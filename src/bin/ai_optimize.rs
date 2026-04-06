@@ -21,8 +21,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use ai_assistant::config_optimizer::{
-    get_code_version, ConfigOptimizer, ConfigPoint, ConfigValue,
-    OptimizationPhase, OptimizerConfig,
+    get_code_version, ConfigOptimizer, ConfigPoint, ConfigValue, OptimizationPhase, OptimizerConfig,
 };
 
 fn main() -> ExitCode {
@@ -41,7 +40,10 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Some(other) => {
-            eprintln!("{}Unknown command: {}. Run ai_optimize --help{}", RED, other, RESET);
+            eprintln!(
+                "{}Unknown command: {}. Run ai_optimize --help{}",
+                RED, other, RESET
+            );
             ExitCode::from(1)
         }
     }
@@ -70,7 +72,10 @@ fn load_or_create() -> ConfigOptimizer {
         match ConfigOptimizer::load(&path) {
             Ok(opt) => opt,
             Err(e) => {
-                eprintln!("{}Warning: Failed to load state: {}. Starting fresh.{}", YELLOW, e, RESET);
+                eprintln!(
+                    "{}Warning: Failed to load state: {}. Starting fresh.{}",
+                    YELLOW, e, RESET
+                );
                 ConfigOptimizer::new(OptimizerConfig::default())
             }
         }
@@ -170,14 +175,8 @@ fn cmd_run(args: &[String]) -> ExitCode {
     let mut optimizer = load_or_create();
     optimizer.check_version_change();
 
-    println!(
-        "{}{}=== Configuration Optimizer ==={}\n",
-        BOLD, CYAN, RESET
-    );
-    println!(
-        "{}Phase:{} {:?}",
-        DIM, RESET, optimizer.phase()
-    );
+    println!("{}{}=== Configuration Optimizer ==={}\n", BOLD, CYAN, RESET);
+    println!("{}Phase:{} {:?}", DIM, RESET, optimizer.phase());
     println!(
         "{}Running {} optimization round(s)...{}\n",
         GREEN, rounds, RESET
@@ -186,7 +185,10 @@ fn cmd_run(args: &[String]) -> ExitCode {
     for r in 1..=rounds {
         let phase = optimizer.phase();
         if phase == OptimizationPhase::Done {
-            println!("{}Optimization complete (Done phase reached).{}", GREEN, RESET);
+            println!(
+                "{}Optimization complete (Done phase reached).{}",
+                GREEN, RESET
+            );
             break;
         }
 
@@ -213,17 +215,19 @@ fn cmd_run(args: &[String]) -> ExitCode {
         for (id, old, new) in &regressions {
             println!(
                 "  {} {} {:.4} -> {:.4} ({:.1}% drop){}",
-                RED, id, old, new, (old - new) / old * 100.0, RESET
+                RED,
+                id,
+                old,
+                new,
+                (old - new) / old * 100.0,
+                RESET
             );
         }
     }
 
     // Summary
     if let Some((_cfg, score)) = optimizer.best_config() {
-        println!(
-            "\n{}Best score: {:.4}{}",
-            BOLD, score, RESET
-        );
+        println!("\n{}Best score: {:.4}{}", BOLD, score, RESET);
     }
 
     save_state(&optimizer);
@@ -235,13 +239,15 @@ fn cmd_run(args: &[String]) -> ExitCode {
 fn cmd_status(_args: &[String]) -> ExitCode {
     let optimizer = load_or_create();
 
-    println!(
-        "{}{}=== Optimizer Status ==={}\n",
-        BOLD, CYAN, RESET
-    );
+    println!("{}{}=== Optimizer Status ==={}\n", BOLD, CYAN, RESET);
     println!("{}Phase:{}       {:?}", DIM, RESET, optimizer.phase());
     println!("{}Rounds:{}      {}", DIM, RESET, optimizer.total_rounds());
-    println!("{}Evaluations:{} {}", DIM, RESET, optimizer.all_evaluations().len());
+    println!(
+        "{}Evaluations:{} {}",
+        DIM,
+        RESET,
+        optimizer.all_evaluations().len()
+    );
     println!("{}Arms:{}        {}", DIM, RESET, optimizer.arms().len());
 
     if let Some((_, score)) = optimizer.best_config() {
@@ -339,13 +345,19 @@ fn cmd_arms(_args: &[String]) -> ExitCode {
 
     let arms = optimizer.arms();
     if arms.is_empty() {
-        println!("{}No arms registered yet. Run some optimization rounds first.{}", YELLOW, RESET);
+        println!(
+            "{}No arms registered yet. Run some optimization rounds first.{}",
+            YELLOW, RESET
+        );
         return ExitCode::SUCCESS;
     }
 
     println!(
         "{}{}=== Bandit Arms ({}) ==={}\n",
-        BOLD, CYAN, arms.len(), RESET
+        BOLD,
+        CYAN,
+        arms.len(),
+        RESET
     );
 
     println!(
@@ -377,7 +389,10 @@ fn cmd_arms(_args: &[String]) -> ExitCode {
 fn cmd_cache(args: &[String]) -> ExitCode {
     match args.first().map(|s| s.as_str()) {
         Some("clear") => {
-            println!("{}LLM cache cleared (no persistent LLM cache in optimizer).{}", GREEN, RESET);
+            println!(
+                "{}LLM cache cleared (no persistent LLM cache in optimizer).{}",
+                GREEN, RESET
+            );
             ExitCode::SUCCESS
         }
         _ => {

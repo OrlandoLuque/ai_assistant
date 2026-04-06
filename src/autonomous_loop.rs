@@ -582,7 +582,12 @@ impl AutonomousAgent {
     }
 
     /// Check whether a review is triggered at the current iteration state.
-    pub fn should_review_now(&self, milestone_completed: bool, tool_failed: bool, user_interrupted: bool) -> bool {
+    pub fn should_review_now(
+        &self,
+        milestone_completed: bool,
+        tool_failed: bool,
+        user_interrupted: bool,
+    ) -> bool {
         let elapsed_secs = (now_millis().saturating_sub(self.start_time)) / 1000;
         self.methodology.should_review(
             self.iteration,
@@ -1593,9 +1598,7 @@ Let me process the results."#;
 
         let gen = Arc::new(move |msgs: &[LoopMessage]| -> String {
             // Record whether KNOWLEDGE CONTEXT is in the messages
-            let has_knowledge = msgs
-                .iter()
-                .any(|m| m.content.contains("KNOWLEDGE CONTEXT"));
+            let has_knowledge = msgs.iter().any(|m| m.content.contains("KNOWLEDGE CONTEXT"));
             log_clone
                 .lock()
                 .unwrap()
@@ -1623,9 +1626,8 @@ Let me process the results."#;
 
     #[test]
     fn test_agent_without_knowledge_provider() {
-        let gen = Arc::new(|_msgs: &[LoopMessage]| -> String {
-            "Answer without knowledge".to_string()
-        });
+        let gen =
+            Arc::new(|_msgs: &[LoopMessage]| -> String { "Answer without knowledge".to_string() });
 
         let mut agent = AutonomousAgent::builder("test-agent", gen)
             .max_iterations(3)
@@ -1641,9 +1643,7 @@ Let me process the results."#;
         let log_clone = call_log.clone();
 
         let gen = Arc::new(move |msgs: &[LoopMessage]| -> String {
-            let has_knowledge = msgs
-                .iter()
-                .any(|m| m.content.contains("KNOWLEDGE CONTEXT"));
+            let has_knowledge = msgs.iter().any(|m| m.content.contains("KNOWLEDGE CONTEXT"));
             log_clone
                 .lock()
                 .unwrap()

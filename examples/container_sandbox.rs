@@ -11,8 +11,8 @@
 //! - Creating and using a SharedFolder
 
 use ai_assistant::{
-    ContainerConfig, ContainerExecutor, ContainerSandbox, ContainerSandboxConfig,
-    ExecutionBackend, SandboxLanguage as Language, SharedFolder,
+    ContainerConfig, ContainerExecutor, ContainerSandbox, ContainerSandboxConfig, ExecutionBackend,
+    SandboxLanguage as Language, SharedFolder,
 };
 
 fn main() -> anyhow::Result<()> {
@@ -52,10 +52,7 @@ fn main() -> anyhow::Result<()> {
         "  Bash    -> {:?}",
         sandbox_config.image_for(&Language::Bash)
     );
-    println!(
-        "  Reuse containers: {}",
-        sandbox_config.reuse_containers
-    );
+    println!("  Reuse containers: {}", sandbox_config.reuse_containers);
 
     // ── 3. Execute Python code in a container ────────────────────────────
 
@@ -141,14 +138,14 @@ console.log("Array sum:", [1,2,3,4,5].reduce((a,b) => a+b, 0));
 
     // Read it back.
     let content = folder.get_file("greeting.txt")?;
-    println!(
-        "  Read back: {:?}",
-        String::from_utf8_lossy(&content)
-    );
+    println!("  Read back: {:?}", String::from_utf8_lossy(&content));
 
     // Clean up.
     folder.clear()?;
-    println!("  Cleared shared folder (files: {})", folder.list_files()?.len());
+    println!(
+        "  Cleared shared folder (files: {})",
+        folder.list_files()?.len()
+    );
 
     println!("\n=== Done ===");
     Ok(())

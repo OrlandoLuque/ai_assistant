@@ -73,10 +73,12 @@ impl SpeechProvider for MockSpeechProvider {
         let num_samples = audio.len() / 2; // PCM16
         let duration = num_samples as f64 / 16000.0;
 
-        let text = self
-            .fixed_transcript
-            .clone()
-            .unwrap_or_else(|| format!("Mock transcript ({:.1}s, {} samples)", duration, num_samples));
+        let text = self.fixed_transcript.clone().unwrap_or_else(|| {
+            format!(
+                "Mock transcript ({:.1}s, {} samples)",
+                duration, num_samples
+            )
+        });
 
         Ok(TranscriptionResult {
             text: text.clone(),
@@ -136,9 +138,7 @@ mod tests {
     fn test_mock_stt_default() {
         let mock = MockSpeechProvider::new();
         let audio = vec![0u8; 32000]; // 1 second at 16kHz PCM16
-        let result = mock
-            .transcribe(&audio, AudioFormat::Pcm, None)
-            .unwrap();
+        let result = mock.transcribe(&audio, AudioFormat::Pcm, None).unwrap();
         assert!(result.text.contains("Mock transcript"));
         assert!(result.duration_secs > 0.9);
         assert_eq!(result.language, Some("en".to_string()));
@@ -148,9 +148,7 @@ mod tests {
     fn test_mock_stt_fixed_transcript() {
         let mock = MockSpeechProvider::with_transcript("Hello Luna");
         let audio = vec![0u8; 16000];
-        let result = mock
-            .transcribe(&audio, AudioFormat::Pcm, None)
-            .unwrap();
+        let result = mock.transcribe(&audio, AudioFormat::Pcm, None).unwrap();
         assert_eq!(result.text, "Hello Luna");
     }
 

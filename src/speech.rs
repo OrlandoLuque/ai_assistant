@@ -205,11 +205,7 @@ pub trait SpeechProvider: Send + Sync {
     /// # Arguments
     /// * `text` - Text to synthesize
     /// * `options` - Synthesis configuration (voice, format, speed)
-    fn synthesize(
-        &self,
-        text: &str,
-        options: &SynthesisOptions,
-    ) -> Result<SynthesisResult>;
+    fn synthesize(&self, text: &str, options: &SynthesisOptions) -> Result<SynthesisResult>;
 }
 
 // ============================================================================
@@ -240,8 +236,7 @@ impl OpenAISpeechProvider {
 
     /// Create from the `OPENAI_API_KEY` environment variable.
     pub fn from_env() -> Result<Self> {
-        let key =
-            std::env::var("OPENAI_API_KEY").context("OPENAI_API_KEY not set")?;
+        let key = std::env::var("OPENAI_API_KEY").context("OPENAI_API_KEY not set")?;
         Ok(Self::new(&key))
     }
 
@@ -323,32 +318,24 @@ impl SpeechProvider for OpenAISpeechProvider {
             )
             .as_bytes(),
         );
-        body.extend_from_slice(
-            format!("Content-Type: {}\r\n\r\n", format.mime_type()).as_bytes(),
-        );
+        body.extend_from_slice(format!("Content-Type: {}\r\n\r\n", format.mime_type()).as_bytes());
         body.extend_from_slice(audio);
         body.extend_from_slice(b"\r\n");
 
         // Model part
         body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
-        body.extend_from_slice(
-            b"Content-Disposition: form-data; name=\"model\"\r\n\r\n",
-        );
+        body.extend_from_slice(b"Content-Disposition: form-data; name=\"model\"\r\n\r\n");
         body.extend_from_slice(b"whisper-1\r\n");
 
         // Response format part (verbose_json gives us segments)
         body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
-        body.extend_from_slice(
-            b"Content-Disposition: form-data; name=\"response_format\"\r\n\r\n",
-        );
+        body.extend_from_slice(b"Content-Disposition: form-data; name=\"response_format\"\r\n\r\n");
         body.extend_from_slice(b"verbose_json\r\n");
 
         // Language part (optional)
         if let Some(lang) = language {
             body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
-            body.extend_from_slice(
-                b"Content-Disposition: form-data; name=\"language\"\r\n\r\n",
-            );
+            body.extend_from_slice(b"Content-Disposition: form-data; name=\"language\"\r\n\r\n");
             body.extend_from_slice(lang.as_bytes());
             body.extend_from_slice(b"\r\n");
         }
@@ -396,11 +383,7 @@ impl SpeechProvider for OpenAISpeechProvider {
         })
     }
 
-    fn synthesize(
-        &self,
-        text: &str,
-        options: &SynthesisOptions,
-    ) -> Result<SynthesisResult> {
+    fn synthesize(&self, text: &str, options: &SynthesisOptions) -> Result<SynthesisResult> {
         let api_key = self.api_key()?;
         let url = format!("{}/v1/audio/speech", self.base_url());
 
@@ -477,8 +460,7 @@ impl GoogleSpeechProvider {
 
     /// Create from the `GOOGLE_API_KEY` environment variable.
     pub fn from_env() -> Result<Self> {
-        let key =
-            std::env::var("GOOGLE_API_KEY").context("GOOGLE_API_KEY not set")?;
+        let key = std::env::var("GOOGLE_API_KEY").context("GOOGLE_API_KEY not set")?;
         Ok(Self::new(&key))
     }
 
@@ -581,8 +563,7 @@ impl SpeechProvider for GoogleSpeechProvider {
             for result in results {
                 if let Some(alternatives) = result["alternatives"].as_array() {
                     if let Some(best) = alternatives.first() {
-                        let alt_text =
-                            best["transcript"].as_str().unwrap_or("");
+                        let alt_text = best["transcript"].as_str().unwrap_or("");
                         text.push_str(alt_text);
                         text.push(' ');
                         if confidence.is_none() {
@@ -592,22 +573,16 @@ impl SpeechProvider for GoogleSpeechProvider {
                         // Parse word-level timestamps into segments
                         if let Some(words) = best["words"].as_array() {
                             for word in words {
-                                let start =
-                                    Self::parse_google_duration(
-                                        word["startTime"]
-                                            .as_str()
-                                            .unwrap_or("0s"),
-                                    );
+                                let start = Self::parse_google_duration(
+                                    word["startTime"].as_str().unwrap_or("0s"),
+                                );
                                 let end = Self::parse_google_duration(
                                     word["endTime"].as_str().unwrap_or("0s"),
                                 );
                                 segments.push(TranscriptionSegment {
                                     start_secs: start,
                                     end_secs: end,
-                                    text: word["word"]
-                                        .as_str()
-                                        .unwrap_or("")
-                                        .to_string(),
+                                    text: word["word"].as_str().unwrap_or("").to_string(),
                                 });
                             }
                         }
@@ -625,16 +600,11 @@ impl SpeechProvider for GoogleSpeechProvider {
         })
     }
 
-    fn synthesize(
-        &self,
-        text: &str,
-        options: &SynthesisOptions,
-    ) -> Result<SynthesisResult> {
+    fn synthesize(&self, text: &str, options: &SynthesisOptions) -> Result<SynthesisResult> {
         let api_key = self.api_key()?;
         let url = "https://texttospeech.googleapis.com/v1/text:synthesize";
 
-        let voice_name =
-            options.voice.as_deref().unwrap_or("en-US-Standard-A");
+        let voice_name = options.voice.as_deref().unwrap_or("en-US-Standard-A");
 
         // Extract language code from voice name (e.g., "en-US" from "en-US-Standard-A")
         let lang_code = if voice_name.len() >= 5 {
@@ -730,7 +700,10 @@ impl PiperTtsProvider {
 
     /// Check if the Piper server is reachable.
     pub fn is_available(&self) -> bool {
-        match ureq::get(&self.base_url).timeout(Duration::from_secs(2)).call() {
+        match ureq::get(&self.base_url)
+            .timeout(Duration::from_secs(2))
+            .call()
+        {
             Ok(_) => true,
             Err(ureq::Error::Status(400, _)) => true, // Server is up, just rejects empty GET
             Err(_) => false,
@@ -764,11 +737,7 @@ impl SpeechProvider for PiperTtsProvider {
         anyhow::bail!("Piper does not support speech-to-text")
     }
 
-    fn synthesize(
-        &self,
-        text: &str,
-        _options: &SynthesisOptions,
-    ) -> Result<SynthesisResult> {
+    fn synthesize(&self, text: &str, _options: &SynthesisOptions) -> Result<SynthesisResult> {
         if text.is_empty() {
             anyhow::bail!("Cannot synthesize empty text");
         }
@@ -788,7 +757,11 @@ impl SpeechProvider for PiperTtsProvider {
         // WAV header is 44 bytes; estimate duration from PCM data size
         // Assuming 16-bit mono at 22050 Hz (Piper default)
         let sample_rate = 22050u32;
-        let data_size = if audio.len() > 44 { audio.len() - 44 } else { 0 };
+        let data_size = if audio.len() > 44 {
+            audio.len() - 44
+        } else {
+            0
+        };
         let duration_secs = data_size as f64 / (sample_rate as f64 * 2.0);
 
         Ok(SynthesisResult {
@@ -884,11 +857,7 @@ impl SpeechProvider for CoquiTtsProvider {
         anyhow::bail!("Coqui TTS does not support speech-to-text")
     }
 
-    fn synthesize(
-        &self,
-        text: &str,
-        _options: &SynthesisOptions,
-    ) -> Result<SynthesisResult> {
+    fn synthesize(&self, text: &str, _options: &SynthesisOptions) -> Result<SynthesisResult> {
         if text.is_empty() {
             anyhow::bail!("Cannot synthesize empty text");
         }
@@ -917,7 +886,11 @@ impl SpeechProvider for CoquiTtsProvider {
         // WAV header is 44 bytes; estimate duration from PCM data size
         // Assuming 16-bit mono at 22050 Hz (Coqui default)
         let sample_rate = 22050u32;
-        let data_size = if audio.len() > 44 { audio.len() - 44 } else { 0 };
+        let data_size = if audio.len() > 44 {
+            audio.len() - 44
+        } else {
+            0
+        };
         let duration_secs = data_size as f64 / (sample_rate as f64 * 2.0);
 
         Ok(SynthesisResult {
@@ -982,9 +955,7 @@ impl SpeechProvider for LocalSpeechProvider {
     }
 
     fn tts_voices(&self) -> Vec<String> {
-        self.tts
-            .as_ref()
-            .map_or_else(Vec::new, |p| p.tts_voices())
+        self.tts.as_ref().map_or_else(Vec::new, |p| p.tts_voices())
     }
 
     fn transcribe(
@@ -999,11 +970,7 @@ impl SpeechProvider for LocalSpeechProvider {
         }
     }
 
-    fn synthesize(
-        &self,
-        text: &str,
-        options: &SynthesisOptions,
-    ) -> Result<SynthesisResult> {
+    fn synthesize(&self, text: &str, options: &SynthesisOptions) -> Result<SynthesisResult> {
         match &self.tts {
             Some(provider) => provider.synthesize(text, options),
             None => anyhow::bail!("No TTS provider configured in LocalSpeechProvider"),
@@ -1073,8 +1040,8 @@ impl WhisperLocalProvider {
                         break;
                     }
                 }
-                let offset = data_offset
-                    .ok_or_else(|| anyhow::anyhow!("WAV data subchunk not found"))?;
+                let offset =
+                    data_offset.ok_or_else(|| anyhow::anyhow!("WAV data subchunk not found"))?;
 
                 let pcm_data = &audio[offset..];
                 let samples: Vec<f32> = pcm_data
@@ -1131,11 +1098,9 @@ impl SpeechProvider for WhisperLocalProvider {
     ) -> Result<TranscriptionResult> {
         let samples = Self::audio_to_f32_pcm(audio, format)?;
 
-        let ctx = WhisperContext::new_with_params(
-            &self.model_path,
-            WhisperContextParameters::default(),
-        )
-        .map_err(|e| anyhow::anyhow!("Failed to load Whisper model: {}", e))?;
+        let ctx =
+            WhisperContext::new_with_params(&self.model_path, WhisperContextParameters::default())
+                .map_err(|e| anyhow::anyhow!("Failed to load Whisper model: {}", e))?;
 
         let mut state = ctx
             .create_state()
@@ -1195,11 +1160,7 @@ impl SpeechProvider for WhisperLocalProvider {
         })
     }
 
-    fn synthesize(
-        &self,
-        _text: &str,
-        _options: &SynthesisOptions,
-    ) -> Result<SynthesisResult> {
+    fn synthesize(&self, _text: &str, _options: &SynthesisOptions) -> Result<SynthesisResult> {
         anyhow::bail!("WhisperLocalProvider does not support text-to-speech")
     }
 }
@@ -1213,9 +1174,7 @@ impl SpeechProvider for WhisperLocalProvider {
 /// Supported providers: `"openai"`, `"google"`, `"piper"`, `"coqui"`,
 /// `"whisper"` / `"whisper-local"` (requires `whisper-local` feature),
 /// `"local"` (auto-detect best available local providers).
-pub fn create_speech_provider(
-    name: &str,
-) -> Result<Box<dyn SpeechProvider>> {
+pub fn create_speech_provider(name: &str) -> Result<Box<dyn SpeechProvider>> {
     match name.to_lowercase().as_str() {
         "openai" => Ok(Box::new(OpenAISpeechProvider::from_env()?)),
         "google" => Ok(Box::new(GoogleSpeechProvider::from_env()?)),
@@ -1264,8 +1223,7 @@ pub fn create_speech_provider(
 // Base64 helpers (inline, no external dependency)
 // ============================================================================
 
-const B64_CHARS: &[u8] =
-    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const B64_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 fn base64_encode(data: &[u8]) -> String {
     let mut result = String::with_capacity((data.len() + 2) / 3 * 4);
@@ -1350,8 +1308,7 @@ impl ExpressiveOpenAiTtsProvider {
 
     /// Create from OPENAI_API_KEY environment variable.
     pub fn from_env() -> Result<Self> {
-        let key = std::env::var("OPENAI_API_KEY")
-            .context("OPENAI_API_KEY not set")?;
+        let key = std::env::var("OPENAI_API_KEY").context("OPENAI_API_KEY not set")?;
         Ok(Self::new(&key))
     }
 
@@ -1374,10 +1331,7 @@ impl ExpressiveOpenAiTtsProvider {
         emotion_instruction: &str,
         options: &SynthesisOptions,
     ) -> Result<SynthesisResult> {
-        let voice = options
-            .voice
-            .as_deref()
-            .unwrap_or(&self.default_voice);
+        let voice = options.voice.as_deref().unwrap_or(&self.default_voice);
 
         let body = serde_json::json!({
             "model": "gpt-4o-mini-tts",
@@ -1469,8 +1423,7 @@ impl ElevenLabsProvider {
 
     /// Create from ELEVENLABS_API_KEY environment variable.
     pub fn from_env() -> Result<Self> {
-        let key = std::env::var("ELEVENLABS_API_KEY")
-            .context("ELEVENLABS_API_KEY not set")?;
+        let key = std::env::var("ELEVENLABS_API_KEY").context("ELEVENLABS_API_KEY not set")?;
         Ok(Self::new(&key))
     }
 
@@ -1498,15 +1451,9 @@ impl SpeechProvider for ElevenLabsProvider {
     }
 
     fn synthesize(&self, text: &str, options: &SynthesisOptions) -> Result<SynthesisResult> {
-        let voice_id = options
-            .voice
-            .as_deref()
-            .unwrap_or(&self.default_voice_id);
+        let voice_id = options.voice.as_deref().unwrap_or(&self.default_voice_id);
 
-        let url = format!(
-            "https://api.elevenlabs.io/v1/text-to-speech/{}",
-            voice_id
-        );
+        let url = format!("https://api.elevenlabs.io/v1/text-to-speech/{}", voice_id);
 
         let body = serde_json::json!({
             "text": text,
@@ -1678,10 +1625,7 @@ pub trait VoiceCloneProvider: Send + Sync {
 ///
 /// Returns (quality_score, warnings). Quality score is 0.0 to 1.0.
 /// Warns if audio is too short, too quiet, or has silence.
-pub fn assess_enrollment_quality(
-    audio_bytes: &[u8],
-    sample_rate: u32,
-) -> (f32, Vec<String>) {
+pub fn assess_enrollment_quality(audio_bytes: &[u8], sample_rate: u32) -> (f32, Vec<String>) {
     let mut warnings = Vec::new();
     let mut score = 1.0f32;
 
@@ -1715,21 +1659,29 @@ pub fn assess_enrollment_quality(
         .collect();
 
     if !samples.is_empty() {
-        let rms = (samples.iter().map(|&s| (s as f64).powi(2)).sum::<f64>()
-            / samples.len() as f64)
+        let rms = (samples.iter().map(|&s| (s as f64).powi(2)).sum::<f64>() / samples.len() as f64)
             .sqrt();
 
         if rms < 100.0 {
-            warnings.push(format!("Audio is very quiet (RMS: {:.0}). Speak louder or check mic.", rms));
+            warnings.push(format!(
+                "Audio is very quiet (RMS: {:.0}). Speak louder or check mic.",
+                rms
+            ));
             score -= 0.4;
         } else if rms < 500.0 {
-            warnings.push(format!("Audio is quiet (RMS: {:.0}). Consider speaking louder.", rms));
+            warnings.push(format!(
+                "Audio is quiet (RMS: {:.0}). Consider speaking louder.",
+                rms
+            ));
             score -= 0.1;
         }
 
         // Check for too much silence (>50% of frames below threshold)
         let silence_threshold = 200i16;
-        let silent_count = samples.iter().filter(|&&s| s.abs() < silence_threshold).count();
+        let silent_count = samples
+            .iter()
+            .filter(|&&s| s.abs() < silence_threshold)
+            .count();
         let silence_ratio = silent_count as f32 / samples.len() as f32;
         if silence_ratio > 0.7 {
             warnings.push(format!(
@@ -1770,8 +1722,7 @@ impl ElevenLabsCloneProvider {
 
     /// Create from ELEVENLABS_API_KEY environment variable.
     pub fn from_env() -> Result<Self> {
-        let key = std::env::var("ELEVENLABS_API_KEY")
-            .context("ELEVENLABS_API_KEY not set")?;
+        let key = std::env::var("ELEVENLABS_API_KEY").context("ELEVENLABS_API_KEY not set")?;
         Ok(Self::new(&key))
     }
 
@@ -2007,13 +1958,12 @@ impl VoiceCloneProvider for XttsCloneProvider {
         _options: &SynthesisOptions,
     ) -> Result<SynthesisResult> {
         // Get stored reference audio
-        let reference = self
-            .voice_references
-            .get(voice_id)
-            .ok_or_else(|| anyhow::anyhow!(
+        let reference = self.voice_references.get(voice_id).ok_or_else(|| {
+            anyhow::anyhow!(
                 "No reference audio for voice '{}'. Call store_reference() first.",
                 voice_id
-            ))?;
+            )
+        })?;
 
         // XTTS v2 API: POST /api/tts with speaker_wav as base64
         let url = format!("{}/api/tts", self.base_url);
@@ -2149,15 +2099,9 @@ mod tests {
         assert_eq!(AudioFormat::from_extension("wav"), Some(AudioFormat::Wav));
         assert_eq!(AudioFormat::from_extension("mp3"), Some(AudioFormat::Mp3));
         assert_eq!(AudioFormat::from_extension("ogg"), Some(AudioFormat::Ogg));
-        assert_eq!(
-            AudioFormat::from_extension("flac"),
-            Some(AudioFormat::Flac)
-        );
+        assert_eq!(AudioFormat::from_extension("flac"), Some(AudioFormat::Flac));
         assert_eq!(AudioFormat::from_extension("pcm"), Some(AudioFormat::Pcm));
-        assert_eq!(
-            AudioFormat::from_extension("opus"),
-            Some(AudioFormat::Opus)
-        );
+        assert_eq!(AudioFormat::from_extension("opus"), Some(AudioFormat::Opus));
         assert_eq!(AudioFormat::from_extension("aac"), Some(AudioFormat::Aac));
         // m4a maps to Aac
         assert_eq!(AudioFormat::from_extension("m4a"), Some(AudioFormat::Aac));
@@ -2293,8 +2237,7 @@ mod tests {
             confidence: Some(0.9),
         };
         let json = serde_json::to_string(&result).unwrap();
-        let parsed: TranscriptionResult =
-            serde_json::from_str(&json).unwrap();
+        let parsed: TranscriptionResult = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.text, "Test");
         assert_eq!(parsed.segments.len(), 1);
         assert_eq!(parsed.segments[0].text, "Test");
@@ -2369,12 +2312,8 @@ mod tests {
 
     #[test]
     fn test_openai_with_tts_model() {
-        let provider =
-            OpenAISpeechProvider::new("key").with_tts_model("tts-1-hd");
-        assert_eq!(
-            provider.config.model.as_deref(),
-            Some("tts-1-hd")
-        );
+        let provider = OpenAISpeechProvider::new("key").with_tts_model("tts-1-hd");
+        assert_eq!(provider.config.model.as_deref(), Some("tts-1-hd"));
     }
 
     #[test]
@@ -2444,45 +2383,23 @@ mod tests {
 
     #[test]
     fn test_google_parse_duration() {
+        assert!((GoogleSpeechProvider::parse_google_duration("1.500s") - 1.5).abs() < f64::EPSILON);
+        assert!((GoogleSpeechProvider::parse_google_duration("0s") - 0.0).abs() < f64::EPSILON);
+        assert!((GoogleSpeechProvider::parse_google_duration("123.456s") - 123.456).abs() < 1e-10);
         assert!(
-            (GoogleSpeechProvider::parse_google_duration("1.500s") - 1.5)
-                .abs()
-                < f64::EPSILON
-        );
-        assert!(
-            (GoogleSpeechProvider::parse_google_duration("0s") - 0.0).abs()
-                < f64::EPSILON
-        );
-        assert!(
-            (GoogleSpeechProvider::parse_google_duration("123.456s")
-                - 123.456)
-                .abs()
-                < 1e-10
-        );
-        assert!(
-            (GoogleSpeechProvider::parse_google_duration("0.001s") - 0.001)
-                .abs()
-                < f64::EPSILON
+            (GoogleSpeechProvider::parse_google_duration("0.001s") - 0.001).abs() < f64::EPSILON
         );
         // Edge case: no "s" suffix
-        assert!(
-            (GoogleSpeechProvider::parse_google_duration("5.0") - 5.0).abs()
-                < f64::EPSILON
-        );
+        assert!((GoogleSpeechProvider::parse_google_duration("5.0") - 5.0).abs() < f64::EPSILON);
     }
 
     #[test]
     fn test_google_parse_duration_invalid() {
         // Non-numeric should fall back to 0.0
         assert!(
-            (GoogleSpeechProvider::parse_google_duration("invalid") - 0.0)
-                .abs()
-                < f64::EPSILON
+            (GoogleSpeechProvider::parse_google_duration("invalid") - 0.0).abs() < f64::EPSILON
         );
-        assert!(
-            (GoogleSpeechProvider::parse_google_duration("") - 0.0).abs()
-                < f64::EPSILON
-        );
+        assert!((GoogleSpeechProvider::parse_google_duration("") - 0.0).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -2602,7 +2519,8 @@ mod tests {
             let encoded = base64_encode(input);
             let decoded = base64_decode(&encoded).unwrap();
             assert_eq!(
-                &decoded, input,
+                &decoded,
+                input,
                 "Roundtrip failed for input of length {}",
                 input.len()
             );
@@ -2637,8 +2555,7 @@ mod tests {
 
     #[test]
     fn test_openai_with_base_url() {
-        let provider = OpenAISpeechProvider::new("key")
-            .with_base_url("http://localhost:8080");
+        let provider = OpenAISpeechProvider::new("key").with_base_url("http://localhost:8080");
         assert_eq!(
             provider.config.base_url.as_deref(),
             Some("http://localhost:8080")
@@ -2659,8 +2576,7 @@ mod tests {
 
     #[test]
     fn test_openai_with_base_url_used_in_url() {
-        let provider = OpenAISpeechProvider::new("key")
-            .with_base_url("http://localhost:8080");
+        let provider = OpenAISpeechProvider::new("key").with_base_url("http://localhost:8080");
         assert_eq!(provider.base_url(), "http://localhost:8080");
     }
 
@@ -2813,11 +2729,7 @@ mod tests {
                 confidence: Some(0.95),
             })
         }
-        fn synthesize(
-            &self,
-            _text: &str,
-            _options: &SynthesisOptions,
-        ) -> Result<SynthesisResult> {
+        fn synthesize(&self, _text: &str, _options: &SynthesisOptions) -> Result<SynthesisResult> {
             anyhow::bail!("Mock STT does not support TTS")
         }
     }
@@ -2844,11 +2756,7 @@ mod tests {
         ) -> Result<TranscriptionResult> {
             anyhow::bail!("Mock TTS does not support STT")
         }
-        fn synthesize(
-            &self,
-            _text: &str,
-            _options: &SynthesisOptions,
-        ) -> Result<SynthesisResult> {
+        fn synthesize(&self, _text: &str, _options: &SynthesisOptions) -> Result<SynthesisResult> {
             Ok(SynthesisResult {
                 audio: vec![0u8; 100],
                 format: AudioFormat::Wav,
@@ -2860,10 +2768,8 @@ mod tests {
 
     #[test]
     fn test_local_provider_name() {
-        let provider = LocalSpeechProvider::new(
-            Box::new(MockSttProvider),
-            Box::new(MockTtsProvider),
-        );
+        let provider =
+            LocalSpeechProvider::new(Box::new(MockSttProvider), Box::new(MockTtsProvider));
         assert_eq!(provider.name(), "local");
     }
 
@@ -2883,10 +2789,8 @@ mod tests {
 
     #[test]
     fn test_local_both_support() {
-        let provider = LocalSpeechProvider::new(
-            Box::new(MockSttProvider),
-            Box::new(MockTtsProvider),
-        );
+        let provider =
+            LocalSpeechProvider::new(Box::new(MockSttProvider), Box::new(MockTtsProvider));
         assert!(provider.supports_stt());
         assert!(provider.supports_tts());
     }
@@ -2978,9 +2882,7 @@ mod tests {
         // Sample 1: 0x0040 = 16384 -> 16384/32768 = 0.5
         // Sample 2: 0xC000 = -16384 (signed) -> -16384/32768 = -0.5
         let pcm_data: Vec<u8> = vec![0x00, 0x40, 0x00, 0xC0];
-        let samples =
-            WhisperLocalProvider::audio_to_f32_pcm(&pcm_data, AudioFormat::Pcm)
-                .unwrap();
+        let samples = WhisperLocalProvider::audio_to_f32_pcm(&pcm_data, AudioFormat::Pcm).unwrap();
         assert_eq!(samples.len(), 2);
         assert!((samples[0] - 0.5).abs() < 1e-4);
         assert!((samples[1] - (-0.5)).abs() < 1e-4);
@@ -3065,7 +2967,12 @@ mod tests {
         let bytes: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
 
         let (score, warnings) = assess_enrollment_quality(&bytes, sample_rate);
-        assert!(score > 0.5, "Good audio should score well: {}, warnings: {:?}", score, warnings);
+        assert!(
+            score > 0.5,
+            "Good audio should score well: {}, warnings: {:?}",
+            score,
+            warnings
+        );
     }
 
     #[test]
@@ -3091,7 +2998,9 @@ mod tests {
         let (score, warnings) = assess_enrollment_quality(&bytes, 16000);
         assert!(score < 0.5, "Silent audio should score low: {}", score);
         assert!(
-            warnings.iter().any(|w| w.contains("quiet") || w.contains("silence")),
+            warnings
+                .iter()
+                .any(|w| w.contains("quiet") || w.contains("silence")),
             "Should warn about silence: {:?}",
             warnings
         );
@@ -3137,7 +3046,9 @@ mod tests {
         assert!(result.is_err());
 
         // Good audio should succeed
-        let samples: Vec<i16> = (0..80000).map(|i| ((i % 100) as i16 * 300) - 15000).collect();
+        let samples: Vec<i16> = (0..80000)
+            .map(|i| ((i % 100) as i16 * 300) - 15000)
+            .collect();
         let bytes: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
         let result = provider.enroll(&bytes, AudioFormat::Pcm, "Good Voice", 16000);
         assert!(result.is_ok());
@@ -3147,7 +3058,10 @@ mod tests {
     #[test]
     fn test_elevenlabs_clone_provider_construction() {
         let provider = ElevenLabsCloneProvider::new("test_key");
-        assert_eq!(provider.clone_provider_name(), "ElevenLabs Instant Voice Clone");
+        assert_eq!(
+            provider.clone_provider_name(),
+            "ElevenLabs Instant Voice Clone"
+        );
         assert!(provider.is_available());
 
         let empty = ElevenLabsCloneProvider::new("");

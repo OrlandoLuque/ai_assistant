@@ -272,14 +272,20 @@ impl FaultInjector {
 
             // Check max_injections cap
             if let Some(max) = rule.max_injections {
-                let mut counts = self.injections_count.lock().unwrap_or_else(|e| e.into_inner());
+                let mut counts = self
+                    .injections_count
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
                 let current = counts.get(&rule.name).copied().unwrap_or(0);
                 if current >= max {
                     continue;
                 }
                 *counts.entry(rule.name.clone()).or_insert(0) += 1;
             } else {
-                let mut counts = self.injections_count.lock().unwrap_or_else(|e| e.into_inner());
+                let mut counts = self
+                    .injections_count
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
                 *counts.entry(rule.name.clone()).or_insert(0) += 1;
             }
 
@@ -313,7 +319,10 @@ impl FaultInjector {
     pub fn reset_stats(&self) {
         let mut stats = self.stats.lock().unwrap_or_else(|e| e.into_inner());
         *stats = FaultStats::default();
-        let mut counts = self.injections_count.lock().unwrap_or_else(|e| e.into_inner());
+        let mut counts = self
+            .injections_count
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         counts.clear();
     }
 
@@ -613,12 +622,7 @@ mod tests {
 
     #[test]
     fn test_fault_rule_rate_limit_builder() {
-        let rule = FaultRule::rate_limit(
-            "rl",
-            FaultTarget::All,
-            Duration::from_secs(30),
-            0.1,
-        );
+        let rule = FaultRule::rate_limit("rl", FaultTarget::All, Duration::from_secs(30), 0.1);
         assert_eq!(rule.name, "rl");
         assert!(matches!(
             rule.fault_type,

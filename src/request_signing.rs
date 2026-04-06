@@ -320,7 +320,9 @@ impl std::fmt::Display for SignatureError {
             Self::Invalid => write!(f, "Invalid signature"),
             Self::Expired => write!(f, "Signature expired"),
             Self::MissingFields => write!(f, "Missing required fields"),
-            Self::ReplayedNonce => write!(f, "Nonce has already been used (possible replay attack)"),
+            Self::ReplayedNonce => {
+                write!(f, "Nonce has already been used (possible replay attack)")
+            }
         }
     }
 }
@@ -411,7 +413,10 @@ mod tests {
     fn test_signature_error_display() {
         assert_eq!(SignatureError::Invalid.to_string(), "Invalid signature");
         assert_eq!(SignatureError::Expired.to_string(), "Signature expired");
-        assert_eq!(SignatureError::MissingFields.to_string(), "Missing required fields");
+        assert_eq!(
+            SignatureError::MissingFields.to_string(),
+            "Missing required fields"
+        );
     }
 
     #[test]
@@ -427,7 +432,10 @@ mod tests {
         let input = b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
         let digest = sha256::sha256(input);
         let hex = sha256::hex_encode(&digest);
-        assert_eq!(hex, "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1");
+        assert_eq!(
+            hex,
+            "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
+        );
     }
 
     #[test]

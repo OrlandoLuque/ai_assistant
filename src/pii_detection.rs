@@ -224,8 +224,7 @@ impl PiiDetector {
         // SSN pattern — matches NNN-NN-NNNN format; invalid ranges are filtered in detect()
         self.patterns.insert(
             PiiType::Ssn,
-            Regex::new(r"\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b")
-                .expect("valid regex"),
+            Regex::new(r"\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b").expect("valid regex"),
         );
 
         // Credit card pattern (simplified)
@@ -298,7 +297,8 @@ impl PiiDetector {
                             let area: u16 = digits[..3].parse().unwrap_or(0);
                             let group: u16 = digits[3..5].parse().unwrap_or(0);
                             let serial: u16 = digits[5..].parse().unwrap_or(0);
-                            if area == 0 || area == 666 || area >= 900 || group == 0 || serial == 0 {
+                            if area == 0 || area == 666 || area >= 900 || group == 0 || serial == 0
+                            {
                                 continue; // Invalid SSN range — skip
                             }
                         }
@@ -716,10 +716,14 @@ mod tests {
     #[test]
     fn test_sensitivity_high_detects_more() {
         let high = PiiDetector::new(
-            PiiConfigBuilder::new().sensitivity(SensitivityLevel::High).build()
+            PiiConfigBuilder::new()
+                .sensitivity(SensitivityLevel::High)
+                .build(),
         );
         let low = PiiDetector::new(
-            PiiConfigBuilder::new().sensitivity(SensitivityLevel::Low).build()
+            PiiConfigBuilder::new()
+                .sensitivity(SensitivityLevel::Low)
+                .build(),
         );
         let text = "John Smith at john@test.com, SSN 123-45-6789";
         let r_high = high.detect(text);

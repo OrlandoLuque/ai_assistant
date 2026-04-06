@@ -144,7 +144,10 @@ impl DistributedRateLimiter {
         // Layer 1: Local per-IP check (instant)
         let window = Duration::from_secs(self.config.local_window_secs);
         let count = {
-            let mut entry = self.local_counters.entry(*ip).or_insert_with(|| LocalCounter::new(window));
+            let mut entry = self
+                .local_counters
+                .entry(*ip)
+                .or_insert_with(|| LocalCounter::new(window));
             entry.record()
         };
 
@@ -297,7 +300,11 @@ mod tests {
             assert!(limiter.check_global().await.is_ok());
 
             // Push over global limit
-            counter.write().await.positive.increment_by("other-node", 20);
+            counter
+                .write()
+                .await
+                .positive
+                .increment_by("other-node", 20);
             assert!(limiter.check_global().await.is_err());
         });
     }

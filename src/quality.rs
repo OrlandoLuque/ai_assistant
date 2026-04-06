@@ -706,8 +706,7 @@ impl QualityAnalyzer {
             if self.config.llm_enhanced && enhancer.is_available() {
                 if let Some(prompt) = self.build_analyze_prompt(query, response) {
                     if let Ok(llm_response) = enhancer.generate(&prompt, 200) {
-                        if let Some((rel, coh, comp)) =
-                            Self::parse_analyze_response(&llm_response)
+                        if let Some((rel, coh, comp)) = Self::parse_analyze_response(&llm_response)
                         {
                             score.relevance = rel;
                             score.coherence = coh;
@@ -922,7 +921,11 @@ mod tests {
         assert_eq!(variants.len(), 13);
         for variant in &variants {
             let desc = variant.description();
-            assert!(!desc.is_empty(), "Description for {:?} should not be empty", variant);
+            assert!(
+                !desc.is_empty(),
+                "Description for {:?} should not be empty",
+                variant
+            );
         }
     }
 

@@ -437,9 +437,15 @@ mod tests {
     #[test]
     fn test_ranking_criteria_defaults() {
         let c = RankingCriteria::default();
-        let sum = c.relevance_weight + c.coherence_weight + c.completeness_weight
-            + c.conciseness_weight + c.safety_weight;
-        assert!((sum - 1.0).abs() < 1e-10, "default weights should sum to 1.0");
+        let sum = c.relevance_weight
+            + c.coherence_weight
+            + c.completeness_weight
+            + c.conciseness_weight
+            + c.safety_weight;
+        assert!(
+            (sum - 1.0).abs() < 1e-10,
+            "default weights should sum to 1.0"
+        );
         assert_eq!(c.preferred_length, 0);
     }
 
@@ -454,9 +460,10 @@ mod tests {
             .preferred_length(100)
             .build();
         // Verify the ranker was created with custom criteria by ranking something
-        let candidates = vec![
-            ResponseCandidate::new("Relevant answer about Rust programming language.", "m"),
-        ];
+        let candidates = vec![ResponseCandidate::new(
+            "Relevant answer about Rust programming language.",
+            "m",
+        )];
         let ranked = ranker.rank("Tell me about Rust", candidates);
         assert_eq!(ranked.len(), 1);
         assert!(ranked[0].score > 0.0);
@@ -476,10 +483,7 @@ mod tests {
             "This works because the algorithm is efficient. Therefore it scales well. For example, sorting 1M items takes under a second.",
             "m",
         );
-        let plain = ResponseCandidate::new(
-            "It works. It scales. It is fast.",
-            "m",
-        );
+        let plain = ResponseCandidate::new("It works. It scales. It is fast.", "m");
         let ranked = ranker.rank("How does it work?", vec![good, plain]);
         assert!(ranked[0].breakdown.coherence > ranked[1].breakdown.coherence);
     }
@@ -491,11 +495,12 @@ mod tests {
             "First, install the package. Then configure the settings. The step by step process ensures correctness.",
             "m",
         );
-        let vague_answer = ResponseCandidate::new(
-            "Just do it the normal way and it should be fine.",
-            "m",
+        let vague_answer =
+            ResponseCandidate::new("Just do it the normal way and it should be fine.", "m");
+        let ranked = ranker.rank(
+            "How do I set up the project?",
+            vec![step_answer, vague_answer],
         );
-        let ranked = ranker.rank("How do I set up the project?", vec![step_answer, vague_answer]);
         assert!(ranked[0].breakdown.completeness >= ranked[1].breakdown.completeness);
     }
 
@@ -506,10 +511,7 @@ mod tests {
             "Here is a detailed explanation of the concept with examples and reasoning.",
             "m",
         );
-        let refusal = ResponseCandidate::new(
-            "I cannot help with that request as an AI.",
-            "m",
-        );
+        let refusal = ResponseCandidate::new("I cannot help with that request as an AI.", "m");
         let ranked = ranker.rank("Explain this", vec![helpful, refusal]);
         assert!(ranked[0].breakdown.safety > ranked[1].breakdown.safety);
         assert!(ranked[1].breakdown.safety < 0.5); // refusal pattern detected
@@ -542,14 +544,9 @@ mod tests {
         let ranker = RankingCriteriaBuilder::new()
             .preferred_length(10) // prefer ~10 words
             .build();
-        let short = ResponseCandidate::new(
-            "Ten words is about right for this test case here.",
-            "m",
-        );
-        let long = ResponseCandidate::new(
-            &"word ".repeat(200),
-            "m",
-        );
+        let short =
+            ResponseCandidate::new("Ten words is about right for this test case here.", "m");
+        let long = ResponseCandidate::new(&"word ".repeat(200), "m");
         let ranked = ranker.rank("q", vec![short, long]);
         assert!(ranked[0].breakdown.conciseness > ranked[1].breakdown.conciseness);
     }
@@ -563,10 +560,7 @@ mod tests {
                 "A medium-length response that provides some detail about the topic at hand.",
                 "m",
             ),
-            ResponseCandidate::new(
-                &"Very long response. ".repeat(50),
-                "m",
-            ),
+            ResponseCandidate::new(&"Very long response. ".repeat(50), "m"),
         ];
         let ranked = ranker.rank("Tell me about testing", candidates);
         for r in &ranked {

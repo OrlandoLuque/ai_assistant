@@ -53,15 +53,8 @@ fn main() {
         },
         cors: CorsConfig {
             allowed_origins: vec!["https://myapp.example.com".to_string()],
-            allowed_methods: vec![
-                "GET".to_string(),
-                "POST".to_string(),
-                "OPTIONS".to_string(),
-            ],
-            allowed_headers: vec![
-                "Content-Type".to_string(),
-                "Authorization".to_string(),
-            ],
+            allowed_methods: vec!["GET".to_string(), "POST".to_string(), "OPTIONS".to_string()],
+            allowed_headers: vec!["Content-Type".to_string(), "Authorization".to_string()],
             max_age_secs: 3600,
             allow_credentials: true,
         },
@@ -80,7 +73,11 @@ fn main() {
     println!("\n--- 3. Plain HTTP vs HTTPS ---\n");
 
     let http_config = ServerConfig::default();
-    println!("  HTTP  -> {}  (TLS: {})", http_config.bind_address(), http_config.tls.is_some());
+    println!(
+        "  HTTP  -> {}  (TLS: {})",
+        http_config.bind_address(),
+        http_config.tls.is_some()
+    );
 
     let https_config = ServerConfig {
         port: 8443,
@@ -90,7 +87,11 @@ fn main() {
         }),
         ..Default::default()
     };
-    println!("  HTTPS -> {}  (TLS: {})", https_config.bind_address(), https_config.tls.is_some());
+    println!(
+        "  HTTPS -> {}  (TLS: {})",
+        https_config.bind_address(),
+        https_config.tls.is_some()
+    );
 
     // ------------------------------------------------------------------
     // 4. Server creation (does not start — just instantiates)

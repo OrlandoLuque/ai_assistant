@@ -5,9 +5,7 @@
 //!
 //! Run with: cargo run --example cost_tracking --features full
 
-use ai_assistant::{
-    CostDashboard, CostEstimator, BudgetManager, RequestType,
-};
+use ai_assistant::{BudgetManager, CostDashboard, CostEstimator, RequestType};
 
 fn main() {
     println!("=== Cost Tracking Demo ===\n");
@@ -17,7 +15,10 @@ fn main() {
     let estimate = estimator.estimate("gpt-4", "api", 1000, 500);
     println!("--- Cost Estimator ---");
     println!("Model: gpt-4, Input: 1000 tokens, Output: 500 tokens");
-    println!("  Estimated cost: ${:.6} {}", estimate.cost, estimate.currency);
+    println!(
+        "  Estimated cost: ${:.6} {}",
+        estimate.cost, estimate.currency
+    );
     println!("  Provider:       {}", estimate.provider);
 
     let estimate2 = estimator.estimate("gpt-3.5-turbo", "api", 1000, 500);
@@ -55,8 +56,12 @@ fn main() {
     for (i, entry) in dashboard.most_expensive(3).iter().enumerate() {
         println!(
             "  {}. {} ({}) - {} in / {} out = ${:.6}",
-            i + 1, entry.model, entry.request_type,
-            entry.input_tokens, entry.output_tokens, entry.cost_usd
+            i + 1,
+            entry.model,
+            entry.request_type,
+            entry.input_tokens,
+            entry.output_tokens,
+            entry.cost_usd
         );
     }
 

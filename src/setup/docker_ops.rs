@@ -38,7 +38,14 @@ pub fn docker_available() -> bool {
 /// as a build arg (`--build-arg FEATURES=...`).
 pub fn docker_build(features: &str) -> Result<String, String> {
     let output = Command::new("docker")
-        .args(["build", "--build-arg", &format!("FEATURES={}", features), "-t", "ai_assistant", "."])
+        .args([
+            "build",
+            "--build-arg",
+            &format!("FEATURES={}", features),
+            "-t",
+            "ai_assistant",
+            ".",
+        ])
         .output()
         .map_err(|e| format!("Failed to run docker build: {}", e))?;
 

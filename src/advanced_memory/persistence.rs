@@ -87,8 +87,12 @@ impl AutoPersistenceConfig {
         let tmp = path.with_extension("tmp.gz");
         let file = std::fs::File::create(&tmp).map_err(|e| format!("Create error: {}", e))?;
         let mut encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
-        encoder.write_all(data).map_err(|e| format!("Compress error: {}", e))?;
-        encoder.finish().map_err(|e| format!("Flush error: {}", e))?;
+        encoder
+            .write_all(data)
+            .map_err(|e| format!("Compress error: {}", e))?;
+        encoder
+            .finish()
+            .map_err(|e| format!("Flush error: {}", e))?;
         std::fs::rename(&tmp, &path).map_err(|e| format!("Rename error: {}", e))?;
         Ok(())
     }
@@ -99,7 +103,9 @@ impl AutoPersistenceConfig {
         let file = std::fs::File::open(path).map_err(|e| format!("Open error: {}", e))?;
         let mut decoder = flate2::read::GzDecoder::new(file);
         let mut data = Vec::new();
-        decoder.read_to_end(&mut data).map_err(|e| format!("Decompress error: {}", e))?;
+        decoder
+            .read_to_end(&mut data)
+            .map_err(|e| format!("Decompress error: {}", e))?;
         Ok(data)
     }
 
@@ -136,11 +142,16 @@ impl AutoPersistenceConfig {
         if checksum_path.exists() {
             let stored = std::fs::read_to_string(&checksum_path)
                 .map_err(|e| format!("Checksum read error: {}", e))?;
-            let stored_checksum: u64 = stored.trim().parse()
+            let stored_checksum: u64 = stored
+                .trim()
+                .parse()
                 .map_err(|e| format!("Checksum parse error: {}", e))?;
             let computed = Self::compute_checksum(&data);
             if stored_checksum != computed {
-                return Err(format!("Checksum mismatch: stored={}, computed={}", stored_checksum, computed));
+                return Err(format!(
+                    "Checksum mismatch: stored={}, computed={}",
+                    stored_checksum, computed
+                ));
             }
         }
         Ok(data)

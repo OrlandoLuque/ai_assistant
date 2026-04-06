@@ -45,7 +45,6 @@ struct EngagementRecord {
     metadata: HashMap<String, String>,
 }
 
-
 /// User engagement tracker
 pub struct EngagementTracker {
     user_id: String,
@@ -501,9 +500,9 @@ mod tests {
     #[test]
     fn test_mixed_feedback_sentiment() {
         let mut tracker = EngagementTracker::new("u");
-        tracker.record_feedback(true);  // +1
+        tracker.record_feedback(true); // +1
         tracker.record_feedback(false); // -1
-        tracker.record_feedback(true);  // +1
+        tracker.record_feedback(true); // +1
         let metrics = tracker.calculate_metrics();
         // Weighted: 1*1 + (-1)*2 + 1*3 = 2, weights = 1+2+3 = 6, result = 0.33...
         assert!(metrics.sentiment_trend > 0.0);
@@ -544,12 +543,16 @@ mod tests {
         let mut manager = EngagementManager::new();
 
         // One session only
-        manager.get_tracker("u").record_event(EngagementEvent::MessageSent);
+        manager
+            .get_tracker("u")
+            .record_event(EngagementEvent::MessageSent);
         manager.end_session("u");
         assert!(manager.calculate_user_trends("u").is_none());
 
         // Second session
-        manager.get_tracker("u").record_event(EngagementEvent::MessageSent);
+        manager
+            .get_tracker("u")
+            .record_event(EngagementEvent::MessageSent);
         manager.end_session("u");
         let trends = manager.calculate_user_trends("u");
         assert!(trends.is_some());

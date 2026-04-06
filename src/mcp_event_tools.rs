@@ -150,17 +150,22 @@ pub fn register_event_tools(server: &mut McpServer, manager: Arc<Mutex<EventSour
     {
         let mgr = manager.clone();
         server.register_tool(
-            McpTool::new("event_unsubscribe", "Remove an event subscription by rule ID.")
-                .with_property("rule_id", "string", "Rule ID to remove (required)", true)
-                .with_annotations(McpToolAnnotation {
-                    title: Some("Unsubscribe".into()),
-                    read_only_hint: Some(false),
-                    destructive_hint: Some(true),
-                    idempotent_hint: Some(true),
-                    open_world_hint: Some(false),
-                }),
+            McpTool::new(
+                "event_unsubscribe",
+                "Remove an event subscription by rule ID.",
+            )
+            .with_property("rule_id", "string", "Rule ID to remove (required)", true)
+            .with_annotations(McpToolAnnotation {
+                title: Some("Unsubscribe".into()),
+                read_only_hint: Some(false),
+                destructive_hint: Some(true),
+                idempotent_hint: Some(true),
+                open_world_hint: Some(false),
+            }),
             move |args| {
-                let rule_id = args.get("rule_id").and_then(|v| v.as_str())
+                let rule_id = args
+                    .get("rule_id")
+                    .and_then(|v| v.as_str())
                     .ok_or("Missing required parameter: rule_id")?;
                 let mut guard = mgr.lock().map_err(|e| format!("Lock error: {}", e))?;
                 let removed = guard.remove_rule(rule_id);
@@ -183,15 +188,19 @@ pub fn register_event_tools(server: &mut McpServer, manager: Arc<Mutex<EventSour
                 }),
             move |_args| {
                 let guard = mgr.lock().map_err(|e| format!("Lock error: {}", e))?;
-                let rules: Vec<serde_json::Value> = guard.list_rules().iter().map(|r| {
-                    serde_json::json!({
-                        "id": r.id,
-                        "name": r.name,
-                        "action": format!("{:?}", r.action),
-                        "enabled": r.enabled,
-                        "cooldown_secs": r.cooldown_secs,
+                let rules: Vec<serde_json::Value> = guard
+                    .list_rules()
+                    .iter()
+                    .map(|r| {
+                        serde_json::json!({
+                            "id": r.id,
+                            "name": r.name,
+                            "action": format!("{:?}", r.action),
+                            "enabled": r.enabled,
+                            "cooldown_secs": r.cooldown_secs,
+                        })
                     })
-                }).collect();
+                    .collect();
                 Ok(serde_json::json!({ "rules": rules, "count": rules.len() }))
             },
         );
@@ -212,16 +221,19 @@ pub fn register_event_tools(server: &mut McpServer, manager: Arc<Mutex<EventSour
             move |_args| {
                 let guard = mgr.lock().map_err(|e| format!("Lock error: {}", e))?;
                 let notifs = guard.notifications();
-                let items: Vec<serde_json::Value> = notifs.iter().map(|n| {
-                    serde_json::json!({
-                        "id": n.id,
-                        "title": n.title,
-                        "body": n.body,
-                        "source": n.source_name,
-                        "timestamp": n.timestamp,
-                        "url": n.url,
+                let items: Vec<serde_json::Value> = notifs
+                    .iter()
+                    .map(|n| {
+                        serde_json::json!({
+                            "id": n.id,
+                            "title": n.title,
+                            "body": n.body,
+                            "source": n.source_name,
+                            "timestamp": n.timestamp,
+                            "url": n.url,
+                        })
                     })
-                }).collect();
+                    .collect();
                 Ok(serde_json::json!({ "notifications": items, "count": items.len() }))
             },
         );
@@ -286,10 +298,9 @@ fn parse_filters(filters_val: Option<&serde_json::Value>) -> Vec<EventFilter> {
                 }
             }
             "data_equals" => {
-                if let (Some(path), Some(value)) = (
-                    item.get("path").and_then(|v| v.as_str()),
-                    item.get("value"),
-                ) {
+                if let (Some(path), Some(value)) =
+                    (item.get("path").and_then(|v| v.as_str()), item.get("value"))
+                {
                     filters.push(EventFilter::DataFieldEquals {
                         path: path.into(),
                         value: value.clone(),

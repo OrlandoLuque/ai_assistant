@@ -15,29 +15,29 @@
 //!
 //! Feature-gated behind the `prompt-signatures` feature flag.
 
-mod types;
-mod optimizers;
-mod reflector;
-mod gepa;
-mod miprov2;
-mod assertions;
 mod adapters;
-mod simba;
-mod reasoning;
+mod assertions;
+mod gepa;
 mod judge;
+mod miprov2;
+mod optimizers;
+mod reasoning;
+mod reflector;
+mod simba;
+mod types;
 
 #[cfg(test)]
 mod tests;
 
 // Re-export all public types so they remain accessible as prompt_signature::TypeName
 
-pub use types::*;
-pub use optimizers::*;
-pub use reflector::*;
-pub use gepa::*;
-pub use miprov2::*;
-pub use assertions::*;
 pub use adapters::*;
-pub use simba::*;
-pub use reasoning::*;
+pub use assertions::*;
+pub use gepa::*;
 pub use judge::*;
+pub use miprov2::*;
+pub use optimizers::*;
+pub use reasoning::*;
+pub use reflector::*;
+pub use simba::*;
+pub use types::*;

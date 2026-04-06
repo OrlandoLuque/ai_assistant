@@ -709,8 +709,8 @@ mod tests {
 
     #[test]
     fn test_profile_task_score_fallback() {
-        let profile = ModelCapabilityProfile::new("test", 4096, 75)
-            .with_task_score(TaskType::Coding, 95);
+        let profile =
+            ModelCapabilityProfile::new("test", 4096, 75).with_task_score(TaskType::Coding, 95);
 
         assert_eq!(profile.get_task_score(TaskType::Coding), 95);
         // Unset task falls back to quality_score

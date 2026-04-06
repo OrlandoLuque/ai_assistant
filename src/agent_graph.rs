@@ -362,11 +362,7 @@ impl AgentGraph {
         let mut graph = Self::new();
 
         for node in &dag.nodes {
-            graph.add_node(AgentNode::new(
-                node.id.as_str(),
-                &node.name,
-                &node.action,
-            ));
+            graph.add_node(AgentNode::new(node.id.as_str(), &node.name, &node.action));
         }
 
         for edge in &dag.edges {
@@ -379,8 +375,7 @@ impl AgentGraph {
                 EdgeCondition::Always => None,
                 other => Some(other.to_string()),
             };
-            let mut agent_edge =
-                AgentEdge::new(edge.from.as_str(), edge.to.as_str(), edge_type);
+            let mut agent_edge = AgentEdge::new(edge.from.as_str(), edge.to.as_str(), edge_type);
             if let Some(lbl) = label {
                 agent_edge = agent_edge.with_label(&lbl);
             }
@@ -490,7 +485,11 @@ impl ExecutionTrace {
         if self.steps.is_empty() {
             return Duration::ZERO;
         }
-        let first_ts = self.steps.first().expect("non-empty: checked above").timestamp;
+        let first_ts = self
+            .steps
+            .first()
+            .expect("non-empty: checked above")
+            .timestamp;
         let last = self.steps.last().expect("non-empty: checked above");
         let end = last.timestamp + last.duration_ms;
         Duration::from_millis(end.saturating_sub(first_ts))
@@ -639,9 +638,7 @@ impl GraphAnalytics {
 
         let mut agent_durations: HashMap<String, u64> = HashMap::new();
         for step in &trace.steps {
-            let entry = agent_durations
-                .entry(step.agent_id.clone())
-                .or_insert(0);
+            let entry = agent_durations.entry(step.agent_id.clone()).or_insert(0);
             *entry += step.duration_ms;
         }
 

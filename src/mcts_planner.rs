@@ -243,7 +243,10 @@ impl MctsPlanner {
     /// Run the full MCTS search from the given initial state.
     ///
     /// Returns the best action and action sequence, along with statistics.
-    pub fn search<S: MctsState>(&self, initial_state: &S) -> Result<MctsResult<S::Action>, MctsError> {
+    pub fn search<S: MctsState>(
+        &self,
+        initial_state: &S,
+    ) -> Result<MctsResult<S::Action>, MctsError> {
         // Terminal initial state: no search needed
         if initial_state.is_terminal() {
             return Ok(MctsResult {
@@ -525,12 +528,7 @@ impl MctsPlanner {
     }
 
     /// Backpropagate the simulation reward up the path from leaf to root.
-    fn backpropagate<S: MctsState>(
-        &self,
-        root: &mut MctsNode<S>,
-        path: &[usize],
-        reward: f64,
-    ) {
+    fn backpropagate<S: MctsState>(&self, root: &mut MctsNode<S>, path: &[usize], reward: f64) {
         // Update root
         root.visits += 1;
         root.total_reward += reward;
@@ -646,11 +644,9 @@ impl PrmRuleCheck {
     /// Evaluate the rule against a step description.
     fn evaluate(&self, step_description: &str) -> bool {
         match self {
-            PrmRuleCheck::ContainsKeyword(keyword) => {
-                step_description
-                    .to_lowercase()
-                    .contains(&keyword.to_lowercase())
-            }
+            PrmRuleCheck::ContainsKeyword(keyword) => step_description
+                .to_lowercase()
+                .contains(&keyword.to_lowercase()),
             PrmRuleCheck::MaxLength(max) => step_description.len() <= *max,
             PrmRuleCheck::MinLength(min) => step_description.len() >= *min,
             PrmRuleCheck::NotEmpty => !step_description.trim().is_empty(),
@@ -874,12 +870,7 @@ impl PrmAggregator {
                 let sum: f64 = raw_scores.iter().sum();
                 sum / raw_scores.len() as f64
             }
-            AggregationStrategy::Minimum => {
-                raw_scores
-                    .iter()
-                    .copied()
-                    .fold(f64::MAX, f64::min)
-            }
+            AggregationStrategy::Minimum => raw_scores.iter().copied().fold(f64::MAX, f64::min),
             AggregationStrategy::WeightedAverage(weights) => {
                 let mut weighted_sum = 0.0;
                 let mut total_weight = 0.0;
@@ -894,9 +885,7 @@ impl PrmAggregator {
                     0.0
                 }
             }
-            AggregationStrategy::Product => {
-                raw_scores.iter().copied().fold(1.0, |acc, s| acc * s)
-            }
+            AggregationStrategy::Product => raw_scores.iter().copied().fold(1.0, |acc, s| acc * s),
         };
 
         let avg_confidence = {
@@ -907,9 +896,7 @@ impl PrmAggregator {
         let feedbacks: Vec<String> = scores
             .iter()
             .enumerate()
-            .map(|(i, s)| {
-                format!("[{}] {}", self.models[i].name(), s.feedback)
-            })
+            .map(|(i, s)| format!("[{}] {}", self.models[i].name(), s.feedback))
             .collect();
 
         StepScore {
@@ -1041,10 +1028,7 @@ impl RefinementLoop {
 
     /// Identify the first failure point in execution feedbacks.
     pub fn identify_failure_point(&self, feedbacks: &[ExecutionFeedback]) -> Option<usize> {
-        feedbacks
-            .iter()
-            .find(|f| !f.success)
-            .map(|f| f.step_index)
+        feedbacks.iter().find(|f| !f.success).map(|f| f.step_index)
     }
 
     /// Compute the relative improvement between initial and current rewards.
@@ -1064,8 +1048,7 @@ impl RefinementLoop {
         let initial_reward = if feedbacks.is_empty() {
             state.reward()
         } else {
-            feedbacks.iter().map(|f| f.actual_reward).sum::<f64>()
-                / feedbacks.len() as f64
+            feedbacks.iter().map(|f| f.actual_reward).sum::<f64>() / feedbacks.len() as f64
         };
 
         // Check if refinement is needed
@@ -1310,7 +1293,12 @@ mod tests {
         let c = std::f64::consts::SQRT_2;
         let expected = 0.5 + c * ((100.0_f64.ln()) / 10.0).sqrt();
         let actual = node.ucb1(c);
-        assert!((actual - expected).abs() < 1e-10, "UCB1: expected {}, got {}", expected, actual);
+        assert!(
+            (actual - expected).abs() < 1e-10,
+            "UCB1: expected {}, got {}",
+            expected,
+            actual
+        );
     }
 
     #[test]
@@ -1501,13 +1489,23 @@ mod tests {
         struct NoActionState;
         impl MctsState for NoActionState {
             type Action = i32;
-            fn available_actions(&self) -> Vec<i32> { Vec::new() }
-            fn apply_action(&self, _action: &i32) -> Result<Self, MctsError> {
-                Err(MctsError::NoValidActions { state_description: "no actions".into() })
+            fn available_actions(&self) -> Vec<i32> {
+                Vec::new()
             }
-            fn is_terminal(&self) -> bool { false }
-            fn reward(&self) -> f64 { 0.0 }
-            fn description(&self) -> String { "NoActionState".into() }
+            fn apply_action(&self, _action: &i32) -> Result<Self, MctsError> {
+                Err(MctsError::NoValidActions {
+                    state_description: "no actions".into(),
+                })
+            }
+            fn is_terminal(&self) -> bool {
+                false
+            }
+            fn reward(&self) -> f64 {
+                0.0
+            }
+            fn description(&self) -> String {
+                "NoActionState".into()
+            }
         }
 
         let planner = MctsPlanner::with_defaults();
@@ -1608,7 +1606,9 @@ mod tests {
         };
         let planner = MctsPlanner::with_policy(
             config,
-            SimulationPolicy::Heuristic { prefer_unexplored: true },
+            SimulationPolicy::Heuristic {
+                prefer_unexplored: true,
+            },
         );
         let result = planner.search(&state).unwrap();
         assert!(result.best_action.is_some());
@@ -1916,13 +1916,16 @@ mod tests {
 
     #[test]
     fn test_llm_prm_delegates_to_scorer() {
-        let prm = LlmPRM::new("test_llm", |step, _ctx| {
-            if step.contains("good") {
-                0.9
-            } else {
-                0.3
-            }
-        });
+        let prm = LlmPRM::new(
+            "test_llm",
+            |step, _ctx| {
+                if step.contains("good") {
+                    0.9
+                } else {
+                    0.3
+                }
+            },
+        );
 
         let score = prm.score_step("This is a good step", &[]);
         assert!((score.score - 0.9).abs() < 1e-10);
@@ -1946,9 +1949,7 @@ mod tests {
 
     #[test]
     fn test_llm_prm_uses_context() {
-        let prm = LlmPRM::new("ctx_model", |_step, ctx| {
-            ctx.len() as f64 * 0.1
-        });
+        let prm = LlmPRM::new("ctx_model", |_step, ctx| ctx.len() as f64 * 0.1);
         let context = vec!["step1".into(), "step2".into()];
         let score = prm.score_step("step3", &context);
         assert!((score.score - 0.2).abs() < 1e-10);
@@ -2280,7 +2281,10 @@ mod tests {
 
         let result = rl.evaluate_plan(&planner, &state, &feedbacks).unwrap();
         assert_eq!(result.iterations_used, 1);
-        assert!(matches!(result.strategy_used, RefinementStrategy::ReplanEntire));
+        assert!(matches!(
+            result.strategy_used,
+            RefinementStrategy::ReplanEntire
+        ));
     }
 
     // =========================================================================
@@ -2326,7 +2330,11 @@ mod tests {
         // Sequence should not contain duplicates (since our state doesn't allow reuse)
         let mut seen = std::collections::HashSet::new();
         for a in &result.best_action_sequence {
-            assert!(seen.insert(a.clone()), "Duplicate action in sequence: {}", a);
+            assert!(
+                seen.insert(a.clone()),
+                "Duplicate action in sequence: {}",
+                a
+            );
         }
 
         assert!(result.root_value >= 0.0);

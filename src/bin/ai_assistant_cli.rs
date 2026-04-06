@@ -26,9 +26,9 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use ai_assistant::repl::{ReplAction, ReplCommand, ReplConfig, ReplEngine};
-use ai_assistant::{AiAssistant, AiResponse};
 #[cfg(feature = "butler")]
 use ai_assistant::ModelInfo;
+use ai_assistant::{AiAssistant, AiResponse};
 
 #[cfg(feature = "butler")]
 use ai_assistant::butler::{Butler, EnvironmentReport};
@@ -224,11 +224,13 @@ fn main() -> ExitCode {
                     apply_provider_url(&mut assistant, report, &unified[0].provider);
                 }
                 assistant.available_models = unified;
-                eprintln!("{} model(s) across {} provider(s).",
+                eprintln!(
+                    "{} model(s) across {} provider(s).",
                     assistant.available_models.len(),
                     report.llm_providers.len(),
                 );
-                println!("Using model: {} {} ({})\n",
+                println!(
+                    "Using model: {} {} ({})\n",
                     assistant.config.provider.icon(),
                     assistant.config.selected_model,
                     assistant.config.provider.display_name(),
@@ -246,7 +248,11 @@ fn main() -> ExitCode {
     #[cfg(not(feature = "butler"))]
     {
         let _ = &scan_report;
-        println!("Provider: {} ({})", assistant.config.provider.display_name(), assistant.config.get_base_url());
+        println!(
+            "Provider: {} ({})",
+            assistant.config.provider.display_name(),
+            assistant.config.get_base_url()
+        );
         println!("(Compile with 'butler' feature for auto-detection)\n");
         fetch_models_blocking(&mut assistant);
     }
@@ -267,7 +273,10 @@ fn main() -> ExitCode {
     println!("Type /help for commands, /models to list models, /exit to quit.\n");
 
     if let Ok(info) = update_rx.try_recv() {
-        println!("  Update available: v{} \u{2192} v{} \u{2014} {}", info.current, info.latest, info.url);
+        println!(
+            "  Update available: v{} \u{2192} v{} \u{2014} {}",
+            info.current, info.latest, info.url
+        );
     }
 
     let stdin = io::stdin();
@@ -328,7 +337,8 @@ fn main() -> ExitCode {
                     assistant.config.provider = unified[0].provider.clone();
                     apply_provider_url(&mut assistant, &report, &unified[0].provider);
                     assistant.available_models = unified;
-                    eprintln!("{} model(s) across {} provider(s).",
+                    eprintln!(
+                        "{} model(s) across {} provider(s).",
                         assistant.available_models.len(),
                         report.llm_providers.len(),
                     );
@@ -353,8 +363,20 @@ fn main() -> ExitCode {
                     } else {
                         println!("Detected providers:");
                         for (i, p) in report.llm_providers.iter().enumerate() {
-                            let current = if p.provider_type == assistant.config.provider { " <-- active" } else { "" };
-                            println!("  [{}] {} {} @ {} ({} models){}", i + 1, p.provider_type.icon(), p.name, p.url, p.available_models.len(), current);
+                            let current = if p.provider_type == assistant.config.provider {
+                                " <-- active"
+                            } else {
+                                ""
+                            };
+                            println!(
+                                "  [{}] {} {} @ {} ({} models){}",
+                                i + 1,
+                                p.provider_type.icon(),
+                                p.name,
+                                p.url,
+                                p.available_models.len(),
+                                current
+                            );
                         }
                         println!("\nUse /use <number> to switch provider.");
                     }
@@ -380,11 +402,20 @@ fn main() -> ExitCode {
                             let p = &report.llm_providers[idx - 1];
                             assistant.config.provider = p.provider_type.clone();
                             match p.provider_type {
-                                ai_assistant::AiProvider::Ollama => assistant.config.ollama_url = p.url.clone(),
-                                ai_assistant::AiProvider::LMStudio => assistant.config.lm_studio_url = p.url.clone(),
+                                ai_assistant::AiProvider::Ollama => {
+                                    assistant.config.ollama_url = p.url.clone()
+                                }
+                                ai_assistant::AiProvider::LMStudio => {
+                                    assistant.config.lm_studio_url = p.url.clone()
+                                }
                                 _ => assistant.config.custom_url = p.url.clone(),
                             }
-                            println!("Switched to {} {} @ {}", p.provider_type.icon(), p.name, p.url);
+                            println!(
+                                "Switched to {} {} @ {}",
+                                p.provider_type.icon(),
+                                p.name,
+                                p.url
+                            );
 
                             // Re-fetch models for this provider
                             assistant.config.selected_model.clear();
@@ -392,7 +423,9 @@ fn main() -> ExitCode {
                             assistant.fetch_models();
                             let start = Instant::now();
                             loop {
-                                if assistant.poll_models() { break; }
+                                if assistant.poll_models() {
+                                    break;
+                                }
                                 if start.elapsed() > Duration::from_secs(10) {
                                     eprintln!(" timeout.");
                                     break;
@@ -418,7 +451,9 @@ fn main() -> ExitCode {
                         assistant.fetch_models();
                         let start = Instant::now();
                         loop {
-                            if assistant.poll_models() { break; }
+                            if assistant.poll_models() {
+                                break;
+                            }
                             if start.elapsed() > Duration::from_secs(10) {
                                 eprintln!(" timeout.");
                                 break;
@@ -448,11 +483,18 @@ fn main() -> ExitCode {
 
         // Provider info command
         if trimmed == "/provider" {
-            println!("Provider:  {} {}", assistant.config.provider.icon(), assistant.config.provider.display_name());
+            println!(
+                "Provider:  {} {}",
+                assistant.config.provider.icon(),
+                assistant.config.provider.display_name()
+            );
             println!("URL:       {}", assistant.config.get_base_url());
             println!("Model:     {}", assistant.config.selected_model);
             println!("Temp:      {}", assistant.config.temperature);
-            println!("History:   {} messages max", assistant.config.max_history_messages);
+            println!(
+                "History:   {} messages max",
+                assistant.config.max_history_messages
+            );
             continue;
         }
 
@@ -564,18 +606,32 @@ fn main() -> ExitCode {
                         println!("No models loaded. Use /scan to detect providers.");
                     } else {
                         // Group by provider for clearer display
-                        let mut by_provider: std::collections::BTreeMap<String, Vec<&ai_assistant::ModelInfo>> =
-                            std::collections::BTreeMap::new();
+                        let mut by_provider: std::collections::BTreeMap<
+                            String,
+                            Vec<&ai_assistant::ModelInfo>,
+                        > = std::collections::BTreeMap::new();
                         for m in &assistant.available_models {
-                            by_provider.entry(format!("{} {}", m.provider.icon(), m.provider.display_name()))
+                            by_provider
+                                .entry(format!(
+                                    "{} {}",
+                                    m.provider.icon(),
+                                    m.provider.display_name()
+                                ))
                                 .or_default()
                                 .push(m);
                         }
-                        println!("Available models ({} total):", assistant.available_models.len());
+                        println!(
+                            "Available models ({} total):",
+                            assistant.available_models.len()
+                        );
                         for (provider_label, models) in &by_provider {
                             println!("  {provider_label}:");
                             for m in models {
-                                let current = if m.name == assistant.config.selected_model { " <--" } else { "" };
+                                let current = if m.name == assistant.config.selected_model {
+                                    " <--"
+                                } else {
+                                    ""
+                                };
                                 let size = m.size.as_deref().unwrap_or("");
                                 println!("    {} {}{}", m.name, size, current);
                             }
@@ -585,7 +641,11 @@ fn main() -> ExitCode {
                 }
                 ReplCommand::Config => {
                     println!("{}", engine.format_config());
-                    println!("provider = {} ({})", assistant.config.provider.display_name(), assistant.config.get_base_url());
+                    println!(
+                        "provider = {} ({})",
+                        assistant.config.provider.display_name(),
+                        assistant.config.get_base_url()
+                    );
                     println!("temperature = {}", assistant.config.temperature);
                 }
                 ReplCommand::Clear => {
@@ -635,7 +695,8 @@ fn main() -> ExitCode {
                 }
                 ReplCommand::Model(name) => {
                     if name.is_empty() {
-                        println!("Current model: {} {} ({})",
+                        println!(
+                            "Current model: {} {} ({})",
                             assistant.config.provider.icon(),
                             assistant.config.selected_model,
                             assistant.config.provider.display_name(),
@@ -643,7 +704,11 @@ fn main() -> ExitCode {
                         println!("Use /models to list available models.");
                     } else {
                         // Check if model exists in available list
-                        let found = assistant.available_models.iter().find(|m| m.name == name).cloned();
+                        let found = assistant
+                            .available_models
+                            .iter()
+                            .find(|m| m.name == name)
+                            .cloned();
                         if let Some(m) = found {
                             assistant.config.provider = m.provider.clone();
                             assistant.config.selected_model = m.name.clone();
@@ -653,7 +718,12 @@ fn main() -> ExitCode {
                                 apply_provider_url(&mut assistant, report, &m.provider);
                             }
                             engine.set_model(&m.name);
-                            println!("Model set to: {} {} ({})", m.provider.icon(), m.name, m.provider.display_name());
+                            println!(
+                                "Model set to: {} {} ({})",
+                                m.provider.icon(),
+                                m.name,
+                                m.provider.display_name()
+                            );
                         } else {
                             // Allow setting unknown models (user might know what they're doing)
                             assistant.config.selected_model = name.clone();
@@ -748,14 +818,18 @@ fn main() -> ExitCode {
                     println!("Unknown command: /{cmd}. Type /help for available commands.");
                 }
                 ReplCommand::Exit => unreachable!("Exit handled by ReplAction::Exit"),
-                _ => { eprintln!("Unknown command"); }
+                _ => {
+                    eprintln!("Unknown command");
+                }
             },
             ReplAction::Continue => {}
             ReplAction::Exit => {
                 println!("Goodbye!");
                 break;
             }
-            _ => { eprintln!("Unknown action"); }
+            _ => {
+                eprintln!("Unknown action");
+            }
         }
     }
 
@@ -801,7 +875,10 @@ fn build_unified_model_list(report: &EnvironmentReport) -> Vec<ModelInfo> {
     let mut models = Vec::new();
     for provider in &report.llm_providers {
         for model_name in &provider.available_models {
-            models.push(ModelInfo::new(model_name.clone(), provider.provider_type.clone()));
+            models.push(ModelInfo::new(
+                model_name.clone(),
+                provider.provider_type.clone(),
+            ));
         }
     }
     models
@@ -809,12 +886,18 @@ fn build_unified_model_list(report: &EnvironmentReport) -> Vec<ModelInfo> {
 
 /// Apply the correct URL for a provider based on Butler scan data.
 #[cfg(feature = "butler")]
-fn apply_provider_url(assistant: &mut AiAssistant, report: &EnvironmentReport, provider: &ai_assistant::AiProvider) {
+fn apply_provider_url(
+    assistant: &mut AiAssistant,
+    report: &EnvironmentReport,
+    provider: &ai_assistant::AiProvider,
+) {
     for p in &report.llm_providers {
         if p.provider_type == *provider {
             match p.provider_type {
                 ai_assistant::AiProvider::Ollama => assistant.config.ollama_url = p.url.clone(),
-                ai_assistant::AiProvider::LMStudio => assistant.config.lm_studio_url = p.url.clone(),
+                ai_assistant::AiProvider::LMStudio => {
+                    assistant.config.lm_studio_url = p.url.clone()
+                }
                 _ => assistant.config.custom_url = p.url.clone(),
             }
             break;
@@ -832,8 +915,22 @@ fn print_environment_summary(report: &EnvironmentReport) {
     println!("--- Environment ---");
     println!("OS:      {} ({})", report.runtime.os, report.runtime.arch);
     println!("CPUs:    {}", report.runtime.cpus);
-    println!("GPU:     {}", if report.runtime.has_gpu { "detected" } else { "not detected" });
-    println!("Docker:  {}", if report.runtime.has_docker { "available" } else { "not available" });
+    println!(
+        "GPU:     {}",
+        if report.runtime.has_gpu {
+            "detected"
+        } else {
+            "not detected"
+        }
+    );
+    println!(
+        "Docker:  {}",
+        if report.runtime.has_docker {
+            "available"
+        } else {
+            "not available"
+        }
+    );
 
     if report.llm_providers.is_empty() {
         println!("LLM:     no providers detected");
@@ -842,13 +939,33 @@ fn print_environment_summary(report: &EnvironmentReport) {
         for p in &report.llm_providers {
             let model_count = p.available_models.len();
             let models_str = if model_count > 0 {
-                let preview: Vec<&str> = p.available_models.iter().take(3).map(|s| s.as_str()).collect();
-                let suffix = if model_count > 3 { format!(" +{} more", model_count - 3) } else { String::new() };
-                format!(" ({} models: {}{})", model_count, preview.join(", "), suffix)
+                let preview: Vec<&str> = p
+                    .available_models
+                    .iter()
+                    .take(3)
+                    .map(|s| s.as_str())
+                    .collect();
+                let suffix = if model_count > 3 {
+                    format!(" +{} more", model_count - 3)
+                } else {
+                    String::new()
+                };
+                format!(
+                    " ({} models: {}{})",
+                    model_count,
+                    preview.join(", "),
+                    suffix
+                )
             } else {
                 String::new()
             };
-            println!("  {} {} @ {}{}", p.provider_type.icon(), p.name, p.url, models_str);
+            println!(
+                "  {} {} @ {}{}",
+                p.provider_type.icon(),
+                p.name,
+                p.url,
+                models_str
+            );
         }
     }
     println!("-------------------\n");
@@ -876,7 +993,10 @@ fn handle_docker_command(
             if containers.is_empty() {
                 return "No managed containers.".to_string();
             }
-            let mut out = format!("{:<16} {:<20} {:<25} {:<10}\n", "ID", "NAME", "IMAGE", "STATUS");
+            let mut out = format!(
+                "{:<16} {:<20} {:<25} {:<10}\n",
+                "ID", "NAME", "IMAGE", "STATUS"
+            );
             out.push_str(&"-".repeat(71));
             out.push('\n');
             for r in containers {
@@ -896,7 +1016,9 @@ fn handle_docker_command(
         "create" => {
             let image = match parts.get(2) {
                 Some(img) => *img,
-                None => return "Usage: /docker create <image> [--name NAME] [--cmd CMD...]".to_string(),
+                None => {
+                    return "Usage: /docker create <image> [--name NAME] [--cmd CMD...]".to_string()
+                }
             };
             let mut name = "mcp_container".to_string();
             let mut cmd: Option<Vec<String>> = None;
@@ -915,7 +1037,9 @@ fn handle_docker_command(
                         cmd = Some(parts[i + 1..].iter().map(|s| s.to_string()).collect());
                         break;
                     }
-                    _ => { i += 1; }
+                    _ => {
+                        i += 1;
+                    }
                 }
             }
             let opts = ai_assistant::CreateOptions {
@@ -927,7 +1051,10 @@ fn handle_docker_command(
                 Err(e) => return format!("Error: lock poisoned: {e}"),
             };
             match guard.create(image, &name, opts) {
-                Ok(id) => format!("Created container {} (image: {image}, name: {name})", &id[..12.min(id.len())]),
+                Ok(id) => format!(
+                    "Created container {} (image: {image}, name: {name})",
+                    &id[..12.min(id.len())]
+                ),
                 Err(e) => format!("Error: {e}"),
             }
         }
@@ -1001,7 +1128,9 @@ fn handle_docker_command(
                         out.push_str(&result.stdout);
                     }
                     if !result.stderr.is_empty() {
-                        if !out.is_empty() { out.push('\n'); }
+                        if !out.is_empty() {
+                            out.push('\n');
+                        }
                         out.push_str("[stderr] ");
                         out.push_str(&result.stderr);
                     }
@@ -1032,7 +1161,11 @@ fn handle_docker_command(
             };
             match guard.logs(id, tail) {
                 Ok(logs) => {
-                    if logs.is_empty() { "(no logs)".to_string() } else { logs }
+                    if logs.is_empty() {
+                        "(no logs)".to_string()
+                    } else {
+                        logs
+                    }
                 }
                 Err(e) => format!("Error: {e}"),
             }
@@ -1062,8 +1195,7 @@ fn handle_docker_command(
             format!("Cleaned up {count} container(s)")
         }
 
-        "help" | _ => {
-            "Docker commands:\n\
+        "help" | _ => "Docker commands:\n\
              \x20 /docker list              List all containers\n\
              \x20 /docker create <image>    Create container (--name NAME, --cmd CMD...)\n\
              \x20 /docker start <id>        Start a container\n\
@@ -1074,7 +1206,6 @@ fn handle_docker_command(
              \x20 /docker status <id>       Show container status\n\
              \x20 /docker cleanup           Remove all managed containers\n\
              \x20 /docker help              Show this help"
-                .to_string()
-        }
+            .to_string(),
     }
 }

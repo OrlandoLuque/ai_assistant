@@ -28,11 +28,7 @@ use std::collections::HashMap;
 /// addresses).  Used before making HTTP requests to user-provided endpoints to
 /// prevent server-side request forgery (SSRF).
 fn is_safe_url(url: &str) -> bool {
-    if let Some(authority) = url
-        .split("://")
-        .nth(1)
-        .and_then(|s| s.split('/').next())
-    {
+    if let Some(authority) = url.split("://").nth(1).and_then(|s| s.split('/').next()) {
         // Handle IPv6 addresses in brackets: [::1], [::1]:8080
         let host = if authority.starts_with('[') {
             // Extract the part inside brackets (IPv6 literal)
@@ -359,7 +355,11 @@ impl S3Client {
 
 impl CloudStorage for S3Client {
     fn list(&self, options: &ListOptions) -> Result<ListResult> {
-        log::info!("S3 list: bucket={}, prefix={:?}", self.config.bucket, options.prefix);
+        log::info!(
+            "S3 list: bucket={}, prefix={:?}",
+            self.config.bucket,
+            options.prefix
+        );
         let mut url = format!("{}?list-type=2", self.config.base_url());
         if let Some(ref prefix) = options.prefix {
             url.push_str(&format!("&prefix={}", prefix));
@@ -400,7 +400,12 @@ impl CloudStorage for S3Client {
     }
 
     fn put(&self, key: &str, data: &[u8], content_type: Option<&str>) -> Result<()> {
-        log::info!("S3 upload: bucket={}, key={}, size={}", self.config.bucket, key, data.len());
+        log::info!(
+            "S3 upload: bucket={}, key={}, size={}",
+            self.config.bucket,
+            key,
+            data.len()
+        );
         let url = self.object_url(key);
         let ct = content_type.unwrap_or("application/octet-stream");
         self.signed_put(&url, data, ct)?;
@@ -415,7 +420,11 @@ impl CloudStorage for S3Client {
     }
 
     fn exists(&self, key: &str) -> Result<bool> {
-        log::debug!("S3 exists check: bucket={}, key={}", self.config.bucket, key);
+        log::debug!(
+            "S3 exists check: bucket={}, key={}",
+            self.config.bucket,
+            key
+        );
         let url = self.object_url(key);
         // SSRF protection: reject private/internal URLs
         anyhow::ensure!(
@@ -654,22 +663,19 @@ impl CloudStorage for GoogleDriveClient {
 
 /// SHA-256 round constants (first 32 bits of fractional parts of cube roots of first 64 primes).
 const SHA256_K: [u32; 64] = [
-    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
-    0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
-    0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
-    0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
-    0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
-    0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
-    0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
-    0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
-    0xc67178f2,
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 ];
 
 /// Initial hash values for SHA-256 (first 32 bits of fractional parts of square roots of first 8 primes).
 const SHA256_H0: [u32; 8] = [
-    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
-    0x5be0cd19,
+    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
 ];
 
 /// Minimal SHA-256 implementation for AWS SigV4 signing.
@@ -919,7 +925,12 @@ impl AwsSigV4Signer {
     }
 
     /// Build canonical headers string (sorted, lowercased, trimmed).
-    fn canonical_headers(&self, extra_headers: &[(&str, &str)], amz_date: &str, url: &str) -> String {
+    fn canonical_headers(
+        &self,
+        extra_headers: &[(&str, &str)],
+        amz_date: &str,
+        url: &str,
+    ) -> String {
         let host = Self::extract_host(url);
         let mut headers: Vec<(String, String)> = Vec::new();
         headers.push(("host".to_string(), host));
@@ -1834,10 +1845,7 @@ mod tests {
     fn test_sigv4_hmac_sha256_known_vector() {
         // HMAC-SHA256 with key "key" and message "The quick brown fox jumps over the lazy dog"
         // = f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8
-        let result = hmac_sha256_hex(
-            b"key",
-            b"The quick brown fox jumps over the lazy dog",
-        );
+        let result = hmac_sha256_hex(b"key", b"The quick brown fox jumps over the lazy dog");
         assert_eq!(
             result,
             "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8"
@@ -1847,7 +1855,11 @@ mod tests {
     #[test]
     fn test_sigv4_signing_key_derivation() {
         // Test the key derivation chain with known values
-        let signer = AwsSigV4Signer::new("AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "us-east-1");
+        let signer = AwsSigV4Signer::new(
+            "AKIAIOSFODNN7EXAMPLE",
+            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            "us-east-1",
+        );
         let key = signer.derive_signing_key("20150830");
         // The signing key should be 32 bytes (SHA-256 output)
         assert_eq!(key.len(), 32);
@@ -1880,7 +1892,7 @@ mod tests {
         assert_eq!(lines[0], "GET"); // Method
         assert_eq!(lines[1], "/test.txt"); // Path
         assert_eq!(lines[2], ""); // Empty query string
-        // Headers should contain host and x-amz-date
+                                  // Headers should contain host and x-amz-date
         assert!(lines[3].starts_with("host:"));
         assert!(lines[4].starts_with("x-amz-date:"));
         // Blank line after headers (the trailing \n in canonical_headers)
@@ -1890,7 +1902,11 @@ mod tests {
 
     #[test]
     fn test_sigv4_authorization_header_format() {
-        let signer = AwsSigV4Signer::new("AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "us-east-1");
+        let signer = AwsSigV4Signer::new(
+            "AKIAIOSFODNN7EXAMPLE",
+            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            "us-east-1",
+        );
         let url = "https://examplebucket.s3.us-east-1.amazonaws.com/test.txt";
         let date_stamp = "20130524";
         let amz_date = "20130524T000000Z";
@@ -1902,7 +1918,9 @@ mod tests {
 
         let auth = &headers[0];
         assert_eq!(auth.0, "Authorization");
-        assert!(auth.1.starts_with("AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/"));
+        assert!(auth
+            .1
+            .starts_with("AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/"));
         assert!(auth.1.contains("20130524/us-east-1/s3/aws4_request"));
         assert!(auth.1.contains("SignedHeaders=host;x-amz-date"));
         assert!(auth.1.contains("Signature="));
@@ -1942,9 +1960,8 @@ mod tests {
 
     #[test]
     fn test_sigv4_parse_url_with_query() {
-        let (path, query) = AwsSigV4Signer::parse_url(
-            "https://bucket.s3.amazonaws.com/?list-type=2&prefix=docs/",
-        );
+        let (path, query) =
+            AwsSigV4Signer::parse_url("https://bucket.s3.amazonaws.com/?list-type=2&prefix=docs/");
         assert_eq!(path, "/");
         // Query params should be sorted
         assert!(query.contains("list-type=2"));
@@ -2021,7 +2038,9 @@ mod tests {
     fn test_ssrf_blocks_internal_hostnames() {
         assert!(!is_safe_url("http://myservice.local/api"));
         assert!(!is_safe_url("http://db.internal/query"));
-        assert!(!is_safe_url("http://metadata.google.internal/computeMetadata/v1/"));
+        assert!(!is_safe_url(
+            "http://metadata.google.internal/computeMetadata/v1/"
+        ));
     }
 
     #[test]
@@ -2032,7 +2051,9 @@ mod tests {
     #[test]
     fn test_ssrf_allows_public_urls() {
         assert!(is_safe_url("https://s3.us-east-1.amazonaws.com/bucket/key"));
-        assert!(is_safe_url("https://my-bucket.s3.us-west-2.amazonaws.com/path"));
+        assert!(is_safe_url(
+            "https://my-bucket.s3.us-west-2.amazonaws.com/path"
+        ));
         assert!(is_safe_url("https://storage.googleapis.com/bucket/object"));
         assert!(is_safe_url("https://minio.example.com:9000/data"));
         assert!(is_safe_url("https://cdn.example.org/file.bin"));
@@ -2081,8 +2102,8 @@ mod tests {
 
     #[test]
     fn test_ssrf_s3_exists_blocked() {
-        let config = S3Config::new("data", "us-east-1", "AKID", "secret")
-            .with_endpoint("http://10.0.0.1");
+        let config =
+            S3Config::new("data", "us-east-1", "AKID", "secret").with_endpoint("http://10.0.0.1");
         let client = S3Client::new(config);
         let err = client.exists("key").unwrap_err();
         assert!(
@@ -2094,8 +2115,8 @@ mod tests {
 
     #[test]
     fn test_ssrf_s3_delete_blocked() {
-        let config = S3Config::new("data", "us-east-1", "AKID", "secret")
-            .with_endpoint("http://172.16.0.1");
+        let config =
+            S3Config::new("data", "us-east-1", "AKID", "secret").with_endpoint("http://172.16.0.1");
         let client = S3Client::new(config);
         let err = client.delete("key").unwrap_err();
         assert!(

@@ -697,7 +697,7 @@ mod tests {
     fn test_no_consensus_with_divergent_answers() {
         let config = ConsistencyConfig {
             num_samples: 5,
-            min_consensus: 0.8, // Require 80% agreement
+            min_consensus: 0.8,         // Require 80% agreement
             similarity_threshold: 0.95, // Very strict similarity
             ..Default::default()
         };

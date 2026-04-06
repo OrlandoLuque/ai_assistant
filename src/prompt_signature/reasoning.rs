@@ -323,7 +323,10 @@ impl TraceAnalyzer {
                 std::collections::HashSet::new();
             for step in &trace.steps {
                 for word in step.thought.split_whitespace() {
-                    let normalized = word.to_lowercase().trim_matches(|c: char| c.is_ascii_punctuation()).to_string();
+                    let normalized = word
+                        .to_lowercase()
+                        .trim_matches(|c: char| c.is_ascii_punctuation())
+                        .to_string();
                     if normalized.len() >= 3 {
                         seen_in_trace.insert(normalized);
                     }

@@ -81,12 +81,14 @@ impl AlertCondition {
     /// Check if the condition is met.
     pub fn check(&self, value: &str, previous: Option<&str>) -> bool {
         match self {
-            Self::Above(threshold) => {
-                value.parse::<f64>().map(|v| v > *threshold).unwrap_or(false)
-            }
-            Self::Below(threshold) => {
-                value.parse::<f64>().map(|v| v < *threshold).unwrap_or(false)
-            }
+            Self::Above(threshold) => value
+                .parse::<f64>()
+                .map(|v| v > *threshold)
+                .unwrap_or(false),
+            Self::Below(threshold) => value
+                .parse::<f64>()
+                .map(|v| v < *threshold)
+                .unwrap_or(false),
             Self::Equals(expected) => value == expected,
             Self::Changed => previous.map(|p| p != value).unwrap_or(true),
         }

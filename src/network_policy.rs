@@ -57,7 +57,9 @@ impl NetworkPolicy {
             log_allowed: true,
         };
         // Block common cloud metadata endpoints
-        policy.blocked_hosts.insert("metadata.google.internal".into());
+        policy
+            .blocked_hosts
+            .insert("metadata.google.internal".into());
         policy.blocked_hosts.insert("metadata.google.com".into());
         policy
     }
@@ -132,10 +134,7 @@ impl NetworkPolicy {
         // 5. Default policy
         if self.default_deny {
             PolicyDecision::Denied {
-                reason: format!(
-                    "Host '{}' not in allow list (default-deny policy)",
-                    host
-                ),
+                reason: format!("Host '{}' not in allow list (default-deny policy)", host),
             }
         } else {
             PolicyDecision::Allowed

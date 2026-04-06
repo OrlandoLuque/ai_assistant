@@ -3,7 +3,10 @@
 //! Supports Zigbee2MQTT, Tasmota, and Home Assistant MQTT Discovery conventions.
 //! Auto-discovers devices via bridge topics. State tracked via subscriptions.
 
-use super::backend::{DeviceState, HomeBackend, validate_entity_id, validate_domain, validate_service_name, validate_backend_url};
+use super::backend::{
+    validate_backend_url, validate_domain, validate_entity_id, validate_service_name, DeviceState,
+    HomeBackend,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -93,7 +96,9 @@ impl TopicConvention {
             Self::Zigbee2Mqtt => format!("zigbee2mqtt/{}/set", device),
             Self::Tasmota => format!("cmnd/{}/POWER", device),
             Self::HomeAssistant => format!("homeassistant/+/{}/set", device),
-            Self::Custom { command_template, .. } => command_template.replace("{device}", device),
+            Self::Custom {
+                command_template, ..
+            } => command_template.replace("{device}", device),
         }
     }
 
@@ -241,7 +246,10 @@ impl MqttHomeBackend {
     /// Check command rate limit (#7).
     fn check_rate_limit(&self, entity_id: &str) -> Result<(), String> {
         let now = now_epoch();
-        let mut history = self.command_history.lock().map_err(|e| format!("Lock error: {}", e))?;
+        let mut history = self
+            .command_history
+            .lock()
+            .map_err(|e| format!("Lock error: {}", e))?;
 
         // Cleanup old entries (older than 60s)
         history.retain(|(ts, _)| now - ts < 60);
@@ -318,15 +326,30 @@ impl MqttHomeBackend {
                             .and_then(|v| v.as_str())
                             .unwrap_or("");
                         let lower = desc.to_lowercase();
-                        if lower.contains("light") || lower.contains("bulb") || lower.contains("lamp") {
+                        if lower.contains("light")
+                            || lower.contains("bulb")
+                            || lower.contains("lamp")
+                        {
                             "light"
-                        } else if lower.contains("switch") || lower.contains("plug") || lower.contains("relay") {
+                        } else if lower.contains("switch")
+                            || lower.contains("plug")
+                            || lower.contains("relay")
+                        {
                             "switch"
-                        } else if lower.contains("sensor") || lower.contains("temperature") || lower.contains("humidity") {
+                        } else if lower.contains("sensor")
+                            || lower.contains("temperature")
+                            || lower.contains("humidity")
+                        {
                             "sensor"
-                        } else if lower.contains("thermostat") || lower.contains("climate") || lower.contains("hvac") {
+                        } else if lower.contains("thermostat")
+                            || lower.contains("climate")
+                            || lower.contains("hvac")
+                        {
                             "climate"
-                        } else if lower.contains("cover") || lower.contains("blind") || lower.contains("shutter") {
+                        } else if lower.contains("cover")
+                            || lower.contains("blind")
+                            || lower.contains("shutter")
+                        {
                             "cover"
                         } else if lower.contains("lock") {
                             "lock"
@@ -338,7 +361,11 @@ impl MqttHomeBackend {
                     _ => "sensor",
                 };
 
-                let entity_id = format!("{}.{}", domain, friendly_name.replace(' ', "_").to_lowercase());
+                let entity_id = format!(
+                    "{}.{}",
+                    domain,
+                    friendly_name.replace(' ', "_").to_lowercase()
+                );
 
                 entries.push(RegistryEntry {
                     entity_id,
@@ -347,7 +374,10 @@ impl MqttHomeBackend {
                     state_topic: format!("zigbee2mqtt/{}", friendly_name),
                     command_topic: Some(format!("zigbee2mqtt/{}/set", friendly_name)),
                     last_state: None,
-                    attributes: device.get("definition").cloned().unwrap_or(serde_json::json!({})),
+                    attributes: device
+                        .get("definition")
+                        .cloned()
+                        .unwrap_or(serde_json::json!({})),
                     discovered_at: now,
                     last_seen: now,
                 });
@@ -363,7 +393,10 @@ impl HomeBackend for MqttHomeBackend {
         if let Some(d) = domain {
             validate_domain(d)?;
         }
-        let registry = self.registry.lock().map_err(|e| format!("Lock error: {}", e))?;
+        let registry = self
+            .registry
+            .lock()
+            .map_err(|e| format!("Lock error: {}", e))?;
         Ok(registry
             .list(domain)
             .into_iter()
@@ -379,7 +412,10 @@ impl HomeBackend for MqttHomeBackend {
 
     fn get_device(&self, entity_id: &str) -> Result<DeviceState, String> {
         validate_entity_id(entity_id)?;
-        let registry = self.registry.lock().map_err(|e| format!("Lock error: {}", e))?;
+        let registry = self
+            .registry
+            .lock()
+            .map_err(|e| format!("Lock error: {}", e))?;
         registry
             .get(entity_id)
             .map(|e| DeviceState {
@@ -429,9 +465,7 @@ impl HomeBackend for MqttHomeBackend {
             }
             "turn_off" => serde_json::json!({"state": "OFF"}),
             "toggle" => serde_json::json!({"state": "TOGGLE"}),
-            "set_temperature" => {
-                data.cloned().unwrap_or(serde_json::json!({}))
-            }
+            "set_temperature" => data.cloned().unwrap_or(serde_json::json!({})),
             _ => data.cloned().unwrap_or(serde_json::json!({})),
         };
 

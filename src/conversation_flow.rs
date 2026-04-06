@@ -475,7 +475,10 @@ mod tests {
     #[test]
     fn test_state_conclusion_on_thank_you() {
         let mut analyzer = FlowAnalyzer::new();
-        analyzer.add_turn(ConversationTurn::new("user", "How do I sort a list in Python?"));
+        analyzer.add_turn(ConversationTurn::new(
+            "user",
+            "How do I sort a list in Python?",
+        ));
         analyzer.add_turn(ConversationTurn::new(
             "assistant",
             "You can use the sorted() function or the list.sort() method.",
@@ -575,7 +578,10 @@ mod tests {
     fn test_turn_distribution_balanced() {
         let mut analyzer = FlowAnalyzer::new();
         for _ in 0..5 {
-            analyzer.add_turn(ConversationTurn::new("user", "This is a user message with enough words."));
+            analyzer.add_turn(ConversationTurn::new(
+                "user",
+                "This is a user message with enough words.",
+            ));
             analyzer.add_turn(ConversationTurn::new(
                 "assistant",
                 "This is an assistant reply with enough words too.",

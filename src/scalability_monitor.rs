@@ -293,7 +293,10 @@ fn default_threshold(subsystem: &Subsystem) -> ScalabilityThreshold {
 // ============================================================================
 
 /// Build recommendations for a subsystem based on severity.
-fn build_recommendations(subsystem: &Subsystem, severity: WarningSeverity) -> Vec<ScalabilityAction> {
+fn build_recommendations(
+    subsystem: &Subsystem,
+    severity: WarningSeverity,
+) -> Vec<ScalabilityAction> {
     match subsystem {
         Subsystem::VectorDbInMemory => {
             let mut recs = vec![ScalabilityAction::SwitchBackend {
@@ -313,7 +316,8 @@ fn build_recommendations(subsystem: &Subsystem, severity: WarningSeverity) -> Ve
         Subsystem::VectorDbHnsw => {
             let mut recs = vec![ScalabilityAction::RunMaintenance {
                 operation: "hnsw_compaction".into(),
-                description: "Remove deleted nodes and rebuild connections to reclaim memory".into(),
+                description: "Remove deleted nodes and rebuild connections to reclaim memory"
+                    .into(),
             }];
             if severity >= WarningSeverity::Warning {
                 recs.push(ScalabilityAction::SwitchBackend {
@@ -409,12 +413,10 @@ fn build_recommendations(subsystem: &Subsystem, severity: WarningSeverity) -> Ve
             ]
         }
         Subsystem::ResponseCache => {
-            vec![
-                ScalabilityAction::EnableFeature {
-                    feature: "redis-backend".into(),
-                    description: "Switch to Redis-backed cache for shared/persistent caching".into(),
-                },
-            ]
+            vec![ScalabilityAction::EnableFeature {
+                feature: "redis-backend".into(),
+                description: "Switch to Redis-backed cache for shared/persistent caching".into(),
+            }]
         }
         Subsystem::EpisodicMemory => {
             vec![ScalabilityAction::Custom {
@@ -623,17 +625,26 @@ pub fn audit_snapshot(snapshot: &ScalabilitySnapshot) -> Vec<ScalabilityWarning>
     let mut warnings = Vec::new();
 
     let checks: Vec<(Subsystem, Option<usize>)> = vec![
-        (Subsystem::VectorDbInMemory, snapshot.vector_db_in_memory_count),
+        (
+            Subsystem::VectorDbInMemory,
+            snapshot.vector_db_in_memory_count,
+        ),
         (Subsystem::VectorDbHnsw, snapshot.hnsw_node_count),
         (Subsystem::EmbeddingCache, snapshot.embedding_cache_entries),
         (Subsystem::KnowledgeGraph, snapshot.knowledge_graph_entities),
-        (Subsystem::MultiLayerGraph, snapshot.multi_layer_graph_entities),
+        (
+            Subsystem::MultiLayerGraph,
+            snapshot.multi_layer_graph_entities,
+        ),
         (Subsystem::SessionStore, snapshot.session_count),
         (Subsystem::FactStore, snapshot.fact_store_count),
         (Subsystem::ResponseCache, snapshot.response_cache_entries),
         (Subsystem::EpisodicMemory, snapshot.episodic_memory_episodes),
         (Subsystem::EntityStore, snapshot.entity_store_count),
-        (Subsystem::CrdtOrSetTombstones, snapshot.crdt_orset_tombstones),
+        (
+            Subsystem::CrdtOrSetTombstones,
+            snapshot.crdt_orset_tombstones,
+        ),
         (Subsystem::DhtStorage, snapshot.dht_storage_entries),
     ];
 
@@ -759,8 +770,7 @@ mod tests {
 
     #[test]
     fn test_orset_tombstone_recommendation() {
-        let result =
-            check_scalability_no_cooldown(Subsystem::CrdtOrSetTombstones, 9_000).unwrap();
+        let result = check_scalability_no_cooldown(Subsystem::CrdtOrSetTombstones, 9_000).unwrap();
         match &result.recommendations[0] {
             ScalabilityAction::RunMaintenance { operation, .. } => {
                 assert!(operation.contains("compaction"));
@@ -898,8 +908,14 @@ mod tests {
 
     #[test]
     fn test_subsystem_display() {
-        assert_eq!(Subsystem::VectorDbInMemory.to_string(), "VectorDb (InMemory)");
-        assert_eq!(Subsystem::CrdtOrSetTombstones.to_string(), "ORSet Tombstones");
+        assert_eq!(
+            Subsystem::VectorDbInMemory.to_string(),
+            "VectorDb (InMemory)"
+        );
+        assert_eq!(
+            Subsystem::CrdtOrSetTombstones.to_string(),
+            "ORSet Tombstones"
+        );
         assert_eq!(Subsystem::DhtStorage.to_string(), "DHT Storage");
     }
 

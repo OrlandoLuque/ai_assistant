@@ -272,10 +272,8 @@ mod tests {
     #[test]
     fn test_rolling_summary_without_existing() {
         let summarizer = ConversationSummarizer::default();
-        let result = summarizer.rolling_summary(
-            "",
-            &[("User".to_string(), "First message".to_string())],
-        );
+        let result =
+            summarizer.rolling_summary("", &[("User".to_string(), "First message".to_string())]);
         assert!(!result.contains("Previous summary:"));
         assert!(result.contains("First message"));
     }
@@ -300,8 +298,14 @@ mod tests {
     fn test_stop_words_filtered() {
         let summarizer = ConversationSummarizer::default();
         let messages = vec![
-            ("User".to_string(), "Explain machine learning algorithms in detail".to_string()),
-            ("Assistant".to_string(), "Machine learning algorithms process data".to_string()),
+            (
+                "User".to_string(),
+                "Explain machine learning algorithms in detail".to_string(),
+            ),
+            (
+                "Assistant".to_string(),
+                "Machine learning algorithms process data".to_string(),
+            ),
         ];
         let topics = summarizer.extract_topics(&messages);
         // "machine" and "learning" should appear but stop words like "the", "in" should not

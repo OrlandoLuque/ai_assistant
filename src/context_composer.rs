@@ -422,14 +422,18 @@ impl TokenBudgetAllocator {
             allocations[idx].allocated_tokens += share;
 
             // Re-enforce max_tokens cap after redistribution
-            if let Some(sb) = config.section_budgets.iter().find(|sb| sb.section == allocations[idx].section) {
+            if let Some(sb) = config
+                .section_budgets
+                .iter()
+                .find(|sb| sb.section == allocations[idx].section)
+            {
                 if let Some(max) = sb.max_tokens {
                     allocations[idx].allocated_tokens = allocations[idx].allocated_tokens.min(max);
                 }
             }
 
-            allocations[idx].surplus = allocations[idx].allocated_tokens as i64
-                - allocations[idx].actual_tokens as i64;
+            allocations[idx].surplus =
+                allocations[idx].allocated_tokens as i64 - allocations[idx].actual_tokens as i64;
         }
 
         // Reduce surplus from donors proportionally
@@ -729,8 +733,8 @@ impl ContextComposer {
 
         // Overflow detection
         let (overflow_level, overflow_action) = if self.config.overflow_detection {
-            let detector =
-                ContextOverflowDetector::new(available).with_thresholds(self.config.overflow_thresholds.clone());
+            let detector = ContextOverflowDetector::new(available)
+                .with_thresholds(self.config.overflow_thresholds.clone());
             let level = detector.check(total_tokens);
             let action = detector.get_action(level, total_tokens);
             (level, action)
@@ -758,8 +762,8 @@ impl ContextComposer {
             .total_budget
             .saturating_sub(self.config.response_reserve);
 
-        let detector =
-            ContextOverflowDetector::new(available).with_thresholds(self.config.overflow_thresholds.clone());
+        let detector = ContextOverflowDetector::new(available)
+            .with_thresholds(self.config.overflow_thresholds.clone());
         let level = detector.check(composed.total_tokens);
         let action = detector.get_action(level, composed.total_tokens);
 
@@ -770,7 +774,6 @@ impl ContextComposer {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
-
 
 // ---------------------------------------------------------------------------
 // ContextCompiler - token-budget-aware segment compiler with eviction
@@ -870,7 +873,12 @@ impl ContextCompiler {
     }
 
     /// Override the allocation for a specific segment type (builder pattern).
-    pub fn with_allocation(mut self, segment_type: SegmentType, percentage: f64, priority: u32) -> Self {
+    pub fn with_allocation(
+        mut self,
+        segment_type: SegmentType,
+        percentage: f64,
+        priority: u32,
+    ) -> Self {
         let max_tokens = (self.total_budget as f64 * percentage).round() as usize;
         self.allocations.insert(
             segment_type,
@@ -916,7 +924,8 @@ impl ContextCompiler {
                     if let Some(idx) = self.find_lowest_priority_of_type(&seg_type) {
                         let removed = self.segments.remove(idx);
                         if let Some(alloc) = self.allocations.get_mut(&removed.segment_type) {
-                            alloc.current_tokens = alloc.current_tokens.saturating_sub(removed.token_estimate);
+                            alloc.current_tokens =
+                                alloc.current_tokens.saturating_sub(removed.token_estimate);
                         }
                         evicted_count += 1;
                     } else {
@@ -1006,7 +1015,6 @@ impl ContextCompiler {
 
         best_idx
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -1160,19 +1168,16 @@ pub struct ToolSearchResult {
 
 /// Common English stop words to filter out during tokenization.
 const STOP_WORDS: &[&str] = &[
-    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
-    "have", "has", "had", "do", "does", "did", "will", "would", "could",
-    "should", "may", "might", "shall", "can", "need", "dare", "ought",
-    "used", "to", "of", "in", "for", "on", "with", "at", "by", "from",
-    "as", "into", "through", "during", "before", "after", "above", "below",
-    "between", "out", "off", "over", "under", "again", "further", "then",
-    "once", "and", "but", "or", "nor", "not", "so", "yet", "both",
-    "either", "neither", "each", "every", "all", "any", "few", "more",
-    "most", "other", "some", "such", "no", "only", "own", "same", "than",
-    "too", "very", "just", "because", "if", "when", "where", "how",
-    "what", "which", "who", "whom", "this", "that", "these", "those",
-    "it", "its", "i", "me", "my", "we", "our", "you", "your", "he",
-    "him", "his", "she", "her", "they", "them", "their",
+    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
+    "do", "does", "did", "will", "would", "could", "should", "may", "might", "shall", "can",
+    "need", "dare", "ought", "used", "to", "of", "in", "for", "on", "with", "at", "by", "from",
+    "as", "into", "through", "during", "before", "after", "above", "below", "between", "out",
+    "off", "over", "under", "again", "further", "then", "once", "and", "but", "or", "nor", "not",
+    "so", "yet", "both", "either", "neither", "each", "every", "all", "any", "few", "more", "most",
+    "other", "some", "such", "no", "only", "own", "same", "than", "too", "very", "just", "because",
+    "if", "when", "where", "how", "what", "which", "who", "whom", "this", "that", "these", "those",
+    "it", "its", "i", "me", "my", "we", "our", "you", "your", "he", "him", "his", "she", "her",
+    "they", "them", "their",
 ];
 
 impl ToolSearchIndex {
@@ -1262,7 +1267,11 @@ impl ToolSearchIndex {
             })
             .collect();
 
-        results.sort_by(|a, b| b.relevance_score.partial_cmp(&a.relevance_score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.relevance_score
+                .partial_cmp(&a.relevance_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results.truncate(top_k);
         results
     }
@@ -1294,15 +1303,15 @@ impl ToolSearchIndex {
             *counts.entry(token.clone()).or_insert(0) += 1;
         }
         let total = tokens.len() as f64;
-        counts.into_iter().map(|(k, v)| (k, v as f64 / total)).collect()
+        counts
+            .into_iter()
+            .map(|(k, v)| (k, v as f64 / total))
+            .collect()
     }
 
     /// Cosine similarity between two sparse TF-IDF vectors.
     fn cosine_similarity(a: &HashMap<String, f64>, b: &HashMap<String, f64>) -> f64 {
-        let dot: f64 = a
-            .iter()
-            .map(|(k, v)| v * b.get(k).unwrap_or(&0.0))
-            .sum();
+        let dot: f64 = a.iter().map(|(k, v)| v * b.get(k).unwrap_or(&0.0)).sum();
 
         let mag_a: f64 = a.values().map(|v| v * v).sum::<f64>().sqrt();
         let mag_b: f64 = b.values().map(|v| v * v).sum::<f64>().sqrt();
@@ -1314,7 +1323,6 @@ impl ToolSearchIndex {
         dot / (mag_a * mag_b)
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -1402,10 +1410,9 @@ mod tests {
         let counter = Arc::new(AtomicUsize::new(0));
         let counter_clone = counter.clone();
 
-        let d = ContextOverflowDetector::new(1000)
-            .on_overflow(move |_level, _tokens| {
-                counter_clone.fetch_add(1, Ordering::SeqCst);
-            });
+        let d = ContextOverflowDetector::new(1000).on_overflow(move |_level, _tokens| {
+            counter_clone.fetch_add(1, Ordering::SeqCst);
+        });
 
         d.check(500); // Normal — no callback
         assert_eq!(counter.load(Ordering::SeqCst), 0);
@@ -1502,7 +1509,9 @@ mod tests {
 
         let allocs = TokenBudgetAllocator::allocate(&config, &contents);
         // Conversation should have gotten surplus from SystemPrompt
-        let conv = allocs.iter().find(|a| a.section == ContextSection::Conversation);
+        let conv = allocs
+            .iter()
+            .find(|a| a.section == ContextSection::Conversation);
         assert!(conv.is_some());
         let conv = conv.expect("conversation allocation missing");
         // It should have more than its initial 500 allocation
@@ -1552,7 +1561,10 @@ mod tests {
             ContextSection::Conversation,
             "user: Hello\nassistant: Hi!".to_string(),
         );
-        sections.insert(ContextSection::UserPrompt, "Tell me about Rust.".to_string());
+        sections.insert(
+            ContextSection::UserPrompt,
+            "Tell me about Rust.".to_string(),
+        );
 
         let composed = composer.compose(sections);
         assert_eq!(composed.sections.len(), 6);
@@ -1676,7 +1688,10 @@ mod tests {
     #[test]
     fn test_generate_mini_summary() {
         let messages = vec![
-            ("user".to_string(), "Tell me about Rust programming.".to_string()),
+            (
+                "user".to_string(),
+                "Tell me about Rust programming.".to_string(),
+            ),
             (
                 "assistant".to_string(),
                 "Rust is a systems programming language. It focuses on safety.".to_string(),
@@ -1753,7 +1768,11 @@ mod tests {
     fn test_default_config_percentages_sum() {
         let config = ContextComposer::default_config();
         let sum: f64 = config.section_budgets.iter().map(|sb| sb.percentage).sum();
-        assert!((sum - 1.0).abs() < 0.01, "Percentages sum to {}, not 1.0", sum);
+        assert!(
+            (sum - 1.0).abs() < 0.01,
+            "Percentages sum to {}, not 1.0",
+            sum
+        );
     }
 
     #[test]
@@ -1944,9 +1963,10 @@ mod tests {
 
     #[test]
     fn test_generate_mini_summary_very_small_budget() {
-        let messages = vec![
-            ("user".to_string(), "A very long sentence that goes on and on.".to_string()),
-        ];
+        let messages = vec![(
+            "user".to_string(),
+            "A very long sentence that goes on and on.".to_string(),
+        )];
         let summary = generate_mini_summary(&messages, 5);
         // Should still produce something (possibly truncated)
         assert!(!summary.is_empty());
@@ -2120,8 +2140,7 @@ mod tests {
 
     #[test]
     fn test_compiler_custom_allocation() {
-        let compiler = ContextCompiler::new(1000)
-            .with_allocation(SegmentType::Examples, 0.25, 2);
+        let compiler = ContextCompiler::new(1000).with_allocation(SegmentType::Examples, 0.25, 2);
         assert_eq!(compiler.budget_for(&SegmentType::Examples), 250);
     }
 
@@ -2157,11 +2176,31 @@ mod tests {
     fn test_compactor_compact() {
         let mut compactor = ConversationCompactor::new(5, 2);
         let messages = vec![
-            CompactableMessage { role: "user".to_string(), content: "Hello there.".to_string(), token_estimate: 3 },
-            CompactableMessage { role: "assistant".to_string(), content: "Hi! How can I help?".to_string(), token_estimate: 5 },
-            CompactableMessage { role: "user".to_string(), content: "Tell me about Rust.".to_string(), token_estimate: 5 },
-            CompactableMessage { role: "assistant".to_string(), content: "Rust is a systems language.".to_string(), token_estimate: 6 },
-            CompactableMessage { role: "user".to_string(), content: "Thanks!".to_string(), token_estimate: 2 },
+            CompactableMessage {
+                role: "user".to_string(),
+                content: "Hello there.".to_string(),
+                token_estimate: 3,
+            },
+            CompactableMessage {
+                role: "assistant".to_string(),
+                content: "Hi! How can I help?".to_string(),
+                token_estimate: 5,
+            },
+            CompactableMessage {
+                role: "user".to_string(),
+                content: "Tell me about Rust.".to_string(),
+                token_estimate: 5,
+            },
+            CompactableMessage {
+                role: "assistant".to_string(),
+                content: "Rust is a systems language.".to_string(),
+                token_estimate: 6,
+            },
+            CompactableMessage {
+                role: "user".to_string(),
+                content: "Thanks!".to_string(),
+                token_estimate: 2,
+            },
         ];
 
         let result = compactor.compact(&messages);
@@ -2175,10 +2214,26 @@ mod tests {
     fn test_compactor_preserve_recent() {
         let mut compactor = ConversationCompactor::new(3, 2);
         let messages = vec![
-            CompactableMessage { role: "user".to_string(), content: "First message.".to_string(), token_estimate: 3 },
-            CompactableMessage { role: "assistant".to_string(), content: "Second message.".to_string(), token_estimate: 3 },
-            CompactableMessage { role: "user".to_string(), content: "Third message.".to_string(), token_estimate: 3 },
-            CompactableMessage { role: "assistant".to_string(), content: "Fourth message.".to_string(), token_estimate: 3 },
+            CompactableMessage {
+                role: "user".to_string(),
+                content: "First message.".to_string(),
+                token_estimate: 3,
+            },
+            CompactableMessage {
+                role: "assistant".to_string(),
+                content: "Second message.".to_string(),
+                token_estimate: 3,
+            },
+            CompactableMessage {
+                role: "user".to_string(),
+                content: "Third message.".to_string(),
+                token_estimate: 3,
+            },
+            CompactableMessage {
+                role: "assistant".to_string(),
+                content: "Fourth message.".to_string(),
+                token_estimate: 3,
+            },
         ];
 
         let result = compactor.compact(&messages);
@@ -2191,9 +2246,21 @@ mod tests {
     fn test_compactor_summary() {
         let mut compactor = ConversationCompactor::new(2, 1);
         let messages = vec![
-            CompactableMessage { role: "user".to_string(), content: "What is machine learning? It is cool.".to_string(), token_estimate: 8 },
-            CompactableMessage { role: "assistant".to_string(), content: "ML is a subset of AI. It uses data.".to_string(), token_estimate: 9 },
-            CompactableMessage { role: "user".to_string(), content: "Thanks!".to_string(), token_estimate: 2 },
+            CompactableMessage {
+                role: "user".to_string(),
+                content: "What is machine learning? It is cool.".to_string(),
+                token_estimate: 8,
+            },
+            CompactableMessage {
+                role: "assistant".to_string(),
+                content: "ML is a subset of AI. It uses data.".to_string(),
+                token_estimate: 9,
+            },
+            CompactableMessage {
+                role: "user".to_string(),
+                content: "Thanks!".to_string(),
+                token_estimate: 2,
+            },
         ];
 
         let result = compactor.compact(&messages);
@@ -2206,9 +2273,21 @@ mod tests {
     fn test_compactor_count() {
         let mut compactor = ConversationCompactor::new(2, 1);
         let messages = vec![
-            CompactableMessage { role: "user".to_string(), content: "Hello.".to_string(), token_estimate: 2 },
-            CompactableMessage { role: "assistant".to_string(), content: "Hi.".to_string(), token_estimate: 1 },
-            CompactableMessage { role: "user".to_string(), content: "Bye.".to_string(), token_estimate: 1 },
+            CompactableMessage {
+                role: "user".to_string(),
+                content: "Hello.".to_string(),
+                token_estimate: 2,
+            },
+            CompactableMessage {
+                role: "assistant".to_string(),
+                content: "Hi.".to_string(),
+                token_estimate: 1,
+            },
+            CompactableMessage {
+                role: "user".to_string(),
+                content: "Bye.".to_string(),
+                token_estimate: 1,
+            },
         ];
         assert_eq!(compactor.compaction_count(), 0);
         compactor.compact(&messages);
@@ -2229,7 +2308,10 @@ mod tests {
     #[test]
     fn test_tool_index_add_tool() {
         let mut index = ToolSearchIndex::new();
-        index.add_tool("calculator", "Performs arithmetic calculations and math operations");
+        index.add_tool(
+            "calculator",
+            "Performs arithmetic calculations and math operations",
+        );
         assert_eq!(index.tool_count(), 1);
         assert!(!index.idf_cache.is_empty());
     }
@@ -2255,8 +2337,16 @@ mod tests {
 
         let results = index.search("read file content", 3);
         assert!(!results.is_empty());
-        let reader_score = results.iter().find(|r| r.tool_name == "file_reader").map(|r| r.relevance_score).unwrap_or(0.0);
-        let calc_score = results.iter().find(|r| r.tool_name == "calculator").map(|r| r.relevance_score).unwrap_or(0.0);
+        let reader_score = results
+            .iter()
+            .find(|r| r.tool_name == "file_reader")
+            .map(|r| r.relevance_score)
+            .unwrap_or(0.0);
+        let calc_score = results
+            .iter()
+            .find(|r| r.tool_name == "calculator")
+            .map(|r| r.relevance_score)
+            .unwrap_or(0.0);
         assert!(reader_score > calc_score);
     }
 
@@ -2306,5 +2396,4 @@ mod tests {
         let sim2 = ToolSearchIndex::cosine_similarity(&a, &c);
         assert!((sim2 - 0.0).abs() < 1e-10);
     }
-
 }

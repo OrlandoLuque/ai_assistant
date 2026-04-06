@@ -354,15 +354,14 @@ mod inner {
 
     impl Checkpointer for InMemoryCheckpointer {
         fn save(&self, checkpoint: &WorkflowCheckpoint) -> Result<(), AiError> {
-            let mut store = self.data.lock().map_err(|e| {
-                WorkflowError::CheckpointFailed {
+            let mut store = self
+                .data
+                .lock()
+                .map_err(|e| WorkflowError::CheckpointFailed {
                     workflow_id: checkpoint.workflow_id.clone(),
                     reason: format!("lock poisoned: {}", e),
-                }
-            })?;
-            let entry = store
-                .entry(checkpoint.workflow_id.clone())
-                .or_default();
+                })?;
+            let entry = store.entry(checkpoint.workflow_id.clone()).or_default();
             // Replace if same step already exists, otherwise push.
             if let Some(pos) = entry.iter().position(|c| c.step == checkpoint.step) {
                 entry[pos] = checkpoint.clone();
@@ -377,24 +376,26 @@ mod inner {
             workflow_id: &str,
             step: usize,
         ) -> Result<Option<WorkflowCheckpoint>, AiError> {
-            let store = self.data.lock().map_err(|e| {
-                WorkflowError::CheckpointFailed {
+            let store = self
+                .data
+                .lock()
+                .map_err(|e| WorkflowError::CheckpointFailed {
                     workflow_id: workflow_id.to_string(),
                     reason: format!("lock poisoned: {}", e),
-                }
-            })?;
+                })?;
             Ok(store
                 .get(workflow_id)
                 .and_then(|v| v.iter().find(|c| c.step == step).cloned()))
         }
 
         fn list(&self, workflow_id: &str) -> Result<Vec<usize>, AiError> {
-            let store = self.data.lock().map_err(|e| {
-                WorkflowError::CheckpointFailed {
+            let store = self
+                .data
+                .lock()
+                .map_err(|e| WorkflowError::CheckpointFailed {
                     workflow_id: workflow_id.to_string(),
                     reason: format!("lock poisoned: {}", e),
-                }
-            })?;
+                })?;
             let mut steps: Vec<usize> = store
                 .get(workflow_id)
                 .map(|v| v.iter().map(|c| c.step).collect())
@@ -404,12 +405,13 @@ mod inner {
         }
 
         fn latest(&self, workflow_id: &str) -> Result<Option<WorkflowCheckpoint>, AiError> {
-            let store = self.data.lock().map_err(|e| {
-                WorkflowError::CheckpointFailed {
+            let store = self
+                .data
+                .lock()
+                .map_err(|e| WorkflowError::CheckpointFailed {
                     workflow_id: workflow_id.to_string(),
                     reason: format!("lock poisoned: {}", e),
-                }
-            })?;
+                })?;
             Ok(store
                 .get(workflow_id)
                 .and_then(|v| v.iter().max_by_key(|c| c.step).cloned()))
@@ -520,8 +522,7 @@ mod inner {
                     .to_string();
 
                 // Find handlers for this event type.
-                let handler_ids: Vec<String> =
-                    self.graph.handlers_for(&event_type).to_vec();
+                let handler_ids: Vec<String> = self.graph.handlers_for(&event_type).to_vec();
 
                 if handler_ids.is_empty() {
                     // Terminal event — no handlers, just drop it.
@@ -608,18 +609,13 @@ mod inner {
         }
 
         /// Resume execution from a previously saved checkpoint (time-travel).
-        pub fn resume(
-            &self,
-            workflow_id: &str,
-            step: usize,
-        ) -> Result<WorkflowResult, AiError> {
-            let checkpoint = self
-                .checkpointer
-                .load(workflow_id, step)?
-                .ok_or_else(|| WorkflowError::CheckpointFailed {
+        pub fn resume(&self, workflow_id: &str, step: usize) -> Result<WorkflowResult, AiError> {
+            let checkpoint = self.checkpointer.load(workflow_id, step)?.ok_or_else(|| {
+                WorkflowError::CheckpointFailed {
                     workflow_id: workflow_id.to_string(),
                     reason: format!("no checkpoint at step {}", step),
-                })?;
+                }
+            })?;
 
             // Resume: re-process the pending events from the checkpoint.
             let mut state = checkpoint.state;
@@ -644,8 +640,7 @@ mod inner {
                     .unwrap_or("")
                     .to_string();
 
-                let handler_ids: Vec<String> =
-                    self.graph.handlers_for(&event_type).to_vec();
+                let handler_ids: Vec<String> = self.graph.handlers_for(&event_type).to_vec();
 
                 if handler_ids.is_empty() {
                     continue;
@@ -735,11 +730,7 @@ mod inner {
             self.checkpointer.save(&cp)
         }
 
-        fn check_breakpoint<'a>(
-            &'a self,
-            node_id: &str,
-            state: &WorkflowState,
-        ) -> Option<&'a str> {
+        fn check_breakpoint<'a>(&'a self, node_id: &str, state: &WorkflowState) -> Option<&'a str> {
             for bp in &self.breakpoints {
                 if bp.node_id == node_id {
                     match &bp.condition {
@@ -1027,11 +1018,7 @@ mod inner {
             config: DurableConfig,
             checkpointer: Box<dyn Checkpointer>,
         ) -> Self {
-            let execution_id = format!(
-                "exec-{}-{}",
-                _now_secs(),
-                runner.graph.entry_event()
-            );
+            let execution_id = format!("exec-{}-{}", _now_secs(), runner.graph.entry_event());
             Self {
                 runner,
                 config,
@@ -1057,10 +1044,7 @@ mod inner {
         /// This method drives execution step-by-step, saving durable
         /// checkpoints before and after each node. On error, an error
         /// checkpoint is saved and the error state is returned.
-        pub fn execute(
-            &mut self,
-            initial_state: WorkflowState,
-        ) -> Result<WorkflowState, AiError> {
+        pub fn execute(&mut self, initial_state: WorkflowState) -> Result<WorkflowState, AiError> {
             let workflow_id = self.execution_id.clone();
             let entry_event = self.runner.graph.entry_event().to_string();
 
@@ -1072,20 +1056,13 @@ mod inner {
 
             // Save initial durable checkpoint.
             if self.config.auto_checkpoint {
-                self.save_durable_checkpoint(
-                    "initial",
-                    &initial_state,
-                    0,
-                    true,
-                )?;
+                self.save_durable_checkpoint("initial", &initial_state, 0, true)?;
             }
 
             // Delegate to the runner for actual execution.
-            let result = self.runner.run(
-                &workflow_id,
-                initial_event,
-                initial_state,
-            )?;
+            let result = self
+                .runner
+                .run(&workflow_id, initial_event, initial_state)?;
 
             // Save per-step auto-checkpoints after execution.
             // The runner already saved WorkflowCheckpoints internally; we
@@ -1149,10 +1126,7 @@ mod inner {
             step_number: usize,
             is_auto: bool,
         ) -> Result<(), AiError> {
-            let checkpoint_id = format!(
-                "{}-cp-{}",
-                self.execution_id, self.checkpoint_count
-            );
+            let checkpoint_id = format!("{}-cp-{}", self.execution_id, self.checkpoint_count);
             let ts = _now_secs();
 
             let durable_cp = DurableCheckpoint {
@@ -1167,12 +1141,13 @@ mod inner {
 
             // Store in durable metadata.
             {
-                let mut store = self.durable_store.lock().map_err(|e| {
-                    WorkflowError::CheckpointFailed {
-                        workflow_id: self.execution_id.clone(),
-                        reason: format!("durable store lock poisoned: {}", e),
-                    }
-                })?;
+                let mut store =
+                    self.durable_store
+                        .lock()
+                        .map_err(|e| WorkflowError::CheckpointFailed {
+                            workflow_id: self.execution_id.clone(),
+                            reason: format!("durable store lock poisoned: {}", e),
+                        })?;
                 store
                     .entry(self.execution_id.clone())
                     .or_default()
@@ -1195,12 +1170,13 @@ mod inner {
 
         /// Apply the configured retention policy to durable checkpoints.
         fn apply_retention_policy(&mut self) -> Result<(), AiError> {
-            let mut store = self.durable_store.lock().map_err(|e| {
-                WorkflowError::CheckpointFailed {
-                    workflow_id: self.execution_id.clone(),
-                    reason: format!("durable store lock poisoned: {}", e),
-                }
-            })?;
+            let mut store =
+                self.durable_store
+                    .lock()
+                    .map_err(|e| WorkflowError::CheckpointFailed {
+                        workflow_id: self.execution_id.clone(),
+                        reason: format!("durable store lock poisoned: {}", e),
+                    })?;
 
             if let Some(checkpoints) = store.get_mut(&self.execution_id) {
                 match &self.config.retention_policy {
@@ -1217,9 +1193,7 @@ mod inner {
                     RetentionPolicy::KeepDuration(secs) => {
                         let secs = *secs;
                         let now = _now_secs();
-                        checkpoints.retain(|cp| {
-                            now.saturating_sub(cp.created_at) <= secs
-                        });
+                        checkpoints.retain(|cp| now.saturating_sub(cp.created_at) <= secs);
                     }
                     RetentionPolicy::KeepCheckpointsOnly => {
                         checkpoints.retain(|cp| !cp.is_auto);
@@ -1248,10 +1222,7 @@ mod inner {
                 Ok(s) => s,
                 Err(_) => return vec![],
             };
-            store
-                .get(&self.execution_id)
-                .cloned()
-                .unwrap_or_default()
+            store.get(&self.execution_id).cloned().unwrap_or_default()
         }
     }
 
@@ -1299,10 +1270,7 @@ mod inner {
         }
 
         /// Attempt to recover state from the latest good checkpoint.
-        pub fn recover(
-            &self,
-            execution_id: &str,
-        ) -> Result<Option<WorkflowState>, AiError> {
+        pub fn recover(&self, execution_id: &str) -> Result<Option<WorkflowState>, AiError> {
             match self.checkpointer.latest(execution_id) {
                 Ok(Some(cp)) => Ok(Some(cp.state)),
                 Ok(None) => Ok(None),
@@ -1311,10 +1279,7 @@ mod inner {
         }
 
         /// List all checkpoint step numbers for a given execution.
-        pub fn list_checkpoints(
-            &self,
-            execution_id: &str,
-        ) -> Vec<String> {
+        pub fn list_checkpoints(&self, execution_id: &str) -> Vec<String> {
             match self.checkpointer.list(execution_id) {
                 Ok(steps) => steps.iter().map(|s| format!("step-{}", s)).collect(),
                 Err(_) => vec![],
@@ -1645,7 +1610,9 @@ mod inner {
                 "event_type": "start",
                 "payload": { "value": 5 }
             });
-            let result = runner.run("wf-1", initial, WorkflowState::new()).expect("run");
+            let result = runner
+                .run("wf-1", initial, WorkflowState::new())
+                .expect("run");
             assert!(result.completed);
             assert_eq!(result.steps_executed, 3);
             assert_eq!(
@@ -1713,11 +1680,22 @@ mod inner {
                 "event_type": "start",
                 "payload": {}
             });
-            let result = runner.run("wf-branch", initial, WorkflowState::new()).expect("run");
+            let result = runner
+                .run("wf-branch", initial, WorkflowState::new())
+                .expect("run");
             assert!(result.completed);
-            assert_eq!(result.final_state.get("split"), Some(&serde_json::json!(true)));
-            assert_eq!(result.final_state.get("a_done"), Some(&serde_json::json!(true)));
-            assert_eq!(result.final_state.get("b_done"), Some(&serde_json::json!(true)));
+            assert_eq!(
+                result.final_state.get("split"),
+                Some(&serde_json::json!(true))
+            );
+            assert_eq!(
+                result.final_state.get("a_done"),
+                Some(&serde_json::json!(true))
+            );
+            assert_eq!(
+                result.final_state.get("b_done"),
+                Some(&serde_json::json!(true))
+            );
         }
 
         #[test]
@@ -1733,7 +1711,9 @@ mod inner {
                 "event_type": "start",
                 "payload": { "value": 1 }
             });
-            let err = runner.run("wf-bp", initial, WorkflowState::new()).unwrap_err();
+            let err = runner
+                .run("wf-bp", initial, WorkflowState::new())
+                .unwrap_err();
             assert!(err.to_string().contains("Breakpoint"));
             assert!(err.to_string().contains("b"));
         }
@@ -1770,7 +1750,9 @@ mod inner {
                 "event_type": "start",
                 "payload": { "value": 20 }
             });
-            let err = runner.run("wf-cond-yes", initial2, WorkflowState::new()).unwrap_err();
+            let err = runner
+                .run("wf-cond-yes", initial2, WorkflowState::new())
+                .unwrap_err();
             assert!(err.to_string().contains("Breakpoint"));
         }
 
@@ -1780,9 +1762,7 @@ mod inner {
             graph.add_node(WorkflowNode {
                 id: "fail_node".to_string(),
                 name: "Failing Node".to_string(),
-                handler: Box::new(|_p, _s| {
-                    Err(AiError::Other("intentional failure".to_string()))
-                }),
+                handler: Box::new(|_p, _s| Err(AiError::Other("intentional failure".to_string()))),
                 input_type: "start".to_string(),
                 output_types: vec![],
                 timeout_ms: None,
@@ -1793,7 +1773,9 @@ mod inner {
                 "event_type": "start",
                 "payload": {}
             });
-            let result = runner.run("wf-err", initial, WorkflowState::new()).expect("result ok");
+            let result = runner
+                .run("wf-err", initial, WorkflowState::new())
+                .expect("result ok");
             assert!(!result.completed);
             let snap = result.error_snapshot.as_ref().expect("error snapshot");
             assert_eq!(snap.node_id, "fail_node");
@@ -1823,7 +1805,9 @@ mod inner {
                 "event_type": "start",
                 "payload": {}
             });
-            let result = runner.run("wf-timeout", initial, WorkflowState::new()).expect("result");
+            let result = runner
+                .run("wf-timeout", initial, WorkflowState::new())
+                .expect("result");
             assert!(!result.completed);
             let snap = result.error_snapshot.as_ref().expect("error snapshot");
             assert!(snap.error_message.contains("timed out"));
@@ -1971,7 +1955,9 @@ mod inner {
             let graph = make_simple_pipeline();
             let runner = WorkflowRunner::new(graph);
             let err = runner.resume("nonexistent", 99).unwrap_err();
-            assert!(err.to_string().contains("checkpoint") || err.to_string().contains("Checkpoint"));
+            assert!(
+                err.to_string().contains("checkpoint") || err.to_string().contains("Checkpoint")
+            );
         }
 
         // -- WorkflowDefinition serialization tests --------------------------
@@ -2146,10 +2132,15 @@ mod inner {
                 "event_type": "start",
                 "payload": {}
             });
-            let result = runner.run("wf-single", initial, WorkflowState::new()).expect("run");
+            let result = runner
+                .run("wf-single", initial, WorkflowState::new())
+                .expect("run");
             assert!(result.completed);
             assert_eq!(result.steps_executed, 1);
-            assert_eq!(result.final_state.get("ran"), Some(&serde_json::json!(true)));
+            assert_eq!(
+                result.final_state.get("ran"),
+                Some(&serde_json::json!(true))
+            );
         }
 
         #[test]
@@ -2162,10 +2153,7 @@ mod inner {
                 id: "pingpong".to_string(),
                 name: "PingPong".to_string(),
                 handler: Box::new(|_p, state| {
-                    let count = state
-                        .get("count")
-                        .and_then(|v| v.as_i64())
-                        .unwrap_or(0);
+                    let count = state.get("count").and_then(|v| v.as_i64()).unwrap_or(0);
                     state.set("count", serde_json::json!(count + 1));
                     Ok(vec![serde_json::json!({
                         "event_type": "ping",
@@ -2229,7 +2217,9 @@ mod inner {
                 name: "Step1".to_string(),
                 handler: Box::new(|_p, state| {
                     state.set("s1", serde_json::json!(1));
-                    Ok(vec![serde_json::json!({"event_type": "next", "payload": {}})])
+                    Ok(vec![
+                        serde_json::json!({"event_type": "next", "payload": {}}),
+                    ])
                 }),
                 input_type: "start".to_string(),
                 output_types: vec!["next".to_string()],
@@ -2249,7 +2239,9 @@ mod inner {
 
             let runner = WorkflowRunner::new(graph);
             let initial = serde_json::json!({"event_type": "start", "payload": {}});
-            let result = runner.run("wf-acc", initial, WorkflowState::new()).expect("run");
+            let result = runner
+                .run("wf-acc", initial, WorkflowState::new())
+                .expect("run");
             assert!(result.completed);
             assert_eq!(result.final_state.get("s1"), Some(&serde_json::json!(1)));
             assert_eq!(result.final_state.get("s2"), Some(&serde_json::json!(2)));
@@ -2300,7 +2292,9 @@ mod inner {
             });
             let runner = WorkflowRunner::new(graph);
             let initial = serde_json::json!({"event_type": "s", "payload": {}});
-            let result = runner.run("my-unique-id", initial, WorkflowState::new()).expect("run");
+            let result = runner
+                .run("my-unique-id", initial, WorkflowState::new())
+                .expect("run");
             assert_eq!(result.workflow_id, "my-unique-id");
         }
 
@@ -2327,7 +2321,11 @@ mod inner {
                 fn save(&self, cp: &WorkflowCheckpoint) -> Result<(), AiError> {
                     self.0.save(cp)
                 }
-                fn load(&self, wf: &str, step: usize) -> Result<Option<WorkflowCheckpoint>, AiError> {
+                fn load(
+                    &self,
+                    wf: &str,
+                    step: usize,
+                ) -> Result<Option<WorkflowCheckpoint>, AiError> {
                     self.0.load(wf, step)
                 }
                 fn list(&self, wf: &str) -> Result<Vec<usize>, AiError> {
@@ -2338,12 +2336,12 @@ mod inner {
                 }
             }
 
-            let runner = WorkflowRunner::with_checkpointer(
-                graph,
-                Box::new(ArcCheckpointer(cp_clone)),
-            );
+            let runner =
+                WorkflowRunner::with_checkpointer(graph, Box::new(ArcCheckpointer(cp_clone)));
             let initial = serde_json::json!({"event_type": "start", "payload": {}});
-            runner.run("wf-cp", initial, WorkflowState::new()).expect("run");
+            runner
+                .run("wf-cp", initial, WorkflowState::new())
+                .expect("run");
 
             let steps = cp.list("wf-cp").expect("list");
             assert!(steps.len() >= 2); // at least step 0 (initial) + step 1
@@ -2481,10 +2479,18 @@ mod inner {
 
             let runner = WorkflowRunner::new(graph);
             let initial = serde_json::json!({"event_type": "start", "payload": {}});
-            let result = runner.run("wf-multi", initial, WorkflowState::new()).expect("run");
+            let result = runner
+                .run("wf-multi", initial, WorkflowState::new())
+                .expect("run");
             assert!(result.completed);
-            assert_eq!(result.final_state.get("h1_ran"), Some(&serde_json::json!(true)));
-            assert_eq!(result.final_state.get("h2_ran"), Some(&serde_json::json!(true)));
+            assert_eq!(
+                result.final_state.get("h1_ran"),
+                Some(&serde_json::json!(true))
+            );
+            assert_eq!(
+                result.final_state.get("h2_ran"),
+                Some(&serde_json::json!(true))
+            );
         }
 
         #[test]
@@ -2495,7 +2501,9 @@ mod inner {
                 "event_type": "start",
                 "payload": { "value": 1 }
             });
-            let result = runner.run("wf-sc", initial, WorkflowState::new()).expect("run");
+            let result = runner
+                .run("wf-sc", initial, WorkflowState::new())
+                .expect("run");
             assert_eq!(result.final_state.step_count, result.steps_executed);
         }
 
@@ -2591,7 +2599,9 @@ mod inner {
 
             let runner = WorkflowRunner::new(graph);
             let initial = serde_json::json!({"event_type": "start"});
-            let result = runner.run("wf-ep", initial, WorkflowState::new()).expect("run");
+            let result = runner
+                .run("wf-ep", initial, WorkflowState::new())
+                .expect("run");
             assert!(result.completed);
             assert_eq!(
                 result.final_state.get("payload_was_null"),
@@ -2645,7 +2655,9 @@ mod inner {
                 handler: Box::new(|_p, state| {
                     let v = state.get("counter").and_then(|v| v.as_i64()).unwrap_or(0);
                     state.set("counter", serde_json::json!(v + 1));
-                    Ok(vec![serde_json::json!({"event_type": "next1", "payload": {}})])
+                    Ok(vec![
+                        serde_json::json!({"event_type": "next1", "payload": {}}),
+                    ])
                 }),
                 input_type: "start".to_string(),
                 output_types: vec!["next1".to_string()],
@@ -2657,7 +2669,9 @@ mod inner {
                 handler: Box::new(|_p, state| {
                     let v = state.get("counter").and_then(|v| v.as_i64()).unwrap_or(0);
                     state.set("counter", serde_json::json!(v + 1));
-                    Ok(vec![serde_json::json!({"event_type": "next2", "payload": {}})])
+                    Ok(vec![
+                        serde_json::json!({"event_type": "next2", "payload": {}}),
+                    ])
                 }),
                 input_type: "next1".to_string(),
                 output_types: vec!["next2".to_string()],
@@ -2678,7 +2692,9 @@ mod inner {
 
             let runner = WorkflowRunner::new(graph);
             let initial = serde_json::json!({"event_type": "start", "payload": {}});
-            let result = runner.run("wf-inc", initial, WorkflowState::new()).expect("run");
+            let result = runner
+                .run("wf-inc", initial, WorkflowState::new())
+                .expect("run");
             assert!(result.completed);
             assert_eq!(
                 result.final_state.get("counter"),
@@ -2703,7 +2719,9 @@ mod inner {
 
             let runner = WorkflowRunner::new(graph);
             let initial = serde_json::json!({"event_type": "start", "payload": {}});
-            let result = runner.run("wf-sink", initial, WorkflowState::new()).expect("run");
+            let result = runner
+                .run("wf-sink", initial, WorkflowState::new())
+                .expect("run");
             assert!(result.completed);
             assert_eq!(result.steps_executed, 1);
         }
@@ -2735,8 +2753,7 @@ mod inner {
             let tool = WorkflowTool::new("td_ser", "Tool def serializable", def);
             let td = tool.to_tool_definition();
             let json = serde_json::to_string(&td).expect("serialize");
-            let deser: WorkflowToolDefinition =
-                serde_json::from_str(&json).expect("deserialize");
+            let deser: WorkflowToolDefinition = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(deser.name, "td_ser");
             assert_eq!(deser.category, "workflow");
         }
@@ -2757,7 +2774,9 @@ mod inner {
             runner.set_max_steps(0);
 
             let initial = serde_json::json!({"event_type": "start", "payload": {}});
-            let result = runner.run("wf-0", initial, WorkflowState::new()).expect("run");
+            let result = runner
+                .run("wf-0", initial, WorkflowState::new())
+                .expect("run");
             assert!(!result.completed);
             assert_eq!(result.steps_executed, 0);
         }
@@ -2788,7 +2807,9 @@ mod inner {
                 "event_type": "start",
                 "payload": {"msg": "hello", "num": 42}
             });
-            let result = runner.run("wf-recv", initial, WorkflowState::new()).expect("run");
+            let result = runner
+                .run("wf-recv", initial, WorkflowState::new())
+                .expect("run");
             let received = result.final_state.get("received").expect("received");
             assert_eq!(received["msg"], "hello");
             assert_eq!(received["num"], 42);
@@ -2837,7 +2858,10 @@ mod inner {
                 retention_policy: RetentionPolicy::KeepLast(5),
                 recovery_enabled: false,
             };
-            assert_eq!(config.backend, DurableBackend::Custom("rocksdb".to_string()));
+            assert_eq!(
+                config.backend,
+                DurableBackend::Custom("rocksdb".to_string())
+            );
             assert!(!config.auto_checkpoint);
             assert_eq!(config.retention_policy, RetentionPolicy::KeepLast(5));
             assert!(!config.recovery_enabled);
@@ -2922,9 +2946,7 @@ mod inner {
             graph.add_node(WorkflowNode {
                 id: "fail".to_string(),
                 name: "Fail".to_string(),
-                handler: Box::new(|_p, _s| {
-                    Err(AiError::Other("durable failure".to_string()))
-                }),
+                handler: Box::new(|_p, _s| Err(AiError::Other("durable failure".to_string()))),
                 input_type: "start".to_string(),
                 output_types: vec![],
                 timeout_ms: None,
@@ -2942,9 +2964,7 @@ mod inner {
 
             // Should have error-related durable checkpoints.
             let durable_cps = executor.get_durable_checkpoints();
-            let has_error_cp = durable_cps
-                .iter()
-                .any(|cp| cp.node_id.starts_with("error"));
+            let has_error_cp = durable_cps.iter().any(|cp| cp.node_id.starts_with("error"));
             assert!(has_error_cp, "expected an error checkpoint");
             assert!(result.values.is_empty() || result.step_count == 0);
         }

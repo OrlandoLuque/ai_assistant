@@ -53,10 +53,7 @@ impl SelfReflector {
         for output_field in &signature.outputs {
             if !compiled.system_prompt.contains(&output_field.name) {
                 rules.push(ImprovementRule {
-                    condition: format!(
-                        "missing_output_field_reference:{}",
-                        output_field.name
-                    ),
+                    condition: format!("missing_output_field_reference:{}", output_field.name),
                     action: format!(
                         "Add explicit reference to output field '{}' in the system prompt",
                         output_field.name
@@ -96,9 +93,9 @@ impl SelfReflector {
         // Rule 4: Check input field coverage in examples
         for input_field in &signature.inputs {
             if input_field.required {
-                let all_covered = examples.iter().all(|ex| {
-                    ex.inputs.contains_key(&input_field.name)
-                });
+                let all_covered = examples
+                    .iter()
+                    .all(|ex| ex.inputs.contains_key(&input_field.name));
                 if !all_covered {
                     rules.push(ImprovementRule {
                         condition: format!(
@@ -118,9 +115,9 @@ impl SelfReflector {
         // Rule 5: Check output field coverage in examples
         for output_field in &signature.outputs {
             if output_field.required {
-                let all_covered = examples.iter().all(|ex| {
-                    ex.expected_outputs.contains_key(&output_field.name)
-                });
+                let all_covered = examples
+                    .iter()
+                    .all(|ex| ex.expected_outputs.contains_key(&output_field.name));
                 if !all_covered {
                     rules.push(ImprovementRule {
                         condition: format!(
@@ -141,7 +138,8 @@ impl SelfReflector {
         if compiled.system_prompt.len() < 50 {
             rules.push(ImprovementRule {
                 condition: "short_system_prompt".to_string(),
-                action: "System prompt is very short; consider adding more context and constraints".to_string(),
+                action: "System prompt is very short; consider adding more context and constraints"
+                    .to_string(),
                 applied: false,
             });
         }
@@ -194,11 +192,7 @@ impl SelfReflector {
     /// Apply improvement rules by modifying a signature and recompiling.
     ///
     /// Returns the updated signature with improvements applied.
-    pub fn apply_rules(
-        &self,
-        signature: &Signature,
-        rules: &[ImprovementRule],
-    ) -> Signature {
+    pub fn apply_rules(&self, signature: &Signature, rules: &[ImprovementRule]) -> Signature {
         let mut improved = signature.clone();
 
         // Collect actions into instructions
@@ -206,11 +200,11 @@ impl SelfReflector {
 
         for rule in rules {
             if rule.condition == "no_instructions" {
-                extra_instructions.push(
-                    "Follow the field descriptions carefully.".to_string(),
-                );
+                extra_instructions.push("Follow the field descriptions carefully.".to_string());
             } else if rule.condition.starts_with("missing_type_guidance:") {
-                let field_name = rule.condition.strip_prefix("missing_type_guidance:")
+                let field_name = rule
+                    .condition
+                    .strip_prefix("missing_type_guidance:")
                     .unwrap_or("");
                 for output_field in &signature.outputs {
                     if output_field.name == field_name {

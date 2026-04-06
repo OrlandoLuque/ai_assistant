@@ -132,7 +132,11 @@ impl TournamentSelector {
         let mut result = Vec::with_capacity(n);
 
         // Sort by score descending to identify elites
-        let mut indexed: Vec<(usize, f64)> = population.iter().enumerate().map(|(i, (_, s))| (i, *s)).collect();
+        let mut indexed: Vec<(usize, f64)> = population
+            .iter()
+            .enumerate()
+            .map(|(i, (_, s))| (i, *s))
+            .collect();
         indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         // Keep elites
@@ -147,7 +151,9 @@ impl TournamentSelector {
             let mut best_idx = seed % n;
             let mut best_score = population[best_idx].1;
             for t in 1..self.tournament_size {
-                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                seed = seed
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
                 let candidate_idx = (seed >> 16) % n;
                 if population[candidate_idx].1 > best_score {
                     best_score = population[candidate_idx].1;
@@ -156,7 +162,9 @@ impl TournamentSelector {
                 let _ = t;
             }
             result.push(population[best_idx].0.clone());
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
         }
 
         result
@@ -205,7 +213,10 @@ impl SimbaOptimizer {
     /// Based on `strength` (0.0..1.0), applies random word swaps, capitalization
     /// changes, and emphasis markers.
     fn mutate_instruction(instruction: &str, strength: f64, seed: usize) -> String {
-        let mut words: Vec<String> = instruction.split_whitespace().map(|w| w.to_string()).collect();
+        let mut words: Vec<String> = instruction
+            .split_whitespace()
+            .map(|w| w.to_string())
+            .collect();
         if words.is_empty() {
             // Generate a base instruction if empty
             let bases = [
@@ -219,7 +230,9 @@ impl SimbaOptimizer {
 
         let mut rng_state: usize = seed;
         let mut next_rng = || -> usize {
-            rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            rng_state = rng_state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (rng_state >> 16) & 0xFFFF
         };
 
@@ -255,7 +268,11 @@ impl SimbaOptimizer {
         let prob = (r as f64) / 65535.0;
         if prob < strength * 0.3 {
             let marker = emphasis_markers[next_rng() % emphasis_markers.len()];
-            let insert_pos = if words.is_empty() { 0 } else { next_rng() % words.len() };
+            let insert_pos = if words.is_empty() {
+                0
+            } else {
+                next_rng() % words.len()
+            };
             words.insert(insert_pos, marker.to_string());
         }
 
@@ -355,7 +372,8 @@ impl SimbaOptimizer {
             let selected = self.selector.select(&population);
 
             // Create offspring via mutation
-            let mut new_population: Vec<(String, f64)> = Vec::with_capacity(self.config.population_size);
+            let mut new_population: Vec<(String, f64)> =
+                Vec::with_capacity(self.config.population_size);
 
             // Determine mutation strength from strategy
             let mutation_strength = match &self.mutation_strategy {
@@ -364,7 +382,11 @@ impl SimbaOptimizer {
                 MutationStrategy::LlmGuided { .. } => 0.3,
                 MutationStrategy::Combined { weights, .. } => {
                     let sum: f64 = weights.iter().sum();
-                    if sum > 0.0 { 0.3 * (weights.len() as f64 / sum).min(1.0) } else { 0.3 }
+                    if sum > 0.0 {
+                        0.3 * (weights.len() as f64 / sum).min(1.0)
+                    } else {
+                        0.3
+                    }
                 }
             };
 
@@ -423,9 +445,7 @@ impl SimbaOptimizer {
         }
 
         // Build final result
-        let best_sig = signature
-            .clone()
-            .with_instructions(best_instruction);
+        let best_sig = signature.clone().with_instructions(best_instruction);
         let best_prompt = best_sig.compile();
 
         OptimizationResult {

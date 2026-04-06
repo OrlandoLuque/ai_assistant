@@ -1184,7 +1184,10 @@ mod tests {
         assert_eq!(restored.entries[0].source, "computer");
         assert_eq!(restored.entries[0].target, "ordenador");
         assert_eq!(restored.entries[1].source, "mouse");
-        assert_eq!(restored.entries[1].context, Some("input device".to_string()));
+        assert_eq!(
+            restored.entries[1].context,
+            Some("input device".to_string())
+        );
     }
 
     #[test]
@@ -1318,7 +1321,8 @@ mod tests {
         let analyzer = TranslationAnalyzer::new(config);
 
         let source = "The quick brown fox jumps over the lazy dog near the river bank.";
-        let target = "El rapido zorro marron salta sobre el perro perezoso cerca del banco del rio.";
+        let target =
+            "El rapido zorro marron salta sobre el perro perezoso cerca del banco del rio.";
 
         let result = analyzer.analyze(source, target);
 
@@ -1350,7 +1354,8 @@ mod tests {
     fn test_detect_language_english() {
         let analyzer = TranslationAnalyzer::new(TranslationAnalysisConfig::default());
 
-        let text = "The children that have been playing with the dog are not going to school today.";
+        let text =
+            "The children that have been playing with the dog are not going to school today.";
         let lang = analyzer.detect_language(text);
         assert_eq!(lang, Some("en".to_string()));
     }

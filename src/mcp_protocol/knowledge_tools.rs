@@ -39,10 +39,7 @@ pub fn register_knowledge_tools(
 
 /// Lazy-opening RagDb wrapper for MCP tool handlers.
 /// Opens the database connection on first use and caches it.
-fn get_or_open_db(
-    db: &Mutex<Option<RagDb>>,
-    path: &Path,
-) -> Result<(), String> {
+fn get_or_open_db(db: &Mutex<Option<RagDb>>, path: &Path) -> Result<(), String> {
     let mut lock = db.lock().map_err(|e| format!("Lock error: {}", e))?;
     if lock.is_none() {
         *lock = Some(RagDb::open(path).map_err(|e| format!("Failed to open RAG DB: {}", e))?);
@@ -156,7 +153,12 @@ fn register_query_graph(server: &mut McpServer, kg: Arc<KnowledgeGraph>) {
             "Query the knowledge graph for entities, relations, and related document chunks. \
              Extracts entities from the query and finds matching nodes in the graph.",
         )
-        .with_property("query", "string", "Natural language query to search entities", true)
+        .with_property(
+            "query",
+            "string",
+            "Natural language query to search entities",
+            true,
+        )
         .with_annotations(McpToolAnnotation {
             title: Some("Query Knowledge Graph".to_string()),
             read_only_hint: Some(true),

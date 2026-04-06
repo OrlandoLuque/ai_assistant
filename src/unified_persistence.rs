@@ -136,9 +136,9 @@ impl UnifiedDb {
 
     /// List all applied schema versions.
     pub fn applied_versions(&self) -> Result<Vec<SchemaVersion>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT version, description, applied_at FROM schema_versions ORDER BY version")?;
+        let mut stmt = self.conn.prepare(
+            "SELECT version, description, applied_at FROM schema_versions ORDER BY version",
+        )?;
 
         let versions = stmt
             .query_map([], |row| {
@@ -356,8 +356,8 @@ impl<'a> SqliteSessionStore<'a> {
     pub fn save_session(&self, session: &ChatSession) -> Result<()> {
         let tx = self.db.conn.unchecked_transaction()?;
 
-        let prefs_json = serde_json::to_string(&session.preferences)
-            .unwrap_or_else(|_| "{}".to_string());
+        let prefs_json =
+            serde_json::to_string(&session.preferences).unwrap_or_else(|_| "{}".to_string());
 
         // Upsert session metadata
         tx.execute(
@@ -464,8 +464,7 @@ impl<'a> SqliteSessionStore<'a> {
             Err(e) => return Err(e.into()),
         };
 
-        let preferences: UserPreferences =
-            serde_json::from_str(&prefs_json).unwrap_or_default();
+        let preferences: UserPreferences = serde_json::from_str(&prefs_json).unwrap_or_default();
 
         let created_at = chrono::DateTime::parse_from_rfc3339(&created_str)
             .map(|dt| dt.with_timezone(&chrono::Utc))
@@ -536,9 +535,7 @@ impl<'a> SqliteSessionStore<'a> {
     /// Delete a session and all its messages.
     pub fn delete_session(&self, session_id: &str) -> Result<bool> {
         // Messages are cascade-deleted via FK, but SQLite foreign_keys must be enabled
-        self.db
-            .conn
-            .execute("PRAGMA foreign_keys = ON", [])?;
+        self.db.conn.execute("PRAGMA foreign_keys = ON", [])?;
 
         let deleted = self.db.conn.execute(
             "DELETE FROM sessions WHERE id = ?1",
@@ -604,9 +601,7 @@ impl<'a> SqliteSessionStore<'a> {
                     report.messages_imported += session.messages.len();
                 }
                 Err(e) => {
-                    report
-                        .errors
-                        .push(format!("Session {}: {}", session.id, e));
+                    report.errors.push(format!("Session {}: {}", session.id, e));
                 }
             }
         }
@@ -625,11 +620,12 @@ impl<'a> SqliteSessionStore<'a> {
 
     /// Return the total number of messages across all sessions.
     pub fn message_count(&self) -> Result<usize> {
-        let count: i64 = self.db.conn.query_row(
-            "SELECT COUNT(*) FROM session_messages",
-            [],
-            |row| row.get(0),
-        )?;
+        let count: i64 =
+            self.db
+                .conn
+                .query_row("SELECT COUNT(*) FROM session_messages", [], |row| {
+                    row.get(0)
+                })?;
         Ok(count as usize)
     }
 
@@ -719,15 +715,16 @@ pub enum UserScope {
 /// This helps developers understand what's safe to share and what must be isolated.
 pub fn classify_data_scope(data_type: &str) -> UserScope {
     match data_type {
-        "conversation" | "messages" | "session" | "preferences"
-        | "memory" | "episodic" | "procedural" | "entity_memory"
-        | "working_memory" | "user_notes" | "session_notes" => UserScope::Private,
+        "conversation" | "messages" | "session" | "preferences" | "memory" | "episodic"
+        | "procedural" | "entity_memory" | "working_memory" | "user_notes" | "session_notes" => {
+            UserScope::Private
+        }
 
-        "knowledge_chunks" | "knowledge_sources" | "knowledge_graph"
-        | "model_catalog" | "guardrails" | "templates" => UserScope::Shared,
+        "knowledge_chunks" | "knowledge_sources" | "knowledge_graph" | "model_catalog"
+        | "guardrails" | "templates" => UserScope::Shared,
 
-        "rate_limits" | "active_nodes" | "cluster_config"
-        | "crdt_counters" | "crdt_sets" | "crdt_registers" => UserScope::Replicated,
+        "rate_limits" | "active_nodes" | "cluster_config" | "crdt_counters" | "crdt_sets"
+        | "crdt_registers" => UserScope::Replicated,
 
         _ => UserScope::Private, // Default to private for safety
     }
@@ -1233,9 +1230,7 @@ mod tests {
         // Create a session
         let mut session = ChatSession::new("Test session");
         session.messages.push(ChatMessage::user("Hello"));
-        session
-            .messages
-            .push(ChatMessage::assistant("Hi there!"));
+        session.messages.push(ChatMessage::assistant("Hi there!"));
 
         // Save
         store.save_session(&session).expect("save");
@@ -1332,8 +1327,7 @@ mod tests {
         let mut s2 = ChatSession::new("Imported 2");
         s2.id = "import_test_2".to_string();
         s2.messages.push(ChatMessage::user("Another one"));
-        s2.messages
-            .push(ChatMessage::assistant("Response"));
+        s2.messages.push(ChatMessage::assistant("Response"));
         css.save_session(s2);
 
         // Import
@@ -1370,10 +1364,7 @@ mod tests {
         assert_eq!(snap.store_name, "episodic");
 
         // Load by ID
-        let snap2 = mem
-            .load_by_id(id)
-            .expect("load by id")
-            .expect("exists");
+        let snap2 = mem.load_by_id(id).expect("load by id").expect("exists");
         assert_eq!(snap2.id, id);
     }
 
@@ -1393,10 +1384,7 @@ mod tests {
         assert_eq!(count, 3);
 
         // Latest should be the last one saved
-        let latest = mem
-            .load_latest("rotating")
-            .expect("load")
-            .expect("exists");
+        let latest = mem.load_latest("rotating").expect("load").expect("exists");
         assert_eq!(latest.data, vec![4u8]);
     }
 
@@ -1420,12 +1408,10 @@ mod tests {
         // Load should fail with checksum mismatch
         let result = mem.load_latest("integrity");
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Checksum mismatch")
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Checksum mismatch"));
     }
 
     #[test]
@@ -1511,7 +1497,10 @@ mod tests {
         assert!(store.load_session("nonexistent").expect("load").is_none());
         assert!(!store.delete_session("nonexistent").expect("del"));
         assert!(store.list_sessions().expect("list").is_empty());
-        assert!(store.search_messages("anything", 10).expect("search").is_empty());
+        assert!(store
+            .search_messages("anything", 10)
+            .expect("search")
+            .is_empty());
 
         // Memory
         assert_eq!(mem.snapshot_count("any").expect("c"), 0);
@@ -1548,19 +1537,20 @@ mod tests {
         s1.id = "alice_1".to_string();
         s1.messages.push(ChatMessage::user("Hello from Alice"));
         store.save_session(&s1).expect("save s1");
-        db.conn.execute(
-            "UPDATE sessions SET user_id = 'alice' WHERE id = 'alice_1'",
-            [],
-        ).expect("set user");
+        db.conn
+            .execute(
+                "UPDATE sessions SET user_id = 'alice' WHERE id = 'alice_1'",
+                [],
+            )
+            .expect("set user");
 
         let mut s2 = ChatSession::new("Bob session");
         s2.id = "bob_1".to_string();
         s2.messages.push(ChatMessage::user("Hello from Bob"));
         store.save_session(&s2).expect("save s2");
-        db.conn.execute(
-            "UPDATE sessions SET user_id = 'bob' WHERE id = 'bob_1'",
-            [],
-        ).expect("set user");
+        db.conn
+            .execute("UPDATE sessions SET user_id = 'bob' WHERE id = 'bob_1'", [])
+            .expect("set user");
 
         // Filter by user
         let alice_sessions = store.list_sessions_for_user("alice").expect("alice");

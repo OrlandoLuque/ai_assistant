@@ -98,7 +98,8 @@ impl ClusterMetrics {
 
     /// Record a circuit breaker open event.
     pub fn record_circuit_breaker_open(&self) {
-        self.circuit_breaker_opens_total.fetch_add(1, Ordering::Relaxed);
+        self.circuit_breaker_opens_total
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record a session migration.
@@ -108,15 +109,33 @@ impl ClusterMetrics {
 
     // ========== Getters ==========
 
-    pub fn active_nodes(&self) -> u64 { self.active_nodes.load(Ordering::Relaxed) }
-    pub fn crdt_syncs_total(&self) -> u64 { self.crdt_syncs_total.load(Ordering::Relaxed) }
-    pub fn crdt_merges_total(&self) -> u64 { self.crdt_merges_total.load(Ordering::Relaxed) }
-    pub fn rate_limit_syncs_total(&self) -> u64 { self.rate_limit_syncs_total.load(Ordering::Relaxed) }
-    pub fn ring_rebalances_total(&self) -> u64 { self.ring_rebalances_total.load(Ordering::Relaxed) }
-    pub fn circuit_breaker_opens_total(&self) -> u64 { self.circuit_breaker_opens_total.load(Ordering::Relaxed) }
-    pub fn sessions_migrated_total(&self) -> u64 { self.sessions_migrated_total.load(Ordering::Relaxed) }
-    pub fn crdt_state_bytes(&self) -> u64 { self.crdt_state_bytes.load(Ordering::Relaxed) }
-    pub fn sync_lag_ms(&self) -> u64 { self.sync_lag_ms.load(Ordering::Relaxed) }
+    pub fn active_nodes(&self) -> u64 {
+        self.active_nodes.load(Ordering::Relaxed)
+    }
+    pub fn crdt_syncs_total(&self) -> u64 {
+        self.crdt_syncs_total.load(Ordering::Relaxed)
+    }
+    pub fn crdt_merges_total(&self) -> u64 {
+        self.crdt_merges_total.load(Ordering::Relaxed)
+    }
+    pub fn rate_limit_syncs_total(&self) -> u64 {
+        self.rate_limit_syncs_total.load(Ordering::Relaxed)
+    }
+    pub fn ring_rebalances_total(&self) -> u64 {
+        self.ring_rebalances_total.load(Ordering::Relaxed)
+    }
+    pub fn circuit_breaker_opens_total(&self) -> u64 {
+        self.circuit_breaker_opens_total.load(Ordering::Relaxed)
+    }
+    pub fn sessions_migrated_total(&self) -> u64 {
+        self.sessions_migrated_total.load(Ordering::Relaxed)
+    }
+    pub fn crdt_state_bytes(&self) -> u64 {
+        self.crdt_state_bytes.load(Ordering::Relaxed)
+    }
+    pub fn sync_lag_ms(&self) -> u64 {
+        self.sync_lag_ms.load(Ordering::Relaxed)
+    }
 
     /// Take a snapshot of all metrics.
     pub fn snapshot(&self) -> MetricsSnapshot {
@@ -166,15 +185,24 @@ impl ClusterMetrics {
                 "# TYPE ai_cluster_sessions_migrated_total counter\n",
                 "ai_cluster_sessions_migrated_total{{node=\"{}\"}} {}\n",
             ),
-            node, self.active_nodes(),
-            node, self.sync_lag_ms() as f64 / 1000.0,
-            node, self.crdt_syncs_total(),
-            node, self.crdt_merges_total(),
-            node, self.crdt_state_bytes(),
-            node, self.rate_limit_syncs_total(),
-            node, self.ring_rebalances_total(),
-            node, self.circuit_breaker_opens_total(),
-            node, self.sessions_migrated_total(),
+            node,
+            self.active_nodes(),
+            node,
+            self.sync_lag_ms() as f64 / 1000.0,
+            node,
+            self.crdt_syncs_total(),
+            node,
+            self.crdt_merges_total(),
+            node,
+            self.crdt_state_bytes(),
+            node,
+            self.rate_limit_syncs_total(),
+            node,
+            self.ring_rebalances_total(),
+            node,
+            self.circuit_breaker_opens_total(),
+            node,
+            self.sessions_migrated_total(),
         )
     }
 }

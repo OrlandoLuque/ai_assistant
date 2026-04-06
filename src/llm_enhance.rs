@@ -235,7 +235,10 @@ impl LlmEnhancer for CachedLlmEnhancer {
 
         // Check cache
         {
-            let cache = self.cache.lock().map_err(|e| format!("Cache lock error: {}", e))?;
+            let cache = self
+                .cache
+                .lock()
+                .map_err(|e| format!("Cache lock error: {}", e))?;
             if let Some(entry) = cache.get(&hash) {
                 if entry.created.elapsed() < self.ttl {
                     return Ok(entry.response.clone());
@@ -248,7 +251,10 @@ impl LlmEnhancer for CachedLlmEnhancer {
 
         // Store in cache
         {
-            let mut cache = self.cache.lock().map_err(|e| format!("Cache lock error: {}", e))?;
+            let mut cache = self
+                .cache
+                .lock()
+                .map_err(|e| format!("Cache lock error: {}", e))?;
             cache.insert(
                 hash,
                 CacheEntry {

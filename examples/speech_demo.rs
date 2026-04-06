@@ -10,8 +10,8 @@
 //! - Butler-based auto-detection (requires features: audio,butler)
 
 use ai_assistant::{
-    AudioFormat, CoquiTtsProvider, LocalSpeechProvider, OpenAISpeechProvider,
-    PiperTtsProvider, SpeechProvider, SynthesisOptions,
+    AudioFormat, CoquiTtsProvider, LocalSpeechProvider, OpenAISpeechProvider, PiperTtsProvider,
+    SpeechProvider, SynthesisOptions,
 };
 
 fn main() -> anyhow::Result<()> {
@@ -22,7 +22,10 @@ fn main() -> anyhow::Result<()> {
     // OpenAI: reads OPENAI_API_KEY from the environment.
     println!("--- Provider creation ---");
     match OpenAISpeechProvider::from_env() {
-        Ok(p) => println!("[ok] OpenAI provider created (voices: {:?})", p.tts_voices()),
+        Ok(p) => println!(
+            "[ok] OpenAI provider created (voices: {:?})",
+            p.tts_voices()
+        ),
         Err(e) => println!("[skip] OpenAI: {} (set OPENAI_API_KEY to enable)", e),
     }
 
@@ -46,8 +49,8 @@ fn main() -> anyhow::Result<()> {
 
     // LocalSpeechProvider: composite that delegates STT and TTS separately.
     // Combine a whisper.cpp HTTP server for STT + Piper for TTS.
-    let whisper_http = OpenAISpeechProvider::new("not-needed")
-        .with_base_url("http://localhost:8080");
+    let whisper_http =
+        OpenAISpeechProvider::new("not-needed").with_base_url("http://localhost:8080");
     let local_combo = LocalSpeechProvider::new(
         Box::new(whisper_http),
         Box::new(PiperTtsProvider::default_local()),
@@ -128,8 +131,8 @@ fn main() -> anyhow::Result<()> {
     println!("\n--- Local whisper.cpp server (with_base_url) ---");
     println!("If you run whisper.cpp server on port 8080:");
     println!("  ./server -m ggml-base.en.bin --port 8080");
-    let local_whisper = OpenAISpeechProvider::new("not-needed")
-        .with_base_url("http://localhost:8080");
+    let local_whisper =
+        OpenAISpeechProvider::new("not-needed").with_base_url("http://localhost:8080");
     println!(
         "  Provider: name={}, stt={}, base_url overridden to localhost:8080",
         local_whisper.name(),
@@ -197,7 +200,7 @@ fn build_silent_wav(sample_rate: u32, duration_secs: f32) -> Vec<u8> {
     buf.extend_from_slice(&(sample_rate * 2).to_le_bytes()); // byte rate
     buf.extend_from_slice(&2u16.to_le_bytes()); // block align
     buf.extend_from_slice(&16u16.to_le_bytes()); // bits per sample
-    // data subchunk
+                                                 // data subchunk
     buf.extend_from_slice(b"data");
     buf.extend_from_slice(&data_size.to_le_bytes());
     buf.resize(buf.len() + data_size as usize, 0); // silence

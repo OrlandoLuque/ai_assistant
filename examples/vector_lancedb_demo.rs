@@ -134,7 +134,9 @@ fn main() {
     let batch: Vec<(String, Vec<f32>, serde_json::Value)> = (0..10)
         .map(|i| {
             let id = format!("batch_{}", i);
-            let vec: Vec<f32> = (0..128).map(|d| ((i * 128 + d) as f32 * 0.01).sin()).collect();
+            let vec: Vec<f32> = (0..128)
+                .map(|d| ((i * 128 + d) as f32 * 0.01).sin())
+                .collect();
             let meta = serde_json::json!({ "batch": true, "index": i });
             (id, vec, meta)
         })

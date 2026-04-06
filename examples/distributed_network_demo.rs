@@ -11,8 +11,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use ai_assistant::{
-    NetworkConfig, NetworkNode, ReplicationConfig, WriteMode,
-    NetworkDiscoveryConfig,
+    NetworkConfig, NetworkDiscoveryConfig, NetworkNode, ReplicationConfig, WriteMode,
 };
 
 fn main() {
@@ -55,9 +54,15 @@ fn main() {
 
     println!("  Listen address:     {}", config.listen_addr);
     println!("  Heartbeat interval: {:?}", config.heartbeat_interval);
-    println!("  Replication copies: {}-{}", config.replication.min_copies, config.replication.max_copies);
+    println!(
+        "  Replication copies: {}-{}",
+        config.replication.min_copies, config.replication.max_copies
+    );
     println!("  Write mode:         {:?}", config.replication.write_mode);
-    println!("  VNodes per node:    {}", config.replication.vnodes_per_node);
+    println!(
+        "  VNodes per node:    {}",
+        config.replication.vnodes_per_node
+    );
     println!("  Max connections:    {}", config.max_connections);
     println!("  Phi threshold:      {}", config.phi_threshold);
 

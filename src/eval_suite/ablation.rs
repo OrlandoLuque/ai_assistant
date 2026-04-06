@@ -163,7 +163,10 @@ impl AblationEngine {
 
     /// Run multiple ablation studies in batch.
     pub fn analyze_batch(studies: &[AblationStudy], confidence: f64) -> Vec<AblationResult> {
-        studies.iter().map(|s| Self::analyze(s, confidence)).collect()
+        studies
+            .iter()
+            .map(|s| Self::analyze(s, confidence))
+            .collect()
     }
 
     /// Extract per-problem mean scores from a run.
@@ -276,27 +279,36 @@ fn normal_cdf(x: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use super::super::runner::{ModelIdentifier, ProblemResult, TokenUsage};
     use super::super::dataset::BenchmarkSuiteType;
+    use super::super::runner::{ModelIdentifier, ProblemResult, TokenUsage};
+    use super::*;
     use std::collections::HashMap;
 
     fn make_run(scores: &[f64], cost: f64) -> BenchmarkRunResult {
-        let model = ModelIdentifier { name: "test".into(), provider: "test".into(), variant: None };
-        let results: Vec<ProblemResult> = scores.iter().enumerate().map(|(i, &s)| {
-            ProblemResult {
+        let model = ModelIdentifier {
+            name: "test".into(),
+            provider: "test".into(),
+            variant: None,
+        };
+        let results: Vec<ProblemResult> = scores
+            .iter()
+            .enumerate()
+            .map(|(i, &s)| ProblemResult {
                 problem_id: format!("p/{}", i),
                 model_id: model.clone(),
                 responses: vec!["resp".into()],
                 scores: vec![s],
                 passed: vec![s >= 0.99],
                 latencies_ms: vec![100],
-                token_counts: vec![TokenUsage { input_tokens: 50, output_tokens: 20 }],
+                token_counts: vec![TokenUsage {
+                    input_tokens: 50,
+                    output_tokens: 20,
+                }],
                 cost_estimates: vec![cost / scores.len() as f64],
                 error: None,
                 metadata: HashMap::new(),
-            }
-        }).collect();
+            })
+            .collect();
 
         BenchmarkRunResult {
             run_id: "run".into(),
@@ -307,7 +319,10 @@ mod tests {
             started_at: 1000,
             completed_at: 1010,
             total_cost: cost,
-            total_tokens: TokenUsage { input_tokens: 500, output_tokens: 200 },
+            total_tokens: TokenUsage {
+                input_tokens: 500,
+                output_tokens: 200,
+            },
         }
     }
 
@@ -325,7 +340,10 @@ mod tests {
         assert!(result.quality_delta > 0.0);
         assert!(result.is_significant);
         assert!(result.effect_size > 0.5); // Large effect
-        assert!(matches!(result.recommendation, AblationRecommendation::Enable { .. }));
+        assert!(matches!(
+            result.recommendation,
+            AblationRecommendation::Enable { .. }
+        ));
     }
 
     #[test]
@@ -341,7 +359,10 @@ mod tests {
 
         assert!((result.quality_delta).abs() < 0.01);
         assert!(!result.is_significant);
-        assert!(matches!(result.recommendation, AblationRecommendation::Neutral));
+        assert!(matches!(
+            result.recommendation,
+            AblationRecommendation::Neutral
+        ));
     }
 
     #[test]
@@ -357,7 +378,10 @@ mod tests {
 
         assert!(result.quality_delta < 0.0);
         assert!(result.is_significant);
-        assert!(matches!(result.recommendation, AblationRecommendation::Disable { .. }));
+        assert!(matches!(
+            result.recommendation,
+            AblationRecommendation::Disable { .. }
+        ));
     }
 
     #[test]
@@ -371,7 +395,10 @@ mod tests {
         };
         let result = AblationEngine::analyze(&study, 0.95);
 
-        assert!(matches!(result.recommendation, AblationRecommendation::InsufficientData));
+        assert!(matches!(
+            result.recommendation,
+            AblationRecommendation::InsufficientData
+        ));
     }
 
     #[test]

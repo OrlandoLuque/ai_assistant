@@ -75,8 +75,14 @@ pub fn validate_domain(domain: &str) -> Result<(), String> {
     if domain.is_empty() || domain.len() > 64 {
         return Err("Invalid domain length".into());
     }
-    if !domain.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-        return Err(format!("Invalid domain '{}': alphanumeric and underscore only", domain));
+    if !domain
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return Err(format!(
+            "Invalid domain '{}': alphanumeric and underscore only",
+            domain
+        ));
     }
     Ok(())
 }
@@ -85,8 +91,14 @@ pub fn validate_service_name(service: &str) -> Result<(), String> {
     if service.is_empty() || service.len() > 64 {
         return Err("Invalid service name length".into());
     }
-    if !service.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-        return Err(format!("Invalid service '{}': alphanumeric and underscore only", service));
+    if !service
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return Err(format!(
+            "Invalid service '{}': alphanumeric and underscore only",
+            service
+        ));
     }
     Ok(())
 }

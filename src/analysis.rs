@@ -870,13 +870,12 @@ pub fn cluster_topics_by_embedding(messages: &[&str], threshold: f32) -> Vec<(St
 
     // Stop words for label generation
     let stop_words: std::collections::HashSet<&str> = [
-        "the", "a", "an", "is", "are", "was", "were", "be", "been", "have", "has",
-        "had", "do", "does", "did", "will", "would", "could", "should", "may", "might",
-        "to", "of", "in", "for", "on", "with", "at", "by", "from", "as", "into",
-        "and", "but", "if", "or", "so", "than", "too", "very", "just", "not", "no",
-        "this", "that", "it", "its", "i", "you", "he", "she", "we", "they", "my",
-        "your", "his", "her", "our", "their", "me", "us", "el", "la", "los", "las",
-        "un", "una", "de", "en", "con", "por", "para", "que", "es",
+        "the", "a", "an", "is", "are", "was", "were", "be", "been", "have", "has", "had", "do",
+        "does", "did", "will", "would", "could", "should", "may", "might", "to", "of", "in", "for",
+        "on", "with", "at", "by", "from", "as", "into", "and", "but", "if", "or", "so", "than",
+        "too", "very", "just", "not", "no", "this", "that", "it", "its", "i", "you", "he", "she",
+        "we", "they", "my", "your", "his", "her", "our", "their", "me", "us", "el", "la", "los",
+        "las", "un", "una", "de", "en", "con", "por", "para", "que", "es",
     ]
     .iter()
     .copied()
@@ -1493,16 +1492,17 @@ impl EmoticonDetector {
         }
 
         // Dominant category
-        let dominant_category = category_counts
-            .iter()
-            .max_by_key(|(_, count)| *count)
-            .map(|(cat_name, _)| {
-                matches
-                    .iter()
-                    .find(|m| m.category.to_string() == *cat_name)
-                    .map(|m| m.category.clone())
-                    .unwrap_or(EmojiCategory::Neutral)
-            });
+        let dominant_category =
+            category_counts
+                .iter()
+                .max_by_key(|(_, count)| *count)
+                .map(|(cat_name, _)| {
+                    matches
+                        .iter()
+                        .find(|m| m.category.to_string() == *cat_name)
+                        .map(|m| m.category.clone())
+                        .unwrap_or(EmojiCategory::Neutral)
+                });
 
         // Convert text emoticons to emoji
         let converted_text = self.convert_emoticons(text);
@@ -1667,7 +1667,10 @@ impl TopicDetector {
                                 .collect();
 
                             for ht in &heuristic {
-                                if !merged.iter().any(|m| m.name.to_lowercase() == ht.name.to_lowercase()) {
+                                if !merged
+                                    .iter()
+                                    .any(|m| m.name.to_lowercase() == ht.name.to_lowercase())
+                                {
                                     merged.push(ht.clone());
                                 }
                             }
@@ -1817,9 +1820,7 @@ impl SentimentAnalyzer {
             if llm_enhanced && enhancer.is_available() {
                 if let Some(prompt) = self.build_sentiment_trend_prompt(messages, llm_enhanced) {
                     if let Ok(response) = enhancer.generate(&prompt, 300) {
-                        if let Some(analysis) =
-                            Self::parse_sentiment_trend_response(&response)
-                        {
+                        if let Some(analysis) = Self::parse_sentiment_trend_response(&response) {
                             return analysis;
                         }
                     }
@@ -2007,7 +2008,12 @@ mod tests {
             Sentiment::VeryNegative,
         ] {
             let s = variant.score();
-            assert!((-1.0..=1.0).contains(&s), "Score {} out of range for {:?}", s, variant);
+            assert!(
+                (-1.0..=1.0).contains(&s),
+                "Score {} out of range for {:?}",
+                s,
+                variant
+            );
         }
     }
 
@@ -2022,7 +2028,11 @@ mod tests {
             Sentiment::VeryNegative,
         ] {
             let emoji = variant.emoji();
-            assert!(!emoji.is_empty(), "Emoji should be non-empty for {:?}", variant);
+            assert!(
+                !emoji.is_empty(),
+                "Emoji should be non-empty for {:?}",
+                variant
+            );
         }
 
         // Distinct variants have distinct emojis
@@ -2063,7 +2073,11 @@ mod tests {
             Sentiment::VeryNegative,
         ] {
             let display = format!("{}", variant);
-            assert!(!display.is_empty(), "Display should be non-empty for {:?}", variant);
+            assert!(
+                !display.is_empty(),
+                "Display should be non-empty for {:?}",
+                variant
+            );
         }
     }
 
@@ -2091,9 +2105,16 @@ mod tests {
         let analyzer = SentimentAnalyzer::new();
 
         let result = analyzer.analyze_message("This is excellent and amazing work! I love it!");
-        assert!(result.score > 0.0, "Score should be positive, got {}", result.score);
         assert!(
-            matches!(result.sentiment, Sentiment::Positive | Sentiment::VeryPositive),
+            result.score > 0.0,
+            "Score should be positive, got {}",
+            result.score
+        );
+        assert!(
+            matches!(
+                result.sentiment,
+                Sentiment::Positive | Sentiment::VeryPositive
+            ),
             "Expected Positive or VeryPositive, got {:?}",
             result.sentiment,
         );
@@ -2107,10 +2128,18 @@ mod tests {
     fn test_analyze_message_negative() {
         let analyzer = SentimentAnalyzer::new();
 
-        let result = analyzer.analyze_message("This is terrible and awful. I hate this broken thing.");
-        assert!(result.score < 0.0, "Score should be negative, got {}", result.score);
+        let result =
+            analyzer.analyze_message("This is terrible and awful. I hate this broken thing.");
         assert!(
-            matches!(result.sentiment, Sentiment::Negative | Sentiment::VeryNegative),
+            result.score < 0.0,
+            "Score should be negative, got {}",
+            result.score
+        );
+        assert!(
+            matches!(
+                result.sentiment,
+                Sentiment::Negative | Sentiment::VeryNegative
+            ),
             "Expected Negative or VeryNegative, got {:?}",
             result.sentiment,
         );
@@ -2220,7 +2249,9 @@ mod tests {
         detector.add_topic("custom_topic", vec!["alpha", "beta", "gamma"]);
 
         // Verify topic can be detected
-        let messages = vec![ChatMessage::user("Testing alpha and beta parameters together.")];
+        let messages = vec![ChatMessage::user(
+            "Testing alpha and beta parameters together.",
+        )];
         let topics = detector.detect_topics(&messages);
         assert!(
             topics.iter().any(|t| t.name == "custom_topic"),
@@ -2243,7 +2274,10 @@ mod tests {
     fn test_topic_detector_custom_topics() {
         let mut detector = TopicDetector::new();
 
-        detector.add_topic("machine_learning", vec!["neural", "network", "training", "model", "dataset"]);
+        detector.add_topic(
+            "machine_learning",
+            vec!["neural", "network", "training", "model", "dataset"],
+        );
 
         let messages = vec![
             ChatMessage::user("I need help training a neural network model."),
@@ -2252,12 +2286,18 @@ mod tests {
 
         let topics = detector.detect_topics(&messages);
         let ml_topic = topics.iter().find(|t| t.name == "machine_learning");
-        assert!(ml_topic.is_some(), "machine_learning topic should be detected");
+        assert!(
+            ml_topic.is_some(),
+            "machine_learning topic should be detected"
+        );
 
         let ml = ml_topic.unwrap();
         assert!(ml.relevance > 0.0, "Relevance should be positive");
         assert!(!ml.keywords.is_empty(), "Should have matched keywords");
-        assert!(!ml.message_indices.is_empty(), "Should have message indices");
+        assert!(
+            !ml.message_indices.is_empty(),
+            "Should have message indices"
+        );
     }
 
     #[test]
@@ -2276,7 +2316,10 @@ mod tests {
 
         let main = main_topic.unwrap();
         // The main topic should have positive relevance
-        assert!(main.relevance > 0.0, "Main topic should have positive relevance");
+        assert!(
+            main.relevance > 0.0,
+            "Main topic should have positive relevance"
+        );
 
         // The main topic's relevance should be >= all other detected topics
         let all_topics = detector.detect_topics(&messages);
@@ -2365,7 +2408,10 @@ mod tests {
         // Summarize empty messages should not panic
         let summary = summarizer.summarize(&[]);
         assert_eq!(summary.message_count, 0);
-        assert!(!summary.summary.is_empty(), "Summary text should not be empty even for empty input");
+        assert!(
+            !summary.summary.is_empty(),
+            "Summary text should not be empty even for empty input"
+        );
         assert_eq!(summary.sentiment, Sentiment::Neutral);
         assert!(summary.key_points.is_empty());
         assert!(summary.topics.is_empty());
@@ -2385,14 +2431,32 @@ mod tests {
         let summarizer = SessionSummarizer::new(config);
 
         // Below threshold
-        assert!(!summarizer.should_summarize(0), "0 messages: should not summarize");
-        assert!(!summarizer.should_summarize(1), "1 message: should not summarize");
-        assert!(!summarizer.should_summarize(4), "4 messages: should not summarize");
+        assert!(
+            !summarizer.should_summarize(0),
+            "0 messages: should not summarize"
+        );
+        assert!(
+            !summarizer.should_summarize(1),
+            "1 message: should not summarize"
+        );
+        assert!(
+            !summarizer.should_summarize(4),
+            "4 messages: should not summarize"
+        );
 
         // At and above threshold
-        assert!(summarizer.should_summarize(5), "5 messages: should summarize");
-        assert!(summarizer.should_summarize(10), "10 messages: should summarize");
-        assert!(summarizer.should_summarize(100), "100 messages: should summarize");
+        assert!(
+            summarizer.should_summarize(5),
+            "5 messages: should summarize"
+        );
+        assert!(
+            summarizer.should_summarize(10),
+            "10 messages: should summarize"
+        );
+        assert!(
+            summarizer.should_summarize(100),
+            "100 messages: should summarize"
+        );
 
         // Disabled config should never trigger
         let disabled_config = SummaryConfig {
@@ -2502,21 +2566,33 @@ mod tests {
     fn test_sentiment_positive_emoticons() {
         let detector = EmoticonDetector::new();
         let score = detector.sentiment_score(":) :D <3");
-        assert!(score > 0.5, "Positive emoticons should give positive score, got {}", score);
+        assert!(
+            score > 0.5,
+            "Positive emoticons should give positive score, got {}",
+            score
+        );
     }
 
     #[test]
     fn test_sentiment_negative_emoticons() {
         let detector = EmoticonDetector::new();
         let score = detector.sentiment_score(":( >:( D:");
-        assert!(score < -0.5, "Negative emoticons should give negative score, got {}", score);
+        assert!(
+            score < -0.5,
+            "Negative emoticons should give negative score, got {}",
+            score
+        );
     }
 
     #[test]
     fn test_sentiment_mixed() {
         let detector = EmoticonDetector::new();
         let score = detector.sentiment_score(":) :(");
-        assert!(score.abs() < 0.3, "Mixed emoticons should be near-neutral, got {}", score);
+        assert!(
+            score.abs() < 0.3,
+            "Mixed emoticons should be near-neutral, got {}",
+            score
+        );
     }
 
     #[test]
@@ -2605,12 +2681,8 @@ mod tests {
     #[test]
     fn test_detect_topics_with_llm_disabled() {
         let detector = TopicDetector::new();
-        let messages = vec![
-            ChatMessage::user("How does the weather look today?"),
-        ];
-        let mock = crate::llm_enhance::MockLlm::new(
-            r#"[{"topic":"Weather","relevance":0.9}]"#,
-        );
+        let messages = vec![ChatMessage::user("How does the weather look today?")];
+        let mock = crate::llm_enhance::MockLlm::new(r#"[{"topic":"Weather","relevance":0.9}]"#);
         // With llm_enhanced=false, should NOT use mock
         let topics = detector.detect_topics_with_llm(&messages, false, Some(&mock));
         // Should return heuristic result (no "Weather" from LLM)
@@ -2630,7 +2702,11 @@ mod tests {
         ];
         let result = analyzer.analyze_sentiment_trend_with_llm(&messages, false, None);
         // First half is negative, second half positive → should be "improving"
-        assert_eq!(result.trend, "improving", "Expected improving, got: {}", result.trend);
+        assert_eq!(
+            result.trend, "improving",
+            "Expected improving, got: {}",
+            result.trend
+        );
         assert!(!result.summary.is_empty());
     }
 
@@ -2645,7 +2721,11 @@ mod tests {
             "{\"trend\":\"stable\",\"summary\":\"The conversation maintained a neutral tone throughout.\"}",
         );
         let result = analyzer.analyze_sentiment_trend_with_llm(&messages, true, Some(&mock));
-        assert_eq!(result.trend, "stable", "Expected LLM trend, got: {}", result.trend);
+        assert_eq!(
+            result.trend, "stable",
+            "Expected LLM trend, got: {}",
+            result.trend
+        );
         assert!(result.summary.contains("neutral tone"));
     }
 
@@ -2722,10 +2802,7 @@ mod tests {
         ];
         // With a low threshold, all 3 related messages should cluster together
         let clusters = cluster_topics_by_embedding(&messages, 0.05);
-        assert!(
-            !clusters.is_empty(),
-            "Should produce at least one cluster"
-        );
+        assert!(!clusters.is_empty(), "Should produce at least one cluster");
         // With very related messages, we expect a single cluster
         // (though the algorithm may split if similarity is below threshold)
         let total_messages: usize = clusters.iter().map(|(_, v)| v.len()).sum();

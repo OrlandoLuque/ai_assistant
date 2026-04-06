@@ -79,10 +79,9 @@ impl MessageAuthorization {
     /// Check if a peer with the given trust level is authorized to send a message category.
     pub fn is_authorized(trust: TrustLevel, category: MessageCategory) -> bool {
         match trust {
-            TrustLevel::Probation => matches!(
-                category,
-                MessageCategory::Heartbeat | MessageCategory::Join
-            ),
+            TrustLevel::Probation => {
+                matches!(category, MessageCategory::Heartbeat | MessageCategory::Join)
+            }
             TrustLevel::Normal => matches!(
                 category,
                 MessageCategory::Heartbeat

@@ -114,10 +114,7 @@ mod tests {
         let ds = make_mixed_dataset();
         let mut tags = HashMap::new();
         for i in 1..=3 {
-            tags.insert(
-                format!("fc/know/{}", i),
-                Subtask::InformationGathering,
-            );
+            tags.insert(format!("fc/know/{}", i), Subtask::InformationGathering);
         }
         for i in 1..=3 {
             tags.insert(format!("fc/math/{}", i), Subtask::ReasoningChain);
@@ -136,8 +133,7 @@ mod tests {
 
     /// Mock generator that returns appropriate answers based on prompt content.
     #[allow(dead_code)]
-    fn mock_generator_by_category(
-    ) -> Arc<dyn Fn(&str) -> Result<String, String> + Send + Sync> {
+    fn mock_generator_by_category() -> Arc<dyn Fn(&str) -> Result<String, String> + Send + Sync> {
         Arc::new(|prompt: &str| {
             let lower = prompt.to_lowercase();
             if lower.contains("capital") && lower.contains("france") {
@@ -238,10 +234,7 @@ mod tests {
 
         for problem in &ds.problems {
             let mut ctx = HashMap::new();
-            ctx.insert(
-                "category".to_string(),
-                json!(problem_category(&problem.id)),
-            );
+            ctx.insert("category".to_string(), json!(problem_category(&problem.id)));
             let path = tree.evaluate(&ctx);
             assert!(path.complete, "Path should be complete for {}", problem.id);
             let result = path.result.unwrap();
@@ -269,20 +262,12 @@ mod tests {
             label: Some("MC".to_string()),
         };
         let num_branch = DecisionBranch {
-            condition: Condition::new(
-                "problem_type",
-                ConditionOperator::Equals,
-                json!("Numeric"),
-            ),
+            condition: Condition::new("problem_type", ConditionOperator::Equals, json!("Numeric")),
             target_node_id: "num_strategy".to_string(),
             label: Some("Numeric".to_string()),
         };
         let code_branch = DecisionBranch {
-            condition: Condition::new(
-                "problem_type",
-                ConditionOperator::Equals,
-                json!("Code"),
-            ),
+            condition: Condition::new("problem_type", ConditionOperator::Equals, json!("Code")),
             target_node_id: "code_strategy".to_string(),
             label: Some("Code".to_string()),
         };
@@ -333,10 +318,7 @@ mod tests {
         // Test Code routing
         ctx.insert("problem_type".to_string(), json!("Code"));
         let path = tree.evaluate(&ctx);
-        assert_eq!(
-            path.result.unwrap().as_str().unwrap(),
-            "jaccard_similarity"
-        );
+        assert_eq!(path.result.unwrap().as_str().unwrap(), "jaccard_similarity");
 
         // Test fallback
         ctx.insert("problem_type".to_string(), json!("FreeText"));
@@ -350,9 +332,9 @@ mod tests {
         let ds = make_mixed_dataset();
 
         // Register category-specific generators in MultiModelGenerator
-        let mut generator = MultiModelGenerator::new(
-            |_prompt: &str| -> Result<String, String> { Ok("B".to_string()) },
-        );
+        let mut generator = MultiModelGenerator::new(|_prompt: &str| -> Result<String, String> {
+            Ok("B".to_string())
+        });
 
         // Knowledge specialist: always returns correct MC letters
         generator.register_model("knowledge-specialist", |prompt: &str| {
@@ -395,9 +377,7 @@ mod tests {
         });
 
         // Entity specialist
-        generator.register_model("entity-specialist", |_prompt: &str| {
-            Ok("B".to_string())
-        });
+        generator.register_model("entity-specialist", |_prompt: &str| Ok("B".to_string()));
 
         // Route each problem through tree → generator, score
         let scorer = DefaultScorer;
@@ -406,18 +386,13 @@ mod tests {
 
         for problem in &ds.problems {
             let mut ctx = HashMap::new();
-            ctx.insert(
-                "category".to_string(),
-                json!(problem_category(&problem.id)),
-            );
+            ctx.insert("category".to_string(), json!(problem_category(&problem.id)));
             let path = tree.evaluate(&ctx);
             let model_key = path.result.unwrap();
             let model_key_str = model_key.as_str().unwrap();
 
             // Routed response
-            let routed_response = generator
-                .generate(model_key_str, &problem.prompt)
-                .unwrap();
+            let routed_response = generator.generate(model_key_str, &problem.prompt).unwrap();
             let routed_score = scorer.score(problem, &routed_response);
             routed_scores.push(routed_score);
 
@@ -464,19 +439,14 @@ mod tests {
             let mut embedder = LocalEmbedder::new(EmbeddingConfig::default());
             embedder.train(&prompts);
 
-            let embeddings: Vec<Vec<f32>> =
-                prompts.iter().map(|p| embedder.embed(p)).collect();
+            let embeddings: Vec<Vec<f32>> = prompts.iter().map(|p| embedder.embed(p)).collect();
 
             // Same-category similarity should be higher than cross-category
             // Know: 0,1,2  Math: 3,4,5  Code: 6,7  Entity: 8,9
-            let sim_know_know =
-                LocalEmbedder::cosine_similarity(&embeddings[0], &embeddings[1]);
-            let _sim_know_code =
-                LocalEmbedder::cosine_similarity(&embeddings[0], &embeddings[6]);
-            let sim_math_math =
-                LocalEmbedder::cosine_similarity(&embeddings[3], &embeddings[4]);
-            let sim_math_code =
-                LocalEmbedder::cosine_similarity(&embeddings[3], &embeddings[6]);
+            let sim_know_know = LocalEmbedder::cosine_similarity(&embeddings[0], &embeddings[1]);
+            let _sim_know_code = LocalEmbedder::cosine_similarity(&embeddings[0], &embeddings[6]);
+            let sim_math_math = LocalEmbedder::cosine_similarity(&embeddings[3], &embeddings[4]);
+            let sim_math_code = LocalEmbedder::cosine_similarity(&embeddings[3], &embeddings[6]);
 
             // At minimum, math-math should be more similar than math-code
             // (both math problems talk about numbers, calculation)
@@ -610,8 +580,12 @@ mod tests {
 
             // Embed two math problems and one code problem
             let math1 = embedder.embed("Calculate 6 times 7").unwrap();
-            let math2 = embedder.embed("How many sides does a hexagon have").unwrap();
-            let code1 = embedder.embed("Write a Python function that adds numbers").unwrap();
+            let math2 = embedder
+                .embed("How many sides does a hexagon have")
+                .unwrap();
+            let code1 = embedder
+                .embed("Write a Python function that adds numbers")
+                .unwrap();
 
             assert_eq!(math1.len(), 64);
             assert_eq!(math2.len(), 64);
@@ -628,7 +602,7 @@ mod tests {
 
         #[test]
         fn test_neural_embeddings_sparse_keyword_overlap() {
-            use crate::neural_embeddings::{SparseEmbeddingConfig, SparseEmbedder};
+            use crate::neural_embeddings::{SparseEmbedder, SparseEmbeddingConfig};
 
             let mut embedder = SparseEmbedder::new(SparseEmbeddingConfig::default());
             let docs = vec![
@@ -726,11 +700,7 @@ mod tests {
 
             // Build a tree that routes based on similarity threshold
             let high_sim_branch = DecisionBranch {
-                condition: Condition::new(
-                    "is_code_like",
-                    ConditionOperator::Equals,
-                    json!(true),
-                ),
+                condition: Condition::new("is_code_like", ConditionOperator::Equals, json!(true)),
                 target_node_id: "code_path".to_string(),
                 label: Some("Code-like".to_string()),
             };
@@ -800,7 +770,7 @@ mod tests {
             GraphCallback, GraphRelation, LlmCallback, RagPipeline, RetrievalCallback,
             RetrievedChunk,
         };
-        use crate::rag_tiers::{RagTierConfig, RagTier};
+        use crate::rag_tiers::{RagTier, RagTierConfig};
 
         struct MockLlmCb;
         impl LlmCallback for MockLlmCb {
@@ -989,14 +959,18 @@ mod tests {
             extractor = extractor.add_entity("France", EntityType::Location);
             extractor = extractor.add_entity("Einstein", EntityType::Person);
 
-            let extraction = extractor.extract(
-                "Paris is the capital of France. Einstein developed relativity.",
-            ).unwrap();
+            let extraction = extractor
+                .extract("Paris is the capital of France. Einstein developed relativity.")
+                .unwrap();
             assert!(
                 !extraction.entities.is_empty(),
                 "Should extract at least one entity"
             );
-            let names: Vec<&str> = extraction.entities.iter().map(|e| e.name.as_str()).collect();
+            let names: Vec<&str> = extraction
+                .entities
+                .iter()
+                .map(|e| e.name.as_str())
+                .collect();
             assert!(names.contains(&"Paris") || names.contains(&"paris"));
         }
 
@@ -1044,7 +1018,13 @@ mod tests {
             let retrieval = MockRetrievalCb::new(MockRetrievalCb::default_chunks());
 
             let result = pipeline
-                .process("What is the capital of France?", &llm, None, &retrieval, None)
+                .process(
+                    "What is the capital of France?",
+                    &llm,
+                    None,
+                    &retrieval,
+                    None,
+                )
                 .unwrap();
 
             assert!(!result.context.is_empty(), "Context should not be empty");
@@ -1061,7 +1041,8 @@ mod tests {
             let llm = MockLlmCb;
 
             // Test with Disabled tier
-            let mut pipeline_disabled = RagPipeline::new(RagTierConfig::with_tier(RagTier::Disabled));
+            let mut pipeline_disabled =
+                RagPipeline::new(RagTierConfig::with_tier(RagTier::Disabled));
             let result_disabled = pipeline_disabled.process(
                 "What is the capital of France?",
                 &llm,
@@ -1070,14 +1051,18 @@ mod tests {
                 None,
             );
             // Disabled tier might return empty context
-            let disabled_chunks = result_disabled
-                .map(|r| r.chunks.len())
-                .unwrap_or(0);
+            let disabled_chunks = result_disabled.map(|r| r.chunks.len()).unwrap_or(0);
 
             // Test with Fast tier
             let mut pipeline_fast = RagPipeline::new(RagTierConfig::with_tier(RagTier::Fast));
             let result_fast = pipeline_fast
-                .process("What is the capital of France?", &llm, None, &retrieval, None)
+                .process(
+                    "What is the capital of France?",
+                    &llm,
+                    None,
+                    &retrieval,
+                    None,
+                )
                 .unwrap();
             let fast_chunks = result_fast.chunks.len();
 
@@ -1212,11 +1197,7 @@ mod tests {
 
             // Tree checks if entities were found
             let entity_branch = DecisionBranch {
-                condition: Condition::new(
-                    "has_entities",
-                    ConditionOperator::Equals,
-                    json!(true),
-                ),
+                condition: Condition::new("has_entities", ConditionOperator::Equals, json!(true)),
                 target_node_id: "kg_path".to_string(),
                 label: Some("Has entities".to_string()),
             };
@@ -1268,20 +1249,12 @@ mod tests {
         fn test_combo_decision_tree_rag_tier_selection() {
             // Tree selects RAG tier based on difficulty
             let hard_branch = DecisionBranch {
-                condition: Condition::new(
-                    "difficulty",
-                    ConditionOperator::Equals,
-                    json!("hard"),
-                ),
+                condition: Condition::new("difficulty", ConditionOperator::Equals, json!("hard")),
                 target_node_id: "enhanced_tier".to_string(),
                 label: Some("Hard".to_string()),
             };
             let medium_branch = DecisionBranch {
-                condition: Condition::new(
-                    "difficulty",
-                    ConditionOperator::Equals,
-                    json!("medium"),
-                ),
+                condition: Condition::new("difficulty", ConditionOperator::Equals, json!("medium")),
                 target_node_id: "semantic_tier".to_string(),
                 label: Some("Medium".to_string()),
             };
@@ -1303,11 +1276,7 @@ mod tests {
                     json!("Semantic"),
                     None,
                 ))
-                .node(DecisionNode::new_terminal(
-                    "fast_tier",
-                    json!("Fast"),
-                    None,
-                ))
+                .node(DecisionNode::new_terminal("fast_tier", json!("Fast"), None))
                 .build();
 
             // Easy problem → Fast tier
@@ -1404,10 +1373,7 @@ mod tests {
                 ) -> Result<Vec<RetrievedChunk>, String> {
                     Ok(self.chunks.iter().take(limit).cloned().collect())
                 }
-                fn get_chunk(
-                    &self,
-                    id: &str,
-                ) -> Result<Option<RetrievedChunk>, String> {
+                fn get_chunk(&self, id: &str) -> Result<Option<RetrievedChunk>, String> {
                     Ok(self.chunks.iter().find(|c| c.chunk_id == id).cloned())
                 }
             }
@@ -1441,7 +1407,13 @@ mod tests {
             let mut pipeline = RagPipeline::new(RagTierConfig::with_tier(RagTier::Fast));
 
             let result = pipeline
-                .process("What is the capital of France?", &llm, None, &retrieval, None)
+                .process(
+                    "What is the capital of France?",
+                    &llm,
+                    None,
+                    &retrieval,
+                    None,
+                )
                 .unwrap();
 
             assert!(
@@ -1459,9 +1431,9 @@ mod tests {
             let tree = build_category_routing_tree();
             let ds = make_mixed_dataset();
 
-            let mut generator = MultiModelGenerator::new(
-                |_: &str| -> Result<String, String> { Ok("B".to_string()) },
-            );
+            let mut generator = MultiModelGenerator::new(|_: &str| -> Result<String, String> {
+                Ok("B".to_string())
+            });
 
             // Register generators
             generator.register_model("knowledge-specialist", |prompt: &str| {
@@ -1487,9 +1459,7 @@ mod tests {
                     Ok("def length(s): return len(s)".to_string())
                 }
             });
-            generator.register_model("entity-specialist", |_: &str| {
-                Ok("B".to_string())
-            });
+            generator.register_model("entity-specialist", |_: &str| Ok("B".to_string()));
 
             let scorer = DefaultScorer;
             let mut total_score = 0.0;
@@ -1498,24 +1468,20 @@ mod tests {
             for problem in &ds.problems {
                 // Step 1: Route via decision tree
                 let mut ctx = HashMap::new();
-                ctx.insert(
-                    "category".to_string(),
-                    json!(problem_category(&problem.id)),
-                );
+                ctx.insert("category".to_string(), json!(problem_category(&problem.id)));
                 let path = tree.evaluate(&ctx);
-                let model_key = path
-                    .result
-                    .unwrap()
-                    .as_str()
-                    .unwrap()
-                    .to_string();
+                let model_key = path.result.unwrap().as_str().unwrap().to_string();
 
                 // Step 2: Check for entities → augment if found
                 let entities = extractor.extract(&problem.prompt).unwrap().entities;
                 let prompt = if !entities.is_empty() {
                     format!(
                         "Context: Entities found: {}.\n{}",
-                        entities.iter().map(|e| e.name.as_str()).collect::<Vec<_>>().join(", "),
+                        entities
+                            .iter()
+                            .map(|e| e.name.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", "),
                         problem.prompt
                     )
                 } else {
@@ -1544,14 +1510,9 @@ mod tests {
     #[cfg(feature = "advanced-memory")]
     mod memory_tests {
         use super::*;
-        use crate::advanced_memory::{EpisodicStore, Episode, ProceduralStore, Procedure};
+        use crate::advanced_memory::{Episode, EpisodicStore, ProceduralStore, Procedure};
 
-        fn make_eval_episode(
-            id: &str,
-            content: &str,
-            tags: &[&str],
-            importance: f64,
-        ) -> Episode {
+        fn make_eval_episode(id: &str, content: &str, tags: &[&str], importance: f64) -> Episode {
             Episode {
                 id: id.to_string(),
                 content: content.to_string(),
@@ -1619,10 +1580,7 @@ mod tests {
             // Recall by similarity to a math query
             let math_query = deterministic_embedding("Calculate numbers math", 32);
             let recalled = store.recall(&math_query, 2);
-            assert!(
-                !recalled.is_empty(),
-                "Should recall at least one episode"
-            );
+            assert!(!recalled.is_empty(), "Should recall at least one episode");
         }
 
         #[test]
@@ -1650,22 +1608,15 @@ mod tests {
 
             // Find by condition matching
             let mc_procedures = store.find_by_condition("multiple choice question");
-            assert!(
-                !mc_procedures.is_empty(),
-                "Should find MC procedure"
-            );
+            assert!(!mc_procedures.is_empty(), "Should find MC procedure");
             assert_eq!(
-                mc_procedures[0].name,
-                "MC Letter Extraction",
+                mc_procedures[0].name, "MC Letter Extraction",
                 "Highest confidence MC procedure should be first"
             );
 
             // Find numeric
             let num_procedures = store.find_by_condition("calculate number");
-            assert!(
-                !num_procedures.is_empty(),
-                "Should find numeric procedure"
-            );
+            assert!(!num_procedures.is_empty(), "Should find numeric procedure");
         }
     }
 
@@ -1681,14 +1632,17 @@ mod tests {
 
         #[test]
         fn test_multi_agent_eval_distribution() {
-            let mut orchestrator =
-                AgentOrchestrator::new(OrchestrationStrategy::BestFit);
+            let mut orchestrator = AgentOrchestrator::new(OrchestrationStrategy::BestFit);
 
             // Register specialist agents
             orchestrator.register_agent(
-                Agent::new("knowledge_agent", "Knowledge Specialist", AgentRole::Analyst)
-                    .with_capability("knowledge")
-                    .with_capability("geography"),
+                Agent::new(
+                    "knowledge_agent",
+                    "Knowledge Specialist",
+                    AgentRole::Analyst,
+                )
+                .with_capability("knowledge")
+                .with_capability("geography"),
             );
             orchestrator.register_agent(
                 Agent::new("math_agent", "Math Specialist", AgentRole::Executor)
@@ -1714,10 +1668,7 @@ mod tests {
 
             // Auto-assign
             let assignments = orchestrator.auto_assign_tasks();
-            assert!(
-                !assignments.is_empty(),
-                "Should assign at least some tasks"
-            );
+            assert!(!assignments.is_empty(), "Should assign at least some tasks");
         }
 
         #[test]
@@ -1754,10 +1705,7 @@ mod tests {
             let snap1 = ctx.snapshot();
             ctx.set("math_score", json!(0.95), "math_agent");
             let snap2 = ctx.snapshot();
-            assert_ne!(
-                snap1, snap2,
-                "Snapshots should differ after update"
-            );
+            assert_ne!(snap1, snap2, "Snapshots should differ after update");
         }
     }
 
@@ -1767,14 +1715,9 @@ mod tests {
     #[cfg(all(feature = "rag", feature = "advanced-memory"))]
     mod rag_memory_tests {
         use super::*;
-        use crate::advanced_memory::{EpisodicStore, Episode, ProceduralStore, Procedure};
+        use crate::advanced_memory::{Episode, EpisodicStore, ProceduralStore, Procedure};
 
-        fn make_eval_episode(
-            id: &str,
-            content: &str,
-            tags: &[&str],
-            importance: f64,
-        ) -> Episode {
+        fn make_eval_episode(id: &str, content: &str, tags: &[&str], importance: f64) -> Episode {
             Episode {
                 id: id.to_string(),
                 content: content.to_string(),
@@ -1797,7 +1740,10 @@ mod tests {
                 id: "proc_mc".to_string(),
                 name: "MC Strategy".to_string(),
                 condition: "multiple choice question answer letter".to_string(),
-                steps: vec!["Extract answer letter".to_string(), "Return letter only".to_string()],
+                steps: vec![
+                    "Extract answer letter".to_string(),
+                    "Return letter only".to_string(),
+                ],
                 success_count: 8,
                 failure_count: 2,
                 confidence: 0.8,
@@ -1866,10 +1812,7 @@ mod tests {
             let query_emb = deterministic_embedding("capital of France Paris", 32);
             let recalled = store.recall(&query_emb, 2);
 
-            assert!(
-                !recalled.is_empty(),
-                "Should recall past episodes"
-            );
+            assert!(!recalled.is_empty(), "Should recall past episodes");
             // The high-importance one should generally be recalled
             let has_good = recalled.iter().any(|e| e.importance > 0.5);
             assert!(
@@ -1885,14 +1828,12 @@ mod tests {
     #[cfg(all(feature = "rag", feature = "multi-agent"))]
     mod rag_agent_tests {
         use crate::multi_agent::{
-            Agent, AgentMessage, AgentOrchestrator, AgentRole, MessageType,
-            OrchestrationStrategy,
+            Agent, AgentMessage, AgentOrchestrator, AgentRole, MessageType, OrchestrationStrategy,
         };
 
         #[test]
         fn test_combo_multi_agent_rag_pipeline() {
-            let mut orchestrator =
-                AgentOrchestrator::new(OrchestrationStrategy::Sequential);
+            let mut orchestrator = AgentOrchestrator::new(OrchestrationStrategy::Sequential);
 
             // Register 3 agents for the pipeline
             orchestrator.register_agent(
@@ -1900,12 +1841,10 @@ mod tests {
                     .with_capability("retrieval"),
             );
             orchestrator.register_agent(
-                Agent::new("solver", "Solver", AgentRole::Executor)
-                    .with_capability("generation"),
+                Agent::new("solver", "Solver", AgentRole::Executor).with_capability("generation"),
             );
             orchestrator.register_agent(
-                Agent::new("reviewer", "Reviewer", AgentRole::Analyst)
-                    .with_capability("scoring"),
+                Agent::new("reviewer", "Reviewer", AgentRole::Analyst).with_capability("scoring"),
             );
 
             // Simulate pipeline: retriever → solver → reviewer via messages
@@ -1964,9 +1903,11 @@ mod tests {
     ))]
     mod full_stack_tests {
         use super::*;
-        use crate::advanced_memory::{EpisodicStore, Episode, ProceduralStore, Procedure};
+        use crate::advanced_memory::{Episode, EpisodicStore, ProceduralStore, Procedure};
         use crate::embeddings::{EmbeddingConfig, LocalEmbedder};
-        use crate::knowledge_graph::{EntityExtractor, EntityType, KnowledgeGraphBuilder, PatternEntityExtractor};
+        use crate::knowledge_graph::{
+            EntityExtractor, EntityType, KnowledgeGraphBuilder, PatternEntityExtractor,
+        };
         use crate::multi_agent::{
             Agent, AgentOrchestrator, AgentRole, OrchestrationStrategy, SharedContext,
         };
@@ -2027,8 +1968,12 @@ mod tests {
             let mut vdb = InMemoryVectorDb::new(vdb_config);
             for problem in &ds.problems {
                 let emb = embedder.embed(&problem.prompt);
-                vdb.insert(&problem.id, emb, json!({"cat": problem_category(&problem.id)}))
-                    .unwrap();
+                vdb.insert(
+                    &problem.id,
+                    emb,
+                    json!({"cat": problem_category(&problem.id)}),
+                )
+                .unwrap();
             }
             assert_eq!(vdb.count(), 10);
 
@@ -2036,20 +1981,31 @@ mod tests {
             let tree = build_category_routing_tree();
 
             // 6. Multi-model generator
-            let mut generator = MultiModelGenerator::new(
-                |_: &str| -> Result<String, String> { Ok("B".to_string()) },
-            );
+            let mut generator = MultiModelGenerator::new(|_: &str| -> Result<String, String> {
+                Ok("B".to_string())
+            });
             generator.register_model("knowledge-specialist", |p: &str| {
-                if p.to_lowercase().contains("gold") { Ok("C".to_string()) } else { Ok("B".to_string()) }
+                if p.to_lowercase().contains("gold") {
+                    Ok("C".to_string())
+                } else {
+                    Ok("B".to_string())
+                }
             });
             generator.register_model("math-specialist", |p: &str| {
-                if p.contains("6 * 7") { Ok("42".to_string()) }
-                else if p.to_lowercase().contains("hexagon") { Ok("6".to_string()) }
-                else { Ok("B".to_string()) }
+                if p.contains("6 * 7") {
+                    Ok("42".to_string())
+                } else if p.to_lowercase().contains("hexagon") {
+                    Ok("6".to_string())
+                } else {
+                    Ok("B".to_string())
+                }
             });
             generator.register_model("code-specialist", |p: &str| {
-                if p.to_lowercase().contains("add") { Ok("def add(a, b): return a + b".to_string()) }
-                else { Ok("def length(s): return len(s)".to_string()) }
+                if p.to_lowercase().contains("add") {
+                    Ok("def add(a, b): return a + b".to_string())
+                } else {
+                    Ok("def length(s): return len(s)".to_string())
+                }
             });
             generator.register_model("entity-specialist", |_: &str| Ok("B".to_string()));
 
@@ -2061,8 +2017,7 @@ mod tests {
             // 8. Agent orchestrator
             let mut orchestrator = AgentOrchestrator::new(OrchestrationStrategy::Sequential);
             orchestrator.register_agent(
-                Agent::new("evaluator", "Evaluator", AgentRole::Executor)
-                    .with_capability("eval"),
+                Agent::new("evaluator", "Evaluator", AgentRole::Executor).with_capability("eval"),
             );
 
             // 9. Shared context for results
@@ -2075,10 +2030,7 @@ mod tests {
             for problem in &ds.problems {
                 // Route via tree
                 let mut ctx = HashMap::new();
-                ctx.insert(
-                    "category".to_string(),
-                    json!(problem_category(&problem.id)),
-                );
+                ctx.insert("category".to_string(), json!(problem_category(&problem.id)));
                 let path = tree.evaluate(&ctx);
                 let model_key = path.result.unwrap().as_str().unwrap().to_string();
 
@@ -2104,11 +2056,7 @@ mod tests {
             }
 
             let avg = total_score / 10.0;
-            assert!(
-                avg > 0.3,
-                "Full stack avg should be > 0.3, got {:.3}",
-                avg
-            );
+            assert!(avg > 0.3, "Full stack avg should be > 0.3, got {:.3}", avg);
 
             // Verify all problems recorded in shared context
             for problem in &ds.problems {
@@ -2128,20 +2076,31 @@ mod tests {
             // Full stack score (with routing)
             let tree = build_category_routing_tree();
             let default_fn = |_: &str| -> Result<String, String> { Ok("B".to_string()) };
-            let mut gen_full = MultiModelGenerator::new(
-                |_: &str| -> Result<String, String> { Ok("B".to_string()) },
-            );
+            let mut gen_full = MultiModelGenerator::new(|_: &str| -> Result<String, String> {
+                Ok("B".to_string())
+            });
             gen_full.register_model("knowledge-specialist", |p: &str| {
-                if p.to_lowercase().contains("gold") { Ok("C".to_string()) } else { Ok("B".to_string()) }
+                if p.to_lowercase().contains("gold") {
+                    Ok("C".to_string())
+                } else {
+                    Ok("B".to_string())
+                }
             });
             gen_full.register_model("math-specialist", |p: &str| {
-                if p.contains("6 * 7") { Ok("42".to_string()) }
-                else if p.to_lowercase().contains("hexagon") { Ok("6".to_string()) }
-                else { Ok("B".to_string()) }
+                if p.contains("6 * 7") {
+                    Ok("42".to_string())
+                } else if p.to_lowercase().contains("hexagon") {
+                    Ok("6".to_string())
+                } else {
+                    Ok("B".to_string())
+                }
             });
             gen_full.register_model("code-specialist", |p: &str| {
-                if p.to_lowercase().contains("add") { Ok("def add(a, b): return a + b".to_string()) }
-                else { Ok("def length(s): return len(s)".to_string()) }
+                if p.to_lowercase().contains("add") {
+                    Ok("def add(a, b): return a + b".to_string())
+                } else {
+                    Ok("def length(s): return len(s)".to_string())
+                }
             });
             gen_full.register_model("entity-specialist", |_: &str| Ok("B".to_string()));
 
@@ -2182,26 +2141,30 @@ mod tests {
 
             // Build config with feature integration
             let baseline = EvalAgentConfig::new("full-stack", test_model("default"))
-                .with_subtask_model(
-                    &Subtask::InformationGathering,
-                    test_model("default"),
-                )
+                .with_subtask_model(&Subtask::InformationGathering, test_model("default"))
                 .with_subtask_model(&Subtask::ReasoningChain, test_model("default"))
                 .with_subtask_model(&Subtask::CodeGeneration, test_model("default"));
 
             // Mock generators
-            let mut gen = MultiModelGenerator::new(
-                |_: &str| -> Result<String, String> { Ok("B".to_string()) },
-            );
+            let mut gen = MultiModelGenerator::new(|_: &str| -> Result<String, String> {
+                Ok("B".to_string())
+            });
             gen.register_model("mock/default", |_: &str| Ok("B".to_string()));
             gen.register_model("mock/specialist", |p: &str| {
                 let lower = p.to_lowercase();
-                if lower.contains("6 * 7") { Ok("42".to_string()) }
-                else if lower.contains("hexagon") { Ok("6".to_string()) }
-                else if lower.contains("gold") { Ok("C".to_string()) }
-                else if lower.contains("add") { Ok("def add(a, b): return a + b".to_string()) }
-                else if lower.contains("length") { Ok("def length(s): return len(s)".to_string()) }
-                else { Ok("B".to_string()) }
+                if lower.contains("6 * 7") {
+                    Ok("42".to_string())
+                } else if lower.contains("hexagon") {
+                    Ok("6".to_string())
+                } else if lower.contains("gold") {
+                    Ok("C".to_string())
+                } else if lower.contains("add") {
+                    Ok("def add(a, b): return a + b".to_string())
+                } else if lower.contains("length") {
+                    Ok("def length(s): return len(s)".to_string())
+                } else {
+                    Ok("B".to_string())
+                }
             });
 
             let search_config = ConfigSearchConfig {
@@ -2249,8 +2212,9 @@ mod tests {
         feature = "multi-agent"
     ))]
     mod heavy_integration_tests {
+        use super::super::super::runner::{BenchmarkSuiteRunner, RunConfig};
         use super::*;
-        use crate::advanced_memory::{Episode, EpisodicStore, Procedure, ProceduralStore};
+        use crate::advanced_memory::{Episode, EpisodicStore, ProceduralStore, Procedure};
         use crate::context_composer::{ContextComposer, ContextSection};
         use crate::document_parsing::{DocumentFormat, DocumentParser, DocumentParserConfig};
         use crate::embeddings::{EmbeddingConfig, LocalEmbedder};
@@ -2262,12 +2226,11 @@ mod tests {
             Agent, AgentOrchestrator, AgentRole, AgentTask, OrchestrationStrategy, SharedContext,
         };
         use crate::rag_pipeline::{
-            PipelineChunkPosition, GraphCallback, GraphRelation, LlmCallback, RagPipeline,
+            GraphCallback, GraphRelation, LlmCallback, PipelineChunkPosition, RagPipeline,
             RetrievalCallback, RetrievedChunk,
         };
-        use crate::rag_tiers::{RagTierConfig, RagTier};
+        use crate::rag_tiers::{RagTier, RagTierConfig};
         use crate::vector_db::{DistanceMetric, InMemoryVectorDb, VectorDb, VectorDbConfig};
-        use super::super::super::runner::{BenchmarkSuiteRunner, RunConfig};
 
         // ================================================================
         // Domain documents (~300 words each)
@@ -2374,8 +2337,10 @@ mod tests {
             ext
         }
 
-        fn build_sustainability_kg(
-        ) -> (crate::knowledge_graph::KnowledgeGraph, PatternEntityExtractor) {
+        fn build_sustainability_kg() -> (
+            crate::knowledge_graph::KnowledgeGraph,
+            PatternEntityExtractor,
+        ) {
             let extractor = build_sustainability_extractor();
             let mut graph = KnowledgeGraphBuilder::new()
                 .add_entity("Barcelona", EntityType::Location)
@@ -2418,7 +2383,11 @@ mod tests {
 
                 // Fact verification (must come FIRST — verify prompts contain claim text)
                 if lower.contains("verify") || lower.contains("refute") {
-                    if lower.contains("50%") || lower.contains("3,000 sunshine") || lower.contains("3000 sunshine") || lower.contains("60%") {
+                    if lower.contains("50%")
+                        || lower.contains("3,000 sunshine")
+                        || lower.contains("3000 sunshine")
+                        || lower.contains("60%")
+                    {
                         return Ok("REFUTED".to_string());
                     }
                     return Ok("VERIFIED".to_string());
@@ -2426,7 +2395,10 @@ mod tests {
 
                 // Hint-augmented (for memory tests) — check BEFORE specific facts
                 // because recalled episodes may contain keywords from other questions
-                if lower.contains("hint:") || lower.contains("strategy:") || lower.contains("recall:") {
+                if lower.contains("hint:")
+                    || lower.contains("strategy:")
+                    || lower.contains("recall:")
+                {
                     if lower.contains("copenhagen") {
                         return Ok("Based on the retrieved context, Copenhagen partnered with BYD and achieved 40% emission reduction through electric transit.".to_string());
                     }
@@ -2439,40 +2411,73 @@ mod tests {
                 }
 
                 // Barcelona questions
-                if lower.contains("30%") || (lower.contains("barcelona") && lower.contains("energy cost")) {
+                if lower.contains("30%")
+                    || (lower.contains("barcelona") && lower.contains("energy cost"))
+                {
                     return Ok("Barcelona's solar initiative achieves a 30% reduction in household energy costs.".to_string());
                 }
-                if lower.contains("2,500") || lower.contains("2500") || (lower.contains("sunshine") && lower.contains("hours")) {
+                if lower.contains("2,500")
+                    || lower.contains("2500")
+                    || (lower.contains("sunshine") && lower.contains("hours"))
+                {
                     return Ok("Barcelona receives an average of 2,500 sunshine hours per year due to its Mediterranean climate.".to_string());
                 }
-                if lower.contains("15 megawatt") || lower.contains("15mw") || (lower.contains("barcelona") && lower.contains("capacity")) {
-                    return Ok("Barcelona targets 15 megawatts of installed solar capacity by 2025.".to_string());
+                if lower.contains("15 megawatt")
+                    || lower.contains("15mw")
+                    || (lower.contains("barcelona") && lower.contains("capacity"))
+                {
+                    return Ok(
+                        "Barcelona targets 15 megawatts of installed solar capacity by 2025."
+                            .to_string(),
+                    );
                 }
 
                 // Copenhagen questions
-                if lower.contains("byd") || (lower.contains("copenhagen") && lower.contains("manufacturer")) || (lower.contains("bus") && lower.contains("partner")) {
-                    return Ok("Copenhagen partnered with BYD, the Chinese electric vehicle manufacturer.".to_string());
+                if lower.contains("byd")
+                    || (lower.contains("copenhagen") && lower.contains("manufacturer"))
+                    || (lower.contains("bus") && lower.contains("partner"))
+                {
+                    return Ok(
+                        "Copenhagen partnered with BYD, the Chinese electric vehicle manufacturer."
+                            .to_string(),
+                    );
                 }
-                if lower.contains("40%") || (lower.contains("copenhagen") && lower.contains("emission")) {
+                if lower.contains("40%")
+                    || (lower.contains("copenhagen") && lower.contains("emission"))
+                {
                     return Ok("Copenhagen's electric transit program achieved a 40% reduction in transit-related emissions.".to_string());
                 }
-                if lower.contains("400") || (lower.contains("copenhagen") && lower.contains("diesel")) {
-                    return Ok("Copenhagen aims to replace all 400 diesel buses with electric vehicles.".to_string());
+                if lower.contains("400")
+                    || (lower.contains("copenhagen") && lower.contains("diesel"))
+                {
+                    return Ok(
+                        "Copenhagen aims to replace all 400 diesel buses with electric vehicles."
+                            .to_string(),
+                    );
                 }
 
                 // Singapore questions
-                if lower.contains("green mark") || (lower.contains("singapore") && lower.contains("certification")) {
+                if lower.contains("green mark")
+                    || (lower.contains("singapore") && lower.contains("certification"))
+                {
                     return Ok("Singapore uses the Green Mark certification program administered by the BCA.".to_string());
                 }
-                if lower.contains("35%") || (lower.contains("singapore") && lower.contains("energy reduction")) {
+                if lower.contains("35%")
+                    || (lower.contains("singapore") && lower.contains("energy reduction"))
+                {
                     return Ok("Singapore's Green Mark Platinum requires a 35% reduction in energy consumption.".to_string());
                 }
-                if lower.contains("4,300") || lower.contains("4300") || (lower.contains("singapore") && lower.contains("certified")) {
+                if lower.contains("4,300")
+                    || lower.contains("4300")
+                    || (lower.contains("singapore") && lower.contains("certified"))
+                {
                     return Ok("Over 4,300 buildings have been certified under Singapore's Green Mark program.".to_string());
                 }
 
                 // Cross-document / comparison questions
-                if lower.contains("compare") || (lower.contains("barcelona") && lower.contains("copenhagen")) {
+                if lower.contains("compare")
+                    || (lower.contains("barcelona") && lower.contains("copenhagen"))
+                {
                     return Ok("Both Barcelona and Copenhagen pursue urban sustainability but through different strategies: \
                               Barcelona focuses on solar energy with a 30% cost reduction, while Copenhagen targets \
                               electric transit achieving 40% emission reduction.".to_string());
@@ -2481,7 +2486,11 @@ mod tests {
                     return Ok("Copenhagen has the most ambitious emission reduction target at 40%, compared to \
                               Barcelona's 30% energy cost reduction and Singapore's 35% energy consumption reduction.".to_string());
                 }
-                if (lower.contains("singapore") && lower.contains("barcelona") && lower.contains("building")) || lower.contains("energy efficiency") {
+                if (lower.contains("singapore")
+                    && lower.contains("barcelona")
+                    && lower.contains("building"))
+                    || lower.contains("energy efficiency")
+                {
                     return Ok("Singapore mandates 35% energy reduction via Green Mark certification, while Barcelona \
                               focuses on rooftop solar panels reducing energy costs by 30%.".to_string());
                 }
@@ -2575,8 +2584,11 @@ mod tests {
                     .filter(|(hits, _)| *hits > 0)
                     .collect();
                 scored.sort_by(|a, b| b.0.cmp(&a.0));
-                let results: Vec<RetrievedChunk> =
-                    scored.into_iter().take(limit).map(|(_, c)| c.clone()).collect();
+                let results: Vec<RetrievedChunk> = scored
+                    .into_iter()
+                    .take(limit)
+                    .map(|(_, c)| c.clone())
+                    .collect();
                 if results.is_empty() {
                     Ok(self.chunks.iter().take(limit).cloned().collect())
                 } else {
@@ -2601,8 +2613,16 @@ mod tests {
                 let lower = text.to_lowercase();
                 let mut entities = Vec::new();
                 let known = [
-                    "Barcelona", "Copenhagen", "Singapore", "BYD", "Endesa", "BCA",
-                    "Green Mark", "Movia", "SolarCity Europe", "Mediterranean",
+                    "Barcelona",
+                    "Copenhagen",
+                    "Singapore",
+                    "BYD",
+                    "Endesa",
+                    "BCA",
+                    "Green Mark",
+                    "Movia",
+                    "SolarCity Europe",
+                    "Mediterranean",
                 ];
                 for name in &known {
                     if lower.contains(&name.to_lowercase()) {
@@ -2775,7 +2795,10 @@ mod tests {
             // Search for Barcelona-related content
             let bcn_query_emb = embedder.embed("solar energy Barcelona rooftop panels");
             let bcn_results = vdb.search(&bcn_query_emb, 3, None).unwrap();
-            assert!(!bcn_results.is_empty(), "Should find Barcelona-related chunks");
+            assert!(
+                !bcn_results.is_empty(),
+                "Should find Barcelona-related chunks"
+            );
 
             // Search for Copenhagen-related content
             let cph_query_emb = embedder.embed("electric bus Copenhagen transit emissions");
@@ -2880,11 +2903,7 @@ mod tests {
 
             // Decision tree routing: multi-city → Full tier, single-city → Fast
             let multi_city_branch = DecisionBranch {
-                condition: Condition::new(
-                    "is_multi_city",
-                    ConditionOperator::Equals,
-                    json!(true),
-                ),
+                condition: Condition::new("is_multi_city", ConditionOperator::Equals, json!(true)),
                 target_node_id: "full_tier".to_string(),
                 label: Some("MultiCity".to_string()),
             };
@@ -2901,11 +2920,7 @@ mod tests {
                     json!("Semantic"),
                     None,
                 ))
-                .node(DecisionNode::new_terminal(
-                    "fast_tier",
-                    json!("Fast"),
-                    None,
-                ))
+                .node(DecisionNode::new_terminal("fast_tier", json!("Fast"), None))
                 .build();
 
             // Multi-city question routes to Semantic
@@ -2936,8 +2951,11 @@ mod tests {
             transport.capabilities = vec!["transport".into(), "mobility".into(), "bus".into()];
 
             let mut buildings = Agent::new("buildings", "Buildings Analyst", AgentRole::Researcher);
-            buildings.capabilities =
-                vec!["buildings".into(), "architecture".into(), "construction".into()];
+            buildings.capabilities = vec![
+                "buildings".into(),
+                "architecture".into(),
+                "construction".into(),
+            ];
 
             let synthesizer = Agent::new("synth", "Synthesizer", AgentRole::Coordinator);
 
@@ -3090,9 +3108,16 @@ mod tests {
 
             // Verify diff detects changes (compare context with a fresh one)
             let mut context2 = SharedContext::new();
-            context2.set("barcelona_analysis", serde_json::json!({"city": "Barcelona"}), "energy");
+            context2.set(
+                "barcelona_analysis",
+                serde_json::json!({"city": "Barcelona"}),
+                "energy",
+            );
             let diff = context.diff(&context2);
-            assert!(!diff.is_empty(), "Diff should detect differences between contexts");
+            assert!(
+                !diff.is_empty(),
+                "Diff should detect differences between contexts"
+            );
         }
 
         // ================================================================
@@ -3148,17 +3173,27 @@ mod tests {
             let gen = |prompt: &str| -> Result<String, String> {
                 let lower = prompt.to_lowercase();
                 // Answer MC questions based on domain knowledge
-                if lower.contains("30%") || (lower.contains("barcelona") && lower.contains("energy cost")) {
+                if lower.contains("30%")
+                    || (lower.contains("barcelona") && lower.contains("energy cost"))
+                {
                     Ok("B".to_string())
                 } else if lower.contains("2,500") || lower.contains("sunshine") {
                     Ok("C".to_string())
-                } else if lower.contains("byd") || (lower.contains("copenhagen") && lower.contains("manufacturer")) {
+                } else if lower.contains("byd")
+                    || (lower.contains("copenhagen") && lower.contains("manufacturer"))
+                {
                     Ok("B".to_string())
-                } else if lower.contains("40%") || (lower.contains("copenhagen") && lower.contains("emission")) {
+                } else if lower.contains("40%")
+                    || (lower.contains("copenhagen") && lower.contains("emission"))
+                {
                     Ok("C".to_string())
-                } else if lower.contains("green mark") || (lower.contains("singapore") && lower.contains("certification")) {
+                } else if lower.contains("green mark")
+                    || (lower.contains("singapore") && lower.contains("certification"))
+                {
                     Ok("C".to_string())
-                } else if lower.contains("35%") || (lower.contains("singapore") && lower.contains("energy reduction")) {
+                } else if lower.contains("35%")
+                    || (lower.contains("singapore") && lower.contains("energy reduction"))
+                {
                     Ok("B".to_string())
                 } else {
                     Ok("B".to_string())
@@ -3216,24 +3251,56 @@ mod tests {
         #[test]
         fn test_heavy_knowledge_evolution_with_memory() {
             let questions = [
-                ("eq/bcn/1", "What percentage energy cost reduction does Barcelona achieve?", "30%"),
-                ("eq/bcn/2", "How many sunshine hours does Barcelona get per year?", "2,500"),
-                ("eq/cph/1", "What manufacturer supplies Copenhagen's electric buses?", "BYD"),
-                ("eq/cph/2", "What emission reduction has Copenhagen achieved?", "40%"),
-                ("eq/sgp/1", "What building certification does Singapore use?", "Green Mark"),
-                ("eq/sgp/2", "What energy reduction do Singapore's green buildings achieve?", "35%"),
+                (
+                    "eq/bcn/1",
+                    "What percentage energy cost reduction does Barcelona achieve?",
+                    "30%",
+                ),
+                (
+                    "eq/bcn/2",
+                    "How many sunshine hours does Barcelona get per year?",
+                    "2,500",
+                ),
+                (
+                    "eq/cph/1",
+                    "What manufacturer supplies Copenhagen's electric buses?",
+                    "BYD",
+                ),
+                (
+                    "eq/cph/2",
+                    "What emission reduction has Copenhagen achieved?",
+                    "40%",
+                ),
+                (
+                    "eq/sgp/1",
+                    "What building certification does Singapore use?",
+                    "Green Mark",
+                ),
+                (
+                    "eq/sgp/2",
+                    "What energy reduction do Singapore's green buildings achieve?",
+                    "35%",
+                ),
             ];
 
             // ---- Round 1: Baseline evaluation ----
             let basic_gen = |prompt: &str| -> Result<String, String> {
                 let lower = prompt.to_lowercase();
-                if lower.contains("30%") || lower.contains("energy cost") { Ok("30%".into()) }
-                else if lower.contains("sunshine") { Ok("2,500".into()) }
-                else if lower.contains("manufacturer") || lower.contains("bus") { Ok("BYD".into()) }
-                else if lower.contains("emission") { Ok("40%".into()) }
-                else if lower.contains("certification") { Ok("Green Mark".into()) }
-                else if lower.contains("energy reduction") { Ok("35%".into()) }
-                else { Ok("unknown".into()) }
+                if lower.contains("30%") || lower.contains("energy cost") {
+                    Ok("30%".into())
+                } else if lower.contains("sunshine") {
+                    Ok("2,500".into())
+                } else if lower.contains("manufacturer") || lower.contains("bus") {
+                    Ok("BYD".into())
+                } else if lower.contains("emission") {
+                    Ok("40%".into())
+                } else if lower.contains("certification") {
+                    Ok("Green Mark".into())
+                } else if lower.contains("energy reduction") {
+                    Ok("35%".into())
+                } else {
+                    Ok("unknown".into())
+                }
             };
 
             let mut episodic = EpisodicStore::new(50, 0.001);
@@ -3242,7 +3309,11 @@ mod tests {
             let mut round1_correct = 0;
             for (id, question, answer) in &questions {
                 let response = basic_gen(question).unwrap();
-                let score: f64 = if response.to_lowercase().contains(&answer.to_lowercase()) { 1.0 } else { 0.0 };
+                let score: f64 = if response.to_lowercase().contains(&answer.to_lowercase()) {
+                    1.0
+                } else {
+                    0.0
+                };
 
                 if score > 0.5 {
                     round1_correct += 1;
@@ -3303,7 +3374,12 @@ mod tests {
             });
 
             assert!(procedural.find_by_condition("percentage reduction").len() >= 1);
-            assert!(procedural.find_by_condition("manufacturer certification").len() >= 1);
+            assert!(
+                procedural
+                    .find_by_condition("manufacturer certification")
+                    .len()
+                    >= 1
+            );
 
             // ---- Round 2: Memory-augmented evaluation ----
             let mut round2_correct = 0;
@@ -3326,10 +3402,7 @@ mod tests {
                     augmented.push_str(&format!("Recall: {}\n", recalled[0].content));
                 }
                 if !procs.is_empty() {
-                    augmented.push_str(&format!(
-                        "Strategy: {}\n",
-                        procs[0].steps.join(", ")
-                    ));
+                    augmented.push_str(&format!("Strategy: {}\n", procs[0].steps.join(", ")));
                 }
                 augmented.push_str(&format!("Hint: use retrieved context\n{}", question));
 
@@ -3363,23 +3436,43 @@ mod tests {
 
             // Claims: (claim_text, is_true, explanation)
             let claims = [
-                ("Barcelona aims for 30% energy cost reduction through solar panels", true, "Matches Doc A"),
-                ("Copenhagen partnered with BYD for electric buses", true, "Matches Doc B"),
-                ("Singapore uses Green Mark certification for green buildings", true, "Matches Doc C"),
-                ("Barcelona targets 50% emission reduction by 2025", false, "Doc A says 30% cost reduction, not 50%"),
-                ("Copenhagen has 3,000 sunshine hours per year", false, "That's Barcelona with 2,500 hours"),
-                ("Singapore green buildings achieve 60% energy reduction", false, "Doc C says 35%, not 60%"),
+                (
+                    "Barcelona aims for 30% energy cost reduction through solar panels",
+                    true,
+                    "Matches Doc A",
+                ),
+                (
+                    "Copenhagen partnered with BYD for electric buses",
+                    true,
+                    "Matches Doc B",
+                ),
+                (
+                    "Singapore uses Green Mark certification for green buildings",
+                    true,
+                    "Matches Doc C",
+                ),
+                (
+                    "Barcelona targets 50% emission reduction by 2025",
+                    false,
+                    "Doc A says 30% cost reduction, not 50%",
+                ),
+                (
+                    "Copenhagen has 3,000 sunshine hours per year",
+                    false,
+                    "That's Barcelona with 2,500 hours",
+                ),
+                (
+                    "Singapore green buildings achieve 60% energy reduction",
+                    false,
+                    "Doc C says 35%, not 60%",
+                ),
             ];
 
             let gen = smart_mock_generator();
 
             // Decision tree for verification routing
             let has_entity_branch = DecisionBranch {
-                condition: Condition::new(
-                    "has_entities",
-                    ConditionOperator::Equals,
-                    json!(true),
-                ),
+                condition: Condition::new("has_entities", ConditionOperator::Equals, json!(true)),
                 target_node_id: "kg_verify".to_string(),
                 label: Some("HasEntities".to_string()),
             };
@@ -3445,17 +3538,28 @@ mod tests {
             // 1. Document ingestion
             let parser = DocumentParser::new(DocumentParserConfig::default());
             let parsed_docs = [
-                ("barcelona", parser.parse_bytes(doc_barcelona().as_bytes(), DocumentFormat::PlainText).unwrap()),
-                ("copenhagen", parser.parse_bytes(doc_copenhagen().as_bytes(), DocumentFormat::PlainText).unwrap()),
-                ("singapore", parser.parse_bytes(doc_singapore().as_bytes(), DocumentFormat::PlainText).unwrap()),
+                (
+                    "barcelona",
+                    parser
+                        .parse_bytes(doc_barcelona().as_bytes(), DocumentFormat::PlainText)
+                        .unwrap(),
+                ),
+                (
+                    "copenhagen",
+                    parser
+                        .parse_bytes(doc_copenhagen().as_bytes(), DocumentFormat::PlainText)
+                        .unwrap(),
+                ),
+                (
+                    "singapore",
+                    parser
+                        .parse_bytes(doc_singapore().as_bytes(), DocumentFormat::PlainText)
+                        .unwrap(),
+                ),
             ];
 
             for (city, doc) in &parsed_docs {
-                assert!(
-                    doc.word_count > 100,
-                    "{} doc should have >100 words",
-                    city
-                );
+                assert!(doc.word_count > 100, "{} doc should have >100 words", city);
             }
 
             // KG + VDB
@@ -3486,9 +3590,24 @@ mod tests {
             // 2. Memory bootstrap
             let mut episodic = EpisodicStore::new(50, 0.001);
             let initial_episodes = [
-                ("past_bcn", "Barcelona solar 30% reduction success", "barcelona", 0.9),
-                ("past_cph", "Copenhagen BYD electric bus 40% emission cut", "copenhagen", 0.85),
-                ("past_sgp", "Singapore Green Mark 35% energy efficient", "singapore", 0.88),
+                (
+                    "past_bcn",
+                    "Barcelona solar 30% reduction success",
+                    "barcelona",
+                    0.9,
+                ),
+                (
+                    "past_cph",
+                    "Copenhagen BYD electric bus 40% emission cut",
+                    "copenhagen",
+                    0.85,
+                ),
+                (
+                    "past_sgp",
+                    "Singapore Green Mark 35% energy efficient",
+                    "singapore",
+                    0.88,
+                ),
             ];
             for (id, content, city, importance) in &initial_episodes {
                 episodic.add(Episode {
@@ -3521,7 +3640,10 @@ mod tests {
                 id: "proc_comparison".into(),
                 name: "Comparison QA Strategy".into(),
                 condition: "compare difference between cities".into(),
-                steps: vec!["Gather data for each city".into(), "Contrast metrics".into()],
+                steps: vec![
+                    "Gather data for each city".into(),
+                    "Contrast metrics".into(),
+                ],
                 success_count: 3,
                 failure_count: 0,
                 confidence: 0.85,
@@ -3532,11 +3654,14 @@ mod tests {
             // 3. Agent setup
             let mut orch = AgentOrchestrator::new(OrchestrationStrategy::BestFit);
 
-            let mut bcn_agent = Agent::new("bcn_agent", "Barcelona Specialist", AgentRole::Researcher);
+            let mut bcn_agent =
+                Agent::new("bcn_agent", "Barcelona Specialist", AgentRole::Researcher);
             bcn_agent.capabilities = vec!["barcelona".into(), "solar".into(), "energy".into()];
-            let mut cph_agent = Agent::new("cph_agent", "Copenhagen Specialist", AgentRole::Researcher);
+            let mut cph_agent =
+                Agent::new("cph_agent", "Copenhagen Specialist", AgentRole::Researcher);
             cph_agent.capabilities = vec!["copenhagen".into(), "transit".into(), "bus".into()];
-            let mut sgp_agent = Agent::new("sgp_agent", "Singapore Specialist", AgentRole::Researcher);
+            let mut sgp_agent =
+                Agent::new("sgp_agent", "Singapore Specialist", AgentRole::Researcher);
             sgp_agent.capabilities = vec!["singapore".into(), "building".into(), "green".into()];
             let coordinator = Agent::new("coord", "Coordinator", AgentRole::Coordinator);
 
@@ -3569,34 +3694,65 @@ mod tests {
                     vec![bcn_branch, cph_branch, sgp_branch],
                     Some("cross_doc_path".to_string()),
                 ))
-                .node(DecisionNode::new_terminal("bcn_path", json!("bcn_specialist"), None))
-                .node(DecisionNode::new_terminal("cph_path", json!("cph_specialist"), None))
-                .node(DecisionNode::new_terminal("sgp_path", json!("sgp_specialist"), None))
-                .node(DecisionNode::new_terminal("cross_doc_path", json!("cross_doc"), None))
+                .node(DecisionNode::new_terminal(
+                    "bcn_path",
+                    json!("bcn_specialist"),
+                    None,
+                ))
+                .node(DecisionNode::new_terminal(
+                    "cph_path",
+                    json!("cph_specialist"),
+                    None,
+                ))
+                .node(DecisionNode::new_terminal(
+                    "sgp_path",
+                    json!("sgp_specialist"),
+                    None,
+                ))
+                .node(DecisionNode::new_terminal(
+                    "cross_doc_path",
+                    json!("cross_doc"),
+                    None,
+                ))
                 .build();
 
             // MultiModelGenerator with city specialists
             let mut multi_gen = MultiModelGenerator::new(smart_mock_generator());
             multi_gen.register_model("bcn_specialist", |prompt: &str| {
                 let lower = prompt.to_lowercase();
-                if lower.contains("30%") || lower.contains("energy cost") { Ok("B".into()) }
-                else if lower.contains("sunshine") || lower.contains("2,500") { Ok("C".into()) }
-                else if lower.contains("15") && lower.contains("megawatt") { Ok("15MW".into()) }
-                else { Ok("B".into()) }
+                if lower.contains("30%") || lower.contains("energy cost") {
+                    Ok("B".into())
+                } else if lower.contains("sunshine") || lower.contains("2,500") {
+                    Ok("C".into())
+                } else if lower.contains("15") && lower.contains("megawatt") {
+                    Ok("15MW".into())
+                } else {
+                    Ok("B".into())
+                }
             });
             multi_gen.register_model("cph_specialist", |prompt: &str| {
                 let lower = prompt.to_lowercase();
-                if lower.contains("byd") || lower.contains("manufacturer") { Ok("B".into()) }
-                else if lower.contains("40%") || lower.contains("emission") { Ok("C".into()) }
-                else if lower.contains("400") || lower.contains("diesel") { Ok("400".into()) }
-                else { Ok("C".into()) }
+                if lower.contains("byd") || lower.contains("manufacturer") {
+                    Ok("B".into())
+                } else if lower.contains("40%") || lower.contains("emission") {
+                    Ok("C".into())
+                } else if lower.contains("400") || lower.contains("diesel") {
+                    Ok("400".into())
+                } else {
+                    Ok("C".into())
+                }
             });
             multi_gen.register_model("sgp_specialist", |prompt: &str| {
                 let lower = prompt.to_lowercase();
-                if lower.contains("green mark") || lower.contains("certification") { Ok("C".into()) }
-                else if lower.contains("35%") || lower.contains("energy reduction") { Ok("B".into()) }
-                else if lower.contains("4,300") || lower.contains("certified") { Ok("4300".into()) }
-                else { Ok("C".into()) }
+                if lower.contains("green mark") || lower.contains("certification") {
+                    Ok("C".into())
+                } else if lower.contains("35%") || lower.contains("energy reduction") {
+                    Ok("B".into())
+                } else if lower.contains("4,300") || lower.contains("certified") {
+                    Ok("4300".into())
+                } else {
+                    Ok("C".into())
+                }
             });
 
             // 5. Questions
@@ -3713,7 +3869,8 @@ mod tests {
                 EvalCriterion::Helpfulness,
             ]);
             for (_, question, _, _) in &questions {
-                let prompts = judge.evaluate_all(question, "test response", Some("sustainability context"));
+                let prompts =
+                    judge.evaluate_all(question, "test response", Some("sustainability context"));
                 assert_eq!(prompts.len(), 3, "Should generate 3 criterion prompts");
             }
 

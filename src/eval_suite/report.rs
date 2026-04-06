@@ -191,8 +191,11 @@ impl ReportBuilder {
 
         let mut cost_by_technique: HashMap<String, f64> = HashMap::new();
         for ablation in &self.ablations {
-            let technique_cost = ablation.control_summary.total_cost + ablation.treatment_summary.total_cost;
-            *cost_by_technique.entry(ablation.technique.clone()).or_insert(0.0) += technique_cost;
+            let technique_cost =
+                ablation.control_summary.total_cost + ablation.treatment_summary.total_cost;
+            *cost_by_technique
+                .entry(ablation.technique.clone())
+                .or_insert(0.0) += technique_cost;
         }
 
         CostBreakdown {
@@ -236,9 +239,7 @@ impl ReportBuilder {
 
         // Best per category (from comparison if available)
         let best_per_category = if let Some(ref comparison) = self.comparison {
-            comparison.best_per_metric()
-                .into_iter()
-                .collect()
+            comparison.best_per_metric().into_iter().collect()
         } else {
             HashMap::new()
         };
@@ -247,23 +248,30 @@ impl ReportBuilder {
         let technique_recommendations: Vec<String> = self
             .ablations
             .iter()
-            .map(|a| {
-                match &a.recommendation {
-                    super::ablation::AblationRecommendation::Enable { quality_gain_pct, cost_increase_pct } => {
-                        format!(
-                            "ENABLE '{}': +{:.1}% quality, +{:.1}% cost",
-                            a.technique, quality_gain_pct, cost_increase_pct
-                        )
-                    }
-                    super::ablation::AblationRecommendation::Neutral => {
-                        format!("NEUTRAL '{}': no significant effect", a.technique)
-                    }
-                    super::ablation::AblationRecommendation::Disable { quality_loss_pct } => {
-                        format!("DISABLE '{}': -{:.1}% quality", a.technique, quality_loss_pct)
-                    }
-                    super::ablation::AblationRecommendation::InsufficientData => {
-                        format!("INSUFFICIENT DATA for '{}': collect more samples", a.technique)
-                    }
+            .map(|a| match &a.recommendation {
+                super::ablation::AblationRecommendation::Enable {
+                    quality_gain_pct,
+                    cost_increase_pct,
+                } => {
+                    format!(
+                        "ENABLE '{}': +{:.1}% quality, +{:.1}% cost",
+                        a.technique, quality_gain_pct, cost_increase_pct
+                    )
+                }
+                super::ablation::AblationRecommendation::Neutral => {
+                    format!("NEUTRAL '{}': no significant effect", a.technique)
+                }
+                super::ablation::AblationRecommendation::Disable { quality_loss_pct } => {
+                    format!(
+                        "DISABLE '{}': -{:.1}% quality",
+                        a.technique, quality_loss_pct
+                    )
+                }
+                super::ablation::AblationRecommendation::InsufficientData => {
+                    format!(
+                        "INSUFFICIENT DATA for '{}': collect more samples",
+                        a.technique
+                    )
                 }
             })
             .collect();
@@ -274,7 +282,8 @@ impl ReportBuilder {
         if let Some(ref model) = best_overall_model {
             key_findings.push(format!(
                 "Best overall model: {} ({:.1}% accuracy)",
-                model, best_overall_accuracy * 100.0
+                model,
+                best_overall_accuracy * 100.0
             ));
         }
 
@@ -296,11 +305,8 @@ impl ReportBuilder {
             }
         }
 
-        let significant_ablations: Vec<&AblationResult> = self
-            .ablations
-            .iter()
-            .filter(|a| a.is_significant)
-            .collect();
+        let significant_ablations: Vec<&AblationResult> =
+            self.ablations.iter().filter(|a| a.is_significant).collect();
         if !significant_ablations.is_empty() {
             key_findings.push(format!(
                 "{} out of {} techniques showed significant impact",
@@ -318,10 +324,15 @@ impl ReportBuilder {
                 ));
             }
             if search.cost_change_pct.abs() > 1.0 {
-                let direction = if search.cost_change_pct < 0.0 { "reduced" } else { "increased" };
+                let direction = if search.cost_change_pct < 0.0 {
+                    "reduced"
+                } else {
+                    "increased"
+                };
                 key_findings.push(format!(
                     "Config search {} cost by {:.1}%",
-                    direction, search.cost_change_pct.abs()
+                    direction,
+                    search.cost_change_pct.abs()
                 ));
             }
             let top_dims = search.top_dimensions(2);
@@ -350,29 +361,42 @@ impl ReportBuilder {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use super::super::runner::ProblemResult;
-    use super::super::dataset::BenchmarkSuiteType;
     use super::super::ablation::{AblationRecommendation, RunSummary};
+    use super::super::dataset::BenchmarkSuiteType;
+    use super::super::runner::ProblemResult;
+    use super::*;
 
     fn make_run(model_name: &str, accuracy: f64, cost: f64) -> BenchmarkRunResult {
-        let model = ModelIdentifier { name: model_name.into(), provider: "test".into(), variant: None };
+        let model = ModelIdentifier {
+            name: model_name.into(),
+            provider: "test".into(),
+            variant: None,
+        };
         let n_problems = 10;
-        let results: Vec<ProblemResult> = (0..n_problems).map(|i| {
-            let score = if (i as f64 / n_problems as f64) < accuracy { 1.0 } else { 0.0 };
-            ProblemResult {
-                problem_id: format!("p/{}", i),
-                model_id: model.clone(),
-                responses: vec!["resp".into()],
-                scores: vec![score],
-                passed: vec![score >= 0.99],
-                latencies_ms: vec![100],
-                token_counts: vec![TokenUsage { input_tokens: 50, output_tokens: 20 }],
-                cost_estimates: vec![cost / n_problems as f64],
-                error: None,
-                metadata: HashMap::new(),
-            }
-        }).collect();
+        let results: Vec<ProblemResult> = (0..n_problems)
+            .map(|i| {
+                let score = if (i as f64 / n_problems as f64) < accuracy {
+                    1.0
+                } else {
+                    0.0
+                };
+                ProblemResult {
+                    problem_id: format!("p/{}", i),
+                    model_id: model.clone(),
+                    responses: vec!["resp".into()],
+                    scores: vec![score],
+                    passed: vec![score >= 0.99],
+                    latencies_ms: vec![100],
+                    token_counts: vec![TokenUsage {
+                        input_tokens: 50,
+                        output_tokens: 20,
+                    }],
+                    cost_estimates: vec![cost / n_problems as f64],
+                    error: None,
+                    metadata: HashMap::new(),
+                }
+            })
+            .collect();
 
         BenchmarkRunResult {
             run_id: format!("run_{}", model_name),
@@ -383,11 +407,18 @@ mod tests {
             started_at: 1000,
             completed_at: 1010,
             total_cost: cost,
-            total_tokens: TokenUsage { input_tokens: 500, output_tokens: 200 },
+            total_tokens: TokenUsage {
+                input_tokens: 500,
+                output_tokens: 200,
+            },
         }
     }
 
-    fn make_ablation_result(technique: &str, significant: bool, quality_delta: f64) -> AblationResult {
+    fn make_ablation_result(
+        technique: &str,
+        significant: bool,
+        quality_delta: f64,
+    ) -> AblationResult {
         AblationResult {
             study_name: format!("{} study", technique),
             technique: technique.into(),
@@ -398,14 +429,31 @@ mod tests {
             is_significant: significant,
             effect_size: quality_delta.abs() * 2.0,
             recommendation: if quality_delta > 0.0 && significant {
-                AblationRecommendation::Enable { quality_gain_pct: quality_delta * 100.0, cost_increase_pct: 10.0 }
+                AblationRecommendation::Enable {
+                    quality_gain_pct: quality_delta * 100.0,
+                    cost_increase_pct: 10.0,
+                }
             } else if quality_delta < 0.0 && significant {
-                AblationRecommendation::Disable { quality_loss_pct: quality_delta.abs() * 100.0 }
+                AblationRecommendation::Disable {
+                    quality_loss_pct: quality_delta.abs() * 100.0,
+                }
             } else {
                 AblationRecommendation::Neutral
             },
-            control_summary: RunSummary { mean_score: 0.5, std_dev: 0.1, mean_latency_ms: 100.0, total_cost: 0.01, sample_count: 10 },
-            treatment_summary: RunSummary { mean_score: 0.5 + quality_delta, std_dev: 0.1, mean_latency_ms: 110.0, total_cost: 0.02, sample_count: 10 },
+            control_summary: RunSummary {
+                mean_score: 0.5,
+                std_dev: 0.1,
+                mean_latency_ms: 100.0,
+                total_cost: 0.01,
+                sample_count: 10,
+            },
+            treatment_summary: RunSummary {
+                mean_score: 0.5 + quality_delta,
+                std_dev: 0.1,
+                mean_latency_ms: 110.0,
+                total_cost: 0.02,
+                sample_count: 10,
+            },
         }
     }
 
@@ -453,7 +501,10 @@ mod tests {
             .build();
 
         assert!(report.summary.best_overall_model.is_some());
-        assert_eq!(report.summary.best_overall_model.as_ref().unwrap().name, "gpt-4");
+        assert_eq!(
+            report.summary.best_overall_model.as_ref().unwrap().name,
+            "gpt-4"
+        );
     }
 
     #[test]
@@ -507,9 +558,20 @@ mod tests {
             .build();
 
         // Best overall = expensive_good (highest accuracy)
-        assert_eq!(report.summary.best_overall_model.as_ref().unwrap().name, "expensive_good");
+        assert_eq!(
+            report.summary.best_overall_model.as_ref().unwrap().name,
+            "expensive_good"
+        );
         // Best cost-effective = cheap_bad (best acc/cost ratio)
-        assert_eq!(report.summary.best_cost_effective_model.as_ref().unwrap().name, "cheap_bad");
+        assert_eq!(
+            report
+                .summary
+                .best_cost_effective_model
+                .as_ref()
+                .unwrap()
+                .name,
+            "cheap_bad"
+        );
     }
 
     #[test]
@@ -536,9 +598,7 @@ mod tests {
     #[test]
     fn test_report_with_config_search() {
         use super::super::agent_config::{ConfigMeasurement, EvalAgentConfig};
-        use super::super::config_search::{
-            ConfigSearchResult, EvolutionSnapshot, SearchCost,
-        };
+        use super::super::config_search::{ConfigSearchResult, EvolutionSnapshot, SearchCost};
         use super::super::runner::ModelIdentifier;
 
         let model = ModelIdentifier {

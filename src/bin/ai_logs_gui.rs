@@ -104,7 +104,11 @@ impl eframe::App for LogViewerApp {
                     self.load_source();
                 }
                 ui.separator();
-                let live_label = if self.live_mode { "⏸ Pause" } else { "▶ Live" };
+                let live_label = if self.live_mode {
+                    "⏸ Pause"
+                } else {
+                    "▶ Live"
+                };
                 if ui.button(live_label).clicked() {
                     self.live_mode = !self.live_mode;
                     if self.live_mode {
@@ -177,13 +181,19 @@ impl eframe::App for LogViewerApp {
 
                 ui.separator();
                 ui.label("Node:");
-                if ui.text_edit_singleline(&mut self.filter.node_filter).changed() {
+                if ui
+                    .text_edit_singleline(&mut self.filter.node_filter)
+                    .changed()
+                {
                     self.apply_trace_filter();
                 }
 
                 ui.separator();
                 ui.label("Search:");
-                if ui.text_edit_singleline(&mut self.filter.search_text).changed() {
+                if ui
+                    .text_edit_singleline(&mut self.filter.search_text)
+                    .changed()
+                {
                     self.apply_trace_filter();
                 }
 
@@ -269,11 +279,7 @@ impl LogViewerApp {
         let path = PathBuf::from(&self.source_path);
         match LogReader::list_traces(&path) {
             Ok(traces) => {
-                self.status = format!(
-                    "Loaded {} trace(s) from {}",
-                    traces.len(),
-                    self.source_path
-                );
+                self.status = format!("Loaded {} trace(s) from {}", traces.len(), self.source_path);
                 self.traces = traces;
                 self.selected_trace = None;
                 self.entries.clear();
@@ -365,12 +371,12 @@ impl LogViewerApp {
 
 fn level_color(level: LogLevel) -> egui::Color32 {
     match level {
-        LogLevel::Error => egui::Color32::from_rgb(239, 68, 68),   // red
-        LogLevel::Warn => egui::Color32::from_rgb(234, 179, 8),    // yellow
-        LogLevel::Info => egui::Color32::from_rgb(226, 232, 240),  // white-ish
+        LogLevel::Error => egui::Color32::from_rgb(239, 68, 68), // red
+        LogLevel::Warn => egui::Color32::from_rgb(234, 179, 8),  // yellow
+        LogLevel::Info => egui::Color32::from_rgb(226, 232, 240), // white-ish
         LogLevel::Debug => egui::Color32::from_rgb(148, 163, 184), // gray
         LogLevel::Trace => egui::Color32::from_rgb(100, 116, 139), // dark gray
-        _ => egui::Color32::from_rgb(226, 232, 240),               // default
+        _ => egui::Color32::from_rgb(226, 232, 240),             // default
     }
 }
 

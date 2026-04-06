@@ -52,7 +52,7 @@ impl Tab {
         match self {
             Self::Setup => "\u{2699}",   // gear
             Self::Config => "\u{1f4dd}", // memo
-            Self::Nodes => "\u{1f5a5}", // desktop computer
+            Self::Nodes => "\u{1f5a5}",  // desktop computer
             Self::Docker => "\u{1f4e6}", // package
             Self::Models => "\u{1f9e0}", // brain
             Self::Backup => "\u{1f4be}", // floppy disk
@@ -273,8 +273,7 @@ impl SetupGuiApp {
                                 uptime_secs: 0,
                                 health: "unreachable".to_string(),
                             });
-                            self.node_log
-                                .push_str(&format!("[status] Error: {}\n", e));
+                            self.node_log.push_str(&format!("[status] Error: {}\n", e));
                         }
                     }
                 }
@@ -290,17 +289,15 @@ impl SetupGuiApp {
                         }
                     }
                 }
-                BgMessage::ModelListDone(result) => {
-                    match result {
-                        Ok(list) => {
-                            self.models = list;
-                            self.models_loaded = true;
-                        }
-                        Err(e) => {
-                            self.set_status(&format!("Model list error: {}", e), true);
-                        }
+                BgMessage::ModelListDone(result) => match result {
+                    Ok(list) => {
+                        self.models = list;
+                        self.models_loaded = true;
                     }
-                }
+                    Err(e) => {
+                        self.set_status(&format!("Model list error: {}", e), true);
+                    }
+                },
                 BgMessage::ModelPullDone(result) => {
                     self.model_pulling = false;
                     match result {
@@ -325,25 +322,23 @@ impl SetupGuiApp {
                         }
                     }
                 }
-                BgMessage::BackupDone(result) => {
-                    match result {
-                        Ok(info) => {
-                            self.set_status(
-                                &format!(
-                                    "Backup created: {} ({} files, {} bytes)",
-                                    info.path.display(),
-                                    info.files_count,
-                                    info.size_bytes
-                                ),
-                                false,
-                            );
-                            self.backup_info = Some(info);
-                        }
-                        Err(e) => {
-                            self.set_status(&format!("Backup failed: {}", e), true);
-                        }
+                BgMessage::BackupDone(result) => match result {
+                    Ok(info) => {
+                        self.set_status(
+                            &format!(
+                                "Backup created: {} ({} files, {} bytes)",
+                                info.path.display(),
+                                info.files_count,
+                                info.size_bytes
+                            ),
+                            false,
+                        );
+                        self.backup_info = Some(info);
                     }
-                }
+                    Err(e) => {
+                        self.set_status(&format!("Backup failed: {}", e), true);
+                    }
+                },
                 BgMessage::RestoreDone(result) => match result {
                     Ok(()) => {
                         self.set_status("Restore complete", false);
@@ -358,10 +353,7 @@ impl SetupGuiApp {
                         self.set_status("Configuration is valid", false);
                     } else {
                         self.set_status(
-                            &format!(
-                                "{} validation error(s)",
-                                self.validation_errors.len()
-                            ),
+                            &format!("{} validation error(s)", self.validation_errors.len()),
                             true,
                         );
                     }
@@ -372,15 +364,13 @@ impl SetupGuiApp {
                         self.set_status("Docker build succeeded", false);
                     }
                     Err(e) => {
-                        self.docker_log
-                            .push_str(&format!("[build] Error: {}\n", e));
+                        self.docker_log.push_str(&format!("[build] Error: {}\n", e));
                         self.set_status("Docker build failed", true);
                     }
                 },
                 BgMessage::DockerComposeUpDone(result) => match result {
                     Ok(msg) => {
-                        self.docker_log
-                            .push_str(&format!("[compose up] {}\n", msg));
+                        self.docker_log.push_str(&format!("[compose up] {}\n", msg));
                         self.set_status("Docker Compose up succeeded", false);
                         self.refresh_docker();
                     }
@@ -410,8 +400,7 @@ impl SetupGuiApp {
                         self.refresh_node_status();
                     }
                     Err(e) => {
-                        self.node_log
-                            .push_str(&format!("[start] Error: {}\n", e));
+                        self.node_log.push_str(&format!("[start] Error: {}\n", e));
                         self.set_status("Node start failed", true);
                     }
                 },
@@ -422,8 +411,7 @@ impl SetupGuiApp {
                         self.refresh_node_status();
                     }
                     Err(e) => {
-                        self.node_log
-                            .push_str(&format!("[stop] Error: {}\n", e));
+                        self.node_log.push_str(&format!("[stop] Error: {}\n", e));
                         self.set_status("Node stop failed", true);
                     }
                 },
@@ -480,7 +468,7 @@ impl SetupGuiApp {
                 let _ = tx.send(BgMessage::DockerStatusDone(result));
             } else {
                 let _ = tx.send(BgMessage::DockerStatusDone(Err(
-                    "Docker is not available".to_string(),
+                    "Docker is not available".to_string()
                 )));
             }
         });
@@ -638,9 +626,8 @@ impl SetupGuiApp {
             self.config_text = content;
         }
         // Load individual fields
-        let get = |key: &str| -> String {
-            config_ops::get_config_value(&path, key).unwrap_or_default()
-        };
+        let get =
+            |key: &str| -> String { config_ops::get_config_value(&path, key).unwrap_or_default() };
 
         let val = get("provider.type");
         if !val.is_empty() {
@@ -864,12 +851,7 @@ max_entries = {}
                         let color = if self.status_is_error {
                             Color32::from_rgba_unmultiplied(255, 80, 80, (alpha * 255.0) as u8)
                         } else {
-                            Color32::from_rgba_unmultiplied(
-                                150,
-                                220,
-                                150,
-                                (alpha * 255.0) as u8,
-                            )
+                            Color32::from_rgba_unmultiplied(150, 220, 150, (alpha * 255.0) as u8)
                         };
                         ui.label(RichText::new(&self.status_message).small().color(color));
                     }
@@ -963,22 +945,15 @@ max_entries = {}
                         ui.label(&name_text);
 
                         // Details
-                        ui.label(
-                            RichText::new(&p.details)
-                                .small()
-                                .color(Color32::LIGHT_GRAY),
-                        );
+                        ui.label(RichText::new(&p.details).small().color(Color32::LIGHT_GRAY));
 
                         // Install button for missing items
                         if !p.installed {
                             let target = p.name.to_lowercase();
                             if target == "ollama" || target == "docker" {
                                 if ui.small_button("Install Info").clicked() {
-                                    if let Ok(instructions) =
-                                        prereq::install_command(&target)
-                                    {
-                                        self.install_info =
-                                            Some((p.name.clone(), instructions));
+                                    if let Ok(instructions) = prereq::install_command(&target) {
+                                        self.install_info = Some((p.name.clone(), instructions));
                                     }
                                 }
                             } else {
@@ -1078,10 +1053,7 @@ max_entries = {}
                 let path = PathBuf::from(&self.config_path);
                 let output = path.with_extension("export.toml");
                 match config_ops::export_config(&path, "toml", &output) {
-                    Ok(()) => self.set_status(
-                        &format!("Exported to {}", output.display()),
-                        false,
-                    ),
+                    Ok(()) => self.set_status(&format!("Exported to {}", output.display()), false),
                     Err(e) => self.set_status(&format!("Export failed: {}", e), true),
                 }
             }
@@ -1089,10 +1061,7 @@ max_entries = {}
                 let path = PathBuf::from(&self.config_path);
                 let output = path.with_extension("export.json");
                 match config_ops::export_config(&path, "json", &output) {
-                    Ok(()) => self.set_status(
-                        &format!("Exported to {}", output.display()),
-                        false,
-                    ),
+                    Ok(()) => self.set_status(&format!("Exported to {}", output.display()), false),
                     Err(e) => self.set_status(&format!("Export failed: {}", e), true),
                 }
             }
@@ -1130,7 +1099,9 @@ max_entries = {}
             // Provider section
             let mut modified = false;
             egui::CollapsingHeader::new(
-                RichText::new("Provider").strong().color(Color32::from_rgb(100, 200, 255)),
+                RichText::new("Provider")
+                    .strong()
+                    .color(Color32::from_rgb(100, 200, 255)),
             )
             .default_open(true)
             .show(ui, |ui| {
@@ -1143,13 +1114,7 @@ max_entries = {}
                         egui::ComboBox::from_id_source("provider_type")
                             .selected_text(&self.cfg_provider_type)
                             .show_ui(ui, |ui| {
-                                for t in &[
-                                    "ollama",
-                                    "lm_studio",
-                                    "openai",
-                                    "anthropic",
-                                    "gemini",
-                                ] {
+                                for t in &["ollama", "lm_studio", "openai", "anthropic", "gemini"] {
                                     ui.selectable_value(
                                         &mut self.cfg_provider_type,
                                         t.to_string(),
@@ -1163,7 +1128,10 @@ max_entries = {}
                         ui.end_row();
 
                         ui.label("Model:");
-                        if ui.text_edit_singleline(&mut self.cfg_provider_model).changed() {
+                        if ui
+                            .text_edit_singleline(&mut self.cfg_provider_model)
+                            .changed()
+                        {
                             modified = true;
                         }
                         ui.end_row();
@@ -1181,20 +1149,12 @@ max_entries = {}
                                 let mut masked = if self.cfg_provider_api_key.is_empty() {
                                     String::new()
                                 } else {
-                                    "\u{2022}".repeat(
-                                        self.cfg_provider_api_key.len().min(20),
-                                    )
+                                    "\u{2022}".repeat(self.cfg_provider_api_key.len().min(20))
                                 };
-                                ui.add(
-                                    egui::TextEdit::singleline(&mut masked).interactive(false),
-                                );
+                                ui.add(egui::TextEdit::singleline(&mut masked).interactive(false));
                             }
                             if ui
-                                .small_button(if self.show_api_keys {
-                                    "Hide"
-                                } else {
-                                    "Show"
-                                })
+                                .small_button(if self.show_api_keys { "Hide" } else { "Show" })
                                 .clicked()
                             {
                                 self.show_api_keys = !self.show_api_keys;
@@ -1206,7 +1166,9 @@ max_entries = {}
 
             // Server URLs section
             egui::CollapsingHeader::new(
-                RichText::new("Server URLs").strong().color(Color32::from_rgb(100, 200, 255)),
+                RichText::new("Server URLs")
+                    .strong()
+                    .color(Color32::from_rgb(100, 200, 255)),
             )
             .default_open(true)
             .show(ui, |ui| {
@@ -1233,7 +1195,9 @@ max_entries = {}
 
             // Generation section
             egui::CollapsingHeader::new(
-                RichText::new("Generation").strong().color(Color32::from_rgb(100, 200, 255)),
+                RichText::new("Generation")
+                    .strong()
+                    .color(Color32::from_rgb(100, 200, 255)),
             )
             .default_open(true)
             .show(ui, |ui| {
@@ -1252,7 +1216,10 @@ max_entries = {}
 
                         ui.label("Max History:");
                         if ui
-                            .add(egui::DragValue::new(&mut self.cfg_max_history).clamp_range(1..=100))
+                            .add(
+                                egui::DragValue::new(&mut self.cfg_max_history)
+                                    .clamp_range(1..=100),
+                            )
                             .changed()
                         {
                             modified = true;
@@ -1263,7 +1230,9 @@ max_entries = {}
 
             // RAG section
             egui::CollapsingHeader::new(
-                RichText::new("RAG").strong().color(Color32::from_rgb(100, 200, 255)),
+                RichText::new("RAG")
+                    .strong()
+                    .color(Color32::from_rgb(100, 200, 255)),
             )
             .default_open(true)
             .show(ui, |ui| {
@@ -1305,7 +1274,9 @@ max_entries = {}
 
             // Logging section
             egui::CollapsingHeader::new(
-                RichText::new("Logging").strong().color(Color32::from_rgb(100, 200, 255)),
+                RichText::new("Logging")
+                    .strong()
+                    .color(Color32::from_rgb(100, 200, 255)),
             )
             .default_open(false)
             .show(ui, |ui| {
@@ -1335,7 +1306,9 @@ max_entries = {}
 
             // Cache section
             egui::CollapsingHeader::new(
-                RichText::new("Cache").strong().color(Color32::from_rgb(100, 200, 255)),
+                RichText::new("Cache")
+                    .strong()
+                    .color(Color32::from_rgb(100, 200, 255)),
             )
             .default_open(false)
             .show(ui, |ui| {
@@ -1436,9 +1409,7 @@ max_entries = {}
                             "unreachable" => Color32::from_rgb(255, 80, 80),
                             _ => Color32::YELLOW,
                         };
-                        ui.label(
-                            RichText::new(&info.health).color(health_color),
-                        );
+                        ui.label(RichText::new(&info.health).color(health_color));
                         ui.end_row();
 
                         if info.uptime_secs > 0 {
@@ -1474,10 +1445,7 @@ max_entries = {}
                 }
             });
         } else {
-            ui.label(
-                RichText::new("Checking node status...")
-                    .color(Color32::GRAY),
-            );
+            ui.label(RichText::new("Checking node status...").color(Color32::GRAY));
         }
 
         // Node log
@@ -1545,10 +1513,7 @@ max_entries = {}
         ui.add_space(8.0);
 
         if self.containers.is_empty() {
-            ui.label(
-                RichText::new("No running containers.")
-                    .color(Color32::GRAY),
-            );
+            ui.label(RichText::new("No running containers.").color(Color32::GRAY));
         } else {
             egui::Grid::new("docker_containers")
                 .num_columns(4)
@@ -1569,14 +1534,8 @@ max_entries = {}
                             "unhealthy" => Color32::from_rgb(255, 80, 80),
                             _ => Color32::YELLOW,
                         };
-                        ui.label(
-                            RichText::new(&c.health).color(health_color),
-                        );
-                        ui.label(
-                            RichText::new(&c.ports)
-                                .small()
-                                .color(Color32::LIGHT_GRAY),
-                        );
+                        ui.label(RichText::new(&c.health).color(health_color));
+                        ui.label(RichText::new(&c.ports).small().color(Color32::LIGHT_GRAY));
                         ui.end_row();
                     }
                 });
@@ -1716,16 +1675,8 @@ max_entries = {}
                     let models_clone = self.models.clone();
                     for m in &models_clone {
                         ui.label(&m.name);
-                        ui.label(
-                            RichText::new(&m.size)
-                                .small()
-                                .color(Color32::LIGHT_GRAY),
-                        );
-                        ui.label(
-                            RichText::new(&m.modified)
-                                .small()
-                                .color(Color32::GRAY),
-                        );
+                        ui.label(RichText::new(&m.size).small().color(Color32::LIGHT_GRAY));
+                        ui.label(RichText::new(&m.modified).small().color(Color32::GRAY));
 
                         let is_deleting = self
                             .model_deleting
@@ -1767,7 +1718,10 @@ max_entries = {}
             );
         });
 
-        ui.checkbox(&mut self.backup_include_models, "Include model files (may be very large)");
+        ui.checkbox(
+            &mut self.backup_include_models,
+            "Include model files (may be very large)",
+        );
 
         ui.add_space(4.0);
         if ui.button("Create Backup").clicked() {
@@ -1851,15 +1805,13 @@ impl eframe::App for SetupGuiApp {
         self.render_left_panel(ctx);
         self.render_status_bar(ctx);
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            match self.tab {
-                Tab::Setup => self.render_setup_tab(ui),
-                Tab::Config => self.render_config_tab(ui),
-                Tab::Nodes => self.render_nodes_tab(ui),
-                Tab::Docker => self.render_docker_tab(ui),
-                Tab::Models => self.render_models_tab(ui),
-                Tab::Backup => self.render_backup_tab(ui),
-            }
+        egui::CentralPanel::default().show(ctx, |ui| match self.tab {
+            Tab::Setup => self.render_setup_tab(ui),
+            Tab::Config => self.render_config_tab(ui),
+            Tab::Nodes => self.render_nodes_tab(ui),
+            Tab::Docker => self.render_docker_tab(ui),
+            Tab::Models => self.render_models_tab(ui),
+            Tab::Backup => self.render_backup_tab(ui),
         });
     }
 }

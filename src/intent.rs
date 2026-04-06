@@ -107,12 +107,12 @@ impl IntentClassifier {
                 "does it",
                 "?",
                 // Spanish
-                "\u{00bf}qu\u{00e9}",    // ¿qué
+                "\u{00bf}qu\u{00e9}",     // ¿qué
                 "\u{00bf}por qu\u{00e9}", // ¿por qué
-                "\u{00bf}c\u{00f3}mo",   // ¿cómo
-                "\u{00bf}cu\u{00e1}ndo", // ¿cuándo
-                "\u{00bf}d\u{00f3}nde",  // ¿dónde
-                "\u{00bf}qui\u{00e9}n",  // ¿quién
+                "\u{00bf}c\u{00f3}mo",    // ¿cómo
+                "\u{00bf}cu\u{00e1}ndo",  // ¿cuándo
+                "\u{00bf}d\u{00f3}nde",   // ¿dónde
+                "\u{00bf}qui\u{00e9}n",   // ¿quién
             ],
         );
 
@@ -161,10 +161,10 @@ impl IntentClassifier {
                 "howdy",
                 // Spanish
                 "hola",
-                "buenos d\u{00ed}as",   // buenos días
+                "buenos d\u{00ed}as", // buenos días
                 "buenas tardes",
                 "buenas noches",
-                "qu\u{00e9} tal",       // qué tal
+                "qu\u{00e9} tal", // qué tal
             ],
         );
 
@@ -179,7 +179,7 @@ impl IntentClassifier {
                 "farewell",
                 "later",
                 // Spanish
-                "adi\u{00f3}s",         // adiós
+                "adi\u{00f3}s", // adiós
                 "hasta luego",
                 "nos vemos",
                 "chao",
@@ -189,9 +189,15 @@ impl IntentClassifier {
         patterns.insert(
             Intent::Thanks,
             vec![
-                "thank", "thanks", "appreciate", "grateful", "cheers",
+                "thank",
+                "thanks",
+                "appreciate",
+                "grateful",
+                "cheers",
                 // Spanish
-                "gracias", "muchas gracias", "te agradezco",
+                "gracias",
+                "muchas gracias",
+                "te agradezco",
             ],
         );
 
@@ -210,7 +216,7 @@ impl IntentClassifier {
                 "awful",
                 // Spanish
                 "no funciona",
-                "est\u{00e1} roto",     // está roto
+                "est\u{00e1} roto", // está roto
                 "mal",
                 "problema",
                 "horrible",
@@ -232,9 +238,9 @@ impl IntentClassifier {
                 "por favor",
                 "necesito",
                 "quiero",
-                "podr\u{00ed}as",       // podrías
-                "me gustar\u{00ed}a",   // me gustaría
-                "ay\u{00fa}dame",       // ayúdame
+                "podr\u{00ed}as",     // podrías
+                "me gustar\u{00ed}a", // me gustaría
+                "ay\u{00fa}dame",     // ayúdame
             ],
         );
 
@@ -250,7 +256,7 @@ impl IntentClassifier {
                 // Spanish
                 "no entiendo",
                 "\u{00bf}qu\u{00e9} quieres decir?", // ¿qué quieres decir?
-                "expl\u{00ed}came",     // explícame
+                "expl\u{00ed}came",                  // explícame
                 "aclara",
             ],
         );
@@ -270,7 +276,7 @@ impl IntentClassifier {
                 "agreed",
                 "affirmative",
                 // Spanish
-                "s\u{00ed}",            // sí
+                "s\u{00ed}", // sí
                 "claro",
                 "exacto",
                 "correcto",
@@ -312,8 +318,8 @@ impl IntentClassifier {
                 "syntax",
                 "debug",
                 // Spanish
-                "c\u{00f3}digo",        // código
-                "funci\u{00f3}n",       // función
+                "c\u{00f3}digo",  // código
+                "funci\u{00f3}n", // función
                 "implementa",
                 "programa",
                 "algoritmo",
@@ -332,8 +338,8 @@ impl IntentClassifier {
                 // Spanish
                 "explica",
                 "describe",
-                "qu\u{00e9} es",        // qué es
-                "definici\u{00f3}n",    // definición
+                "qu\u{00e9} es",         // qué es
+                "definici\u{00f3}n",     // definición
                 "cu\u{00e9}ntame sobre", // cuéntame sobre
             ],
         );
@@ -384,9 +390,9 @@ impl IntentClassifier {
                 "nice weather",
                 "just chatting",
                 // Spanish
-                "\u{00bf}qu\u{00e9} tal?",   // ¿qué tal?
+                "\u{00bf}qu\u{00e9} tal?",           // ¿qué tal?
                 "\u{00bf}c\u{00f3}mo est\u{00e1}s?", // ¿cómo estás?
-                "qu\u{00e9} onda",       // qué onda
+                "qu\u{00e9} onda",                   // qué onda
             ],
         );
 
@@ -588,7 +594,10 @@ mod tests {
         assert!(result.confidence > 0.0);
         // Should match "goodbye", "see you", "later" — multiple farewell patterns
         assert!(
-            result.all_intents.iter().any(|(i, _)| *i == Intent::Farewell),
+            result
+                .all_intents
+                .iter()
+                .any(|(i, _)| *i == Intent::Farewell),
             "Farewell should appear in all_intents"
         );
     }
@@ -609,9 +618,10 @@ mod tests {
         assert_eq!(result.primary, Intent::Complaint);
         assert!(result.confidence > 0.0);
         // Should match "doesn't work" and "broken"
-        assert!(
-            result.all_intents.iter().any(|(i, _)| *i == Intent::Complaint),
-        );
+        assert!(result
+            .all_intents
+            .iter()
+            .any(|(i, _)| *i == Intent::Complaint),);
     }
 
     #[test]
@@ -621,9 +631,10 @@ mod tests {
         assert_eq!(result.primary, Intent::Comparison);
         assert!(result.confidence > 0.0);
         // "compare" and "vs" are both Comparison patterns
-        assert!(
-            result.all_intents.iter().any(|(i, _)| *i == Intent::Comparison),
-        );
+        assert!(result
+            .all_intents
+            .iter()
+            .any(|(i, _)| *i == Intent::Comparison),);
     }
 
     #[test]
@@ -633,9 +644,10 @@ mod tests {
         assert_eq!(result.primary, Intent::Confirmation);
         assert!(result.confidence > 0.0);
         // "yes" and "correct" both match Confirmation patterns
-        assert!(
-            result.all_intents.iter().any(|(i, _)| *i == Intent::Confirmation),
-        );
+        assert!(result
+            .all_intents
+            .iter()
+            .any(|(i, _)| *i == Intent::Confirmation),);
     }
 
     #[test]
@@ -643,21 +655,60 @@ mod tests {
         let classifier = IntentClassifier::new();
 
         // Verify every intent variant maps to the correct response type
-        assert_eq!(classifier.suggest_response_type(Intent::Question), "informative");
+        assert_eq!(
+            classifier.suggest_response_type(Intent::Question),
+            "informative"
+        );
         assert_eq!(classifier.suggest_response_type(Intent::Command), "action");
-        assert_eq!(classifier.suggest_response_type(Intent::Greeting), "greeting");
-        assert_eq!(classifier.suggest_response_type(Intent::Farewell), "farewell");
-        assert_eq!(classifier.suggest_response_type(Intent::Thanks), "acknowledgment");
-        assert_eq!(classifier.suggest_response_type(Intent::Complaint), "supportive");
+        assert_eq!(
+            classifier.suggest_response_type(Intent::Greeting),
+            "greeting"
+        );
+        assert_eq!(
+            classifier.suggest_response_type(Intent::Farewell),
+            "farewell"
+        );
+        assert_eq!(
+            classifier.suggest_response_type(Intent::Thanks),
+            "acknowledgment"
+        );
+        assert_eq!(
+            classifier.suggest_response_type(Intent::Complaint),
+            "supportive"
+        );
         assert_eq!(classifier.suggest_response_type(Intent::Request), "helpful");
-        assert_eq!(classifier.suggest_response_type(Intent::Clarification), "detailed_explanation");
-        assert_eq!(classifier.suggest_response_type(Intent::Confirmation), "acknowledgment");
-        assert_eq!(classifier.suggest_response_type(Intent::Negation), "clarification");
-        assert_eq!(classifier.suggest_response_type(Intent::Opinion), "balanced");
-        assert_eq!(classifier.suggest_response_type(Intent::Chitchat), "conversational");
-        assert_eq!(classifier.suggest_response_type(Intent::CodeRequest), "code");
-        assert_eq!(classifier.suggest_response_type(Intent::Explanation), "educational");
-        assert_eq!(classifier.suggest_response_type(Intent::Comparison), "analytical");
+        assert_eq!(
+            classifier.suggest_response_type(Intent::Clarification),
+            "detailed_explanation"
+        );
+        assert_eq!(
+            classifier.suggest_response_type(Intent::Confirmation),
+            "acknowledgment"
+        );
+        assert_eq!(
+            classifier.suggest_response_type(Intent::Negation),
+            "clarification"
+        );
+        assert_eq!(
+            classifier.suggest_response_type(Intent::Opinion),
+            "balanced"
+        );
+        assert_eq!(
+            classifier.suggest_response_type(Intent::Chitchat),
+            "conversational"
+        );
+        assert_eq!(
+            classifier.suggest_response_type(Intent::CodeRequest),
+            "code"
+        );
+        assert_eq!(
+            classifier.suggest_response_type(Intent::Explanation),
+            "educational"
+        );
+        assert_eq!(
+            classifier.suggest_response_type(Intent::Comparison),
+            "analytical"
+        );
         assert_eq!(classifier.suggest_response_type(Intent::Unknown), "general");
     }
 
@@ -686,13 +737,10 @@ mod tests {
 
     #[test]
     fn test_classify_with_mock_llm() {
-        let config = IntentConfig {
-            llm_enhanced: true,
-        };
+        let config = IntentConfig { llm_enhanced: true };
         let classifier = IntentClassifier::with_config(config);
-        let mock = crate::llm_enhance::MockLlm::new(
-            "{\"intent\":\"complaint\",\"confidence\":0.95}",
-        );
+        let mock =
+            crate::llm_enhance::MockLlm::new("{\"intent\":\"complaint\",\"confidence\":0.95}");
         let result = classifier.classify_with_llm("this is broken", Some(&mock));
         assert_eq!(result.primary, Intent::Complaint);
         assert!((result.confidence - 0.95).abs() < f64::EPSILON);
@@ -700,9 +748,7 @@ mod tests {
 
     #[test]
     fn test_classify_llm_fallback_on_failure() {
-        let config = IntentConfig {
-            llm_enhanced: true,
-        };
+        let config = IntentConfig { llm_enhanced: true };
         let classifier = IntentClassifier::with_config(config);
         let failing = crate::llm_enhance::FailingMockLlm;
         let result = classifier.classify_with_llm("goodbye, see you later", Some(&failing));
@@ -718,7 +764,10 @@ mod tests {
         let result = classifier.classify("\u{00bf}c\u{00f3}mo funciona esto?");
         // Should match Question via "¿cómo" and "?"
         assert!(
-            result.all_intents.iter().any(|(i, _)| *i == Intent::Question),
+            result
+                .all_intents
+                .iter()
+                .any(|(i, _)| *i == Intent::Question),
             "Spanish question should be detected, got: {:?}",
             result.all_intents
         );
@@ -729,7 +778,10 @@ mod tests {
         let classifier = IntentClassifier::new();
         let result = classifier.classify("hola, buenos d\u{00ed}as");
         assert!(
-            result.all_intents.iter().any(|(i, _)| *i == Intent::Greeting),
+            result
+                .all_intents
+                .iter()
+                .any(|(i, _)| *i == Intent::Greeting),
             "Spanish greeting should be detected, got: {:?}",
             result.all_intents
         );
@@ -742,7 +794,10 @@ mod tests {
         // English chitchat
         let result = classifier.classify("how are you doing today?");
         assert!(
-            result.all_intents.iter().any(|(i, _)| *i == Intent::Chitchat),
+            result
+                .all_intents
+                .iter()
+                .any(|(i, _)| *i == Intent::Chitchat),
             "English chitchat 'how are you' should be detected, got: {:?}",
             result.all_intents
         );
@@ -750,7 +805,10 @@ mod tests {
         // Opinion detection
         let result2 = classifier.classify("i think this is a great approach");
         assert!(
-            result2.all_intents.iter().any(|(i, _)| *i == Intent::Opinion),
+            result2
+                .all_intents
+                .iter()
+                .any(|(i, _)| *i == Intent::Opinion),
             "Opinion 'i think' should be detected, got: {:?}",
             result2.all_intents
         );

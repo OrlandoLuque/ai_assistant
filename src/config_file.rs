@@ -1101,7 +1101,10 @@ impl ConfigFile {
             if !custom_url.starts_with("http://") && !custom_url.starts_with("https://") {
                 errors.push(ConfigValidationError {
                     field: "provider.custom_url".to_string(),
-                    message: format!("Custom URL '{}' must start with http:// or https://", custom_url),
+                    message: format!(
+                        "Custom URL '{}' must start with http:// or https://",
+                        custom_url
+                    ),
                     suggestion: Some("Prefix with http:// or https://".to_string()),
                 });
             }
@@ -1172,9 +1175,7 @@ impl ConfigWatcher {
     pub fn new(path: impl Into<PathBuf>, poll_interval_secs: u64) -> Result<Self, String> {
         let path = path.into();
         let config = ConfigFile::load(&path).map_err(|e| e.to_string())?;
-        let mtime = std::fs::metadata(&path)
-            .and_then(|m| m.modified())
-            .ok();
+        let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
 
         Ok(Self {
             path,
@@ -1204,7 +1205,10 @@ impl ConfigWatcher {
             .and_then(|m| m.modified())
             .map_err(|e| format!("Failed to stat config file: {}", e))?;
 
-        let mut last = self.last_modified.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut last = self
+            .last_modified
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         let changed = match *last {
             Some(prev) => current_mtime > prev,
             None => true,
@@ -1224,13 +1228,17 @@ impl ConfigWatcher {
         let mut reloaded = Vec::new();
         let mut restart_required = Vec::new();
 
-        let mut current = self.current_config.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut current = self
+            .current_config
+            .lock()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
 
         // Check hot-reloadable fields
         if new_config.provider.model != current.provider.model {
             reloaded.push("provider.model".to_string());
         }
-        if (new_config.generation.temperature - current.generation.temperature).abs() > f32::EPSILON {
+        if (new_config.generation.temperature - current.generation.temperature).abs() > f32::EPSILON
+        {
             reloaded.push("generation.temperature".to_string());
         }
         if new_config.generation.max_history != current.generation.max_history {
@@ -1284,8 +1292,12 @@ impl ConfigWatcher {
     /// Classify a config field by its reload scope.
     pub fn field_scope(field: &str) -> ReloadScope {
         match field {
-            "provider.model" | "generation.temperature" | "generation.max_history"
-            | "generation.max_tokens" | "logging.level" | "cache.enabled"
+            "provider.model"
+            | "generation.temperature"
+            | "generation.max_history"
+            | "generation.max_tokens"
+            | "logging.level"
+            | "cache.enabled"
             | "cache.ttl_seconds" => ReloadScope::HotReload,
             _ => ReloadScope::RequiresRestart,
         }
@@ -1449,23 +1461,39 @@ pub fn register_config_tools(
     // --- config.list_providers ---
     let c = config.clone();
     server.register_tool(
-        McpTool::new("config.list_providers", "List all available AI providers with details"),
+        McpTool::new(
+            "config.list_providers",
+            "List all available AI providers with details",
+        ),
         move |_args| {
             let cfg = c.lock().map_err(|e| e.to_string())?;
             let providers: Vec<serde_json::Value> = [
-                AiProvider::Ollama, AiProvider::LMStudio, AiProvider::TextGenWebUI,
-                AiProvider::KoboldCpp, AiProvider::LocalAI, AiProvider::OpenAI,
-                AiProvider::Anthropic, AiProvider::Gemini, AiProvider::Groq,
-                AiProvider::Together, AiProvider::Fireworks, AiProvider::DeepSeek,
-                AiProvider::Mistral, AiProvider::Perplexity, AiProvider::OpenRouter,
-            ].iter().map(|p| {
+                AiProvider::Ollama,
+                AiProvider::LMStudio,
+                AiProvider::TextGenWebUI,
+                AiProvider::KoboldCpp,
+                AiProvider::LocalAI,
+                AiProvider::OpenAI,
+                AiProvider::Anthropic,
+                AiProvider::Gemini,
+                AiProvider::Groq,
+                AiProvider::Together,
+                AiProvider::Fireworks,
+                AiProvider::DeepSeek,
+                AiProvider::Mistral,
+                AiProvider::Perplexity,
+                AiProvider::OpenRouter,
+            ]
+            .iter()
+            .map(|p| {
                 serde_json::json!({
                     "name": p.display_name(),
                     "is_cloud": p.is_cloud(),
                     "is_openai_compatible": p.is_openai_compatible(),
                     "url": cfg.get_provider_url(p),
                 })
-            }).collect();
+            })
+            .collect();
 
             Ok(serde_json::json!({
                 "providers": providers,
@@ -1520,11 +1548,21 @@ pub fn register_config_tools(
     // --- config.get_provider_url ---
     let c = config.clone();
     server.register_tool(
-        McpTool::new("config.get_provider_url", "Get the URL for a specific provider")
-            .with_property("provider", "string", "Provider name (ollama, lmstudio, openai, anthropic, etc.)", true),
+        McpTool::new(
+            "config.get_provider_url",
+            "Get the URL for a specific provider",
+        )
+        .with_property(
+            "provider",
+            "string",
+            "Provider name (ollama, lmstudio, openai, anthropic, etc.)",
+            true,
+        ),
         move |args| {
             let cfg = c.lock().map_err(|e| e.to_string())?;
-            let name = args.get("provider").and_then(|v| v.as_str())
+            let name = args
+                .get("provider")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing required parameter: provider")?;
 
             let provider = match name.to_lowercase().as_str() {
@@ -1556,7 +1594,10 @@ pub fn register_config_tools(
 
     // --- config.can_write ---
     server.register_tool(
-        McpTool::new("config.can_write", "Check if write access to configuration is enabled"),
+        McpTool::new(
+            "config.can_write",
+            "Check if write access to configuration is enabled",
+        ),
         move |_args| {
             Ok(serde_json::json!({
                 "allow_writes": allow_writes,
@@ -1718,7 +1759,10 @@ knowledge_enabled = true
         let mut config = ConfigFile::default();
         config.generation.temperature = 10.0;
         let errors = config.validate_detailed().unwrap_err();
-        let temp_err = errors.iter().find(|e| e.field == "generation.temperature").unwrap();
+        let temp_err = errors
+            .iter()
+            .find(|e| e.field == "generation.temperature")
+            .unwrap();
         assert!(temp_err.suggestion.is_some());
     }
 
@@ -1753,11 +1797,7 @@ knowledge_enabled = true
         let dir = std::env::temp_dir().join("ai_test_watcher");
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("test_config.toml");
-        std::fs::write(
-            &path,
-            "[provider]\ntype = \"ollama\"\nmodel = \"llama2\"\n",
-        )
-        .unwrap();
+        std::fs::write(&path, "[provider]\ntype = \"ollama\"\nmodel = \"llama2\"\n").unwrap();
 
         let watcher = ConfigWatcher::new(&path, 5);
         assert!(watcher.is_ok());
@@ -1807,7 +1847,9 @@ knowledge_enabled = true
 
         let result = watcher.check_and_reload().unwrap();
         assert!(result.changed);
-        assert!(result.reloaded_fields.contains(&"provider.model".to_string()));
+        assert!(result
+            .reloaded_fields
+            .contains(&"provider.model".to_string()));
         assert_eq!(watcher.current_config().provider.model, "mistral");
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -1828,7 +1870,9 @@ knowledge_enabled = true
 
         let result = watcher.check_and_reload().unwrap();
         assert!(result.changed);
-        assert!(result.restart_required_fields.contains(&"provider.type".to_string()));
+        assert!(result
+            .restart_required_fields
+            .contains(&"provider.type".to_string()));
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1841,12 +1885,30 @@ knowledge_enabled = true
 
     #[test]
     fn test_field_scope_classification() {
-        assert_eq!(ConfigWatcher::field_scope("provider.model"), ReloadScope::HotReload);
-        assert_eq!(ConfigWatcher::field_scope("generation.temperature"), ReloadScope::HotReload);
-        assert_eq!(ConfigWatcher::field_scope("logging.level"), ReloadScope::HotReload);
-        assert_eq!(ConfigWatcher::field_scope("cache.enabled"), ReloadScope::HotReload);
-        assert_eq!(ConfigWatcher::field_scope("urls.ollama"), ReloadScope::RequiresRestart);
-        assert_eq!(ConfigWatcher::field_scope("provider.custom_url"), ReloadScope::RequiresRestart);
+        assert_eq!(
+            ConfigWatcher::field_scope("provider.model"),
+            ReloadScope::HotReload
+        );
+        assert_eq!(
+            ConfigWatcher::field_scope("generation.temperature"),
+            ReloadScope::HotReload
+        );
+        assert_eq!(
+            ConfigWatcher::field_scope("logging.level"),
+            ReloadScope::HotReload
+        );
+        assert_eq!(
+            ConfigWatcher::field_scope("cache.enabled"),
+            ReloadScope::HotReload
+        );
+        assert_eq!(
+            ConfigWatcher::field_scope("urls.ollama"),
+            ReloadScope::RequiresRestart
+        );
+        assert_eq!(
+            ConfigWatcher::field_scope("provider.custom_url"),
+            ReloadScope::RequiresRestart
+        );
     }
 
     #[test]
@@ -1870,7 +1932,9 @@ knowledge_enabled = true
     // Config MCP tools tests
     // =========================================================================
 
-    fn make_test_server_with_config(allow_writes: bool) -> (crate::mcp_protocol::McpServer, Arc<Mutex<AiConfig>>) {
+    fn make_test_server_with_config(
+        allow_writes: bool,
+    ) -> (crate::mcp_protocol::McpServer, Arc<Mutex<AiConfig>>) {
         let mut server = crate::mcp_protocol::McpServer::new("test-config", "1.0.0");
         let mut config = AiConfig::default();
         config.selected_model = "llama2".to_string();
@@ -1880,7 +1944,11 @@ knowledge_enabled = true
         (server, shared)
     }
 
-    fn call_tool(server: &crate::mcp_protocol::McpServer, name: &str, args: serde_json::Value) -> serde_json::Value {
+    fn call_tool(
+        server: &crate::mcp_protocol::McpServer,
+        name: &str,
+        args: serde_json::Value,
+    ) -> serde_json::Value {
         use crate::mcp_protocol::McpRequest;
         // Initialize first
         let init = McpRequest::new("initialize")
@@ -1926,7 +1994,11 @@ knowledge_enabled = true
     #[test]
     fn test_config_mcp_get_field() {
         let (server, _cfg) = make_test_server_with_config(false);
-        let result = call_tool(&server, "config.get", serde_json::json!({"field": "temperature"}));
+        let result = call_tool(
+            &server,
+            "config.get",
+            serde_json::json!({"field": "temperature"}),
+        );
         let data = extract_text(&result);
         let temp = data["temperature"].as_f64().unwrap();
         assert!((temp - 0.7).abs() < 0.01);
@@ -1935,7 +2007,11 @@ knowledge_enabled = true
     #[test]
     fn test_config_mcp_set_temperature() {
         let (server, cfg) = make_test_server_with_config(true);
-        let result = call_tool(&server, "config.set", serde_json::json!({"field": "temperature", "value": "1.2"}));
+        let result = call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "temperature", "value": "1.2"}),
+        );
         let data = extract_text(&result);
         assert_eq!(data["status"], "updated");
         let locked = cfg.lock().unwrap();
@@ -1945,7 +2021,11 @@ knowledge_enabled = true
     #[test]
     fn test_config_mcp_set_model() {
         let (server, cfg) = make_test_server_with_config(true);
-        let result = call_tool(&server, "config.set", serde_json::json!({"field": "model", "value": "mistral"}));
+        let result = call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "model", "value": "mistral"}),
+        );
         let data = extract_text(&result);
         assert_eq!(data["status"], "updated");
         assert_eq!(data["old"], "llama2");
@@ -1956,7 +2036,11 @@ knowledge_enabled = true
     #[test]
     fn test_config_mcp_set_blocked_when_readonly() {
         let (server, cfg) = make_test_server_with_config(false);
-        let result = call_tool(&server, "config.set", serde_json::json!({"field": "model", "value": "mistral"}));
+        let result = call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "model", "value": "mistral"}),
+        );
         // Should return error — check that the config didn't change
         assert_eq!(cfg.lock().unwrap().selected_model, "llama2");
         // The response should have an error, not content with "updated"
@@ -1967,7 +2051,11 @@ knowledge_enabled = true
     #[test]
     fn test_config_mcp_set_invalid_temperature() {
         let (server, cfg) = make_test_server_with_config(true);
-        let result = call_tool(&server, "config.set", serde_json::json!({"field": "temperature", "value": "3.5"}));
+        let result = call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "temperature", "value": "3.5"}),
+        );
         // Should fail — temperature remains unchanged
         let locked = cfg.lock().unwrap();
         assert!((locked.temperature - 0.7).abs() < 0.01);
@@ -2021,26 +2109,46 @@ knowledge_enabled = true
         assert_eq!(data["provider"], "Ollama");
 
         // Step 2: AI decides to switch model mid-conversation
-        let _ = call_tool(&server, "config.set", serde_json::json!({"field": "model", "value": "codellama"}));
+        let _ = call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "model", "value": "codellama"}),
+        );
         let result = call_tool(&server, "config.get", serde_json::json!({"field": "model"}));
         let data = extract_text(&result);
         assert_eq!(data["model"], "codellama");
 
         // Step 3: AI raises temperature for creative task
-        let _ = call_tool(&server, "config.set", serde_json::json!({"field": "temperature", "value": "1.5"}));
-        let result = call_tool(&server, "config.get", serde_json::json!({"field": "temperature"}));
+        let _ = call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "temperature", "value": "1.5"}),
+        );
+        let result = call_tool(
+            &server,
+            "config.get",
+            serde_json::json!({"field": "temperature"}),
+        );
         let data = extract_text(&result);
         assert!((data["temperature"].as_f64().unwrap() - 1.5).abs() < 0.01);
 
         // Step 4: AI switches provider entirely
-        let _ = call_tool(&server, "config.set", serde_json::json!({"field": "provider", "value": "openai"}));
+        let _ = call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "provider", "value": "openai"}),
+        );
         let result = call_tool(&server, "config.get", serde_json::json!({}));
         let data = extract_text(&result);
         assert_eq!(data["provider"], "OpenAI");
         assert!(data["is_cloud"].as_bool().unwrap());
 
         // Step 5: AI lowers temperature back for analytical task
-        let _ = call_tool(&server, "config.set", serde_json::json!({"field": "temperature", "value": "0.2"}));
+        let _ = call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "temperature", "value": "0.2"}),
+        );
 
         // Step 6: Verify all changes persisted through Arc<Mutex<>>
         let locked = cfg.lock().unwrap();
@@ -2064,22 +2172,38 @@ knowledge_enabled = true
         assert_eq!(url1, "http://localhost:11434");
 
         // Switch to OpenAI via MCP
-        call_tool(&server, "config.set", serde_json::json!({"field": "provider", "value": "openai"}));
+        call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "provider", "value": "openai"}),
+        );
         let url2 = cfg.lock().unwrap().get_base_url();
         assert_eq!(url2, "https://api.openai.com");
 
         // Switch to Anthropic via MCP
-        call_tool(&server, "config.set", serde_json::json!({"field": "provider", "value": "anthropic"}));
+        call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "provider", "value": "anthropic"}),
+        );
         let url3 = cfg.lock().unwrap().get_base_url();
         assert_eq!(url3, "https://api.anthropic.com");
 
         // Switch to Groq via MCP
-        call_tool(&server, "config.set", serde_json::json!({"field": "provider", "value": "groq"}));
+        call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "provider", "value": "groq"}),
+        );
         let url4 = cfg.lock().unwrap().get_base_url();
         assert_eq!(url4, "https://api.groq.com/openai");
 
         // Switch back to local — URL should change back
-        call_tool(&server, "config.set", serde_json::json!({"field": "provider", "value": "lmstudio"}));
+        call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "provider", "value": "lmstudio"}),
+        );
         let url5 = cfg.lock().unwrap().get_base_url();
         assert_eq!(url5, "http://localhost:1234");
     }
@@ -2094,16 +2218,27 @@ knowledge_enabled = true
 
         // Switch to cloud providers, verify is_cloud changes each time
         for (provider, expected_cloud) in [
-            ("openai", true), ("anthropic", true), ("gemini", true),
-            ("ollama", false), ("lmstudio", false),
-            ("groq", true), ("together", true),
+            ("openai", true),
+            ("anthropic", true),
+            ("gemini", true),
+            ("ollama", false),
+            ("lmstudio", false),
+            ("groq", true),
+            ("together", true),
             ("ollama", false),
         ] {
-            call_tool(&server, "config.set", serde_json::json!({"field": "provider", "value": provider}));
+            call_tool(
+                &server,
+                "config.set",
+                serde_json::json!({"field": "provider", "value": provider}),
+            );
             let locked = cfg.lock().unwrap();
             assert_eq!(
-                locked.provider.is_cloud(), expected_cloud,
-                "Provider {} should have is_cloud={}", provider, expected_cloud
+                locked.provider.is_cloud(),
+                expected_cloud,
+                "Provider {} should have is_cloud={}",
+                provider,
+                expected_cloud
             );
         }
     }
@@ -2114,16 +2249,30 @@ knowledge_enabled = true
         let (server, cfg) = make_test_server_with_config(true);
 
         // Change Ollama URL to a custom address
-        call_tool(&server, "config.set", serde_json::json!({"field": "ollama_url", "value": "http://gpu-server:11434"}));
+        call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "ollama_url", "value": "http://gpu-server:11434"}),
+        );
         let locked = cfg.lock().unwrap();
         assert_eq!(locked.get_base_url(), "http://gpu-server:11434");
-        assert_eq!(locked.get_provider_url(&AiProvider::Ollama), "http://gpu-server:11434");
+        assert_eq!(
+            locked.get_provider_url(&AiProvider::Ollama),
+            "http://gpu-server:11434"
+        );
         drop(locked);
 
         // LM Studio URL change
-        call_tool(&server, "config.set", serde_json::json!({"field": "lm_studio_url", "value": "http://192.168.1.100:1234"}));
+        call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "lm_studio_url", "value": "http://192.168.1.100:1234"}),
+        );
         let locked = cfg.lock().unwrap();
-        assert_eq!(locked.get_provider_url(&AiProvider::LMStudio), "http://192.168.1.100:1234");
+        assert_eq!(
+            locked.get_provider_url(&AiProvider::LMStudio),
+            "http://192.168.1.100:1234"
+        );
     }
 
     #[test]
@@ -2135,15 +2284,27 @@ knowledge_enabled = true
         assert_eq!(cfg.lock().unwrap().max_history_messages, 20);
 
         // AI decides to use shorter context for speed
-        call_tool(&server, "config.set", serde_json::json!({"field": "max_history", "value": "5"}));
+        call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "max_history", "value": "5"}),
+        );
         assert_eq!(cfg.lock().unwrap().max_history_messages, 5);
 
         // AI expands context for complex task
-        call_tool(&server, "config.set", serde_json::json!({"field": "max_history", "value": "100"}));
+        call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "max_history", "value": "100"}),
+        );
         assert_eq!(cfg.lock().unwrap().max_history_messages, 100);
 
         // Verify 0 is rejected
-        let result = call_tool(&server, "config.set", serde_json::json!({"field": "max_history", "value": "0"}));
+        let result = call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "max_history", "value": "0"}),
+        );
         let data = extract_text(&result);
         assert_ne!(data.get("status").and_then(|s| s.as_str()), Some("updated"));
         // Still 100 — rejected change didn't apply
@@ -2156,18 +2317,34 @@ knowledge_enabled = true
         let (server, cfg) = make_test_server_with_config(true);
 
         // Valid boundaries
-        call_tool(&server, "config.set", serde_json::json!({"field": "temperature", "value": "0.0"}));
+        call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "temperature", "value": "0.0"}),
+        );
         assert!((cfg.lock().unwrap().temperature - 0.0).abs() < 0.001);
 
-        call_tool(&server, "config.set", serde_json::json!({"field": "temperature", "value": "2.0"}));
+        call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "temperature", "value": "2.0"}),
+        );
         assert!((cfg.lock().unwrap().temperature - 2.0).abs() < 0.001);
 
         // Invalid: negative
-        call_tool(&server, "config.set", serde_json::json!({"field": "temperature", "value": "-0.1"}));
+        call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "temperature", "value": "-0.1"}),
+        );
         assert!((cfg.lock().unwrap().temperature - 2.0).abs() < 0.001); // Unchanged
 
         // Invalid: too high
-        call_tool(&server, "config.set", serde_json::json!({"field": "temperature", "value": "2.1"}));
+        call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "temperature", "value": "2.1"}),
+        );
         assert!((cfg.lock().unwrap().temperature - 2.0).abs() < 0.001); // Unchanged
     }
 
@@ -2183,12 +2360,18 @@ knowledge_enabled = true
         assert!(!errors.iter().any(|e| e["field"] == "api_key"));
 
         // Switch to OpenAI without API key
-        call_tool(&server, "config.set", serde_json::json!({"field": "provider", "value": "openai"}));
+        call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "provider", "value": "openai"}),
+        );
         let result = call_tool(&server, "config.validate", serde_json::json!({}));
         let data = extract_text(&result);
         let errors = data["errors"].as_array().unwrap();
-        assert!(errors.iter().any(|e| e["field"] == "api_key"),
-            "Validation should warn about missing API key for cloud provider");
+        assert!(
+            errors.iter().any(|e| e["field"] == "api_key"),
+            "Validation should warn about missing API key for cloud provider"
+        );
     }
 
     #[test]
@@ -2197,10 +2380,26 @@ knowledge_enabled = true
         let (server, cfg) = make_test_server_with_config(true);
 
         // Phase 1: Fast local coding task
-        call_tool(&server, "config.set", serde_json::json!({"field": "provider", "value": "ollama"}));
-        call_tool(&server, "config.set", serde_json::json!({"field": "model", "value": "codellama:13b"}));
-        call_tool(&server, "config.set", serde_json::json!({"field": "temperature", "value": "0.1"}));
-        call_tool(&server, "config.set", serde_json::json!({"field": "max_history", "value": "5"}));
+        call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "provider", "value": "ollama"}),
+        );
+        call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "model", "value": "codellama:13b"}),
+        );
+        call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "temperature", "value": "0.1"}),
+        );
+        call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "max_history", "value": "5"}),
+        );
         {
             let c = cfg.lock().unwrap();
             assert!(!c.provider.is_cloud());
@@ -2211,10 +2410,26 @@ knowledge_enabled = true
         }
 
         // Phase 2: Complex reasoning task — switch to cloud, high context
-        call_tool(&server, "config.set", serde_json::json!({"field": "provider", "value": "anthropic"}));
-        call_tool(&server, "config.set", serde_json::json!({"field": "model", "value": "claude-3-opus"}));
-        call_tool(&server, "config.set", serde_json::json!({"field": "temperature", "value": "0.3"}));
-        call_tool(&server, "config.set", serde_json::json!({"field": "max_history", "value": "50"}));
+        call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "provider", "value": "anthropic"}),
+        );
+        call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "model", "value": "claude-3-opus"}),
+        );
+        call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "temperature", "value": "0.3"}),
+        );
+        call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "max_history", "value": "50"}),
+        );
         {
             let c = cfg.lock().unwrap();
             assert!(c.provider.is_cloud());
@@ -2225,9 +2440,21 @@ knowledge_enabled = true
         }
 
         // Phase 3: Creative writing — high temperature
-        call_tool(&server, "config.set", serde_json::json!({"field": "provider", "value": "openai"}));
-        call_tool(&server, "config.set", serde_json::json!({"field": "model", "value": "gpt-4o"}));
-        call_tool(&server, "config.set", serde_json::json!({"field": "temperature", "value": "1.8"}));
+        call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "provider", "value": "openai"}),
+        );
+        call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "model", "value": "gpt-4o"}),
+        );
+        call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "temperature", "value": "1.8"}),
+        );
         {
             let c = cfg.lock().unwrap();
             assert!(c.provider.is_cloud());
@@ -2236,9 +2463,21 @@ knowledge_enabled = true
         }
 
         // Phase 4: Back to local for privacy
-        call_tool(&server, "config.set", serde_json::json!({"field": "provider", "value": "lmstudio"}));
-        call_tool(&server, "config.set", serde_json::json!({"field": "model", "value": "mistral-7b"}));
-        call_tool(&server, "config.set", serde_json::json!({"field": "temperature", "value": "0.7"}));
+        call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "provider", "value": "lmstudio"}),
+        );
+        call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "model", "value": "mistral-7b"}),
+        );
+        call_tool(
+            &server,
+            "config.set",
+            serde_json::json!({"field": "temperature", "value": "0.7"}),
+        );
         {
             let c = cfg.lock().unwrap();
             assert!(!c.provider.is_cloud());

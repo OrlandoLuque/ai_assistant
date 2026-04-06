@@ -551,7 +551,10 @@ mod tests {
     fn test_message_types() {
         let sys = OpenAIMessage::system("Be helpful");
         assert_eq!(sys.role, "system");
-        assert_eq!(sys.content, serde_json::Value::String("Be helpful".to_string()));
+        assert_eq!(
+            sys.content,
+            serde_json::Value::String("Be helpful".to_string())
+        );
         assert!(sys.name.is_none());
         assert!(sys.function_call.is_none());
 
@@ -561,7 +564,10 @@ mod tests {
 
         let asst = OpenAIMessage::assistant("Hi there");
         assert_eq!(asst.role, "assistant");
-        assert_eq!(asst.content, serde_json::Value::String("Hi there".to_string()));
+        assert_eq!(
+            asst.content,
+            serde_json::Value::String("Hi there".to_string())
+        );
     }
 
     #[test]
@@ -576,7 +582,10 @@ mod tests {
         assert_eq!(content[0]["text"], "Describe this");
 
         assert_eq!(content[1]["type"], "image_url");
-        assert_eq!(content[1]["image_url"]["url"], "https://example.com/img.png");
+        assert_eq!(
+            content[1]["image_url"]["url"],
+            "https://example.com/img.png"
+        );
     }
 
     #[test]
@@ -684,10 +693,7 @@ mod tests {
             message: "Invalid API key".to_string(),
             error_type: "authentication_error".to_string(),
         };
-        assert_eq!(
-            format!("{}", api_err),
-            "API error 401: Invalid API key"
-        );
+        assert_eq!(format!("{}", api_err), "API error 401: Invalid API key");
 
         let rate_err_with = OpenAIAdapterError::RateLimit {
             retry_after: Some(Duration::from_secs(60)),

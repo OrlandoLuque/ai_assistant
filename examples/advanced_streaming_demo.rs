@@ -6,14 +6,25 @@
 //! and resumable streaming with checkpoints.
 
 use ai_assistant::{
-    // SSE
-    SseEvent, SseWriter,
-    // WebSocket
-    WsFrame, WsOpcode, WsCloseCode, WsAiMessage, WsUsage, WsStreamHandler, WsState,
-    // Compression
-    StreamCompressor, StreamCompressionConfig, StreamCompressionAlgorithm,
+    format_sse_event,
     // Resumable streaming
-    ResumableStream, ResumableStreamConfig, format_sse_event,
+    ResumableStream,
+    ResumableStreamConfig,
+    // SSE
+    SseEvent,
+    SseWriter,
+    StreamCompressionAlgorithm,
+    StreamCompressionConfig,
+    // Compression
+    StreamCompressor,
+    WsAiMessage,
+    WsCloseCode,
+    // WebSocket
+    WsFrame,
+    WsOpcode,
+    WsState,
+    WsStreamHandler,
+    WsUsage,
 };
 
 fn main() {
@@ -76,13 +87,28 @@ fn main() {
     let pong_frame = WsFrame::pong(b"keepalive");
     let close_frame = WsFrame::close(1000, "Normal closure");
 
-    println!("  Text frame:   opcode={:?}, payload={:?}",
-        WsOpcode::Text, text_frame.as_text().unwrap_or(""));
-    println!("  Binary frame: {} bytes encoded", binary_frame.encode().len());
-    println!("  Ping frame:   {} bytes encoded", ping_frame.encode().len());
-    println!("  Pong frame:   {} bytes encoded", pong_frame.encode().len());
-    println!("  Close frame:  code={}, {} bytes encoded",
-        1000, close_frame.encode().len());
+    println!(
+        "  Text frame:   opcode={:?}, payload={:?}",
+        WsOpcode::Text,
+        text_frame.as_text().unwrap_or("")
+    );
+    println!(
+        "  Binary frame: {} bytes encoded",
+        binary_frame.encode().len()
+    );
+    println!(
+        "  Ping frame:   {} bytes encoded",
+        ping_frame.encode().len()
+    );
+    println!(
+        "  Pong frame:   {} bytes encoded",
+        pong_frame.encode().len()
+    );
+    println!(
+        "  Close frame:  code={}, {} bytes encoded",
+        1000,
+        close_frame.encode().len()
+    );
 
     // Close codes
     println!("\n  Close codes:");
@@ -152,7 +178,8 @@ fn main() {
     for (name, config) in configs {
         let compressor = StreamCompressor::new(config);
         let result = compressor.compress(payload.as_bytes());
-        println!("  Config '{}': {} -> {} bytes (ratio: {:.1}%, saved: {} bytes, beneficial: {})",
+        println!(
+            "  Config '{}': {} -> {} bytes (ratio: {:.1}%, saved: {} bytes, beneficial: {})",
             name,
             result.original_size,
             result.compressed_size,
@@ -212,8 +239,12 @@ fn main() {
 
     // Checkpoint
     if let Some(cp) = stream.latest_checkpoint() {
-        println!("    Latest checkpoint: seq={}, tokens={}, text_len={}",
-            cp.sequence_id, cp.token_count, cp.accumulated_text.len());
+        println!(
+            "    Latest checkpoint: seq={}, tokens={}, text_len={}",
+            cp.sequence_id,
+            cp.token_count,
+            cp.accumulated_text.len()
+        );
     }
 
     // Resume from sequence 5
@@ -238,7 +269,10 @@ fn main() {
 
     // Accumulated text
     let full_text = stream.accumulated_text();
-    println!("  Full text: {:?}...", &full_text[..60.min(full_text.len())]);
+    println!(
+        "  Full text: {:?}...",
+        &full_text[..60.min(full_text.len())]
+    );
 
     // ------------------------------------------------------------------
     println!("\n==========================================================");

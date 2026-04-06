@@ -5,9 +5,7 @@
 //!
 //! Run with: cargo run --example ui_hooks_demo
 
-use ai_assistant::{
-    ChatHooks, ChatStatus, ChatStreamEvent, StreamAdapter, UsageInfo,
-};
+use ai_assistant::{ChatHooks, ChatStatus, ChatStreamEvent, StreamAdapter, UsageInfo};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -47,7 +45,10 @@ fn main() {
     hooks.emit(ChatStreamEvent::StatusChange {
         status: ChatStatus::Idle,
     });
-    println!("  Total events received: {}\n", counter.load(Ordering::SeqCst));
+    println!(
+        "  Total events received: {}\n",
+        counter.load(Ordering::SeqCst)
+    );
 
     // 2. StreamAdapter
     println!("--- StreamAdapter: Converting Chunks ---");
@@ -79,7 +80,10 @@ fn main() {
     println!("  Messages: {}", session.message_count());
     println!("  Status: {:?}", session.status);
     println!("  Last assistant: {:?}", session.last_assistant_message());
-    println!("  Session JSON (first 200 chars): {}...", &session.to_json()[..200.min(session.to_json().len())]);
+    println!(
+        "  Session JSON (first 200 chars): {}...",
+        &session.to_json()[..200.min(session.to_json().len())]
+    );
 
     println!("\nDone!");
 }

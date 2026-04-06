@@ -20,10 +20,7 @@ use std::sync::{Arc, Mutex};
 // ============================================================================
 
 /// Register voice speaker enrollment and identification tools.
-pub fn register_voice_tools(
-    server: &mut McpServer,
-    speaker_gate: Arc<Mutex<SpeakerGate>>,
-) {
+pub fn register_voice_tools(server: &mut McpServer, speaker_gate: Arc<Mutex<SpeakerGate>>) {
     let ann_ro = McpToolAnnotation {
         title: None,
         read_only_hint: Some(true),
@@ -107,10 +104,17 @@ pub fn register_voice_tools(
                 "voice_identify_speaker",
                 "Identify a speaker from a PCM16 audio sample (base64-encoded).",
             )
-            .with_property("audio_base64", "string", "Base64-encoded PCM16 audio at 16kHz", true)
+            .with_property(
+                "audio_base64",
+                "string",
+                "Base64-encoded PCM16 audio at 16kHz",
+                true,
+            )
             .with_annotations(ann_ro.clone()),
             move |args| {
-                let audio_b64 = args.get("audio_base64").and_then(|v| v.as_str())
+                let audio_b64 = args
+                    .get("audio_base64")
+                    .and_then(|v| v.as_str())
                     .ok_or("Missing required parameter: audio_base64")?;
 
                 let audio = simple_base64_decode(audio_b64)
@@ -168,7 +172,9 @@ pub fn register_voice_tools(
                 .with_property("name", "string", "Speaker name to remove", true)
                 .with_annotations(ann_delete),
             move |args| {
-                let name = args.get("name").and_then(|v| v.as_str())
+                let name = args
+                    .get("name")
+                    .and_then(|v| v.as_str())
                     .ok_or("Missing required parameter: name")?;
                 let mut gate = gate.lock().map_err(|e| format!("Lock error: {}", e))?;
                 let removed = gate.remove_profile(name);
@@ -185,8 +191,18 @@ pub fn register_voice_tools(
                 "voice_gate_config",
                 "Configure the speaker gate: only_owner mode and allow_unknown mode.",
             )
-            .with_property("only_owner", "boolean", "Only allow the owner to pass the gate", false)
-            .with_property("allow_unknown", "boolean", "Allow unrecognized speakers", false)
+            .with_property(
+                "only_owner",
+                "boolean",
+                "Only allow the owner to pass the gate",
+                false,
+            )
+            .with_property(
+                "allow_unknown",
+                "boolean",
+                "Allow unrecognized speakers",
+                false,
+            )
             .with_annotations(ann_action),
             move |args| {
                 let mut gate = gate.lock().map_err(|e| format!("Lock error: {}", e))?;
@@ -269,9 +285,13 @@ pub fn register_voice_clone_tools(
             .with_property("voice_id", "string", "Cloned voice ID", true)
             .with_annotations(ann_action),
             move |args| {
-                let text = args.get("text").and_then(|v| v.as_str())
+                let text = args
+                    .get("text")
+                    .and_then(|v| v.as_str())
                     .ok_or("Missing required parameter: text")?;
-                let voice_id = args.get("voice_id").and_then(|v| v.as_str())
+                let voice_id = args
+                    .get("voice_id")
+                    .and_then(|v| v.as_str())
                     .ok_or("Missing required parameter: voice_id")?;
 
                 let provider = provider.lock().map_err(|e| format!("Lock error: {}", e))?;
@@ -297,19 +317,23 @@ pub fn register_voice_clone_tools(
             McpTool::new("voice_clone_list", "List all cloned voice profiles.")
                 .with_annotations(ann_ro),
             move |_args| {
-                let provider = clone_provider.lock().map_err(|e| format!("Lock error: {}", e))?;
+                let provider = clone_provider
+                    .lock()
+                    .map_err(|e| format!("Lock error: {}", e))?;
                 let voices = provider
                     .list_cloned_voices()
                     .map_err(|e| format!("List failed: {}", e))?;
 
                 let list: Vec<serde_json::Value> = voices
                     .iter()
-                    .map(|v| serde_json::json!({
-                        "voice_id": v.voice_id,
-                        "name": v.name,
-                        "provider": v.provider,
-                        "quality_score": v.quality_score,
-                    }))
+                    .map(|v| {
+                        serde_json::json!({
+                            "voice_id": v.voice_id,
+                            "name": v.name,
+                            "provider": v.provider,
+                            "quality_score": v.quality_score,
+                        })
+                    })
                     .collect();
                 Ok(serde_json::json!({ "voices": list, "count": list.len() }))
             },
@@ -367,8 +391,16 @@ fn simple_base64_encode(data: &[u8]) -> String {
         let n = (b0 << 16) | (b1 << 8) | b2;
         result.push(CHARS[((n >> 18) & 0x3F) as usize] as char);
         result.push(CHARS[((n >> 12) & 0x3F) as usize] as char);
-        if chunk.len() > 1 { result.push(CHARS[((n >> 6) & 0x3F) as usize] as char); } else { result.push('='); }
-        if chunk.len() > 2 { result.push(CHARS[(n & 0x3F) as usize] as char); } else { result.push('='); }
+        if chunk.len() > 1 {
+            result.push(CHARS[((n >> 6) & 0x3F) as usize] as char);
+        } else {
+            result.push('=');
+        }
+        if chunk.len() > 2 {
+            result.push(CHARS[(n & 0x3F) as usize] as char);
+        } else {
+            result.push('=');
+        }
     }
     result
 }

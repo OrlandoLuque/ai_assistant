@@ -9,7 +9,7 @@ use ai_assistant::agent_graph::{
     AgentEdge, AgentGraph, AgentNode, EdgeType, ExecutionTrace, GraphAnalytics, StepStatus,
     TraceStep,
 };
-use ai_assistant::{DagDefinition, DagNode, DagEdge};
+use ai_assistant::{DagDefinition, DagEdge, DagNode};
 
 fn main() {
     println!("=== Agent Graph Visualization Demo ===\n");
@@ -27,21 +27,16 @@ fn main() {
             .with_capability("draft")
             .with_capability("edit"),
     );
-    graph.add_node(
-        AgentNode::new("reviewer", "Reviewer", "review")
-            .with_capability("critique"),
-    );
+    graph.add_node(AgentNode::new("reviewer", "Reviewer", "review").with_capability("critique"));
     graph.add_edge(AgentEdge::new("researcher", "writer", EdgeType::DataFlow));
-    graph.add_edge(
-        AgentEdge::new("writer", "reviewer", EdgeType::DataFlow)
-            .with_label("draft"),
-    );
-    graph.add_edge(
-        AgentEdge::new("reviewer", "writer", EdgeType::Control)
-            .with_label("revision"),
-    );
+    graph.add_edge(AgentEdge::new("writer", "reviewer", EdgeType::DataFlow).with_label("draft"));
+    graph.add_edge(AgentEdge::new("reviewer", "writer", EdgeType::Control).with_label("revision"));
 
-    println!("  Nodes: {}, Edges: {}", graph.node_count(), graph.edge_count());
+    println!(
+        "  Nodes: {}, Edges: {}",
+        graph.node_count(),
+        graph.edge_count()
+    );
 
     // 2. Export formats
     println!("\n--- DOT Export ---");
@@ -63,7 +58,11 @@ fn main() {
     dag.add_edge(DagEdge::new("process", "store"));
 
     let dag_graph = AgentGraph::from_dag(&dag);
-    println!("  DAG graph: {} nodes, {} edges", dag_graph.node_count(), dag_graph.edge_count());
+    println!(
+        "  DAG graph: {} nodes, {} edges",
+        dag_graph.node_count(),
+        dag_graph.edge_count()
+    );
     println!("{}", dag_graph.export_mermaid());
 
     // 4. Execution trace
@@ -107,7 +106,10 @@ fn main() {
     let bottlenecks = GraphAnalytics::bottlenecks(&trace, 2000);
     println!("  Bottlenecks (>2000ms): {}", bottlenecks.len());
     for step in &bottlenecks {
-        println!("    - {} / {} ({}ms)", step.agent_id, step.action, step.duration_ms);
+        println!(
+            "    - {} / {} ({}ms)",
+            step.agent_id, step.action, step.duration_ms
+        );
     }
 
     let utilization = GraphAnalytics::agent_utilization(&trace);

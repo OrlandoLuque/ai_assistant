@@ -771,7 +771,10 @@ mod tests {
 
     #[test]
     fn test_variant_apply_with_variables_and_effectiveness() {
-        let variant = PromptVariant::new("multi-var", "Hello {name}, your question about {topic} is: {query}");
+        let variant = PromptVariant::new(
+            "multi-var",
+            "Hello {name}, your question about {topic} is: {query}",
+        );
 
         // apply with HashMap of multiple variables
         let mut vars = HashMap::new();
@@ -780,7 +783,10 @@ mod tests {
         vars.insert("query".to_string(), "How do lifetimes work?".to_string());
 
         let result = variant.apply(&vars);
-        assert_eq!(result, "Hello Alice, your question about Rust is: How do lifetimes work?");
+        assert_eq!(
+            result,
+            "Hello Alice, your question about Rust is: How do lifetimes work?"
+        );
 
         // estimate_tokens: rough estimate at len/4
         let tokens = variant.estimate_tokens("test");
@@ -818,7 +824,13 @@ mod tests {
 
         // Record some usage
         for _ in 0..3 {
-            optimizer.record_feedback(&id1, Feedback::positive().with_quality(0.9).with_time(100).with_tokens(50));
+            optimizer.record_feedback(
+                &id1,
+                Feedback::positive()
+                    .with_quality(0.9)
+                    .with_time(100)
+                    .with_tokens(50),
+            );
             optimizer.record_feedback(&id2, Feedback::positive().with_quality(0.5));
         }
 

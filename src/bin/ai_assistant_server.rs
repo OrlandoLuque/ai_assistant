@@ -95,7 +95,10 @@ fn main() -> ExitCode {
     }
 
     if let Ok(info) = update_rx.try_recv() {
-        eprintln!("  Update available: v{} \u{2192} v{}", info.current, info.latest);
+        eprintln!(
+            "  Update available: v{} \u{2192} v{}",
+            info.current, info.latest
+        );
         eprintln!("  Download: {}", info.url);
         eprintln!();
     }
@@ -165,10 +168,7 @@ fn wait_for_ctrlc() {
     }
 
     extern "system" {
-        fn SetConsoleCtrlHandler(
-            handler: unsafe extern "system" fn(u32) -> i32,
-            add: i32,
-        ) -> i32;
+        fn SetConsoleCtrlHandler(handler: unsafe extern "system" fn(u32) -> i32, add: i32) -> i32;
     }
 
     unsafe {
@@ -483,7 +483,11 @@ mod tests {
             help: false,
         };
         let err = build_config(&cli).unwrap_err();
-        assert!(err.contains("--tls-cert requires --tls-key"), "got: {}", err);
+        assert!(
+            err.contains("--tls-cert requires --tls-key"),
+            "got: {}",
+            err
+        );
     }
 
     #[test]
@@ -499,7 +503,11 @@ mod tests {
             help: false,
         };
         let err = build_config(&cli).unwrap_err();
-        assert!(err.contains("--tls-key requires --tls-cert"), "got: {}", err);
+        assert!(
+            err.contains("--tls-key requires --tls-cert"),
+            "got: {}",
+            err
+        );
     }
 
     #[test]
@@ -579,12 +587,18 @@ mod tests {
     #[test]
     fn test_parse_args_all_combined() {
         let a = args(&[
-            "--host", "192.168.1.1",
-            "--port", "8080",
-            "--config", "server.json",
-            "--api-key", "tok123",
-            "--tls-cert", "my.crt",
-            "--tls-key", "my.key",
+            "--host",
+            "192.168.1.1",
+            "--port",
+            "8080",
+            "--config",
+            "server.json",
+            "--api-key",
+            "tok123",
+            "--tls-cert",
+            "my.crt",
+            "--tls-key",
+            "my.key",
             "--dry-run",
         ]);
         let cli = parse_args(&a).unwrap();

@@ -57,10 +57,8 @@ impl CrdtPersistence {
         let path = self.snapshot_dir.join(&filename);
         let tmp_path = self.snapshot_dir.join(format!("{}.tmp", filename));
 
-        fs::write(&tmp_path, data)
-            .map_err(|e| format!("Failed to write snapshot tmp: {}", e))?;
-        fs::rename(&tmp_path, &path)
-            .map_err(|e| format!("Failed to rename snapshot: {}", e))?;
+        fs::write(&tmp_path, data).map_err(|e| format!("Failed to write snapshot tmp: {}", e))?;
+        fs::rename(&tmp_path, &path).map_err(|e| format!("Failed to rename snapshot: {}", e))?;
 
         Ok(path)
     }
@@ -87,8 +85,8 @@ impl CrdtPersistence {
         snapshots.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
 
         let latest = &snapshots[0];
-        let data = fs::read(latest.path())
-            .map_err(|e| format!("Failed to read snapshot: {}", e))?;
+        let data =
+            fs::read(latest.path()).map_err(|e| format!("Failed to read snapshot: {}", e))?;
         Ok(Some(data))
     }
 
@@ -119,8 +117,8 @@ impl CrdtPersistence {
             return Ok(Vec::new());
         }
 
-        let content = fs::read_to_string(&wal_file)
-            .map_err(|e| format!("Failed to read WAL file: {}", e))?;
+        let content =
+            fs::read_to_string(&wal_file).map_err(|e| format!("Failed to read WAL file: {}", e))?;
 
         let mut entries = Vec::new();
         for line in content.lines() {
@@ -141,8 +139,7 @@ impl CrdtPersistence {
     pub fn compact_wal(&self, name: &str) -> Result<(), String> {
         let wal_file = self.wal_dir.join(format!("{}.wal", name));
         if wal_file.exists() {
-            fs::write(&wal_file, b"")
-                .map_err(|e| format!("Failed to compact WAL: {}", e))?;
+            fs::write(&wal_file, b"").map_err(|e| format!("Failed to compact WAL: {}", e))?;
         }
         Ok(())
     }
@@ -206,13 +203,21 @@ pub enum WalOperation {
     /// Decrement a counter.
     Decrement { key: String, amount: u64 },
     /// Set a register value.
-    SetRegister { key: String, value: Vec<u8>, timestamp: u64 },
+    SetRegister {
+        key: String,
+        value: Vec<u8>,
+        timestamp: u64,
+    },
     /// Add to a set.
     AddToSet { element: String },
     /// Remove from a set.
     RemoveFromSet { element: String },
     /// Set a map entry.
-    SetMap { key: String, value: Vec<u8>, timestamp: u64 },
+    SetMap {
+        key: String,
+        value: Vec<u8>,
+        timestamp: u64,
+    },
     /// Merge with remote state (full serialized CRDT).
     Merge { remote_state: Vec<u8> },
 }
@@ -405,7 +410,8 @@ mod tests {
         let p = CrdtPersistence::new(dir.clone());
 
         for i in 0..5 {
-            p.write_snapshot("counter", format!("data{}", i).as_bytes()).unwrap();
+            p.write_snapshot("counter", format!("data{}", i).as_bytes())
+                .unwrap();
             thread::sleep(Duration::from_millis(5));
         }
 
@@ -450,13 +456,33 @@ mod tests {
     #[test]
     fn test_wal_operation_variants() {
         let ops = vec![
-            WalOperation::Increment { key: "k".to_string(), amount: 1 },
-            WalOperation::Decrement { key: "k".to_string(), amount: 1 },
-            WalOperation::SetRegister { key: "k".to_string(), value: vec![1, 2], timestamp: 100 },
-            WalOperation::AddToSet { element: "e".to_string() },
-            WalOperation::RemoveFromSet { element: "e".to_string() },
-            WalOperation::SetMap { key: "k".to_string(), value: vec![3], timestamp: 200 },
-            WalOperation::Merge { remote_state: vec![4, 5] },
+            WalOperation::Increment {
+                key: "k".to_string(),
+                amount: 1,
+            },
+            WalOperation::Decrement {
+                key: "k".to_string(),
+                amount: 1,
+            },
+            WalOperation::SetRegister {
+                key: "k".to_string(),
+                value: vec![1, 2],
+                timestamp: 100,
+            },
+            WalOperation::AddToSet {
+                element: "e".to_string(),
+            },
+            WalOperation::RemoveFromSet {
+                element: "e".to_string(),
+            },
+            WalOperation::SetMap {
+                key: "k".to_string(),
+                value: vec![3],
+                timestamp: 200,
+            },
+            WalOperation::Merge {
+                remote_state: vec![4, 5],
+            },
         ];
 
         for op in ops {

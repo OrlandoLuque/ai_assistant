@@ -345,7 +345,9 @@ fn extract_attr(tag: &str, attr_name: &str) -> Option<String> {
         Some(content[..end].to_string())
     } else {
         // Unquoted value — take until whitespace or >
-        let end = trimmed.find(|c: char| c.is_whitespace() || c == '>').unwrap_or(trimmed.len());
+        let end = trimmed
+            .find(|c: char| c.is_whitespace() || c == '>')
+            .unwrap_or(trimmed.len());
         Some(trimmed[..end].to_string())
     }
 }
@@ -651,7 +653,15 @@ impl ImageCaptionExtractor {
 
         // Filter out common placeholder alt texts
         let lower = trimmed.to_lowercase();
-        let placeholders = ["image", "photo", "picture", "img", "placeholder", "untitled", ""];
+        let placeholders = [
+            "image",
+            "photo",
+            "picture",
+            "img",
+            "placeholder",
+            "untitled",
+            "",
+        ];
         if placeholders.contains(&lower.as_str()) {
             return None;
         }
@@ -733,7 +743,10 @@ mod tests {
             .with_metadata("author", "Alice");
 
         assert_eq!(chunk.source.as_deref(), Some("doc1.md"));
-        assert_eq!(chunk.metadata.get("author").map(|s| s.as_str()), Some("Alice"));
+        assert_eq!(
+            chunk.metadata.get("author").map(|s| s.as_str()),
+            Some("Alice")
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -759,7 +772,11 @@ mod tests {
         let doc = MultiModalDocument::from_html(html);
 
         // Should have text, image, text
-        assert!(doc.sections.len() >= 3, "Expected >= 3 sections, got {}", doc.sections.len());
+        assert!(
+            doc.sections.len() >= 3,
+            "Expected >= 3 sections, got {}",
+            doc.sections.len()
+        );
 
         // First section should be text
         assert_eq!(doc.sections[0].modality, ModalityType::Text);
@@ -849,7 +866,9 @@ mod tests {
         let results = retriever.retrieve("sunset ocean", &chunks);
         assert!(!results.is_empty());
         // Both the text and image about sunset should be returned
-        let has_text = results.iter().any(|c| c.modality == ModalityType::Text && c.content.contains("sunset"));
+        let has_text = results
+            .iter()
+            .any(|c| c.modality == ModalityType::Text && c.content.contains("sunset"));
         let has_img = results.iter().any(|c| c.modality == ModalityType::Image);
         assert!(has_text, "Should include text chunk about sunset");
         assert!(has_img, "Should include image chunk about sunset");
@@ -922,7 +941,11 @@ mod tests {
 
         pipeline.add_text("Rust is a systems programming language", Some("doc1"));
         pipeline.add_text("Python is great for data science", Some("doc2"));
-        pipeline.add_image("rust_logo.png", "the Rust programming language logo", Some("doc1"));
+        pipeline.add_image(
+            "rust_logo.png",
+            "the Rust programming language logo",
+            Some("doc1"),
+        );
 
         assert_eq!(pipeline.chunk_count(), 3);
 
@@ -933,7 +956,11 @@ mod tests {
 
         // The Rust text should rank high
         assert!(
-            result.chunks[0].content.contains("Rust") || result.chunks[0].caption.as_deref().map_or(false, |c| c.contains("Rust")),
+            result.chunks[0].content.contains("Rust")
+                || result.chunks[0]
+                    .caption
+                    .as_deref()
+                    .map_or(false, |c| c.contains("Rust")),
             "Top result should be about Rust"
         );
 

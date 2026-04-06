@@ -985,7 +985,11 @@ pub enum WorkflowError {
     /// Workflow serialization/deserialization failed
     SerializationFailed { reason: String },
     /// Workflow is in an invalid state for the requested operation
-    InvalidState { workflow_id: String, current_state: String, attempted_action: String },
+    InvalidState {
+        workflow_id: String,
+        current_state: String,
+        attempted_action: String,
+    },
 }
 
 impl std::error::Error for WorkflowError {}
@@ -1000,12 +1004,26 @@ impl fmt::Display for WorkflowError {
                 write!(f, "Cycle detected in workflow: {}", path.join(" -> "))
             }
             WorkflowError::EventTypeMismatch { expected, got } => {
-                write!(f, "Event type mismatch: expected '{}', got '{}'", expected, got)
+                write!(
+                    f,
+                    "Event type mismatch: expected '{}', got '{}'",
+                    expected, got
+                )
             }
-            WorkflowError::CheckpointFailed { workflow_id, reason } => {
-                write!(f, "Checkpoint failed for workflow '{}': {}", workflow_id, reason)
+            WorkflowError::CheckpointFailed {
+                workflow_id,
+                reason,
+            } => {
+                write!(
+                    f,
+                    "Checkpoint failed for workflow '{}': {}",
+                    workflow_id, reason
+                )
             }
-            WorkflowError::TimeoutExceeded { node_id, timeout_ms } => {
+            WorkflowError::TimeoutExceeded {
+                node_id,
+                timeout_ms,
+            } => {
                 write!(f, "Node '{}' timed out after {}ms", node_id, timeout_ms)
             }
             WorkflowError::BreakpointHit { node_id } => {
@@ -1014,9 +1032,16 @@ impl fmt::Display for WorkflowError {
             WorkflowError::SerializationFailed { reason } => {
                 write!(f, "Workflow serialization failed: {}", reason)
             }
-            WorkflowError::InvalidState { workflow_id, current_state, attempted_action } => {
-                write!(f, "Workflow '{}' in state '{}', cannot perform '{}'",
-                    workflow_id, current_state, attempted_action)
+            WorkflowError::InvalidState {
+                workflow_id,
+                current_state,
+                attempted_action,
+            } => {
+                write!(
+                    f,
+                    "Workflow '{}' in state '{}', cannot perform '{}'",
+                    workflow_id, current_state, attempted_action
+                )
             }
         }
     }
@@ -1085,7 +1110,11 @@ pub enum AdvancedMemoryError {
     /// Duplicate entity detected during insert
     DuplicateEntity { name: String, existing_id: String },
     /// Memory capacity limit reached
-    CapacityExceeded { memory_type: String, limit: usize, current: usize },
+    CapacityExceeded {
+        memory_type: String,
+        limit: usize,
+        current: usize,
+    },
 }
 
 impl std::error::Error for AdvancedMemoryError {}
@@ -1093,7 +1122,10 @@ impl std::error::Error for AdvancedMemoryError {}
 impl fmt::Display for AdvancedMemoryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            AdvancedMemoryError::StoreFailed { memory_type, reason } => {
+            AdvancedMemoryError::StoreFailed {
+                memory_type,
+                reason,
+            } => {
                 write!(f, "Failed to store {} memory: {}", memory_type, reason)
             }
             AdvancedMemoryError::RecallFailed { query, reason } => {
@@ -1106,10 +1138,22 @@ impl fmt::Display for AdvancedMemoryError {
                 write!(f, "Entity '{}' not found in memory", name)
             }
             AdvancedMemoryError::DuplicateEntity { name, existing_id } => {
-                write!(f, "Duplicate entity '{}' (existing id: {})", name, existing_id)
+                write!(
+                    f,
+                    "Duplicate entity '{}' (existing id: {})",
+                    name, existing_id
+                )
             }
-            AdvancedMemoryError::CapacityExceeded { memory_type, limit, current } => {
-                write!(f, "{} memory capacity exceeded: {} of {} limit", memory_type, current, limit)
+            AdvancedMemoryError::CapacityExceeded {
+                memory_type,
+                limit,
+                current,
+            } => {
+                write!(
+                    f,
+                    "{} memory capacity exceeded: {} of {} limit",
+                    memory_type, current, limit
+                )
             }
         }
     }
@@ -1155,7 +1199,11 @@ pub enum A2AError {
     /// Task not found
     TaskNotFound { task_id: String },
     /// Invalid state transition for a task
-    InvalidState { task_id: String, current: String, attempted: String },
+    InvalidState {
+        task_id: String,
+        current: String,
+        attempted: String,
+    },
     /// Agent not found in directory
     AgentNotFound { agent_id: String },
     /// Protocol-level error (malformed request, unsupported method, etc.)
@@ -1176,9 +1224,16 @@ impl fmt::Display for A2AError {
             A2AError::TaskNotFound { task_id } => {
                 write!(f, "A2A task '{}' not found", task_id)
             }
-            A2AError::InvalidState { task_id, current, attempted } => {
-                write!(f, "A2A task '{}' in state '{}', cannot transition to '{}'",
-                    task_id, current, attempted)
+            A2AError::InvalidState {
+                task_id,
+                current,
+                attempted,
+            } => {
+                write!(
+                    f,
+                    "A2A task '{}' in state '{}', cannot transition to '{}'",
+                    task_id, current, attempted
+                )
             }
             A2AError::AgentNotFound { agent_id } => {
                 write!(f, "A2A agent '{}' not found in directory", agent_id)
@@ -1190,7 +1245,11 @@ impl fmt::Display for A2AError {
                 write!(f, "A2A agent discovery failed at '{}': {}", url, reason)
             }
             A2AError::AuthenticationFailed { agent_id, reason } => {
-                write!(f, "A2A authentication failed for agent '{}': {}", agent_id, reason)
+                write!(
+                    f,
+                    "A2A authentication failed for agent '{}': {}",
+                    agent_id, reason
+                )
             }
             A2AError::TaskCancelled { task_id } => {
                 write!(f, "A2A task '{}' was cancelled", task_id)
@@ -1227,8 +1286,7 @@ impl A2AError {
     pub fn is_recoverable(&self) -> bool {
         matches!(
             self,
-            A2AError::DiscoveryFailed { .. }
-                | A2AError::ProtocolError { .. }
+            A2AError::DiscoveryFailed { .. } | A2AError::ProtocolError { .. }
         )
     }
 }
@@ -1277,7 +1335,11 @@ impl fmt::Display for VoiceAgentError {
                 write!(f, "Speech synthesis failed: {}", reason)
             }
             VoiceAgentError::InvalidSessionState { current, attempted } => {
-                write!(f, "Voice session in state '{}', cannot perform '{}'", current, attempted)
+                write!(
+                    f,
+                    "Voice session in state '{}', cannot perform '{}'",
+                    current, attempted
+                )
             }
             VoiceAgentError::UnsupportedFormat { format } => {
                 write!(f, "Unsupported audio format: {}", format)
@@ -1289,11 +1351,15 @@ impl fmt::Display for VoiceAgentError {
 impl VoiceAgentError {
     pub fn suggestion(&self) -> Option<&'static str> {
         match self {
-            VoiceAgentError::StreamFailed { .. } => Some("Check audio device and network connection"),
+            VoiceAgentError::StreamFailed { .. } => {
+                Some("Check audio device and network connection")
+            }
             VoiceAgentError::VadError { .. } => Some("Adjust VAD sensitivity thresholds"),
             VoiceAgentError::TranscriptionFailed { .. } => Some("Check STT provider availability"),
             VoiceAgentError::SynthesisFailed { .. } => Some("Check TTS provider availability"),
-            VoiceAgentError::InvalidSessionState { .. } => Some("Check voice session lifecycle state"),
+            VoiceAgentError::InvalidSessionState { .. } => {
+                Some("Check voice session lifecycle state")
+            }
             VoiceAgentError::UnsupportedFormat { .. } => Some("Use PCM 16-bit 16kHz or WAV format"),
         }
     }
@@ -1345,8 +1411,15 @@ impl fmt::Display for MediaGenerationError {
             MediaGenerationError::GenerationFailed { provider, reason } => {
                 write!(f, "Generation failed on '{}': {}", provider, reason)
             }
-            MediaGenerationError::JobTimeout { job_id, timeout_secs } => {
-                write!(f, "Generation job '{}' timed out after {}s", job_id, timeout_secs)
+            MediaGenerationError::JobTimeout {
+                job_id,
+                timeout_secs,
+            } => {
+                write!(
+                    f,
+                    "Generation job '{}' timed out after {}s",
+                    job_id, timeout_secs
+                )
             }
             MediaGenerationError::InvalidParams { param, reason } => {
                 write!(f, "Invalid generation parameter '{}': {}", param, reason)
@@ -1364,12 +1437,24 @@ impl fmt::Display for MediaGenerationError {
 impl MediaGenerationError {
     pub fn suggestion(&self) -> Option<&'static str> {
         match self {
-            MediaGenerationError::ProviderUnavailable { .. } => Some("Check API key and provider status"),
-            MediaGenerationError::GenerationFailed { .. } => Some("Try a different prompt or parameters"),
-            MediaGenerationError::JobTimeout { .. } => Some("Increase timeout or try a simpler prompt"),
-            MediaGenerationError::InvalidParams { .. } => Some("Check parameter ranges and valid values"),
-            MediaGenerationError::UnsupportedFormat { .. } => Some("Use PNG, JPEG, WebP, MP4, or WebM"),
-            MediaGenerationError::ContentPolicyViolation { .. } => Some("Modify the prompt to comply with content policies"),
+            MediaGenerationError::ProviderUnavailable { .. } => {
+                Some("Check API key and provider status")
+            }
+            MediaGenerationError::GenerationFailed { .. } => {
+                Some("Try a different prompt or parameters")
+            }
+            MediaGenerationError::JobTimeout { .. } => {
+                Some("Increase timeout or try a simpler prompt")
+            }
+            MediaGenerationError::InvalidParams { .. } => {
+                Some("Check parameter ranges and valid values")
+            }
+            MediaGenerationError::UnsupportedFormat { .. } => {
+                Some("Use PNG, JPEG, WebP, MP4, or WebM")
+            }
+            MediaGenerationError::ContentPolicyViolation { .. } => {
+                Some("Modify the prompt to comply with content policies")
+            }
         }
     }
 
@@ -1401,7 +1486,10 @@ pub enum DistillationError {
     /// Dataset build failed
     DatasetBuildFailed { format: String, reason: String },
     /// No valid trajectories found after filtering
-    NoValidTrajectories { min_score: f64, total_checked: usize },
+    NoValidTrajectories {
+        min_score: f64,
+        total_checked: usize,
+    },
     /// Flywheel cycle failed
     FlywheelFailed { cycle_id: String, reason: String },
     /// Storage backend error
@@ -1420,16 +1508,31 @@ impl fmt::Display for DistillationError {
                 write!(f, "Trajectory scoring failed: {}", reason)
             }
             DistillationError::DatasetBuildFailed { format, reason } => {
-                write!(f, "Dataset build failed for format '{}': {}", format, reason)
+                write!(
+                    f,
+                    "Dataset build failed for format '{}': {}",
+                    format, reason
+                )
             }
-            DistillationError::NoValidTrajectories { min_score, total_checked } => {
-                write!(f, "No trajectories met score threshold {:.2} (checked {})", min_score, total_checked)
+            DistillationError::NoValidTrajectories {
+                min_score,
+                total_checked,
+            } => {
+                write!(
+                    f,
+                    "No trajectories met score threshold {:.2} (checked {})",
+                    min_score, total_checked
+                )
             }
             DistillationError::FlywheelFailed { cycle_id, reason } => {
                 write!(f, "Flywheel cycle '{}' failed: {}", cycle_id, reason)
             }
             DistillationError::StorageError { operation, reason } => {
-                write!(f, "Distillation storage error during '{}': {}", operation, reason)
+                write!(
+                    f,
+                    "Distillation storage error during '{}': {}",
+                    operation, reason
+                )
             }
         }
     }
@@ -1438,12 +1541,24 @@ impl fmt::Display for DistillationError {
 impl DistillationError {
     pub fn suggestion(&self) -> Option<&'static str> {
         match self {
-            DistillationError::CollectionFailed { .. } => Some("Check that trajectory hooks are properly registered"),
-            DistillationError::ScoringFailed { .. } => Some("Verify scorer configuration and trajectory format"),
-            DistillationError::DatasetBuildFailed { .. } => Some("Check output path permissions and format config"),
-            DistillationError::NoValidTrajectories { .. } => Some("Lower the score threshold or collect more trajectories"),
-            DistillationError::FlywheelFailed { .. } => Some("Check flywheel trigger configuration"),
-            DistillationError::StorageError { .. } => Some("Check storage backend availability and permissions"),
+            DistillationError::CollectionFailed { .. } => {
+                Some("Check that trajectory hooks are properly registered")
+            }
+            DistillationError::ScoringFailed { .. } => {
+                Some("Verify scorer configuration and trajectory format")
+            }
+            DistillationError::DatasetBuildFailed { .. } => {
+                Some("Check output path permissions and format config")
+            }
+            DistillationError::NoValidTrajectories { .. } => {
+                Some("Lower the score threshold or collect more trajectories")
+            }
+            DistillationError::FlywheelFailed { .. } => {
+                Some("Check flywheel trigger configuration")
+            }
+            DistillationError::StorageError { .. } => {
+                Some("Check storage backend availability and permissions")
+            }
         }
     }
 }
@@ -1465,7 +1580,11 @@ pub enum ConstrainedDecodingError {
     /// JSON Schema conversion failed
     SchemaConversionFailed { path: String, reason: String },
     /// Streaming validation detected invalid output
-    ValidationFailed { position: usize, expected: String, got: String },
+    ValidationFailed {
+        position: usize,
+        expected: String,
+        got: String,
+    },
     /// Provider does not support grammar-guided generation
     ProviderUnsupported { provider: String },
     /// Grammar syntax error
@@ -1483,11 +1602,23 @@ impl fmt::Display for ConstrainedDecodingError {
             ConstrainedDecodingError::SchemaConversionFailed { path, reason } => {
                 write!(f, "Schema conversion failed at '{}': {}", path, reason)
             }
-            ConstrainedDecodingError::ValidationFailed { position, expected, got } => {
-                write!(f, "Validation failed at position {}: expected {}, got '{}'", position, expected, got)
+            ConstrainedDecodingError::ValidationFailed {
+                position,
+                expected,
+                got,
+            } => {
+                write!(
+                    f,
+                    "Validation failed at position {}: expected {}, got '{}'",
+                    position, expected, got
+                )
             }
             ConstrainedDecodingError::ProviderUnsupported { provider } => {
-                write!(f, "Provider '{}' does not support constrained decoding", provider)
+                write!(
+                    f,
+                    "Provider '{}' does not support constrained decoding",
+                    provider
+                )
             }
             ConstrainedDecodingError::GrammarSyntaxError { line, message } => {
                 write!(f, "Grammar syntax error at line {}: {}", line, message)
@@ -1499,11 +1630,21 @@ impl fmt::Display for ConstrainedDecodingError {
 impl ConstrainedDecodingError {
     pub fn suggestion(&self) -> Option<&'static str> {
         match self {
-            ConstrainedDecodingError::GrammarCompilationFailed { .. } => Some("Check grammar syntax and rule definitions"),
-            ConstrainedDecodingError::SchemaConversionFailed { .. } => Some("Verify JSON Schema is valid and supported"),
-            ConstrainedDecodingError::ValidationFailed { .. } => Some("Check that the model output matches the expected schema"),
-            ConstrainedDecodingError::ProviderUnsupported { .. } => Some("Use Ollama, LM Studio, or vLLM for grammar support"),
-            ConstrainedDecodingError::GrammarSyntaxError { .. } => Some("Fix the grammar syntax at the indicated line"),
+            ConstrainedDecodingError::GrammarCompilationFailed { .. } => {
+                Some("Check grammar syntax and rule definitions")
+            }
+            ConstrainedDecodingError::SchemaConversionFailed { .. } => {
+                Some("Verify JSON Schema is valid and supported")
+            }
+            ConstrainedDecodingError::ValidationFailed { .. } => {
+                Some("Check that the model output matches the expected schema")
+            }
+            ConstrainedDecodingError::ProviderUnsupported { .. } => {
+                Some("Use Ollama, LM Studio, or vLLM for grammar support")
+            }
+            ConstrainedDecodingError::GrammarSyntaxError { .. } => {
+                Some("Fix the grammar syntax at the indicated line")
+            }
         }
     }
 }
@@ -1521,7 +1662,10 @@ impl From<ConstrainedDecodingError> for AiError {
 #[non_exhaustive]
 pub enum HitlError {
     /// Approval request timed out waiting for human response
-    ApprovalTimeout { tool_name: String, timeout_secs: u64 },
+    ApprovalTimeout {
+        tool_name: String,
+        timeout_secs: u64,
+    },
     /// Action violated an approval policy
     PolicyViolation { policy_name: String, reason: String },
     /// No approval gate configured for the operation
@@ -1539,10 +1683,20 @@ impl std::error::Error for HitlError {}
 impl fmt::Display for HitlError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            HitlError::ApprovalTimeout { tool_name, timeout_secs } => {
-                write!(f, "Approval timeout for tool '{}' after {}s", tool_name, timeout_secs)
+            HitlError::ApprovalTimeout {
+                tool_name,
+                timeout_secs,
+            } => {
+                write!(
+                    f,
+                    "Approval timeout for tool '{}' after {}s",
+                    tool_name, timeout_secs
+                )
             }
-            HitlError::PolicyViolation { policy_name, reason } => {
+            HitlError::PolicyViolation {
+                policy_name,
+                reason,
+            } => {
                 write!(f, "Policy '{}' violated: {}", policy_name, reason)
             }
             HitlError::GateNotConfigured { operation } => {
@@ -1564,12 +1718,24 @@ impl fmt::Display for HitlError {
 impl HitlError {
     pub fn suggestion(&self) -> Option<&'static str> {
         match self {
-            HitlError::ApprovalTimeout { .. } => Some("Increase timeout or configure auto-approve for this tool"),
-            HitlError::PolicyViolation { .. } => Some("Review approval policies or adjust action parameters"),
-            HitlError::GateNotConfigured { .. } => Some("Register an approval gate before executing sensitive operations"),
-            HitlError::CorrectionRejected { .. } => Some("Verify the correction format and target step"),
-            HitlError::ConfidenceEstimationFailed { .. } => Some("Check confidence estimator configuration"),
-            HitlError::EscalationUnavailable { .. } => Some("Ensure escalation handlers are registered and reachable"),
+            HitlError::ApprovalTimeout { .. } => {
+                Some("Increase timeout or configure auto-approve for this tool")
+            }
+            HitlError::PolicyViolation { .. } => {
+                Some("Review approval policies or adjust action parameters")
+            }
+            HitlError::GateNotConfigured { .. } => {
+                Some("Register an approval gate before executing sensitive operations")
+            }
+            HitlError::CorrectionRejected { .. } => {
+                Some("Verify the correction format and target step")
+            }
+            HitlError::ConfidenceEstimationFailed { .. } => {
+                Some("Check confidence estimator configuration")
+            }
+            HitlError::EscalationUnavailable { .. } => {
+                Some("Ensure escalation handlers are registered and reachable")
+            }
         }
     }
 
@@ -1600,7 +1766,11 @@ pub enum McpClientError {
     /// Authentication with MCP server failed
     AuthFailed { url: String, reason: String },
     /// MCP server returned an error
-    ServerError { url: String, code: i64, message: String },
+    ServerError {
+        url: String,
+        code: i64,
+        message: String,
+    },
     /// Connection timed out
     Timeout { url: String, timeout_ms: u64 },
     /// Protocol version mismatch
@@ -1626,13 +1796,25 @@ impl fmt::Display for McpClientError {
                 write!(f, "MCP server '{}' error {}: {}", url, code, message)
             }
             McpClientError::Timeout { url, timeout_ms } => {
-                write!(f, "MCP connection to '{}' timed out after {}ms", url, timeout_ms)
+                write!(
+                    f,
+                    "MCP connection to '{}' timed out after {}ms",
+                    url, timeout_ms
+                )
             }
             McpClientError::ProtocolMismatch { expected, got } => {
-                write!(f, "MCP protocol mismatch: expected '{}', got '{}'", expected, got)
+                write!(
+                    f,
+                    "MCP protocol mismatch: expected '{}', got '{}'",
+                    expected, got
+                )
             }
             McpClientError::ToolNotFound { server, tool_name } => {
-                write!(f, "Tool '{}' not found on MCP server '{}'", tool_name, server)
+                write!(
+                    f,
+                    "Tool '{}' not found on MCP server '{}'",
+                    tool_name, server
+                )
             }
             McpClientError::SessionExpired { session_id } => {
                 write!(f, "MCP session '{}' expired", session_id)
@@ -1644,13 +1826,21 @@ impl fmt::Display for McpClientError {
 impl McpClientError {
     pub fn suggestion(&self) -> Option<&'static str> {
         match self {
-            McpClientError::ConnectionFailed { .. } => Some("Check the MCP server URL and network connectivity"),
+            McpClientError::ConnectionFailed { .. } => {
+                Some("Check the MCP server URL and network connectivity")
+            }
             McpClientError::AuthFailed { .. } => Some("Verify OAuth credentials or bearer token"),
             McpClientError::ServerError { .. } => Some("Check MCP server logs for details"),
             McpClientError::Timeout { .. } => Some("Increase timeout or check server availability"),
-            McpClientError::ProtocolMismatch { .. } => Some("Update MCP client to match server protocol version"),
-            McpClientError::ToolNotFound { .. } => Some("Verify tool name and refresh the tool registry"),
-            McpClientError::SessionExpired { .. } => Some("Reconnect to the MCP server to create a new session"),
+            McpClientError::ProtocolMismatch { .. } => {
+                Some("Update MCP client to match server protocol version")
+            }
+            McpClientError::ToolNotFound { .. } => {
+                Some("Verify tool name and refresh the tool registry")
+            }
+            McpClientError::SessionExpired { .. } => {
+                Some("Reconnect to the MCP server to create a new session")
+            }
         }
     }
 
@@ -1698,7 +1888,10 @@ impl fmt::Display for AgentEvalError {
             AgentEvalError::TrajectoryEmpty { agent_id } => {
                 write!(f, "Trajectory for agent '{}' is empty", agent_id)
             }
-            AgentEvalError::MetricFailed { metric_name, reason } => {
+            AgentEvalError::MetricFailed {
+                metric_name,
+                reason,
+            } => {
                 write!(f, "Metric '{}' failed: {}", metric_name, reason)
             }
             AgentEvalError::BaselineNotFound { eval_id } => {
@@ -1708,7 +1901,11 @@ impl fmt::Display for AgentEvalError {
                 write!(f, "Invalid eval config '{}': {}", field, reason)
             }
             AgentEvalError::ToolCallMatchFailed { expected, actual } => {
-                write!(f, "Tool call mismatch: expected '{}', got '{}'", expected, actual)
+                write!(
+                    f,
+                    "Tool call mismatch: expected '{}', got '{}'",
+                    expected, actual
+                )
             }
             AgentEvalError::ReportFailed { reason } => {
                 write!(f, "Eval report generation failed: {}", reason)
@@ -1720,12 +1917,24 @@ impl fmt::Display for AgentEvalError {
 impl AgentEvalError {
     pub fn suggestion(&self) -> Option<&'static str> {
         match self {
-            AgentEvalError::TrajectoryEmpty { .. } => Some("Ensure the agent ran and TrajectoryRecorder was attached"),
-            AgentEvalError::MetricFailed { .. } => Some("Check metric configuration and input data"),
-            AgentEvalError::BaselineNotFound { .. } => Some("Create a baseline trajectory before running comparisons"),
-            AgentEvalError::InvalidConfig { .. } => Some("Review evaluation configuration parameters"),
-            AgentEvalError::ToolCallMatchFailed { .. } => Some("Check expected tool call definitions"),
-            AgentEvalError::ReportFailed { .. } => Some("Ensure all metrics completed before generating the report"),
+            AgentEvalError::TrajectoryEmpty { .. } => {
+                Some("Ensure the agent ran and TrajectoryRecorder was attached")
+            }
+            AgentEvalError::MetricFailed { .. } => {
+                Some("Check metric configuration and input data")
+            }
+            AgentEvalError::BaselineNotFound { .. } => {
+                Some("Create a baseline trajectory before running comparisons")
+            }
+            AgentEvalError::InvalidConfig { .. } => {
+                Some("Review evaluation configuration parameters")
+            }
+            AgentEvalError::ToolCallMatchFailed { .. } => {
+                Some("Check expected tool call definitions")
+            }
+            AgentEvalError::ReportFailed { .. } => {
+                Some("Ensure all metrics completed before generating the report")
+            }
         }
     }
 }
@@ -1769,7 +1978,11 @@ impl fmt::Display for RedTeamError {
                 write!(f, "Invalid attack category: '{}'", category)
             }
             RedTeamError::DefenseEvalFailed { guard_name, reason } => {
-                write!(f, "Defense evaluation failed for '{}': {}", guard_name, reason)
+                write!(
+                    f,
+                    "Defense evaluation failed for '{}': {}",
+                    guard_name, reason
+                )
             }
             RedTeamError::ReportFailed { reason } => {
                 write!(f, "Red team report generation failed: {}", reason)
@@ -1781,11 +1994,17 @@ impl fmt::Display for RedTeamError {
 impl RedTeamError {
     pub fn suggestion(&self) -> Option<&'static str> {
         match self {
-            RedTeamError::GenerationFailed { .. } => Some("Check attack templates and generator configuration"),
+            RedTeamError::GenerationFailed { .. } => {
+                Some("Check attack templates and generator configuration")
+            }
             RedTeamError::ExecutionFailed { .. } => Some("Verify the target agent is accessible"),
             RedTeamError::InvalidCategory { .. } => Some("Use a valid AttackCategory variant"),
-            RedTeamError::DefenseEvalFailed { .. } => Some("Ensure guardrails are properly configured"),
-            RedTeamError::ReportFailed { .. } => Some("Check that all attacks completed before reporting"),
+            RedTeamError::DefenseEvalFailed { .. } => {
+                Some("Ensure guardrails are properly configured")
+            }
+            RedTeamError::ReportFailed { .. } => {
+                Some("Check that all attacks completed before reporting")
+            }
         }
     }
 }
@@ -1813,7 +2032,10 @@ pub enum MctsError {
     /// Reward model error
     RewardModelError { step: usize, reason: String },
     /// Refinement loop exhausted
-    RefinementExhausted { iterations: usize, last_improvement: f64 },
+    RefinementExhausted {
+        iterations: usize,
+        last_improvement: f64,
+    },
 }
 
 impl std::error::Error for MctsError {}
@@ -1821,8 +2043,15 @@ impl std::error::Error for MctsError {}
 impl fmt::Display for MctsError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            MctsError::MaxIterations { iterations, best_reward } => {
-                write!(f, "MCTS reached {} iterations, best reward: {:.4}", iterations, best_reward)
+            MctsError::MaxIterations {
+                iterations,
+                best_reward,
+            } => {
+                write!(
+                    f,
+                    "MCTS reached {} iterations, best reward: {:.4}",
+                    iterations, best_reward
+                )
             }
             MctsError::NoValidActions { state_description } => {
                 write!(f, "No valid actions from state: {}", state_description)
@@ -1836,8 +2065,15 @@ impl fmt::Display for MctsError {
             MctsError::RewardModelError { step, reason } => {
                 write!(f, "Reward model error at step {}: {}", step, reason)
             }
-            MctsError::RefinementExhausted { iterations, last_improvement } => {
-                write!(f, "Refinement exhausted after {} iterations (last improvement: {:.4})", iterations, last_improvement)
+            MctsError::RefinementExhausted {
+                iterations,
+                last_improvement,
+            } => {
+                write!(
+                    f,
+                    "Refinement exhausted after {} iterations (last improvement: {:.4})",
+                    iterations, last_improvement
+                )
             }
         }
     }
@@ -1846,12 +2082,22 @@ impl fmt::Display for MctsError {
 impl MctsError {
     pub fn suggestion(&self) -> Option<&'static str> {
         match self {
-            MctsError::MaxIterations { .. } => Some("Increase max_iterations or adjust exploration constant"),
-            MctsError::NoValidActions { .. } => Some("Check state implementation returns available actions"),
-            MctsError::SimulationFailed { .. } => Some("Review simulation policy and state transitions"),
+            MctsError::MaxIterations { .. } => {
+                Some("Increase max_iterations or adjust exploration constant")
+            }
+            MctsError::NoValidActions { .. } => {
+                Some("Check state implementation returns available actions")
+            }
+            MctsError::SimulationFailed { .. } => {
+                Some("Review simulation policy and state transitions")
+            }
             MctsError::StateError { .. } => Some("Verify state transition logic for this action"),
-            MctsError::RewardModelError { .. } => Some("Check reward model configuration and input format"),
-            MctsError::RefinementExhausted { .. } => Some("Lower improvement threshold or increase iteration limit"),
+            MctsError::RewardModelError { .. } => {
+                Some("Check reward model configuration and input format")
+            }
+            MctsError::RefinementExhausted { .. } => {
+                Some("Lower improvement threshold or increase iteration limit")
+            }
         }
     }
 
@@ -1880,7 +2126,10 @@ pub enum DevToolsError {
     /// Recording failed
     RecordingFailed { agent_id: String, reason: String },
     /// Replay failed
-    ReplayFailed { recording_id: String, reason: String },
+    ReplayFailed {
+        recording_id: String,
+        reason: String,
+    },
     /// Invalid breakpoint configuration
     BreakpointInvalid { description: String },
     /// State inspection failed
@@ -1897,14 +2146,25 @@ impl fmt::Display for DevToolsError {
             DevToolsError::RecordingFailed { agent_id, reason } => {
                 write!(f, "Recording failed for agent '{}': {}", agent_id, reason)
             }
-            DevToolsError::ReplayFailed { recording_id, reason } => {
-                write!(f, "Replay failed for recording '{}': {}", recording_id, reason)
+            DevToolsError::ReplayFailed {
+                recording_id,
+                reason,
+            } => {
+                write!(
+                    f,
+                    "Replay failed for recording '{}': {}",
+                    recording_id, reason
+                )
             }
             DevToolsError::BreakpointInvalid { description } => {
                 write!(f, "Invalid breakpoint: {}", description)
             }
             DevToolsError::InspectionFailed { agent_id, reason } => {
-                write!(f, "State inspection failed for agent '{}': {}", agent_id, reason)
+                write!(
+                    f,
+                    "State inspection failed for agent '{}': {}",
+                    agent_id, reason
+                )
             }
             DevToolsError::ProfilingUnavailable { reason } => {
                 write!(f, "Profiling data unavailable: {}", reason)
@@ -1916,11 +2176,21 @@ impl fmt::Display for DevToolsError {
 impl DevToolsError {
     pub fn suggestion(&self) -> Option<&'static str> {
         match self {
-            DevToolsError::RecordingFailed { .. } => Some("Ensure ExecutionRecorder is attached before agent runs"),
-            DevToolsError::ReplayFailed { .. } => Some("Verify the recording file exists and is not corrupted"),
-            DevToolsError::BreakpointInvalid { .. } => Some("Check breakpoint conditions and target identifiers"),
-            DevToolsError::InspectionFailed { .. } => Some("Ensure the agent supports state inspection"),
-            DevToolsError::ProfilingUnavailable { .. } => Some("Enable profiling in DevToolsConfig before running"),
+            DevToolsError::RecordingFailed { .. } => {
+                Some("Ensure ExecutionRecorder is attached before agent runs")
+            }
+            DevToolsError::ReplayFailed { .. } => {
+                Some("Verify the recording file exists and is not corrupted")
+            }
+            DevToolsError::BreakpointInvalid { .. } => {
+                Some("Check breakpoint conditions and target identifiers")
+            }
+            DevToolsError::InspectionFailed { .. } => {
+                Some("Ensure the agent supports state inspection")
+            }
+            DevToolsError::ProfilingUnavailable { .. } => {
+                Some("Enable profiling in DevToolsConfig before running")
+            }
         }
     }
 }
@@ -1952,7 +2222,10 @@ pub enum EvalSuiteError {
     /// Report generation failed
     ReportFailed { reason: String },
     /// Evaluation timed out
-    Timeout { problem_id: String, timeout_secs: u64 },
+    Timeout {
+        problem_id: String,
+        timeout_secs: u64,
+    },
     /// Configuration search failed
     SearchFailed { reason: String },
     /// Invalid agent configuration
@@ -1971,7 +2244,11 @@ impl fmt::Display for EvalSuiteError {
                 write!(f, "Invalid problem '{}': {}", problem_id, reason)
             }
             EvalSuiteError::GenerationFailed { problem_id, reason } => {
-                write!(f, "Generation failed for problem '{}': {}", problem_id, reason)
+                write!(
+                    f,
+                    "Generation failed for problem '{}': {}",
+                    problem_id, reason
+                )
             }
             EvalSuiteError::ScoringFailed { problem_id, reason } => {
                 write!(f, "Scoring failed for problem '{}': {}", problem_id, reason)
@@ -1980,13 +2257,24 @@ impl fmt::Display for EvalSuiteError {
                 write!(f, "No results available: {}", reason)
             }
             EvalSuiteError::InsufficientData { metric, samples } => {
-                write!(f, "Insufficient data for '{}': only {} samples", metric, samples)
+                write!(
+                    f,
+                    "Insufficient data for '{}': only {} samples",
+                    metric, samples
+                )
             }
             EvalSuiteError::ReportFailed { reason } => {
                 write!(f, "Report generation failed: {}", reason)
             }
-            EvalSuiteError::Timeout { problem_id, timeout_secs } => {
-                write!(f, "Evaluation timed out for '{}' after {}s", problem_id, timeout_secs)
+            EvalSuiteError::Timeout {
+                problem_id,
+                timeout_secs,
+            } => {
+                write!(
+                    f,
+                    "Evaluation timed out for '{}' after {}s",
+                    problem_id, timeout_secs
+                )
             }
             EvalSuiteError::SearchFailed { reason } => {
                 write!(f, "Configuration search failed: {}", reason)
@@ -2001,16 +2289,34 @@ impl fmt::Display for EvalSuiteError {
 impl EvalSuiteError {
     pub fn suggestion(&self) -> Option<&'static str> {
         match self {
-            EvalSuiteError::DatasetLoadFailed { .. } => Some("Check the dataset file path and format (JSONL or JSON)"),
-            EvalSuiteError::InvalidProblem { .. } => Some("Verify the problem has all required fields (id, prompt, answer_format)"),
-            EvalSuiteError::GenerationFailed { .. } => Some("Check that the LLM provider is accessible and the model is available"),
-            EvalSuiteError::ScoringFailed { .. } => Some("Verify the scorer matches the problem's answer format"),
-            EvalSuiteError::NoResults { .. } => Some("Run at least one benchmark before generating reports"),
-            EvalSuiteError::InsufficientData { .. } => Some("Collect more samples or lower the significance threshold"),
-            EvalSuiteError::ReportFailed { .. } => Some("Ensure all benchmark runs completed before generating the report"),
+            EvalSuiteError::DatasetLoadFailed { .. } => {
+                Some("Check the dataset file path and format (JSONL or JSON)")
+            }
+            EvalSuiteError::InvalidProblem { .. } => {
+                Some("Verify the problem has all required fields (id, prompt, answer_format)")
+            }
+            EvalSuiteError::GenerationFailed { .. } => {
+                Some("Check that the LLM provider is accessible and the model is available")
+            }
+            EvalSuiteError::ScoringFailed { .. } => {
+                Some("Verify the scorer matches the problem's answer format")
+            }
+            EvalSuiteError::NoResults { .. } => {
+                Some("Run at least one benchmark before generating reports")
+            }
+            EvalSuiteError::InsufficientData { .. } => {
+                Some("Collect more samples or lower the significance threshold")
+            }
+            EvalSuiteError::ReportFailed { .. } => {
+                Some("Ensure all benchmark runs completed before generating the report")
+            }
             EvalSuiteError::Timeout { .. } => Some("Increase the timeout or use a faster model"),
-            EvalSuiteError::SearchFailed { .. } => Some("Check search dimensions and dataset, or increase max_evaluations budget"),
-            EvalSuiteError::InvalidAgentConfig { .. } => Some("Verify the EvalAgentConfig fields (model identifiers, temperature range, etc.)"),
+            EvalSuiteError::SearchFailed { .. } => {
+                Some("Check search dimensions and dataset, or increase max_evaluations budget")
+            }
+            EvalSuiteError::InvalidAgentConfig { .. } => Some(
+                "Verify the EvalAgentConfig fields (model identifiers, temperature range, etc.)",
+            ),
         }
     }
 
@@ -2086,7 +2392,11 @@ impl fmt::Display for AdvancedRoutingError {
                 write!(f, "Serialization failed ({}): {}", format, reason)
             }
             AdvancedRoutingError::IncompatibleVersion { expected, found } => {
-                write!(f, "Incompatible snapshot version: expected {}, found {}", expected, found)
+                write!(
+                    f,
+                    "Incompatible snapshot version: expected {}, found {}",
+                    expected, found
+                )
             }
             AdvancedRoutingError::NoRoutingPath { query, reason } => {
                 write!(f, "No routing path for query '{}': {}", query, reason)
@@ -2102,25 +2412,44 @@ impl fmt::Display for AdvancedRoutingError {
 impl AdvancedRoutingError {
     pub fn suggestion(&self) -> Option<&'static str> {
         match self {
-            AdvancedRoutingError::InvalidConfig { .. } => Some("Check the routing configuration fields and value ranges"),
-            AdvancedRoutingError::ArmNotFound { .. } => Some("Register the arm with add_arm() before selecting"),
-            AdvancedRoutingError::CompilationError { .. } => Some("Verify the NFA has valid states and transitions"),
-            AdvancedRoutingError::CycleDetected => Some("Remove cycles from the routing DAG to make it acyclic"),
-            AdvancedRoutingError::NodeNotFound { .. } => Some("Add the node with add_node() before referencing it"),
-            AdvancedRoutingError::EmptyEnsemble => Some("Add at least one voter with add_voter() before routing"),
-            AdvancedRoutingError::SerializationFailed { .. } => Some("Check that the data format matches the expected schema"),
-            AdvancedRoutingError::IncompatibleVersion { .. } => Some("Export a new snapshot from the current version"),
-            AdvancedRoutingError::NoRoutingPath { .. } => Some("Add transitions or accepting states that match the query features"),
+            AdvancedRoutingError::InvalidConfig { .. } => {
+                Some("Check the routing configuration fields and value ranges")
+            }
+            AdvancedRoutingError::ArmNotFound { .. } => {
+                Some("Register the arm with add_arm() before selecting")
+            }
+            AdvancedRoutingError::CompilationError { .. } => {
+                Some("Verify the NFA has valid states and transitions")
+            }
+            AdvancedRoutingError::CycleDetected => {
+                Some("Remove cycles from the routing DAG to make it acyclic")
+            }
+            AdvancedRoutingError::NodeNotFound { .. } => {
+                Some("Add the node with add_node() before referencing it")
+            }
+            AdvancedRoutingError::EmptyEnsemble => {
+                Some("Add at least one voter with add_voter() before routing")
+            }
+            AdvancedRoutingError::SerializationFailed { .. } => {
+                Some("Check that the data format matches the expected schema")
+            }
+            AdvancedRoutingError::IncompatibleVersion { .. } => {
+                Some("Export a new snapshot from the current version")
+            }
+            AdvancedRoutingError::NoRoutingPath { .. } => {
+                Some("Add transitions or accepting states that match the query features")
+            }
             #[cfg(feature = "distributed")]
-            AdvancedRoutingError::MergeConflict { .. } => Some("Ensure all nodes use compatible bandit configurations"),
+            AdvancedRoutingError::MergeConflict { .. } => {
+                Some("Ensure all nodes use compatible bandit configurations")
+            }
         }
     }
 
     pub fn is_recoverable(&self) -> bool {
         matches!(
             self,
-            AdvancedRoutingError::NoRoutingPath { .. }
-                | AdvancedRoutingError::ArmNotFound { .. }
+            AdvancedRoutingError::NoRoutingPath { .. } | AdvancedRoutingError::ArmNotFound { .. }
         )
     }
 }
@@ -2327,20 +2656,56 @@ mod tests {
             AiError::ResourceLimit(ResourceLimitError::ConcurrentRequestLimit { limit: 5 }),
             AiError::Io(IoError::new("read", "permission denied")),
             AiError::Serialization(SerializationError::json_serialize("bad data")),
-            AiError::Workflow(WorkflowError::BreakpointHit { node_id: "n".into() }),
-            AiError::AdvancedMemory(AdvancedMemoryError::ConsolidationFailed { reason: "r".into() }),
-            AiError::A2A(A2AError::TaskCancelled { task_id: "t".into() }),
-            AiError::VoiceAgent(VoiceAgentError::StreamFailed { reason: "disconnected".into() }),
-            AiError::MediaGeneration(MediaGenerationError::GenerationFailed { provider: "dalle".into(), reason: "timeout".into() }),
-            AiError::Distillation(DistillationError::NoValidTrajectories { min_score: 0.8, total_checked: 100 }),
-            AiError::ConstrainedDecoding(ConstrainedDecodingError::ProviderUnsupported { provider: "openai".into() }),
-            AiError::Hitl(HitlError::ApprovalTimeout { tool_name: "delete".into(), timeout_secs: 30 }),
-            AiError::McpClient(McpClientError::ConnectionFailed { url: "http://mcp.local".into(), reason: "refused".into() }),
-            AiError::AgentEval(AgentEvalError::TrajectoryEmpty { agent_id: "agent-1".into() }),
-            AiError::RedTeam(RedTeamError::GenerationFailed { category: "injection".into(), reason: "template".into() }),
-            AiError::Mcts(MctsError::MaxIterations { iterations: 1000, best_reward: 0.75 }),
-            AiError::DevTools(DevToolsError::RecordingFailed { agent_id: "a".into(), reason: "no recorder".into() }),
-            AiError::EvalSuite(EvalSuiteError::DatasetLoadFailed { path: "bench.jsonl".into(), reason: "not found".into() }),
+            AiError::Workflow(WorkflowError::BreakpointHit {
+                node_id: "n".into(),
+            }),
+            AiError::AdvancedMemory(AdvancedMemoryError::ConsolidationFailed {
+                reason: "r".into(),
+            }),
+            AiError::A2A(A2AError::TaskCancelled {
+                task_id: "t".into(),
+            }),
+            AiError::VoiceAgent(VoiceAgentError::StreamFailed {
+                reason: "disconnected".into(),
+            }),
+            AiError::MediaGeneration(MediaGenerationError::GenerationFailed {
+                provider: "dalle".into(),
+                reason: "timeout".into(),
+            }),
+            AiError::Distillation(DistillationError::NoValidTrajectories {
+                min_score: 0.8,
+                total_checked: 100,
+            }),
+            AiError::ConstrainedDecoding(ConstrainedDecodingError::ProviderUnsupported {
+                provider: "openai".into(),
+            }),
+            AiError::Hitl(HitlError::ApprovalTimeout {
+                tool_name: "delete".into(),
+                timeout_secs: 30,
+            }),
+            AiError::McpClient(McpClientError::ConnectionFailed {
+                url: "http://mcp.local".into(),
+                reason: "refused".into(),
+            }),
+            AiError::AgentEval(AgentEvalError::TrajectoryEmpty {
+                agent_id: "agent-1".into(),
+            }),
+            AiError::RedTeam(RedTeamError::GenerationFailed {
+                category: "injection".into(),
+                reason: "template".into(),
+            }),
+            AiError::Mcts(MctsError::MaxIterations {
+                iterations: 1000,
+                best_reward: 0.75,
+            }),
+            AiError::DevTools(DevToolsError::RecordingFailed {
+                agent_id: "a".into(),
+                reason: "no recorder".into(),
+            }),
+            AiError::EvalSuite(EvalSuiteError::DatasetLoadFailed {
+                path: "bench.jsonl".into(),
+                reason: "not found".into(),
+            }),
             AiError::Other("something went wrong".into()),
         ];
 
@@ -2486,13 +2851,30 @@ mod tests {
     #[test]
     fn test_workflow_error_display_and_suggestion() {
         let errors: Vec<WorkflowError> = vec![
-            WorkflowError::NodeNotFound { node_id: "step_1".into() },
-            WorkflowError::CycleDetected { path: vec!["a".into(), "b".into(), "a".into()] },
-            WorkflowError::EventTypeMismatch { expected: "QueryEvent".into(), got: "ResultEvent".into() },
-            WorkflowError::CheckpointFailed { workflow_id: "wf-1".into(), reason: "disk full".into() },
-            WorkflowError::TimeoutExceeded { node_id: "slow_node".into(), timeout_ms: 5000 },
-            WorkflowError::BreakpointHit { node_id: "debug_node".into() },
-            WorkflowError::SerializationFailed { reason: "invalid handler".into() },
+            WorkflowError::NodeNotFound {
+                node_id: "step_1".into(),
+            },
+            WorkflowError::CycleDetected {
+                path: vec!["a".into(), "b".into(), "a".into()],
+            },
+            WorkflowError::EventTypeMismatch {
+                expected: "QueryEvent".into(),
+                got: "ResultEvent".into(),
+            },
+            WorkflowError::CheckpointFailed {
+                workflow_id: "wf-1".into(),
+                reason: "disk full".into(),
+            },
+            WorkflowError::TimeoutExceeded {
+                node_id: "slow_node".into(),
+                timeout_ms: 5000,
+            },
+            WorkflowError::BreakpointHit {
+                node_id: "debug_node".into(),
+            },
+            WorkflowError::SerializationFailed {
+                reason: "invalid handler".into(),
+            },
             WorkflowError::InvalidState {
                 workflow_id: "wf-1".into(),
                 current_state: "completed".into(),
@@ -2502,84 +2884,178 @@ mod tests {
 
         for err in &errors {
             let display = err.to_string();
-            assert!(!display.is_empty(), "Display for {:?} should be non-empty", err);
-            assert!(err.suggestion().is_some(), "WorkflowError {:?} should have a suggestion", err);
+            assert!(
+                !display.is_empty(),
+                "Display for {:?} should be non-empty",
+                err
+            );
+            assert!(
+                err.suggestion().is_some(),
+                "WorkflowError {:?} should have a suggestion",
+                err
+            );
         }
     }
 
     #[test]
     fn test_workflow_error_recoverable() {
-        assert!(WorkflowError::TimeoutExceeded { node_id: "n".into(), timeout_ms: 100 }.is_recoverable());
-        assert!(WorkflowError::CheckpointFailed { workflow_id: "w".into(), reason: "r".into() }.is_recoverable());
-        assert!(WorkflowError::BreakpointHit { node_id: "n".into() }.is_recoverable());
-        assert!(!WorkflowError::NodeNotFound { node_id: "n".into() }.is_recoverable());
+        assert!(WorkflowError::TimeoutExceeded {
+            node_id: "n".into(),
+            timeout_ms: 100
+        }
+        .is_recoverable());
+        assert!(WorkflowError::CheckpointFailed {
+            workflow_id: "w".into(),
+            reason: "r".into()
+        }
+        .is_recoverable());
+        assert!(WorkflowError::BreakpointHit {
+            node_id: "n".into()
+        }
+        .is_recoverable());
+        assert!(!WorkflowError::NodeNotFound {
+            node_id: "n".into()
+        }
+        .is_recoverable());
         assert!(!WorkflowError::CycleDetected { path: vec![] }.is_recoverable());
     }
 
     #[test]
     fn test_advanced_memory_error_display_and_suggestion() {
         let errors: Vec<AdvancedMemoryError> = vec![
-            AdvancedMemoryError::StoreFailed { memory_type: "episodic".into(), reason: "db locked".into() },
-            AdvancedMemoryError::RecallFailed { query: "what happened".into(), reason: "no index".into() },
-            AdvancedMemoryError::ConsolidationFailed { reason: "too few episodes".into() },
-            AdvancedMemoryError::EntityNotFound { name: "Project X".into() },
-            AdvancedMemoryError::DuplicateEntity { name: "Python".into(), existing_id: "e-42".into() },
-            AdvancedMemoryError::CapacityExceeded { memory_type: "episodic".into(), limit: 1000, current: 1001 },
+            AdvancedMemoryError::StoreFailed {
+                memory_type: "episodic".into(),
+                reason: "db locked".into(),
+            },
+            AdvancedMemoryError::RecallFailed {
+                query: "what happened".into(),
+                reason: "no index".into(),
+            },
+            AdvancedMemoryError::ConsolidationFailed {
+                reason: "too few episodes".into(),
+            },
+            AdvancedMemoryError::EntityNotFound {
+                name: "Project X".into(),
+            },
+            AdvancedMemoryError::DuplicateEntity {
+                name: "Python".into(),
+                existing_id: "e-42".into(),
+            },
+            AdvancedMemoryError::CapacityExceeded {
+                memory_type: "episodic".into(),
+                limit: 1000,
+                current: 1001,
+            },
         ];
 
         for err in &errors {
             let display = err.to_string();
-            assert!(!display.is_empty(), "Display for {:?} should be non-empty", err);
-            assert!(err.suggestion().is_some(), "AdvancedMemoryError {:?} should have a suggestion", err);
+            assert!(
+                !display.is_empty(),
+                "Display for {:?} should be non-empty",
+                err
+            );
+            assert!(
+                err.suggestion().is_some(),
+                "AdvancedMemoryError {:?} should have a suggestion",
+                err
+            );
         }
     }
 
     #[test]
     fn test_a2a_error_display_and_suggestion() {
         let errors: Vec<A2AError> = vec![
-            A2AError::TaskNotFound { task_id: "task-123".into() },
-            A2AError::InvalidState { task_id: "task-1".into(), current: "working".into(), attempted: "submitted".into() },
-            A2AError::AgentNotFound { agent_id: "agent-42".into() },
-            A2AError::ProtocolError { method: "tasks/send".into(), reason: "missing params".into() },
-            A2AError::DiscoveryFailed { url: "https://example.com".into(), reason: "timeout".into() },
-            A2AError::AuthenticationFailed { agent_id: "agent-1".into(), reason: "bad key".into() },
-            A2AError::TaskCancelled { task_id: "task-99".into() },
+            A2AError::TaskNotFound {
+                task_id: "task-123".into(),
+            },
+            A2AError::InvalidState {
+                task_id: "task-1".into(),
+                current: "working".into(),
+                attempted: "submitted".into(),
+            },
+            A2AError::AgentNotFound {
+                agent_id: "agent-42".into(),
+            },
+            A2AError::ProtocolError {
+                method: "tasks/send".into(),
+                reason: "missing params".into(),
+            },
+            A2AError::DiscoveryFailed {
+                url: "https://example.com".into(),
+                reason: "timeout".into(),
+            },
+            A2AError::AuthenticationFailed {
+                agent_id: "agent-1".into(),
+                reason: "bad key".into(),
+            },
+            A2AError::TaskCancelled {
+                task_id: "task-99".into(),
+            },
         ];
 
         for err in &errors {
             let display = err.to_string();
-            assert!(!display.is_empty(), "Display for {:?} should be non-empty", err);
+            assert!(
+                !display.is_empty(),
+                "Display for {:?} should be non-empty",
+                err
+            );
             // TaskCancelled has no suggestion — that's ok
             if !matches!(err, A2AError::TaskCancelled { .. }) {
-                assert!(err.suggestion().is_some(), "A2AError {:?} should have a suggestion", err);
+                assert!(
+                    err.suggestion().is_some(),
+                    "A2AError {:?} should have a suggestion",
+                    err
+                );
             }
         }
     }
 
     #[test]
     fn test_a2a_error_recoverable() {
-        assert!(A2AError::DiscoveryFailed { url: "u".into(), reason: "r".into() }.is_recoverable());
-        assert!(A2AError::ProtocolError { method: "m".into(), reason: "r".into() }.is_recoverable());
-        assert!(!A2AError::TaskNotFound { task_id: "t".into() }.is_recoverable());
-        assert!(!A2AError::TaskCancelled { task_id: "t".into() }.is_recoverable());
+        assert!(A2AError::DiscoveryFailed {
+            url: "u".into(),
+            reason: "r".into()
+        }
+        .is_recoverable());
+        assert!(A2AError::ProtocolError {
+            method: "m".into(),
+            reason: "r".into()
+        }
+        .is_recoverable());
+        assert!(!A2AError::TaskNotFound {
+            task_id: "t".into()
+        }
+        .is_recoverable());
+        assert!(!A2AError::TaskCancelled {
+            task_id: "t".into()
+        }
+        .is_recoverable());
     }
 
     #[test]
     fn test_new_error_from_conversions() {
         // WorkflowError -> AiError::Workflow
-        let wf_err = WorkflowError::NodeNotFound { node_id: "test".into() };
+        let wf_err = WorkflowError::NodeNotFound {
+            node_id: "test".into(),
+        };
         let ai_err: AiError = wf_err.into();
         assert_eq!(ai_err.code(), "WORKFLOW");
         assert!(ai_err.to_string().contains("test"));
 
         // AdvancedMemoryError -> AiError::AdvancedMemory
-        let mem_err = AdvancedMemoryError::EntityNotFound { name: "entity".into() };
+        let mem_err = AdvancedMemoryError::EntityNotFound {
+            name: "entity".into(),
+        };
         let ai_err: AiError = mem_err.into();
         assert_eq!(ai_err.code(), "MEMORY");
         assert!(ai_err.to_string().contains("entity"));
 
         // A2AError -> AiError::A2A
-        let a2a_err = A2AError::TaskNotFound { task_id: "task-1".into() };
+        let a2a_err = A2AError::TaskNotFound {
+            task_id: "task-1".into(),
+        };
         let ai_err: AiError = a2a_err.into();
         assert_eq!(ai_err.code(), "A2A");
         assert!(ai_err.to_string().contains("task-1"));
@@ -2588,12 +3064,25 @@ mod tests {
     #[test]
     fn test_voice_agent_error_display_and_suggestion() {
         let errors: Vec<VoiceAgentError> = vec![
-            VoiceAgentError::StreamFailed { reason: "disconnected".into() },
-            VoiceAgentError::VadError { reason: "threshold".into() },
-            VoiceAgentError::TranscriptionFailed { reason: "timeout".into() },
-            VoiceAgentError::SynthesisFailed { reason: "no voice".into() },
-            VoiceAgentError::InvalidSessionState { current: "idle".into(), attempted: "resume".into() },
-            VoiceAgentError::UnsupportedFormat { format: "aac".into() },
+            VoiceAgentError::StreamFailed {
+                reason: "disconnected".into(),
+            },
+            VoiceAgentError::VadError {
+                reason: "threshold".into(),
+            },
+            VoiceAgentError::TranscriptionFailed {
+                reason: "timeout".into(),
+            },
+            VoiceAgentError::SynthesisFailed {
+                reason: "no voice".into(),
+            },
+            VoiceAgentError::InvalidSessionState {
+                current: "idle".into(),
+                attempted: "resume".into(),
+            },
+            VoiceAgentError::UnsupportedFormat {
+                format: "aac".into(),
+            },
         ];
         for err in &errors {
             assert!(!err.to_string().is_empty());
@@ -2605,19 +3094,39 @@ mod tests {
     fn test_voice_agent_error_recoverable() {
         assert!(VoiceAgentError::StreamFailed { reason: "r".into() }.is_recoverable());
         assert!(VoiceAgentError::TranscriptionFailed { reason: "r".into() }.is_recoverable());
-        assert!(!VoiceAgentError::InvalidSessionState { current: "a".into(), attempted: "b".into() }.is_recoverable());
+        assert!(!VoiceAgentError::InvalidSessionState {
+            current: "a".into(),
+            attempted: "b".into()
+        }
+        .is_recoverable());
         assert!(!VoiceAgentError::UnsupportedFormat { format: "f".into() }.is_recoverable());
     }
 
     #[test]
     fn test_media_generation_error_display_and_suggestion() {
         let errors: Vec<MediaGenerationError> = vec![
-            MediaGenerationError::ProviderUnavailable { provider: "dalle".into(), reason: "timeout".into() },
-            MediaGenerationError::GenerationFailed { provider: "sd".into(), reason: "oom".into() },
-            MediaGenerationError::JobTimeout { job_id: "j-1".into(), timeout_secs: 300 },
-            MediaGenerationError::InvalidParams { param: "width".into(), reason: "too large".into() },
-            MediaGenerationError::UnsupportedFormat { format: "bmp".into() },
-            MediaGenerationError::ContentPolicyViolation { reason: "nsfw".into() },
+            MediaGenerationError::ProviderUnavailable {
+                provider: "dalle".into(),
+                reason: "timeout".into(),
+            },
+            MediaGenerationError::GenerationFailed {
+                provider: "sd".into(),
+                reason: "oom".into(),
+            },
+            MediaGenerationError::JobTimeout {
+                job_id: "j-1".into(),
+                timeout_secs: 300,
+            },
+            MediaGenerationError::InvalidParams {
+                param: "width".into(),
+                reason: "too large".into(),
+            },
+            MediaGenerationError::UnsupportedFormat {
+                format: "bmp".into(),
+            },
+            MediaGenerationError::ContentPolicyViolation {
+                reason: "nsfw".into(),
+            },
         ];
         for err in &errors {
             assert!(!err.to_string().is_empty());
@@ -2627,21 +3136,51 @@ mod tests {
 
     #[test]
     fn test_media_generation_error_recoverable() {
-        assert!(MediaGenerationError::ProviderUnavailable { provider: "p".into(), reason: "r".into() }.is_recoverable());
-        assert!(MediaGenerationError::JobTimeout { job_id: "j".into(), timeout_secs: 60 }.is_recoverable());
-        assert!(!MediaGenerationError::GenerationFailed { provider: "p".into(), reason: "r".into() }.is_recoverable());
-        assert!(!MediaGenerationError::ContentPolicyViolation { reason: "r".into() }.is_recoverable());
+        assert!(MediaGenerationError::ProviderUnavailable {
+            provider: "p".into(),
+            reason: "r".into()
+        }
+        .is_recoverable());
+        assert!(MediaGenerationError::JobTimeout {
+            job_id: "j".into(),
+            timeout_secs: 60
+        }
+        .is_recoverable());
+        assert!(!MediaGenerationError::GenerationFailed {
+            provider: "p".into(),
+            reason: "r".into()
+        }
+        .is_recoverable());
+        assert!(
+            !MediaGenerationError::ContentPolicyViolation { reason: "r".into() }.is_recoverable()
+        );
     }
 
     #[test]
     fn test_distillation_error_display_and_suggestion() {
         let errors: Vec<DistillationError> = vec![
-            DistillationError::CollectionFailed { reason: "no hooks".into() },
-            DistillationError::ScoringFailed { reason: "nan".into() },
-            DistillationError::DatasetBuildFailed { format: "openai".into(), reason: "io".into() },
-            DistillationError::NoValidTrajectories { min_score: 0.9, total_checked: 50 },
-            DistillationError::FlywheelFailed { cycle_id: "c-1".into(), reason: "trigger".into() },
-            DistillationError::StorageError { operation: "write".into(), reason: "full".into() },
+            DistillationError::CollectionFailed {
+                reason: "no hooks".into(),
+            },
+            DistillationError::ScoringFailed {
+                reason: "nan".into(),
+            },
+            DistillationError::DatasetBuildFailed {
+                format: "openai".into(),
+                reason: "io".into(),
+            },
+            DistillationError::NoValidTrajectories {
+                min_score: 0.9,
+                total_checked: 50,
+            },
+            DistillationError::FlywheelFailed {
+                cycle_id: "c-1".into(),
+                reason: "trigger".into(),
+            },
+            DistillationError::StorageError {
+                operation: "write".into(),
+                reason: "full".into(),
+            },
         ];
         for err in &errors {
             assert!(!err.to_string().is_empty());
@@ -2652,11 +3191,25 @@ mod tests {
     #[test]
     fn test_constrained_decoding_error_display_and_suggestion() {
         let errors: Vec<ConstrainedDecodingError> = vec![
-            ConstrainedDecodingError::GrammarCompilationFailed { reason: "bad rule".into() },
-            ConstrainedDecodingError::SchemaConversionFailed { path: "$.items".into(), reason: "unsupported".into() },
-            ConstrainedDecodingError::ValidationFailed { position: 42, expected: "string".into(), got: "123".into() },
-            ConstrainedDecodingError::ProviderUnsupported { provider: "openai".into() },
-            ConstrainedDecodingError::GrammarSyntaxError { line: 5, message: "unexpected token".into() },
+            ConstrainedDecodingError::GrammarCompilationFailed {
+                reason: "bad rule".into(),
+            },
+            ConstrainedDecodingError::SchemaConversionFailed {
+                path: "$.items".into(),
+                reason: "unsupported".into(),
+            },
+            ConstrainedDecodingError::ValidationFailed {
+                position: 42,
+                expected: "string".into(),
+                got: "123".into(),
+            },
+            ConstrainedDecodingError::ProviderUnsupported {
+                provider: "openai".into(),
+            },
+            ConstrainedDecodingError::GrammarSyntaxError {
+                line: 5,
+                message: "unexpected token".into(),
+            },
         ];
         for err in &errors {
             assert!(!err.to_string().is_empty());
@@ -2667,12 +3220,28 @@ mod tests {
     #[test]
     fn test_hitl_error_display_and_suggestion() {
         let errors: Vec<HitlError> = vec![
-            HitlError::ApprovalTimeout { tool_name: "delete_file".into(), timeout_secs: 30 },
-            HitlError::PolicyViolation { policy_name: "no-destructive".into(), reason: "tool is destructive".into() },
-            HitlError::GateNotConfigured { operation: "deploy".into() },
-            HitlError::CorrectionRejected { step_id: "s-1".into(), reason: "invalid format".into() },
-            HitlError::ConfidenceEstimationFailed { reason: "no signals".into() },
-            HitlError::EscalationUnavailable { target: "supervisor".into(), reason: "offline".into() },
+            HitlError::ApprovalTimeout {
+                tool_name: "delete_file".into(),
+                timeout_secs: 30,
+            },
+            HitlError::PolicyViolation {
+                policy_name: "no-destructive".into(),
+                reason: "tool is destructive".into(),
+            },
+            HitlError::GateNotConfigured {
+                operation: "deploy".into(),
+            },
+            HitlError::CorrectionRejected {
+                step_id: "s-1".into(),
+                reason: "invalid format".into(),
+            },
+            HitlError::ConfidenceEstimationFailed {
+                reason: "no signals".into(),
+            },
+            HitlError::EscalationUnavailable {
+                target: "supervisor".into(),
+                reason: "offline".into(),
+            },
         ];
         for err in &errors {
             assert!(!err.to_string().is_empty());
@@ -2682,24 +3251,64 @@ mod tests {
 
     #[test]
     fn test_hitl_error_recoverable() {
-        assert!(HitlError::ApprovalTimeout { tool_name: "t".into(), timeout_secs: 10 }.is_recoverable());
-        assert!(HitlError::EscalationUnavailable { target: "t".into(), reason: "r".into() }.is_recoverable());
+        assert!(HitlError::ApprovalTimeout {
+            tool_name: "t".into(),
+            timeout_secs: 10
+        }
+        .is_recoverable());
+        assert!(HitlError::EscalationUnavailable {
+            target: "t".into(),
+            reason: "r".into()
+        }
+        .is_recoverable());
         assert!(HitlError::ConfidenceEstimationFailed { reason: "r".into() }.is_recoverable());
-        assert!(!HitlError::PolicyViolation { policy_name: "p".into(), reason: "r".into() }.is_recoverable());
-        assert!(!HitlError::GateNotConfigured { operation: "o".into() }.is_recoverable());
-        assert!(!HitlError::CorrectionRejected { step_id: "s".into(), reason: "r".into() }.is_recoverable());
+        assert!(!HitlError::PolicyViolation {
+            policy_name: "p".into(),
+            reason: "r".into()
+        }
+        .is_recoverable());
+        assert!(!HitlError::GateNotConfigured {
+            operation: "o".into()
+        }
+        .is_recoverable());
+        assert!(!HitlError::CorrectionRejected {
+            step_id: "s".into(),
+            reason: "r".into()
+        }
+        .is_recoverable());
     }
 
     #[test]
     fn test_mcp_client_error_display_and_suggestion() {
         let errors: Vec<McpClientError> = vec![
-            McpClientError::ConnectionFailed { url: "http://mcp.local:3000".into(), reason: "refused".into() },
-            McpClientError::AuthFailed { url: "http://mcp.local:3000".into(), reason: "invalid token".into() },
-            McpClientError::ServerError { url: "http://mcp.local".into(), code: -32600, message: "invalid request".into() },
-            McpClientError::Timeout { url: "http://mcp.local".into(), timeout_ms: 5000 },
-            McpClientError::ProtocolMismatch { expected: "2025-11-05".into(), got: "2024-11-05".into() },
-            McpClientError::ToolNotFound { server: "mcp.local".into(), tool_name: "search".into() },
-            McpClientError::SessionExpired { session_id: "sess-123".into() },
+            McpClientError::ConnectionFailed {
+                url: "http://mcp.local:3000".into(),
+                reason: "refused".into(),
+            },
+            McpClientError::AuthFailed {
+                url: "http://mcp.local:3000".into(),
+                reason: "invalid token".into(),
+            },
+            McpClientError::ServerError {
+                url: "http://mcp.local".into(),
+                code: -32600,
+                message: "invalid request".into(),
+            },
+            McpClientError::Timeout {
+                url: "http://mcp.local".into(),
+                timeout_ms: 5000,
+            },
+            McpClientError::ProtocolMismatch {
+                expected: "2025-11-05".into(),
+                got: "2024-11-05".into(),
+            },
+            McpClientError::ToolNotFound {
+                server: "mcp.local".into(),
+                tool_name: "search".into(),
+            },
+            McpClientError::SessionExpired {
+                session_id: "sess-123".into(),
+            },
         ];
         for err in &errors {
             assert!(!err.to_string().is_empty());
@@ -2709,23 +3318,61 @@ mod tests {
 
     #[test]
     fn test_mcp_client_error_recoverable() {
-        assert!(McpClientError::ConnectionFailed { url: "u".into(), reason: "r".into() }.is_recoverable());
-        assert!(McpClientError::Timeout { url: "u".into(), timeout_ms: 100 }.is_recoverable());
-        assert!(McpClientError::SessionExpired { session_id: "s".into() }.is_recoverable());
-        assert!(!McpClientError::AuthFailed { url: "u".into(), reason: "r".into() }.is_recoverable());
-        assert!(!McpClientError::ProtocolMismatch { expected: "a".into(), got: "b".into() }.is_recoverable());
-        assert!(!McpClientError::ToolNotFound { server: "s".into(), tool_name: "t".into() }.is_recoverable());
+        assert!(McpClientError::ConnectionFailed {
+            url: "u".into(),
+            reason: "r".into()
+        }
+        .is_recoverable());
+        assert!(McpClientError::Timeout {
+            url: "u".into(),
+            timeout_ms: 100
+        }
+        .is_recoverable());
+        assert!(McpClientError::SessionExpired {
+            session_id: "s".into()
+        }
+        .is_recoverable());
+        assert!(!McpClientError::AuthFailed {
+            url: "u".into(),
+            reason: "r".into()
+        }
+        .is_recoverable());
+        assert!(!McpClientError::ProtocolMismatch {
+            expected: "a".into(),
+            got: "b".into()
+        }
+        .is_recoverable());
+        assert!(!McpClientError::ToolNotFound {
+            server: "s".into(),
+            tool_name: "t".into()
+        }
+        .is_recoverable());
     }
 
     #[test]
     fn test_agent_eval_error_display_and_suggestion() {
         let errors: Vec<AgentEvalError> = vec![
-            AgentEvalError::TrajectoryEmpty { agent_id: "agent-1".into() },
-            AgentEvalError::MetricFailed { metric_name: "accuracy".into(), reason: "div by zero".into() },
-            AgentEvalError::BaselineNotFound { eval_id: "eval-42".into() },
-            AgentEvalError::InvalidConfig { field: "top_k".into(), reason: "must be > 0".into() },
-            AgentEvalError::ToolCallMatchFailed { expected: "search".into(), actual: "browse".into() },
-            AgentEvalError::ReportFailed { reason: "incomplete data".into() },
+            AgentEvalError::TrajectoryEmpty {
+                agent_id: "agent-1".into(),
+            },
+            AgentEvalError::MetricFailed {
+                metric_name: "accuracy".into(),
+                reason: "div by zero".into(),
+            },
+            AgentEvalError::BaselineNotFound {
+                eval_id: "eval-42".into(),
+            },
+            AgentEvalError::InvalidConfig {
+                field: "top_k".into(),
+                reason: "must be > 0".into(),
+            },
+            AgentEvalError::ToolCallMatchFailed {
+                expected: "search".into(),
+                actual: "browse".into(),
+            },
+            AgentEvalError::ReportFailed {
+                reason: "incomplete data".into(),
+            },
         ];
         for err in &errors {
             assert!(!err.to_string().is_empty());
@@ -2736,11 +3383,24 @@ mod tests {
     #[test]
     fn test_red_team_error_display_and_suggestion() {
         let errors: Vec<RedTeamError> = vec![
-            RedTeamError::GenerationFailed { category: "jailbreak".into(), reason: "template parse".into() },
-            RedTeamError::ExecutionFailed { attack_id: "atk-1".into(), reason: "target unreachable".into() },
-            RedTeamError::InvalidCategory { category: "unknown".into() },
-            RedTeamError::DefenseEvalFailed { guard_name: "pii".into(), reason: "timeout".into() },
-            RedTeamError::ReportFailed { reason: "aggregation".into() },
+            RedTeamError::GenerationFailed {
+                category: "jailbreak".into(),
+                reason: "template parse".into(),
+            },
+            RedTeamError::ExecutionFailed {
+                attack_id: "atk-1".into(),
+                reason: "target unreachable".into(),
+            },
+            RedTeamError::InvalidCategory {
+                category: "unknown".into(),
+            },
+            RedTeamError::DefenseEvalFailed {
+                guard_name: "pii".into(),
+                reason: "timeout".into(),
+            },
+            RedTeamError::ReportFailed {
+                reason: "aggregation".into(),
+            },
         ];
         for err in &errors {
             assert!(!err.to_string().is_empty());
@@ -2751,12 +3411,29 @@ mod tests {
     #[test]
     fn test_mcts_error_display_and_suggestion() {
         let errors: Vec<MctsError> = vec![
-            MctsError::MaxIterations { iterations: 1000, best_reward: 0.72 },
-            MctsError::NoValidActions { state_description: "terminal state".into() },
-            MctsError::SimulationFailed { depth: 5, reason: "invalid transition".into() },
-            MctsError::StateError { action: "search".into(), reason: "state locked".into() },
-            MctsError::RewardModelError { step: 3, reason: "nan score".into() },
-            MctsError::RefinementExhausted { iterations: 10, last_improvement: 0.001 },
+            MctsError::MaxIterations {
+                iterations: 1000,
+                best_reward: 0.72,
+            },
+            MctsError::NoValidActions {
+                state_description: "terminal state".into(),
+            },
+            MctsError::SimulationFailed {
+                depth: 5,
+                reason: "invalid transition".into(),
+            },
+            MctsError::StateError {
+                action: "search".into(),
+                reason: "state locked".into(),
+            },
+            MctsError::RewardModelError {
+                step: 3,
+                reason: "nan score".into(),
+            },
+            MctsError::RefinementExhausted {
+                iterations: 10,
+                last_improvement: 0.001,
+            },
         ];
         for err in &errors {
             assert!(!err.to_string().is_empty());
@@ -2766,21 +3443,53 @@ mod tests {
 
     #[test]
     fn test_mcts_error_recoverable() {
-        assert!(MctsError::MaxIterations { iterations: 100, best_reward: 0.5 }.is_recoverable());
-        assert!(MctsError::SimulationFailed { depth: 1, reason: "r".into() }.is_recoverable());
-        assert!(MctsError::RefinementExhausted { iterations: 5, last_improvement: 0.0 }.is_recoverable());
-        assert!(!MctsError::NoValidActions { state_description: "s".into() }.is_recoverable());
-        assert!(!MctsError::StateError { action: "a".into(), reason: "r".into() }.is_recoverable());
+        assert!(MctsError::MaxIterations {
+            iterations: 100,
+            best_reward: 0.5
+        }
+        .is_recoverable());
+        assert!(MctsError::SimulationFailed {
+            depth: 1,
+            reason: "r".into()
+        }
+        .is_recoverable());
+        assert!(MctsError::RefinementExhausted {
+            iterations: 5,
+            last_improvement: 0.0
+        }
+        .is_recoverable());
+        assert!(!MctsError::NoValidActions {
+            state_description: "s".into()
+        }
+        .is_recoverable());
+        assert!(!MctsError::StateError {
+            action: "a".into(),
+            reason: "r".into()
+        }
+        .is_recoverable());
     }
 
     #[test]
     fn test_devtools_error_display_and_suggestion() {
         let errors: Vec<DevToolsError> = vec![
-            DevToolsError::RecordingFailed { agent_id: "agent-1".into(), reason: "no storage".into() },
-            DevToolsError::ReplayFailed { recording_id: "rec-1".into(), reason: "corrupted".into() },
-            DevToolsError::BreakpointInvalid { description: "unknown tool name".into() },
-            DevToolsError::InspectionFailed { agent_id: "agent-2".into(), reason: "not running".into() },
-            DevToolsError::ProfilingUnavailable { reason: "not enabled".into() },
+            DevToolsError::RecordingFailed {
+                agent_id: "agent-1".into(),
+                reason: "no storage".into(),
+            },
+            DevToolsError::ReplayFailed {
+                recording_id: "rec-1".into(),
+                reason: "corrupted".into(),
+            },
+            DevToolsError::BreakpointInvalid {
+                description: "unknown tool name".into(),
+            },
+            DevToolsError::InspectionFailed {
+                agent_id: "agent-2".into(),
+                reason: "not running".into(),
+            },
+            DevToolsError::ProfilingUnavailable {
+                reason: "not enabled".into(),
+            },
         ];
         for err in &errors {
             assert!(!err.to_string().is_empty());
@@ -2791,71 +3500,135 @@ mod tests {
     #[test]
     fn test_eval_suite_error_display_and_suggestion() {
         let errors: Vec<EvalSuiteError> = vec![
-            EvalSuiteError::DatasetLoadFailed { path: "bench.jsonl".into(), reason: "not found".into() },
-            EvalSuiteError::InvalidProblem { problem_id: "humaneval/0".into(), reason: "missing prompt".into() },
-            EvalSuiteError::GenerationFailed { problem_id: "mmlu/1".into(), reason: "provider down".into() },
-            EvalSuiteError::ScoringFailed { problem_id: "gsm8k/5".into(), reason: "no reference".into() },
-            EvalSuiteError::NoResults { reason: "no runs completed".into() },
-            EvalSuiteError::InsufficientData { metric: "accuracy".into(), samples: 1 },
-            EvalSuiteError::ReportFailed { reason: "incomplete data".into() },
-            EvalSuiteError::Timeout { problem_id: "swe/10".into(), timeout_secs: 60 },
-            EvalSuiteError::SearchFailed { reason: "budget exhausted".into() },
-            EvalSuiteError::InvalidAgentConfig { field: "temperature".into(), reason: "must be >= 0".into() },
+            EvalSuiteError::DatasetLoadFailed {
+                path: "bench.jsonl".into(),
+                reason: "not found".into(),
+            },
+            EvalSuiteError::InvalidProblem {
+                problem_id: "humaneval/0".into(),
+                reason: "missing prompt".into(),
+            },
+            EvalSuiteError::GenerationFailed {
+                problem_id: "mmlu/1".into(),
+                reason: "provider down".into(),
+            },
+            EvalSuiteError::ScoringFailed {
+                problem_id: "gsm8k/5".into(),
+                reason: "no reference".into(),
+            },
+            EvalSuiteError::NoResults {
+                reason: "no runs completed".into(),
+            },
+            EvalSuiteError::InsufficientData {
+                metric: "accuracy".into(),
+                samples: 1,
+            },
+            EvalSuiteError::ReportFailed {
+                reason: "incomplete data".into(),
+            },
+            EvalSuiteError::Timeout {
+                problem_id: "swe/10".into(),
+                timeout_secs: 60,
+            },
+            EvalSuiteError::SearchFailed {
+                reason: "budget exhausted".into(),
+            },
+            EvalSuiteError::InvalidAgentConfig {
+                field: "temperature".into(),
+                reason: "must be >= 0".into(),
+            },
         ];
         for err in &errors {
             assert!(!err.to_string().is_empty());
             assert!(err.suggestion().is_some());
         }
         // Recoverability
-        assert!(EvalSuiteError::GenerationFailed { problem_id: "x".into(), reason: "r".into() }.is_recoverable());
-        assert!(EvalSuiteError::Timeout { problem_id: "x".into(), timeout_secs: 30 }.is_recoverable());
+        assert!(EvalSuiteError::GenerationFailed {
+            problem_id: "x".into(),
+            reason: "r".into()
+        }
+        .is_recoverable());
+        assert!(EvalSuiteError::Timeout {
+            problem_id: "x".into(),
+            timeout_secs: 30
+        }
+        .is_recoverable());
         assert!(EvalSuiteError::SearchFailed { reason: "r".into() }.is_recoverable());
-        assert!(!EvalSuiteError::DatasetLoadFailed { path: "x".into(), reason: "r".into() }.is_recoverable());
+        assert!(!EvalSuiteError::DatasetLoadFailed {
+            path: "x".into(),
+            reason: "r".into()
+        }
+        .is_recoverable());
         assert!(!EvalSuiteError::NoResults { reason: "r".into() }.is_recoverable());
-        assert!(!EvalSuiteError::InvalidAgentConfig { field: "f".into(), reason: "r".into() }.is_recoverable());
+        assert!(!EvalSuiteError::InvalidAgentConfig {
+            field: "f".into(),
+            reason: "r".into()
+        }
+        .is_recoverable());
     }
 
     #[test]
     fn test_eval_suite_error_from_conversion() {
-        let err = EvalSuiteError::NoResults { reason: "empty".into() };
+        let err = EvalSuiteError::NoResults {
+            reason: "empty".into(),
+        };
         let ai_err: AiError = err.into();
         assert_eq!(ai_err.code(), "EVAL_SUITE");
     }
 
     #[test]
     fn test_v6_error_from_conversions() {
-        let hitl_err = HitlError::ApprovalTimeout { tool_name: "t".into(), timeout_secs: 10 };
+        let hitl_err = HitlError::ApprovalTimeout {
+            tool_name: "t".into(),
+            timeout_secs: 10,
+        };
         let ai_err: AiError = hitl_err.into();
         assert_eq!(ai_err.code(), "HITL");
 
-        let mcp_err = McpClientError::ConnectionFailed { url: "u".into(), reason: "r".into() };
+        let mcp_err = McpClientError::ConnectionFailed {
+            url: "u".into(),
+            reason: "r".into(),
+        };
         let ai_err: AiError = mcp_err.into();
         assert_eq!(ai_err.code(), "MCP_CLIENT");
 
-        let eval_err = AgentEvalError::TrajectoryEmpty { agent_id: "a".into() };
+        let eval_err = AgentEvalError::TrajectoryEmpty {
+            agent_id: "a".into(),
+        };
         let ai_err: AiError = eval_err.into();
         assert_eq!(ai_err.code(), "AGENT_EVAL");
 
-        let rt_err = RedTeamError::InvalidCategory { category: "c".into() };
+        let rt_err = RedTeamError::InvalidCategory {
+            category: "c".into(),
+        };
         let ai_err: AiError = rt_err.into();
         assert_eq!(ai_err.code(), "RED_TEAM");
 
-        let mcts_err = MctsError::NoValidActions { state_description: "s".into() };
+        let mcts_err = MctsError::NoValidActions {
+            state_description: "s".into(),
+        };
         let ai_err: AiError = mcts_err.into();
         assert_eq!(ai_err.code(), "MCTS");
 
-        let dt_err = DevToolsError::BreakpointInvalid { description: "d".into() };
+        let dt_err = DevToolsError::BreakpointInvalid {
+            description: "d".into(),
+        };
         let ai_err: AiError = dt_err.into();
         assert_eq!(ai_err.code(), "DEVTOOLS");
     }
 
     #[test]
     fn test_new_v5_error_from_conversions() {
-        let va_err = VoiceAgentError::StreamFailed { reason: "test".into() };
+        let va_err = VoiceAgentError::StreamFailed {
+            reason: "test".into(),
+        };
         let ai_err: AiError = va_err.into();
         assert_eq!(ai_err.code(), "VOICE_AGENT");
 
-        let mg_err = MediaGenerationError::GenerationFailed { provider: "p".into(), reason: "r".into() };
+        let mg_err = MediaGenerationError::GenerationFailed {
+            provider: "p".into(),
+            reason: "r".into(),
+        };
         let ai_err: AiError = mg_err.into();
         assert_eq!(ai_err.code(), "MEDIA_GENERATION");
 
@@ -2863,7 +3636,9 @@ mod tests {
         let ai_err: AiError = d_err.into();
         assert_eq!(ai_err.code(), "DISTILLATION");
 
-        let cd_err = ConstrainedDecodingError::ProviderUnsupported { provider: "p".into() };
+        let cd_err = ConstrainedDecodingError::ProviderUnsupported {
+            provider: "p".into(),
+        };
         let ai_err: AiError = cd_err.into();
         assert_eq!(ai_err.code(), "CONSTRAINED_DECODING");
     }
@@ -2895,7 +3670,9 @@ mod tests {
                 "SERIALIZATION",
             ),
             (
-                AiError::Workflow(WorkflowError::NodeNotFound { node_id: "x".into() }),
+                AiError::Workflow(WorkflowError::NodeNotFound {
+                    node_id: "x".into(),
+                }),
                 "WORKFLOW",
             ),
             (
@@ -2903,7 +3680,9 @@ mod tests {
                 "MEMORY",
             ),
             (
-                AiError::A2A(A2AError::TaskNotFound { task_id: "x".into() }),
+                AiError::A2A(A2AError::TaskNotFound {
+                    task_id: "x".into(),
+                }),
                 "A2A",
             ),
             (
@@ -2911,7 +3690,10 @@ mod tests {
                 "VOICE_AGENT",
             ),
             (
-                AiError::MediaGeneration(MediaGenerationError::GenerationFailed { provider: "x".into(), reason: "x".into() }),
+                AiError::MediaGeneration(MediaGenerationError::GenerationFailed {
+                    provider: "x".into(),
+                    reason: "x".into(),
+                }),
                 "MEDIA_GENERATION",
             ),
             (
@@ -2919,31 +3701,46 @@ mod tests {
                 "DISTILLATION",
             ),
             (
-                AiError::ConstrainedDecoding(ConstrainedDecodingError::ProviderUnsupported { provider: "x".into() }),
+                AiError::ConstrainedDecoding(ConstrainedDecodingError::ProviderUnsupported {
+                    provider: "x".into(),
+                }),
                 "CONSTRAINED_DECODING",
             ),
             (
-                AiError::Hitl(HitlError::GateNotConfigured { operation: "x".into() }),
+                AiError::Hitl(HitlError::GateNotConfigured {
+                    operation: "x".into(),
+                }),
                 "HITL",
             ),
             (
-                AiError::McpClient(McpClientError::Timeout { url: "x".into(), timeout_ms: 5000 }),
+                AiError::McpClient(McpClientError::Timeout {
+                    url: "x".into(),
+                    timeout_ms: 5000,
+                }),
                 "MCP_CLIENT",
             ),
             (
-                AiError::AgentEval(AgentEvalError::TrajectoryEmpty { agent_id: "x".into() }),
+                AiError::AgentEval(AgentEvalError::TrajectoryEmpty {
+                    agent_id: "x".into(),
+                }),
                 "AGENT_EVAL",
             ),
             (
-                AiError::RedTeam(RedTeamError::InvalidCategory { category: "x".into() }),
+                AiError::RedTeam(RedTeamError::InvalidCategory {
+                    category: "x".into(),
+                }),
                 "RED_TEAM",
             ),
             (
-                AiError::Mcts(MctsError::NoValidActions { state_description: "x".into() }),
+                AiError::Mcts(MctsError::NoValidActions {
+                    state_description: "x".into(),
+                }),
                 "MCTS",
             ),
             (
-                AiError::DevTools(DevToolsError::BreakpointInvalid { description: "x".into() }),
+                AiError::DevTools(DevToolsError::BreakpointInvalid {
+                    description: "x".into(),
+                }),
                 "DEVTOOLS",
             ),
             (

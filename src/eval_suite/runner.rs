@@ -163,7 +163,11 @@ impl BenchmarkRunResult {
 
     /// Mean latency across all samples.
     pub fn mean_latency_ms(&self) -> f64 {
-        let all: Vec<u64> = self.results.iter().flat_map(|r| r.latencies_ms.iter().copied()).collect();
+        let all: Vec<u64> = self
+            .results
+            .iter()
+            .flat_map(|r| r.latencies_ms.iter().copied())
+            .collect();
         if all.is_empty() {
             return 0.0;
         }
@@ -205,11 +209,7 @@ impl BenchmarkSuiteRunner {
     }
 
     /// Run a single problem, producing `samples_per_problem` responses.
-    pub fn run_problem(
-        &self,
-        problem: &BenchmarkProblem,
-        config: &RunConfig,
-    ) -> ProblemResult {
+    pub fn run_problem(&self, problem: &BenchmarkProblem, config: &RunConfig) -> ProblemResult {
         let mut responses = Vec::new();
         let mut scores = Vec::new();
         let mut passed = Vec::new();
@@ -249,7 +249,10 @@ impl BenchmarkSuiteRunner {
                     // Approximate token count (len/4 heuristic, same as providers.rs)
                     let input_tokens = prompt.len() / 4;
                     let output_tokens = response.len() / 4;
-                    token_counts.push(TokenUsage { input_tokens, output_tokens });
+                    token_counts.push(TokenUsage {
+                        input_tokens,
+                        output_tokens,
+                    });
 
                     // Approximate cost (placeholder — real cost would come from CostEstimator)
                     cost_estimates.push(0.0);
@@ -319,8 +322,16 @@ impl BenchmarkSuiteRunner {
             .as_secs();
 
         let total_cost: f64 = results.iter().flat_map(|r| r.cost_estimates.iter()).sum();
-        let total_input: usize = results.iter().flat_map(|r| r.token_counts.iter()).map(|t| t.input_tokens).sum();
-        let total_output: usize = results.iter().flat_map(|r| r.token_counts.iter()).map(|t| t.output_tokens).sum();
+        let total_input: usize = results
+            .iter()
+            .flat_map(|r| r.token_counts.iter())
+            .map(|t| t.input_tokens)
+            .sum();
+        let total_output: usize = results
+            .iter()
+            .flat_map(|r| r.token_counts.iter())
+            .map(|t| t.output_tokens)
+            .sum();
 
         Ok(BenchmarkRunResult {
             run_id: uuid::Uuid::new_v4().to_string(),
@@ -361,11 +372,7 @@ impl BenchmarkSuiteRunner {
     }
 
     /// Enrich a prompt with format-specific context for better LLM responses.
-    fn enrich_prompt(
-        &self,
-        prompt: &str,
-        answer_format: &super::dataset::AnswerFormat,
-    ) -> String {
+    fn enrich_prompt(&self, prompt: &str, answer_format: &super::dataset::AnswerFormat) -> String {
         use super::dataset::AnswerFormat;
         match answer_format {
             AnswerFormat::CompetitiveProgrammingCode {
@@ -419,10 +426,12 @@ impl BenchmarkSuiteRunner {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::dataset::*;
+    use super::*;
 
-    fn mock_generator(responses: Vec<&str>) -> Arc<dyn Fn(&str) -> Result<String, String> + Send + Sync> {
+    fn mock_generator(
+        responses: Vec<&str>,
+    ) -> Arc<dyn Fn(&str) -> Result<String, String> + Send + Sync> {
         let responses: Vec<String> = responses.into_iter().map(|s| s.to_string()).collect();
         let idx = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         Arc::new(move |_prompt: &str| {
@@ -442,9 +451,24 @@ mod tests {
     #[test]
     fn test_run_single_mc_problem() {
         let gen = mock_generator(vec!["B"]);
-        let runner = BenchmarkSuiteRunner { generator: gen, scorer: Box::new(DefaultScorer) };
-        let problem = make_mc_problem("t/1", "What is 2+2? A)3 B)4 C)5 D)6", vec!["A","B","C","D"], "B");
-        let config = RunConfig { model_id: ModelIdentifier { name: "test".into(), provider: "mock".into(), variant: None }, ..Default::default() };
+        let runner = BenchmarkSuiteRunner {
+            generator: gen,
+            scorer: Box::new(DefaultScorer),
+        };
+        let problem = make_mc_problem(
+            "t/1",
+            "What is 2+2? A)3 B)4 C)5 D)6",
+            vec!["A", "B", "C", "D"],
+            "B",
+        );
+        let config = RunConfig {
+            model_id: ModelIdentifier {
+                name: "test".into(),
+                provider: "mock".into(),
+                variant: None,
+            },
+            ..Default::default()
+        };
 
         let result = runner.run_problem(&problem, &config);
         assert_eq!(result.problem_id, "t/1");
@@ -457,9 +481,19 @@ mod tests {
     #[test]
     fn test_run_single_numeric_problem() {
         let gen = mock_generator(vec!["The answer is 42"]);
-        let runner = BenchmarkSuiteRunner { generator: gen, scorer: Box::new(DefaultScorer) };
+        let runner = BenchmarkSuiteRunner {
+            generator: gen,
+            scorer: Box::new(DefaultScorer),
+        };
         let problem = make_numeric_problem("t/1", "What is 6*7?", 42.0, 0.01);
-        let config = RunConfig { model_id: ModelIdentifier { name: "test".into(), provider: "mock".into(), variant: None }, ..Default::default() };
+        let config = RunConfig {
+            model_id: ModelIdentifier {
+                name: "test".into(),
+                provider: "mock".into(),
+                variant: None,
+            },
+            ..Default::default()
+        };
 
         let result = runner.run_problem(&problem, &config);
         assert_eq!(result.scores[0], 1.0);
@@ -468,9 +502,19 @@ mod tests {
     #[test]
     fn test_run_problem_generator_error() {
         let gen = failing_generator();
-        let runner = BenchmarkSuiteRunner { generator: gen, scorer: Box::new(DefaultScorer) };
-        let problem = make_mc_problem("t/1", "Q?", vec!["A","B"], "A");
-        let config = RunConfig { model_id: ModelIdentifier { name: "test".into(), provider: "mock".into(), variant: None }, ..Default::default() };
+        let runner = BenchmarkSuiteRunner {
+            generator: gen,
+            scorer: Box::new(DefaultScorer),
+        };
+        let problem = make_mc_problem("t/1", "Q?", vec!["A", "B"], "A");
+        let config = RunConfig {
+            model_id: ModelIdentifier {
+                name: "test".into(),
+                provider: "mock".into(),
+                variant: None,
+            },
+            ..Default::default()
+        };
 
         let result = runner.run_problem(&problem, &config);
         assert!(result.error.is_some());
@@ -484,13 +528,24 @@ mod tests {
         let cc = call_count.clone();
         let gen: Arc<dyn Fn(&str) -> Result<String, String> + Send + Sync> = Arc::new(move |_| {
             let n = cc.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            if n == 0 { Err("transient".into()) } else { Ok("B".into()) }
+            if n == 0 {
+                Err("transient".into())
+            } else {
+                Ok("B".into())
+            }
         });
-        let runner = BenchmarkSuiteRunner { generator: gen, scorer: Box::new(DefaultScorer) };
-        let problem = make_mc_problem("t/1", "Q?", vec!["A","B"], "B");
+        let runner = BenchmarkSuiteRunner {
+            generator: gen,
+            scorer: Box::new(DefaultScorer),
+        };
+        let problem = make_mc_problem("t/1", "Q?", vec!["A", "B"], "B");
         let config = RunConfig {
             max_retries: 2,
-            model_id: ModelIdentifier { name: "test".into(), provider: "mock".into(), variant: None },
+            model_id: ModelIdentifier {
+                name: "test".into(),
+                provider: "mock".into(),
+                variant: None,
+            },
             ..Default::default()
         };
 
@@ -502,12 +557,26 @@ mod tests {
     #[test]
     fn test_run_dataset_all_pass() {
         let gen = mock_generator(vec!["B", "B"]);
-        let runner = BenchmarkSuiteRunner { generator: gen, scorer: Box::new(DefaultScorer) };
-        let ds = BenchmarkDataset::from_problems("test", BenchmarkSuiteType::Mmlu, vec![
-            make_mc_problem("t/1", "Q1", vec!["A","B"], "B"),
-            make_mc_problem("t/2", "Q2", vec!["A","B"], "B"),
-        ]);
-        let config = RunConfig { model_id: ModelIdentifier { name: "test".into(), provider: "mock".into(), variant: None }, ..Default::default() };
+        let runner = BenchmarkSuiteRunner {
+            generator: gen,
+            scorer: Box::new(DefaultScorer),
+        };
+        let ds = BenchmarkDataset::from_problems(
+            "test",
+            BenchmarkSuiteType::Mmlu,
+            vec![
+                make_mc_problem("t/1", "Q1", vec!["A", "B"], "B"),
+                make_mc_problem("t/2", "Q2", vec!["A", "B"], "B"),
+            ],
+        );
+        let config = RunConfig {
+            model_id: ModelIdentifier {
+                name: "test".into(),
+                provider: "mock".into(),
+                variant: None,
+            },
+            ..Default::default()
+        };
 
         let run = runner.run_dataset(&ds, &config).expect("should succeed");
         assert_eq!(run.results.len(), 2);
@@ -519,12 +588,26 @@ mod tests {
     #[test]
     fn test_run_dataset_mixed_results() {
         let gen = mock_generator(vec!["B", "A"]);
-        let runner = BenchmarkSuiteRunner { generator: gen, scorer: Box::new(DefaultScorer) };
-        let ds = BenchmarkDataset::from_problems("test", BenchmarkSuiteType::Mmlu, vec![
-            make_mc_problem("t/1", "Q1", vec!["A","B"], "B"),
-            make_mc_problem("t/2", "Q2", vec!["A","B"], "B"),
-        ]);
-        let config = RunConfig { model_id: ModelIdentifier { name: "test".into(), provider: "mock".into(), variant: None }, ..Default::default() };
+        let runner = BenchmarkSuiteRunner {
+            generator: gen,
+            scorer: Box::new(DefaultScorer),
+        };
+        let ds = BenchmarkDataset::from_problems(
+            "test",
+            BenchmarkSuiteType::Mmlu,
+            vec![
+                make_mc_problem("t/1", "Q1", vec!["A", "B"], "B"),
+                make_mc_problem("t/2", "Q2", vec!["A", "B"], "B"),
+            ],
+        );
+        let config = RunConfig {
+            model_id: ModelIdentifier {
+                name: "test".into(),
+                provider: "mock".into(),
+                variant: None,
+            },
+            ..Default::default()
+        };
 
         let run = runner.run_dataset(&ds, &config).expect("should succeed");
         assert!((run.accuracy() - 0.5).abs() < 0.01);
@@ -533,9 +616,19 @@ mod tests {
     #[test]
     fn test_run_dataset_empty() {
         let gen = mock_generator(vec![]);
-        let runner = BenchmarkSuiteRunner { generator: gen, scorer: Box::new(DefaultScorer) };
+        let runner = BenchmarkSuiteRunner {
+            generator: gen,
+            scorer: Box::new(DefaultScorer),
+        };
         let ds = BenchmarkDataset::from_problems("empty", BenchmarkSuiteType::Mmlu, vec![]);
-        let config = RunConfig { model_id: ModelIdentifier { name: "test".into(), provider: "mock".into(), variant: None }, ..Default::default() };
+        let config = RunConfig {
+            model_id: ModelIdentifier {
+                name: "test".into(),
+                provider: "mock".into(),
+                variant: None,
+            },
+            ..Default::default()
+        };
 
         let result = runner.run_dataset(&ds, &config);
         assert!(result.is_err());
@@ -554,16 +647,27 @@ mod tests {
 
     #[test]
     fn test_model_identifier_display() {
-        let m = ModelIdentifier { name: "gpt-4".into(), provider: "openai".into(), variant: None };
+        let m = ModelIdentifier {
+            name: "gpt-4".into(),
+            provider: "openai".into(),
+            variant: None,
+        };
         assert_eq!(m.to_string(), "openai/gpt-4");
 
-        let m2 = ModelIdentifier { name: "llama3.1".into(), provider: "ollama".into(), variant: Some("8b".into()) };
+        let m2 = ModelIdentifier {
+            name: "llama3.1".into(),
+            provider: "ollama".into(),
+            variant: Some("8b".into()),
+        };
         assert_eq!(m2.to_string(), "ollama/llama3.1 (8b)");
     }
 
     #[test]
     fn test_token_usage() {
-        let t = TokenUsage { input_tokens: 100, output_tokens: 50 };
+        let t = TokenUsage {
+            input_tokens: 100,
+            output_tokens: 50,
+        };
         assert_eq!(t.total(), 150);
     }
 
@@ -571,15 +675,23 @@ mod tests {
     fn test_run_with_chain_of_thought() {
         let prompt_capture = Arc::new(std::sync::Mutex::new(String::new()));
         let pc = prompt_capture.clone();
-        let gen: Arc<dyn Fn(&str) -> Result<String, String> + Send + Sync> = Arc::new(move |prompt: &str| {
-            *pc.lock().unwrap() = prompt.to_string();
-            Ok("B".into())
-        });
-        let runner = BenchmarkSuiteRunner { generator: gen, scorer: Box::new(DefaultScorer) };
-        let problem = make_mc_problem("t/1", "Q?", vec!["A","B"], "B");
+        let gen: Arc<dyn Fn(&str) -> Result<String, String> + Send + Sync> =
+            Arc::new(move |prompt: &str| {
+                *pc.lock().unwrap() = prompt.to_string();
+                Ok("B".into())
+            });
+        let runner = BenchmarkSuiteRunner {
+            generator: gen,
+            scorer: Box::new(DefaultScorer),
+        };
+        let problem = make_mc_problem("t/1", "Q?", vec!["A", "B"], "B");
         let config = RunConfig {
             chain_of_thought: true,
-            model_id: ModelIdentifier { name: "test".into(), provider: "mock".into(), variant: None },
+            model_id: ModelIdentifier {
+                name: "test".into(),
+                provider: "mock".into(),
+                variant: None,
+            },
             ..Default::default()
         };
 
@@ -592,15 +704,23 @@ mod tests {
     fn test_run_with_custom_template() {
         let prompt_capture = Arc::new(std::sync::Mutex::new(String::new()));
         let pc = prompt_capture.clone();
-        let gen: Arc<dyn Fn(&str) -> Result<String, String> + Send + Sync> = Arc::new(move |prompt: &str| {
-            *pc.lock().unwrap() = prompt.to_string();
-            Ok("B".into())
-        });
-        let runner = BenchmarkSuiteRunner { generator: gen, scorer: Box::new(DefaultScorer) };
-        let problem = make_mc_problem("t/1", "What is 2+2?", vec!["A","B"], "B");
+        let gen: Arc<dyn Fn(&str) -> Result<String, String> + Send + Sync> =
+            Arc::new(move |prompt: &str| {
+                *pc.lock().unwrap() = prompt.to_string();
+                Ok("B".into())
+            });
+        let runner = BenchmarkSuiteRunner {
+            generator: gen,
+            scorer: Box::new(DefaultScorer),
+        };
+        let problem = make_mc_problem("t/1", "What is 2+2?", vec!["A", "B"], "B");
         let config = RunConfig {
             prompt_template: Some("SYSTEM: {system}\nUSER: {prompt}\nANSWER:".to_string()),
-            model_id: ModelIdentifier { name: "test".into(), provider: "mock".into(), variant: None },
+            model_id: ModelIdentifier {
+                name: "test".into(),
+                provider: "mock".into(),
+                variant: None,
+            },
             ..Default::default()
         };
 
@@ -612,7 +732,11 @@ mod tests {
 
     #[test]
     fn test_benchmark_run_result_stats() {
-        let model = ModelIdentifier { name: "test".into(), provider: "mock".into(), variant: None };
+        let model = ModelIdentifier {
+            name: "test".into(),
+            provider: "mock".into(),
+            variant: None,
+        };
         let run = BenchmarkRunResult {
             run_id: "r1".into(),
             model_id: model.clone(),
@@ -620,22 +744,43 @@ mod tests {
             suite_type: BenchmarkSuiteType::Mmlu,
             results: vec![
                 ProblemResult {
-                    problem_id: "1".into(), model_id: model.clone(),
-                    responses: vec!["A".into()], scores: vec![1.0], passed: vec![true],
-                    latencies_ms: vec![100], token_counts: vec![TokenUsage { input_tokens: 50, output_tokens: 10 }],
-                    cost_estimates: vec![0.001], error: None, metadata: HashMap::new(),
+                    problem_id: "1".into(),
+                    model_id: model.clone(),
+                    responses: vec!["A".into()],
+                    scores: vec![1.0],
+                    passed: vec![true],
+                    latencies_ms: vec![100],
+                    token_counts: vec![TokenUsage {
+                        input_tokens: 50,
+                        output_tokens: 10,
+                    }],
+                    cost_estimates: vec![0.001],
+                    error: None,
+                    metadata: HashMap::new(),
                 },
                 ProblemResult {
-                    problem_id: "2".into(), model_id: model.clone(),
-                    responses: vec!["wrong".into()], scores: vec![0.0], passed: vec![false],
-                    latencies_ms: vec![200], token_counts: vec![TokenUsage { input_tokens: 50, output_tokens: 20 }],
-                    cost_estimates: vec![0.002], error: Some("err".into()), metadata: HashMap::new(),
+                    problem_id: "2".into(),
+                    model_id: model.clone(),
+                    responses: vec!["wrong".into()],
+                    scores: vec![0.0],
+                    passed: vec![false],
+                    latencies_ms: vec![200],
+                    token_counts: vec![TokenUsage {
+                        input_tokens: 50,
+                        output_tokens: 20,
+                    }],
+                    cost_estimates: vec![0.002],
+                    error: Some("err".into()),
+                    metadata: HashMap::new(),
                 },
             ],
             started_at: 1000,
             completed_at: 1010,
             total_cost: 0.003,
-            total_tokens: TokenUsage { input_tokens: 100, output_tokens: 30 },
+            total_tokens: TokenUsage {
+                input_tokens: 100,
+                output_tokens: 30,
+            },
         };
 
         assert!((run.accuracy() - 0.5).abs() < 0.01);
@@ -650,14 +795,24 @@ mod tests {
     #[test]
     fn test_run_competitive_programming_problem() {
         let gen = mock_generator(vec!["n = int(input())\nprint(sum(range(n)))"]);
-        let runner = BenchmarkSuiteRunner { generator: gen, scorer: Box::new(DefaultScorer) };
+        let runner = BenchmarkSuiteRunner {
+            generator: gen,
+            scorer: Box::new(DefaultScorer),
+        };
         let problem = make_competitive_problem(
-            "cp/1", "Read N and print sum of 0..N-1",
-            "n = int(input())\nprint(sum(range(n)))", "python",
-            vec![("5", "10"), ("3", "3")], "easy",
+            "cp/1",
+            "Read N and print sum of 0..N-1",
+            "n = int(input())\nprint(sum(range(n)))",
+            "python",
+            vec![("5", "10"), ("3", "3")],
+            "easy",
         );
         let config = RunConfig {
-            model_id: ModelIdentifier { name: "test".into(), provider: "mock".into(), variant: None },
+            model_id: ModelIdentifier {
+                name: "test".into(),
+                provider: "mock".into(),
+                variant: None,
+            },
             ..Default::default()
         };
         let result = runner.run_problem(&problem, &config);
@@ -672,16 +827,26 @@ mod tests {
 
     #[test]
     fn test_run_code_edit_problem() {
-        let gen = mock_generator(vec!["def divide(a, b):\n    if b == 0: return None\n    return a / b"]);
-        let runner = BenchmarkSuiteRunner { generator: gen, scorer: Box::new(DefaultScorer) };
+        let gen = mock_generator(vec![
+            "def divide(a, b):\n    if b == 0: return None\n    return a / b",
+        ]);
+        let runner = BenchmarkSuiteRunner {
+            generator: gen,
+            scorer: Box::new(DefaultScorer),
+        };
         let problem = make_code_edit_problem(
-            "ce/1", "Add zero division guard",
+            "ce/1",
+            "Add zero division guard",
             "def divide(a, b):\n    return a / b",
             "def divide(a, b):\n    if b == 0:\n        return None\n    return a / b",
             "python",
         );
         let config = RunConfig {
-            model_id: ModelIdentifier { name: "test".into(), provider: "mock".into(), variant: None },
+            model_id: ModelIdentifier {
+                name: "test".into(),
+                provider: "mock".into(),
+                variant: None,
+            },
             ..Default::default()
         };
         let result = runner.run_problem(&problem, &config);
@@ -696,15 +861,23 @@ mod tests {
     #[test]
     fn test_run_terminal_problem() {
         let gen = mock_generator(vec!["```bash\n$ find . -name '*.py'\n$ wc -l\n```"]);
-        let runner = BenchmarkSuiteRunner { generator: gen, scorer: Box::new(DefaultScorer) };
+        let runner = BenchmarkSuiteRunner {
+            generator: gen,
+            scorer: Box::new(DefaultScorer),
+        };
         let problem = make_terminal_problem(
-            "tb/1", "Count lines of Python code",
+            "tb/1",
+            "Count lines of Python code",
             "Ubuntu 22.04, bash, ~/project",
             vec!["find . -name '*.py'", "wc -l"],
             "find . -name '*.py' | xargs wc -l",
         );
         let config = RunConfig {
-            model_id: ModelIdentifier { name: "test".into(), provider: "mock".into(), variant: None },
+            model_id: ModelIdentifier {
+                name: "test".into(),
+                provider: "mock".into(),
+                variant: None,
+            },
             ..Default::default()
         };
         let result = runner.run_problem(&problem, &config);

@@ -704,7 +704,8 @@ impl Dht {
         let mut freed_bytes = 0usize;
 
         for (key, _, _, size) in &candidates {
-            let still_over_entries = max_entries > 0 && (current_entries - freed_entries) >= max_entries;
+            let still_over_entries =
+                max_entries > 0 && (current_entries - freed_entries) >= max_entries;
             let still_over_bytes = max_bytes > 0 && (current_bytes - freed_bytes) > max_bytes;
 
             if !still_over_entries && !still_over_bytes {
@@ -1629,7 +1630,10 @@ impl MapReduceJob {
 
         self.status = JobStatus::Completed;
         self.completed_at = Some(Instant::now());
-        *self.reduce_outputs.lock().unwrap_or_else(|e| e.into_inner()) = results.clone();
+        *self
+            .reduce_outputs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = results.clone();
 
         Ok(results)
     }
@@ -2053,15 +2057,9 @@ pub enum NodeMessage {
     /// Cancel all in-flight tasks for a given job. Workers should stop processing
     /// and discard partial results. Coordinators send this when the user cancels
     /// or the job times out.
-    CancelTask {
-        job_id: String,
-        reason: String,
-    },
+    CancelTask { job_id: String, reason: String },
     /// Acknowledge that a task was cancelled (optional, for audit).
-    CancelAck {
-        job_id: String,
-        node_id: Vec<u8>,
-    },
+    CancelAck { job_id: String, node_id: Vec<u8> },
 
     // --- Cluster Management ---
     /// Request to join the cluster with a token and certificate.
@@ -2587,7 +2585,10 @@ mod tests {
         }
 
         let stats = dht.stats();
-        assert!(stats.current_entries <= 3, "Should evict to stay under max_entries");
+        assert!(
+            stats.current_entries <= 3,
+            "Should evict to stay under max_entries"
+        );
         assert!(stats.evictions > 0, "Should have evicted some entries");
     }
 
@@ -2604,7 +2605,11 @@ mod tests {
 
         let stats = dht.stats();
         // Should be around max_bytes + one entry (eviction happens before insert)
-        assert!(stats.current_bytes <= 120, "Should evict to stay near max_bytes: got {}", stats.current_bytes);
+        assert!(
+            stats.current_bytes <= 120,
+            "Should evict to stay near max_bytes: got {}",
+            stats.current_bytes
+        );
         assert!(stats.evictions > 0, "Should have evicted some entries");
     }
 
@@ -2625,8 +2630,14 @@ mod tests {
         // Insert "d" — should evict "b" (least recently accessed)
         dht.put("d", b"ddd".to_vec());
 
-        assert!(dht.get("a").is_some(), "a should survive (recently accessed)");
-        assert!(dht.get("c").is_some() || dht.get("d").is_some(), "c or d should exist");
+        assert!(
+            dht.get("a").is_some(),
+            "a should survive (recently accessed)"
+        );
+        assert!(
+            dht.get("c").is_some() || dht.get("d").is_some(),
+            "c or d should exist"
+        );
     }
 
     #[test]
@@ -2650,7 +2661,10 @@ mod tests {
 
         // Pinned should still exist
         let storage = dht.storage.read().unwrap();
-        assert!(storage.contains_key(&key_id), "Pinned entry should not be evicted");
+        assert!(
+            storage.contains_key(&key_id),
+            "Pinned entry should not be evicted"
+        );
     }
 
     #[test]
@@ -2693,7 +2707,11 @@ mod tests {
         assert!(stats.current_bytes > 0);
 
         let hr = dht.hit_rate();
-        assert!((hr - 2.0 / 3.0).abs() < 0.01, "Hit rate should be ~0.67, got {}", hr);
+        assert!(
+            (hr - 2.0 / 3.0).abs() < 0.01,
+            "Hit rate should be ~0.67, got {}",
+            hr
+        );
     }
 
     #[test]
@@ -2706,7 +2724,10 @@ mod tests {
         assert!(dht.get("auto_expire").is_some());
 
         std::thread::sleep(Duration::from_millis(10));
-        assert!(dht.get("auto_expire").is_none(), "Should expire with default TTL");
+        assert!(
+            dht.get("auto_expire").is_none(),
+            "Should expire with default TTL"
+        );
     }
 
     // ── V49: Version, Replicas, Capabilities tests ──────────────
@@ -2825,7 +2846,9 @@ mod tests {
         let local_count = job.local_chunk_count(1); // 1 worker = all local
         assert_eq!(local_count, 2);
 
-        let results = job.execute_distributed_with_results(local_count, Vec::new()).unwrap();
+        let results = job
+            .execute_distributed_with_results(local_count, Vec::new())
+            .unwrap();
         assert!(!results.is_empty());
 
         // Check word count results
@@ -2837,7 +2860,10 @@ mod tests {
     fn test_chunk_distribution_round_robin() {
         let mut job = MapReduceBuilder::word_count();
         for i in 0..9 {
-            job.add_input(DataChunk::new(format!("c{}", i), format!("word{}", i).into_bytes()));
+            job.add_input(DataChunk::new(
+                format!("c{}", i),
+                format!("word{}", i).into_bytes(),
+            ));
         }
 
         // 3 workers (1 local + 2 peers): 3 chunks each
@@ -2867,17 +2893,26 @@ mod tests {
         assert_eq!(local_count, 3);
 
         // Simulate: peer processes its 3 chunks and returns results
-        let peer_results: Vec<Vec<MapOutput>> = job.remote_chunks(0, 2)
+        let peer_results: Vec<Vec<MapOutput>> = job
+            .remote_chunks(0, 2)
             .iter()
             .map(|_chunk| {
                 vec![
-                    MapOutput { key: "hello".to_string(), value: 1u64.to_le_bytes().to_vec() },
-                    MapOutput { key: "world".to_string(), value: 1u64.to_le_bytes().to_vec() },
+                    MapOutput {
+                        key: "hello".to_string(),
+                        value: 1u64.to_le_bytes().to_vec(),
+                    },
+                    MapOutput {
+                        key: "world".to_string(),
+                        value: 1u64.to_le_bytes().to_vec(),
+                    },
                 ]
             })
             .collect();
 
-        let results = job.execute_distributed_with_results(local_count, peer_results).unwrap();
+        let results = job
+            .execute_distributed_with_results(local_count, peer_results)
+            .unwrap();
         assert!(!results.is_empty());
 
         // "hello" should appear 6 times total (3 local + 3 from peer)
@@ -2889,26 +2924,36 @@ mod tests {
     fn test_distributed_mapreduce_with_peer_results() {
         let map_fn: MapFn = Arc::new(|chunk| {
             let n = chunk.data.len();
-            vec![MapOutput { key: "total_bytes".to_string(), value: (n as u64).to_le_bytes().to_vec() }]
+            vec![MapOutput {
+                key: "total_bytes".to_string(),
+                value: (n as u64).to_le_bytes().to_vec(),
+            }]
         });
         let reduce_fn: ReduceFn = Arc::new(|_key, values| {
-            let sum: u64 = values.iter()
-                .map(|v| u64::from_le_bytes(v[..8].try_into().unwrap_or([0;8])))
+            let sum: u64 = values
+                .iter()
+                .map(|v| u64::from_le_bytes(v[..8].try_into().unwrap_or([0; 8])))
                 .sum();
-            ReduceOutput { key: _key.to_string(), value: sum.to_le_bytes().to_vec() }
+            ReduceOutput {
+                key: _key.to_string(),
+                value: sum.to_le_bytes().to_vec(),
+            }
         });
 
         let mut job = MapReduceJob::new("byte_count", map_fn, reduce_fn);
-        job.add_input(DataChunk::new("local1", b"abc".to_vec()));     // 3 bytes
-        job.add_input(DataChunk::new("local2", b"de".to_vec()));      // 2 bytes
-        job.add_input(DataChunk::new("remote1", b"fghij".to_vec()));  // 5 bytes
+        job.add_input(DataChunk::new("local1", b"abc".to_vec())); // 3 bytes
+        job.add_input(DataChunk::new("local2", b"de".to_vec())); // 2 bytes
+        job.add_input(DataChunk::new("remote1", b"fghij".to_vec())); // 5 bytes
 
         // Local processes first 2 chunks, peer processes 1
-        let peer_results = vec![
-            vec![MapOutput { key: "total_bytes".to_string(), value: 5u64.to_le_bytes().to_vec() }]
-        ];
+        let peer_results = vec![vec![MapOutput {
+            key: "total_bytes".to_string(),
+            value: 5u64.to_le_bytes().to_vec(),
+        }]];
 
-        let results = job.execute_distributed_with_results(2, peer_results).unwrap();
+        let results = job
+            .execute_distributed_with_results(2, peer_results)
+            .unwrap();
         assert_eq!(results.len(), 1);
 
         let total = u64::from_le_bytes(results[0].value[..8].try_into().unwrap());

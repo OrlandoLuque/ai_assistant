@@ -180,7 +180,14 @@ impl std::fmt::Debug for AiConfig {
             .field("kobold_url", &self.kobold_url)
             .field("local_ai_url", &self.local_ai_url)
             .field("custom_url", &self.custom_url)
-            .field("api_key", &if self.api_key.is_empty() { "<empty>" } else { "<REDACTED>" })
+            .field(
+                "api_key",
+                &if self.api_key.is_empty() {
+                    "<empty>"
+                } else {
+                    "<REDACTED>"
+                },
+            )
             .field("max_history_messages", &self.max_history_messages)
             .field("temperature", &self.temperature)
             .finish()
@@ -362,8 +369,11 @@ mod tests {
     #[test]
     fn test_all_providers_have_display_names() {
         let providers = [
-            AiProvider::Ollama, AiProvider::LMStudio, AiProvider::OpenAI,
-            AiProvider::Anthropic, AiProvider::Gemini,
+            AiProvider::Ollama,
+            AiProvider::LMStudio,
+            AiProvider::OpenAI,
+            AiProvider::Anthropic,
+            AiProvider::Gemini,
         ];
         for p in &providers {
             assert!(!p.display_name().is_empty());

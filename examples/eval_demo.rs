@@ -8,14 +8,22 @@
 use std::time::Duration;
 
 use ai_assistant::{
-    // Core evaluation types
-    EvalSample, EvalSuite, Evaluator, MetricResult, MetricType,
-    // Evaluators
-    TextQualityEvaluator, RelevanceEvaluator, SafetyEvaluator,
-    // Benchmarking
-    Benchmarker, EvalBenchmarkResult,
     // A/B testing
-    AbTestConfig, AbTestManager,
+    AbTestConfig,
+    AbTestManager,
+    // Benchmarking
+    Benchmarker,
+    EvalBenchmarkResult,
+    // Core evaluation types
+    EvalSample,
+    EvalSuite,
+    Evaluator,
+    MetricResult,
+    MetricType,
+    RelevanceEvaluator,
+    SafetyEvaluator,
+    // Evaluators
+    TextQualityEvaluator,
 };
 
 fn main() {
@@ -43,7 +51,6 @@ fn main() {
         )
         .with_metadata("model", "llama3-8b")
         .with_metadata("category", "technical"),
-
         EvalSample::new(
             "sample-002",
             "What is the capital of France?",
@@ -54,7 +61,6 @@ fn main() {
         .with_context("France is a country in Western Europe.")
         .with_metadata("model", "mistral-7b")
         .with_metadata("category", "factual"),
-
         EvalSample::new(
             "sample-003",
             "Write a haiku about programming.",
@@ -84,9 +90,15 @@ fn main() {
         .with_range(0.0, 1.0)
         .with_threshold(0.7);
 
-    println!("  Metric:     {:?} (\"{}\")", metric.metric_type, metric.name);
+    println!(
+        "  Metric:     {:?} (\"{}\")",
+        metric.metric_type, metric.name
+    );
     println!("  Value:      {:.2}", metric.value);
-    println!("  Range:      [{:.1}, {:.1}]", metric.min_value, metric.max_value);
+    println!(
+        "  Range:      [{:.1}, {:.1}]",
+        metric.min_value, metric.max_value
+    );
     println!("  Normalized: {:.2}", metric.normalized());
     println!("  Threshold:  {:?}", metric.threshold);
     println!("  Passed:     {:?}", metric.passed);
@@ -137,7 +149,10 @@ fn main() {
     println!("  Evaluator: safety (with default patterns)");
     println!("  Sample:    {}", samples[0].id);
     for m in &safety_metrics {
-        println!("    {:<15} = {:.3} (passed: {:?})", m.name, m.value, m.passed);
+        println!(
+            "    {:<15} = {:.3} (passed: {:?})",
+            m.name, m.value, m.passed
+        );
     }
 
     // Test with a potentially unsafe response
@@ -149,7 +164,10 @@ fn main() {
     let unsafe_metrics = safety_eval.evaluate(&unsafe_sample);
     println!("\n  Sample:    {} (potentially unsafe)", unsafe_sample.id);
     for m in &unsafe_metrics {
-        println!("    {:<15} = {:.3} (passed: {:?})", m.name, m.value, m.passed);
+        println!(
+            "    {:<15} = {:.3} (passed: {:?})",
+            m.name, m.value, m.passed
+        );
         if let Some(ref details) = m.details {
             println!("    details: {}", details);
         }
@@ -172,7 +190,8 @@ fn main() {
     let results = suite.evaluate_batch(&samples);
 
     for result in &results {
-        println!("  [{}] score={:.3}  passed={}  metrics={}  duration={:?}",
+        println!(
+            "  [{}] score={:.3}  passed={}  metrics={}  duration={:?}",
             result.sample_id,
             result.overall_score,
             result.passed,
@@ -240,13 +259,14 @@ fn main() {
 
     let mut ab_manager = AbTestManager::new();
 
-    let test_config = AbTestConfig::new("model_comparison", "llama3-8b", "mistral-7b")
-        .with_split(0.5);
+    let test_config =
+        AbTestConfig::new("model_comparison", "llama3-8b", "mistral-7b").with_split(0.5);
 
     println!("  Test: {}", test_config.name);
     println!("    Variant A:  {}", test_config.variant_a);
     println!("    Variant B:  {}", test_config.variant_b);
-    println!("    Split:      {:.0}%/{:.0}%",
+    println!(
+        "    Split:      {:.0}%/{:.0}%",
         test_config.traffic_split * 100.0,
         (1.0 - test_config.traffic_split) * 100.0,
     );
@@ -254,27 +274,39 @@ fn main() {
     ab_manager.register_test(test_config);
 
     // Simulate user assignments and scores
-    let users = ["alice", "bob", "carol", "dave", "eve", "frank", "grace", "heidi"];
+    let users = [
+        "alice", "bob", "carol", "dave", "eve", "frank", "grace", "heidi",
+    ];
     for user in &users {
         if let Some(variant) = ab_manager.assign_variant("model_comparison", user) {
             let variant = variant.to_string(); // clone to release the immutable borrow
-            // Simulate a quality score for this variant
+                                               // Simulate a quality score for this variant
             let score = if variant == "llama3-8b" { 0.82 } else { 0.78 };
             ab_manager.record_result("model_comparison", &variant, score);
-            println!("  User {:<6} -> variant={:<12} score={:.2}", user, variant, score);
+            println!(
+                "  User {:<6} -> variant={:<12} score={:.2}",
+                user, variant, score
+            );
         }
     }
 
     if let Some(result) = ab_manager.get_results("model_comparison") {
         println!("\n  A/B Test Results:");
-        println!("    Variant A ({}) samples: {}, avg: {:.3}",
-            result.config.variant_a, result.variant_a_samples, result.variant_a_score);
-        println!("    Variant B ({}) samples: {}, avg: {:.3}",
-            result.config.variant_b, result.variant_b_samples, result.variant_b_score);
+        println!(
+            "    Variant A ({}) samples: {}, avg: {:.3}",
+            result.config.variant_a, result.variant_a_samples, result.variant_a_score
+        );
+        println!(
+            "    Variant B ({}) samples: {}, avg: {:.3}",
+            result.config.variant_b, result.variant_b_samples, result.variant_b_score
+        );
         println!("    Difference:  {:.3}", result.difference);
         println!("    p-value:     {:.4}", result.p_value);
         println!("    Significant: {}", result.significant);
-        println!("    Winner:      {}", result.winner.as_deref().unwrap_or("none (not significant)"));
+        println!(
+            "    Winner:      {}",
+            result.winner.as_deref().unwrap_or("none (not significant)")
+        );
     }
 
     // ------------------------------------------------------------------

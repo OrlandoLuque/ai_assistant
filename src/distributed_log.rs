@@ -301,13 +301,7 @@ impl LogCollector {
     }
 
     /// Log an entry for a trace.
-    pub fn log(
-        &mut self,
-        trace_id: &str,
-        level: LogLevel,
-        operation: &str,
-        message: &str,
-    ) {
+    pub fn log(&mut self, trace_id: &str, level: LogLevel, operation: &str, message: &str) {
         if !self.config.enabled || level < self.config.min_level {
             return;
         }
@@ -403,11 +397,7 @@ impl LogCollector {
     }
 
     /// Merge log entries received from a remote node.
-    pub fn merge_remote_logs(
-        &mut self,
-        trace_id: &str,
-        remote_logs: Vec<DistributedLogEntry>,
-    ) {
+    pub fn merge_remote_logs(&mut self, trace_id: &str, remote_logs: Vec<DistributedLogEntry>) {
         if !self.config.enabled || remote_logs.is_empty() {
             return;
         }
@@ -471,7 +461,11 @@ impl LogCollector {
                 serde_json::to_string_pretty(&entries.iter().cloned().collect::<Vec<_>>())
                     .unwrap_or_else(|_| "[]".to_string())
             }
-            ExportFormat::Text => entries.iter().map(|e| e.to_text()).collect::<Vec<_>>().join("\n"),
+            ExportFormat::Text => entries
+                .iter()
+                .map(|e| e.to_text())
+                .collect::<Vec<_>>()
+                .join("\n"),
             ExportFormat::Csv => {
                 let mut csv = String::from(
                     "timestamp_ms,level,node_id,operation,message,duration_ms,trace_id,span_id\n",
@@ -643,9 +637,7 @@ impl LogReader {
     }
 
     /// List unique trace IDs with summary from a file or directory.
-    pub fn list_traces(
-        path: &std::path::Path,
-    ) -> Result<Vec<TraceSummary>, std::io::Error> {
+    pub fn list_traces(path: &std::path::Path) -> Result<Vec<TraceSummary>, std::io::Error> {
         let entries = if path.is_dir() {
             Self::read_dir(path)?
         } else {
@@ -676,10 +668,7 @@ impl LogReader {
             if !summary.nodes.contains(&entry.node_id) {
                 summary.nodes.push(entry.node_id.clone());
             }
-            *summary
-                .levels
-                .entry(entry.level.to_string())
-                .or_insert(0) += 1;
+            *summary.levels.entry(entry.level.to_string()).or_insert(0) += 1;
         }
 
         let mut result: Vec<TraceSummary> = traces.into_values().collect();
@@ -775,7 +764,14 @@ pub fn parse_log_level(s: &str) -> Option<LogLevel> {
 mod tests {
     use super::*;
 
-    fn make_entry(trace_id: &str, node: &str, level: LogLevel, op: &str, msg: &str, ts: u64) -> DistributedLogEntry {
+    fn make_entry(
+        trace_id: &str,
+        node: &str,
+        level: LogLevel,
+        op: &str,
+        msg: &str,
+        ts: u64,
+    ) -> DistributedLogEntry {
         DistributedLogEntry {
             trace_id: trace_id.to_string(),
             node_id: node.to_string(),
@@ -792,9 +788,10 @@ mod tests {
 
     #[test]
     fn test_distributed_log_entry_serialize() {
-        let entry = DistributedLogEntry::new("trace-1", "node-A", LogLevel::Info, "test.op", "hello")
-            .with_attr("key", "value")
-            .with_duration(42);
+        let entry =
+            DistributedLogEntry::new("trace-1", "node-A", LogLevel::Info, "test.op", "hello")
+                .with_attr("key", "value")
+                .with_duration(42);
 
         let json = serde_json::to_string(&entry).unwrap();
         let parsed: DistributedLogEntry = serde_json::from_str(&json).unwrap();
@@ -843,7 +840,10 @@ mod tests {
         let mut collector = LogCollector::new("node-A", LogCollectorConfig::default());
 
         // Local log
-        collector.add_entry("trace-1", make_entry("trace-1", "node-A", LogLevel::Info, "op", "local", 100));
+        collector.add_entry(
+            "trace-1",
+            make_entry("trace-1", "node-A", LogLevel::Info, "op", "local", 100),
+        );
 
         // Remote logs from node B
         let remote = vec![
@@ -860,8 +860,14 @@ mod tests {
     fn test_log_collector_unified_sorted() {
         let mut collector = LogCollector::new("node-A", LogCollectorConfig::default());
 
-        collector.add_entry("t1", make_entry("t1", "A", LogLevel::Info, "op", "third", 300));
-        collector.add_entry("t1", make_entry("t1", "A", LogLevel::Info, "op", "first", 100));
+        collector.add_entry(
+            "t1",
+            make_entry("t1", "A", LogLevel::Info, "op", "third", 300),
+        );
+        collector.add_entry(
+            "t1",
+            make_entry("t1", "A", LogLevel::Info, "op", "first", 100),
+        );
 
         let remote = vec![make_entry("t1", "B", LogLevel::Info, "op", "second", 200)];
         collector.merge_remote_logs("t1", remote);
@@ -880,7 +886,17 @@ mod tests {
         let mut collector = LogCollector::new("A", config);
 
         for i in 0..5 {
-            collector.add_entry("t1", make_entry("t1", "A", LogLevel::Info, "op", &format!("msg {}", i), i as u64));
+            collector.add_entry(
+                "t1",
+                make_entry(
+                    "t1",
+                    "A",
+                    LogLevel::Info,
+                    "op",
+                    &format!("msg {}", i),
+                    i as u64,
+                ),
+            );
         }
 
         let logs = collector.get_trace_logs("t1");
@@ -919,12 +935,23 @@ mod tests {
     fn test_log_collector_share_enabled_filtered() {
         let mut collector = LogCollector::new("A", LogCollectorConfig::default());
 
-        collector.add_entry("t1", make_entry("t1", "A", LogLevel::Debug, "op", "debug msg", 100));
-        collector.add_entry("t1", make_entry("t1", "A", LogLevel::Info, "op", "info msg", 200));
-        collector.add_entry("t1", make_entry("t1", "A", LogLevel::Error, "op", "error msg", 300));
+        collector.add_entry(
+            "t1",
+            make_entry("t1", "A", LogLevel::Debug, "op", "debug msg", 100),
+        );
+        collector.add_entry(
+            "t1",
+            make_entry("t1", "A", LogLevel::Info, "op", "info msg", 200),
+        );
+        collector.add_entry(
+            "t1",
+            make_entry("t1", "A", LogLevel::Error, "op", "error msg", 300),
+        );
 
         // Request only Warn+ level
-        let shareable = collector.get_shareable_logs("t1", 10, LogLevel::Warn).unwrap();
+        let shareable = collector
+            .get_shareable_logs("t1", 10, LogLevel::Warn)
+            .unwrap();
         assert_eq!(shareable.len(), 1);
         assert_eq!(shareable[0].message, "error msg");
     }
@@ -932,7 +959,10 @@ mod tests {
     #[test]
     fn test_export_json() {
         let mut collector = LogCollector::new("A", LogCollectorConfig::default());
-        collector.add_entry("t1", make_entry("t1", "A", LogLevel::Info, "op", "test", 100));
+        collector.add_entry(
+            "t1",
+            make_entry("t1", "A", LogLevel::Info, "op", "test", 100),
+        );
 
         let json = collector.export_trace("t1", ExportFormat::Json);
         assert!(json.contains("\"trace_id\""));
@@ -946,7 +976,17 @@ mod tests {
     #[test]
     fn test_export_text() {
         let mut collector = LogCollector::new("A", LogCollectorConfig::default());
-        collector.add_entry("t1", make_entry("t1", "node-A", LogLevel::Warn, "rag.query", "slow query", 100));
+        collector.add_entry(
+            "t1",
+            make_entry(
+                "t1",
+                "node-A",
+                LogLevel::Warn,
+                "rag.query",
+                "slow query",
+                100,
+            ),
+        );
 
         let text = collector.export_trace("t1", ExportFormat::Text);
         assert!(text.contains("WARN"));
@@ -980,8 +1020,19 @@ mod tests {
 
         // Write
         let mut writer = LogWriter::new(&path).unwrap();
-        writer.write_entry(&make_entry("t1", "A", LogLevel::Info, "op1", "hello", 100)).unwrap();
-        writer.write_entry(&make_entry("t1", "B", LogLevel::Warn, "op2", "warning", 200)).unwrap();
+        writer
+            .write_entry(&make_entry("t1", "A", LogLevel::Info, "op1", "hello", 100))
+            .unwrap();
+        writer
+            .write_entry(&make_entry(
+                "t1",
+                "B",
+                LogLevel::Warn,
+                "op2",
+                "warning",
+                200,
+            ))
+            .unwrap();
         writer.flush().unwrap();
 
         // Read
@@ -998,11 +1049,27 @@ mod tests {
 
         // Write two files
         let mut w1 = LogWriter::new(&dir.path().join("a.jsonl")).unwrap();
-        w1.write_entry(&make_entry("t1", "A", LogLevel::Info, "op", "from file a", 300)).unwrap();
+        w1.write_entry(&make_entry(
+            "t1",
+            "A",
+            LogLevel::Info,
+            "op",
+            "from file a",
+            300,
+        ))
+        .unwrap();
         w1.flush().unwrap();
 
         let mut w2 = LogWriter::new(&dir.path().join("b.jsonl")).unwrap();
-        w2.write_entry(&make_entry("t1", "B", LogLevel::Info, "op", "from file b", 100)).unwrap();
+        w2.write_entry(&make_entry(
+            "t1",
+            "B",
+            LogLevel::Info,
+            "op",
+            "from file b",
+            100,
+        ))
+        .unwrap();
         w2.flush().unwrap();
 
         let entries = LogReader::read_dir(dir.path()).unwrap();
@@ -1018,9 +1085,15 @@ mod tests {
         let path = dir.path().join("multi.jsonl");
 
         let mut writer = LogWriter::new(&path).unwrap();
-        writer.write_entry(&make_entry("t1", "A", LogLevel::Info, "op", "msg1", 100)).unwrap();
-        writer.write_entry(&make_entry("t1", "B", LogLevel::Error, "op", "msg2", 200)).unwrap();
-        writer.write_entry(&make_entry("t2", "A", LogLevel::Warn, "op", "msg3", 150)).unwrap();
+        writer
+            .write_entry(&make_entry("t1", "A", LogLevel::Info, "op", "msg1", 100))
+            .unwrap();
+        writer
+            .write_entry(&make_entry("t1", "B", LogLevel::Error, "op", "msg2", 200))
+            .unwrap();
+        writer
+            .write_entry(&make_entry("t2", "A", LogLevel::Warn, "op", "msg3", 150))
+            .unwrap();
         writer.flush().unwrap();
 
         let traces = LogReader::list_traces(&path).unwrap();
@@ -1041,7 +1114,9 @@ mod tests {
 
         // Write initial data
         let mut writer = LogWriter::new(&path).unwrap();
-        writer.write_entry(&make_entry("t1", "A", LogLevel::Info, "op", "initial", 100)).unwrap();
+        writer
+            .write_entry(&make_entry("t1", "A", LogLevel::Info, "op", "initial", 100))
+            .unwrap();
         writer.flush().unwrap();
 
         // Start tailing from current end
@@ -1052,8 +1127,12 @@ mod tests {
         assert!(new.is_empty());
 
         // Append more data
-        writer.write_entry(&make_entry("t1", "A", LogLevel::Info, "op", "new1", 200)).unwrap();
-        writer.write_entry(&make_entry("t1", "A", LogLevel::Info, "op", "new2", 300)).unwrap();
+        writer
+            .write_entry(&make_entry("t1", "A", LogLevel::Info, "op", "new1", 200))
+            .unwrap();
+        writer
+            .write_entry(&make_entry("t1", "A", LogLevel::Info, "op", "new2", 300))
+            .unwrap();
         writer.flush().unwrap();
 
         // Should see the 2 new entries
@@ -1073,9 +1152,15 @@ mod tests {
         let path = dir.path().join("summary.jsonl");
 
         let mut writer = LogWriter::new(&path).unwrap();
-        writer.write_entry(&make_entry("t1", "node-A", LogLevel::Info, "op", "a", 100)).unwrap();
-        writer.write_entry(&make_entry("t1", "node-A", LogLevel::Info, "op", "b", 200)).unwrap();
-        writer.write_entry(&make_entry("t1", "node-B", LogLevel::Error, "op", "c", 300)).unwrap();
+        writer
+            .write_entry(&make_entry("t1", "node-A", LogLevel::Info, "op", "a", 100))
+            .unwrap();
+        writer
+            .write_entry(&make_entry("t1", "node-A", LogLevel::Info, "op", "b", 200))
+            .unwrap();
+        writer
+            .write_entry(&make_entry("t1", "node-B", LogLevel::Error, "op", "c", 300))
+            .unwrap();
         writer.flush().unwrap();
 
         let traces = LogReader::list_traces(&path).unwrap();

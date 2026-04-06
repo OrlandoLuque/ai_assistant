@@ -538,7 +538,10 @@ mod tests {
     #[test]
     fn test_from_content_encoding() {
         assert_eq!(Algorithm::from_content_encoding("gzip"), Algorithm::Gzip);
-        assert_eq!(Algorithm::from_content_encoding("deflate"), Algorithm::Deflate);
+        assert_eq!(
+            Algorithm::from_content_encoding("deflate"),
+            Algorithm::Deflate
+        );
         assert_eq!(Algorithm::from_content_encoding("unknown"), Algorithm::None);
     }
 

@@ -794,33 +794,28 @@ mod tests {
 
     #[test]
     fn test_decompose_task_with_mock_llm() {
-        let config = TaskDecompositionConfig {
-            llm_enhanced: true,
-        };
+        let config = TaskDecompositionConfig { llm_enhanced: true };
         let decomposer = TaskDecomposer::new(config);
         let mock = crate::llm_enhance::MockLlm::new(
             "{\"steps\":[{\"description\":\"Gather requirements\",\"estimated_complexity\":\"low\"},{\"description\":\"Implement solution\",\"estimated_complexity\":\"high\"}]}",
         );
-        let result = decomposer.decompose_task_with_llm(
-            "Build a web application",
-            Some(&mock),
+        let result = decomposer.decompose_task_with_llm("Build a web application", Some(&mock));
+        assert_eq!(
+            result.steps.len(),
+            2,
+            "Expected 2 LLM steps, got: {}",
+            result.steps.len()
         );
-        assert_eq!(result.steps.len(), 2, "Expected 2 LLM steps, got: {}", result.steps.len());
         assert!(result.steps[0].description.contains("Gather"));
         assert_eq!(result.steps[1].estimated_complexity, "high");
     }
 
     #[test]
     fn test_decompose_task_llm_fallback_on_failure() {
-        let config = TaskDecompositionConfig {
-            llm_enhanced: true,
-        };
+        let config = TaskDecompositionConfig { llm_enhanced: true };
         let decomposer = TaskDecomposer::new(config);
         let failing = crate::llm_enhance::FailingMockLlm;
-        let result = decomposer.decompose_task_with_llm(
-            "Do something complex",
-            Some(&failing),
-        );
+        let result = decomposer.decompose_task_with_llm("Do something complex", Some(&failing));
         // Should fall back to heuristic (not crash)
         assert!(!result.steps.is_empty());
         assert!(result.steps[0].description.contains("Do something complex"));

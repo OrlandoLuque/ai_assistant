@@ -30,7 +30,10 @@ impl std::fmt::Debug for AwsCredentials {
         f.debug_struct("AwsCredentials")
             .field("access_key_id", &self.access_key_id)
             .field("secret_access_key", &"<REDACTED>")
-            .field("session_token", &self.session_token.as_ref().map(|_| "<REDACTED>"))
+            .field(
+                "session_token",
+                &self.session_token.as_ref().map(|_| "<REDACTED>"),
+            )
             .finish()
     }
 }
@@ -390,9 +393,7 @@ mod tests {
             .strip_prefix("https://")
             .or_else(|| url.strip_prefix("http://"))
             .ok_or_else(|| "URL must start with http(s)://".to_string())?;
-        let (host, rest) = stripped
-            .split_once('/')
-            .unwrap_or((stripped, ""));
+        let (host, rest) = stripped.split_once('/').unwrap_or((stripped, ""));
         let (path, query) = if let Some((p, q)) = rest.split_once('?') {
             (format!("/{}", p), Some(q.to_string()))
         } else if rest.is_empty() {
@@ -409,7 +410,11 @@ mod tests {
                 segment
                     .bytes()
                     .map(|b| {
-                        if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'~'
+                        if b.is_ascii_alphanumeric()
+                            || b == b'-'
+                            || b == b'_'
+                            || b == b'.'
+                            || b == b'~'
                         {
                             (b as char).to_string()
                         } else {

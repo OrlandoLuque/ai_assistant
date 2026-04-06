@@ -78,7 +78,9 @@ fn main() {
     wav_data.extend_from_slice(&1u16.to_le_bytes()); // PCM format
     wav_data.extend_from_slice(&num_channels.to_le_bytes());
     wav_data.extend_from_slice(&sample_rate.to_le_bytes());
-    wav_data.extend_from_slice(&(sample_rate * num_channels as u32 * bits_per_sample as u32 / 8).to_le_bytes());
+    wav_data.extend_from_slice(
+        &(sample_rate * num_channels as u32 * bits_per_sample as u32 / 8).to_le_bytes(),
+    );
     wav_data.extend_from_slice(&(num_channels * bits_per_sample / 8).to_le_bytes());
     wav_data.extend_from_slice(&bits_per_sample.to_le_bytes());
     // data subchunk (1 second of silence)
@@ -86,8 +88,12 @@ fn main() {
     wav_data.extend_from_slice(&data_size.to_le_bytes());
     wav_data.extend_from_slice(&vec![0u8; data_size as usize]);
 
-    println!("  Synthetic WAV: {} bytes ({} samples @ {} Hz)",
-        wav_data.len(), num_samples, sample_rate);
+    println!(
+        "  Synthetic WAV: {} bytes ({} samples @ {} Hz)",
+        wav_data.len(),
+        num_samples,
+        sample_rate
+    );
 
     // Attempt transcription — will fail because model file doesn't exist,
     // but demonstrates the API
@@ -118,9 +124,17 @@ fn main() {
     let models = [
         ("ggml-tiny.en.bin", "~75 MB", "Fastest, English only"),
         ("ggml-base.en.bin", "~142 MB", "Good balance, English only"),
-        ("ggml-small.en.bin", "~466 MB", "Better accuracy, English only"),
+        (
+            "ggml-small.en.bin",
+            "~466 MB",
+            "Better accuracy, English only",
+        ),
         ("ggml-medium.bin", "~1.5 GB", "High accuracy, multilingual"),
-        ("ggml-large-v3.bin", "~3.1 GB", "Best accuracy, multilingual"),
+        (
+            "ggml-large-v3.bin",
+            "~3.1 GB",
+            "Best accuracy, multilingual",
+        ),
     ];
 
     println!("  {:<25} {:<12} {}", "Model", "Size", "Notes");

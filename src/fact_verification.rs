@@ -430,10 +430,17 @@ mod tests {
     #[test]
     fn test_multiple_sources() {
         let mut verifier = FactVerifier::default();
-        verifier.add_sources("rust", vec![
-            FactSource::new("s1", "Doc1", "Rust is a systems programming language"),
-            FactSource::new("s2", "Doc2", "Rust is a programming language focused on safety"),
-        ]);
+        verifier.add_sources(
+            "rust",
+            vec![
+                FactSource::new("s1", "Doc1", "Rust is a systems programming language"),
+                FactSource::new(
+                    "s2",
+                    "Doc2",
+                    "Rust is a programming language focused on safety",
+                ),
+            ],
+        );
         let result = verifier.verify("Rust is a programming language");
         assert_eq!(result.status, VerificationStatus::Verified);
         assert!(result.confidence > 0.0);
@@ -442,7 +449,10 @@ mod tests {
     #[test]
     fn test_verify_all() {
         let mut verifier = FactVerifier::default();
-        verifier.add_source("python", FactSource::new("w", "Wiki", "Python is a programming language"));
+        verifier.add_source(
+            "python",
+            FactSource::new("w", "Wiki", "Python is a programming language"),
+        );
         let results = verifier.verify_all(&["Python is a language", "Unknown fact xyz"]);
         assert_eq!(results.len(), 2);
     }
@@ -472,7 +482,8 @@ mod tests {
     #[test]
     fn test_extract_claims_filters_opinions() {
         let verifier = FactVerifier::default();
-        let text = "I think AI is great. Python is a programming language. Maybe it rains tomorrow.";
+        let text =
+            "I think AI is great. Python is a programming language. Maybe it rains tomorrow.";
         let claims = verifier.extract_claims(text);
         // "I think..." and "Maybe..." should be filtered out
         for claim in &claims {

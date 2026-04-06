@@ -681,7 +681,11 @@ mod tests {
 
         for variant in &variants {
             let name = variant.display_name();
-            assert!(!name.is_empty(), "{:?} should have a non-empty display name", variant);
+            assert!(
+                !name.is_empty(),
+                "{:?} should have a non-empty display name",
+                variant
+            );
         }
 
         // Verify all 8 variants produce unique names
@@ -767,7 +771,10 @@ mod tests {
 
         let mut facts = HashMap::new();
         facts.insert("earth".to_string(), "The Earth orbits the Sun.".to_string());
-        facts.insert("water".to_string(), "Water boils at 100 degrees Celsius.".to_string());
+        facts.insert(
+            "water".to_string(),
+            "Water boils at 100 degrees Celsius.".to_string(),
+        );
         detector.add_known_facts(facts);
 
         // Text containing a known fact keyword should have that claim marked as supported

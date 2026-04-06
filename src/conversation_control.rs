@@ -641,10 +641,7 @@ mod tests {
 
     #[test]
     fn test_edit_non_user_message_fails() {
-        let mut conversation = vec![
-            ChatMessage::user("Hello"),
-            ChatMessage::assistant("Hi!"),
-        ];
+        let mut conversation = vec![ChatMessage::user("Hello"), ChatMessage::assistant("Hi!")];
         // Editing an assistant message should return None
         let result = MessageOperations::edit_user_message(&mut conversation, 1, "changed", false);
         assert!(result.is_none());

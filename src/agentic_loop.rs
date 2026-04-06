@@ -194,10 +194,7 @@ impl AgenticLoop {
             let iteration_result = self.run_iteration(needs_search && self.state.iteration == 1);
             iterations.push(iteration_result.clone());
 
-            if matches!(
-                self.state.status,
-                LoopStatus::Finished | LoopStatus::Error
-            ) {
+            if matches!(self.state.status, LoopStatus::Finished | LoopStatus::Error) {
                 break;
             }
         }
@@ -625,8 +622,8 @@ mod tests {
 
     #[test]
     fn test_with_system_prompt() {
-        let agent = AgenticLoop::new(LoopConfig::default())
-            .with_system_prompt("You are a test assistant.");
+        let agent =
+            AgenticLoop::new(LoopConfig::default()).with_system_prompt("You are a test assistant.");
 
         assert_eq!(agent.config.system_prompt, "You are a test assistant.");
     }
@@ -833,9 +830,7 @@ mod tests {
 
         // Result should have all expected fields
         assert!(result.total_iterations > 0);
-        assert!(
-            result.final_answer.is_some() || result.status == LoopStatus::MaxIterationsReached
-        );
+        assert!(result.final_answer.is_some() || result.status == LoopStatus::MaxIterationsReached);
     }
 
     #[test]

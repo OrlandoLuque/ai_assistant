@@ -86,14 +86,9 @@ impl ListenerHandle {
 #[non_exhaustive]
 pub enum ListenerSource {
     /// Home Assistant SSE stream.
-    HomeAssistantSse {
-        url: String,
-        token: String,
-    },
+    HomeAssistantSse { url: String, token: String },
     /// OpenHAB SSE stream.
-    OpenHabSse {
-        url: String,
-    },
+    OpenHabSse { url: String },
     /// MQTT topic subscription.
     MqttSubscription {
         broker_url: String,

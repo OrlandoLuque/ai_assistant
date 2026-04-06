@@ -162,7 +162,11 @@ impl Signature {
         if !self.inputs.is_empty() {
             system_parts.push("\nInput fields:".to_string());
             for field in &self.inputs {
-                let req = if field.required { "required" } else { "optional" };
+                let req = if field.required {
+                    "required"
+                } else {
+                    "optional"
+                };
                 system_parts.push(format!(
                     "- {} ({}): {} [{}]",
                     field.name, field.field_type, field.description, req
@@ -174,7 +178,11 @@ impl Signature {
         if !self.outputs.is_empty() {
             system_parts.push("\nOutput fields:".to_string());
             for field in &self.outputs {
-                let req = if field.required { "required" } else { "optional" };
+                let req = if field.required {
+                    "required"
+                } else {
+                    "optional"
+                };
                 system_parts.push(format!(
                     "- {} ({}): {} [{}]",
                     field.name, field.field_type, field.description, req
@@ -185,19 +193,13 @@ impl Signature {
         // Build user template with placeholders
         let mut user_parts: Vec<String> = Vec::new();
         for field in &self.inputs {
-            let prefix = field
-                .prefix
-                .as_deref()
-                .unwrap_or(&field.name);
+            let prefix = field.prefix.as_deref().unwrap_or(&field.name);
             user_parts.push(format!("{}: {{{}}}", prefix, field.name));
         }
 
         // Add output field labels so the model knows what to produce
         for field in &self.outputs {
-            let prefix = field
-                .prefix
-                .as_deref()
-                .unwrap_or(&field.name);
+            let prefix = field.prefix.as_deref().unwrap_or(&field.name);
             user_parts.push(format!("{}: ", prefix));
         }
 
@@ -333,9 +335,7 @@ pub struct F1Score;
 impl F1Score {
     /// Tokenize a string by splitting on whitespace and lowercasing.
     fn tokenize(s: &str) -> Vec<String> {
-        s.split_whitespace()
-            .map(|t| t.to_lowercase())
-            .collect()
+        s.split_whitespace().map(|t| t.to_lowercase()).collect()
     }
 }
 

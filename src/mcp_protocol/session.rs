@@ -106,9 +106,7 @@ impl SessionMcpManager {
         let entries: Vec<serde_json::Value> = self
             .sessions
             .values()
-            .map(|info| {
-                serde_json::to_value(info).unwrap_or_else(|_| serde_json::Value::Null)
-            })
+            .map(|info| serde_json::to_value(info).unwrap_or_else(|_| serde_json::Value::Null))
             .collect();
         serde_json::Value::Array(entries)
     }
@@ -116,10 +114,7 @@ impl SessionMcpManager {
     /// Generate a summary for a session from its messages.
     ///
     /// Each message is a tuple of (role, content).
-    pub fn generate_summary(
-        session_id: &str,
-        messages: &[(String, String)],
-    ) -> SessionSummary {
+    pub fn generate_summary(session_id: &str, messages: &[(String, String)]) -> SessionSummary {
         if messages.is_empty() {
             return SessionSummary {
                 session_id: session_id.to_string(),
@@ -133,10 +128,9 @@ impl SessionMcpManager {
 
         // Build word frequency map for topic extraction (words >= 4 chars, lowercased)
         let stop_words: &[&str] = &[
-            "this", "that", "with", "from", "have", "been", "were", "they",
-            "their", "about", "would", "could", "should", "there", "which",
-            "will", "what", "when", "where", "some", "into", "also", "then",
-            "than", "them", "these", "those", "each", "other", "more",
+            "this", "that", "with", "from", "have", "been", "were", "they", "their", "about",
+            "would", "could", "should", "there", "which", "will", "what", "when", "where", "some",
+            "into", "also", "then", "than", "them", "these", "those", "each", "other", "more",
         ];
         let mut word_freq: HashMap<String, usize> = HashMap::new();
         for (_role, content) in messages {
@@ -155,11 +149,7 @@ impl SessionMcpManager {
         // Top topics by frequency
         let mut freq_vec: Vec<(String, usize)> = word_freq.into_iter().collect();
         freq_vec.sort_by(|a, b| b.1.cmp(&a.1));
-        let key_topics: Vec<String> = freq_vec
-            .into_iter()
-            .take(5)
-            .map(|(word, _)| word)
-            .collect();
+        let key_topics: Vec<String> = freq_vec.into_iter().take(5).map(|(word, _)| word).collect();
 
         // Decisions: messages containing decision-related keywords
         let decision_keywords = ["decided", "agreed", "chosen", "decision", "we will"];
@@ -210,8 +200,21 @@ impl SessionMcpManager {
         let mut action_items = Vec::new();
 
         let highlight_keywords = ["important", "key", "critical", "significant", "essential"];
-        let conclusion_keywords = ["in conclusion", "therefore", "finally", "to summarize", "in summary"];
-        let action_keywords = ["todo", "need to", "should", "action item", "must", "next step"];
+        let conclusion_keywords = [
+            "in conclusion",
+            "therefore",
+            "finally",
+            "to summarize",
+            "in summary",
+        ];
+        let action_keywords = [
+            "todo",
+            "need to",
+            "should",
+            "action item",
+            "must",
+            "next step",
+        ];
 
         for (_role, content) in messages {
             let lower = content.to_lowercase();
@@ -236,10 +239,7 @@ impl SessionMcpManager {
     }
 
     /// Extract context (entities, relations, key facts) from session messages.
-    pub fn extract_context(
-        session_id: &str,
-        messages: &[(String, String)],
-    ) -> SessionContext {
+    pub fn extract_context(session_id: &str, messages: &[(String, String)]) -> SessionContext {
         let mut entities = Vec::new();
         let mut relations = Vec::new();
         let mut key_facts = Vec::new();
@@ -267,16 +267,16 @@ impl SessionMcpManager {
                 if let Some(pos) = content.find(&pattern) {
                     let before = content[..pos].split_whitespace().next_back();
                     let after_start = pos + pattern.len();
-                    let after = content.get(after_start..).and_then(|s| s.split_whitespace().next());
+                    let after = content
+                        .get(after_start..)
+                        .and_then(|s| s.split_whitespace().next());
                     if let (Some(subj), Some(obj)) = (before, after) {
-                        let subj_clean: String = subj.chars().filter(|c| c.is_alphanumeric()).collect();
-                        let obj_clean: String = obj.chars().filter(|c| c.is_alphanumeric()).collect();
+                        let subj_clean: String =
+                            subj.chars().filter(|c| c.is_alphanumeric()).collect();
+                        let obj_clean: String =
+                            obj.chars().filter(|c| c.is_alphanumeric()).collect();
                         if !subj_clean.is_empty() && !obj_clean.is_empty() {
-                            relations.push((
-                                subj_clean,
-                                verb.to_string(),
-                                obj_clean,
-                            ));
+                            relations.push((subj_clean, verb.to_string(), obj_clean));
                         }
                     }
                 }
@@ -301,10 +301,7 @@ impl SessionMcpManager {
     }
 
     /// Extract beliefs from session messages.
-    pub fn extract_beliefs(
-        session_id: &str,
-        messages: &[(String, String)],
-    ) -> SessionBeliefs {
+    pub fn extract_beliefs(session_id: &str, messages: &[(String, String)]) -> SessionBeliefs {
         let belief_patterns: &[(&str, &str, f32)] = &[
             ("i think", "opinion", 0.6),
             ("i believe", "conviction", 0.8),
@@ -379,7 +376,10 @@ impl SessionMcpManager {
                 }
                 if serde_json::from_str::<serde_json::Value>(&candidate).is_ok() {
                     recovered += 1;
-                    notes.push(format!("Line {}: repaired (trailing comma or missing brace).", line_idx + 1));
+                    notes.push(format!(
+                        "Line {}: repaired (trailing comma or missing brace).",
+                        line_idx + 1
+                    ));
                 } else {
                     lost += 1;
                     notes.push(format!("Line {}: unrecoverable.", line_idx + 1));

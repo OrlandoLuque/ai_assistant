@@ -411,13 +411,7 @@ impl PluginManager {
     }
 
     /// Dispatch on_response to all enabled plugins.
-    pub fn dispatch_on_response(
-        &self,
-        method: &str,
-        path: &str,
-        status: &str,
-        duration_ms: f64,
-    ) {
+    pub fn dispatch_on_response(&self, method: &str, path: &str, status: &str, duration_ms: f64) {
         for (info, plugin) in &self.plugins {
             if info.enabled {
                 plugin.on_response(method, path, status, duration_ms);
@@ -966,18 +960,14 @@ mod tests {
     #[test]
     fn test_ip_allowlist_plugin_allows_all_when_empty() {
         let plugin = IpAllowlistPlugin::new(vec![]);
-        let headers = vec![
-            ("x-forwarded-for".to_string(), "1.2.3.4".to_string()),
-        ];
+        let headers = vec![("x-forwarded-for".to_string(), "1.2.3.4".to_string())];
         assert!(plugin.on_request("GET", "/", &headers).is_none());
     }
 
     #[test]
     fn test_ip_allowlist_plugin_blocks_unknown() {
         let plugin = IpAllowlistPlugin::new(vec!["10.0.0.1".to_string()]);
-        let headers = vec![
-            ("x-forwarded-for".to_string(), "192.168.1.1".to_string()),
-        ];
+        let headers = vec![("x-forwarded-for".to_string(), "192.168.1.1".to_string())];
         let result = plugin.on_request("GET", "/", &headers);
         assert!(result.is_some());
         let (status, body) = result.unwrap();
@@ -988,9 +978,7 @@ mod tests {
     #[test]
     fn test_ip_allowlist_plugin_allows_known() {
         let plugin = IpAllowlistPlugin::new(vec!["10.0.0.1".to_string()]);
-        let headers = vec![
-            ("x-forwarded-for".to_string(), "10.0.0.1".to_string()),
-        ];
+        let headers = vec![("x-forwarded-for".to_string(), "10.0.0.1".to_string())];
         assert!(plugin.on_request("GET", "/", &headers).is_none());
     }
 
@@ -1040,7 +1028,9 @@ mod tests {
     #[test]
     fn test_dispatch_on_request_passes_through() {
         let mut manager = PluginManager::new();
-        manager.register(Box::new(RequestLoggingPlugin::new())).unwrap();
+        manager
+            .register(Box::new(RequestLoggingPlugin::new()))
+            .unwrap();
         // RequestLoggingPlugin returns None from on_request (uses default)
         let result = manager.dispatch_on_request("GET", "/health", &[]);
         assert!(result.is_none());
@@ -1051,11 +1041,11 @@ mod tests {
         let mut manager = PluginManager::new();
         let allowlist = IpAllowlistPlugin::new(vec!["10.0.0.1".to_string()]);
         manager.register(Box::new(allowlist)).unwrap();
-        manager.register(Box::new(RequestLoggingPlugin::new())).unwrap();
+        manager
+            .register(Box::new(RequestLoggingPlugin::new()))
+            .unwrap();
 
-        let headers = vec![
-            ("x-forwarded-for".to_string(), "evil.ip".to_string()),
-        ];
+        let headers = vec![("x-forwarded-for".to_string(), "evil.ip".to_string())];
         let result = manager.dispatch_on_request("GET", "/secret", &headers);
         assert!(result.is_some());
         let (status, _) = result.unwrap();
@@ -1068,14 +1058,19 @@ mod tests {
         let metrics = MetricsCollectorPlugin::new();
         // Store a reference-counted pointer to check later
         let metrics_ptr = &metrics as *const MetricsCollectorPlugin;
-        manager.register(Box::new(RequestLoggingPlugin::new())).unwrap();
+        manager
+            .register(Box::new(RequestLoggingPlugin::new()))
+            .unwrap();
         manager.register(Box::new(metrics)).unwrap();
 
         manager.dispatch_on_response("GET", "/api", "200 OK", 15.0);
 
         // Verify via downcast
         let plugin = manager.get("metrics-collector").unwrap();
-        let mc = plugin.as_any().downcast_ref::<MetricsCollectorPlugin>().unwrap();
+        let mc = plugin
+            .as_any()
+            .downcast_ref::<MetricsCollectorPlugin>()
+            .unwrap();
         assert_eq!(mc.request_count(), 1);
         let _ = metrics_ptr; // suppress unused warning
     }
@@ -1083,8 +1078,12 @@ mod tests {
     #[test]
     fn test_dispatch_on_event_all_plugins() {
         let mut manager = PluginManager::new();
-        manager.register(Box::new(RequestLoggingPlugin::new())).unwrap();
-        manager.register(Box::new(MetricsCollectorPlugin::new())).unwrap();
+        manager
+            .register(Box::new(RequestLoggingPlugin::new()))
+            .unwrap();
+        manager
+            .register(Box::new(MetricsCollectorPlugin::new()))
+            .unwrap();
         // Should not panic
         manager.dispatch_on_event("startup", "server started on port 8080");
         manager.dispatch_on_event("shutdown", "graceful shutdown");
@@ -1128,18 +1127,14 @@ mod tests {
     #[test]
     fn test_ip_allowlist_with_x_forwarded_for() {
         let plugin = IpAllowlistPlugin::new(vec!["192.168.1.100".to_string()]);
-        let headers = vec![
-            ("X-Forwarded-For".to_string(), "192.168.1.100".to_string()),
-        ];
+        let headers = vec![("X-Forwarded-For".to_string(), "192.168.1.100".to_string())];
         assert!(plugin.on_request("GET", "/", &headers).is_none());
     }
 
     #[test]
     fn test_ip_allowlist_with_x_real_ip() {
         let plugin = IpAllowlistPlugin::new(vec!["172.16.0.5".to_string()]);
-        let headers = vec![
-            ("X-Real-IP".to_string(), "172.16.0.5".to_string()),
-        ];
+        let headers = vec![("X-Real-IP".to_string(), "172.16.0.5".to_string())];
         assert!(plugin.on_request("GET", "/", &headers).is_none());
     }
 
@@ -1166,7 +1161,9 @@ mod tests {
             .register(Box::new(RequestLoggingPlugin::new()))
             .unwrap();
         manager
-            .register(Box::new(IpAllowlistPlugin::new(vec!["127.0.0.1".to_string()])))
+            .register(Box::new(IpAllowlistPlugin::new(vec![
+                "127.0.0.1".to_string()
+            ])))
             .unwrap();
         manager
             .register(Box::new(MetricsCollectorPlugin::new()))
@@ -1178,9 +1175,7 @@ mod tests {
         assert!(manager.get("metrics-collector").is_some());
 
         // Dispatch a full request cycle
-        let headers = vec![
-            ("x-forwarded-for".to_string(), "127.0.0.1".to_string()),
-        ];
+        let headers = vec![("x-forwarded-for".to_string(), "127.0.0.1".to_string())];
         let blocked = manager.dispatch_on_request("GET", "/test", &headers);
         assert!(blocked.is_none()); // 127.0.0.1 is allowed
 
@@ -1202,11 +1197,11 @@ mod tests {
         let mut manager = PluginManager::new();
         let allowlist = IpAllowlistPlugin::new(vec!["10.0.0.1".to_string()]);
         manager.register(Box::new(allowlist)).unwrap();
-        manager.register(Box::new(MetricsCollectorPlugin::new())).unwrap();
+        manager
+            .register(Box::new(MetricsCollectorPlugin::new()))
+            .unwrap();
 
-        let headers = vec![
-            ("x-forwarded-for".to_string(), "bad-ip".to_string()),
-        ];
+        let headers = vec![("x-forwarded-for".to_string(), "bad-ip".to_string())];
 
         // on_request short-circuits at IpAllowlist
         let result = manager.dispatch_on_request("GET", "/", &headers);

@@ -18,10 +18,7 @@ use crate::mcp_protocol::{McpServer, McpTool, McpToolAnnotation};
 ///
 /// - `server` — MCP server to register tools on.
 /// - `executor` — Shared container executor.
-pub fn register_mcp_docker_tools(
-    server: &mut McpServer,
-    executor: Arc<RwLock<ContainerExecutor>>,
-) {
+pub fn register_mcp_docker_tools(server: &mut McpServer, executor: Arc<RwLock<ContainerExecutor>>) {
     register_list_containers(server, Arc::clone(&executor));
     register_create_container(server, Arc::clone(&executor));
     register_start_container(server, Arc::clone(&executor));
@@ -39,7 +36,8 @@ pub fn register_mcp_docker_tools(
 fn register_list_containers(server: &mut McpServer, executor: Arc<RwLock<ContainerExecutor>>) {
     let tool = McpTool {
         name: "docker_list_containers".into(),
-        description: "List all managed Docker containers with their IDs, names, images, and status".into(),
+        description: "List all managed Docker containers with their IDs, names, images, and status"
+            .into(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {}
@@ -54,7 +52,9 @@ fn register_list_containers(server: &mut McpServer, executor: Arc<RwLock<Contain
     };
 
     server.register_tool(tool, move |_params| {
-        let guard = executor.read().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let guard = executor
+            .read()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         let containers: Vec<serde_json::Value> = guard
             .list()
             .iter()
@@ -132,7 +132,9 @@ fn register_create_container(server: &mut McpServer, executor: Arc<RwLock<Contai
             CreateOptions::default()
         };
 
-        let mut guard = executor.write().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut guard = executor
+            .write()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         let container_id = guard
             .create(image, name, opts)
             .map_err(|e| format!("{}", e))?;
@@ -179,7 +181,9 @@ fn register_start_container(server: &mut McpServer, executor: Arc<RwLock<Contain
             .and_then(|v| v.as_str())
             .ok_or_else(|| "Missing required parameter: container_id".to_string())?;
 
-        let mut guard = executor.write().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut guard = executor
+            .write()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         guard.start(id).map_err(|e| format!("{}", e))?;
 
         Ok(serde_json::json!({
@@ -227,12 +231,11 @@ fn register_stop_container(server: &mut McpServer, executor: Arc<RwLock<Containe
             .and_then(|v| v.as_str())
             .ok_or_else(|| "Missing required parameter: container_id".to_string())?;
 
-        let timeout = params
-            .get("timeout")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(10) as u32;
+        let timeout = params.get("timeout").and_then(|v| v.as_u64()).unwrap_or(10) as u32;
 
-        let mut guard = executor.write().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut guard = executor
+            .write()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         guard.stop(id, timeout).map_err(|e| format!("{}", e))?;
 
         Ok(serde_json::json!({
@@ -249,7 +252,8 @@ fn register_stop_container(server: &mut McpServer, executor: Arc<RwLock<Containe
 fn register_remove_container(server: &mut McpServer, executor: Arc<RwLock<ContainerExecutor>>) {
     let tool = McpTool {
         name: "docker_remove_container".into(),
-        description: "Remove a Docker container. Use force=true to remove running containers.".into(),
+        description: "Remove a Docker container. Use force=true to remove running containers."
+            .into(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
@@ -285,7 +289,9 @@ fn register_remove_container(server: &mut McpServer, executor: Arc<RwLock<Contai
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        let mut guard = executor.write().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let mut guard = executor
+            .write()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         guard.remove(id, force).map_err(|e| format!("{}", e))?;
 
         Ok(serde_json::json!({
@@ -360,8 +366,12 @@ fn register_exec(server: &mut McpServer, executor: Arc<RwLock<ContainerExecutor>
         let cmd_refs: Vec<&str> = command.iter().map(|s| s.as_str()).collect();
         let timeout = Duration::from_secs(timeout_secs);
 
-        let guard = executor.read().map_err(|e| format!("Lock poisoned: {}", e))?;
-        let result = guard.exec(id, &cmd_refs, timeout).map_err(|e| format!("{}", e))?;
+        let guard = executor
+            .read()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
+        let result = guard
+            .exec(id, &cmd_refs, timeout)
+            .map_err(|e| format!("{}", e))?;
 
         Ok(serde_json::json!({
             "exit_code": result.exit_code,
@@ -412,12 +422,11 @@ fn register_logs(server: &mut McpServer, executor: Arc<RwLock<ContainerExecutor>
             .and_then(|v| v.as_str())
             .ok_or_else(|| "Missing required parameter: container_id".to_string())?;
 
-        let tail = params
-            .get("tail")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(100) as usize;
+        let tail = params.get("tail").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
 
-        let guard = executor.read().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let guard = executor
+            .read()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         let logs = guard.logs(id, tail).map_err(|e| format!("{}", e))?;
 
         Ok(serde_json::json!({
@@ -460,7 +469,9 @@ fn register_container_status(server: &mut McpServer, executor: Arc<RwLock<Contai
             .and_then(|v| v.as_str())
             .ok_or_else(|| "Missing required parameter: container_id".to_string())?;
 
-        let guard = executor.read().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let guard = executor
+            .read()
+            .map_err(|e| format!("Lock poisoned: {}", e))?;
         match guard.status(id) {
             Some(status) => Ok(serde_json::json!({
                 "container_id": id,
@@ -497,9 +508,8 @@ mod tests {
     fn test_register_mcp_docker_tools_count() {
         let server = make_server_with_tools();
         // If Docker is unavailable, 0 tools are registered (graceful skip)
-        let response = server.handle_message(
-            r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#,
-        );
+        let response =
+            server.handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#);
         let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
         let tools = parsed["result"]["tools"].as_array();
         // Either 8 tools (Docker available) or 0 (Docker unavailable)
@@ -514,9 +524,8 @@ mod tests {
     #[test]
     fn test_mcp_tool_list_schema() {
         let server = make_server_with_tools();
-        let response = server.handle_message(
-            r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#,
-        );
+        let response =
+            server.handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#);
         let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
         let tools = parsed["result"]["tools"].as_array();
         if let Some(t) = tools {
@@ -533,9 +542,8 @@ mod tests {
     #[test]
     fn test_mcp_tool_create_schema() {
         let server = make_server_with_tools();
-        let response = server.handle_message(
-            r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#,
-        );
+        let response =
+            server.handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#);
         let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
         let tools = parsed["result"]["tools"].as_array();
         if let Some(t) = tools {
@@ -551,18 +559,25 @@ mod tests {
     #[test]
     fn test_mcp_tool_annotations() {
         let server = make_server_with_tools();
-        let response = server.handle_message(
-            r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#,
-        );
+        let response =
+            server.handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#);
         let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
         let tools = parsed["result"]["tools"].as_array();
         if let Some(t) = tools {
-            let read_only_tools = ["docker_list_containers", "docker_logs", "docker_container_status"];
+            let read_only_tools = [
+                "docker_list_containers",
+                "docker_logs",
+                "docker_container_status",
+            ];
             for name in &read_only_tools {
                 if let Some(tool) = t.iter().find(|t| t["name"] == *name) {
                     if let Some(ann) = tool.get("annotations") {
                         assert_eq!(ann["readOnlyHint"], true, "{} should be read-only", name);
-                        assert_eq!(ann["destructiveHint"], false, "{} should not be destructive", name);
+                        assert_eq!(
+                            ann["destructiveHint"], false,
+                            "{} should not be destructive",
+                            name
+                        );
                     }
                 }
             }
@@ -579,9 +594,8 @@ mod tests {
     #[test]
     fn test_mcp_tool_exec_schema() {
         let server = make_server_with_tools();
-        let response = server.handle_message(
-            r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#,
-        );
+        let response =
+            server.handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#);
         let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
         let tools = parsed["result"]["tools"].as_array();
         if let Some(t) = tools {
@@ -590,7 +604,10 @@ mod tests {
                 let required = tool["inputSchema"]["required"].as_array().unwrap();
                 assert!(required.iter().any(|r| r == "container_id"));
                 assert!(required.iter().any(|r| r == "command"));
-                assert_eq!(tool["inputSchema"]["properties"]["command"]["type"], "array");
+                assert_eq!(
+                    tool["inputSchema"]["properties"]["command"]["type"],
+                    "array"
+                );
             }
         }
     }

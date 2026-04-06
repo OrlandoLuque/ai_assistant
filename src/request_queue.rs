@@ -243,11 +243,7 @@ impl RequestQueue {
 
             match decision {
                 SheddingDecision::Shed { reason } => {
-                    log::warn!(
-                        "Load shedder rejected request {}: {}",
-                        request.id,
-                        reason
-                    );
+                    log::warn!("Load shedder rejected request {}: {}", request.id, reason);
                     return false;
                 }
                 SheddingDecision::Throttle { delay } => {
@@ -646,7 +642,7 @@ mod tests {
 
     #[test]
     fn test_load_shedder_accepts_normal_load() {
-        use crate::load_shedding::{LoadSheddingConfig, LoadShedder};
+        use crate::load_shedding::{LoadShedder, LoadSheddingConfig};
 
         let shedder = Arc::new(LoadShedder::new(LoadSheddingConfig::conservative()));
         let queue = RequestQueue::new(100).with_load_shedder(shedder);
@@ -658,7 +654,7 @@ mod tests {
 
     #[test]
     fn test_load_shedder_sheds_under_pressure() {
-        use crate::load_shedding::{LoadSheddingConfig, LoadShedder, SheddingStrategy};
+        use crate::load_shedding::{LoadShedder, LoadSheddingConfig, SheddingStrategy};
 
         // Aggressive config with very low queue depth threshold
         let config = LoadSheddingConfig {
@@ -674,13 +670,11 @@ mod tests {
         let queue = RequestQueue::new(100).with_load_shedder(shedder);
 
         // Low priority may be shed (queue_depth_threshold = 0 means always under pressure)
-        let _result = queue.enqueue(
-            QueuedRequest::new("low priority").with_priority(RequestPriority::Low),
-        );
+        let _result =
+            queue.enqueue(QueuedRequest::new("low priority").with_priority(RequestPriority::Low));
         // High priority should always pass with priority protection enabled
-        let result_high = queue.enqueue(
-            QueuedRequest::new("high priority").with_priority(RequestPriority::High),
-        );
+        let result_high =
+            queue.enqueue(QueuedRequest::new("high priority").with_priority(RequestPriority::High));
         assert!(result_high);
     }
 

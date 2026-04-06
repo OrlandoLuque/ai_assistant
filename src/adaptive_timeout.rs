@@ -211,7 +211,8 @@ impl AdaptiveTimeout {
         // Saturate count at window_size.
         let prev = self.count.fetch_add(1, Ordering::Relaxed);
         if prev >= self.samples.len() as u64 {
-            self.count.store(self.samples.len() as u64, Ordering::Relaxed);
+            self.count
+                .store(self.samples.len() as u64, Ordering::Relaxed);
         }
 
         self.recalculate();
@@ -226,7 +227,9 @@ impl AdaptiveTimeout {
 
     /// Return the number of samples recorded (capped at `window_size`).
     pub fn sample_count(&self) -> u64 {
-        self.count.load(Ordering::Relaxed).min(self.samples.len() as u64)
+        self.count
+            .load(Ordering::Relaxed)
+            .min(self.samples.len() as u64)
     }
 
     /// Return a snapshot of current statistics.
@@ -234,12 +237,9 @@ impl AdaptiveTimeout {
         let sorted = self.collect_sorted_samples();
         AdaptiveTimeoutStats {
             current_timeout: self.current_timeout(),
-            p50: Self::compute_percentile(&sorted, &Percentile::P50)
-                .map(Duration::from_micros),
-            p95: Self::compute_percentile(&sorted, &Percentile::P95)
-                .map(Duration::from_micros),
-            p99: Self::compute_percentile(&sorted, &Percentile::P99)
-                .map(Duration::from_micros),
+            p50: Self::compute_percentile(&sorted, &Percentile::P50).map(Duration::from_micros),
+            p95: Self::compute_percentile(&sorted, &Percentile::P95).map(Duration::from_micros),
+            p99: Self::compute_percentile(&sorted, &Percentile::P99).map(Duration::from_micros),
             sample_count: self.sample_count(),
         }
     }

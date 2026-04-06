@@ -1226,7 +1226,7 @@ mod tests {
         assert_eq!(AutoIndexer::estimate_tokens(""), 0);
         assert_eq!(AutoIndexer::estimate_tokens("abcd"), 2); // ceil(4/3.5)
         assert_eq!(AutoIndexer::estimate_tokens("abcdefgh"), 3); // ceil(8/3.5)
-        // chars / 3.5, rounded up
+                                                                 // chars / 3.5, rounded up
         assert_eq!(AutoIndexer::estimate_tokens("hello world!"), 4); // ceil(12/3.5)
     }
 

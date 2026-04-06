@@ -671,11 +671,13 @@ impl log::Log for GuiLogger {
         };
 
         // Use the module path as component, falling back to target
-        let component = record
-            .module_path()
-            .unwrap_or_else(|| record.target());
+        let component = record.module_path().unwrap_or_else(|| record.target());
 
-        self.inner.log(DebugEntry::new(level, component, format!("{}", record.args())));
+        self.inner.log(DebugEntry::new(
+            level,
+            component,
+            format!("{}", record.args()),
+        ));
     }
 
     fn flush(&self) {}

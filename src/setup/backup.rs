@@ -7,8 +7,8 @@
 //! but available as an optional dep) for creating portable archives.
 //! Falls back to a simple gzip-based concatenation using `flate2` (always available).
 
-use flate2::write::GzEncoder;
 use flate2::read::GzDecoder;
+use flate2::write::GzEncoder;
 use flate2::Compression;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -40,7 +40,10 @@ pub fn create_backup(
     include_models: bool,
 ) -> Result<BackupInfo, String> {
     if !config_dir.exists() {
-        return Err(format!("Config directory does not exist: {}", config_dir.display()));
+        return Err(format!(
+            "Config directory does not exist: {}",
+            config_dir.display()
+        ));
     }
 
     let mut files: Vec<(PathBuf, Vec<u8>)> = Vec::new();
@@ -84,9 +87,7 @@ pub fn create_backup(
         .finish()
         .map_err(|e| format!("Failed to finalize archive: {}", e))?;
 
-    let size_bytes = std::fs::metadata(output)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let size_bytes = std::fs::metadata(output).map(|m| m.len()).unwrap_or(0);
 
     Ok(BackupInfo {
         path: output.to_path_buf(),
@@ -107,7 +108,8 @@ pub fn restore_backup(archive: &Path, target_dir: &Path) -> Result<(), String> {
         .read_to_end(&mut data)
         .map_err(|e| format!("Decompression failed: {}", e))?;
 
-    if data.len() < 13 { // magic(8) + version(1) + count(4)
+    if data.len() < 13 {
+        // magic(8) + version(1) + count(4)
         return Err("Invalid backup archive: too small".to_string());
     }
 
@@ -128,12 +130,8 @@ pub fn restore_backup(archive: &Path, target_dir: &Path) -> Result<(), String> {
         if pos + 4 > data.len() {
             return Err("Truncated archive: path length".to_string());
         }
-        let path_len = u32::from_le_bytes([
-            data[pos],
-            data[pos + 1],
-            data[pos + 2],
-            data[pos + 3],
-        ]) as usize;
+        let path_len =
+            u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
         pos += 4;
 
         if pos + path_len > data.len() {
@@ -165,7 +163,10 @@ pub fn restore_backup(archive: &Path, target_dir: &Path) -> Result<(), String> {
 
         // Security: prevent path traversal
         let rel = PathBuf::from(&path_str);
-        if rel.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+        if rel
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
             return Err(format!("Path traversal detected in archive: {}", path_str));
         }
 
@@ -214,10 +215,7 @@ fn collect_files(
             };
 
             if should_include {
-                let rel_path = path
-                    .strip_prefix(base)
-                    .unwrap_or(&path)
-                    .to_path_buf();
+                let rel_path = path.strip_prefix(base).unwrap_or(&path).to_path_buf();
                 let data = std::fs::read(&path)
                     .map_err(|e| format!("Cannot read {}: {}", path.display(), e))?;
                 files.push((rel_path, data));
@@ -258,7 +256,10 @@ mod tests {
         // Create backup
         let archive = std::env::temp_dir().join(format!("ai_backup_{}.gz", uuid::Uuid::new_v4()));
         let info = create_backup(&src_dir, &archive, false).unwrap();
-        assert_eq!(info.files_count, 2, "Should include .toml and .db but not .txt");
+        assert_eq!(
+            info.files_count, 2,
+            "Should include .toml and .db but not .txt"
+        );
         assert!(info.size_bytes > 0);
 
         // Restore to a different directory
@@ -283,10 +284,12 @@ mod tests {
 
     #[test]
     fn test_backup_empty_dir() {
-        let src_dir = std::env::temp_dir().join(format!("ai_backup_empty_{}", uuid::Uuid::new_v4()));
+        let src_dir =
+            std::env::temp_dir().join(format!("ai_backup_empty_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&src_dir);
 
-        let archive = std::env::temp_dir().join(format!("ai_backup_empty_{}.gz", uuid::Uuid::new_v4()));
+        let archive =
+            std::env::temp_dir().join(format!("ai_backup_empty_{}.gz", uuid::Uuid::new_v4()));
         let result = create_backup(&src_dir, &archive, false);
         assert!(result.is_err(), "Empty directory should produce an error");
 

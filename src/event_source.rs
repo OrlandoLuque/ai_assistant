@@ -105,15 +105,17 @@ impl EventFilter {
         match self {
             Self::TitleContains(s) => event.title.to_lowercase().contains(&s.to_lowercase()),
             Self::BodyContains(s) => event.body.to_lowercase().contains(&s.to_lowercase()),
-            Self::DataFieldEquals { path, value } => {
-                event.data.pointer(path).map(|v| v == value).unwrap_or(false)
-            }
-            Self::PriceBelow(max) => {
-                extract_price(&event.data).map(|p| p < *max).unwrap_or(false)
-            }
-            Self::PriceAbove(min) => {
-                extract_price(&event.data).map(|p| p > *min).unwrap_or(false)
-            }
+            Self::DataFieldEquals { path, value } => event
+                .data
+                .pointer(path)
+                .map(|v| v == value)
+                .unwrap_or(false),
+            Self::PriceBelow(max) => extract_price(&event.data)
+                .map(|p| p < *max)
+                .unwrap_or(false),
+            Self::PriceAbove(min) => extract_price(&event.data)
+                .map(|p| p > *min)
+                .unwrap_or(false),
         }
     }
 }
@@ -128,9 +130,7 @@ pub enum EventSourceConfig {
         secret: Option<String>,
     },
     /// RSS/Atom feed URL.
-    Rss {
-        feed_url: String,
-    },
+    Rss { feed_url: String },
     /// Web scraper: monitor a URL for changes.
     Scraper {
         url: String,
@@ -151,9 +151,7 @@ pub enum EventSourceConfig {
         broker_url: Option<String>,
     },
     /// External WebSocket server.
-    WebSocket {
-        url: String,
-    },
+    WebSocket { url: String },
     /// REST API polling.
     RestPoll {
         url: String,
@@ -320,7 +318,10 @@ impl EventSourceManager {
 
     /// Process an incoming event against all active rules.
     /// Returns a list of (rule_id, action, rendered_prompt) for matching rules.
-    pub fn process_event(&mut self, event: &IncomingEvent) -> Vec<(String, EventAction, Option<String>)> {
+    pub fn process_event(
+        &mut self,
+        event: &IncomingEvent,
+    ) -> Vec<(String, EventAction, Option<String>)> {
         let now = now_epoch_secs();
         let mut results = Vec::new();
 
@@ -365,9 +366,10 @@ impl EventSourceManager {
             }
 
             // Render prompt template
-            let prompt = rule.prompt_template.as_ref().map(|tmpl| {
-                render_prompt_template(tmpl, event)
-            });
+            let prompt = rule
+                .prompt_template
+                .as_ref()
+                .map(|tmpl| render_prompt_template(tmpl, event));
 
             // Add notification if needed
             if matches!(rule.action, EventAction::Notify | EventAction::Both) {
@@ -384,7 +386,8 @@ impl EventSourceManager {
         }
 
         // Cleanup old seen_event_ids (keep last hour only)
-        self.seen_event_ids.retain(|_, &mut seen_at| now - seen_at < 3600);
+        self.seen_event_ids
+            .retain(|_, &mut seen_at| now - seen_at < 3600);
 
         results
     }
@@ -438,7 +441,12 @@ fn render_prompt_template(template: &str, event: &IncomingEvent) -> String {
                     other => other.to_string(),
                 })
                 .unwrap_or_default();
-            result = format!("{}{}{}", &result[..start], value, &result[start + end + 2..]);
+            result = format!(
+                "{}{}{}",
+                &result[..start],
+                value,
+                &result[start + end + 2..]
+            );
         } else {
             break;
         }
@@ -548,15 +556,20 @@ fn validate_url_host(url: &str, context: &str) -> Result<(), String> {
     // SSRF protection (#11, #30)
     let lower = url.to_lowercase();
     if lower.contains("169.254.") || lower.contains("metadata.google") {
-        return Err(format!("{}: blocked SSRF target (metadata endpoint)", context));
+        return Err(format!(
+            "{}: blocked SSRF target (metadata endpoint)",
+            context
+        ));
     }
     if lower.contains("127.0.0.1") || lower.contains("localhost") || lower.contains("[::1]") {
         return Err(format!("{}: blocked loopback address", context));
     }
     // Block common private ranges
-    let private_patterns = ["10.", "192.168.", "172.16.", "172.17.", "172.18.", "172.19.",
-        "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.",
-        "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31."];
+    let private_patterns = [
+        "10.", "192.168.", "172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.",
+        "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.",
+        "172.30.", "172.31.",
+    ];
     // Extract host from URL
     if let Some(host_start) = lower.find("://") {
         let after_scheme = &lower[host_start + 3..];
@@ -608,7 +621,10 @@ pub fn validate_mqtt_topic_safe(topic: &str) -> Result<(), String> {
 // ============================================================================
 
 /// Poll an RSS feed and return new entries as events.
-pub fn poll_rss_feed(feed_url: &str, seen_ids: &mut HashMap<String, u64>) -> Result<Vec<IncomingEvent>, String> {
+pub fn poll_rss_feed(
+    feed_url: &str,
+    seen_ids: &mut HashMap<String, u64>,
+) -> Result<Vec<IncomingEvent>, String> {
     validate_url(feed_url, "RSS feed")?;
 
     let response = ureq::get(feed_url)
@@ -695,7 +711,11 @@ pub fn poll_web_scraper(
 
     // Enforce max body size (#18)
     if body.len() > MAX_SCRAPE_BODY_BYTES {
-        return Err(format!("Response too large: {} bytes (max {})", body.len(), MAX_SCRAPE_BODY_BYTES));
+        return Err(format!(
+            "Response too large: {} bytes (max {})",
+            body.len(),
+            MAX_SCRAPE_BODY_BYTES
+        ));
     }
 
     // Extract value to watch
@@ -857,10 +877,7 @@ pub fn parse_ical_events(
 }
 
 /// Process a webhook POST body into an IncomingEvent.
-pub fn process_webhook_payload(
-    rule_id: &str,
-    body: &serde_json::Value,
-) -> IncomingEvent {
+pub fn process_webhook_payload(rule_id: &str, body: &serde_json::Value) -> IncomingEvent {
     let title = body
         .get("title")
         .or_else(|| body.get("subject"))
@@ -988,7 +1005,11 @@ fn extract_xml_tag(xml: &str, tag: &str) -> Option<String> {
 fn extract_xml_attr(xml: &str, tag: &str, attr: &str) -> Option<String> {
     let open = format!("<{}", tag);
     if let Some(start) = xml.find(&open) {
-        let tag_region = &xml[start..xml[start..].find('>').map(|i| start + i + 1).unwrap_or(xml.len())];
+        let tag_region = &xml[start
+            ..xml[start..]
+                .find('>')
+                .map(|i| start + i + 1)
+                .unwrap_or(xml.len())];
         let attr_pattern = format!("{}=\"", attr);
         if let Some(attr_start) = tag_region.find(&attr_pattern) {
             let value_start = attr_start + attr_pattern.len();
@@ -1110,7 +1131,8 @@ mod tests {
     #[test]
     fn test_manager_add_and_process() {
         let mut mgr = EventSourceManager::new();
-        mgr.add_rule(sample_rule("r1", EventAction::Notify)).unwrap();
+        mgr.add_rule(sample_rule("r1", EventAction::Notify))
+            .unwrap();
 
         let event = sample_event("e1", "Test event");
         let results = mgr.process_event(&event);
@@ -1122,7 +1144,8 @@ mod tests {
     #[test]
     fn test_manager_dedup() {
         let mut mgr = EventSourceManager::new();
-        mgr.add_rule(sample_rule("r1", EventAction::Notify)).unwrap();
+        mgr.add_rule(sample_rule("r1", EventAction::Notify))
+            .unwrap();
 
         let event = sample_event("e1", "Test");
         assert_eq!(mgr.process_event(&event).len(), 1);
@@ -1148,7 +1171,8 @@ mod tests {
     fn test_manager_filter_blocks() {
         let mut mgr = EventSourceManager::new();
         let mut rule = sample_rule("r1", EventAction::Notify);
-        rule.filters.push(EventFilter::TitleContains("urgent".into()));
+        rule.filters
+            .push(EventFilter::TitleContains("urgent".into()));
         mgr.add_rule(rule).unwrap();
 
         let event = sample_event("e1", "Normal update");
@@ -1170,7 +1194,8 @@ mod tests {
     #[test]
     fn test_notifications_queue() {
         let mut mgr = EventSourceManager::new();
-        mgr.add_rule(sample_rule("r1", EventAction::Notify)).unwrap();
+        mgr.add_rule(sample_rule("r1", EventAction::Notify))
+            .unwrap();
 
         let event = sample_event("e1", "Notification test");
         mgr.process_event(&event);
@@ -1196,10 +1221,8 @@ mod tests {
             url: Some("https://shop.com/product".into()),
         };
 
-        let rendered = render_prompt_template(
-            "{{title}} at {{url}} — price: {{data.price}}",
-            &event,
-        );
+        let rendered =
+            render_prompt_template("{{title}} at {{url}} — price: {{data.price}}", &event);
         assert!(rendered.contains("[EXTERNAL EVENT"));
         assert!(rendered.contains("New Product"));
         assert!(rendered.contains("https://shop.com/product"));
@@ -1271,8 +1294,10 @@ mod tests {
     #[test]
     fn test_remove_rule() {
         let mut mgr = EventSourceManager::new();
-        mgr.add_rule(sample_rule("r1", EventAction::Notify)).unwrap();
-        mgr.add_rule(sample_rule("r2", EventAction::PromptLlm)).unwrap();
+        mgr.add_rule(sample_rule("r1", EventAction::Notify))
+            .unwrap();
+        mgr.add_rule(sample_rule("r2", EventAction::PromptLlm))
+            .unwrap();
         assert_eq!(mgr.list_rules().len(), 2);
 
         assert!(mgr.remove_rule("r1"));
@@ -1285,24 +1310,28 @@ mod tests {
         // Valid
         assert!(validate_source_config(&EventSourceConfig::Rss {
             feed_url: "https://blog.com/rss".into()
-        }).is_ok());
+        })
+        .is_ok());
 
         // SSRF blocked
         assert!(validate_source_config(&EventSourceConfig::Scraper {
             url: "http://169.254.169.254/metadata".into(),
             selector: None,
             watch_field: None,
-        }).is_err());
+        })
+        .is_err());
 
         // Bad WebSocket scheme
         assert!(validate_source_config(&EventSourceConfig::WebSocket {
             url: "http://example.com".into()
-        }).is_err());
+        })
+        .is_err());
 
         // Bad MQTT topic
         assert!(validate_source_config(&EventSourceConfig::Mqtt {
             topic: "$SYS/#".into(),
             broker_url: None,
-        }).is_err());
+        })
+        .is_err());
     }
 }

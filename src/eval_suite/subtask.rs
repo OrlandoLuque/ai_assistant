@@ -121,7 +121,9 @@ impl SubtaskAnalyzer {
                     } else {
                         pr.cost_estimates.iter().sum::<f64>() / pr.cost_estimates.len() as f64
                     };
-                    data.entry(key).or_default().push((mean_score, mean_latency, mean_cost));
+                    data.entry(key)
+                        .or_default()
+                        .push((mean_score, mean_latency, mean_cost));
                 }
             }
         }
@@ -146,28 +148,41 @@ impl SubtaskAnalyzer {
 
         // Find optimal routing (best model per subtask)
         let mut optimal_routing: HashMap<String, ModelIdentifier> = HashMap::new();
-        let all_subtasks: Vec<Subtask> = subtask_tags.values().cloned().collect::<std::collections::HashSet<_>>().into_iter().collect();
+        let all_subtasks: Vec<Subtask> = subtask_tags
+            .values()
+            .cloned()
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
 
         for subtask in &all_subtasks {
             let best = performances
                 .iter()
                 .filter(|p| &p.subtask == subtask)
-                .max_by(|a, b| a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal));
+                .max_by(|a, b| {
+                    a.score
+                        .partial_cmp(&b.score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
             if let Some(best_perf) = best {
                 optimal_routing.insert(subtask.to_string(), best_perf.model_id.clone());
             }
         }
 
         // Compute routed composite score (weighted average of best-per-subtask)
-        let routed_composite_score = Self::compute_routed_score(&performances, &optimal_routing, &all_subtasks);
+        let routed_composite_score =
+            Self::compute_routed_score(&performances, &optimal_routing, &all_subtasks);
 
         // Compute best single model score
-        let all_models: Vec<ModelIdentifier> = results.iter().map(|r| r.model_id.clone()).collect::<std::collections::HashSet<_>>().into_iter().collect();
+        let all_models: Vec<ModelIdentifier> = results
+            .iter()
+            .map(|r| r.model_id.clone())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
         let best_single_model_score = all_models
             .iter()
-            .map(|model| {
-                Self::compute_model_subtask_score(&performances, model, &all_subtasks)
-            })
+            .map(|model| Self::compute_model_subtask_score(&performances, model, &all_subtasks))
             .fold(0.0_f64, f64::max);
 
         let routing_improvement_pct = if best_single_model_score > 0.0 {
@@ -197,13 +212,20 @@ impl SubtaskAnalyzer {
         let mut count = 0;
         for subtask in subtasks {
             if let Some(model) = routing.get(&subtask.to_string()) {
-                if let Some(perf) = performances.iter().find(|p| &p.subtask == subtask && &p.model_id == model) {
+                if let Some(perf) = performances
+                    .iter()
+                    .find(|p| &p.subtask == subtask && &p.model_id == model)
+                {
                     total += perf.score;
                     count += 1;
                 }
             }
         }
-        if count > 0 { total / count as f64 } else { 0.0 }
+        if count > 0 {
+            total / count as f64
+        } else {
+            0.0
+        }
     }
 
     fn compute_model_subtask_score(
@@ -217,12 +239,19 @@ impl SubtaskAnalyzer {
         let mut total = 0.0;
         let mut count = 0;
         for subtask in subtasks {
-            if let Some(perf) = performances.iter().find(|p| &p.subtask == subtask && &p.model_id == model) {
+            if let Some(perf) = performances
+                .iter()
+                .find(|p| &p.subtask == subtask && &p.model_id == model)
+            {
                 total += perf.score;
                 count += 1;
             }
         }
-        if count > 0 { total / count as f64 } else { 0.0 }
+        if count > 0 {
+            total / count as f64
+        } else {
+            0.0
+        }
     }
 }
 
@@ -232,26 +261,34 @@ impl SubtaskAnalyzer {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use super::super::runner::{ProblemResult, TokenUsage};
     use super::super::dataset::BenchmarkSuiteType;
+    use super::super::runner::{ProblemResult, TokenUsage};
+    use super::*;
 
     fn make_run(model_name: &str, problem_scores: &[(&str, f64)]) -> BenchmarkRunResult {
-        let model = ModelIdentifier { name: model_name.into(), provider: "test".into(), variant: None };
-        let results: Vec<ProblemResult> = problem_scores.iter().map(|(id, score)| {
-            ProblemResult {
+        let model = ModelIdentifier {
+            name: model_name.into(),
+            provider: "test".into(),
+            variant: None,
+        };
+        let results: Vec<ProblemResult> = problem_scores
+            .iter()
+            .map(|(id, score)| ProblemResult {
                 problem_id: id.to_string(),
                 model_id: model.clone(),
                 responses: vec!["resp".into()],
                 scores: vec![*score],
                 passed: vec![*score >= 0.99],
                 latencies_ms: vec![100],
-                token_counts: vec![TokenUsage { input_tokens: 50, output_tokens: 20 }],
+                token_counts: vec![TokenUsage {
+                    input_tokens: 50,
+                    output_tokens: 20,
+                }],
                 cost_estimates: vec![0.001],
                 error: None,
                 metadata: HashMap::new(),
-            }
-        }).collect();
+            })
+            .collect();
 
         BenchmarkRunResult {
             run_id: format!("run_{}", model_name),
@@ -262,7 +299,10 @@ mod tests {
             started_at: 1000,
             completed_at: 1010,
             total_cost: 0.01,
-            total_tokens: TokenUsage { input_tokens: 500, output_tokens: 200 },
+            total_tokens: TokenUsage {
+                input_tokens: 500,
+                output_tokens: 200,
+            },
         }
     }
 
@@ -277,8 +317,14 @@ mod tests {
     #[test]
     fn test_subtask_analysis_basic() {
         let runs = vec![
-            make_run("gpt-4", &[("p/decompose", 0.9), ("p/codegen", 0.8), ("p/review", 0.7)]),
-            make_run("llama3", &[("p/decompose", 0.6), ("p/codegen", 0.9), ("p/review", 0.5)]),
+            make_run(
+                "gpt-4",
+                &[("p/decompose", 0.9), ("p/codegen", 0.8), ("p/review", 0.7)],
+            ),
+            make_run(
+                "llama3",
+                &[("p/decompose", 0.6), ("p/codegen", 0.9), ("p/review", 0.5)],
+            ),
         ];
         let tags = make_tags();
         let analysis = SubtaskAnalyzer::analyze(&runs, &tags);
@@ -296,7 +342,10 @@ mod tests {
         let tags = make_tags();
         let analysis = SubtaskAnalyzer::analyze(&runs, &tags);
 
-        assert_eq!(analysis.optimal_routing["TaskDecomposition"].name, "model_a");
+        assert_eq!(
+            analysis.optimal_routing["TaskDecomposition"].name,
+            "model_a"
+        );
         assert_eq!(analysis.optimal_routing["CodeGeneration"].name, "model_b");
     }
 
@@ -340,9 +389,10 @@ mod tests {
 
     #[test]
     fn test_subtask_analysis_single_model() {
-        let runs = vec![
-            make_run("only", &[("p/decompose", 0.8), ("p/codegen", 0.7), ("p/review", 0.6)]),
-        ];
+        let runs = vec![make_run(
+            "only",
+            &[("p/decompose", 0.8), ("p/codegen", 0.7), ("p/review", 0.6)],
+        )];
         let tags = make_tags();
         let analysis = SubtaskAnalyzer::analyze(&runs, &tags);
 
@@ -377,8 +427,14 @@ mod tests {
     fn test_best_single_vs_routed() {
         // When one model is universally best, routing shouldn't help
         let runs = vec![
-            make_run("best", &[("p/decompose", 0.9), ("p/codegen", 0.9), ("p/review", 0.9)]),
-            make_run("worse", &[("p/decompose", 0.5), ("p/codegen", 0.5), ("p/review", 0.5)]),
+            make_run(
+                "best",
+                &[("p/decompose", 0.9), ("p/codegen", 0.9), ("p/review", 0.9)],
+            ),
+            make_run(
+                "worse",
+                &[("p/decompose", 0.5), ("p/codegen", 0.5), ("p/review", 0.5)],
+            ),
         ];
         let tags = make_tags();
         let analysis = SubtaskAnalyzer::analyze(&runs, &tags);
@@ -390,9 +446,7 @@ mod tests {
 
     #[test]
     fn test_subtask_cost_comparison() {
-        let runs = vec![
-            make_run("model_a", &[("p/codegen", 0.8)]),
-        ];
+        let runs = vec![make_run("model_a", &[("p/codegen", 0.8)])];
         let tags = make_tags();
         let analysis = SubtaskAnalyzer::analyze(&runs, &tags);
 

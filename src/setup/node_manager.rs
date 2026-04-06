@@ -37,8 +37,8 @@ const PID_FILENAME: &str = "ai_assistant.pid";
 /// If false, it spawns in the background and writes a PID file.
 pub fn start_node(config_path: &Path, foreground: bool) -> Result<String, String> {
     // Determine the binary path (same directory as the current executable)
-    let current_exe = std::env::current_exe()
-        .map_err(|e| format!("Cannot determine executable path: {}", e))?;
+    let current_exe =
+        std::env::current_exe().map_err(|e| format!("Cannot determine executable path: {}", e))?;
     let exe_dir = current_exe.parent().unwrap_or(Path::new("."));
 
     let server_bin = if cfg!(target_os = "windows") {

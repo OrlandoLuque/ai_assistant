@@ -812,11 +812,18 @@ impl RagDb {
     /// Index a document by splitting it into chunks
     /// Returns the number of chunks indexed, or 0 if document was already up-to-date
     pub fn index_document(&self, source: &str, content: &str) -> Result<usize> {
-        crate::diag_debug!("[rag] index_document: source={}, content_len={} chars", source, content.len());
+        crate::diag_debug!(
+            "[rag] index_document: source={}, content_len={} chars",
+            source,
+            content.len()
+        );
         let (needs_index, content_hash) = self.needs_reindex(source, content)?;
 
         if !needs_index {
-            crate::diag_debug!("[rag] index_document: source={} already up-to-date, skipping", source);
+            crate::diag_debug!(
+                "[rag] index_document: source={} already up-to-date, skipping",
+                source
+            );
             // Document already indexed with same content
             return Ok(0);
         }
@@ -827,7 +834,11 @@ impl RagDb {
 
         // Index new chunks
         let chunks = chunk_document(source, content);
-        crate::diag_debug!("[rag] index_document: source={}, chunks_created={}", source, chunks.len());
+        crate::diag_debug!(
+            "[rag] index_document: source={}, chunks_created={}",
+            source,
+            chunks.len()
+        );
         let now = chrono::Utc::now().to_rfc3339();
         let mut count = 0;
         let mut total_tokens = 0;
@@ -897,7 +908,11 @@ impl RagDb {
         max_tokens: usize,
         top_k: usize,
     ) -> Result<Vec<KnowledgeChunk>> {
-        crate::diag_debug!("[rag] search_knowledge: max_tokens={}, top_k={}", max_tokens, top_k);
+        crate::diag_debug!(
+            "[rag] search_knowledge: max_tokens={}, top_k={}",
+            max_tokens,
+            top_k
+        );
         crate::diag_trace!("[rag] search_knowledge: query={:.300}", query);
         let search_terms = prepare_fts_query(query);
 
@@ -938,12 +953,20 @@ impl RagDb {
             }
         }
 
-        crate::diag_debug!("[rag] search_knowledge: found {} results, total_tokens={}", results.len(), total_tokens);
+        crate::diag_debug!(
+            "[rag] search_knowledge: found {} results, total_tokens={}",
+            results.len(),
+            total_tokens
+        );
         #[cfg(feature = "diagnostic-logging")]
         for (i, chunk) in results.iter().enumerate() {
             crate::diag_trace!(
                 "[rag] search_knowledge result[{}]: source={}, section={}, tokens={}, text={:.200}",
-                i, chunk.source, chunk.section, chunk.token_count, chunk.content
+                i,
+                chunk.source,
+                chunk.section,
+                chunk.token_count,
+                chunk.content
             );
         }
 
@@ -1039,7 +1062,10 @@ impl RagDb {
     ) -> Result<Vec<HybridKnowledgeResult>> {
         log::debug!(
             "[rag] hybrid_search: max_tokens={}, top_k={}, bm25_weight={}, semantic_weight={}",
-            max_tokens, top_k, self.hybrid_config.bm25_weight, self.hybrid_config.semantic_weight
+            max_tokens,
+            top_k,
+            self.hybrid_config.bm25_weight,
+            self.hybrid_config.semantic_weight
         );
         crate::diag_trace!("[rag] hybrid_search: query={:.300}", query);
         // Get BM25 results with scores
@@ -1163,7 +1189,11 @@ impl RagDb {
             }
         }
 
-        crate::diag_debug!("[rag] hybrid_search: final {} results, total_tokens={}", results.len(), total_tokens);
+        crate::diag_debug!(
+            "[rag] hybrid_search: final {} results, total_tokens={}",
+            results.len(),
+            total_tokens
+        );
         #[cfg(feature = "diagnostic-logging")]
         for (i, r) in results.iter().enumerate() {
             crate::diag_trace!(
@@ -2300,7 +2330,10 @@ impl DiscourseChunker {
             DiscourseType::Quote
         } else if trimmed.starts_with('|') && trimmed.ends_with('|') {
             DiscourseType::Table
-        } else if trimmed.starts_with("- ") || trimmed.starts_with("* ") || trimmed.starts_with("1.") {
+        } else if trimmed.starts_with("- ")
+            || trimmed.starts_with("* ")
+            || trimmed.starts_with("1.")
+        {
             DiscourseType::ListItem
         } else {
             DiscourseType::Paragraph
@@ -3409,10 +3442,7 @@ Total gastado: $175
         let chunker = DiscourseChunker::with_defaults();
         let text = "# Introduction\nThis is a simple introduction to the topic.\n\n## Details\nHere are some details about the subject that explain things in more depth.";
         let chunks = chunker.chunk(text);
-        assert!(
-            !chunks.is_empty(),
-            "Should produce at least one chunk"
-        );
+        assert!(!chunks.is_empty(), "Should produce at least one chunk");
     }
 
     #[test]
@@ -3534,7 +3564,8 @@ Total gastado: $175
     fn test_user_global_notes_roundtrip() {
         let (db, path) = create_temp_db();
         db.get_or_create_user("carol").expect("create");
-        db.set_user_global_notes("carol", "My important notes").expect("set");
+        db.set_user_global_notes("carol", "My important notes")
+            .expect("set");
         let notes = db.get_user_global_notes("carol").expect("get");
         assert_eq!(notes, "My important notes");
         cleanup_db(&path);
@@ -3572,7 +3603,9 @@ Total gastado: $175
     fn test_store_message_basic() {
         let (db, path) = create_temp_db();
         let msg = ChatMessage::user("Hello world");
-        let id = db.store_message("user1", "sess1", &msg, true).expect("store");
+        let id = db
+            .store_message("user1", "sess1", &msg, true)
+            .expect("store");
         assert!(id > 0);
         cleanup_db(&path);
     }
@@ -3582,9 +3615,11 @@ Total gastado: $175
         let (db, path) = create_temp_db();
         for i in 0..5 {
             let msg = ChatMessage::user(format!("Message {}", i));
-            db.store_message("user1", "sess1", &msg, true).expect("store");
+            db.store_message("user1", "sess1", &msg, true)
+                .expect("store");
         }
-        let (total, archived, _tokens) = db.get_conversation_stats("user1", "sess1").expect("stats");
+        let (total, archived, _tokens) =
+            db.get_conversation_stats("user1", "sess1").expect("stats");
         assert_eq!(total, 5);
         assert_eq!(archived, 0);
         cleanup_db(&path);
@@ -3593,10 +3628,17 @@ Total gastado: $175
     #[test]
     fn test_mark_messages_out_of_context() {
         let (db, path) = create_temp_db();
-        let id1 = db.store_message("user1", "sess1", &ChatMessage::user("First"), true).expect("s1");
-        let id2 = db.store_message("user1", "sess1", &ChatMessage::user("Second"), true).expect("s2");
-        let _id3 = db.store_message("user1", "sess1", &ChatMessage::user("Third"), true).expect("s3");
-        db.mark_messages_out_of_context("user1", "sess1", &[id1, id2]).expect("mark");
+        let id1 = db
+            .store_message("user1", "sess1", &ChatMessage::user("First"), true)
+            .expect("s1");
+        let id2 = db
+            .store_message("user1", "sess1", &ChatMessage::user("Second"), true)
+            .expect("s2");
+        let _id3 = db
+            .store_message("user1", "sess1", &ChatMessage::user("Third"), true)
+            .expect("s3");
+        db.mark_messages_out_of_context("user1", "sess1", &[id1, id2])
+            .expect("mark");
         let (total, archived, _) = db.get_conversation_stats("user1", "sess1").expect("stats");
         assert_eq!(total, 3);
         assert_eq!(archived, 2);
@@ -3606,10 +3648,30 @@ Total gastado: $175
     #[test]
     fn test_search_conversation_basic() {
         let (db, path) = create_temp_db();
-        db.store_message("u1", "s1", &ChatMessage::user("The weather is sunny today"), true).expect("store");
-        db.store_message("u1", "s1", &ChatMessage::assistant("Glad to hear about the weather"), true).expect("store");
-        db.store_message("u1", "s1", &ChatMessage::user("Tell me about Rust programming"), true).expect("store");
-        let results = db.search_conversation("u1", "s1", "weather", 2000, false).expect("search");
+        db.store_message(
+            "u1",
+            "s1",
+            &ChatMessage::user("The weather is sunny today"),
+            true,
+        )
+        .expect("store");
+        db.store_message(
+            "u1",
+            "s1",
+            &ChatMessage::assistant("Glad to hear about the weather"),
+            true,
+        )
+        .expect("store");
+        db.store_message(
+            "u1",
+            "s1",
+            &ChatMessage::user("Tell me about Rust programming"),
+            true,
+        )
+        .expect("store");
+        let results = db
+            .search_conversation("u1", "s1", "weather", 2000, false)
+            .expect("search");
         assert!(!results.is_empty());
         assert!(results.iter().any(|m| m.content.contains("weather")));
         cleanup_db(&path);
@@ -3618,10 +3680,26 @@ Total gastado: $175
     #[test]
     fn test_search_conversation_exclude_in_context() {
         let (db, path) = create_temp_db();
-        let id1 = db.store_message("u1", "s1", &ChatMessage::user("Archived weather message"), true).expect("store");
-        db.store_message("u1", "s1", &ChatMessage::user("Active weather message"), true).expect("store");
-        db.mark_messages_out_of_context("u1", "s1", &[id1]).expect("mark");
-        let results = db.search_conversation("u1", "s1", "weather", 2000, true).expect("search");
+        let id1 = db
+            .store_message(
+                "u1",
+                "s1",
+                &ChatMessage::user("Archived weather message"),
+                true,
+            )
+            .expect("store");
+        db.store_message(
+            "u1",
+            "s1",
+            &ChatMessage::user("Active weather message"),
+            true,
+        )
+        .expect("store");
+        db.mark_messages_out_of_context("u1", "s1", &[id1])
+            .expect("mark");
+        let results = db
+            .search_conversation("u1", "s1", "weather", 2000, true)
+            .expect("search");
         // Only the archived message should be returned when excluding in-context
         for msg in &results {
             assert!(!msg.in_context, "Should only return archived messages");
@@ -3632,11 +3710,19 @@ Total gastado: $175
     #[test]
     fn test_get_recent_archived_messages() {
         let (db, path) = create_temp_db();
-        let id1 = db.store_message("u1", "s1", &ChatMessage::user("Old message"), true).expect("s1");
-        let id2 = db.store_message("u1", "s1", &ChatMessage::assistant("Old reply"), true).expect("s2");
-        db.store_message("u1", "s1", &ChatMessage::user("Current message"), true).expect("s3");
-        db.mark_messages_out_of_context("u1", "s1", &[id1, id2]).expect("mark");
-        let archived = db.get_recent_archived_messages("u1", "s1", 5000).expect("get");
+        let id1 = db
+            .store_message("u1", "s1", &ChatMessage::user("Old message"), true)
+            .expect("s1");
+        let id2 = db
+            .store_message("u1", "s1", &ChatMessage::assistant("Old reply"), true)
+            .expect("s2");
+        db.store_message("u1", "s1", &ChatMessage::user("Current message"), true)
+            .expect("s3");
+        db.mark_messages_out_of_context("u1", "s1", &[id1, id2])
+            .expect("mark");
+        let archived = db
+            .get_recent_archived_messages("u1", "s1", 5000)
+            .expect("get");
         assert_eq!(archived.len(), 2);
         // Should be in chronological order
         assert!(archived[0].content.contains("Old message"));
@@ -3647,8 +3733,10 @@ Total gastado: $175
     #[test]
     fn test_clear_session_history() {
         let (db, path) = create_temp_db();
-        db.store_message("u1", "s1", &ChatMessage::user("Message 1"), true).expect("store");
-        db.store_message("u1", "s1", &ChatMessage::user("Message 2"), true).expect("store");
+        db.store_message("u1", "s1", &ChatMessage::user("Message 1"), true)
+            .expect("store");
+        db.store_message("u1", "s1", &ChatMessage::user("Message 2"), true)
+            .expect("store");
         db.clear_session_history("u1", "s1").expect("clear");
         let (total, _, _) = db.get_conversation_stats("u1", "s1").expect("stats");
         assert_eq!(total, 0);
@@ -3658,7 +3746,9 @@ Total gastado: $175
     #[test]
     fn test_conversation_default_wrappers() {
         let (db, path) = create_temp_db();
-        let id = db.store_message_default("sess1", &ChatMessage::user("Default user msg"), true).expect("store");
+        let id = db
+            .store_message_default("sess1", &ChatMessage::user("Default user msg"), true)
+            .expect("store");
         assert!(id > 0);
         let (total, _, _) = db.get_conversation_stats_default("sess1").expect("stats");
         assert_eq!(total, 1);
@@ -3675,8 +3765,10 @@ Total gastado: $175
     #[test]
     fn test_knowledge_notes_set_get() {
         let (db, path) = create_temp_db();
-        db.index_document("doc1", "# Title\nSome content here").expect("index");
-        db.set_knowledge_notes("user1", "doc1", "Important notes about doc1").expect("set");
+        db.index_document("doc1", "# Title\nSome content here")
+            .expect("index");
+        db.set_knowledge_notes("user1", "doc1", "Important notes about doc1")
+            .expect("set");
         let notes = db.get_knowledge_notes("user1", "doc1").expect("get");
         assert_eq!(notes, Some("Important notes about doc1".to_string()));
         cleanup_db(&path);
@@ -3693,7 +3785,8 @@ Total gastado: $175
     #[test]
     fn test_knowledge_notes_delete() {
         let (db, path) = create_temp_db();
-        db.set_knowledge_notes("user1", "doc1", "Some notes").expect("set");
+        db.set_knowledge_notes("user1", "doc1", "Some notes")
+            .expect("set");
         db.delete_knowledge_notes("user1", "doc1").expect("delete");
         let notes = db.get_knowledge_notes("user1", "doc1").expect("get");
         assert_eq!(notes, None);
@@ -3703,9 +3796,12 @@ Total gastado: $175
     #[test]
     fn test_get_all_knowledge_notes() {
         let (db, path) = create_temp_db();
-        db.set_knowledge_notes("user1", "doc_a", "Notes A").expect("set");
-        db.set_knowledge_notes("user1", "doc_b", "Notes B").expect("set");
-        db.set_knowledge_notes("user1", "doc_c", "Notes C").expect("set");
+        db.set_knowledge_notes("user1", "doc_a", "Notes A")
+            .expect("set");
+        db.set_knowledge_notes("user1", "doc_b", "Notes B")
+            .expect("set");
+        db.set_knowledge_notes("user1", "doc_c", "Notes C")
+            .expect("set");
         let all = db.get_all_knowledge_notes("user1").expect("get all");
         assert_eq!(all.len(), 3);
         // Check that all sources are present
@@ -3719,8 +3815,10 @@ Total gastado: $175
     #[test]
     fn test_knowledge_notes_user_isolation() {
         let (db, path) = create_temp_db();
-        db.set_knowledge_notes("alice", "doc1", "Alice's notes").expect("set alice");
-        db.set_knowledge_notes("bob", "doc1", "Bob's notes").expect("set bob");
+        db.set_knowledge_notes("alice", "doc1", "Alice's notes")
+            .expect("set alice");
+        db.set_knowledge_notes("bob", "doc1", "Bob's notes")
+            .expect("set bob");
         let alice_notes = db.get_knowledge_notes("alice", "doc1").expect("get alice");
         let bob_notes = db.get_knowledge_notes("bob", "doc1").expect("get bob");
         assert_eq!(alice_notes, Some("Alice's notes".to_string()));
@@ -3731,7 +3829,8 @@ Total gastado: $175
     #[test]
     fn test_knowledge_notes_default_wrappers() {
         let (db, path) = create_temp_db();
-        db.set_knowledge_notes_default("doc1", "Default user notes").expect("set");
+        db.set_knowledge_notes_default("doc1", "Default user notes")
+            .expect("set");
         let notes = db.get_knowledge_notes_default("doc1").expect("get");
         assert_eq!(notes, Some("Default user notes".to_string()));
         let all = db.get_all_knowledge_notes_default().expect("get all");
@@ -3749,7 +3848,8 @@ Total gastado: $175
     #[test]
     fn test_session_notes_set_get() {
         let (db, path) = create_temp_db();
-        db.set_session_notes("user1", "sess1", "Session context notes").expect("set");
+        db.set_session_notes("user1", "sess1", "Session context notes")
+            .expect("set");
         let notes = db.get_session_notes("user1", "sess1").expect("get");
         assert_eq!(notes, Some("Session context notes".to_string()));
         cleanup_db(&path);
@@ -3758,7 +3858,8 @@ Total gastado: $175
     #[test]
     fn test_session_notes_delete() {
         let (db, path) = create_temp_db();
-        db.set_session_notes("user1", "sess1", "Temp notes").expect("set");
+        db.set_session_notes("user1", "sess1", "Temp notes")
+            .expect("set");
         db.delete_session_notes("user1", "sess1").expect("delete");
         let notes = db.get_session_notes("user1", "sess1").expect("get");
         assert_eq!(notes, None);
@@ -3768,7 +3869,9 @@ Total gastado: $175
     #[test]
     fn test_session_notes_nonexistent() {
         let (db, path) = create_temp_db();
-        let notes = db.get_session_notes("user1", "nonexistent_session").expect("get");
+        let notes = db
+            .get_session_notes("user1", "nonexistent_session")
+            .expect("get");
         assert_eq!(notes, None);
         cleanup_db(&path);
     }
@@ -3789,9 +3892,15 @@ Total gastado: $175
     #[test]
     fn test_hybrid_search_bm25_only() {
         let (db, path) = create_temp_db();
-        db.index_document("doc1", "# Rust Programming\nRust is a systems programming language focused on safety").expect("index");
+        db.index_document(
+            "doc1",
+            "# Rust Programming\nRust is a systems programming language focused on safety",
+        )
+        .expect("index");
         // With semantic_enabled=false (default), hybrid search should still work using BM25 only
-        let results = db.search_knowledge_hybrid("Rust programming", 2000, 5).expect("search");
+        let results = db
+            .search_knowledge_hybrid("Rust programming", 2000, 5)
+            .expect("search");
         assert!(!results.is_empty());
         // All results should have bm25_score > 0
         for r in &results {
@@ -3805,15 +3914,25 @@ Total gastado: $175
     #[test]
     fn test_hybrid_search_combined_score_calculation() {
         let (db, path) = create_temp_db();
-        db.index_document("doc1", "# Machine Learning\nMachine learning is a subset of artificial intelligence").expect("index");
-        let results = db.search_knowledge_hybrid("machine learning", 2000, 5).expect("search");
+        db.index_document(
+            "doc1",
+            "# Machine Learning\nMachine learning is a subset of artificial intelligence",
+        )
+        .expect("index");
+        let results = db
+            .search_knowledge_hybrid("machine learning", 2000, 5)
+            .expect("search");
         // Without semantic, combined_score should equal bm25_score * bm25_weight
         let config = &db.hybrid_config;
         for r in &results {
             let expected = r.bm25_score * config.bm25_weight;
-            assert!((r.combined_score - expected).abs() < 0.01,
+            assert!(
+                (r.combined_score - expected).abs() < 0.01,
                 "combined_score {} should be bm25_score {} * bm25_weight {}",
-                r.combined_score, r.bm25_score, config.bm25_weight);
+                r.combined_score,
+                r.bm25_score,
+                config.bm25_weight
+            );
         }
         cleanup_db(&path);
     }
@@ -3852,7 +3971,8 @@ Total gastado: $175
     #[test]
     fn test_set_get_source_priority() {
         let (db, path) = create_temp_db();
-        db.index_document("important_doc", "# Important\nVery important content").expect("index");
+        db.index_document("important_doc", "# Important\nVery important content")
+            .expect("index");
         db.set_source_priority("important_doc", 10).expect("set");
         let priority = db.get_source_priority("important_doc").expect("get");
         assert_eq!(priority, 10);
@@ -3872,11 +3992,23 @@ Total gastado: $175
     fn test_search_respects_priority_ordering() {
         let (db, path) = create_temp_db();
         // Index two docs with overlapping content
-        db.index_document("low_priority", "# Guide\nRust programming guide for beginners").expect("index1");
-        db.index_document("high_priority", "# Manual\nRust programming manual for experts").expect("index2");
-        db.set_source_priority("high_priority", 100).expect("set priority");
-        db.set_source_priority("low_priority", 1).expect("set priority");
-        let results = db.search_knowledge("Rust programming", 2000, 10).expect("search");
+        db.index_document(
+            "low_priority",
+            "# Guide\nRust programming guide for beginners",
+        )
+        .expect("index1");
+        db.index_document(
+            "high_priority",
+            "# Manual\nRust programming manual for experts",
+        )
+        .expect("index2");
+        db.set_source_priority("high_priority", 100)
+            .expect("set priority");
+        db.set_source_priority("low_priority", 1)
+            .expect("set priority");
+        let results = db
+            .search_knowledge("Rust programming", 2000, 10)
+            .expect("search");
         assert!(results.len() >= 2);
         // High priority source should appear first
         assert_eq!(results[0].source, "high_priority");
@@ -3901,11 +4033,13 @@ Total gastado: $175
     #[test]
     fn test_export_import_replace_mode() {
         let (db, path) = create_temp_db();
-        db.index_document("original", "# Original\nOriginal content here").expect("index");
+        db.index_document("original", "# Original\nOriginal content here")
+            .expect("index");
         let export = db.export_knowledge().expect("export");
 
         // Import in replace mode should clear existing and add exported
-        db.index_document("extra", "# Extra\nExtra content").expect("index extra");
+        db.index_document("extra", "# Extra\nExtra content")
+            .expect("index extra");
         let imported = db.import_knowledge(&export, true).expect("import replace");
         assert!(imported > 0);
 
@@ -3921,11 +4055,13 @@ Total gastado: $175
     #[test]
     fn test_export_import_merge_mode() {
         let (db, path) = create_temp_db();
-        db.index_document("doc_a", "# Doc A\nContent A").expect("index a");
+        db.index_document("doc_a", "# Doc A\nContent A")
+            .expect("index a");
         let export = db.export_knowledge().expect("export");
 
         // Add another doc, then import in merge mode
-        db.index_document("doc_b", "# Doc B\nContent B").expect("index b");
+        db.index_document("doc_b", "# Doc B\nContent B")
+            .expect("index b");
         let _imported = db.import_knowledge(&export, false).expect("import merge");
 
         // Both should exist
@@ -3939,14 +4075,19 @@ Total gastado: $175
     #[test]
     fn test_export_import_file_roundtrip() {
         let (db, path) = create_temp_db();
-        db.index_document("file_test", "# File Test\nRoundtrip through filesystem").expect("index");
+        db.index_document("file_test", "# File Test\nRoundtrip through filesystem")
+            .expect("index");
 
-        let export_path = std::env::temp_dir().join(format!("rag_export_{}.json", uuid::Uuid::new_v4()));
-        db.export_knowledge_to_file(&export_path).expect("export to file");
+        let export_path =
+            std::env::temp_dir().join(format!("rag_export_{}.json", uuid::Uuid::new_v4()));
+        db.export_knowledge_to_file(&export_path)
+            .expect("export to file");
 
         // Create a fresh DB and import
         let (db2, path2) = create_temp_db();
-        let imported = db2.import_knowledge_from_file(&export_path, false).expect("import from file");
+        let imported = db2
+            .import_knowledge_from_file(&export_path, false)
+            .expect("import from file");
         assert!(imported > 0);
 
         let sources = db2.list_indexed_sources().expect("list");
@@ -3973,7 +4114,8 @@ Total gastado: $175
     fn test_is_document_indexed() {
         let (db, path) = create_temp_db();
         assert!(!db.is_document_indexed("doc1").expect("check before"));
-        db.index_document("doc1", "# Doc\nContent here").expect("index");
+        db.index_document("doc1", "# Doc\nContent here")
+            .expect("index");
         assert!(db.is_document_indexed("doc1").expect("check after"));
         cleanup_db(&path);
     }
@@ -3986,7 +4128,8 @@ Total gastado: $175
         assert!(info.is_none());
 
         // Index it
-        db.index_document("doc1", "# Title\nContent with multiple words for tokens").expect("index");
+        db.index_document("doc1", "# Title\nContent with multiple words for tokens")
+            .expect("index");
         let info = db.get_source_info("doc1").expect("info");
         assert!(info.is_some());
         let (hash, chunk_count, total_tokens, updated_at) = info.unwrap();
@@ -4004,13 +4147,23 @@ Total gastado: $175
     #[test]
     fn test_search_filtered_single_source() {
         let (db, path) = create_temp_db();
-        db.index_document("rust_guide", "# Rust\nRust programming language guide").expect("index1");
-        db.index_document("python_guide", "# Python\nPython programming language guide").expect("index2");
+        db.index_document("rust_guide", "# Rust\nRust programming language guide")
+            .expect("index1");
+        db.index_document(
+            "python_guide",
+            "# Python\nPython programming language guide",
+        )
+        .expect("index2");
         let sources = vec!["rust_guide".to_string()];
-        let results = db.search_knowledge_filtered("programming", &sources, 2000, 5).expect("search");
+        let results = db
+            .search_knowledge_filtered("programming", &sources, 2000, 5)
+            .expect("search");
         assert!(!results.is_empty());
         for r in &results {
-            assert_eq!(r.source, "rust_guide", "Should only return results from filtered source");
+            assert_eq!(
+                r.source, "rust_guide",
+                "Should only return results from filtered source"
+            );
         }
         cleanup_db(&path);
     }
@@ -4018,15 +4171,23 @@ Total gastado: $175
     #[test]
     fn test_search_filtered_multiple_sources() {
         let (db, path) = create_temp_db();
-        db.index_document("doc_a", "# Doc A\nProgramming concepts in doc A").expect("index a");
-        db.index_document("doc_b", "# Doc B\nProgramming concepts in doc B").expect("index b");
-        db.index_document("doc_c", "# Doc C\nProgramming concepts in doc C").expect("index c");
+        db.index_document("doc_a", "# Doc A\nProgramming concepts in doc A")
+            .expect("index a");
+        db.index_document("doc_b", "# Doc B\nProgramming concepts in doc B")
+            .expect("index b");
+        db.index_document("doc_c", "# Doc C\nProgramming concepts in doc C")
+            .expect("index c");
         let sources = vec!["doc_a".to_string(), "doc_b".to_string()];
-        let results = db.search_knowledge_filtered("programming", &sources, 2000, 10).expect("search");
+        let results = db
+            .search_knowledge_filtered("programming", &sources, 2000, 10)
+            .expect("search");
         assert!(!results.is_empty());
         for r in &results {
-            assert!(r.source == "doc_a" || r.source == "doc_b",
-                "Should only return from doc_a or doc_b, got: {}", r.source);
+            assert!(
+                r.source == "doc_a" || r.source == "doc_b",
+                "Should only return from doc_a or doc_b, got: {}",
+                r.source
+            );
         }
         cleanup_db(&path);
     }
@@ -4034,9 +4195,12 @@ Total gastado: $175
     #[test]
     fn test_search_auto_falls_back_to_bm25() {
         let (db, path) = create_temp_db();
-        db.index_document("doc1", "# Topic\nSome searchable content about algorithms").expect("index");
+        db.index_document("doc1", "# Topic\nSome searchable content about algorithms")
+            .expect("index");
         // Without semantic enabled, auto should fall back to BM25
-        let results = db.search_knowledge_auto("algorithms", 2000, 5).expect("search");
+        let results = db
+            .search_knowledge_auto("algorithms", 2000, 5)
+            .expect("search");
         assert!(!results.is_empty());
         // Results should be KnowledgeChunk (not HybridKnowledgeResult)
         assert!(!results[0].content.is_empty());
@@ -4047,9 +4211,7 @@ Total gastado: $175
 
     #[test]
     fn test_suggest_chunk_boundaries_with_llm_mock() {
-        let mock = crate::llm_enhance::MockLlm::new(
-            r#"{"boundaries":[50,100]}"#,
-        );
+        let mock = crate::llm_enhance::MockLlm::new(r#"{"boundaries":[50,100]}"#);
         let content = "A".repeat(50) + &"B".repeat(50) + &"C".repeat(50);
         let chunks = suggest_chunk_boundaries_with_llm("test.md", &content, true, Some(&mock));
         assert!(!chunks.is_empty());
@@ -4068,11 +4230,10 @@ Total gastado: $175
 
     #[test]
     fn test_suggest_chunk_boundaries_with_llm_disabled() {
-        let mock = crate::llm_enhance::MockLlm::new(
-            r#"{"boundaries":[5]}"#,
-        );
+        let mock = crate::llm_enhance::MockLlm::new(r#"{"boundaries":[5]}"#);
         let content = "# Title\nContent here.";
-        let chunks_disabled = suggest_chunk_boundaries_with_llm("test.md", content, false, Some(&mock));
+        let chunks_disabled =
+            suggest_chunk_boundaries_with_llm("test.md", content, false, Some(&mock));
         let chunks_heuristic = chunk_document("test.md", content);
         // When disabled, should match heuristic exactly
         assert_eq!(chunks_disabled.len(), chunks_heuristic.len());

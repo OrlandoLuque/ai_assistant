@@ -69,7 +69,10 @@ fn main() -> ExitCode {
     // Check for updates before exit
     if let Ok(info) = update_rx.try_recv() {
         eprintln!();
-        eprintln!("  Update available: v{} \u{2192} v{}", info.current, info.latest);
+        eprintln!(
+            "  Update available: v{} \u{2192} v{}",
+            info.current, info.latest
+        );
         eprintln!("  Download: {}", info.url);
         eprintln!();
     }

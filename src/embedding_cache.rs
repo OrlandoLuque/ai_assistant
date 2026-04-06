@@ -659,7 +659,11 @@ mod tests {
 
         // With 24-byte limit and 16 bytes per entry, should only keep ~1-2 entries
         let stats = cache.stats();
-        assert!(stats.entries <= 3, "Should have limited entries: got {}", stats.entries);
+        assert!(
+            stats.entries <= 3,
+            "Should have limited entries: got {}",
+            stats.entries
+        );
     }
 
     #[test]
@@ -668,7 +672,7 @@ mod tests {
         let mut cache = EmbeddingCache::new(config);
 
         cache.set("a", "model", vec![1.0, 2.0, 3.0]); // 3 floats = 12 bytes
-        cache.set("b", "model", vec![4.0, 5.0]);       // 2 floats = 8 bytes
+        cache.set("b", "model", vec![4.0, 5.0]); // 2 floats = 8 bytes
 
         let stats = cache.stats();
         assert_eq!(stats.memory_bytes, 20); // 12 + 8

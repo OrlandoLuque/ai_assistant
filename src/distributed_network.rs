@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 use tokio::runtime::Runtime;
 use tokio::sync::{mpsc, oneshot};
@@ -2160,10 +2160,7 @@ impl EventLoop {
             .filter(|id| **id != self.node_id)
             .filter_map(|id| peers.get(id).map(|p| (*id, p.reputation)))
             .collect();
-        scored.sort_by(|a, b| {
-            b.1.partial_cmp(&a.1)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         scored.into_iter().take(count).map(|(id, _)| id).collect()
     }
 
@@ -2311,9 +2308,8 @@ impl HintedHandoffQueue {
             .unwrap_or_default()
             .as_secs();
         let before = self.queue.len();
-        self.queue.retain(|entry| {
-            now.saturating_sub(entry.created_at) < entry.ttl_seconds
-        });
+        self.queue
+            .retain(|entry| now.saturating_sub(entry.created_at) < entry.ttl_seconds);
         before - self.queue.len()
     }
 
@@ -2363,12 +2359,15 @@ impl DeadNodeTracker {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        self.dead_nodes.insert(node_id.clone(), DeadNodeInfo {
-            node_id,
-            last_seen: now,
-            marked_dead_at: now,
-            data_replicated: false,
-        });
+        self.dead_nodes.insert(
+            node_id.clone(),
+            DeadNodeInfo {
+                node_id,
+                last_seen: now,
+                marked_dead_at: now,
+                data_replicated: false,
+            },
+        );
     }
 
     /// Mark a node as alive, removing it from the dead nodes set.
@@ -2490,7 +2489,10 @@ pub enum QuorumMode {
     /// Best-effort, degrade gracefully
     Flexible,
     /// Different quorum levels for reads and writes
-    Mixed { reads: QuorumLevel, writes: QuorumLevel },
+    Mixed {
+        reads: QuorumLevel,
+        writes: QuorumLevel,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -3881,7 +3883,10 @@ mod tests {
             resolved_value: None,
         };
         conflict.resolve(&ConflictResolution::HighestVersion);
-        assert_eq!(conflict.resolution, Some(ConflictResolution::HighestVersion));
+        assert_eq!(
+            conflict.resolution,
+            Some(ConflictResolution::HighestVersion)
+        );
         assert_eq!(conflict.resolved_value, Some(b"v10".to_vec()));
     }
 
@@ -3916,14 +3921,12 @@ mod tests {
     fn test_conflict_resolution_manual() {
         let mut conflict = VersionConflict {
             key: "k".to_string(),
-            versions: vec![
-                VersionedValue {
-                    value: b"a".to_vec(),
-                    version: 1,
-                    node_id: vec![1],
-                    timestamp: 100,
-                },
-            ],
+            versions: vec![VersionedValue {
+                value: b"a".to_vec(),
+                version: 1,
+                node_id: vec![1],
+                timestamp: 100,
+            }],
             resolution: None,
             resolved_value: None,
         };
@@ -3949,14 +3952,12 @@ mod tests {
     fn test_version_conflict_serialization() {
         let conflict = VersionConflict {
             key: "ser:test".to_string(),
-            versions: vec![
-                VersionedValue {
-                    value: b"hello".to_vec(),
-                    version: 1,
-                    node_id: vec![1, 2],
-                    timestamp: 12345,
-                },
-            ],
+            versions: vec![VersionedValue {
+                value: b"hello".to_vec(),
+                version: 1,
+                node_id: vec![1, 2],
+                timestamp: 12345,
+            }],
             resolution: Some(ConflictResolution::LastWriteWins),
             resolved_value: Some(b"hello".to_vec()),
         };
@@ -3970,9 +3971,15 @@ mod tests {
 
     #[test]
     fn test_conflict_resolution_eq() {
-        assert_eq!(ConflictResolution::LastWriteWins, ConflictResolution::LastWriteWins);
+        assert_eq!(
+            ConflictResolution::LastWriteWins,
+            ConflictResolution::LastWriteWins
+        );
         assert_eq!(ConflictResolution::Merge, ConflictResolution::Merge);
-        assert_ne!(ConflictResolution::LastWriteWins, ConflictResolution::HighestVersion);
+        assert_ne!(
+            ConflictResolution::LastWriteWins,
+            ConflictResolution::HighestVersion
+        );
         assert_ne!(ConflictResolution::Manual, ConflictResolution::Merge);
     }
 

@@ -174,10 +174,7 @@ pub enum CredentialError {
         sources_tried: Vec<String>,
     },
     /// A source contained data but in an invalid format.
-    InvalidFormat {
-        source: String,
-        detail: String,
-    },
+    InvalidFormat { source: String, detail: String },
 }
 
 impl fmt::Display for CredentialError {
@@ -357,7 +354,9 @@ impl CredentialSource for StaticSource {
     }
 
     fn resolve(&self, key_name: &str) -> Option<SecureString> {
-        self.entries.get(key_name).map(|v| SecureString::new(v.clone()))
+        self.entries
+            .get(key_name)
+            .map(|v| SecureString::new(v.clone()))
     }
 }
 
@@ -671,14 +670,8 @@ mod tests {
     #[test]
     fn test_chain_priority_first_wins() {
         let mut resolver = CredentialResolver::new();
-        resolver.add_source(
-            StaticSource::new()
-                .insert("SHARED_KEY", "first_source"),
-        );
-        resolver.add_source(
-            StaticSource::new()
-                .insert("SHARED_KEY", "second_source"),
-        );
+        resolver.add_source(StaticSource::new().insert("SHARED_KEY", "first_source"));
+        resolver.add_source(StaticSource::new().insert("SHARED_KEY", "second_source"));
 
         let result = resolver.resolve("SHARED_KEY");
         assert!(result.is_some());
@@ -689,10 +682,7 @@ mod tests {
     fn test_chain_fallback_to_second() {
         let mut resolver = CredentialResolver::new();
         resolver.add_source(StaticSource::new()); // empty — will miss
-        resolver.add_source(
-            StaticSource::new()
-                .insert("ONLY_IN_SECOND", "second_value"),
-        );
+        resolver.add_source(StaticSource::new().insert("ONLY_IN_SECOND", "second_value"));
 
         let result = resolver.resolve("ONLY_IN_SECOND");
         assert!(result.is_some());
@@ -702,10 +692,7 @@ mod tests {
     #[test]
     fn test_resolve_or_error_success() {
         let mut resolver = CredentialResolver::new();
-        resolver.add_source(
-            StaticSource::new()
-                .insert("FOUND_KEY", "found_value"),
-        );
+        resolver.add_source(StaticSource::new().insert("FOUND_KEY", "found_value"));
 
         let result = resolver.resolve_or_error("FOUND_KEY");
         assert!(result.is_ok());

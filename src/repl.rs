@@ -320,9 +320,15 @@ impl ReplEngine {
     pub fn format_config(&self) -> String {
         let mut out = String::new();
         out.push_str("Current configuration:\n");
-        out.push_str(&format!("  Prompt:          {}\n", self.config.prompt_string));
+        out.push_str(&format!(
+            "  Prompt:          {}\n",
+            self.config.prompt_string
+        ));
         out.push_str(&format!("  Max history:     {}\n", self.config.max_history));
-        out.push_str(&format!("  Show metrics:    {}\n", self.config.show_metrics));
+        out.push_str(&format!(
+            "  Show metrics:    {}\n",
+            self.config.show_metrics
+        ));
         out.push_str(&format!(
             "  Show timestamps: {}\n",
             self.config.show_timestamps
@@ -330,10 +336,7 @@ impl ReplEngine {
         out.push_str(&format!("  Model:           {}\n", self.session.model));
         out.push_str(&format!(
             "  Template:        {}",
-            self.session
-                .template
-                .as_deref()
-                .unwrap_or("(none)")
+            self.session.template.as_deref().unwrap_or("(none)")
         ));
         out
     }
@@ -559,10 +562,7 @@ mod tests {
         let hist = engine.history();
         assert_eq!(hist.len(), 2);
         assert_eq!(hist[0], ("user".to_string(), "Hello".to_string()));
-        assert_eq!(
-            hist[1],
-            ("assistant".to_string(), "Hi there!".to_string())
-        );
+        assert_eq!(hist[1], ("assistant".to_string(), "Hi there!".to_string()));
     }
 
     #[test]
@@ -602,7 +602,10 @@ mod tests {
         assert_eq!(engine2.history()[0].0, "user");
         assert_eq!(engine2.history()[0].1, "What is Rust?");
         assert_eq!(engine2.history()[1].0, "assistant");
-        assert_eq!(engine2.history()[1].1, "Rust is a systems programming language.");
+        assert_eq!(
+            engine2.history()[1].1,
+            "Rust is a systems programming language."
+        );
 
         // Clean up
         let _ = fs::remove_file(&path);

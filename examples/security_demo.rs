@@ -7,18 +7,38 @@
 //! access control (RBAC), and audit logging.
 
 use ai_assistant::{
-    // PII detection
-    PiiConfig, PiiDetector, PiiType, RedactionStrategy, SensitivityLevel,
-    // Content moderation
-    ContentModerator, ModerationAction, ModerationCategory, ModerationConfig, ModerationStats,
-    // Injection detection
-    DetectionSensitivity, InjectionConfig, InjectionDetector,
     // Access control
-    AccessControlEntry, AccessControlManager, Permission, ResourceType, Role,
+    AccessControlEntry,
+    AccessControlManager,
     // Audit logging
-    AuditConfig, AuditEvent, AuditEventType, AuditLogger,
+    AuditConfig,
+    AuditEvent,
+    AuditEventType,
+    AuditLogger,
+    // Content moderation
+    ContentModerator,
+    // Injection detection
+    DetectionSensitivity,
+    InjectionConfig,
+    InjectionDetector,
     // Sanitization & rate limiting
-    InputSanitizer, RateLimitConfig, RateLimiter, SanitizationConfig,
+    InputSanitizer,
+    ModerationAction,
+    ModerationCategory,
+    ModerationConfig,
+    ModerationStats,
+    Permission,
+    // PII detection
+    PiiConfig,
+    PiiDetector,
+    PiiType,
+    RateLimitConfig,
+    RateLimiter,
+    RedactionStrategy,
+    ResourceType,
+    Role,
+    SanitizationConfig,
+    SensitivityLevel,
 };
 
 fn main() {
@@ -97,7 +117,8 @@ fn main() {
             res.flags.len(),
         );
     }
-    println!("  -- Stats: total={}, pass_rate={:.0}%\n",
+    println!(
+        "  -- Stats: total={}, pass_rate={:.0}%\n",
         stats.total_checks,
         stats.pass_rate() * 100.0,
     );
@@ -124,10 +145,7 @@ fn main() {
             !res.detected, res.risk_score, res.risk_level, res.recommendation,
         );
         for d in &res.detections {
-            println!(
-                "      -> {:?}: \"{}\"",
-                d.injection_type, d.matched_text
-            );
+            println!("      -> {:?}: \"{}\"", d.injection_type, d.matched_text);
         }
     }
     println!();
@@ -184,9 +202,12 @@ fn main() {
     let usage = limiter.get_usage();
     println!(
         "  Usage: {}/{} requests, {}/{} tokens, concurrent={}/{}\n",
-        usage.requests_used, usage.requests_limit,
-        usage.tokens_used, usage.tokens_limit,
-        usage.concurrent_active, usage.concurrent_limit,
+        usage.requests_used,
+        usage.requests_limit,
+        usage.tokens_used,
+        usage.tokens_limit,
+        usage.concurrent_active,
+        usage.concurrent_limit,
     );
 
     // ------------------------------------------------------------------
@@ -225,17 +246,18 @@ fn main() {
     ];
     for (user, rt, perm) in &checks {
         let res = acl.check_permission(user, *rt, *perm, None);
-        let status = if res.is_allowed() { "ALLOWED" } else { "DENIED" };
+        let status = if res.is_allowed() {
+            "ALLOWED"
+        } else {
+            "DENIED"
+        };
         println!("  {} -> {:?}/{:?} = {}", user, rt, perm, status);
     }
 
     // Explicit deny overrides roles
     acl.deny("alice", ResourceType::Settings, Permission::Admin);
     let denied = acl.check_permission("alice", ResourceType::Settings, Permission::Admin, None);
-    println!(
-        "  alice (after explicit deny) -> {:?}\n",
-        denied
-    );
+    println!("  alice (after explicit deny) -> {:?}\n", denied);
 
     // ------------------------------------------------------------------
     // 7. Audit Logging
@@ -265,10 +287,7 @@ fn main() {
             .with_session("sess-001")
             .with_detail("tokens", "128"),
     );
-    logger.log(
-        AuditEvent::new(AuditEventType::RateLimitHit)
-            .with_user("bob"),
-    );
+    logger.log(AuditEvent::new(AuditEventType::RateLimitHit).with_user("bob"));
     logger.log(
         AuditEvent::new(AuditEventType::Error)
             .with_user("carol")

@@ -1638,9 +1638,7 @@ mod tests {
     fn test_registry_unregister() {
         let mut registry = ToolRegistry::new();
         let tool = ToolDefinition::new("temp", "Temporary tool");
-        registry.register(tool, |call| {
-            ToolResult::success(&call.id, &call.name, "ok")
-        });
+        registry.register(tool, |call| ToolResult::success(&call.id, &call.name, "ok"));
         assert!(registry.get_tool("temp").is_some());
 
         registry.unregister("temp");
@@ -1844,10 +1842,7 @@ mod tests {
 
         // Does not contain @: fails
         let mut args2 = HashMap::new();
-        args2.insert(
-            "email".to_string(),
-            Value::String("no-at-sign".to_string()),
-        );
+        args2.insert("email".to_string(), Value::String("no-at-sign".to_string()));
         let err = validator.validate(&args2).unwrap_err();
         assert_eq!(err.len(), 1);
         assert!(err[0].contains("pattern"));

@@ -1,7 +1,7 @@
 //! Multi-backend OCR pipeline.
 
 use super::image_extraction::{ExtractedImage, ImageFormat};
-use super::ocr_engine::{OcrEngine, OcrConfig, OcrLine, OcrResult};
+use super::ocr_engine::{OcrConfig, OcrEngine, OcrLine, OcrResult};
 
 // ============================================================================
 // OCR Integration (WS9)

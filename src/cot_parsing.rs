@@ -730,14 +730,8 @@ Therefore, the answer is 42.
         // Should have issues for: insufficient steps, missing Verification, missing Conclusion, no answer
         assert!(validation.issues.len() >= 3);
         assert!(validation.issues.iter().any(|i| i.contains("Insufficient")));
-        assert!(validation
-            .issues
-            .iter()
-            .any(|i| i.contains("Verification")));
-        assert!(validation
-            .issues
-            .iter()
-            .any(|i| i.contains("Conclusion")));
+        assert!(validation.issues.iter().any(|i| i.contains("Verification")));
+        assert!(validation.issues.iter().any(|i| i.contains("Conclusion")));
         assert!(validation.issues.iter().any(|i| i.contains("answer")));
     }
 }

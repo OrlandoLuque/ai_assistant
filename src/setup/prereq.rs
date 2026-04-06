@@ -103,7 +103,9 @@ fn check_ollama() -> PrereqStatus {
         .ok()
         .and_then(|o| {
             if o.status.success() {
-                String::from_utf8(o.stdout).ok().map(|s| s.trim().to_string())
+                String::from_utf8(o.stdout)
+                    .ok()
+                    .map(|s| s.trim().to_string())
             } else {
                 None
             }
@@ -150,7 +152,9 @@ fn check_docker() -> PrereqStatus {
         .ok()
         .and_then(|o| {
             if o.status.success() {
-                String::from_utf8(o.stdout).ok().map(|s| s.trim().to_string())
+                String::from_utf8(o.stdout)
+                    .ok()
+                    .map(|s| s.trim().to_string())
             } else {
                 None
             }
@@ -180,7 +184,9 @@ fn check_gpu() -> PrereqStatus {
         .ok()
         .and_then(|o| {
             if o.status.success() {
-                String::from_utf8(o.stdout).ok().map(|s| s.trim().to_string())
+                String::from_utf8(o.stdout)
+                    .ok()
+                    .map(|s| s.trim().to_string())
             } else {
                 None
             }

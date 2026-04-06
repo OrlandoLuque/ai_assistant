@@ -7,8 +7,8 @@
 //! Note: actual voice transport requires a network peer.
 
 use ai_assistant::{
-    WebRtcConfig, WebRtcTransport, WebRtcAudioCodec, WebRtcIceCandidate,
-    IceCandidateType, TurnServer, SdpAnswer,
+    IceCandidateType, SdpAnswer, TurnServer, WebRtcAudioCodec, WebRtcConfig, WebRtcIceCandidate,
+    WebRtcTransport,
 };
 
 fn main() {
@@ -20,13 +20,11 @@ fn main() {
             "stun:stun.l.google.com:19302".to_string(),
             "stun:stun1.l.google.com:19302".to_string(),
         ],
-        turn_servers: vec![
-            TurnServer {
-                url: "turn:turn.example.com:3478".to_string(),
-                username: "user".to_string(),
-                credential: "pass".to_string(),
-            },
-        ],
+        turn_servers: vec![TurnServer {
+            url: "turn:turn.example.com:3478".to_string(),
+            username: "user".to_string(),
+            credential: "pass".to_string(),
+        }],
         audio_codec: WebRtcAudioCodec::Opus,
         sample_rate: 48000,
         enable_dtls: true,
@@ -43,13 +41,19 @@ fn main() {
 
     // 2. Create a transport
     let mut transport = WebRtcTransport::new(config);
-    println!("\nTransport created (connected: {})", transport.is_connected());
+    println!(
+        "\nTransport created (connected: {})",
+        transport.is_connected()
+    );
 
     // 3. Generate an SDP offer
     let offer = transport.create_offer();
     println!("\nSDP Offer:");
     println!("  Session ID: {}", offer.session_id);
-    println!("  SDP (first 100 chars): {}", &offer.sdp[..offer.sdp.len().min(100)]);
+    println!(
+        "  SDP (first 100 chars): {}",
+        &offer.sdp[..offer.sdp.len().min(100)]
+    );
 
     // 4. Simulate receiving a remote SDP answer
     let answer = SdpAnswer {

@@ -180,7 +180,9 @@ impl HomeAssistantBackend {
 impl HomeBackend for HomeAssistantBackend {
     fn list_devices(&self, domain: Option<&str>) -> Result<Vec<DeviceState>, String> {
         let states = self.get("/api/states")?;
-        let arr = states.as_array().ok_or("Expected JSON array from /api/states")?;
+        let arr = states
+            .as_array()
+            .ok_or("Expected JSON array from /api/states")?;
         let devices: Vec<DeviceState> = arr
             .iter()
             .filter(|item| {
@@ -263,8 +265,14 @@ fn validate_domain(domain: &str) -> Result<(), String> {
     if domain.is_empty() || domain.len() > 64 {
         return Err("Invalid domain length".into());
     }
-    if !domain.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-        return Err(format!("Invalid domain '{}': alphanumeric and underscore only", domain));
+    if !domain
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return Err(format!(
+            "Invalid domain '{}': alphanumeric and underscore only",
+            domain
+        ));
     }
     Ok(())
 }
@@ -273,7 +281,10 @@ fn validate_service_name(service: &str) -> Result<(), String> {
     if service.is_empty() || service.len() > 64 {
         return Err("Invalid service name length".into());
     }
-    if !service.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+    if !service
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
         return Err(format!(
             "Invalid service name '{}': alphanumeric and underscore only",
             service
@@ -348,11 +359,21 @@ pub fn register_home_tools(server: &mut McpServer, backend: Arc<Mutex<dyn HomeBa
     {
         let backend = backend.clone();
         server.register_tool(
-            McpTool::new("home_get_device", "Get the current state of a specific device.")
-                .with_property("entity_id", "string", "Entity ID (e.g., 'light.living_room', 'climate.bedroom')", true)
-                .with_annotations(ann_ro.clone()),
+            McpTool::new(
+                "home_get_device",
+                "Get the current state of a specific device.",
+            )
+            .with_property(
+                "entity_id",
+                "string",
+                "Entity ID (e.g., 'light.living_room', 'climate.bedroom')",
+                true,
+            )
+            .with_annotations(ann_ro.clone()),
             move |args| {
-                let entity_id = args.get("entity_id").and_then(|v| v.as_str())
+                let entity_id = args
+                    .get("entity_id")
+                    .and_then(|v| v.as_str())
                     .ok_or("Missing required parameter: entity_id")?;
                 let guard = backend.lock().map_err(|e| format!("Lock error: {}", e))?;
                 let device = guard.get_device(entity_id)?;
@@ -406,11 +427,16 @@ pub fn register_home_tools(server: &mut McpServer, backend: Arc<Mutex<dyn HomeBa
     {
         let backend = backend.clone();
         server.register_tool(
-            McpTool::new("home_turn_off", "Turn off a device (light, switch, fan, climate, media_player, etc.).")
-                .with_property("entity_id", "string", "Entity ID (required)", true)
-                .with_annotations(ann_action.clone()),
+            McpTool::new(
+                "home_turn_off",
+                "Turn off a device (light, switch, fan, climate, media_player, etc.).",
+            )
+            .with_property("entity_id", "string", "Entity ID (required)", true)
+            .with_annotations(ann_action.clone()),
             move |args| {
-                let entity_id = args.get("entity_id").and_then(|v| v.as_str())
+                let entity_id = args
+                    .get("entity_id")
+                    .and_then(|v| v.as_str())
                     .ok_or("Missing required parameter: entity_id")?;
                 let domain = extract_domain(entity_id)?;
                 let guard = backend.lock().map_err(|e| format!("Lock error: {}", e))?;
@@ -427,7 +453,9 @@ pub fn register_home_tools(server: &mut McpServer, backend: Arc<Mutex<dyn HomeBa
                 .with_property("entity_id", "string", "Entity ID (required)", true)
                 .with_annotations(ann_toggle),
             move |args| {
-                let entity_id = args.get("entity_id").and_then(|v| v.as_str())
+                let entity_id = args
+                    .get("entity_id")
+                    .and_then(|v| v.as_str())
                     .ok_or("Missing required parameter: entity_id")?;
                 let domain = extract_domain(entity_id)?;
                 let guard = backend.lock().map_err(|e| format!("Lock error: {}", e))?;
@@ -482,10 +510,17 @@ pub fn register_home_tools(server: &mut McpServer, backend: Arc<Mutex<dyn HomeBa
         let backend = backend.clone();
         server.register_tool(
             McpTool::new("home_activate_scene", "Activate a scene.")
-                .with_property("entity_id", "string", "Scene entity ID (e.g., 'scene.movie_night')", true)
+                .with_property(
+                    "entity_id",
+                    "string",
+                    "Scene entity ID (e.g., 'scene.movie_night')",
+                    true,
+                )
                 .with_annotations(ann_action.clone()),
             move |args| {
-                let entity_id = args.get("entity_id").and_then(|v| v.as_str())
+                let entity_id = args
+                    .get("entity_id")
+                    .and_then(|v| v.as_str())
                     .ok_or("Missing required parameter: entity_id")?;
                 let guard = backend.lock().map_err(|e| format!("Lock error: {}", e))?;
                 guard.call_service("scene", "turn_on", entity_id, None)
@@ -497,8 +532,11 @@ pub fn register_home_tools(server: &mut McpServer, backend: Arc<Mutex<dyn HomeBa
     {
         let backend = backend.clone();
         server.register_tool(
-            McpTool::new("home_list_automations", "List automations and their current state.")
-                .with_annotations(ann_ro),
+            McpTool::new(
+                "home_list_automations",
+                "List automations and their current state.",
+            )
+            .with_annotations(ann_ro),
             move |_args| {
                 let guard = backend.lock().map_err(|e| format!("Lock error: {}", e))?;
                 let automations = guard.list_automations()?;
@@ -512,7 +550,12 @@ pub fn register_home_tools(server: &mut McpServer, backend: Arc<Mutex<dyn HomeBa
         let backend = backend.clone();
         server.register_tool(
             McpTool::new("home_trigger_automation", "Trigger an automation manually.")
-                .with_property("entity_id", "string", "Automation entity ID (e.g., 'automation.morning_routine')", true)
+                .with_property(
+                    "entity_id",
+                    "string",
+                    "Automation entity ID (e.g., 'automation.morning_routine')",
+                    true,
+                )
                 .with_annotations(McpToolAnnotation {
                     title: None,
                     read_only_hint: Some(false),
@@ -521,7 +564,9 @@ pub fn register_home_tools(server: &mut McpServer, backend: Arc<Mutex<dyn HomeBa
                     open_world_hint: Some(true),
                 }),
             move |args| {
-                let entity_id = args.get("entity_id").and_then(|v| v.as_str())
+                let entity_id = args
+                    .get("entity_id")
+                    .and_then(|v| v.as_str())
                     .ok_or("Missing required parameter: entity_id")?;
                 let guard = backend.lock().map_err(|e| format!("Lock error: {}", e))?;
                 guard.call_service("automation", "trigger", entity_id, None)
@@ -586,15 +631,23 @@ pub fn register_home_management_tools(
     {
         let mgr = listener_mgr.clone();
         server.register_tool(
-            McpTool::new("home_unsubscribe", "Stop listening for device events. Pass listener_id or omit to stop all.")
-                .with_property("listener_id", "string", "Listener ID (omit to stop all)", false)
-                .with_annotations(McpToolAnnotation {
-                    title: Some("Unsubscribe Device Events".into()),
-                    read_only_hint: Some(false),
-                    destructive_hint: Some(false),
-                    idempotent_hint: Some(true),
-                    open_world_hint: Some(false),
-                }),
+            McpTool::new(
+                "home_unsubscribe",
+                "Stop listening for device events. Pass listener_id or omit to stop all.",
+            )
+            .with_property(
+                "listener_id",
+                "string",
+                "Listener ID (omit to stop all)",
+                false,
+            )
+            .with_annotations(McpToolAnnotation {
+                title: Some("Unsubscribe Device Events".into()),
+                read_only_hint: Some(false),
+                destructive_hint: Some(false),
+                idempotent_hint: Some(true),
+                open_world_hint: Some(false),
+            }),
             move |args| {
                 let mut guard = mgr.lock().map_err(|e| format!("Lock error: {}", e))?;
                 if let Some(id) = args.get("listener_id").and_then(|v| v.as_str()) {
@@ -810,15 +863,20 @@ impl HomeCommandInterpreter {
     ) -> HomeCommandInterpretation {
         // Heuristic baseline
         let lower = command.to_lowercase();
-        let heuristic_action = if lower.contains("turn on") || lower.contains("switch on")
-            || lower.contains("enciende") || lower.contains("encender")
+        let heuristic_action = if lower.contains("turn on")
+            || lower.contains("switch on")
+            || lower.contains("enciende")
+            || lower.contains("encender")
         {
             "turn_on"
-        } else if lower.contains("turn off") || lower.contains("switch off")
-            || lower.contains("apaga") || lower.contains("apagar")
+        } else if lower.contains("turn off")
+            || lower.contains("switch off")
+            || lower.contains("apaga")
+            || lower.contains("apagar")
         {
             "turn_off"
-        } else if lower.contains("temperature") || lower.contains("temp")
+        } else if lower.contains("temperature")
+            || lower.contains("temp")
             || lower.contains("temperatura")
         {
             "set_temperature"
@@ -828,17 +886,16 @@ impl HomeCommandInterpreter {
             "toggle"
         };
 
-        let heuristic_target = if lower.contains("living") || lower.contains("salon")
-            || lower.contains("salón")
-        {
-            "light.living_room"
-        } else if lower.contains("bedroom") || lower.contains("dormitorio") {
-            "light.bedroom"
-        } else if lower.contains("kitchen") || lower.contains("cocina") {
-            "light.kitchen"
-        } else {
-            "light.unknown"
-        };
+        let heuristic_target =
+            if lower.contains("living") || lower.contains("salon") || lower.contains("salón") {
+                "light.living_room"
+            } else if lower.contains("bedroom") || lower.contains("dormitorio") {
+                "light.bedroom"
+            } else if lower.contains("kitchen") || lower.contains("cocina") {
+                "light.kitchen"
+            } else {
+                "light.unknown"
+            };
 
         let heuristic = HomeCommandInterpretation {
             action: heuristic_action.to_string(),
@@ -1003,8 +1060,12 @@ mod tests {
 
     #[test]
     fn test_get_device() {
-        let backend = MockHomeBackend::new()
-            .with_device(climate("climate.living", "Living HVAC", "idle", 20.0));
+        let backend = MockHomeBackend::new().with_device(climate(
+            "climate.living",
+            "Living HVAC",
+            "idle",
+            20.0,
+        ));
 
         let device = backend.get_device("climate.living").expect("get");
         assert_eq!(device.name, "Living HVAC");
@@ -1022,8 +1083,8 @@ mod tests {
 
     #[test]
     fn test_call_service_turn_on() {
-        let backend = MockHomeBackend::new()
-            .with_device(light("light.living", "Living Room", "off"));
+        let backend =
+            MockHomeBackend::new().with_device(light("light.living", "Living Room", "off"));
 
         let data = serde_json::json!({"brightness": 200});
         backend
@@ -1093,7 +1154,8 @@ mod tests {
             llm_enhanced: false,
         };
         let interpreter = HomeCommandInterpreter::new(config);
-        let result = interpreter.interpret_home_command_with_llm("Turn on the living room light", None);
+        let result =
+            interpreter.interpret_home_command_with_llm("Turn on the living room light", None);
         assert_eq!(result.action, "turn_on");
         assert_eq!(result.target, "light.living_room");
         assert!(result.value.is_none());
@@ -1101,33 +1163,29 @@ mod tests {
 
     #[test]
     fn test_interpret_command_with_mock_llm() {
-        let config = HomeCommandConfig {
-            llm_enhanced: true,
-        };
+        let config = HomeCommandConfig { llm_enhanced: true };
         let interpreter = HomeCommandInterpreter::new(config);
         let mock = crate::llm_enhance::MockLlm::new(
             "{\"action\":\"set_temperature\",\"target\":\"climate.bedroom\",\"value\":22}",
         );
-        let result = interpreter.interpret_home_command_with_llm(
-            "Set the bedroom to 22 degrees",
-            Some(&mock),
+        let result = interpreter
+            .interpret_home_command_with_llm("Set the bedroom to 22 degrees", Some(&mock));
+        assert_eq!(
+            result.action, "set_temperature",
+            "Expected LLM action, got: {}",
+            result.action
         );
-        assert_eq!(result.action, "set_temperature", "Expected LLM action, got: {}", result.action);
         assert_eq!(result.target, "climate.bedroom");
         assert!(result.value.is_some());
     }
 
     #[test]
     fn test_interpret_command_llm_fallback_on_failure() {
-        let config = HomeCommandConfig {
-            llm_enhanced: true,
-        };
+        let config = HomeCommandConfig { llm_enhanced: true };
         let interpreter = HomeCommandInterpreter::new(config);
         let failing = crate::llm_enhance::FailingMockLlm;
-        let result = interpreter.interpret_home_command_with_llm(
-            "Turn off the kitchen light",
-            Some(&failing),
-        );
+        let result = interpreter
+            .interpret_home_command_with_llm("Turn off the kitchen light", Some(&failing));
         // Should fall back to heuristic (not crash)
         assert_eq!(result.action, "turn_off");
         assert_eq!(result.target, "light.kitchen");

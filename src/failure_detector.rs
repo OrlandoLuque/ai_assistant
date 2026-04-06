@@ -400,7 +400,9 @@ impl HeartbeatManager {
             return None; // Not failed
         }
 
-        let time_dead = detector.last_heartbeat_ago().unwrap_or(Duration::from_secs(0));
+        let time_dead = detector
+            .last_heartbeat_ago()
+            .unwrap_or(Duration::from_secs(0));
         let permanent_phi = self.config.phi_threshold * 1.5; // e.g., 12.0 if threshold=8.0
         let permanent_duration = Duration::from_secs(300); // 5 minutes
 

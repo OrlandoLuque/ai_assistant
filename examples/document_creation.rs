@@ -85,7 +85,10 @@ The project is on track for the v1.0 release.
     println!("    Name: {}", pdf_request.output_name);
     println!("    Source: {:?}", pdf_request.source_format);
     println!("    Output: {:?}", pdf_request.output_format);
-    println!("    Metadata keys: {:?}", pdf_request.metadata.keys().collect::<Vec<_>>());
+    println!(
+        "    Metadata keys: {:?}",
+        pdf_request.metadata.keys().collect::<Vec<_>>()
+    );
 
     let html_content = r#"<html>
 <body>
@@ -123,14 +126,11 @@ The project is on track for the v1.0 release.
     println!("  Docker available: {}", docker_available);
 
     if docker_available {
-        let executor = Arc::new(RwLock::new(
-            ContainerExecutor::new(ai_assistant::ContainerConfig::default())?,
-        ));
-        let mut pipeline = DocumentPipeline::new(
-            DocumentPipelineConfig::default(),
-            executor,
-            folder,
-        );
+        let executor = Arc::new(RwLock::new(ContainerExecutor::new(
+            ai_assistant::ContainerConfig::default(),
+        )?));
+        let mut pipeline =
+            DocumentPipeline::new(DocumentPipelineConfig::default(), executor, folder);
 
         // Generate PDF from Markdown.
         match pipeline.create(&pdf_request) {
@@ -160,7 +160,9 @@ The project is on track for the v1.0 release.
         println!("    let executor = Arc::new(RwLock::new(ContainerExecutor::new(config)?));");
         println!("    let mut pipeline = DocumentPipeline::new(config, executor, folder);");
         println!("    let result = pipeline.create(&pdf_request)?;");
-        println!("    println!(\"Created {{}} ({{}} bytes)\", result.filename, result.size_bytes);");
+        println!(
+            "    println!(\"Created {{}} ({{}} bytes)\", result.filename, result.size_bytes);"
+        );
     }
 
     println!("\n=== Done ===");

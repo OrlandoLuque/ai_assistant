@@ -36,7 +36,9 @@ pub trait AsyncProviderPlugin: Send + Sync {
     fn is_available_async(&self) -> Pin<Box<dyn Future<Output = bool> + Send + '_>>;
 
     /// List available models from this provider.
-    fn list_models_async(&self) -> Pin<Box<dyn Future<Output = Result<Vec<ModelInfo>>> + Send + '_>>;
+    fn list_models_async(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<ModelInfo>>> + Send + '_>>;
 
     /// Generate a complete (non-streaming) response.
     fn generate_async(
@@ -130,7 +132,9 @@ impl AsyncProviderPlugin for SyncToAsyncAdapter {
         })
     }
 
-    fn list_models_async(&self) -> Pin<Box<dyn Future<Output = Result<Vec<ModelInfo>>> + Send + '_>> {
+    fn list_models_async(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<ModelInfo>>> + Send + '_>> {
         let inner = Arc::clone(&self.inner);
         Box::pin(async move {
             tokio::task::spawn_blocking(move || inner.list_models())
@@ -184,9 +188,7 @@ impl AsyncProviderPlugin for SyncToAsyncAdapter {
                 }
             });
 
-            let result = blocking_result
-                .await
-                .context("spawn_blocking join error")?;
+            let result = blocking_result.await.context("spawn_blocking join error")?;
 
             // Wait for forwarding to finish
             let _ = forward_handle.await;
@@ -321,9 +323,7 @@ impl ProviderPlugin for AsyncToSyncAdapter {
                 }
             }
 
-            stream_handle
-                .await
-                .context("streaming task join error")?
+            stream_handle.await.context("streaming task join error")?
         })
     }
 
@@ -334,10 +334,12 @@ impl ProviderPlugin for AsyncToSyncAdapter {
         system_prompt: &str,
         tools: &[ToolDefinition],
     ) -> Result<(String, Vec<ToolCall>)> {
-        self.runtime.block_on(
-            self.inner
-                .generate_with_tools_async(config, messages, system_prompt, tools),
-        )
+        self.runtime.block_on(self.inner.generate_with_tools_async(
+            config,
+            messages,
+            system_prompt,
+            tools,
+        ))
     }
 
     fn generate_embeddings(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
@@ -547,7 +549,9 @@ mod tests {
             tx: tokio::sync::mpsc::Sender<AiResponse>,
         ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
             Box::pin(async move {
-                let _ = tx.send(AiResponse::Complete("async stream".to_string())).await;
+                let _ = tx
+                    .send(AiResponse::Complete("async stream".to_string()))
+                    .await;
                 Ok(())
             })
         }
@@ -642,7 +646,10 @@ mod tests {
     async fn test_sync_to_async_list_models() {
         let provider = Arc::new(MockSyncProvider) as Arc<dyn ProviderPlugin>;
         let adapter = SyncToAsyncAdapter::new(provider);
-        let models = adapter.list_models_async().await.expect("should list models");
+        let models = adapter
+            .list_models_async()
+            .await
+            .expect("should list models");
         assert_eq!(models.len(), 1);
         assert_eq!(models[0].name, "mock-model");
     }

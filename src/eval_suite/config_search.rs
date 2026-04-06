@@ -4,7 +4,9 @@
 //! then sweep each dimension independently, tracking quality/cost/latency evolution
 //! and using Welch's t-test for statistical significance.
 
-use super::agent_config::{ConfigMeasurement, EvalAgentConfig, MultiModelGenerator, SearchDimension};
+use super::agent_config::{
+    ConfigMeasurement, EvalAgentConfig, MultiModelGenerator, SearchDimension,
+};
 use super::dataset::{BenchmarkDataset, BenchmarkProblem};
 use super::runner::{BenchmarkRunResult, ModelIdentifier, ProblemResult, TokenUsage};
 use super::scoring::{DefaultScorer, ProblemScorer};
@@ -69,8 +71,16 @@ impl std::fmt::Display for SearchObjective {
             Self::MaxQuality => write!(f, "MaxQuality"),
             Self::MinCost { min_quality } => write!(f, "MinCost(min_q={:.2})", min_quality),
             Self::CostEfficiency => write!(f, "CostEfficiency"),
-            Self::Weighted { quality_weight, cost_weight, latency_weight } => {
-                write!(f, "Weighted(q={:.1},c={:.1},l={:.1})", quality_weight, cost_weight, latency_weight)
+            Self::Weighted {
+                quality_weight,
+                cost_weight,
+                latency_weight,
+            } => {
+                write!(
+                    f,
+                    "Weighted(q={:.1},c={:.1},l={:.1})",
+                    quality_weight, cost_weight, latency_weight
+                )
             }
         }
     }
@@ -174,7 +184,10 @@ impl ConfigSearchResult {
 
     /// Get all iterations that produced improvements.
     pub fn improvements(&self) -> Vec<&SearchIteration> {
-        self.iterations.iter().filter(|i| i.is_improvement).collect()
+        self.iterations
+            .iter()
+            .filter(|i| i.is_improvement)
+            .collect()
     }
 
     /// Generate a human-readable summary of the search results.
@@ -192,7 +205,11 @@ impl ConfigSearchResult {
         ));
         lines.push(format!(
             "Improvement: quality {}{:.1}% | cost {}{:.1}%",
-            if self.quality_improvement_pct >= 0.0 { "+" } else { "" },
+            if self.quality_improvement_pct >= 0.0 {
+                "+"
+            } else {
+                ""
+            },
             self.quality_improvement_pct,
             if self.cost_change_pct >= 0.0 { "+" } else { "" },
             self.cost_change_pct,
@@ -354,7 +371,11 @@ impl ConfigSearchEngine {
                 // Check if this is an improvement
                 let is_improvement = self.is_better(&measurement, &current_best, p_value, alpha);
 
-                let obj_score = self.objective_score(if is_improvement { &measurement } else { &current_best });
+                let obj_score = self.objective_score(if is_improvement {
+                    &measurement
+                } else {
+                    &current_best
+                });
 
                 iterations.push(SearchIteration {
                     iteration: iteration_counter,
@@ -437,9 +458,14 @@ impl ConfigSearchEngine {
                     let scores_candidate = measurement.per_problem_scores();
                     let scores_best = current_best.per_problem_scores();
                     let (_, p_value) = welch_t_test(&scores_candidate, &scores_best);
-                    let is_improvement = self.is_better(&measurement, &current_best, p_value, alpha);
+                    let is_improvement =
+                        self.is_better(&measurement, &current_best, p_value, alpha);
 
-                    let obj_score = self.objective_score(if is_improvement { &measurement } else { &current_best });
+                    let obj_score = self.objective_score(if is_improvement {
+                        &measurement
+                    } else {
+                        &current_best
+                    });
 
                     iterations.push(SearchIteration {
                         iteration: iteration_counter,
@@ -476,7 +502,8 @@ impl ConfigSearchEngine {
 
         // Step 5: Build result
         let quality_improvement_pct = if baseline_measurement.quality > 0.0 {
-            ((current_best.quality - baseline_measurement.quality) / baseline_measurement.quality) * 100.0
+            ((current_best.quality - baseline_measurement.quality) / baseline_measurement.quality)
+                * 100.0
         } else if current_best.quality > 0.0 {
             100.0
         } else {
@@ -579,10 +606,7 @@ impl ConfigSearchEngine {
                     total_output_tokens += output_tokens;
 
                     all_scores.push(score);
-                    subtask_scores
-                        .entry(subtask_str)
-                        .or_default()
-                        .push(score);
+                    subtask_scores.entry(subtask_str).or_default().push(score);
 
                     results.push(ProblemResult {
                         problem_id: problem.id.clone(),
@@ -602,10 +626,7 @@ impl ConfigSearchEngine {
                 }
                 Err(e) => {
                     all_scores.push(0.0);
-                    subtask_scores
-                        .entry(subtask_str)
-                        .or_default()
-                        .push(0.0);
+                    subtask_scores.entry(subtask_str).or_default().push(0.0);
 
                     results.push(ProblemResult {
                         problem_id: problem.id.clone(),
@@ -705,16 +726,12 @@ impl ConfigSearchEngine {
                     f64::NEG_INFINITY
                 }
             }
-            SearchObjective::CostEfficiency => {
-                m.quality / m.cost.max(1e-10)
-            }
+            SearchObjective::CostEfficiency => m.quality / m.cost.max(1e-10),
             SearchObjective::Weighted {
                 quality_weight,
                 cost_weight,
                 latency_weight,
-            } => {
-                quality_weight * m.quality - cost_weight * m.cost - latency_weight * m.latency_ms
-            }
+            } => quality_weight * m.quality - cost_weight * m.cost - latency_weight * m.latency_ms,
         }
     }
 
@@ -753,10 +770,7 @@ impl ConfigSearchEngine {
         if let Some(template) = config.subtask_templates.get(subtask) {
             return template
                 .replace("{prompt}", &problem.prompt)
-                .replace(
-                    "{system}",
-                    problem.system_prompt.as_deref().unwrap_or(""),
-                );
+                .replace("{system}", problem.system_prompt.as_deref().unwrap_or(""));
         }
 
         // Check for subtask-specific chain-of-thought
@@ -796,16 +810,8 @@ fn welch_t_test(group_a: &[f64], group_b: &[f64]) -> (f64, f64) {
     let mean_a = group_a.iter().sum::<f64>() / n_a;
     let mean_b = group_b.iter().sum::<f64>() / n_b;
 
-    let var_a = group_a
-        .iter()
-        .map(|x| (x - mean_a).powi(2))
-        .sum::<f64>()
-        / (n_a - 1.0);
-    let var_b = group_b
-        .iter()
-        .map(|x| (x - mean_b).powi(2))
-        .sum::<f64>()
-        / (n_b - 1.0);
+    let var_a = group_a.iter().map(|x| (x - mean_a).powi(2)).sum::<f64>() / (n_a - 1.0);
+    let var_b = group_b.iter().map(|x| (x - mean_b).powi(2)).sum::<f64>() / (n_b - 1.0);
 
     let se = (var_a / n_a + var_b / n_b).sqrt();
     if se == 0.0 {
@@ -840,10 +846,10 @@ fn normal_cdf(x: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::dataset::*;
-    use std::sync::Arc;
+    use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     fn model(name: &str, provider: &str) -> ModelIdentifier {
         ModelIdentifier {
@@ -877,7 +883,10 @@ mod tests {
             } else if prompt.contains("factorial") || prompt.contains("function") {
                 // Code problem
                 if is_good {
-                    Ok("def factorial(n):\n    if n <= 1: return 1\n    return n * factorial(n-1)".to_string())
+                    Ok(
+                        "def factorial(n):\n    if n <= 1: return 1\n    return n * factorial(n-1)"
+                            .to_string(),
+                    )
                 } else {
                     Ok("def factorial(n): return 0".to_string())
                 }
@@ -903,12 +912,42 @@ mod tests {
             "test",
             BenchmarkSuiteType::Custom("config_search_test".into()),
             vec![
-                make_mc_problem("p/mc1", "Q1: A) 3 B) 4 C) 5 D) 6", vec!["A", "B", "C", "D"], "B"),
-                make_mc_problem("p/mc2", "Q2: A) x B) y C) z D) w", vec!["A", "B", "C", "D"], "B"),
-                make_mc_problem("p/mc3", "Q3: A) a B) b C) c D) d", vec!["A", "B", "C", "D"], "B"),
-                make_mc_problem("p/mc4", "Q4: A) 1 B) 2 C) 3 D) 4", vec!["A", "B", "C", "D"], "B"),
-                make_mc_problem("p/mc5", "Q5: A) p B) q C) r D) s", vec!["A", "B", "C", "D"], "B"),
-                make_mc_problem("p/mc6", "Q6: A) i B) j C) k D) l", vec!["A", "B", "C", "D"], "B"),
+                make_mc_problem(
+                    "p/mc1",
+                    "Q1: A) 3 B) 4 C) 5 D) 6",
+                    vec!["A", "B", "C", "D"],
+                    "B",
+                ),
+                make_mc_problem(
+                    "p/mc2",
+                    "Q2: A) x B) y C) z D) w",
+                    vec!["A", "B", "C", "D"],
+                    "B",
+                ),
+                make_mc_problem(
+                    "p/mc3",
+                    "Q3: A) a B) b C) c D) d",
+                    vec!["A", "B", "C", "D"],
+                    "B",
+                ),
+                make_mc_problem(
+                    "p/mc4",
+                    "Q4: A) 1 B) 2 C) 3 D) 4",
+                    vec!["A", "B", "C", "D"],
+                    "B",
+                ),
+                make_mc_problem(
+                    "p/mc5",
+                    "Q5: A) p B) q C) r D) s",
+                    vec!["A", "B", "C", "D"],
+                    "B",
+                ),
+                make_mc_problem(
+                    "p/mc6",
+                    "Q6: A) i B) j C) k D) l",
+                    vec!["A", "B", "C", "D"],
+                    "B",
+                ),
             ],
         )
     }
@@ -1006,14 +1045,8 @@ mod tests {
         let engine = ConfigSearchEngine::new(ConfigSearchConfig::default(), gen);
 
         let config = EvalAgentConfig::new("routed", model("default", "test"))
-            .with_subtask_model(
-                &Subtask::ReasoningChain,
-                model("reasoner", "test"),
-            )
-            .with_subtask_model(
-                &Subtask::CodeGeneration,
-                model("coder", "test"),
-            );
+            .with_subtask_model(&Subtask::ReasoningChain, model("reasoner", "test"))
+            .with_subtask_model(&Subtask::CodeGeneration, model("coder", "test"));
 
         let dataset = make_test_dataset();
         let tags = make_test_tags();
@@ -1037,8 +1070,7 @@ mod tests {
         };
         let engine = ConfigSearchEngine::new(config, gen);
 
-        let baseline = EvalAgentConfig::new("base", model("m", "p"))
-            .with_temperature(0.5);
+        let baseline = EvalAgentConfig::new("base", model("m", "p")).with_temperature(0.5);
         let dims = vec![SearchDimension::Temperature {
             values: vec![0.0, 0.3, 0.7, 1.0],
         }];
@@ -1116,7 +1148,9 @@ mod tests {
 
         let baseline = EvalAgentConfig::new("base", model("m", "p"));
         let dims = vec![
-            SearchDimension::Temperature { values: vec![0.0, 0.5, 1.0] },
+            SearchDimension::Temperature {
+                values: vec![0.0, 0.5, 1.0],
+            },
             SearchDimension::ChainOfThought,
         ];
         let dataset = make_test_dataset();
@@ -1142,8 +1176,12 @@ mod tests {
 
         let baseline = EvalAgentConfig::new("base", model("m", "p"));
         let dims = vec![
-            SearchDimension::Temperature { values: vec![0.0, 1.0] },
-            SearchDimension::RagLevel { values: vec![0, 3, 5] },
+            SearchDimension::Temperature {
+                values: vec![0.0, 1.0],
+            },
+            SearchDimension::RagLevel {
+                values: vec![0, 3, 5],
+            },
         ];
         let dataset = make_test_dataset();
         let tags = make_test_tags();
@@ -1244,8 +1282,7 @@ mod tests {
         let engine = ConfigSearchEngine::new(config, gen);
 
         let gpt4 = model("gpt-4", "openai");
-        let baseline = EvalAgentConfig::new("base", gpt4.clone())
-            .with_model_cost(&gpt4, 0.01);
+        let baseline = EvalAgentConfig::new("base", gpt4.clone()).with_model_cost(&gpt4, 0.01);
         let dims = vec![SearchDimension::Temperature {
             values: vec![0.0, 1.0],
         }];
@@ -1255,7 +1292,10 @@ mod tests {
         let result = engine.search(&baseline, &dims, &dataset, &tags).unwrap();
         // 3 configurations × 6 problems = 18 calls × $0.01 = $0.18
         assert!(result.search_cost.estimated_total_cost > 0.0);
-        assert_eq!(result.search_cost.total_configurations_evaluated, result.total_evaluations);
+        assert_eq!(
+            result.search_cost.total_configurations_evaluated,
+            result.total_evaluations
+        );
         assert!(result.search_cost.total_problems_solved > 0);
         assert!(result.search_cost.total_llm_calls > 0);
     }
@@ -1273,7 +1313,9 @@ mod tests {
 
         let baseline = EvalAgentConfig::new("base", model("m", "p"));
         let dims = vec![
-            SearchDimension::Temperature { values: vec![0.0, 1.0] },
+            SearchDimension::Temperature {
+                values: vec![0.0, 1.0],
+            },
             SearchDimension::ChainOfThought,
         ];
         let dataset = make_test_dataset();
@@ -1324,8 +1366,8 @@ mod tests {
     #[test]
     #[ignore]
     fn test_integration_ollama_real_models() {
-        let base_url = std::env::var("OLLAMA_URL")
-            .unwrap_or_else(|_| "http://localhost:11434".to_string());
+        let base_url =
+            std::env::var("OLLAMA_URL").unwrap_or_else(|_| "http://localhost:11434".to_string());
         let model_names: Vec<String> = std::env::var("EVAL_MODELS")
             .unwrap_or_else(|_| "llama3.1:8b,qwen2.5:14b-instruct-q4_K_M".to_string())
             .split(',')
@@ -1344,19 +1386,14 @@ mod tests {
 
         // Create generators for each model
         let first_model = model_names[0].clone();
-        let mut gen = MultiModelGenerator::new(
-            make_ollama_generator(&base_url, &first_model),
-        );
+        let mut gen = MultiModelGenerator::new(make_ollama_generator(&base_url, &first_model));
         for m in &model_names[1..] {
             let model_id = ModelIdentifier {
                 name: m.clone(),
                 provider: "ollama".to_string(),
                 variant: None,
             };
-            gen.register_model(
-                &model_id.to_string(),
-                make_ollama_generator(&base_url, m),
-            );
+            gen.register_model(&model_id.to_string(), make_ollama_generator(&base_url, m));
         }
 
         // Build comprehensive test dataset covering 6 categories:
@@ -1681,7 +1718,11 @@ mod tests {
                 snap.current_best_quality,
                 snap.current_best_cost,
                 snap.objective_score,
-                if snap.was_improvement { "<< IMPROVEMENT" } else { "" },
+                if snap.was_improvement {
+                    "<< IMPROVEMENT"
+                } else {
+                    ""
+                },
             );
         }
 
@@ -1792,7 +1833,10 @@ mod tests {
             } else if json_body.contains("\"error\"") {
                 Err(format!("Ollama error: {}", json_body.trim()))
             } else {
-                Err(format!("Could not parse Ollama response: {}", &json_body[..json_body.len().min(200)]))
+                Err(format!(
+                    "Could not parse Ollama response: {}",
+                    &json_body[..json_body.len().min(200)]
+                ))
             }
         }
     }

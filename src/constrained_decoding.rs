@@ -76,7 +76,11 @@ mod inner {
                     format!("\"{}\"", escaped)
                 }
                 GrammarElement::CharRange(from, to) => {
-                    format!("[{}-{}]", escape_char_for_charset(*from), escape_char_for_charset(*to))
+                    format!(
+                        "[{}-{}]",
+                        escape_char_for_charset(*from),
+                        escape_char_for_charset(*to)
+                    )
                 }
                 GrammarElement::CharSet(chars) => {
                     let inner: String = chars.iter().map(|c| escape_char_for_charset(*c)).collect();
@@ -255,10 +259,7 @@ mod inner {
                 if root_rule.is_empty() {
                     root_rule.clone_from(&name);
                 }
-                rules.push(GrammarRule {
-                    name,
-                    alternatives,
-                });
+                rules.push(GrammarRule { name, alternatives });
             }
 
             if rules.is_empty() {
@@ -278,10 +279,7 @@ mod inner {
     // ------------------------------------------------------------------------
 
     /// Split the right-hand side of a rule by top-level `|` and parse each alternative.
-    fn parse_alternatives(
-        rhs: &str,
-        line_num: usize,
-    ) -> Result<Vec<GrammarAlternative>, AiError> {
+    fn parse_alternatives(rhs: &str, line_num: usize) -> Result<Vec<GrammarAlternative>, AiError> {
         let parts = split_top_level(rhs, '|');
         let mut alts = Vec::new();
         for part in &parts {
@@ -406,9 +404,7 @@ mod inner {
             Some('"') => parse_literal(chars, line_num),
             Some('[') => parse_charset(chars, line_num),
             Some('(') => parse_group(chars, line_num),
-            Some(c) if c.is_alphanumeric() || *c == '_' || *c == '-' => {
-                parse_rule_ref(chars)
-            }
+            Some(c) if c.is_alphanumeric() || *c == '_' || *c == '-' => parse_rule_ref(chars),
             Some(c) => Err(AiError::ConstrainedDecoding(
                 ConstrainedDecodingError::GrammarSyntaxError {
                     line: line_num,
@@ -719,8 +715,7 @@ mod inner {
 
         /// Add a character range element `[from-to]`.
         pub fn char_range(mut self, from: char, to: char) -> Self {
-            self.elements
-                .push(GrammarElement::CharRange(from, to));
+            self.elements.push(GrammarElement::CharRange(from, to));
             self
         }
 
@@ -902,9 +897,7 @@ mod inner {
         /// Supported providers: `"ollama"`, `"llama.cpp"`, `"lmstudio"`, `"vllm"`, `"openai"`.
         pub fn for_provider(grammar: &Grammar, provider: &str) -> Result<String, AiError> {
             match provider.to_lowercase().as_str() {
-                "ollama" | "llama.cpp" | "llamacpp" | "lmstudio" => {
-                    Ok(grammar.to_gbnf())
-                }
+                "ollama" | "llama.cpp" | "llamacpp" | "lmstudio" => Ok(grammar.to_gbnf()),
                 "vllm" => {
                     // vLLM uses regex; produce a simplified regex from the grammar root
                     Ok(grammar_to_simple_regex(grammar))
@@ -920,8 +913,8 @@ mod inner {
                 _ => Err(AiError::ConstrainedDecoding(
                     ConstrainedDecodingError::ProviderUnsupported {
                         provider: provider.to_string(),
-                    }),
-                ),
+                    },
+                )),
             }
         }
     }
@@ -929,11 +922,8 @@ mod inner {
     /// Produce a simple regex approximation of the grammar root rule.
     /// This is a best-effort translation; complex grammars may not translate perfectly.
     fn grammar_to_simple_regex(grammar: &Grammar) -> String {
-        let rule_map: HashMap<String, &GrammarRule> = grammar
-            .rules
-            .iter()
-            .map(|r| (r.name.clone(), r))
-            .collect();
+        let rule_map: HashMap<String, &GrammarRule> =
+            grammar.rules.iter().map(|r| (r.name.clone(), r)).collect();
         if let Some(root) = rule_map.get(&grammar.root_rule) {
             let alts: Vec<String> = root
                 .alternatives
@@ -1039,8 +1029,7 @@ mod inner {
                 }],
             });
 
-            let root_rule_name =
-                Self::compile_schema(schema, "root", &mut rules, &mut counter)?;
+            let root_rule_name = Self::compile_schema(schema, "root", &mut rules, &mut counter)?;
 
             // If the root was generated with a different name, alias it
             if root_rule_name != "root" {
@@ -1079,12 +1068,8 @@ mod inner {
                 Some("integer") => Self::compile_integer(name_hint, rules),
                 Some("boolean") => Self::compile_boolean(name_hint, rules),
                 Some("null") => Self::compile_null(name_hint, rules),
-                Some("object") => {
-                    Self::compile_object(schema, name_hint, rules, counter)
-                }
-                Some("array") => {
-                    Self::compile_array(schema, name_hint, rules, counter)
-                }
+                Some("object") => Self::compile_object(schema, name_hint, rules, counter),
+                Some("array") => Self::compile_array(schema, name_hint, rules, counter),
                 Some(unknown) => Err(AiError::ConstrainedDecoding(
                     ConstrainedDecodingError::SchemaConversionFailed {
                         path: name_hint.to_string(),
@@ -1189,10 +1174,7 @@ mod inner {
             Ok(rule_name)
         }
 
-        fn compile_null(
-            name_hint: &str,
-            rules: &mut Vec<GrammarRule>,
-        ) -> Result<String, AiError> {
+        fn compile_null(name_hint: &str, rules: &mut Vec<GrammarRule>) -> Result<String, AiError> {
             let rule_name = format!("{}-null", name_hint);
             rules.push(GrammarRule {
                 name: rule_name.clone(),
@@ -1291,18 +1273,14 @@ mod inner {
             for prop_name in &prop_names {
                 if let Some(prop_schema) = properties.get(prop_name) {
                     let prop_hint = format!("{}-{}", name_hint, prop_name);
-                    let prop_rule =
-                        Self::compile_schema(prop_schema, &prop_hint, rules, counter)?;
+                    let prop_rule = Self::compile_schema(prop_schema, &prop_hint, rules, counter)?;
 
                     let mut pair_elements = Vec::new();
                     if !first {
                         pair_elements.push(GrammarElement::Literal(",".to_string()));
                         pair_elements.push(GrammarElement::RuleRef("ws".to_string()));
                     }
-                    pair_elements.push(GrammarElement::Literal(format!(
-                        "\"{}\"",
-                        prop_name
-                    )));
+                    pair_elements.push(GrammarElement::Literal(format!("\"{}\"", prop_name)));
                     pair_elements.push(GrammarElement::RuleRef("ws".to_string()));
                     pair_elements.push(GrammarElement::Literal(":".to_string()));
                     pair_elements.push(GrammarElement::RuleRef("ws".to_string()));
@@ -1406,8 +1384,7 @@ mod inner {
             // A generic JSON value: string | number | boolean | null
             let str_rule = Self::compile_string(&format!("{}-s{}", name_hint, idx), rules)?;
             let num_rule = Self::compile_number(&format!("{}-n{}", name_hint, idx), rules)?;
-            let bool_rule =
-                Self::compile_boolean(&format!("{}-b{}", name_hint, idx), rules)?;
+            let bool_rule = Self::compile_boolean(&format!("{}-b{}", name_hint, idx), rules)?;
             let null_rule = Self::compile_null(&format!("{}-nl{}", name_hint, idx), rules)?;
 
             rules.push(GrammarRule {
@@ -1583,10 +1560,7 @@ mod inner {
         }
 
         /// Create a new streaming validator with custom configuration.
-        pub fn with_config(
-            schema: serde_json::Value,
-            config: StreamingValidationConfig,
-        ) -> Self {
+        pub fn with_config(schema: serde_json::Value, config: StreamingValidationConfig) -> Self {
             let expected = Self::schema_to_expected(&schema);
             Self {
                 schema,
@@ -1647,11 +1621,7 @@ mod inner {
                     let properties = schema
                         .get("properties")
                         .and_then(|p| p.as_object())
-                        .map(|obj| {
-                            obj.iter()
-                                .map(|(k, v)| (k.clone(), v.clone()))
-                                .collect()
-                        })
+                        .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
                         .unwrap_or_default();
                     let required = schema
                         .get("required")
@@ -1695,12 +1665,11 @@ mod inner {
                 }
                 ExpectedType::Boolean => self.validate_boolean_buffer(&buf),
                 ExpectedType::Null => self.validate_null_buffer(&buf),
-                ExpectedType::Object { properties, required } => {
-                    self.validate_object_buffer(&buf, properties.clone(), required.clone())
-                }
-                ExpectedType::Array { items } => {
-                    self.validate_array_buffer(&buf, items.clone())
-                }
+                ExpectedType::Object {
+                    properties,
+                    required,
+                } => self.validate_object_buffer(&buf, properties.clone(), required.clone()),
+                ExpectedType::Array { items } => self.validate_array_buffer(&buf, items.clone()),
                 ExpectedType::Enum(values) => self.validate_enum_buffer(&buf, values.clone()),
                 ExpectedType::Any => self.validate_any_buffer(&buf),
             }
@@ -1724,11 +1693,7 @@ mod inner {
             }
         }
 
-        fn validate_number_buffer(
-            &mut self,
-            buf: &str,
-            integer_only: bool,
-        ) -> ValidationState {
+        fn validate_number_buffer(&mut self, buf: &str, integer_only: bool) -> ValidationState {
             // A number can be: -?[0-9]+(\.[0-9]+)?
             let mut valid_so_far = true;
             let mut has_digit = false;
@@ -1839,10 +1804,7 @@ mod inner {
                                 self.mark_error();
                                 return ValidationState::Invalid {
                                     position: buf.len(),
-                                    reason: format!(
-                                        "missing required property '{}'",
-                                        req_key
-                                    ),
+                                    reason: format!("missing required property '{}'", req_key),
                                 };
                             }
                         }
@@ -1853,10 +1815,7 @@ mod inner {
                                     self.mark_error();
                                     return ValidationState::Invalid {
                                         position: buf.len(),
-                                        reason: format!(
-                                            "property '{}' does not match schema",
-                                            key
-                                        ),
+                                        reason: format!("property '{}' does not match schema", key),
                                     };
                                 }
                             }
@@ -1874,16 +1833,12 @@ mod inner {
                 Err(_) => {
                     // Not complete yet — check basic structure validity
                     if is_partial_json_valid(buf) {
-                        let prop_names: Vec<&str> =
-                            properties.keys().map(|s| s.as_str()).collect();
+                        let prop_names: Vec<&str> = properties.keys().map(|s| s.as_str()).collect();
                         ValidationState::Partial {
                             expected_next: if prop_names.is_empty() {
                                 "object content or '}'".to_string()
                             } else {
-                                format!(
-                                    "property (one of: {}) or '}}'",
-                                    prop_names.join(", ")
-                                )
+                                format!("property (one of: {}) or '}}'", prop_names.join(", "))
                             },
                         }
                     } else {
@@ -1920,10 +1875,7 @@ mod inner {
                                     self.mark_error();
                                     return ValidationState::Invalid {
                                         position: buf.len(),
-                                        reason: format!(
-                                            "array item {} does not match schema",
-                                            i
-                                        ),
+                                        reason: format!("array item {} does not match schema", i),
                                     };
                                 }
                             }
@@ -2140,9 +2092,7 @@ mod inner {
                         }
                     }
                     // Validate property types
-                    if let Some(properties) =
-                        schema.get("properties").and_then(|p| p.as_object())
-                    {
+                    if let Some(properties) = schema.get("properties").and_then(|p| p.as_object()) {
                         for (key, val) in obj {
                             if let Some(prop_schema) = properties.get(key) {
                                 if !value_matches_schema(val, prop_schema) {
@@ -2159,7 +2109,8 @@ mod inner {
             Some("array") => {
                 if let Some(arr) = value.as_array() {
                     if let Some(item_schema) = schema.get("items") {
-                        arr.iter().all(|item| value_matches_schema(item, item_schema))
+                        arr.iter()
+                            .all(|item| value_matches_schema(item, item_schema))
                     } else {
                         true
                     }
@@ -2186,12 +2137,7 @@ mod inner {
         #[test]
         fn test_grammar_builder_simple() {
             let mut builder = GrammarBuilder::new("root");
-            let rule = builder
-                .rule("root")
-                .alt()
-                .literal("hello")
-                .done()
-                .done();
+            let rule = builder.rule("root").alt().literal("hello").done().done();
             builder.add_rule(rule);
             let grammar = builder.build();
 
@@ -2209,12 +2155,7 @@ mod inner {
         fn test_grammar_builder_complex_nested() {
             let mut builder = GrammarBuilder::new("root");
 
-            let root_rule = builder
-                .rule("root")
-                .alt()
-                .rule_ref("object")
-                .done()
-                .done();
+            let root_rule = builder.rule("root").alt().rule_ref("object").done().done();
             builder.add_rule(root_rule);
 
             let object_rule = builder

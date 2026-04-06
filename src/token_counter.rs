@@ -72,225 +72,225 @@ type MergeRule = (&'static [u8], &'static [u8]);
 /// (index 0 = highest priority merge).
 const BPE_MERGES: &[MergeRule] = &[
     // Rank 0-9: very common English bigrams and space-prefixed letters
-    (b" ", b"t"),   // " t"
-    (b"t", b"h"),   // "th"
-    (b" ", b"a"),   // " a"
-    (b"h", b"e"),   // "he"
-    (b"i", b"n"),   // "in"
-    (b"e", b"r"),   // "er"
-    (b" ", b"s"),   // " s"
-    (b"r", b"e"),   // "re"
-    (b"o", b"n"),   // "on"
-    (b" ", b"c"),   // " c"
+    (b" ", b"t"), // " t"
+    (b"t", b"h"), // "th"
+    (b" ", b"a"), // " a"
+    (b"h", b"e"), // "he"
+    (b"i", b"n"), // "in"
+    (b"e", b"r"), // "er"
+    (b" ", b"s"), // " s"
+    (b"r", b"e"), // "re"
+    (b"o", b"n"), // "on"
+    (b" ", b"c"), // " c"
     // Rank 10-19
-    (b"a", b"t"),   // "at"
-    (b"e", b"n"),   // "en"
-    (b"n", b"d"),   // "nd"
-    (b"t", b"i"),   // "ti"
-    (b"e", b"s"),   // "es"
-    (b"o", b"r"),   // "or"
-    (b"t", b"e"),   // "te"
-    (b" ", b"o"),   // " o"
-    (b"e", b"d"),   // "ed"
-    (b"i", b"s"),   // "is"
+    (b"a", b"t"), // "at"
+    (b"e", b"n"), // "en"
+    (b"n", b"d"), // "nd"
+    (b"t", b"i"), // "ti"
+    (b"e", b"s"), // "es"
+    (b"o", b"r"), // "or"
+    (b"t", b"e"), // "te"
+    (b" ", b"o"), // " o"
+    (b"e", b"d"), // "ed"
+    (b"i", b"s"), // "is"
     // Rank 20-29
-    (b"i", b"t"),   // "it"
-    (b"a", b"n"),   // "an"
-    (b"a", b"r"),   // "ar"
-    (b"a", b"l"),   // "al"
-    (b" ", b"b"),   // " b"
-    (b"o", b"u"),   // "ou"
-    (b" ", b"w"),   // " w"
-    (b"l", b"e"),   // "le"
-    (b" ", b"d"),   // " d"
-    (b" ", b"f"),   // " f"
+    (b"i", b"t"), // "it"
+    (b"a", b"n"), // "an"
+    (b"a", b"r"), // "ar"
+    (b"a", b"l"), // "al"
+    (b" ", b"b"), // " b"
+    (b"o", b"u"), // "ou"
+    (b" ", b"w"), // " w"
+    (b"l", b"e"), // "le"
+    (b" ", b"d"), // " d"
+    (b" ", b"f"), // " f"
     // Rank 30-39
-    (b"i", b"o"),   // "io"
-    (b"o", b"t"),   // "ot"
-    (b" ", b"m"),   // " m"
-    (b"a", b"s"),   // "as"
-    (b"e", b"l"),   // "el"
-    (b"c", b"t"),   // "ct"
-    (b"n", b"t"),   // "nt"
-    (b"l", b"l"),   // "ll"
-    (b" ", b"p"),   // " p"
-    (b"s", b"t"),   // "st"
+    (b"i", b"o"), // "io"
+    (b"o", b"t"), // "ot"
+    (b" ", b"m"), // " m"
+    (b"a", b"s"), // "as"
+    (b"e", b"l"), // "el"
+    (b"c", b"t"), // "ct"
+    (b"n", b"t"), // "nt"
+    (b"l", b"l"), // "ll"
+    (b" ", b"p"), // " p"
+    (b"s", b"t"), // "st"
     // Rank 40-49
-    (b" ", b"h"),   // " h"
-    (b"e", b"c"),   // "ec"
-    (b"i", b"c"),   // "ic"
-    (b"i", b"g"),   // "ig"
-    (b" ", b"i"),   // " i"
-    (b" ", b"n"),   // " n"
-    (b"o", b"m"),   // "om"
-    (b"a", b"d"),   // "ad"
-    (b"u", b"r"),   // "ur"
-    (b"i", b"v"),   // "iv"
+    (b" ", b"h"), // " h"
+    (b"e", b"c"), // "ec"
+    (b"i", b"c"), // "ic"
+    (b"i", b"g"), // "ig"
+    (b" ", b"i"), // " i"
+    (b" ", b"n"), // " n"
+    (b"o", b"m"), // "om"
+    (b"a", b"d"), // "ad"
+    (b"u", b"r"), // "ur"
+    (b"i", b"v"), // "iv"
     // Rank 50-59
-    (b"e", b"m"),   // "em"
-    (b"a", b"c"),   // "ac"
-    (b"o", b"l"),   // "ol"
-    (b" ", b"e"),   // " e"
-    (b" ", b"r"),   // " r"
-    (b"u", b"s"),   // "us"
-    (b"a", b"g"),   // "ag"
-    (b" ", b"l"),   // " l"
-    (b"i", b"l"),   // "il"
-    (b"e", b"a"),   // "ea"
+    (b"e", b"m"), // "em"
+    (b"a", b"c"), // "ac"
+    (b"o", b"l"), // "ol"
+    (b" ", b"e"), // " e"
+    (b" ", b"r"), // " r"
+    (b"u", b"s"), // "us"
+    (b"a", b"g"), // "ag"
+    (b" ", b"l"), // " l"
+    (b"i", b"l"), // "il"
+    (b"e", b"a"), // "ea"
     // Rank 60-69
-    (b" ", b"g"),   // " g"
-    (b"v", b"e"),   // "ve"
-    (b"u", b"t"),   // "ut"
-    (b"i", b"d"),   // "id"
-    (b"u", b"n"),   // "un"
-    (b"e", b"t"),   // "et"
-    (b"o", b"w"),   // "ow"
-    (b"r", b"o"),   // "ro"
-    (b"l", b"y"),   // "ly"
-    (b"o", b"f"),   // "of"
+    (b" ", b"g"), // " g"
+    (b"v", b"e"), // "ve"
+    (b"u", b"t"), // "ut"
+    (b"i", b"d"), // "id"
+    (b"u", b"n"), // "un"
+    (b"e", b"t"), // "et"
+    (b"o", b"w"), // "ow"
+    (b"r", b"o"), // "ro"
+    (b"l", b"y"), // "ly"
+    (b"o", b"f"), // "of"
     // Rank 70-79
-    (b"r", b"a"),   // "ra"
-    (b"r", b"i"),   // "ri"
-    (b"n", b"e"),   // "ne"
-    (b"c", b"o"),   // "co"
-    (b"c", b"e"),   // "ce"
-    (b"i", b"r"),   // "ir"
-    (b" ", b"u"),   // " u"
-    (b"u", b"l"),   // "ul"
-    (b"a", b"m"),   // "am"
-    (b"a", b"i"),   // "ai"
+    (b"r", b"a"), // "ra"
+    (b"r", b"i"), // "ri"
+    (b"n", b"e"), // "ne"
+    (b"c", b"o"), // "co"
+    (b"c", b"e"), // "ce"
+    (b"i", b"r"), // "ir"
+    (b" ", b"u"), // " u"
+    (b"u", b"l"), // "ul"
+    (b"a", b"m"), // "am"
+    (b"a", b"i"), // "ai"
     // Rank 80-89
-    (b"p", b"e"),   // "pe"
-    (b"s", b"e"),   // "se"
-    (b"p", b"r"),   // "pr"
-    (b"u", b"e"),   // "ue"
-    (b"o", b"s"),   // "os"
-    (b"s", b"s"),   // "ss"
-    (b"i", b"m"),   // "im"
-    (b"a", b"b"),   // "ab"
-    (b"l", b"a"),   // "la"
-    (b"p", b"o"),   // "po"
+    (b"p", b"e"), // "pe"
+    (b"s", b"e"), // "se"
+    (b"p", b"r"), // "pr"
+    (b"u", b"e"), // "ue"
+    (b"o", b"s"), // "os"
+    (b"s", b"s"), // "ss"
+    (b"i", b"m"), // "im"
+    (b"a", b"b"), // "ab"
+    (b"l", b"a"), // "la"
+    (b"p", b"o"), // "po"
     // Rank 90-99
-    (b"i", b"e"),   // "ie"
-    (b"d", b"e"),   // "de"
-    (b"o", b"d"),   // "od"
-    (b"u", b"d"),   // "ud"
-    (b"t", b"r"),   // "tr"
-    (b"m", b"e"),   // "me"
-    (b"i", b"a"),   // "ia"
-    (b"u", b"m"),   // "um"
-    (b"c", b"h"),   // "ch"
-    (b"a", b"p"),   // "ap"
+    (b"i", b"e"), // "ie"
+    (b"d", b"e"), // "de"
+    (b"o", b"d"), // "od"
+    (b"u", b"d"), // "ud"
+    (b"t", b"r"), // "tr"
+    (b"m", b"e"), // "me"
+    (b"i", b"a"), // "ia"
+    (b"u", b"m"), // "um"
+    (b"c", b"h"), // "ch"
+    (b"a", b"p"), // "ap"
     // Rank 100-109
-    (b"f", b"o"),   // "fo"
-    (b"l", b"o"),   // "lo"
-    (b"g", b"e"),   // "ge"
-    (b"n", b"o"),   // "no"
-    (b"s", b"h"),   // "sh"
-    (b"r", b"s"),   // "rs"
-    (b"p", b"l"),   // "pl"
-    (b"w", b"a"),   // "wa"
-    (b"e", b"e"),   // "ee"
-    (b"o", b"o"),   // "oo"
+    (b"f", b"o"), // "fo"
+    (b"l", b"o"), // "lo"
+    (b"g", b"e"), // "ge"
+    (b"n", b"o"), // "no"
+    (b"s", b"h"), // "sh"
+    (b"r", b"s"), // "rs"
+    (b"p", b"l"), // "pl"
+    (b"w", b"a"), // "wa"
+    (b"e", b"e"), // "ee"
+    (b"o", b"o"), // "oo"
     // Rank 110-119
-    (b"w", b"h"),   // "wh"
-    (b"g", b"h"),   // "gh"
-    (b"m", b"a"),   // "ma"
-    (b"i", b"f"),   // "if"
-    (b"c", b"a"),   // "ca"
-    (b"d", b"i"),   // "di"
-    (b"f", b"i"),   // "fi"
-    (b"b", b"e"),   // "be"
-    (b"g", b"o"),   // "go"
-    (b"t", b"o"),   // "to"
+    (b"w", b"h"), // "wh"
+    (b"g", b"h"), // "gh"
+    (b"m", b"a"), // "ma"
+    (b"i", b"f"), // "if"
+    (b"c", b"a"), // "ca"
+    (b"d", b"i"), // "di"
+    (b"f", b"i"), // "fi"
+    (b"b", b"e"), // "be"
+    (b"g", b"o"), // "go"
+    (b"t", b"o"), // "to"
     // Rank 120-129
-    (b"d", b"o"),   // "do"
-    (b"n", b"g"),   // "ng"
-    (b"k", b"e"),   // "ke"
-    (b"w", b"i"),   // "wi"
-    (b"s", b"i"),   // "si"
-    (b"b", b"l"),   // "bl"
-    (b"m", b"o"),   // "mo"
-    (b"n", b"a"),   // "na"
-    (b"b", b"o"),   // "bo"
-    (b"w", b"e"),   // "we"
+    (b"d", b"o"), // "do"
+    (b"n", b"g"), // "ng"
+    (b"k", b"e"), // "ke"
+    (b"w", b"i"), // "wi"
+    (b"s", b"i"), // "si"
+    (b"b", b"l"), // "bl"
+    (b"m", b"o"), // "mo"
+    (b"n", b"a"), // "na"
+    (b"b", b"o"), // "bo"
+    (b"w", b"e"), // "we"
     // Rank 130-139
-    (b"d", b"a"),   // "da"
-    (b"l", b"i"),   // "li"
-    (b"r", b"u"),   // "ru"
-    (b"v", b"i"),   // "vi"
-    (b"h", b"a"),   // "ha"
-    (b"h", b"i"),   // "hi"
-    (b"c", b"l"),   // "cl"
-    (b"g", b"r"),   // "gr"
-    (b"f", b"r"),   // "fr"
-    (b"p", b"a"),   // "pa"
+    (b"d", b"a"), // "da"
+    (b"l", b"i"), // "li"
+    (b"r", b"u"), // "ru"
+    (b"v", b"i"), // "vi"
+    (b"h", b"a"), // "ha"
+    (b"h", b"i"), // "hi"
+    (b"c", b"l"), // "cl"
+    (b"g", b"r"), // "gr"
+    (b"f", b"r"), // "fr"
+    (b"p", b"a"), // "pa"
     // Rank 140-149
-    (b"c", b"r"),   // "cr"
-    (b"s", b"o"),   // "so"
-    (b"s", b"u"),   // "su"
-    (b"b", b"u"),   // "bu"
-    (b"m", b"i"),   // "mi"
-    (b"n", b"i"),   // "ni"
-    (b"n", b"s"),   // "ns"
-    (b"p", b"i"),   // "pi"
-    (b"d", b"u"),   // "du"
-    (b"k", b"i"),   // "ki"
+    (b"c", b"r"), // "cr"
+    (b"s", b"o"), // "so"
+    (b"s", b"u"), // "su"
+    (b"b", b"u"), // "bu"
+    (b"m", b"i"), // "mi"
+    (b"n", b"i"), // "ni"
+    (b"n", b"s"), // "ns"
+    (b"p", b"i"), // "pi"
+    (b"d", b"u"), // "du"
+    (b"k", b"i"), // "ki"
     // Rank 150-159
-    (b"t", b"u"),   // "tu"
-    (b"s", b"p"),   // "sp"
-    (b"s", b"c"),   // "sc"
-    (b"f", b"e"),   // "fe"
-    (b"g", b"a"),   // "ga"
-    (b"g", b"i"),   // "gi"
-    (b"j", b"u"),   // "ju"
-    (b"w", b"o"),   // "wo"
-    (b"f", b"l"),   // "fl"
-    (b"a", b"v"),   // "av"
+    (b"t", b"u"), // "tu"
+    (b"s", b"p"), // "sp"
+    (b"s", b"c"), // "sc"
+    (b"f", b"e"), // "fe"
+    (b"g", b"a"), // "ga"
+    (b"g", b"i"), // "gi"
+    (b"j", b"u"), // "ju"
+    (b"w", b"o"), // "wo"
+    (b"f", b"l"), // "fl"
+    (b"a", b"v"), // "av"
     // Rank 160-169
-    (b"r", b"y"),   // "ry"
-    (b"a", b"w"),   // "aw"
-    (b"o", b"p"),   // "op"
-    (b"e", b"x"),   // "ex"
-    (b"l", b"u"),   // "lu"
-    (b"b", b"r"),   // "br"
-    (b"d", b"r"),   // "dr"
-    (b"c", b"k"),   // "ck"
-    (b"e", b"p"),   // "ep"
-    (b"h", b"o"),   // "ho"
+    (b"r", b"y"), // "ry"
+    (b"a", b"w"), // "aw"
+    (b"o", b"p"), // "op"
+    (b"e", b"x"), // "ex"
+    (b"l", b"u"), // "lu"
+    (b"b", b"r"), // "br"
+    (b"d", b"r"), // "dr"
+    (b"c", b"k"), // "ck"
+    (b"e", b"p"), // "ep"
+    (b"h", b"o"), // "ho"
     // Rank 170-179
-    (b"k", b"n"),   // "kn"
-    (b"m", b"u"),   // "mu"
-    (b"o", b"v"),   // "ov"
-    (b"a", b"k"),   // "ak"
-    (b"v", b"a"),   // "va"
-    (b"u", b"p"),   // "up"
-    (b"f", b"u"),   // "fu"
-    (b"n", b"u"),   // "nu"
-    (b"g", b"u"),   // "gu"
-    (b"y", b"o"),   // "yo"
+    (b"k", b"n"), // "kn"
+    (b"m", b"u"), // "mu"
+    (b"o", b"v"), // "ov"
+    (b"a", b"k"), // "ak"
+    (b"v", b"a"), // "va"
+    (b"u", b"p"), // "up"
+    (b"f", b"u"), // "fu"
+    (b"n", b"u"), // "nu"
+    (b"g", b"u"), // "gu"
+    (b"y", b"o"), // "yo"
     // Rank 180-189
-    (b"s", b"w"),   // "sw"
-    (b"t", b"w"),   // "tw"
-    (b"i", b"p"),   // "ip"
-    (b"o", b"c"),   // "oc"
-    (b"e", b"w"),   // "ew"
-    (b"a", b"y"),   // "ay"
-    (b"o", b"g"),   // "og"
-    (b"u", b"b"),   // "ub"
-    (b"i", b"x"),   // "ix"
-    (b"o", b"b"),   // "ob"
+    (b"s", b"w"), // "sw"
+    (b"t", b"w"), // "tw"
+    (b"i", b"p"), // "ip"
+    (b"o", b"c"), // "oc"
+    (b"e", b"w"), // "ew"
+    (b"a", b"y"), // "ay"
+    (b"o", b"g"), // "og"
+    (b"u", b"b"), // "ub"
+    (b"i", b"x"), // "ix"
+    (b"o", b"b"), // "ob"
     // Rank 190-199
-    (b"u", b"g"),   // "ug"
-    (b"e", b"g"),   // "eg"
-    (b"y", b"s"),   // "ys"
-    (b"e", b"v"),   // "ev"
-    (b"a", b"x"),   // "ax"
-    (b"u", b"c"),   // "uc"
-    (b"o", b"k"),   // "ok"
-    (b"i", b"b"),   // "ib"
-    (b"o", b"x"),   // "ox"
-    (b"u", b"i"),   // "ui"
+    (b"u", b"g"), // "ug"
+    (b"e", b"g"), // "eg"
+    (b"y", b"s"), // "ys"
+    (b"e", b"v"), // "ev"
+    (b"a", b"x"), // "ax"
+    (b"u", b"c"), // "uc"
+    (b"o", b"k"), // "ok"
+    (b"i", b"b"), // "ib"
+    (b"o", b"x"), // "ox"
+    (b"u", b"i"), // "ui"
 ];
 
 // =============================================================================
@@ -347,12 +347,7 @@ impl BpeTokenCounter {
     ///
     /// Scans for adjacent `(left, right)` pairs and replaces them with
     /// `merged`. Returns the new token list.
-    fn apply_merge(
-        tokens: &[Vec<u8>],
-        left: &[u8],
-        right: &[u8],
-        merged: &[u8],
-    ) -> Vec<Vec<u8>> {
+    fn apply_merge(tokens: &[Vec<u8>], left: &[u8], right: &[u8], merged: &[u8]) -> Vec<Vec<u8>> {
         let mut result = Vec::with_capacity(tokens.len());
         let mut i = 0;
 
@@ -447,8 +442,11 @@ impl TiktokenCounter {
     /// Returns None if the model is not an OpenAI model.
     pub fn for_model(model: &str) -> Option<Self> {
         let name = model.to_lowercase();
-        if name.contains("gpt-4o") || name.starts_with("o1")
-            || name.starts_with("o3") || name.starts_with("o4") {
+        if name.contains("gpt-4o")
+            || name.starts_with("o1")
+            || name.starts_with("o3")
+            || name.starts_with("o4")
+        {
             tiktoken_rs::o200k_base().ok().map(|e| Self {
                 encoding: e,
                 model_family: "o200k_base".into(),
@@ -518,13 +516,15 @@ impl ProviderTokenCounter {
             bpe: BpeTokenCounter::new(),
             approximate: ApproximateCounter::new(),
             #[cfg(feature = "precise-tokens")]
-            tiktoken_o200k: tiktoken_rs::o200k_base()
-                .ok()
-                .map(|e| TiktokenCounter { encoding: e, model_family: "o200k_base".into() }),
+            tiktoken_o200k: tiktoken_rs::o200k_base().ok().map(|e| TiktokenCounter {
+                encoding: e,
+                model_family: "o200k_base".into(),
+            }),
             #[cfg(feature = "precise-tokens")]
-            tiktoken_cl100k: tiktoken_rs::cl100k_base()
-                .ok()
-                .map(|e| TiktokenCounter { encoding: e, model_family: "cl100k_base".into() }),
+            tiktoken_cl100k: tiktoken_rs::cl100k_base().ok().map(|e| TiktokenCounter {
+                encoding: e,
+                model_family: "cl100k_base".into(),
+            }),
         }
     }
 
@@ -535,8 +535,11 @@ impl ProviderTokenCounter {
         // 1. Try tiktoken (precise, OpenAI only)
         #[cfg(feature = "precise-tokens")]
         {
-            if name.contains("gpt-4o") || name.starts_with("o1")
-                || name.starts_with("o3") || name.starts_with("o4") {
+            if name.contains("gpt-4o")
+                || name.starts_with("o1")
+                || name.starts_with("o3")
+                || name.starts_with("o4")
+            {
                 if let Some(ref counter) = self.tiktoken_o200k {
                     return counter;
                 }
@@ -575,8 +578,10 @@ impl ProviderTokenCounter {
 
         #[cfg(feature = "precise-tokens")]
         {
-            if (name.contains("gpt-4o") || name.starts_with("o1")
-                || name.starts_with("o3") || name.starts_with("o4"))
+            if (name.contains("gpt-4o")
+                || name.starts_with("o1")
+                || name.starts_with("o3")
+                || name.starts_with("o4"))
                 && self.tiktoken_o200k.is_some()
             {
                 return TokenPrecision::Precise;
@@ -588,9 +593,12 @@ impl ProviderTokenCounter {
             }
         }
 
-        if name.starts_with("gpt-") || name.starts_with("claude-")
-            || name.contains("gemini") || name.contains("mistral")
-            || name.contains("deepseek") || name.contains("command-r")
+        if name.starts_with("gpt-")
+            || name.starts_with("claude-")
+            || name.contains("gemini")
+            || name.contains("mistral")
+            || name.contains("deepseek")
+            || name.contains("command-r")
         {
             TokenPrecision::Bpe
         } else {
@@ -652,7 +660,9 @@ impl TokenBudget {
         let system_tokens = (self.total as f64 * system_pct) as usize;
         let knowledge_tokens = (self.total as f64 * knowledge_pct) as usize;
         let history_tokens = (self.total as f64 * history_pct) as usize;
-        let response_reserve = self.total.saturating_sub(system_tokens + knowledge_tokens + history_tokens);
+        let response_reserve = self
+            .total
+            .saturating_sub(system_tokens + knowledge_tokens + history_tokens);
 
         TokenAllocation {
             system_tokens,
@@ -678,7 +688,10 @@ mod tests {
         let text = "This is a sample sentence for testing.";
         assert_eq!(counter.count(text), crate::context::estimate_tokens(text));
         assert_eq!(counter.count(""), crate::context::estimate_tokens(""));
-        assert_eq!(counter.count("hello"), crate::context::estimate_tokens("hello"));
+        assert_eq!(
+            counter.count("hello"),
+            crate::context::estimate_tokens("hello")
+        );
     }
 
     // 2. BPE on empty string
@@ -870,7 +883,10 @@ mod tests {
         let provider = ProviderTokenCounter::new();
         let bpe = BpeTokenCounter::new();
         let text = "Gemini model routing test.";
-        assert_eq!(provider.for_model("gemini-1.5-pro").count(text), bpe.count(text));
+        assert_eq!(
+            provider.for_model("gemini-1.5-pro").count(text),
+            bpe.count(text)
+        );
     }
 
     // 17. ProviderTokenCounter routes DeepSeek to BPE
@@ -879,7 +895,10 @@ mod tests {
         let provider = ProviderTokenCounter::new();
         let bpe = BpeTokenCounter::new();
         let text = "DeepSeek routing test.";
-        assert_eq!(provider.for_model("deepseek-v2").count(text), bpe.count(text));
+        assert_eq!(
+            provider.for_model("deepseek-v2").count(text),
+            bpe.count(text)
+        );
     }
 
     // 18. ProviderTokenCounter routes Mistral to BPE
@@ -888,7 +907,10 @@ mod tests {
         let provider = ProviderTokenCounter::new();
         let bpe = BpeTokenCounter::new();
         let text = "Mistral routing test.";
-        assert_eq!(provider.for_model("mistral-large").count(text), bpe.count(text));
+        assert_eq!(
+            provider.for_model("mistral-large").count(text),
+            bpe.count(text)
+        );
     }
 
     // 19. ProviderTokenCounter routes o4-* to BPE

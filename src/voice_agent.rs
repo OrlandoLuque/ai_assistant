@@ -267,10 +267,7 @@ mod inner {
         /// Speech has started at the given timestamp.
         SpeechStart { timestamp_ms: u64 },
         /// Speech has ended at the given timestamp, with total duration.
-        SpeechEnd {
-            timestamp_ms: u64,
-            duration_ms: u64,
-        },
+        SpeechEnd { timestamp_ms: u64, duration_ms: u64 },
         /// Frame contains only silence.
         Silence,
     }
@@ -321,8 +318,7 @@ mod inner {
         /// the frame is silence.
         pub fn process_frame(&mut self, frame: &[i16]) -> VadEvent {
             let rms = Self::compute_rms(frame);
-            self.moving_avg_energy =
-                self.alpha * rms + (1.0 - self.alpha) * self.moving_avg_energy;
+            self.moving_avg_energy = self.alpha * rms + (1.0 - self.alpha) * self.moving_avg_energy;
 
             let is_speech = self.moving_avg_energy > self.config.energy_threshold;
             let frame_duration_ms = self.config.frame_size_ms as u64;
@@ -344,8 +340,7 @@ mod inner {
                 // Silent frame
                 if self.in_speech {
                     self.silence_frames += 1;
-                    let silence_ms =
-                        self.silence_frames as u64 * self.config.frame_size_ms as u64;
+                    let silence_ms = self.silence_frames as u64 * self.config.frame_size_ms as u64;
                     if silence_ms >= self.config.silence_duration_ms as u64 {
                         // Enough silence to end speech segment
                         let duration = self.current_ms - self.speech_start_ms;
@@ -550,12 +545,13 @@ mod inner {
             transcript: String,
             duration_ms: u64,
         ) -> Result<&ConversationTurn, AiError> {
-            let speaker = self.current_turn.take().ok_or_else(|| {
-                VoiceAgentError::InvalidSessionState {
-                    current: "no active turn".to_string(),
-                    attempted: "end_turn".to_string(),
-                }
-            })?;
+            let speaker =
+                self.current_turn
+                    .take()
+                    .ok_or_else(|| VoiceAgentError::InvalidSessionState {
+                        current: "no active turn".to_string(),
+                        attempted: "end_turn".to_string(),
+                    })?;
 
             let turn_number = self.turns.len() + 1;
             let turn = ConversationTurn {
@@ -884,9 +880,7 @@ mod inner {
                 }
                 .into());
             }
-            if self.vad_config.energy_threshold < 0.0
-                || self.vad_config.energy_threshold > 1.0
-            {
+            if self.vad_config.energy_threshold < 0.0 || self.vad_config.energy_threshold > 1.0 {
                 return Err(VoiceAgentError::VadError {
                     reason: "energy_threshold must be in [0.0, 1.0]".to_string(),
                 }
@@ -1079,9 +1073,8 @@ mod inner {
             let effects_elapsed = effects_start.elapsed().as_millis() as u64;
 
             // Feed into VAD frame by frame
-            let frame_samples = (self.config.sample_rate as usize
-                * self.config.chunk_size_ms as usize)
-                / 1000;
+            let frame_samples =
+                (self.config.sample_rate as usize * self.config.chunk_size_ms as usize) / 1000;
             let frame_size = if frame_samples > 0 {
                 frame_samples
             } else {
@@ -1089,8 +1082,8 @@ mod inner {
             };
 
             // Enforce max audio duration to prevent DoS
-            let max_samples = self.config.max_audio_duration_secs as usize
-                * self.config.sample_rate as usize;
+            let max_samples =
+                self.config.max_audio_duration_secs as usize * self.config.sample_rate as usize;
 
             let mut response = None;
 
@@ -1119,11 +1112,8 @@ mod inner {
                         session.transition_to(VoiceSessionState::Processing)?;
 
                         // Execute the STT → LLM → TTS pipeline
-                        let pipeline_result = self.execute_pipeline(
-                            session,
-                            duration_ms,
-                            effects_elapsed,
-                        );
+                        let pipeline_result =
+                            self.execute_pipeline(session, duration_ms, effects_elapsed);
 
                         self.audio_buffer.clear();
 
@@ -1255,11 +1245,7 @@ mod inner {
                     let audio_bytes = samples_to_bytes(&self.audio_buffer);
                     let speech_format = to_speech_audio_format(&AudioFormat::Pcm16);
                     let result = stt
-                        .transcribe(
-                            &audio_bytes,
-                            speech_format,
-                            self.config.language.as_deref(),
-                        )
+                        .transcribe(&audio_bytes, speech_format, self.config.language.as_deref())
                         .map_err(|e| VoiceAgentError::StreamFailed {
                             reason: format!("STT failed: {}", e),
                         })?;
@@ -1803,68 +1789,59 @@ mod inner {
         /// If the model supports `AudioInputOutput`, the audio is processed directly
         /// (simulated here). Otherwise, falls back to STT -> LLM -> TTS if fallback
         /// mode is `SttLlmTts`, or returns an error if fallback is `Disabled`.
-        pub fn process_audio(
-            &mut self,
-            input: &AudioChunk,
-        ) -> Result<AudioChunk, VoiceAgentError> {
+        pub fn process_audio(&mut self, input: &AudioChunk) -> Result<AudioChunk, VoiceAgentError> {
             let start = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis() as u64;
 
-            let (output, used_fallback, input_text, output_text) =
-                if self.supports_direct_audio() {
-                    // Native S2S: simulate direct audio processing
-                    // In production, this sends audio to the model and receives audio back.
-                    let response_bytes = vec![0u8; input.bytes.len()];
-                    let output_chunk = AudioChunk::new(
-                        response_bytes,
-                        input.sample_rate,
-                        input.channels,
-                        self.config.output_format.clone(),
-                    );
-                    (
-                        output_chunk,
-                        false,
-                        Some("[direct audio input]".to_string()),
-                        Some("[direct audio output]".to_string()),
-                    )
-                } else {
-                    // Model does not support direct S2S
-                    match &self.fallback {
-                        S2SFallbackMode::SttLlmTts => {
-                            // Simulate STT -> LLM -> TTS fallback
-                            let stt_text = format!(
-                                "[stt: {} bytes, {}Hz]",
-                                input.bytes.len(),
-                                input.sample_rate
-                            );
-                            let llm_response = format!("[llm response to: {}]", stt_text);
-                            // Simulate TTS output
-                            let tts_bytes = llm_response.as_bytes().to_vec();
-                            let output_chunk = AudioChunk::new(
-                                tts_bytes,
-                                input.sample_rate,
-                                input.channels,
-                                self.config.output_format.clone(),
-                            );
-                            (
-                                output_chunk,
-                                true,
-                                Some(stt_text),
-                                Some(llm_response),
-                            )
-                        }
-                        S2SFallbackMode::Disabled => {
-                            return Err(VoiceAgentError::StreamFailed {
+            let (output, used_fallback, input_text, output_text) = if self.supports_direct_audio() {
+                // Native S2S: simulate direct audio processing
+                // In production, this sends audio to the model and receives audio back.
+                let response_bytes = vec![0u8; input.bytes.len()];
+                let output_chunk = AudioChunk::new(
+                    response_bytes,
+                    input.sample_rate,
+                    input.channels,
+                    self.config.output_format.clone(),
+                );
+                (
+                    output_chunk,
+                    false,
+                    Some("[direct audio input]".to_string()),
+                    Some("[direct audio output]".to_string()),
+                )
+            } else {
+                // Model does not support direct S2S
+                match &self.fallback {
+                    S2SFallbackMode::SttLlmTts => {
+                        // Simulate STT -> LLM -> TTS fallback
+                        let stt_text = format!(
+                            "[stt: {} bytes, {}Hz]",
+                            input.bytes.len(),
+                            input.sample_rate
+                        );
+                        let llm_response = format!("[llm response to: {}]", stt_text);
+                        // Simulate TTS output
+                        let tts_bytes = llm_response.as_bytes().to_vec();
+                        let output_chunk = AudioChunk::new(
+                            tts_bytes,
+                            input.sample_rate,
+                            input.channels,
+                            self.config.output_format.clone(),
+                        );
+                        (output_chunk, true, Some(stt_text), Some(llm_response))
+                    }
+                    S2SFallbackMode::Disabled => {
+                        return Err(VoiceAgentError::StreamFailed {
                                 reason: format!(
                                     "Model '{}' does not support AudioInputOutput and fallback is disabled",
                                     self.config.model_id
                                 ),
                             });
-                        }
                     }
-                };
+                }
+            };
 
             let end = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -2059,8 +2036,7 @@ mod inner {
             });
 
             // Start speech with loud frames
-            let loud_frame: Vec<i16> =
-                (0..320).map(|i| ((i % 50) * 500) as i16).collect();
+            let loud_frame: Vec<i16> = (0..320).map(|i| ((i % 50) * 500) as i16).collect();
             let event = vad.process_frame(&loud_frame);
             assert_eq!(event, VadEvent::SpeechStart { timestamp_ms: 0 });
 
@@ -2093,8 +2069,7 @@ mod inner {
             });
 
             // One loud frame, then immediate silence
-            let loud_frame: Vec<i16> =
-                (0..320).map(|i| ((i % 50) * 500) as i16).collect();
+            let loud_frame: Vec<i16> = (0..320).map(|i| ((i % 50) * 500) as i16).collect();
             let silent_frame = vec![0i16; 320];
 
             let _ = vad.process_frame(&loud_frame);
@@ -2115,8 +2090,7 @@ mod inner {
         #[test]
         fn test_vad_detector_reset() {
             let mut vad = VadDetector::with_defaults();
-            let loud_frame: Vec<i16> =
-                (0..320).map(|i| ((i % 50) * 500) as i16).collect();
+            let loud_frame: Vec<i16> = (0..320).map(|i| ((i % 50) * 500) as i16).collect();
             vad.process_frame(&loud_frame);
             assert!(vad.current_timestamp_ms() > 0);
 
@@ -2278,8 +2252,7 @@ mod inner {
             let mut tm = TurnManager::new(TurnPolicy::NaturalOverlap);
             for i in 1..=5 {
                 tm.start_turn(TurnSpeaker::User).unwrap();
-                tm.end_turn(format!("Turn {}", i), i as u64 * 100)
-                    .unwrap();
+                tm.end_turn(format!("Turn {}", i), i as u64 * 100).unwrap();
             }
 
             let last_2 = tm.get_last_n(2);
@@ -2333,75 +2306,36 @@ mod inner {
         #[test]
         fn test_session_state_valid_transitions() {
             assert!(VoiceSessionState::Idle.can_transition_to(&VoiceSessionState::Listening));
-            assert!(
-                VoiceSessionState::Listening
-                    .can_transition_to(&VoiceSessionState::Processing)
-            );
-            assert!(
-                VoiceSessionState::Processing
-                    .can_transition_to(&VoiceSessionState::Speaking)
-            );
-            assert!(
-                VoiceSessionState::Processing
-                    .can_transition_to(&VoiceSessionState::Listening)
-            );
-            assert!(
-                VoiceSessionState::Speaking
-                    .can_transition_to(&VoiceSessionState::Listening)
-            );
-            assert!(
-                VoiceSessionState::Speaking
-                    .can_transition_to(&VoiceSessionState::Interrupted)
-            );
-            assert!(
-                VoiceSessionState::Interrupted
-                    .can_transition_to(&VoiceSessionState::Listening)
-            );
+            assert!(VoiceSessionState::Listening.can_transition_to(&VoiceSessionState::Processing));
+            assert!(VoiceSessionState::Processing.can_transition_to(&VoiceSessionState::Speaking));
+            assert!(VoiceSessionState::Processing.can_transition_to(&VoiceSessionState::Listening));
+            assert!(VoiceSessionState::Speaking.can_transition_to(&VoiceSessionState::Listening));
+            assert!(VoiceSessionState::Speaking.can_transition_to(&VoiceSessionState::Interrupted));
+            assert!(VoiceSessionState::Interrupted.can_transition_to(&VoiceSessionState::Listening));
         }
 
         #[test]
         fn test_session_state_closed_transitions() {
             // Any state can go to Closed
             assert!(VoiceSessionState::Idle.can_transition_to(&VoiceSessionState::Closed));
-            assert!(
-                VoiceSessionState::Listening.can_transition_to(&VoiceSessionState::Closed)
-            );
-            assert!(
-                VoiceSessionState::Processing.can_transition_to(&VoiceSessionState::Closed)
-            );
-            assert!(
-                VoiceSessionState::Speaking.can_transition_to(&VoiceSessionState::Closed)
-            );
-            assert!(
-                VoiceSessionState::Interrupted.can_transition_to(&VoiceSessionState::Closed)
-            );
+            assert!(VoiceSessionState::Listening.can_transition_to(&VoiceSessionState::Closed));
+            assert!(VoiceSessionState::Processing.can_transition_to(&VoiceSessionState::Closed));
+            assert!(VoiceSessionState::Speaking.can_transition_to(&VoiceSessionState::Closed));
+            assert!(VoiceSessionState::Interrupted.can_transition_to(&VoiceSessionState::Closed));
         }
 
         #[test]
         fn test_session_state_invalid_transitions() {
             // Closed cannot transition anywhere
-            assert!(
-                !VoiceSessionState::Closed
-                    .can_transition_to(&VoiceSessionState::Listening)
-            );
-            assert!(
-                !VoiceSessionState::Closed.can_transition_to(&VoiceSessionState::Idle)
-            );
+            assert!(!VoiceSessionState::Closed.can_transition_to(&VoiceSessionState::Listening));
+            assert!(!VoiceSessionState::Closed.can_transition_to(&VoiceSessionState::Idle));
 
             // Idle cannot go directly to Processing or Speaking
-            assert!(
-                !VoiceSessionState::Idle
-                    .can_transition_to(&VoiceSessionState::Processing)
-            );
-            assert!(
-                !VoiceSessionState::Idle.can_transition_to(&VoiceSessionState::Speaking)
-            );
+            assert!(!VoiceSessionState::Idle.can_transition_to(&VoiceSessionState::Processing));
+            assert!(!VoiceSessionState::Idle.can_transition_to(&VoiceSessionState::Speaking));
 
             // Listening cannot go directly to Speaking
-            assert!(
-                !VoiceSessionState::Listening
-                    .can_transition_to(&VoiceSessionState::Speaking)
-            );
+            assert!(!VoiceSessionState::Listening.can_transition_to(&VoiceSessionState::Speaking));
         }
 
         // ----------------------------------------------------------------
@@ -2422,9 +2356,7 @@ mod inner {
             let config = VoiceAgentConfig::default();
             let mut session = VoiceSession::new(config);
 
-            session
-                .transition_to(VoiceSessionState::Listening)
-                .unwrap();
+            session.transition_to(VoiceSessionState::Listening).unwrap();
             assert_eq!(*session.state(), VoiceSessionState::Listening);
 
             session
@@ -2617,7 +2549,10 @@ mod inner {
             // Silent chunk — all zeros, 20ms at 16kHz mono = 640 bytes
             let chunk = AudioChunk::new(vec![0u8; 640], 16000, 1, AudioFormat::Pcm16);
             let result = agent.process_audio(&mut session, &chunk).unwrap();
-            assert!(result.is_none(), "Silent audio should not produce a response");
+            assert!(
+                result.is_none(),
+                "Silent audio should not produce a response"
+            );
         }
 
         #[test]
@@ -2707,8 +2642,7 @@ mod inner {
                 frame_size_ms: 20,
             });
 
-            let loud_frame: Vec<i16> =
-                (0..320).map(|i| ((i % 50) * 600) as i16).collect();
+            let loud_frame: Vec<i16> = (0..320).map(|i| ((i % 50) * 600) as i16).collect();
             let silent_frame = vec![0i16; 320];
 
             // Phase 1: silence
@@ -2731,10 +2665,7 @@ mod inner {
             let mut got_end = false;
             for _ in 0..20 {
                 let ev = vad.process_frame(&silent_frame);
-                if let VadEvent::SpeechEnd {
-                    duration_ms, ..
-                } = ev
-                {
+                if let VadEvent::SpeechEnd { duration_ms, .. } = ev {
                     assert!(duration_ms >= 40);
                     got_end = true;
                     break;
@@ -2746,8 +2677,7 @@ mod inner {
         #[test]
         fn test_transport_trait_object() {
             // Verify VoiceTransport can be used as a trait object
-            let mut transport: Box<dyn VoiceTransport> =
-                Box::new(InMemoryTransport::new());
+            let mut transport: Box<dyn VoiceTransport> = Box::new(InMemoryTransport::new());
             let chunk = AudioChunk::new(vec![0, 0], 16000, 1, AudioFormat::Pcm16);
             assert!(transport.send_audio(&chunk).is_ok());
             assert!(transport.receive_audio().unwrap().is_none());
@@ -3087,9 +3017,18 @@ mod inner {
                 AudioModelCapability::AudioInputOutput,
             ];
             assert_eq!(capabilities.len(), 4);
-            assert_ne!(AudioModelCapability::TextOnly, AudioModelCapability::AudioInputOutput);
-            assert_ne!(AudioModelCapability::AudioInput, AudioModelCapability::AudioOutput);
-            assert_eq!(AudioModelCapability::TextOnly, AudioModelCapability::TextOnly);
+            assert_ne!(
+                AudioModelCapability::TextOnly,
+                AudioModelCapability::AudioInputOutput
+            );
+            assert_ne!(
+                AudioModelCapability::AudioInput,
+                AudioModelCapability::AudioOutput
+            );
+            assert_eq!(
+                AudioModelCapability::TextOnly,
+                AudioModelCapability::TextOnly
+            );
         }
 
         #[test]
@@ -3392,9 +3331,7 @@ mod inner {
         #[test]
         fn test_voice_agent_set_llm_callback() {
             let mut agent = VoiceAgent::with_defaults().unwrap();
-            agent.set_llm_callback(Box::new(|input| {
-                Ok(format!("Echo: {}", input))
-            }));
+            agent.set_llm_callback(Box::new(|input| Ok(format!("Echo: {}", input))));
             let result = agent.run_llm("hello").unwrap();
             assert_eq!(result, "Echo: hello");
         }
@@ -3431,7 +3368,10 @@ mod inner {
             let mut agent = VoiceAgent::with_defaults().unwrap();
             assert!(!agent.config.emotion_enabled);
             let ctx = agent.run_emotion_detection("I am so happy!");
-            assert!(ctx.is_empty(), "Emotion context should be empty when disabled");
+            assert!(
+                ctx.is_empty(),
+                "Emotion context should be empty when disabled"
+            );
         }
 
         #[test]
@@ -3444,9 +3384,7 @@ mod inner {
             agent.set_audio_chain(chain);
 
             // Set up LLM callback
-            agent.set_llm_callback(Box::new(|input| {
-                Ok(format!("Response to: {}", input))
-            }));
+            agent.set_llm_callback(Box::new(|input| Ok(format!("Response to: {}", input))));
 
             // Create a session and process audio with speech
             let mut session = agent.start_session().unwrap();
@@ -3459,7 +3397,8 @@ mod inner {
             // Send loud frames to trigger SpeechStart
             let loud_frame: Vec<i16> = (0..frame_size).map(|i| ((i % 50) as i16 * 600)).collect();
             let loud_bytes: Vec<u8> = loud_frame.iter().flat_map(|s| s.to_le_bytes()).collect();
-            let loud_chunk = AudioChunk::new(loud_bytes.clone(), sample_rate, 1, AudioFormat::Pcm16);
+            let loud_chunk =
+                AudioChunk::new(loud_bytes.clone(), sample_rate, 1, AudioFormat::Pcm16);
 
             for _ in 0..10 {
                 let _ = agent.process_audio(&mut session, &loud_chunk);
@@ -3481,17 +3420,32 @@ mod inner {
             if got_response {
                 assert!(agent.last_latency.is_some());
                 let lat = agent.last_latency.as_ref().unwrap();
-                assert!(lat.total_ms < 5000, "Pipeline should complete quickly with stubs");
+                assert!(
+                    lat.total_ms < 5000,
+                    "Pipeline should complete quickly with stubs"
+                );
             }
         }
 
         #[cfg(feature = "audio")]
         #[test]
         fn test_audio_format_conversion() {
-            assert_eq!(to_speech_audio_format(&AudioFormat::Pcm16), SpeechAudioFormat::Pcm);
-            assert_eq!(to_speech_audio_format(&AudioFormat::Wav), SpeechAudioFormat::Wav);
-            assert_eq!(to_speech_audio_format(&AudioFormat::Ogg), SpeechAudioFormat::Ogg);
-            assert_eq!(to_speech_audio_format(&AudioFormat::Mp3), SpeechAudioFormat::Mp3);
+            assert_eq!(
+                to_speech_audio_format(&AudioFormat::Pcm16),
+                SpeechAudioFormat::Pcm
+            );
+            assert_eq!(
+                to_speech_audio_format(&AudioFormat::Wav),
+                SpeechAudioFormat::Wav
+            );
+            assert_eq!(
+                to_speech_audio_format(&AudioFormat::Ogg),
+                SpeechAudioFormat::Ogg
+            );
+            assert_eq!(
+                to_speech_audio_format(&AudioFormat::Mp3),
+                SpeechAudioFormat::Mp3
+            );
         }
     }
 }

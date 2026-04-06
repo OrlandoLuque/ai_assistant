@@ -173,11 +173,12 @@ impl ContainerSandbox {
         // Write code to the container safely by hex-encoding to avoid shell injection.
         // The hex string contains only [0-9a-f] characters, making it impossible to
         // break out of the shell command.
-        let hex: String = code.as_bytes().iter().map(|b| format!("{:02x}", b)).collect();
-        let write_cmd = format!(
-            "printf '%s' '{}' | xxd -r -p > {}",
-            hex, filename
-        );
+        let hex: String = code
+            .as_bytes()
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect();
+        let write_cmd = format!("printf '%s' '{}' | xxd -r -p > {}", hex, filename);
         let _ = self.executor.exec(
             &container_id,
             &["sh", "-c", &write_cmd],
@@ -328,7 +329,9 @@ impl ExecutionBackend {
 
     /// Force container backend.
     pub fn container(config: ContainerSandboxConfig) -> Result<Self, ContainerError> {
-        Ok(ExecutionBackend::Container(Box::new(ContainerSandbox::new(config)?)))
+        Ok(ExecutionBackend::Container(Box::new(
+            ContainerSandbox::new(config)?,
+        )))
     }
 
     /// Force process backend.

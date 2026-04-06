@@ -716,7 +716,9 @@ mod tests {
         };
         let score2 = scorer.score(&qa2);
 
-        let avg = scorer.get_average_scores().expect("Should have averages after scoring");
+        let avg = scorer
+            .get_average_scores()
+            .expect("Should have averages after scoring");
 
         let expected_overall = (score1.overall + score2.overall) / 2.0;
         let expected_relevance = (score1.relevance + score2.relevance) / 2.0;
@@ -725,11 +727,26 @@ mod tests {
         let expected_actionability = (score1.actionability + score2.actionability) / 2.0;
 
         let eps = 1e-10;
-        assert!((avg.overall - expected_overall).abs() < eps, "overall mismatch");
-        assert!((avg.relevance - expected_relevance).abs() < eps, "relevance mismatch");
-        assert!((avg.completeness - expected_completeness).abs() < eps, "completeness mismatch");
-        assert!((avg.clarity - expected_clarity).abs() < eps, "clarity mismatch");
-        assert!((avg.actionability - expected_actionability).abs() < eps, "actionability mismatch");
+        assert!(
+            (avg.overall - expected_overall).abs() < eps,
+            "overall mismatch"
+        );
+        assert!(
+            (avg.relevance - expected_relevance).abs() < eps,
+            "relevance mismatch"
+        );
+        assert!(
+            (avg.completeness - expected_completeness).abs() < eps,
+            "completeness mismatch"
+        );
+        assert!(
+            (avg.clarity - expected_clarity).abs() < eps,
+            "clarity mismatch"
+        );
+        assert!(
+            (avg.actionability - expected_actionability).abs() < eps,
+            "actionability mismatch"
+        );
         // No user feedback provided, so satisfaction should be None
         assert!(avg.user_satisfaction.is_none());
     }

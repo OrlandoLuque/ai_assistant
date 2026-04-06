@@ -161,7 +161,11 @@ fn validate_title(title: &str) -> Result<(), String> {
         return Err("Title cannot be empty".into());
     }
     if trimmed.len() > MAX_TITLE_LEN {
-        return Err(format!("Title too long: {} chars (max {})", trimmed.len(), MAX_TITLE_LEN));
+        return Err(format!(
+            "Title too long: {} chars (max {})",
+            trimmed.len(),
+            MAX_TITLE_LEN
+        ));
     }
     Ok(())
 }
@@ -184,7 +188,10 @@ fn sanitize_tags(tags: &[serde_json::Value]) -> Result<Vec<String>, String> {
             continue;
         }
         if trimmed.len() > MAX_TAG_LEN {
-            return Err(format!("Tag '{}' too long (max {} chars)", trimmed, MAX_TAG_LEN));
+            return Err(format!(
+                "Tag '{}' too long (max {} chars)",
+                trimmed, MAX_TAG_LEN
+            ));
         }
         // Reject tags with SQL/JSON special chars
         if trimmed.contains('"') || trimmed.contains('\'') || trimmed.contains(';') {
@@ -308,7 +315,7 @@ impl UserTaskStore {
             conditions.push(format!("priority = ?{}", params.len()));
         }
         if let Some(ref tag) = filters.tag {
-            let pattern = format!("%\"{}\"%" , tag.to_lowercase());
+            let pattern = format!("%\"{}\"%", tag.to_lowercase());
             params.push(Box::new(pattern));
             conditions.push(format!("tags LIKE ?{}", params.len()));
         }
@@ -332,8 +339,12 @@ impl UserTaskStore {
             limit,
         );
 
-        let mut stmt = self.conn.prepare(&sql).map_err(|e| format!("Prepare error: {}", e))?;
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = self
+            .conn
+            .prepare(&sql)
+            .map_err(|e| format!("Prepare error: {}", e))?;
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
         let rows = stmt
             .query_map(param_refs.as_slice(), |row| Ok(row_to_task(row)))
             .map_err(|e| format!("Query error: {}", e))?;
@@ -404,12 +415,14 @@ impl UserTaskStore {
             params.len(),
         );
 
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
         self.conn
             .execute(&sql, param_refs.as_slice())
             .map_err(|e| format!("Update error: {}", e))?;
 
-        self.get(id)?.ok_or_else(|| format!("Task {} disappeared after update", id))
+        self.get(id)?
+            .ok_or_else(|| format!("Task {} disappeared after update", id))
     }
 
     /// Soft-delete a task (can be rolled back within retention period).
@@ -445,8 +458,7 @@ impl UserTaskStore {
     /// Purge soft-deleted tasks older than the retention period.
     /// Call this periodically to prevent unbounded storage growth.
     pub fn purge_expired(&self) -> Result<usize, String> {
-        let cutoff = chrono::Utc::now()
-            - chrono::Duration::days(ROLLBACK_RETENTION_DAYS as i64);
+        let cutoff = chrono::Utc::now() - chrono::Duration::days(ROLLBACK_RETENTION_DAYS as i64);
         let cutoff_str = cutoff.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
         let count = self
             .conn
@@ -481,7 +493,10 @@ impl UserTaskStore {
                        JOIN user_tasks ut ON ut.rowid = fts.rowid
                        WHERE user_tasks_fts MATCH ?1 AND ut.deleted_at IS NULL
                        LIMIT ?2";
-            let mut stmt = self.conn.prepare(sql).map_err(|e| format!("FTS prepare error: {}", e))?;
+            let mut stmt = self
+                .conn
+                .prepare(sql)
+                .map_err(|e| format!("FTS prepare error: {}", e))?;
             let rows = stmt
                 .query_map(rusqlite::params![fts_query, limit as i64], |row| {
                     Ok(row_to_task(row))
@@ -501,7 +516,10 @@ impl UserTaskStore {
                        FROM user_tasks
                        WHERE deleted_at IS NULL AND (title LIKE ?1 OR description LIKE ?1)
                        LIMIT ?2";
-            let mut stmt = self.conn.prepare(sql).map_err(|e| format!("Search prepare error: {}", e))?;
+            let mut stmt = self
+                .conn
+                .prepare(sql)
+                .map_err(|e| format!("Search prepare error: {}", e))?;
             let rows = stmt
                 .query_map(rusqlite::params![pattern, limit as i64], |row| {
                     Ok(row_to_task(row))
@@ -546,32 +564,49 @@ pub fn register_task_tools(server: &mut McpServer, store: Arc<Mutex<UserTaskStor
     {
         let store = store.clone();
         server.register_tool(
-            McpTool::new("task_create", "Create a new user task with optional priority, due date, and tags.")
-                .with_property("title", "string", "Task title (required)", true)
-                .with_property("description", "string", "Task description", false)
-                .with_property("priority", "string", "Priority: low, medium, high, critical (default: medium)", false)
-                .with_property("due_date", "string", "Due date in YYYY-MM-DD format", false)
-                .with_property("tags", "array", "List of tag strings", false)
-                .with_annotations(McpToolAnnotation {
-                    title: Some("Create Task".into()),
-                    read_only_hint: Some(false),
-                    destructive_hint: Some(false),
-                    idempotent_hint: Some(false),
-                    open_world_hint: Some(false),
-                }),
+            McpTool::new(
+                "task_create",
+                "Create a new user task with optional priority, due date, and tags.",
+            )
+            .with_property("title", "string", "Task title (required)", true)
+            .with_property("description", "string", "Task description", false)
+            .with_property(
+                "priority",
+                "string",
+                "Priority: low, medium, high, critical (default: medium)",
+                false,
+            )
+            .with_property("due_date", "string", "Due date in YYYY-MM-DD format", false)
+            .with_property("tags", "array", "List of tag strings", false)
+            .with_annotations(McpToolAnnotation {
+                title: Some("Create Task".into()),
+                read_only_hint: Some(false),
+                destructive_hint: Some(false),
+                idempotent_hint: Some(false),
+                open_world_hint: Some(false),
+            }),
             move |args| {
-                let title = args.get("title").and_then(|v| v.as_str())
+                let title = args
+                    .get("title")
+                    .and_then(|v| v.as_str())
                     .ok_or("Missing required parameter: title")?;
                 validate_title(title)?;
 
-                let description = args.get("description").and_then(|v| v.as_str()).unwrap_or("");
+                let description = args
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 if description.len() > MAX_DESC_LEN {
                     return Err(format!("Description too long (max {} chars)", MAX_DESC_LEN));
                 }
 
                 let priority = match args.get("priority").and_then(|v| v.as_str()) {
-                    Some(p) => TaskPriority::from_str(p)
-                        .ok_or_else(|| format!("Invalid priority '{}': expected low/medium/high/critical", p))?,
+                    Some(p) => TaskPriority::from_str(p).ok_or_else(|| {
+                        format!(
+                            "Invalid priority '{}': expected low/medium/high/critical",
+                            p
+                        )
+                    })?,
                     None => TaskPriority::Medium,
                 };
 
@@ -622,26 +657,61 @@ pub fn register_task_tools(server: &mut McpServer, store: Arc<Mutex<UserTaskStor
     {
         let store = store.clone();
         server.register_tool(
-            McpTool::new("task_list", "List user tasks with optional filtering and sorting.")
-                .with_property("status", "string", "Filter by status: pending, in_progress, done", false)
-                .with_property("priority", "string", "Filter by priority: low, medium, high, critical", false)
-                .with_property("tag", "string", "Filter by tag", false)
-                .with_property("sort_by", "string", "Sort by: due_date, priority, created (default: created)", false)
-                .with_property("sort_order", "string", "Sort order: asc, desc (default: desc)", false)
-                .with_property("limit", "integer", "Max results (default: 50, max: 200)", false)
-                .with_annotations(McpToolAnnotation {
-                    title: Some("List Tasks".into()),
-                    read_only_hint: Some(true),
-                    destructive_hint: Some(false),
-                    idempotent_hint: Some(true),
-                    open_world_hint: Some(false),
-                }),
+            McpTool::new(
+                "task_list",
+                "List user tasks with optional filtering and sorting.",
+            )
+            .with_property(
+                "status",
+                "string",
+                "Filter by status: pending, in_progress, done",
+                false,
+            )
+            .with_property(
+                "priority",
+                "string",
+                "Filter by priority: low, medium, high, critical",
+                false,
+            )
+            .with_property("tag", "string", "Filter by tag", false)
+            .with_property(
+                "sort_by",
+                "string",
+                "Sort by: due_date, priority, created (default: created)",
+                false,
+            )
+            .with_property(
+                "sort_order",
+                "string",
+                "Sort order: asc, desc (default: desc)",
+                false,
+            )
+            .with_property(
+                "limit",
+                "integer",
+                "Max results (default: 50, max: 200)",
+                false,
+            )
+            .with_annotations(McpToolAnnotation {
+                title: Some("List Tasks".into()),
+                read_only_hint: Some(true),
+                destructive_hint: Some(false),
+                idempotent_hint: Some(true),
+                open_world_hint: Some(false),
+            }),
             move |args| {
-                let status = args.get("status").and_then(|v| v.as_str())
+                let status = args
+                    .get("status")
+                    .and_then(|v| v.as_str())
                     .and_then(TaskStatus::from_str);
-                let priority = args.get("priority").and_then(|v| v.as_str())
+                let priority = args
+                    .get("priority")
+                    .and_then(|v| v.as_str())
                     .and_then(TaskPriority::from_str);
-                let tag = args.get("tag").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let tag = args
+                    .get("tag")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
                 let sort_by = match args.get("sort_by").and_then(|v| v.as_str()) {
                     Some("due_date") => TaskSortField::DueDate,
                     Some("priority") => TaskSortField::Priority,
@@ -653,7 +723,14 @@ pub fn register_task_tools(server: &mut McpServer, store: Arc<Mutex<UserTaskStor
                 };
                 let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
 
-                let filters = TaskFilters { status, priority, tag, sort_by, sort_order, limit };
+                let filters = TaskFilters {
+                    status,
+                    priority,
+                    tag,
+                    sort_by,
+                    sort_order,
+                    limit,
+                };
                 let guard = store.lock().map_err(|e| format!("Lock error: {}", e))?;
                 let tasks = guard.list(&filters)?;
 
@@ -679,7 +756,9 @@ pub fn register_task_tools(server: &mut McpServer, store: Arc<Mutex<UserTaskStor
                     open_world_hint: Some(false),
                 }),
             move |args| {
-                let id = args.get("id").and_then(|v| v.as_str())
+                let id = args
+                    .get("id")
+                    .and_then(|v| v.as_str())
                     .ok_or("Missing required parameter: id")?;
                 let guard = store.lock().map_err(|e| format!("Lock error: {}", e))?;
                 match guard.get(id)? {
@@ -694,34 +773,68 @@ pub fn register_task_tools(server: &mut McpServer, store: Arc<Mutex<UserTaskStor
     {
         let store = store.clone();
         server.register_tool(
-            McpTool::new("task_update", "Update a task's fields. Only provided fields are changed.")
-                .with_property("id", "string", "Task ID (required)", true)
-                .with_property("title", "string", "New title", false)
-                .with_property("description", "string", "New description", false)
-                .with_property("status", "string", "New status: pending, in_progress, done", false)
-                .with_property("priority", "string", "New priority: low, medium, high, critical", false)
-                .with_property("due_date", "string", "New due date (YYYY-MM-DD) or null to clear", false)
-                .with_property("tags", "array", "New tags list (replaces existing)", false)
-                .with_annotations(McpToolAnnotation {
-                    title: Some("Update Task".into()),
-                    read_only_hint: Some(false),
-                    destructive_hint: Some(false),
-                    idempotent_hint: Some(true),
-                    open_world_hint: Some(false),
-                }),
+            McpTool::new(
+                "task_update",
+                "Update a task's fields. Only provided fields are changed.",
+            )
+            .with_property("id", "string", "Task ID (required)", true)
+            .with_property("title", "string", "New title", false)
+            .with_property("description", "string", "New description", false)
+            .with_property(
+                "status",
+                "string",
+                "New status: pending, in_progress, done",
+                false,
+            )
+            .with_property(
+                "priority",
+                "string",
+                "New priority: low, medium, high, critical",
+                false,
+            )
+            .with_property(
+                "due_date",
+                "string",
+                "New due date (YYYY-MM-DD) or null to clear",
+                false,
+            )
+            .with_property("tags", "array", "New tags list (replaces existing)", false)
+            .with_annotations(McpToolAnnotation {
+                title: Some("Update Task".into()),
+                read_only_hint: Some(false),
+                destructive_hint: Some(false),
+                idempotent_hint: Some(true),
+                open_world_hint: Some(false),
+            }),
             move |args| {
-                let id = args.get("id").and_then(|v| v.as_str())
+                let id = args
+                    .get("id")
+                    .and_then(|v| v.as_str())
                     .ok_or("Missing required parameter: id")?;
 
-                let title = args.get("title").and_then(|v| v.as_str()).map(|s| s.to_string());
-                let description = args.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
-                let status = args.get("status").and_then(|v| v.as_str()).and_then(TaskStatus::from_str);
-                let priority = args.get("priority").and_then(|v| v.as_str()).and_then(TaskPriority::from_str);
+                let title = args
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let description = args
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let status = args
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .and_then(TaskStatus::from_str);
+                let priority = args
+                    .get("priority")
+                    .and_then(|v| v.as_str())
+                    .and_then(TaskPriority::from_str);
 
                 let due_date = if args.get("due_date").map(|v| v.is_null()).unwrap_or(false) {
                     Some(None) // clear
                 } else {
-                    args.get("due_date").and_then(|v| v.as_str()).map(|s| Some(s.to_string()))
+                    args.get("due_date")
+                        .and_then(|v| v.as_str())
+                        .map(|s| Some(s.to_string()))
                 };
 
                 let tags = match args.get("tags").and_then(|v| v.as_array()) {
@@ -729,7 +842,14 @@ pub fn register_task_tools(server: &mut McpServer, store: Arc<Mutex<UserTaskStor
                     None => None,
                 };
 
-                let updates = TaskUpdates { title, description, status, priority, due_date, tags };
+                let updates = TaskUpdates {
+                    title,
+                    description,
+                    status,
+                    priority,
+                    due_date,
+                    tags,
+                };
                 let guard = store.lock().map_err(|e| format!("Lock error: {}", e))?;
                 let task = guard.update(id, &updates)?;
                 Ok(serde_json::to_value(&task).map_err(|e| e.to_string())?)
@@ -751,11 +871,17 @@ pub fn register_task_tools(server: &mut McpServer, store: Arc<Mutex<UserTaskStor
                     open_world_hint: Some(false),
                 }),
             move |args| {
-                let id = args.get("id").and_then(|v| v.as_str())
+                let id = args
+                    .get("id")
+                    .and_then(|v| v.as_str())
                     .ok_or("Missing required parameter: id")?;
                 let updates = TaskUpdates {
-                    title: None, description: None, status: Some(TaskStatus::Done),
-                    priority: None, due_date: None, tags: None,
+                    title: None,
+                    description: None,
+                    status: Some(TaskStatus::Done),
+                    priority: None,
+                    due_date: None,
+                    tags: None,
                 };
                 let guard = store.lock().map_err(|e| format!("Lock error: {}", e))?;
                 let task = guard.update(id, &updates)?;
@@ -768,17 +894,22 @@ pub fn register_task_tools(server: &mut McpServer, store: Arc<Mutex<UserTaskStor
     {
         let store = store.clone();
         server.register_tool(
-            McpTool::new("task_delete", "Soft-delete a task. Can be rolled back within 30 days via task_undelete.")
-                .with_property("id", "string", "Task ID (required)", true)
-                .with_annotations(McpToolAnnotation {
-                    title: Some("Delete Task".into()),
-                    read_only_hint: Some(false),
-                    destructive_hint: Some(true),
-                    idempotent_hint: Some(false),
-                    open_world_hint: Some(false),
-                }),
+            McpTool::new(
+                "task_delete",
+                "Soft-delete a task. Can be rolled back within 30 days via task_undelete.",
+            )
+            .with_property("id", "string", "Task ID (required)", true)
+            .with_annotations(McpToolAnnotation {
+                title: Some("Delete Task".into()),
+                read_only_hint: Some(false),
+                destructive_hint: Some(true),
+                idempotent_hint: Some(false),
+                open_world_hint: Some(false),
+            }),
             move |args| {
-                let id = args.get("id").and_then(|v| v.as_str())
+                let id = args
+                    .get("id")
+                    .and_then(|v| v.as_str())
                     .ok_or("Missing required parameter: id")?;
                 let guard = store.lock().map_err(|e| format!("Lock error: {}", e))?;
                 guard.delete(id)?;
@@ -796,17 +927,22 @@ pub fn register_task_tools(server: &mut McpServer, store: Arc<Mutex<UserTaskStor
     {
         let store = store.clone();
         server.register_tool(
-            McpTool::new("task_undelete", "Restore a soft-deleted task (rollback delete).")
-                .with_property("id", "string", "Task ID (required)", true)
-                .with_annotations(McpToolAnnotation {
-                    title: Some("Undelete Task".into()),
-                    read_only_hint: Some(false),
-                    destructive_hint: Some(false),
-                    idempotent_hint: Some(true),
-                    open_world_hint: Some(false),
-                }),
+            McpTool::new(
+                "task_undelete",
+                "Restore a soft-deleted task (rollback delete).",
+            )
+            .with_property("id", "string", "Task ID (required)", true)
+            .with_annotations(McpToolAnnotation {
+                title: Some("Undelete Task".into()),
+                read_only_hint: Some(false),
+                destructive_hint: Some(false),
+                idempotent_hint: Some(true),
+                open_world_hint: Some(false),
+            }),
             move |args| {
-                let id = args.get("id").and_then(|v| v.as_str())
+                let id = args
+                    .get("id")
+                    .and_then(|v| v.as_str())
                     .ok_or("Missing required parameter: id")?;
                 let guard = store.lock().map_err(|e| format!("Lock error: {}", e))?;
                 match guard.rollback_delete(id)? {
@@ -824,18 +960,28 @@ pub fn register_task_tools(server: &mut McpServer, store: Arc<Mutex<UserTaskStor
     {
         let store = store.clone();
         server.register_tool(
-            McpTool::new("task_search", "Full-text search across task titles and descriptions.")
-                .with_property("query", "string", "Search query (required)", true)
-                .with_property("limit", "integer", "Max results (default: 20, max: 200)", false)
-                .with_annotations(McpToolAnnotation {
-                    title: Some("Search Tasks".into()),
-                    read_only_hint: Some(true),
-                    destructive_hint: Some(false),
-                    idempotent_hint: Some(true),
-                    open_world_hint: Some(false),
-                }),
+            McpTool::new(
+                "task_search",
+                "Full-text search across task titles and descriptions.",
+            )
+            .with_property("query", "string", "Search query (required)", true)
+            .with_property(
+                "limit",
+                "integer",
+                "Max results (default: 20, max: 200)",
+                false,
+            )
+            .with_annotations(McpToolAnnotation {
+                title: Some("Search Tasks".into()),
+                read_only_hint: Some(true),
+                destructive_hint: Some(false),
+                idempotent_hint: Some(true),
+                open_world_hint: Some(false),
+            }),
             move |args| {
-                let query = args.get("query").and_then(|v| v.as_str())
+                let query = args
+                    .get("query")
+                    .and_then(|v| v.as_str())
                     .ok_or("Missing required parameter: query")?;
                 let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
                 let guard = store.lock().map_err(|e| format!("Lock error: {}", e))?;
@@ -911,7 +1057,10 @@ mod tests {
         store.create(&t1).expect("create");
         store.create(&t2).expect("create");
 
-        let filters = TaskFilters { status: Some(TaskStatus::Pending), ..Default::default() };
+        let filters = TaskFilters {
+            status: Some(TaskStatus::Pending),
+            ..Default::default()
+        };
         let tasks = store.list(&filters).expect("list");
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].title, "Task B");
@@ -950,7 +1099,10 @@ mod tests {
         let updates = TaskUpdates {
             title: Some("Updated".into()),
             priority: Some(TaskPriority::High),
-            description: None, status: None, due_date: None, tags: None,
+            description: None,
+            status: None,
+            due_date: None,
+            tags: None,
         };
         let updated = store.update(&task.id, &updates).expect("update");
         assert_eq!(updated.title, "Updated");
@@ -966,7 +1118,11 @@ mod tests {
 
         let updates = TaskUpdates {
             status: Some(TaskStatus::Done),
-            title: None, description: None, priority: None, due_date: None, tags: None,
+            title: None,
+            description: None,
+            priority: None,
+            due_date: None,
+            tags: None,
         };
         let completed = store.update(&task.id, &updates).expect("update");
         assert_eq!(completed.status, TaskStatus::Done);
@@ -983,7 +1139,10 @@ mod tests {
         assert!(store.get(&task.id).expect("get").is_none()); // Not visible
 
         // Rollback
-        let restored = store.rollback_delete(&task.id).expect("rollback").expect("restored");
+        let restored = store
+            .rollback_delete(&task.id)
+            .expect("rollback")
+            .expect("restored");
         assert_eq!(restored.title, "Deletable");
         assert!(store.get(&task.id).expect("get").is_some()); // Visible again
     }

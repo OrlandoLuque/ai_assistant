@@ -348,7 +348,8 @@ mod tests {
     #[test]
     fn test_max_truncation() {
         let gen = SuggestionGenerator::new();
-        let suggestions = gen.generate("Explain how computers work", "Computers use transistors", 2);
+        let suggestions =
+            gen.generate("Explain how computers work", "Computers use transistors", 2);
         assert!(suggestions.len() <= 2);
     }
 
@@ -356,14 +357,18 @@ mod tests {
     fn test_alternative_suggestion() {
         let gen = SuggestionGenerator::new();
         let suggestions = gen.generate("Tell me about X", "X is great, however Y is also good", 10);
-        assert!(suggestions.iter().any(|s| s.suggestion_type == SuggestionType::Alternative));
+        assert!(suggestions
+            .iter()
+            .any(|s| s.suggestion_type == SuggestionType::Alternative));
     }
 
     #[test]
     fn test_example_suggestion() {
         let gen = SuggestionGenerator::new();
         let suggestions = gen.generate("Show me", "Here is an example of the concept", 10);
-        assert!(suggestions.iter().any(|s| s.text.contains("another example")));
+        assert!(suggestions
+            .iter()
+            .any(|s| s.text.contains("another example")));
     }
 
     #[test]

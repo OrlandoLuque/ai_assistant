@@ -5,28 +5,28 @@
 //! Feature-gated under `home-automation`.
 
 pub mod backend;
-pub mod mqtt_backend;
-pub mod openhab_backend;
 pub mod coap_backend;
 pub mod custom_device;
 pub mod discovery;
 pub mod event_listener;
+pub mod mqtt_backend;
+pub mod openhab_backend;
 
 pub use backend::{
-    DeviceState, HomeBackend, HomeConfig, extract_domain, validate_backend_url,
-    validate_domain, validate_entity_id, validate_service_name,
+    extract_domain, validate_backend_url, validate_domain, validate_entity_id,
+    validate_service_name, DeviceState, HomeBackend, HomeConfig,
+};
+pub use coap_backend::{CoapBackend, CoapConfig, CoapDeviceEntry};
+pub use custom_device::{
+    validate_custom_device, AlertCondition, CommandTarget, CustomDeviceDefinition, StateSource,
+    ThresholdAlert,
+};
+pub use discovery::{discover_services, DiscoveredService, DiscoveredServiceType};
+pub use event_listener::{
+    parse_ha_state_changed, parse_openhab_state_changed, DeviceStateChange, EventListenerConfig,
+    HomeEventListenerManager, ListenerSource, ListenerStatus,
 };
 pub use mqtt_backend::{
     DeviceRegistry, MqttConfig, MqttHomeBackend, RegistryEntry, TopicConvention,
 };
 pub use openhab_backend::{OpenHabBackend, OpenHabConfig};
-pub use coap_backend::{CoapBackend, CoapConfig, CoapDeviceEntry};
-pub use custom_device::{
-    AlertCondition, CommandTarget, CustomDeviceDefinition, StateSource, ThresholdAlert,
-    validate_custom_device,
-};
-pub use discovery::{DiscoveredService, DiscoveredServiceType, discover_services};
-pub use event_listener::{
-    DeviceStateChange, EventListenerConfig, HomeEventListenerManager, ListenerSource,
-    ListenerStatus, parse_ha_state_changed, parse_openhab_state_changed,
-};

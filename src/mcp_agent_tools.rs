@@ -180,9 +180,7 @@ mod tests {
 
     fn make_pool() -> Arc<Mutex<AgentPool>> {
         let factory = crate::agent_wiring::make_response_generator_factory(|_model| {
-            crate::agent_wiring::make_response_generator(|_msgs| {
-                "test response".to_string()
-            })
+            crate::agent_wiring::make_response_generator(|_msgs| "test response".to_string())
         });
         let registry = ToolRegistry::new();
         Arc::new(Mutex::new(AgentPool::new(4, factory, registry)))
@@ -193,9 +191,7 @@ mod tests {
         let mut server = McpServer::new("test-server", "1.0");
         register_mcp_agent_tools(&mut server, make_pool());
         // Verify tools were registered by checking the server handles them
-        let result = server.handle_message(
-            r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#,
-        );
+        let result = server.handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#);
         assert!(result.contains("agent_pool_status"));
         assert!(result.contains("agent_task_progress"));
         assert!(result.contains("agent_stop"));
@@ -234,6 +230,10 @@ mod tests {
             r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"agent_task_progress","arguments":{"agent_id":"nonexistent"}}}"#,
         );
         // Should contain an error since agent doesn't exist
-        assert!(response.contains("not found") || response.contains("error") || response.contains("isError"));
+        assert!(
+            response.contains("not found")
+                || response.contains("error")
+                || response.contains("isError")
+        );
     }
 }

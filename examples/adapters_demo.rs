@@ -7,14 +7,26 @@
 //! including model presets, request building, and provider discovery.
 
 use ai_assistant::{
-    // OpenAI adapter
-    OpenAIClient, OpenAIConfig, OpenAIMessage, OpenAIModel, OpenAIRequest,
     // Anthropic adapter
-    AnthropicClient, AnthropicConfig, AnthropicMessage, AnthropicModel, AnthropicRequest,
-    // HuggingFace connector
-    HfClient, HfConfig, HfRequest, HfTask,
+    AnthropicClient,
+    AnthropicConfig,
+    AnthropicMessage,
+    AnthropicModel,
+    AnthropicRequest,
     // Provider plugins (local LLM discovery)
-    DiscoveryConfig, OllamaProvider,
+    DiscoveryConfig,
+    // HuggingFace connector
+    HfClient,
+    HfConfig,
+    HfRequest,
+    HfTask,
+    OllamaProvider,
+    // OpenAI adapter
+    OpenAIClient,
+    OpenAIConfig,
+    OpenAIMessage,
+    OpenAIModel,
+    OpenAIRequest,
 };
 
 fn main() {
@@ -67,10 +79,8 @@ fn main() {
     println!("\n  Streaming request: stream={}", stream_req.stream);
 
     // Demonstrate multi-modal message
-    let _vision_msg = OpenAIMessage::user_with_image(
-        "Describe this image",
-        "https://example.com/photo.png",
-    );
+    let _vision_msg =
+        OpenAIMessage::user_with_image("Describe this image", "https://example.com/photo.png");
     println!("  Vision message role: user (with image URL)");
 
     // ------------------------------------------------------------------
@@ -95,7 +105,10 @@ fn main() {
     let local_config = OpenAIConfig::local("http://localhost:8080/v1");
     println!("\n  Local config:");
     println!("    Base URL:   {}", local_config.base_url);
-    println!("    API key:    (empty = {})", local_config.api_key.is_empty());
+    println!(
+        "    API key:    (empty = {})",
+        local_config.api_key.is_empty()
+    );
 
     // Create client (does not make network calls)
     let _client = OpenAIClient::new(cloud_config);
@@ -170,24 +183,34 @@ fn main() {
 
     // Request builders
     let text_req = HfRequest::text_generation("Once upon a time in Rust-land");
-    println!("\n  Text generation request created (has params: {})",
-        text_req.parameters.is_some());
+    println!(
+        "\n  Text generation request created (has params: {})",
+        text_req.parameters.is_some()
+    );
 
     let qa_req = HfRequest::question_answering(
         "What is Rust?",
         "Rust is a systems programming language focused on safety and performance.",
     );
-    println!("  QA request created (inputs is object: {})", qa_req.inputs.is_object());
+    println!(
+        "  QA request created (inputs is object: {})",
+        qa_req.inputs.is_object()
+    );
 
     let summ_req = HfRequest::summarization(
         "Rust is a multi-paradigm programming language designed for performance and safety.",
     );
-    println!("  Summarization request created (has params: {})",
-        summ_req.parameters.is_some());
+    println!(
+        "  Summarization request created (has params: {})",
+        summ_req.parameters.is_some()
+    );
 
     // Config variants
     let hf_config = HfConfig::new().with_token("hf_demo_token");
-    println!("\n  HF config with token: has_token={}", hf_config.api_token.is_some());
+    println!(
+        "\n  HF config with token: has_token={}",
+        hf_config.api_token.is_some()
+    );
     println!("    Base URL: {}", hf_config.base_url);
 
     let hf_local = HfConfig::local("http://localhost:8080");
@@ -203,10 +226,22 @@ fn main() {
 
     let discovery = DiscoveryConfig::default();
     println!("  Discovery configuration:");
-    println!("    Check Ollama:     {} ({})", discovery.check_ollama, discovery.ollama_url);
-    println!("    Check LM Studio:  {} ({})", discovery.check_lm_studio, discovery.lm_studio_url);
-    println!("    Check TGW:        {} ({})", discovery.check_text_gen_webui, discovery.text_gen_webui_url);
-    println!("    Check KoboldCpp:  {} ({})", discovery.check_kobold_cpp, discovery.kobold_cpp_url);
+    println!(
+        "    Check Ollama:     {} ({})",
+        discovery.check_ollama, discovery.ollama_url
+    );
+    println!(
+        "    Check LM Studio:  {} ({})",
+        discovery.check_lm_studio, discovery.lm_studio_url
+    );
+    println!(
+        "    Check TGW:        {} ({})",
+        discovery.check_text_gen_webui, discovery.text_gen_webui_url
+    );
+    println!(
+        "    Check KoboldCpp:  {} ({})",
+        discovery.check_kobold_cpp, discovery.kobold_cpp_url
+    );
     println!("    Timeout:          {:?}", discovery.timeout);
 
     // Create an Ollama provider directly (does not connect yet)

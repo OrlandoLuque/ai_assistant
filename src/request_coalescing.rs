@@ -729,18 +729,15 @@ mod tests {
         let coalescer = SemanticCoalescer::new(config);
 
         // Two nearly identical embeddings (should group together)
-        let req1 = CoalescableRequest::new("Hello", "gpt-4")
-            .with_embedding(vec![1.0, 0.0, 0.0]);
-        let req2 = CoalescableRequest::new("Hi there", "gpt-4")
-            .with_embedding(vec![0.99, 0.1, 0.0]);
+        let req1 = CoalescableRequest::new("Hello", "gpt-4").with_embedding(vec![1.0, 0.0, 0.0]);
+        let req2 =
+            CoalescableRequest::new("Hi there", "gpt-4").with_embedding(vec![0.99, 0.1, 0.0]);
 
         // Different embedding (should be separate group)
-        let req3 = CoalescableRequest::new("Goodbye", "gpt-4")
-            .with_embedding(vec![0.0, 0.0, 1.0]);
+        let req3 = CoalescableRequest::new("Goodbye", "gpt-4").with_embedding(vec![0.0, 0.0, 1.0]);
 
         // Different model (should be separate group regardless of embedding)
-        let req4 = CoalescableRequest::new("Hello", "gpt-3.5")
-            .with_embedding(vec![1.0, 0.0, 0.0]);
+        let req4 = CoalescableRequest::new("Hello", "gpt-3.5").with_embedding(vec![1.0, 0.0, 0.0]);
 
         coalescer.submit(req1);
         coalescer.submit(req2);

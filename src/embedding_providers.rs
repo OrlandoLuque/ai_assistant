@@ -221,8 +221,8 @@ impl OpenAIEmbeddings {
 
     /// Create from the `OPENAI_API_KEY` environment variable.
     pub fn from_env() -> Result<Self> {
-        let api_key =
-            std::env::var("OPENAI_API_KEY").context("OPENAI_API_KEY environment variable not set")?;
+        let api_key = std::env::var("OPENAI_API_KEY")
+            .context("OPENAI_API_KEY environment variable not set")?;
         Ok(Self::new(&api_key))
     }
 
@@ -293,9 +293,7 @@ impl EmbeddingProvider for OpenAIEmbeddings {
             let embedding = item
                 .get("embedding")
                 .and_then(|e| e.as_array())
-                .ok_or_else(|| {
-                    anyhow::anyhow!("Invalid embedding format in OpenAI response")
-                })?;
+                .ok_or_else(|| anyhow::anyhow!("Invalid embedding format in OpenAI response"))?;
 
             let vec: Vec<f32> = embedding
                 .iter()
@@ -333,9 +331,7 @@ impl HuggingFaceEmbeddings {
     pub fn from_env() -> Result<Self> {
         let api_key = std::env::var("HF_API_KEY")
             .or_else(|_| std::env::var("HUGGING_FACE_HUB_TOKEN"))
-            .context(
-                "Neither HF_API_KEY nor HUGGING_FACE_HUB_TOKEN environment variable is set",
-            )?;
+            .context("Neither HF_API_KEY nor HUGGING_FACE_HUB_TOKEN environment variable is set")?;
         Ok(Self::default_model(&api_key))
     }
 
@@ -397,9 +393,7 @@ impl EmbeddingProvider for HuggingFaceEmbeddings {
         for item in outer {
             let vec = item
                 .as_array()
-                .ok_or_else(|| {
-                    anyhow::anyhow!("Invalid embedding format in HuggingFace response")
-                })?
+                .ok_or_else(|| anyhow::anyhow!("Invalid embedding format in HuggingFace response"))?
                 .iter()
                 .map(|v| v.as_f64().unwrap_or(0.0) as f32)
                 .collect();
@@ -425,9 +419,7 @@ pub fn create_embedding_provider(name: &str) -> Result<Box<dyn EmbeddingProvider
     match name {
         "local" | "tfidf" => Ok(Box::new(LocalTfIdfEmbedding::new())),
         "ollama" => Ok(Box::new(OllamaEmbeddings::default())),
-        "openai" => {
-            OpenAIEmbeddings::from_env().map(|e| Box::new(e) as Box<dyn EmbeddingProvider>)
-        }
+        "openai" => OpenAIEmbeddings::from_env().map(|e| Box::new(e) as Box<dyn EmbeddingProvider>),
         "huggingface" | "hf" => {
             HuggingFaceEmbeddings::from_env().map(|e| Box::new(e) as Box<dyn EmbeddingProvider>)
         }
@@ -545,8 +537,7 @@ mod tests {
 
     #[test]
     fn test_openai_with_model() {
-        let provider = OpenAIEmbeddings::new("test-key")
-            .with_model("text-embedding-3-large", 3072);
+        let provider = OpenAIEmbeddings::new("test-key").with_model("text-embedding-3-large", 3072);
         assert_eq!(provider.model(), "text-embedding-3-large");
         assert_eq!(provider.dimensions(), 3072);
     }
@@ -569,12 +560,7 @@ mod tests {
 
         let result = OpenAIEmbeddings::from_env();
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("OPENAI_API_KEY")
-        );
+        assert!(result.unwrap_err().to_string().contains("OPENAI_API_KEY"));
 
         // Restore if it was set
         if let Some(key) = original {

@@ -243,9 +243,7 @@ impl TemporalGraph {
             let next = self
                 .edges
                 .iter()
-                .filter(|e| {
-                    e.from_episode_id == current && e.edge_type == TemporalEdgeType::Causes
-                })
+                .filter(|e| e.from_episode_id == current && e.edge_type == TemporalEdgeType::Causes)
                 .max_by(|a, b| {
                     a.confidence
                         .partial_cmp(&b.confidence)
@@ -271,9 +269,7 @@ impl TemporalGraph {
     pub fn get_predecessors(&self, episode_id: &str) -> Vec<String> {
         self.edges
             .iter()
-            .filter(|e| {
-                e.to_episode_id == episode_id && e.edge_type == TemporalEdgeType::Before
-            })
+            .filter(|e| e.to_episode_id == episode_id && e.edge_type == TemporalEdgeType::Before)
             .map(|e| e.from_episode_id.clone())
             .collect()
     }
@@ -282,9 +278,7 @@ impl TemporalGraph {
     pub fn get_successors(&self, episode_id: &str) -> Vec<String> {
         self.edges
             .iter()
-            .filter(|e| {
-                e.from_episode_id == episode_id && e.edge_type == TemporalEdgeType::Before
-            })
+            .filter(|e| e.from_episode_id == episode_id && e.edge_type == TemporalEdgeType::Before)
             .map(|e| e.to_episode_id.clone())
             .collect()
     }

@@ -577,7 +577,9 @@ pub fn recover_session(path: &Path) -> RecoveryResult {
     let mut result = RecoveryResult::default();
 
     if !path.exists() {
-        result.warnings.push(format!("File not found: {}", path.display()));
+        result
+            .warnings
+            .push(format!("File not found: {}", path.display()));
         return result;
     }
 
@@ -590,7 +592,9 @@ pub fn recover_session(path: &Path) -> RecoveryResult {
             return result;
         }
         Ok(_) => {
-            result.warnings.push("Normal load succeeded but returned empty store".to_string());
+            result
+                .warnings
+                .push("Normal load succeeded but returned empty store".to_string());
         }
         Err(e) => {
             result.warnings.push(format!("Normal load failed: {}", e));
@@ -661,9 +665,13 @@ pub fn recover_session(path: &Path) -> RecoveryResult {
             return result;
         }
 
-        result.warnings.push("Text file but no parseable session data found".to_string());
+        result
+            .warnings
+            .push("Text file but no parseable session data found".to_string());
     } else {
-        result.warnings.push("File is not valid UTF-8 text".to_string());
+        result
+            .warnings
+            .push("File is not valid UTF-8 text".to_string());
 
         // Strategy 5: Try binary decompression + JSON
         if let Ok(bytes) = std::fs::read(path) {
@@ -674,11 +682,15 @@ pub fn recover_session(path: &Path) -> RecoveryResult {
                 result.format_used = Some("binary-decompress".to_string());
                 return result;
             }
-            result.warnings.push("Binary decompression also failed".to_string());
+            result
+                .warnings
+                .push("Binary decompression also failed".to_string());
         }
     }
 
-    result.warnings.push("All recovery strategies exhausted — returning empty store".to_string());
+    result
+        .warnings
+        .push("All recovery strategies exhausted — returning empty store".to_string());
     result
 }
 

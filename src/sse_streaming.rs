@@ -574,7 +574,10 @@ mod tests {
             model: "m".to_string(),
             choices: vec![StreamChoice {
                 index: 0,
-                delta: StreamDelta { role: None, content: Some("hi".to_string()) },
+                delta: StreamDelta {
+                    role: None,
+                    content: Some("hi".to_string()),
+                },
                 finish_reason: None,
             }],
         });

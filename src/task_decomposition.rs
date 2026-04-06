@@ -506,8 +506,7 @@ mod tests {
         assert_eq!(leaf.leaf_count(), 1);
         assert_eq!(leaf.depth(), 0);
 
-        let parent = TaskNode::new("2", "Parent")
-            .with_subtask(TaskNode::new("2.1", "Child"));
+        let parent = TaskNode::new("2", "Parent").with_subtask(TaskNode::new("2.1", "Child"));
         assert!(!parent.is_leaf());
         assert_eq!(parent.leaf_count(), 1);
         assert_eq!(parent.depth(), 1);
@@ -515,14 +514,10 @@ mod tests {
 
     #[test]
     fn test_task_node_depth() {
-        let deep = TaskNode::new("r", "Root")
-            .with_subtask(
-                TaskNode::new("a", "Level 1")
-                    .with_subtask(
-                        TaskNode::new("b", "Level 2")
-                            .with_subtask(TaskNode::new("c", "Level 3")),
-                    ),
-            );
+        let deep =
+            TaskNode::new("r", "Root").with_subtask(TaskNode::new("a", "Level 1").with_subtask(
+                TaskNode::new("b", "Level 2").with_subtask(TaskNode::new("c", "Level 3")),
+            ));
         assert_eq!(deep.depth(), 3);
         assert_eq!(deep.leaf_count(), 1);
     }

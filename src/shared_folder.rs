@@ -130,14 +130,20 @@ impl SharedFolder {
 
     /// Validate that a relative path does not escape the shared folder.
     fn validate_relative_path(&self, relative_path: &str) -> Result<()> {
-        if relative_path.contains("..") || relative_path.starts_with('/') || relative_path.starts_with('\\') {
-            anyhow::bail!("Path traversal detected in relative path: {}", relative_path);
+        if relative_path.contains("..")
+            || relative_path.starts_with('/')
+            || relative_path.starts_with('\\')
+        {
+            anyhow::bail!(
+                "Path traversal detected in relative path: {}",
+                relative_path
+            );
         }
         let full_path = self.host_path.join(relative_path);
         // For existing paths, canonicalize and verify containment
         if let Ok(canonical) = std::fs::canonicalize(&full_path) {
-            let base_canonical = std::fs::canonicalize(&self.host_path)
-                .unwrap_or_else(|_| self.host_path.clone());
+            let base_canonical =
+                std::fs::canonicalize(&self.host_path).unwrap_or_else(|_| self.host_path.clone());
             if !canonical.starts_with(&base_canonical) {
                 anyhow::bail!("Path escapes shared folder: {:?}", relative_path);
             }
@@ -150,8 +156,7 @@ impl SharedFolder {
     pub fn get_file(&self, relative_path: &str) -> Result<Vec<u8>> {
         self.validate_relative_path(relative_path)?;
         let full_path = self.host_path.join(relative_path);
-        std::fs::read(&full_path)
-            .with_context(|| format!("Failed to read file {:?}", full_path))
+        std::fs::read(&full_path).with_context(|| format!("Failed to read file {:?}", full_path))
     }
 
     /// Write a file to the shared folder.
@@ -232,11 +237,7 @@ impl SharedFolder {
         let mut count = 0;
         for file in &files {
             let data = self.get_file(&file.to_string_lossy())?;
-            let key = format!(
-                "{}/{}",
-                prefix.trim_end_matches('/'),
-                file.display()
-            );
+            let key = format!("{}/{}", prefix.trim_end_matches('/'), file.display());
             let content_type = Self::guess_content_type(&file.to_string_lossy());
             storage.put(&key, &data, content_type.as_deref())?;
             count += 1;
@@ -292,9 +293,9 @@ impl SharedFolder {
             "docx" => Some(
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document".into(),
             ),
-            "xlsx" => Some(
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet".into(),
-            ),
+            "xlsx" => {
+                Some("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet".into())
+            }
             "pptx" => Some(
                 "application/vnd.openxmlformats-officedocument.presentationml.presentation".into(),
             ),
@@ -531,7 +532,10 @@ mod tests {
         files.sort();
         assert_eq!(files.len(), 3);
 
-        let file_strs: Vec<String> = files.iter().map(|f| f.to_string_lossy().replace('\\', "/")).collect();
+        let file_strs: Vec<String> = files
+            .iter()
+            .map(|f| f.to_string_lossy().replace('\\', "/"))
+            .collect();
         assert!(file_strs.contains(&"root.txt".to_string()));
         assert!(file_strs.contains(&"sub/child.txt".to_string()));
         assert!(file_strs.contains(&"sub/deep/leaf.txt".to_string()));
@@ -649,7 +653,11 @@ mod tests {
         folder.clear().unwrap();
 
         let files = folder.list_files().unwrap();
-        assert!(files.is_empty(), "Expected empty after clear, got {:?}", files);
+        assert!(
+            files.is_empty(),
+            "Expected empty after clear, got {:?}",
+            files
+        );
         // The root directory itself should still exist
         assert!(dir.exists());
 
@@ -726,7 +734,9 @@ mod tests {
         );
         assert_eq!(
             SharedFolder::guess_content_type("slides.pptx"),
-            Some("application/vnd.openxmlformats-officedocument.presentationml.presentation".into())
+            Some(
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation".into()
+            )
         );
 
         // Unknown type

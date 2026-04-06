@@ -114,7 +114,9 @@ impl CostDashboard {
         output_tokens: usize,
         request_type: RequestType,
     ) {
-        let estimate = self.estimator.estimate(model, "api", input_tokens, output_tokens);
+        let estimate = self
+            .estimator
+            .estimate(model, "api", input_tokens, output_tokens);
         let cost = estimate.cost;
 
         let entry = RequestCostEntry {
@@ -158,7 +160,8 @@ impl CostDashboard {
     pub fn cost_by_type(&self) -> HashMap<String, f64> {
         let mut map: HashMap<String, f64> = HashMap::new();
         for e in &self.entries {
-            *map.entry(e.request_type.as_str().to_string()).or_insert(0.0) += e.cost_usd;
+            *map.entry(e.request_type.as_str().to_string())
+                .or_insert(0.0) += e.cost_usd;
         }
         map
     }
@@ -166,7 +169,11 @@ impl CostDashboard {
     /// Return the `n` most expensive entries, sorted descending by cost.
     pub fn most_expensive(&self, n: usize) -> Vec<&RequestCostEntry> {
         let mut sorted: Vec<&RequestCostEntry> = self.entries.iter().collect();
-        sorted.sort_by(|a, b| b.cost_usd.partial_cmp(&a.cost_usd).unwrap_or(std::cmp::Ordering::Equal));
+        sorted.sort_by(|a, b| {
+            b.cost_usd
+                .partial_cmp(&a.cost_usd)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         sorted.truncate(n);
         sorted
     }
@@ -217,7 +224,10 @@ impl CostDashboard {
         lines.push(format!("Session start: {}", self.session_start));
         lines.push(format!("Total requests: {}", self.total_requests()));
         lines.push(format!("Total cost: ${:.4}", self.total_cost()));
-        lines.push(format!("Average cost/request: ${:.4}", self.average_cost_per_request()));
+        lines.push(format!(
+            "Average cost/request: ${:.4}",
+            self.average_cost_per_request()
+        ));
 
         // Cost by model
         let by_model = self.cost_by_model();
@@ -225,7 +235,8 @@ impl CostDashboard {
             lines.push(String::new());
             lines.push("--- Cost by Model ---".to_string());
             let mut model_entries: Vec<_> = by_model.into_iter().collect();
-            model_entries.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            model_entries
+                .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
             for (model, cost) in model_entries {
                 lines.push(format!("  {}: ${:.4}", model, cost));
             }
@@ -248,10 +259,16 @@ impl CostDashboard {
             lines.push(String::new());
             lines.push("--- Budget ---".to_string());
             if let Some(d) = bm.daily_limit {
-                lines.push(format!("  Daily limit: ${:.2} (spent: ${:.4})", d, bm.spent_today));
+                lines.push(format!(
+                    "  Daily limit: ${:.2} (spent: ${:.4})",
+                    d, bm.spent_today
+                ));
             }
             if let Some(m) = bm.monthly_limit {
-                lines.push(format!("  Monthly limit: ${:.2} (spent: ${:.4})", m, bm.spent_month));
+                lines.push(format!(
+                    "  Monthly limit: ${:.2} (spent: ${:.4})",
+                    m, bm.spent_month
+                ));
             }
             if let Some(remaining) = self.budget_remaining() {
                 lines.push(format!("  Remaining: ${:.4}", remaining));
@@ -263,7 +280,8 @@ impl CostDashboard {
 
     /// Export all entries as CSV (header + data rows).
     pub fn export_csv(&self) -> String {
-        let mut csv = String::from("timestamp,model,input_tokens,output_tokens,cost_usd,request_type\n");
+        let mut csv =
+            String::from("timestamp,model,input_tokens,output_tokens,cost_usd,request_type\n");
         for e in &self.entries {
             csv.push_str(&format!(
                 "{},{},{},{},{:.6},{}\n",
@@ -450,10 +468,12 @@ impl CostMiddleware for DefaultCostMiddleware {
         }
 
         // Estimate cost assuming a 1:1 output ratio for the pre-check.
-        let estimate = self
-            .dashboard
-            .estimator
-            .estimate(model, "api", estimated_input_tokens, estimated_input_tokens);
+        let estimate = self.dashboard.estimator.estimate(
+            model,
+            "api",
+            estimated_input_tokens,
+            estimated_input_tokens,
+        );
 
         // Check per-request limit from config.
         if let Some(limit) = self.config.per_request_limit {
@@ -507,7 +527,11 @@ impl CostMiddleware for DefaultCostMiddleware {
             .record(model, input_tokens, output_tokens, RequestType::Chat);
 
         // Return a clone of the most recently added entry.
-        self.dashboard.entries.last().expect("just pushed entry via record()").clone()
+        self.dashboard
+            .entries
+            .last()
+            .expect("just pushed entry via record()")
+            .clone()
     }
 }
 
@@ -544,7 +568,10 @@ mod tests {
         // Each entry should have the same cost so total = 5 * single.
         let single = dash.entries()[0].cost_usd;
         let diff = (dash.total_cost() - single * 5.0).abs();
-        assert!(diff < 1e-9, "accumulated cost should be 5x single entry cost");
+        assert!(
+            diff < 1e-9,
+            "accumulated cost should be 5x single entry cost"
+        );
     }
 
     // 3. Three models, verify breakdown.
@@ -589,7 +616,10 @@ mod tests {
 
         let top = dash.most_expensive(2);
         assert_eq!(top.len(), 2);
-        assert!(top[0].cost_usd >= top[1].cost_usd, "should be sorted descending");
+        assert!(
+            top[0].cost_usd >= top[1].cost_usd,
+            "should be sorted descending"
+        );
         assert_eq!(top[0].output_tokens, 50000);
         assert_eq!(top[1].output_tokens, 10000);
     }
@@ -614,16 +644,23 @@ mod tests {
     // 7. Report contains expected sections.
     #[test]
     fn test_format_report() {
-        let mut dash = CostDashboard::with_budget(
-            BudgetManager::new().with_daily_limit(10.0),
-        );
+        let mut dash = CostDashboard::with_budget(BudgetManager::new().with_daily_limit(10.0));
         dash.record("gpt-4", 1000, 500, RequestType::Chat);
 
         let report = dash.format_report();
-        assert!(report.contains("Cost Dashboard Report"), "should contain title");
-        assert!(report.contains("Total requests:"), "should contain request count");
+        assert!(
+            report.contains("Cost Dashboard Report"),
+            "should contain title"
+        );
+        assert!(
+            report.contains("Total requests:"),
+            "should contain request count"
+        );
         assert!(report.contains("Total cost:"), "should contain total cost");
-        assert!(report.contains("Cost by Model"), "should contain model section");
+        assert!(
+            report.contains("Cost by Model"),
+            "should contain model section"
+        );
         assert!(report.contains("Budget"), "should contain budget section");
     }
 
@@ -637,7 +674,9 @@ mod tests {
         let csv = dash.export_csv();
         let lines: Vec<&str> = csv.lines().collect();
         assert_eq!(lines.len(), 3, "header + 2 data rows");
-        assert!(lines[0].contains("timestamp,model,input_tokens,output_tokens,cost_usd,request_type"));
+        assert!(
+            lines[0].contains("timestamp,model,input_tokens,output_tokens,cost_usd,request_type")
+        );
         assert!(lines[1].contains("gpt-4"));
         assert!(lines[2].contains("claude-3-sonnet"));
         assert!(lines[2].contains("Embedding"));

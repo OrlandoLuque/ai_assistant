@@ -77,14 +77,37 @@ impl UsageInfo {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum ChatStreamEvent {
-    MessageStart { id: String, role: String },
-    MessageDelta { id: String, content_chunk: String },
-    MessageEnd { id: String, finish_reason: String, usage: Option<UsageInfo> },
-    ToolCallStart { id: String, name: String },
-    ToolCallDelta { id: String, args_chunk: String },
-    ToolCallEnd { id: String, result: String },
-    Error { message: String },
-    StatusChange { status: ChatStatus },
+    MessageStart {
+        id: String,
+        role: String,
+    },
+    MessageDelta {
+        id: String,
+        content_chunk: String,
+    },
+    MessageEnd {
+        id: String,
+        finish_reason: String,
+        usage: Option<UsageInfo>,
+    },
+    ToolCallStart {
+        id: String,
+        name: String,
+    },
+    ToolCallDelta {
+        id: String,
+        args_chunk: String,
+    },
+    ToolCallEnd {
+        id: String,
+        result: String,
+    },
+    Error {
+        message: String,
+    },
+    StatusChange {
+        status: ChatStatus,
+    },
 }
 
 impl ChatStreamEvent {
@@ -112,7 +135,11 @@ impl ChatStreamEvent {
             ChatStreamEvent::MessageDelta { id, content_chunk } => {
                 serde_json::json!({ "id": id, "content_chunk": content_chunk })
             }
-            ChatStreamEvent::MessageEnd { id, finish_reason, usage } => {
+            ChatStreamEvent::MessageEnd {
+                id,
+                finish_reason,
+                usage,
+            } => {
                 serde_json::json!({ "id": id, "finish_reason": finish_reason, "usage": usage })
             }
             ChatStreamEvent::ToolCallStart { id, name } => {
@@ -387,35 +414,66 @@ mod tests {
     #[test]
     fn test_chat_stream_event_type() {
         assert_eq!(
-            ChatStreamEvent::MessageStart { id: String::new(), role: String::new() }.event_type(),
+            ChatStreamEvent::MessageStart {
+                id: String::new(),
+                role: String::new()
+            }
+            .event_type(),
             "message_start"
         );
         assert_eq!(
-            ChatStreamEvent::MessageDelta { id: String::new(), content_chunk: String::new() }.event_type(),
+            ChatStreamEvent::MessageDelta {
+                id: String::new(),
+                content_chunk: String::new()
+            }
+            .event_type(),
             "message_delta"
         );
         assert_eq!(
-            ChatStreamEvent::MessageEnd { id: String::new(), finish_reason: String::new(), usage: None }.event_type(),
+            ChatStreamEvent::MessageEnd {
+                id: String::new(),
+                finish_reason: String::new(),
+                usage: None
+            }
+            .event_type(),
             "message_end"
         );
         assert_eq!(
-            ChatStreamEvent::ToolCallStart { id: String::new(), name: String::new() }.event_type(),
+            ChatStreamEvent::ToolCallStart {
+                id: String::new(),
+                name: String::new()
+            }
+            .event_type(),
             "tool_call_start"
         );
         assert_eq!(
-            ChatStreamEvent::ToolCallDelta { id: String::new(), args_chunk: String::new() }.event_type(),
+            ChatStreamEvent::ToolCallDelta {
+                id: String::new(),
+                args_chunk: String::new()
+            }
+            .event_type(),
             "tool_call_delta"
         );
         assert_eq!(
-            ChatStreamEvent::ToolCallEnd { id: String::new(), result: String::new() }.event_type(),
+            ChatStreamEvent::ToolCallEnd {
+                id: String::new(),
+                result: String::new()
+            }
+            .event_type(),
             "tool_call_end"
         );
         assert_eq!(
-            ChatStreamEvent::Error { message: String::new() }.event_type(),
+            ChatStreamEvent::Error {
+                message: String::new()
+            }
+            .event_type(),
             "error"
         );
         assert_eq!(
-            ChatStreamEvent::StatusChange { status: ChatStatus::Idle }.event_type(),
+            ChatStreamEvent::StatusChange {
+                status: ChatStatus::Idle
+            }
+            .event_type(),
             "status_change"
         );
     }
@@ -443,9 +501,15 @@ mod tests {
             counter_clone.fetch_add(1, Ordering::SeqCst);
         }));
 
-        hooks.emit(ChatStreamEvent::StatusChange { status: ChatStatus::Thinking });
-        hooks.emit(ChatStreamEvent::StatusChange { status: ChatStatus::Streaming });
-        hooks.emit(ChatStreamEvent::StatusChange { status: ChatStatus::Idle });
+        hooks.emit(ChatStreamEvent::StatusChange {
+            status: ChatStatus::Thinking,
+        });
+        hooks.emit(ChatStreamEvent::StatusChange {
+            status: ChatStatus::Streaming,
+        });
+        hooks.emit(ChatStreamEvent::StatusChange {
+            status: ChatStatus::Idle,
+        });
 
         assert_eq!(hooks.event_count(), 3);
         assert_eq!(counter.load(Ordering::SeqCst), 3);
@@ -459,10 +523,16 @@ mod tests {
         let cb = counter_b.clone();
 
         let mut hooks = ChatHooks::new();
-        hooks.on_event(Box::new(move |_| { ca.fetch_add(1, Ordering::SeqCst); }));
-        hooks.on_event(Box::new(move |_| { cb.fetch_add(1, Ordering::SeqCst); }));
+        hooks.on_event(Box::new(move |_| {
+            ca.fetch_add(1, Ordering::SeqCst);
+        }));
+        hooks.on_event(Box::new(move |_| {
+            cb.fetch_add(1, Ordering::SeqCst);
+        }));
 
-        hooks.emit(ChatStreamEvent::Error { message: "test".to_string() });
+        hooks.emit(ChatStreamEvent::Error {
+            message: "test".to_string(),
+        });
 
         assert_eq!(counter_a.load(Ordering::SeqCst), 1);
         assert_eq!(counter_b.load(Ordering::SeqCst), 1);
@@ -475,7 +545,9 @@ mod tests {
         hooks.on_event(Box::new(|_| {}));
         assert_eq!(hooks.subscriber_count(), 2);
 
-        hooks.emit(ChatStreamEvent::StatusChange { status: ChatStatus::Idle });
+        hooks.emit(ChatStreamEvent::StatusChange {
+            status: ChatStatus::Idle,
+        });
         assert_eq!(hooks.event_count(), 1);
 
         hooks.clear();
@@ -510,7 +582,8 @@ mod tests {
 
     #[test]
     fn test_stream_adapter_from_tool_call() {
-        let events = StreamAdapter::from_tool_call("search", "{\"q\":\"rust\"}", "found 10 results");
+        let events =
+            StreamAdapter::from_tool_call("search", "{\"q\":\"rust\"}", "found 10 results");
         assert_eq!(events.len(), 3);
         assert_eq!(events[0].event_type(), "tool_call_start");
         assert_eq!(events[1].event_type(), "tool_call_delta");

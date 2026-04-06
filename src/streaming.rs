@@ -763,7 +763,8 @@ impl DiskSpillBuffer {
         // Read disk data first (oldest)
         if let Some(ref path) = self.spill_path {
             if path.exists() {
-                let disk_data = std::fs::read_to_string(path).map_err(|_| StreamError::Cancelled)?;
+                let disk_data =
+                    std::fs::read_to_string(path).map_err(|_| StreamError::Cancelled)?;
                 result.push_str(&disk_data);
             }
         }
@@ -799,7 +800,11 @@ impl DiskSpillBuffer {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_nanos();
-            let path = dir.join(format!("stream_spill_{}_{}.tmp", std::process::id(), unique_id));
+            let path = dir.join(format!(
+                "stream_spill_{}_{}.tmp",
+                std::process::id(),
+                unique_id
+            ));
             let file = std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -1067,7 +1072,10 @@ mod tests {
         // Verify StreamError Display implementations
         assert_eq!(StreamError::BufferFull.to_string(), "Stream buffer is full");
         assert_eq!(StreamError::Closed.to_string(), "Stream is closed");
-        assert_eq!(StreamError::Timeout.to_string(), "Stream operation timed out");
+        assert_eq!(
+            StreamError::Timeout.to_string(),
+            "Stream operation timed out"
+        );
         assert_eq!(StreamError::Cancelled.to_string(), "Stream was cancelled");
     }
 

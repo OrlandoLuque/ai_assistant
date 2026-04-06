@@ -9,8 +9,8 @@
 use std::collections::HashMap;
 
 use ai_assistant::{
-    EntityRecord, EntityRelation, EntityStore, EpisodicStore, Procedure,
-    ProceduralStore, memory_cosine_similarity, new_episode,
+    memory_cosine_similarity, new_episode, EntityRecord, EntityRelation, EntityStore,
+    EpisodicStore, ProceduralStore, Procedure,
 };
 
 fn main() {
@@ -59,12 +59,21 @@ fn main() {
     let recalled = episodic.recall(&query_embedding, 2);
     println!("Recalled top 2 episodes for Rust-related query:");
     for ep in &recalled {
-        println!("  - [{}] \"{}\" (importance={:.1})", &ep.id[..8], ep.content, ep.importance);
+        println!(
+            "  - [{}] \"{}\" (importance={:.1})",
+            &ep.id[..8],
+            ep.content,
+            ep.importance
+        );
     }
 
     // Access a specific episode by id
     if let Some(ep) = episodic.get(&ep1_id) {
-        println!("Accessed episode '{}': access_count={}", &ep.id[..8], ep.access_count);
+        println!(
+            "Accessed episode '{}': access_count={}",
+            &ep.id[..8],
+            ep.access_count
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -131,7 +140,12 @@ fn main() {
     let matches = procedural.find_by_condition("deploy rust app to production");
     println!("Procedures matching 'deploy rust app to production':");
     for proc in &matches {
-        println!("  - {} (confidence={:.2}, steps={})", proc.name, proc.confidence, proc.steps.len());
+        println!(
+            "  - {} (confidence={:.2}, steps={})",
+            proc.name,
+            proc.confidence,
+            proc.steps.len()
+        );
         for (i, step) in proc.steps.iter().enumerate() {
             println!("      {}. {}", i + 1, step);
         }
@@ -165,13 +179,11 @@ fn main() {
             a.insert("creator".to_string(), serde_json::json!("Graydon Hoare"));
             a
         },
-        relations: vec![
-            EntityRelation {
-                relation_type: "influenced_by".to_string(),
-                target_entity_id: "ent-003".to_string(),
-                confidence: 0.95,
-            },
-        ],
+        relations: vec![EntityRelation {
+            relation_type: "influenced_by".to_string(),
+            target_entity_id: "ent-003".to_string(),
+            confidence: 0.95,
+        }],
         first_seen: now,
         last_updated: now,
         mention_count: 15,
@@ -222,7 +234,10 @@ fn main() {
         println!("  Attributes: {:?}", rust.attributes);
         println!("  Relations: {}", rust.relations.len());
         for rel in &rust.relations {
-            println!("    -> {} (target: {}, confidence: {:.2})", rel.relation_type, rel.target_entity_id, rel.confidence);
+            println!(
+                "    -> {} (target: {}, confidence: {:.2})",
+                rel.relation_type, rel.target_entity_id, rel.confidence
+            );
         }
         println!("  Mentions: {}", rust.mention_count);
     }
@@ -242,9 +257,18 @@ fn main() {
     let c = [0.0_f32, 1.0, 0.0];
     let d = [0.707_f32, 0.707, 0.0];
 
-    println!("sim(a, a) = {:.4} (identical vectors)", memory_cosine_similarity(&a, &b));
-    println!("sim(a, c) = {:.4} (orthogonal vectors)", memory_cosine_similarity(&a, &c));
-    println!("sim(a, d) = {:.4} (45-degree angle)", memory_cosine_similarity(&a, &d));
+    println!(
+        "sim(a, a) = {:.4} (identical vectors)",
+        memory_cosine_similarity(&a, &b)
+    );
+    println!(
+        "sim(a, c) = {:.4} (orthogonal vectors)",
+        memory_cosine_similarity(&a, &c)
+    );
+    println!(
+        "sim(a, d) = {:.4} (45-degree angle)",
+        memory_cosine_similarity(&a, &d)
+    );
 
     println!("\nAdvanced memory demo complete.");
 }

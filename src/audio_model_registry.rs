@@ -74,9 +74,7 @@ pub enum ModelStatus {
         path: String,
     },
     /// Downloaded but checksum mismatch (potentially corrupted).
-    Corrupted {
-        path: String,
-    },
+    Corrupted { path: String },
 }
 
 // ============================================================================
@@ -173,9 +171,7 @@ impl AudioModelRegistry {
         if !model.sha256.is_empty() {
             if let Ok(file_hash) = compute_sha256_file(&path) {
                 if file_hash != model.sha256 {
-                    return ModelStatus::Corrupted {
-                        path: path.clone(),
-                    };
+                    return ModelStatus::Corrupted { path: path.clone() };
                 }
             }
         }
@@ -240,8 +236,8 @@ impl AudioModelRegistry {
 
         let total = model.size_bytes;
         let mut downloaded = 0u64;
-        let mut file =
-            std::fs::File::create(&temp_path).map_err(|e| format!("Failed to create temp file: {}", e))?;
+        let mut file = std::fs::File::create(&temp_path)
+            .map_err(|e| format!("Failed to create temp file: {}", e))?;
 
         let mut reader = response.into_reader();
         let mut buf = vec![0u8; 65536]; // 64KB chunks
@@ -414,8 +410,8 @@ impl Sha256Hasher {
     fn new() -> Self {
         Self {
             state: [
-                0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c,
-                0x1f83d9ab, 0x5be0cd19,
+                0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+                0x5be0cd19,
             ],
             buffer: Vec::new(),
             total_len: 0,
@@ -538,7 +534,10 @@ mod tests {
     fn test_registry_builtin_catalog() {
         let registry = AudioModelRegistry::new();
         let catalog = registry.catalog();
-        assert!(catalog.len() >= 7, "Should have at least 7 models in catalog");
+        assert!(
+            catalog.len() >= 7,
+            "Should have at least 7 models in catalog"
+        );
 
         // Check we have models in each relevant category
         assert!(

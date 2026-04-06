@@ -8,14 +8,20 @@
 use std::time::Duration;
 
 use ai_assistant::{
+    compare_responses,
     // Conversation analytics
-    AnalyticsConfig, ConversationAnalytics,
-    // Sentiment analysis
-    Sentiment, SentimentAnalyzer,
+    AnalyticsConfig,
+    ConversationAnalytics,
     // Latency tracking
-    LatencyRecord, LatencyTracker, RequestTimer,
+    LatencyRecord,
+    LatencyTracker,
     // Quality analysis & comparison
-    QualityAnalyzer, QualityConfig, compare_responses,
+    QualityAnalyzer,
+    QualityConfig,
+    RequestTimer,
+    // Sentiment analysis
+    Sentiment,
+    SentimentAnalyzer,
 };
 
 fn main() {
@@ -39,24 +45,42 @@ fn main() {
     // Simulate two conversation sessions
     analytics.track_conversation_start("sess-001", Some("alice"), "llama3");
     analytics.track_message(
-        "sess-001", Some("alice"), "llama3",
-        "How do I read a file in Rust?", true, 12, None,
+        "sess-001",
+        Some("alice"),
+        "llama3",
+        "How do I read a file in Rust?",
+        true,
+        12,
+        None,
     );
     analytics.track_message(
-        "sess-001", Some("alice"), "llama3",
-        "You can use std::fs::read_to_string for text files.", false, 18,
+        "sess-001",
+        Some("alice"),
+        "llama3",
+        "You can use std::fs::read_to_string for text files.",
+        false,
+        18,
         Some(Duration::from_millis(320)),
     );
     analytics.track_feedback("sess-001", 0.9, Some("Very helpful!"));
 
     analytics.track_conversation_start("sess-002", Some("bob"), "mistral");
     analytics.track_message(
-        "sess-002", Some("bob"), "mistral",
-        "Explain ownership in Rust", true, 8, None,
+        "sess-002",
+        Some("bob"),
+        "mistral",
+        "Explain ownership in Rust",
+        true,
+        8,
+        None,
     );
     analytics.track_message(
-        "sess-002", Some("bob"), "mistral",
-        "Ownership is Rust's system for managing memory...", false, 45,
+        "sess-002",
+        Some("bob"),
+        "mistral",
+        "Ownership is Rust's system for managing memory...",
+        false,
+        45,
         Some(Duration::from_millis(580)),
     );
     analytics.track_error(Some("sess-002"), Some("mistral"), "Connection reset");
@@ -67,7 +91,10 @@ fn main() {
     println!("  Conversations     : {}", report.total_conversations);
     println!("  Total messages    : {}", report.total_messages);
     println!("  Total tokens      : {}", report.total_tokens);
-    println!("  Avg msgs/conv     : {:.1}", report.avg_messages_per_conversation);
+    println!(
+        "  Avg msgs/conv     : {:.1}",
+        report.avg_messages_per_conversation
+    );
     println!("  Error rate        : {:.1}%", report.error_rate * 100.0);
     println!("  Avg query length  : {:.0} chars", report.avg_query_length);
     if let Some(sat) = report.avg_satisfaction {
@@ -121,7 +148,11 @@ fn main() {
 
     // Direct Sentiment enum usage
     let s = Sentiment::from_score(0.75);
-    println!("\n  Sentiment::from_score(0.75) = {} (numeric={})\n", s, s.score());
+    println!(
+        "\n  Sentiment::from_score(0.75) = {} (numeric={})\n",
+        s,
+        s.score()
+    );
 
     // ------------------------------------------------------------------
     // 3. Latency Tracking
@@ -194,7 +225,11 @@ fn main() {
     println!("  Query: \"{}\"", query);
     println!();
     println!("  Good response quality:");
-    println!("    Overall      : {:.2} ({})", good_score.overall, good_score.quality_level());
+    println!(
+        "    Overall      : {:.2} ({})",
+        good_score.overall,
+        good_score.quality_level()
+    );
     println!("    Relevance    : {:.2}", good_score.relevance);
     println!("    Coherence    : {:.2}", good_score.coherence);
     println!("    Fluency      : {:.2}", good_score.fluency);
@@ -204,7 +239,11 @@ fn main() {
     }
     println!();
     println!("  Poor response quality:");
-    println!("    Overall      : {:.2} ({})", poor_score.overall, poor_score.quality_level());
+    println!(
+        "    Overall      : {:.2} ({})",
+        poor_score.overall,
+        poor_score.quality_level()
+    );
     println!("    Issues       : {}", poor_score.issues.len());
     for issue in &poor_score.issues {
         println!("      - {:?}: {}", issue.issue_type, issue.description);

@@ -477,7 +477,10 @@ pub struct CitationVerifier;
 
 impl CitationVerifier {
     /// Verify that citations are accurate
-    pub fn verify(cited_text: &CitedText, sources: &HashMap<String, Source>) -> CitationVerificationResult {
+    pub fn verify(
+        cited_text: &CitedText,
+        sources: &HashMap<String, Source>,
+    ) -> CitationVerificationResult {
         let mut verified = 0;
         let mut unverified = Vec::new();
 

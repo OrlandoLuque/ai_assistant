@@ -139,12 +139,16 @@ impl GuardrailPipeline {
 
     /// Run all guards whose stage is [`GuardStage::PreSend`] or [`GuardStage::Both`].
     pub fn check_input(&mut self, text: &str) -> PipelineResult {
-        self.run_stage(text, |stage| stage == GuardStage::PreSend || stage == GuardStage::Both)
+        self.run_stage(text, |stage| {
+            stage == GuardStage::PreSend || stage == GuardStage::Both
+        })
     }
 
     /// Run all guards whose stage is [`GuardStage::PostReceive`] or [`GuardStage::Both`].
     pub fn check_output(&mut self, text: &str) -> PipelineResult {
-        self.run_stage(text, |stage| stage == GuardStage::PostReceive || stage == GuardStage::Both)
+        self.run_stage(text, |stage| {
+            stage == GuardStage::PostReceive || stage == GuardStage::Both
+        })
     }
 
     /// Return all recorded violations (requires logging to be enabled).
@@ -183,7 +187,10 @@ impl GuardrailPipeline {
                 Err(_) => {
                     // FAIL CLOSED: a panicking guard blocks the message (not skips).
                     // A guard that panics on crafted input could be an attack to bypass security.
-                    log::error!("[guardrails] Guard '{}' panicked — blocking message (fail-closed)", guard.name());
+                    log::error!(
+                        "[guardrails] Guard '{}' panicked — blocking message (fail-closed)",
+                        guard.name()
+                    );
                     let guard_name = guard.name().to_string();
                     let panic_result = GuardCheckResult {
                         guard_name: guard_name.clone(),
@@ -743,8 +750,8 @@ impl StreamingGuardrailPipeline {
         let token_count = self.accumulated.split_whitespace().count();
 
         // Decide whether to evaluate.
-        let should_eval =
-            token_count >= self.config.min_buffer_size && self.tokens_since_eval >= self.config.eval_interval;
+        let should_eval = token_count >= self.config.min_buffer_size
+            && self.tokens_since_eval >= self.config.eval_interval;
 
         if !should_eval {
             return StreamChunkResult {
@@ -805,7 +812,10 @@ impl StreamingGuardrailPipeline {
 
     /// Public test-accessible version of [`worse_action`].
     #[cfg(test)]
-    pub(crate) fn worse_action_pub(a: &StreamGuardAction, b: &StreamGuardAction) -> StreamGuardAction {
+    pub(crate) fn worse_action_pub(
+        a: &StreamGuardAction,
+        b: &StreamGuardAction,
+    ) -> StreamGuardAction {
         Self::worse_action(a, b)
     }
 
@@ -864,24 +874,15 @@ impl StreamingGuard for StreamingPiiGuard {
 
     fn check_chunk(&self, _chunk: &str, accumulated: &str) -> StreamGuardAction {
         // Email heuristic: word@word.word
-        if accumulated
-            .split_whitespace()
-            .any(|token| {
-                let parts: Vec<&str> = token.split('@').collect();
-                parts.len() == 2
-                    && !parts[0].is_empty()
-                    && parts[1].contains('.')
-                    && parts[1].len() > 2
-            })
-        {
+        if accumulated.split_whitespace().any(|token| {
+            let parts: Vec<&str> = token.split('@').collect();
+            parts.len() == 2 && !parts[0].is_empty() && parts[1].contains('.') && parts[1].len() > 2
+        }) {
             return StreamGuardAction::Flag("Possible email address detected".to_string());
         }
 
         // Phone heuristic: sequences of 10+ digits (ignoring separators).
-        let digits: String = accumulated
-            .chars()
-            .filter(|c| c.is_ascii_digit())
-            .collect();
+        let digits: String = accumulated.chars().filter(|c| c.is_ascii_digit()).collect();
         // Look for runs of 9+ consecutive digits in the digit-only string.
         if digits.len() >= 9 {
             // SSN pattern: exactly NNN-NN-NNNN
@@ -908,9 +909,7 @@ impl StreamingGuard for StreamingPiiGuard {
             for word in accumulated.split_whitespace() {
                 let word_digits: usize = word.chars().filter(|c| c.is_ascii_digit()).count();
                 if word_digits >= 10 {
-                    return StreamGuardAction::Flag(
-                        "Possible phone number detected".to_string(),
-                    );
+                    return StreamGuardAction::Flag("Possible phone number detected".to_string());
                 }
             }
         }
@@ -1135,10 +1134,7 @@ impl PolicyCompiler {
                 let after = &text_lower[pos + prefix.len()..];
                 let after_trimmed = after.trim_start();
                 // Collect the next 1-3 meaningful words after the negation.
-                let words: Vec<&str> = after_trimmed
-                    .split_whitespace()
-                    .take(3)
-                    .collect();
+                let words: Vec<&str> = after_trimmed.split_whitespace().take(3).collect();
                 for word in &words {
                     let cleaned = word
                         .trim_matches(|c: char| !c.is_alphanumeric())
@@ -1177,7 +1173,9 @@ impl PolicyCompiler {
     /// Return the compiled keywords for a previously compiled policy, or `None`
     /// if the policy id has not been compiled yet.
     pub fn keywords_for(&self, statement_id: &str) -> Option<&[String]> {
-        self.keywords_per_policy.get(statement_id).map(|v| v.as_slice())
+        self.keywords_per_policy
+            .get(statement_id)
+            .map(|v| v.as_slice())
     }
 
     /// Remove all compiled policies.
@@ -1406,37 +1404,25 @@ impl Guard for NaturalLanguageGuard {
         match max_severity {
             PolicyPriority::Critical => GuardCheckResult {
                 guard_name: self.name().to_string(),
-                action: GuardAction::Block(format!(
-                    "Critical policy violation: {}",
-                    details
-                )),
+                action: GuardAction::Block(format!("Critical policy violation: {}", details)),
                 score: 1.0,
                 details,
             },
             PolicyPriority::High => GuardCheckResult {
                 guard_name: self.name().to_string(),
-                action: GuardAction::Warn(format!(
-                    "High-priority policy violation: {}",
-                    details
-                )),
+                action: GuardAction::Warn(format!("High-priority policy violation: {}", details)),
                 score: 0.7,
                 details,
             },
             PolicyPriority::Medium => GuardCheckResult {
                 guard_name: self.name().to_string(),
-                action: GuardAction::Warn(format!(
-                    "Medium-priority policy violation: {}",
-                    details
-                )),
+                action: GuardAction::Warn(format!("Medium-priority policy violation: {}", details)),
                 score: 0.4,
                 details,
             },
             PolicyPriority::Low => GuardCheckResult {
                 guard_name: self.name().to_string(),
-                action: GuardAction::Warn(format!(
-                    "Low-priority policy violation: {}",
-                    details
-                )),
+                action: GuardAction::Warn(format!("Low-priority policy violation: {}", details)),
                 score: 0.2,
                 details,
             },
@@ -1745,7 +1731,10 @@ impl OutputPiiGuard {
                     digit_count += 1;
                     current_group += 1;
                     pos += 1;
-                } else if (bytes[pos] == b'-' || bytes[pos] == b'.') && digit_count < 10 && current_group > 0 {
+                } else if (bytes[pos] == b'-' || bytes[pos] == b'.')
+                    && digit_count < 10
+                    && current_group > 0
+                {
                     group_sizes.push(current_group);
                     current_group = 0;
                     pos += 1;
@@ -1911,9 +1900,10 @@ impl Guard for OutputPiiGuard {
             PiiAction::Block => {
                 GuardAction::Block(format!("PII detected in output: {}", types_str))
             }
-            PiiAction::Redact(_) => {
-                GuardAction::Warn(format!("PII detected in output (redactable): {}", types_str))
-            }
+            PiiAction::Redact(_) => GuardAction::Warn(format!(
+                "PII detected in output (redactable): {}",
+                types_str
+            )),
         };
 
         GuardCheckResult {
@@ -2007,10 +1997,7 @@ impl Guard for OutputToxicityGuard {
         } else if score > 0.0 {
             GuardCheckResult {
                 guard_name: self.name().to_string(),
-                action: GuardAction::Warn(format!(
-                    "Mild toxicity in output (score={:.2})",
-                    score
-                )),
+                action: GuardAction::Warn(format!("Mild toxicity in output (score={:.2})", score)),
                 score,
                 details: format!(
                     "toxic={}, score={:.2}, threshold={:.2}, matches={}",
@@ -2336,8 +2323,7 @@ mod tests {
     fn test_pipeline_process_chunk_not_enough_tokens() {
         // Default min_buffer_size=10, eval_interval=5.
         // A few short chunks should not trigger evaluation.
-        let mut pipeline = StreamingGuardrailPipeline::new()
-            .add_guard(Box::new(StreamingPiiGuard));
+        let mut pipeline = StreamingGuardrailPipeline::new().add_guard(Box::new(StreamingPiiGuard));
         let result = pipeline.process_chunk("hello ");
         assert!(!result.was_evaluated);
         assert!(matches!(result.action, StreamGuardAction::Pass));
@@ -2354,8 +2340,8 @@ mod tests {
             eval_interval: 1,
             max_buffer_size: 500,
         };
-        let mut pipeline = StreamingGuardrailPipeline::with_config(config)
-            .add_guard(Box::new(StreamingPiiGuard));
+        let mut pipeline =
+            StreamingGuardrailPipeline::with_config(config).add_guard(Box::new(StreamingPiiGuard));
 
         // First chunk won't have enough tokens yet (only 1 token).
         let r1 = pipeline.process_chunk("hello ");
@@ -2376,8 +2362,8 @@ mod tests {
             eval_interval: 1,
             max_buffer_size: 500,
         };
-        let mut pipeline = StreamingGuardrailPipeline::with_config(config)
-            .add_guard(Box::new(StreamingPiiGuard));
+        let mut pipeline =
+            StreamingGuardrailPipeline::with_config(config).add_guard(Box::new(StreamingPiiGuard));
 
         pipeline.process_chunk("hello ");
         pipeline.process_chunk("world ");
@@ -2413,8 +2399,8 @@ mod tests {
             eval_interval: 1,
             max_buffer_size: 500,
         };
-        let mut pipeline = StreamingGuardrailPipeline::with_config(config)
-            .add_guard(Box::new(StreamingPiiGuard));
+        let mut pipeline =
+            StreamingGuardrailPipeline::with_config(config).add_guard(Box::new(StreamingPiiGuard));
 
         pipeline.process_chunk("contact ");
         let result = pipeline.process_chunk("user@example.com ");
@@ -2430,8 +2416,8 @@ mod tests {
             eval_interval: 1,
             max_buffer_size: 500,
         };
-        let mut pipeline = StreamingGuardrailPipeline::with_config(config)
-            .add_guard(Box::new(StreamingPiiGuard));
+        let mut pipeline =
+            StreamingGuardrailPipeline::with_config(config).add_guard(Box::new(StreamingPiiGuard));
 
         pipeline.process_chunk("hello ");
         pipeline.process_chunk("world ");
@@ -2508,10 +2494,8 @@ mod tests {
 
     #[test]
     fn test_streaming_pattern_guard_blocks() {
-        let guard = StreamingPatternGuard::new(vec![
-            "secret_key".to_string(),
-            "password123".to_string(),
-        ]);
+        let guard =
+            StreamingPatternGuard::new(vec!["secret_key".to_string(), "password123".to_string()]);
         let action = guard.check_chunk("chunk", "the secret_key is leaked");
         assert!(matches!(action, StreamGuardAction::Block(_)));
         if let StreamGuardAction::Block(msg) = action {
@@ -2679,7 +2663,9 @@ mod tests {
         // Should extract "reveal" (word after "never") and "api keys" (sensitive term).
         assert!(!keywords.is_empty());
         assert!(
-            keywords.iter().any(|k| k == "reveal" || k.contains("reveal")),
+            keywords
+                .iter()
+                .any(|k| k == "reveal" || k.contains("reveal")),
             "Expected 'reveal' in keywords: {:?}",
             keywords
         );
@@ -2690,7 +2676,9 @@ mod tests {
         );
 
         // Verify stored keywords match.
-        let stored = compiler.keywords_for("p1").expect("keywords should be stored");
+        let stored = compiler
+            .keywords_for("p1")
+            .expect("keywords should be stored");
         assert_eq!(stored, keywords.as_slice());
     }
 

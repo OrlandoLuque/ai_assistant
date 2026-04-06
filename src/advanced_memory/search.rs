@@ -107,10 +107,7 @@ impl MemoryIndex {
         let idx = self.entries.len();
         for kw in &entry.keywords {
             let kw_lower = kw.to_lowercase();
-            self.keyword_index
-                .entry(kw_lower)
-                .or_default()
-                .push(idx);
+            self.keyword_index.entry(kw_lower).or_default().push(idx);
         }
         self.entries.push(entry);
     }
@@ -148,10 +145,7 @@ impl MemoryIndex {
         for (idx, entry) in self.entries.iter().enumerate() {
             for kw in &entry.keywords {
                 let kw_lower = kw.to_lowercase();
-                self.keyword_index
-                    .entry(kw_lower)
-                    .or_default()
-                    .push(idx);
+                self.keyword_index.entry(kw_lower).or_default().push(idx);
             }
         }
     }
@@ -248,9 +242,7 @@ impl MemorySearchEngine {
                 for qk in &query_keywords {
                     if content_lower.contains(qk.as_str()) {
                         let count = content_lower.matches(qk.as_str()).count();
-                        let scores = entry_scores
-                            .entry(idx)
-                            .or_insert_with(|| (0.0, Vec::new()));
+                        let scores = entry_scores.entry(idx).or_insert_with(|| (0.0, Vec::new()));
                         scores.0 += count as f64;
                         scores.1.push(MatchReason::KeywordMatch {
                             keyword: qk.clone(),

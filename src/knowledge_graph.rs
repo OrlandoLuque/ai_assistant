@@ -1062,7 +1062,10 @@ impl KnowledgeGraphStore {
     ) -> Result<i64> {
         log::debug!(
             "[graph] add_relation: from_id={}, to_id={}, type={}, confidence={:.2}",
-            from_entity_id, to_entity_id, relation_type, confidence
+            from_entity_id,
+            to_entity_id,
+            relation_type,
+            confidence
         );
         let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
         conn.execute(
@@ -1086,7 +1089,11 @@ impl KnowledgeGraphStore {
 
     /// Get relations from an entity
     pub fn get_relations_from(&self, entity_id: i64, depth: usize) -> Result<Vec<GraphRelation>> {
-        crate::diag_debug!("[graph] get_relations_from: entity_id={}, depth={}", entity_id, depth);
+        crate::diag_debug!(
+            "[graph] get_relations_from: entity_id={}, depth={}",
+            entity_id,
+            depth
+        );
         let mut relations = Vec::new();
         let mut visited = HashSet::new();
         let mut current_entities = vec![entity_id];
@@ -1148,12 +1155,19 @@ impl KnowledgeGraphStore {
             current_entities = next_entities;
         }
 
-        crate::diag_debug!("[graph] get_relations_from: found {} relations", relations.len());
+        crate::diag_debug!(
+            "[graph] get_relations_from: found {} relations",
+            relations.len()
+        );
         #[cfg(feature = "diagnostic-logging")]
         for (i, rel) in relations.iter().enumerate() {
             crate::diag_trace!(
                 "[graph] relation[{}]: {} --[{}]--> {} (weight={:.2})",
-                i, rel.from, rel.relation_type, rel.to, rel.weight
+                i,
+                rel.from,
+                rel.relation_type,
+                rel.to,
+                rel.weight
             );
         }
 
@@ -1489,7 +1503,11 @@ impl KnowledgeGraph {
 
         // Extract entities from query
         let query_entities = extractor.extract_query_entities(query)?;
-        crate::diag_debug!("[graph] query: extracted {} entities: {:?}", query_entities.len(), query_entities);
+        crate::diag_debug!(
+            "[graph] query: extracted {} entities: {:?}",
+            query_entities.len(),
+            query_entities
+        );
 
         if query_entities.is_empty() {
             return Ok(GraphQueryResult {
@@ -1536,7 +1554,9 @@ impl KnowledgeGraph {
 
         log::debug!(
             "[graph] query: found {} entities, {} relations, {} chunks in {}ms",
-            entities_found.len(), all_relations.len(), chunks.len(),
+            entities_found.len(),
+            all_relations.len(),
+            chunks.len(),
             start.elapsed().as_millis()
         );
         crate::diag_trace!(
@@ -2051,7 +2071,10 @@ impl GraphQuery {
     /// Sanitize a SQL identifier (column name, alias, table name).
     /// Only allows alphanumeric chars, underscores, and dots (for table.column).
     fn sanitize_identifier(ident: &str) -> String {
-        ident.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '.').collect()
+        ident
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '.')
+            .collect()
     }
 
     /// Generate SQL query string from the builder state.
@@ -2060,7 +2083,9 @@ impl GraphQuery {
         let select = if self.return_fields.is_empty() {
             "SELECT *".to_string()
         } else {
-            let safe_fields: Vec<String> = self.return_fields.iter()
+            let safe_fields: Vec<String> = self
+                .return_fields
+                .iter()
                 .map(|f| Self::sanitize_identifier(f))
                 .collect();
             format!("SELECT {}", safe_fields.join(", "))
@@ -2076,7 +2101,10 @@ impl GraphQuery {
                     let safe_alias = Self::sanitize_identifier(alias);
                     if let Some(lbl) = label {
                         let safe_lbl = Self::sanitize_identifier(lbl);
-                        tables.push(format!("entities AS {} /* type={} */", safe_alias, safe_lbl));
+                        tables.push(format!(
+                            "entities AS {} /* type={} */",
+                            safe_alias, safe_lbl
+                        ));
                     } else {
                         tables.push(format!("entities AS {}", safe_alias));
                     }
@@ -2131,7 +2159,11 @@ impl GraphQuery {
             } = pattern
             {
                 let safe_alias = Self::sanitize_identifier(alias);
-                where_parts.push(format!("{}.entity_type = '{}'", safe_alias, lbl.replace('\'', "''")));
+                where_parts.push(format!(
+                    "{}.entity_type = '{}'",
+                    safe_alias,
+                    lbl.replace('\'', "''")
+                ));
             }
         }
         for clause in &self.where_clauses {
@@ -2142,7 +2174,10 @@ impl GraphQuery {
                 }
                 WhereClause::Contains(field, value) => {
                     let sf = Self::sanitize_identifier(field);
-                    let escaped = value.replace('\'', "''").replace('%', "\\%").replace('_', "\\_");
+                    let escaped = value
+                        .replace('\'', "''")
+                        .replace('%', "\\%")
+                        .replace('_', "\\_");
                     where_parts.push(format!("{} LIKE '%{}%' ESCAPE '\\'", sf, escaped))
                 }
                 WhereClause::Gt(field, value) => {
@@ -2656,10 +2691,8 @@ pub fn infer_relations_with_llm(
                 if let Ok(response) = enhancer.generate(&prompt, 500) {
                     let relations = parse_relation_inference_response(&response);
                     // Filter out relations that reference entities not in our set
-                    let entity_set: std::collections::HashSet<String> = entities
-                        .iter()
-                        .map(|e| e.to_lowercase())
-                        .collect();
+                    let entity_set: std::collections::HashSet<String> =
+                        entities.iter().map(|e| e.to_lowercase()).collect();
                     return relations
                         .into_iter()
                         .filter(|r| {
@@ -3234,11 +3267,7 @@ mod tests {
         let store = KnowledgeGraphStore::in_memory(config).unwrap();
 
         let id1 = store
-            .get_or_create_entity(
-                "Microsoft",
-                EntityType::Organization,
-                &["MSFT".to_string()],
-            )
+            .get_or_create_entity("Microsoft", EntityType::Organization, &["MSFT".to_string()])
             .unwrap();
 
         // Creating entity by alias name should resolve to same entity
@@ -3464,9 +3493,7 @@ mod tests {
         let entity_id = store
             .get_or_create_entity("Foo", EntityType::Concept, &[])
             .unwrap();
-        let chunk_id = store
-            .add_chunk("doc1", "Foo appears here.", 0)
-            .unwrap();
+        let chunk_id = store.add_chunk("doc1", "Foo appears here.", 0).unwrap();
 
         // Link twice - mention_count should increase
         store
@@ -3771,7 +3798,9 @@ mod tests {
         let config = KnowledgeGraphConfig::default();
         let store = KnowledgeGraphStore::in_memory(config).unwrap();
 
-        let chunk_id = store.add_chunk("doc1", "This is chunk content.", 0).unwrap();
+        let chunk_id = store
+            .add_chunk("doc1", "This is chunk content.", 0)
+            .unwrap();
         assert!(chunk_id > 0, "add_chunk should return a positive id");
     }
 
@@ -3788,7 +3817,12 @@ mod tests {
             .unwrap();
 
         store
-            .link_entity_to_chunk(entity_id, chunk_id, Some(0), Some("TestEntity is mentioned"))
+            .link_entity_to_chunk(
+                entity_id,
+                chunk_id,
+                Some(0),
+                Some("TestEntity is mentioned"),
+            )
             .unwrap();
 
         let chunks = store.get_chunks_for_entities(&[entity_id]).unwrap();
@@ -3815,11 +3849,7 @@ mod tests {
         store.link_entity_to_chunk(e2, c2, None, None).unwrap();
 
         let chunks = store.get_chunks_for_entities(&[e1, e2]).unwrap();
-        assert_eq!(
-            chunks.len(),
-            2,
-            "Should retrieve chunks for both entities"
-        );
+        assert_eq!(chunks.len(), 2, "Should retrieve chunks for both entities");
     }
 
     #[test]
@@ -3871,10 +3901,7 @@ mod tests {
             "where_contains should generate LIKE clause, got: {}",
             sql
         );
-        assert!(
-            sql.contains("Aegis"),
-            "SQL should contain the search value"
-        );
+        assert!(sql.contains("Aegis"), "SQL should contain the search value");
     }
 
     #[test]
@@ -4132,7 +4159,9 @@ mod tests {
         let y = store
             .get_or_create_entity("Y", EntityType::Product, &[])
             .unwrap();
-        store.add_relation(x, y, "related", 0.9, None, None).unwrap();
+        store
+            .add_relation(x, y, "related", 0.9, None, None)
+            .unwrap();
 
         // Group 2: P -> Q (disconnected from group 1)
         let p = store
@@ -4141,7 +4170,9 @@ mod tests {
         let q = store
             .get_or_create_entity("Q", EntityType::Location, &[])
             .unwrap();
-        store.add_relation(p, q, "located_in", 0.8, None, None).unwrap();
+        store
+            .add_relation(p, q, "located_in", 0.8, None, None)
+            .unwrap();
 
         let components = GraphAlgorithms::connected_components(&store).unwrap();
 
@@ -4250,9 +4281,8 @@ mod tests {
 
     #[test]
     fn test_infer_relations_with_llm_disabled() {
-        let mock = crate::llm_enhance::MockLlm::new(
-            r#"[{"from":"X","to":"Y","relation":"related"}]"#,
-        );
+        let mock =
+            crate::llm_enhance::MockLlm::new(r#"[{"from":"X","to":"Y","relation":"related"}]"#);
         let entities = vec!["X", "Y"];
         let relations = infer_relations_with_llm(&entities, false, Some(&mock));
         // Should not use LLM when disabled

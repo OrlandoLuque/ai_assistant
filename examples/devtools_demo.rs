@@ -10,8 +10,7 @@ use std::collections::HashMap;
 
 use ai_assistant::{
     AgentDebugger, Breakpoint, DebugEvent, DebugEventType, DevToolsConfig, ExecutionRecorder,
-    ExecutionReplay, PerformanceProfiler, ProfileSummary, StateInspector,
-    StepProfile,
+    ExecutionReplay, PerformanceProfiler, ProfileSummary, StateInspector, StepProfile,
 };
 
 fn main() {
@@ -29,8 +28,10 @@ fn main() {
             Breakpoint::OnCostAbove { threshold: 5.0 },
         ],
     };
-    println!("DevToolsConfig: recording={}, profiling={}, max_steps={}",
-        config.enable_recording, config.enable_profiling, config.max_recording_steps);
+    println!(
+        "DevToolsConfig: recording={}, profiling={}, max_steps={}",
+        config.enable_recording, config.enable_profiling, config.max_recording_steps
+    );
     println!("Breakpoints configured: {}\n", config.breakpoints.len());
 
     // -----------------------------------------------------------------------
@@ -45,7 +46,8 @@ fn main() {
     let events = vec![
         {
             let mut e = DebugEvent::now(DebugEventType::PlanningStart, 0);
-            e.data.insert("goal".to_string(), "Summarize document".to_string());
+            e.data
+                .insert("goal".to_string(), "Summarize document".to_string());
             e
         },
         DebugEvent::now(DebugEventType::PlanningEnd, 0),
@@ -74,7 +76,11 @@ fn main() {
     }
     recorder.stop();
 
-    println!("Recorded {} events for agent '{}'", recorder.event_count(), recorder.agent_id());
+    println!(
+        "Recorded {} events for agent '{}'",
+        recorder.event_count(),
+        recorder.agent_id()
+    );
 
     // Filter by type
     let tool_events = recorder.events_by_type(&DebugEventType::ToolCallStart);
@@ -89,7 +95,11 @@ fn main() {
     // -----------------------------------------------------------------------
     println!("\n--- ExecutionReplay ---");
     let mut replay = ExecutionReplay::new(&recorder);
-    println!("Replay for agent '{}', {} total events", replay.agent_id(), replay.total_events());
+    println!(
+        "Replay for agent '{}', {} total events",
+        replay.agent_id(),
+        replay.total_events()
+    );
 
     while let Some(event) = replay.next() {
         println!(
@@ -97,7 +107,11 @@ fn main() {
             event.step_number, event.event_type, event.tool_name, event.confidence,
         );
     }
-    println!("Replay complete: {} (progress: {:.0}%)", replay.is_complete(), replay.progress() * 100.0);
+    println!(
+        "Replay complete: {} (progress: {:.0}%)",
+        replay.is_complete(),
+        replay.progress() * 100.0
+    );
 
     // Reset and skip to a specific step
     replay.reset();
@@ -145,13 +159,22 @@ fn main() {
     println!("Total cost: ${:.4}", summary.total_cost);
     println!("Avg step duration: {:.1} ms", summary.avg_duration_ms);
     println!("Slowest step name: {:?}", summary.slowest_step_name);
-    println!("Most expensive step name: {:?}", summary.most_expensive_step_name);
+    println!(
+        "Most expensive step name: {:?}",
+        summary.most_expensive_step_name
+    );
 
     if let Some(slowest) = profiler.slowest_step() {
-        println!("Slowest step: #{} '{}' ({} ms)", slowest.step_number, slowest.action_name, slowest.duration_ms);
+        println!(
+            "Slowest step: #{} '{}' ({} ms)",
+            slowest.step_number, slowest.action_name, slowest.duration_ms
+        );
     }
     if let Some(expensive) = profiler.most_expensive_step() {
-        println!("Most expensive step: #{} '{}' (${:.4})", expensive.step_number, expensive.action_name, expensive.cost);
+        println!(
+            "Most expensive step: #{} '{}' (${:.4})",
+            expensive.step_number, expensive.action_name, expensive.cost
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -174,8 +197,12 @@ fn main() {
 
     println!("Snapshots captured: {}", inspector.snapshot_count());
     if let Some(latest) = inspector.latest() {
-        println!("Latest snapshot at step {}: {} keys, label='{}'",
-            latest.step_number, latest.state_data.len(), latest.label);
+        println!(
+            "Latest snapshot at step {}: {} keys, label='{}'",
+            latest.step_number,
+            latest.state_data.len(),
+            latest.label
+        );
     }
 
     if let Some(diff) = inspector.diff(0, 1) {
@@ -189,17 +216,22 @@ fn main() {
     // 6. AgentDebugger — unified facade
     // -----------------------------------------------------------------------
     println!("\n--- AgentDebugger (unified facade) ---");
-    let mut debugger = AgentDebugger::new("demo-agent", DevToolsConfig {
-        enable_recording: true,
-        enable_profiling: true,
-        max_recording_steps: 500,
-        breakpoints: vec![
-            Breakpoint::BeforeToolCall { tool_name: "dangerous_tool".to_string() },
-            Breakpoint::AfterStep { step_number: 5 },
-            Breakpoint::OnConfidenceBelow { threshold: 0.5 },
-            Breakpoint::AtStepCount { count: 10 },
-        ],
-    });
+    let mut debugger = AgentDebugger::new(
+        "demo-agent",
+        DevToolsConfig {
+            enable_recording: true,
+            enable_profiling: true,
+            max_recording_steps: 500,
+            breakpoints: vec![
+                Breakpoint::BeforeToolCall {
+                    tool_name: "dangerous_tool".to_string(),
+                },
+                Breakpoint::AfterStep { step_number: 5 },
+                Breakpoint::OnConfidenceBelow { threshold: 0.5 },
+                Breakpoint::AtStepCount { count: 10 },
+            ],
+        },
+    );
     debugger.start();
 
     // Process an event that triggers the "BeforeToolCall" breakpoint
@@ -213,8 +245,14 @@ fn main() {
 
     debugger.stop();
 
-    println!("Total recorded events: {}", debugger.recorder().event_count());
-    println!("Total hit breakpoints: {}", debugger.hit_breakpoints().len());
+    println!(
+        "Total recorded events: {}",
+        debugger.recorder().event_count()
+    );
+    println!(
+        "Total hit breakpoints: {}",
+        debugger.hit_breakpoints().len()
+    );
 
     // Create a replay from the debugger
     let replay2 = debugger.create_replay();

@@ -29,9 +29,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::collusion_detection::CollusionDetector;
 use crate::credit_system::CreditManager;
 use crate::dynamic_pricing::DynamicPricer;
-use crate::collusion_detection::CollusionDetector;
 
 // ============================================================================
 // Configuration
@@ -460,16 +460,19 @@ impl InferenceRequest {
             hash
         };
 
-        (Self {
-            request_id: uuid::Uuid::new_v4().to_string(),
-            model: model.to_string(),
-            prompt: masked_prompt,
-            max_tokens,
-            temperature,
-            budget_credits,
-            goal,
-            commitment,
-        }, pii_map)
+        (
+            Self {
+                request_id: uuid::Uuid::new_v4().to_string(),
+                model: model.to_string(),
+                prompt: masked_prompt,
+                max_tokens,
+                temperature,
+                budget_credits,
+                goal,
+                commitment,
+            },
+            pii_map,
+        )
     }
 }
 
@@ -1114,8 +1117,7 @@ mod tests {
     fn test_node_capability_ad_serialization() {
         let ad = make_test_ad("test-node", 45.0, 1.5, 0.85, 0.3);
         let json = serde_json::to_string(&ad).expect("serialize ad");
-        let deserialized: NodeCapabilityAd =
-            serde_json::from_str(&json).expect("deserialize ad");
+        let deserialized: NodeCapabilityAd = serde_json::from_str(&json).expect("deserialize ad");
         assert_eq!(deserialized.node_id, "test-node");
         assert_eq!(deserialized.gpu.vram_mb, 24576);
         assert_eq!(deserialized.models.len(), 1);

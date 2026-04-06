@@ -33,9 +33,9 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bollard::container::{
-    Config as BollardConfig, CreateContainerOptions, DownloadFromContainerOptions,
-    LogOutput, LogsOptions, RemoveContainerOptions, StartContainerOptions,
-    StopContainerOptions, UploadToContainerOptions,
+    Config as BollardConfig, CreateContainerOptions, DownloadFromContainerOptions, LogOutput,
+    LogsOptions, RemoveContainerOptions, StartContainerOptions, StopContainerOptions,
+    UploadToContainerOptions,
 };
 use bollard::exec::{CreateExecOptions, StartExecResults};
 use bollard::models::{HostConfig, PortBinding};
@@ -170,7 +170,7 @@ impl Default for ContainerConfig {
             docker_host: None,
             default_timeout: Duration::from_secs(60),
             default_memory_limit: 512 * 1024 * 1024, // 512 MB
-            default_cpu_quota: 100_000, // 1 core (100ms per 100ms period)
+            default_cpu_quota: 100_000,              // 1 core (100ms per 100ms period)
             allowed_bind_mount_prefixes: Vec::new(),
             default_network_mode: NetworkMode::None,
             auto_pull: true,
@@ -546,7 +546,9 @@ impl ContainerExecutor {
 
         // === Validate bind mounts (H8) ===
         // Reject dangerous host paths and enforce prefix whitelist
-        const DANGEROUS_MOUNTS: &[&str] = &["/", "/etc", "/var", "/home", "/root", "/proc", "/sys", "/dev"];
+        const DANGEROUS_MOUNTS: &[&str] = &[
+            "/", "/etc", "/var", "/home", "/root", "/proc", "/sys", "/dev",
+        ];
         for (host_path, _) in &opts.bind_mounts {
             let normalized = host_path.replace('\\', "/");
             let trimmed = normalized.trim_end_matches('/');
@@ -559,10 +561,15 @@ impl ContainerExecutor {
             if !self.config.allowed_bind_mount_prefixes.is_empty() {
                 let hp = std::path::Path::new(host_path);
                 let hp_canon = std::fs::canonicalize(hp).unwrap_or_else(|_| hp.to_path_buf());
-                let allowed = self.config.allowed_bind_mount_prefixes.iter().any(|prefix| {
-                    let prefix_canon = std::fs::canonicalize(prefix).unwrap_or_else(|_| prefix.clone());
-                    hp_canon.starts_with(&prefix_canon)
-                });
+                let allowed = self
+                    .config
+                    .allowed_bind_mount_prefixes
+                    .iter()
+                    .any(|prefix| {
+                        let prefix_canon =
+                            std::fs::canonicalize(prefix).unwrap_or_else(|_| prefix.clone());
+                        hp_canon.starts_with(&prefix_canon)
+                    });
                 if !allowed {
                     return Err(ContainerError::PolicyViolation(format!(
                         "Bind mount host path '{}' is not in allowed prefixes",
@@ -599,22 +606,14 @@ impl ContainerExecutor {
         // === Build HostConfig ===
         let host_config = HostConfig {
             memory: Some(memory as i64),
-            cpu_quota: if cpu_quota > 0 {
-                Some(cpu_quota)
-            } else {
-                None
-            },
+            cpu_quota: if cpu_quota > 0 { Some(cpu_quota) } else { None },
             network_mode: Some(network_mode),
             port_bindings: if port_bindings.is_empty() {
                 None
             } else {
                 Some(port_bindings)
             },
-            binds: if binds.is_empty() {
-                None
-            } else {
-                Some(binds)
-            },
+            binds: if binds.is_empty() { None } else { Some(binds) },
             ..Default::default()
         };
 
@@ -902,18 +901,14 @@ impl ContainerExecutor {
                         while let Some(chunk) = output.next().await {
                             match chunk {
                                 Ok(LogOutput::StdOut { message }) => {
-                                    stdout
-                                        .push_str(&String::from_utf8_lossy(&message));
+                                    stdout.push_str(&String::from_utf8_lossy(&message));
                                 }
                                 Ok(LogOutput::StdErr { message }) => {
-                                    stderr
-                                        .push_str(&String::from_utf8_lossy(&message));
+                                    stderr.push_str(&String::from_utf8_lossy(&message));
                                 }
                                 Ok(_) => {}
                                 Err(e) => {
-                                    return Err(ContainerError::OperationFailed(
-                                        e.to_string(),
-                                    ));
+                                    return Err(ContainerError::OperationFailed(e.to_string()));
                                 }
                             }
                         }
@@ -1023,10 +1018,7 @@ impl ContainerExecutor {
     ) -> Result<(), ContainerError> {
         // Read the source file
         let file_data = std::fs::read(src)?;
-        let file_name = src
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("file");
+        let file_name = src.file_name().and_then(|n| n.to_str()).unwrap_or("file");
 
         // Build a tar archive in memory
         let tar_bytes = build_tar_archive(file_name, &file_data)?;
@@ -1039,11 +1031,7 @@ impl ContainerExecutor {
         self.runtime
             .block_on(async {
                 self.docker
-                    .upload_to_container(
-                        container_id,
-                        Some(upload_opts),
-                        tar_bytes.into(),
-                    )
+                    .upload_to_container(container_id, Some(upload_opts), tar_bytes.into())
                     .await
             })
             .map_err(|e| ContainerError::OperationFailed(e.to_string()))?;
@@ -1315,10 +1303,7 @@ mod tests {
             container_name_prefix: "custom_".to_string(),
             allowed_bind_mount_prefixes: Vec::new(),
         };
-        assert_eq!(
-            config.docker_host,
-            Some("tcp://localhost:2375".to_string())
-        );
+        assert_eq!(config.docker_host, Some("tcp://localhost:2375".to_string()));
         assert_eq!(config.default_timeout, Duration::from_secs(120));
         assert_eq!(config.default_memory_limit, 1024 * 1024 * 1024);
         assert_eq!(config.default_cpu_quota, 50000);
@@ -1433,14 +1418,8 @@ mod tests {
         assert_eq!(record.container_id, "abc123");
         assert_eq!(record.name, "ai_assistant_test_abc123");
         assert_eq!(record.image, "alpine:latest");
-        assert_eq!(
-            record.created_by_agent,
-            Some("test_agent".to_string())
-        );
-        assert_eq!(
-            record.created_by_session,
-            Some("session_1".to_string())
-        );
+        assert_eq!(record.created_by_agent, Some("test_agent".to_string()));
+        assert_eq!(record.created_by_session, Some("session_1".to_string()));
         assert_eq!(record.status, ContainerStatus::Created);
         assert_eq!(record.ports, vec![(8080, 80)]);
         assert_eq!(
@@ -1495,7 +1474,10 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(opts.env_vars.len(), 2);
-        assert_eq!(opts.env_vars[0], ("PATH".to_string(), "/usr/bin".to_string()));
+        assert_eq!(
+            opts.env_vars[0],
+            ("PATH".to_string(), "/usr/bin".to_string())
+        );
         assert_eq!(opts.env_vars[1], ("HOME".to_string(), "/root".to_string()));
     }
 
@@ -1629,10 +1611,7 @@ mod tests {
     #[test]
     fn test_container_error_display() {
         let e = ContainerError::DockerNotAvailable("connection refused".to_string());
-        assert_eq!(
-            format!("{}", e),
-            "Docker not available: connection refused"
-        );
+        assert_eq!(format!("{}", e), "Docker not available: connection refused");
 
         let e = ContainerError::ImageNotFound("foo:latest".to_string());
         assert_eq!(format!("{}", e), "Image not found: foo:latest");
@@ -1696,7 +1675,10 @@ mod tests {
     fn test_labels_generation() {
         let extra = HashMap::new();
         let labels = management_labels(Some("sess_1"), Some("agent_a"), &extra);
-        assert_eq!(labels.get("ai.assistant.managed"), Some(&"true".to_string()));
+        assert_eq!(
+            labels.get("ai.assistant.managed"),
+            Some(&"true".to_string())
+        );
         assert_eq!(
             labels.get("ai.assistant.session"),
             Some(&"sess_1".to_string())
@@ -1711,7 +1693,10 @@ mod tests {
     fn test_labels_without_session_and_agent() {
         let extra = HashMap::new();
         let labels = management_labels(None, None, &extra);
-        assert_eq!(labels.get("ai.assistant.managed"), Some(&"true".to_string()));
+        assert_eq!(
+            labels.get("ai.assistant.managed"),
+            Some(&"true".to_string())
+        );
         assert!(labels.get("ai.assistant.session").is_none());
         assert!(labels.get("ai.assistant.agent").is_none());
         assert_eq!(labels.len(), 1);
@@ -1722,11 +1707,11 @@ mod tests {
         let mut extra = HashMap::new();
         extra.insert("custom.key".to_string(), "custom.value".to_string());
         let labels = management_labels(Some("s1"), None, &extra);
-        assert_eq!(labels.get("ai.assistant.managed"), Some(&"true".to_string()));
         assert_eq!(
-            labels.get("custom.key"),
-            Some(&"custom.value".to_string())
+            labels.get("ai.assistant.managed"),
+            Some(&"true".to_string())
         );
+        assert_eq!(labels.get("custom.key"), Some(&"custom.value".to_string()));
     }
 
     // =========================================================================
@@ -1877,8 +1862,7 @@ mod tests {
         let expired_ids: Vec<&str> = containers
             .iter()
             .filter(|r| {
-                r.status != ContainerStatus::Removed
-                    && now.saturating_sub(r.created_at) >= max_age
+                r.status != ContainerStatus::Removed && now.saturating_sub(r.created_at) >= max_age
             })
             .map(|r| r.container_id.as_str())
             .collect();

@@ -16,7 +16,6 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-
 // =============================================================================
 // P2P CONFIGURATION
 // =============================================================================
@@ -1579,7 +1578,8 @@ impl P2PTransport {
 
     /// Signal all transport threads to stop.
     pub fn shutdown(&self) {
-        self.shutdown.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.shutdown
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Whether shutdown has been requested.
@@ -1643,8 +1643,10 @@ impl P2PTransport {
             let mut len_buf = [0u8; 4];
             match stream.read_exact(&mut len_buf) {
                 Ok(()) => {}
-                Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut
-                    || e.kind() == std::io::ErrorKind::WouldBlock => {
+                Err(ref e)
+                    if e.kind() == std::io::ErrorKind::TimedOut
+                        || e.kind() == std::io::ErrorKind::WouldBlock =>
+                {
                     continue;
                 }
                 Err(_) => break, // connection closed or error
@@ -1699,7 +1701,9 @@ impl P2PTransport {
 
             // Send response if any
             if let Some(resp) = response {
-                let local_id = manager.lock().map(|m| m.local_peer_id.clone())
+                let local_id = manager
+                    .lock()
+                    .map(|m| m.local_peer_id.clone())
                     .unwrap_or_default();
                 let resp_envelope = WireEnvelope {
                     sender_id: local_id,
@@ -1735,7 +1739,8 @@ impl P2PTransport {
                         continue;
                     }
                     let id = mgr.local_peer_id.clone();
-                    let addrs: HashMap<String, SocketAddr> = mgr.connections
+                    let addrs: HashMap<String, SocketAddr> = mgr
+                        .connections
                         .iter()
                         .map(|(k, v)| (k.clone(), v.address))
                         .collect();
@@ -1793,7 +1798,8 @@ impl P2PTransport {
                         Ok(g) => g,
                         Err(_) => continue,
                     };
-                    let addrs: Vec<(String, SocketAddr)> = mgr.connections
+                    let addrs: Vec<(String, SocketAddr)> = mgr
+                        .connections
                         .iter()
                         .map(|(k, v)| (k.clone(), v.address))
                         .collect();
@@ -1810,7 +1816,9 @@ impl P2PTransport {
                 for (peer_id, addr) in &peers {
                     let envelope = WireEnvelope {
                         sender_id: local_id.clone(),
-                        message: PeerMessage::Ping { timestamp: now_secs },
+                        message: PeerMessage::Ping {
+                            timestamp: now_secs,
+                        },
                     };
 
                     match Self::send_envelope_with_response(&envelope, *addr) {
@@ -1848,8 +1856,7 @@ impl P2PTransport {
     fn send_envelope(envelope: &WireEnvelope, addr: SocketAddr) -> Result<(), String> {
         use std::io::Write;
 
-        let data = serde_json::to_vec(envelope)
-            .map_err(|e| format!("serialize: {}", e))?;
+        let data = serde_json::to_vec(envelope).map_err(|e| format!("serialize: {}", e))?;
         if data.len() > MAX_WIRE_PAYLOAD {
             return Err("payload too large".to_string());
         }
@@ -1858,8 +1865,12 @@ impl P2PTransport {
         stream.set_write_timeout(Some(Duration::from_secs(5))).ok();
 
         let len = (data.len() as u32).to_be_bytes();
-        stream.write_all(&len).map_err(|e| format!("write len: {}", e))?;
-        stream.write_all(&data).map_err(|e| format!("write data: {}", e))?;
+        stream
+            .write_all(&len)
+            .map_err(|e| format!("write len: {}", e))?;
+        stream
+            .write_all(&data)
+            .map_err(|e| format!("write data: {}", e))?;
         Ok(())
     }
 
@@ -1870,8 +1881,7 @@ impl P2PTransport {
     ) -> Result<Option<WireEnvelope>, String> {
         use std::io::{Read, Write};
 
-        let data = serde_json::to_vec(envelope)
-            .map_err(|e| format!("serialize: {}", e))?;
+        let data = serde_json::to_vec(envelope).map_err(|e| format!("serialize: {}", e))?;
         if data.len() > MAX_WIRE_PAYLOAD {
             return Err("payload too large".to_string());
         }
@@ -1882,16 +1892,22 @@ impl P2PTransport {
 
         // Write
         let len = (data.len() as u32).to_be_bytes();
-        stream.write_all(&len).map_err(|e| format!("write: {}", e))?;
-        stream.write_all(&data).map_err(|e| format!("write: {}", e))?;
+        stream
+            .write_all(&len)
+            .map_err(|e| format!("write: {}", e))?;
+        stream
+            .write_all(&data)
+            .map_err(|e| format!("write: {}", e))?;
 
         // Read response
         let mut len_buf = [0u8; 4];
         match stream.read_exact(&mut len_buf) {
             Ok(()) => {}
-            Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut
-                || e.kind() == std::io::ErrorKind::WouldBlock
-                || e.kind() == std::io::ErrorKind::UnexpectedEof => {
+            Err(ref e)
+                if e.kind() == std::io::ErrorKind::TimedOut
+                    || e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
                 return Ok(None);
             }
             Err(e) => return Err(format!("read response: {}", e)),
@@ -1903,7 +1919,8 @@ impl P2PTransport {
         }
 
         let mut resp_buf = vec![0u8; resp_len];
-        stream.read_exact(&mut resp_buf)
+        stream
+            .read_exact(&mut resp_buf)
             .map_err(|e| format!("read response body: {}", e))?;
 
         let resp: WireEnvelope = serde_json::from_slice(&resp_buf)
@@ -2914,7 +2931,10 @@ mod tests {
         // Ensure all PeerMessage variants survive round-trip through WireEnvelope
         let messages = vec![
             PeerMessage::Ping { timestamp: 1 },
-            PeerMessage::Pong { timestamp: 2, peer_id: "p1".to_string() },
+            PeerMessage::Pong {
+                timestamp: 2,
+                peer_id: "p1".to_string(),
+            },
             PeerMessage::GetPeers,
             PeerMessage::Peers { peers: vec![] },
             PeerMessage::ShareKnowledge {
@@ -2928,15 +2948,26 @@ mod tests {
                     signature: None,
                 },
             },
-            PeerMessage::AckKnowledge { id: "k1".to_string(), accepted: true },
-            PeerMessage::QueryKnowledge { query: "test".to_string() },
-            PeerMessage::QueryResponse { query: "test".to_string(), results: vec![] },
+            PeerMessage::AckKnowledge {
+                id: "k1".to_string(),
+                accepted: true,
+            },
+            PeerMessage::QueryKnowledge {
+                query: "test".to_string(),
+            },
+            PeerMessage::QueryResponse {
+                query: "test".to_string(),
+                results: vec![],
+            },
             PeerMessage::ConsensusRequest {
                 entity: "e".to_string(),
                 attribute: "a".to_string(),
                 value: "v".to_string(),
             },
-            PeerMessage::ConsensusVote { request_id: "r1".to_string(), agree: true },
+            PeerMessage::ConsensusVote {
+                request_id: "r1".to_string(),
+                agree: true,
+            },
         ];
 
         for msg in messages {
@@ -2995,7 +3026,10 @@ mod tests {
 
         match result {
             Ok(Some(resp)) => {
-                assert_eq!(resp.sender_id, manager.lock().unwrap().local_peer_id().to_string());
+                assert_eq!(
+                    resp.sender_id,
+                    manager.lock().unwrap().local_peer_id().to_string()
+                );
                 match resp.message {
                     PeerMessage::Pong { timestamp, .. } => assert_eq!(timestamp, 999),
                     other => panic!("Expected Pong, got {:?}", other),

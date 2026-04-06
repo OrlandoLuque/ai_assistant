@@ -289,11 +289,15 @@ impl ProceduralStore {
     /// Record an outcome (success or failure) for a procedure and update its
     /// confidence.
     pub fn update_outcome(&mut self, id: &str, success: bool) -> Result<(), AiError> {
-        let proc = self.procedures.iter_mut().find(|p| p.id == id).ok_or_else(|| {
-            AiError::AdvancedMemory(AdvancedMemoryError::EntityNotFound {
-                name: id.to_string(),
-            })
-        })?;
+        let proc = self
+            .procedures
+            .iter_mut()
+            .find(|p| p.id == id)
+            .ok_or_else(|| {
+                AiError::AdvancedMemory(AdvancedMemoryError::EntityNotFound {
+                    name: id.to_string(),
+                })
+            })?;
         if success {
             proc.success_count += 1;
         } else {
@@ -421,7 +425,11 @@ impl ProceduralStore {
             .collect();
 
         matches.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-        matches.into_iter().take(max_results).map(|(_, p)| p).collect()
+        matches
+            .into_iter()
+            .take(max_results)
+            .map(|(_, p)| p)
+            .collect()
     }
 
     /// Create a versioned export of all procedures.
@@ -438,8 +446,8 @@ impl ProceduralStore {
     /// Export to a JSON file.
     pub fn export_to_file(&self, path: &std::path::Path, source: &str) -> Result<(), String> {
         let export = self.export(source);
-        let json = serde_json::to_string_pretty(&export)
-            .map_err(|e| format!("Serialize error: {}", e))?;
+        let json =
+            serde_json::to_string_pretty(&export).map_err(|e| format!("Serialize error: {}", e))?;
         let tmp = path.with_extension("tmp");
         std::fs::write(&tmp, &json).map_err(|e| format!("Write error: {}", e))?;
         std::fs::rename(&tmp, path).map_err(|e| format!("Rename error: {}", e))?;
@@ -518,7 +526,13 @@ impl ProceduralStore {
 mod tests {
     use super::*;
 
-    fn make_procedure(id: &str, name: &str, condition: &str, steps: Vec<&str>, confidence: f64) -> Procedure {
+    fn make_procedure(
+        id: &str,
+        name: &str,
+        condition: &str,
+        steps: Vec<&str>,
+        confidence: f64,
+    ) -> Procedure {
         Procedure {
             id: id.to_string(),
             name: name.to_string(),
@@ -535,8 +549,20 @@ mod tests {
     #[test]
     fn test_procedural_remove() {
         let mut store = ProceduralStore::new(10);
-        store.add(make_procedure("p1", "Proc 1", "deploy rust", vec!["step1"], 0.9));
-        store.add(make_procedure("p2", "Proc 2", "test code", vec!["step1"], 0.8));
+        store.add(make_procedure(
+            "p1",
+            "Proc 1",
+            "deploy rust",
+            vec!["step1"],
+            0.9,
+        ));
+        store.add(make_procedure(
+            "p2",
+            "Proc 2",
+            "test code",
+            vec!["step1"],
+            0.8,
+        ));
 
         let removed = store.remove("p1");
         assert!(removed.is_some());
@@ -550,8 +576,20 @@ mod tests {
     #[test]
     fn test_find_relevant_min_match_ratio() {
         let mut store = ProceduralStore::new(10);
-        store.add(make_procedure("p1", "Deploy", "deploy rust application production", vec!["step1"], 0.9));
-        store.add(make_procedure("p2", "Test", "run cargo test suite", vec!["step1"], 0.8));
+        store.add(make_procedure(
+            "p1",
+            "Deploy",
+            "deploy rust application production",
+            vec!["step1"],
+            0.9,
+        ));
+        store.add(make_procedure(
+            "p2",
+            "Test",
+            "run cargo test suite",
+            vec!["step1"],
+            0.8,
+        ));
 
         // "deploy rust" matches 2/4 = 50% of p1's condition words
         let results = store.find_relevant("deploy rust app", 0.3, 0.0, 10);
@@ -566,8 +604,20 @@ mod tests {
     #[test]
     fn test_find_relevant_min_confidence() {
         let mut store = ProceduralStore::new(10);
-        store.add(make_procedure("p1", "High", "deploy code", vec!["step"], 0.9));
-        store.add(make_procedure("p2", "Low", "deploy code", vec!["step"], 0.05));
+        store.add(make_procedure(
+            "p1",
+            "High",
+            "deploy code",
+            vec!["step"],
+            0.9,
+        ));
+        store.add(make_procedure(
+            "p2",
+            "Low",
+            "deploy code",
+            vec!["step"],
+            0.05,
+        ));
 
         let results = store.find_relevant("deploy code now", 0.3, 0.1, 10);
         assert_eq!(results.len(), 1);
@@ -624,20 +674,38 @@ mod tests {
     #[test]
     fn test_default_procedures_not_empty() {
         let defaults = default_procedures();
-        assert!(defaults.len() >= 5, "should have at least 5 default procedures");
+        assert!(
+            defaults.len() >= 5,
+            "should have at least 5 default procedures"
+        );
         for p in &defaults {
             assert!(!p.id.is_empty(), "default procedure must have an ID");
             assert!(!p.name.is_empty(), "default procedure must have a name");
             assert!(!p.steps.is_empty(), "default procedure must have steps");
-            assert!(!p.condition.is_empty(), "default procedure must have a condition");
+            assert!(
+                !p.condition.is_empty(),
+                "default procedure must have a condition"
+            );
         }
     }
 
     #[test]
     fn test_export_import_roundtrip() {
         let mut store = ProceduralStore::new(10);
-        store.add(make_procedure("p1", "Deploy", "deploy rust", vec!["test", "build"], 0.9));
-        store.add(make_procedure("p2", "Review", "code review", vec!["compile", "lint"], 0.85));
+        store.add(make_procedure(
+            "p1",
+            "Deploy",
+            "deploy rust",
+            vec!["test", "build"],
+            0.9,
+        ));
+        store.add(make_procedure(
+            "p2",
+            "Review",
+            "code review",
+            vec!["compile", "lint"],
+            0.85,
+        ));
 
         let export = store.export("test");
         assert_eq!(export.version, 1);
@@ -652,7 +720,13 @@ mod tests {
     #[test]
     fn test_import_merge_skip_duplicates() {
         let mut store = ProceduralStore::new(10);
-        store.add(make_procedure("p1", "Original", "deploy rust", vec!["step1"], 0.9));
+        store.add(make_procedure(
+            "p1",
+            "Original",
+            "deploy rust",
+            vec!["step1"],
+            0.9,
+        ));
 
         let export = ProcedureExport {
             procedures: vec![
@@ -662,7 +736,11 @@ mod tests {
             ..Default::default()
         };
 
-        let options = ProcedureImportOptions { merge: true, skip_duplicates: true, reset_confidence: false };
+        let options = ProcedureImportOptions {
+            merge: true,
+            skip_duplicates: true,
+            reset_confidence: false,
+        };
         let result = store.import(&export, &options);
         assert_eq!(result.skipped, 1); // p1 skipped
         assert_eq!(result.imported, 1); // p2 imported
@@ -678,13 +756,15 @@ mod tests {
         store.add(make_procedure("p2", "Also Old", "old", vec!["step"], 0.8));
 
         let export = ProcedureExport {
-            procedures: vec![
-                make_procedure("p3", "New", "new stuff", vec!["step"], 0.7),
-            ],
+            procedures: vec![make_procedure("p3", "New", "new stuff", vec!["step"], 0.7)],
             ..Default::default()
         };
 
-        let options = ProcedureImportOptions { merge: false, skip_duplicates: false, reset_confidence: false };
+        let options = ProcedureImportOptions {
+            merge: false,
+            skip_duplicates: false,
+            reset_confidence: false,
+        };
         let result = store.import(&export, &options);
         assert_eq!(result.replaced, 2); // old ones cleared
         assert_eq!(result.imported, 1);
@@ -696,13 +776,15 @@ mod tests {
     fn test_import_reset_confidence() {
         let mut store = ProceduralStore::new(10);
         let export = ProcedureExport {
-            procedures: vec![
-                make_procedure("p1", "High", "deploy", vec!["step"], 0.95),
-            ],
+            procedures: vec![make_procedure("p1", "High", "deploy", vec!["step"], 0.95)],
             ..Default::default()
         };
 
-        let options = ProcedureImportOptions { merge: true, skip_duplicates: false, reset_confidence: true };
+        let options = ProcedureImportOptions {
+            merge: true,
+            skip_duplicates: false,
+            reset_confidence: true,
+        };
         let result = store.import(&export, &options);
         assert_eq!(result.imported, 1);
         assert!((store.get("p1").unwrap().confidence - 0.5).abs() < f64::EPSILON);
@@ -741,7 +823,13 @@ mod tests {
     #[test]
     fn test_export_import_file_roundtrip() {
         let mut store = ProceduralStore::new(10);
-        store.add(make_procedure("p1", "Deploy", "deploy", vec!["step1", "step2"], 0.9));
+        store.add(make_procedure(
+            "p1",
+            "Deploy",
+            "deploy",
+            vec!["step1", "step2"],
+            0.9,
+        ));
 
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("procedures_export.json");
@@ -750,7 +838,9 @@ mod tests {
         assert!(path.exists());
 
         let mut store2 = ProceduralStore::new(10);
-        let result = store2.import_from_file(&path, &ProcedureImportOptions::default()).expect("import");
+        let result = store2
+            .import_from_file(&path, &ProcedureImportOptions::default())
+            .expect("import");
         assert_eq!(result.imported, 1);
         assert_eq!(store2.get("p1").unwrap().name, "Deploy");
     }

@@ -365,7 +365,10 @@ impl ConversationCompactor {
     pub fn parse_summary_response(response: &str) -> Option<String> {
         if let Some(json_str) = crate::llm_enhance::extract_json(response) {
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
-                return val.get("summary").and_then(|s| s.as_str()).map(String::from);
+                return val
+                    .get("summary")
+                    .and_then(|s| s.as_str())
+                    .map(String::from);
             }
         }
         // Fallback: use raw response if it looks like a summary
@@ -692,7 +695,10 @@ mod tests {
 
         // The message with the rare topic should be preserved even though it has low importance
         assert!(
-            result.messages.iter().any(|m| m.topics.contains(&"rare_topic".to_string())),
+            result
+                .messages
+                .iter()
+                .any(|m| m.topics.contains(&"rare_topic".to_string())),
             "Message with unique topic should be preserved"
         );
     }
@@ -721,14 +727,20 @@ mod tests {
             ..Default::default()
         };
         let compactor = ConversationCompactor::new(config);
-        let mock = crate::llm_enhance::MockLlm::new("{\"summary\": \"LLM-generated summary of the conversation.\"}");
+        let mock = crate::llm_enhance::MockLlm::new(
+            "{\"summary\": \"LLM-generated summary of the conversation.\"}",
+        );
         let messages: Vec<_> = (0..60)
             .map(|i| CompactableMessage::new("user", &format!("Message {}", i)))
             .collect();
         let result = compactor.compact_with_llm(messages, Some(&mock));
         assert!(result.summary.is_some());
         let summary = result.summary.unwrap();
-        assert!(summary.contains("LLM-generated"), "Expected LLM summary, got: {}", summary);
+        assert!(
+            summary.contains("LLM-generated"),
+            "Expected LLM summary, got: {}",
+            summary
+        );
     }
 
     #[test]
@@ -779,7 +791,10 @@ mod tests {
     fn test_parse_summary_response_json() {
         let response = "{\"summary\": \"Users discussed weather and travel plans.\"}";
         let result = ConversationCompactor::parse_summary_response(response);
-        assert_eq!(result, Some("Users discussed weather and travel plans.".to_string()));
+        assert_eq!(
+            result,
+            Some("Users discussed weather and travel plans.".to_string())
+        );
     }
 
     #[test]

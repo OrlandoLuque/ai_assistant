@@ -597,21 +597,47 @@ mod tests {
 
     #[test]
     fn test_model_error_display() {
-        assert_eq!(ModelError::RateLimitError.to_string(), "Rate limit exceeded");
-        assert_eq!(ModelError::AuthenticationError.to_string(), "Authentication failed");
-        assert_eq!(ModelError::ContextLengthExceeded.to_string(), "Context length exceeded");
-        assert_eq!(ModelError::ContentFilterTriggered.to_string(), "Content filter triggered");
-        assert!(ModelError::ConnectionError("timeout".into()).to_string().contains("timeout"));
-        assert!(ModelError::ToolExecutionError("fail".into()).to_string().contains("fail"));
+        assert_eq!(
+            ModelError::RateLimitError.to_string(),
+            "Rate limit exceeded"
+        );
+        assert_eq!(
+            ModelError::AuthenticationError.to_string(),
+            "Authentication failed"
+        );
+        assert_eq!(
+            ModelError::ContextLengthExceeded.to_string(),
+            "Context length exceeded"
+        );
+        assert_eq!(
+            ModelError::ContentFilterTriggered.to_string(),
+            "Content filter triggered"
+        );
+        assert!(ModelError::ConnectionError("timeout".into())
+            .to_string()
+            .contains("timeout"));
+        assert!(ModelError::ToolExecutionError("fail".into())
+            .to_string()
+            .contains("fail"));
     }
 
     #[test]
     fn test_chat_role_serialization_all() {
-        let roles = [ChatRole::System, ChatRole::User, ChatRole::Assistant, ChatRole::Tool];
+        let roles = [
+            ChatRole::System,
+            ChatRole::User,
+            ChatRole::Assistant,
+            ChatRole::Tool,
+        ];
         let expected = ["system", "user", "assistant", "tool"];
         for (role, exp) in roles.iter().zip(expected.iter()) {
             let json = serde_json::to_string(role).unwrap();
-            assert!(json.contains(exp), "Role {:?} should serialize to {}", role, exp);
+            assert!(
+                json.contains(exp),
+                "Role {:?} should serialize to {}",
+                role,
+                exp
+            );
         }
     }
 

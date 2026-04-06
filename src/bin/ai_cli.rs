@@ -91,7 +91,11 @@ fn main() -> ExitCode {
             }
         }
         log_builder.init();
-        log::debug!("ai_cli starting, log_level={}, args={:?}", log_level, command_args);
+        log::debug!(
+            "ai_cli starting, log_level={}, args={:?}",
+            log_level,
+            command_args
+        );
     }
     #[cfg(not(feature = "diagnostic-logging"))]
     {
@@ -130,7 +134,10 @@ fn main() -> ExitCode {
     // Check for updates before exit
     if let Ok(info) = update_rx.try_recv() {
         eprintln!();
-        eprintln!("  Update available: v{} \u{2192} v{}", info.current, info.latest);
+        eprintln!(
+            "  Update available: v{} \u{2192} v{}",
+            info.current, info.latest
+        );
         eprintln!("  Download: {}", info.url);
         eprintln!();
     }
@@ -177,7 +184,9 @@ fn print_usage() {
     println!("    --filter <pattern>             Filter test names");
     println!("    --features <flags>             Override feature flags");
     println!("    --output <dir>                 Output directory (default: results/)");
-    println!("    --provider <name>              Provider (ollama, openai, anthropic, gemini, ...)");
+    println!(
+        "    --provider <name>              Provider (ollama, openai, anthropic, gemini, ...)"
+    );
     println!("    --model <name>                 Model name");
     println!("    --url <url>                    Provider URL");
     println!("    --config <file>                Load config from JSON file");
@@ -388,7 +397,10 @@ fn cmd_config(args: &[String]) -> ExitCode {
             cmd_config_set(&args[1], &args[2..])
         }
         other => {
-            eprintln!("Error: unknown config subcommand '{}'. Use show, check, or set.", other);
+            eprintln!(
+                "Error: unknown config subcommand '{}'. Use show, check, or set.",
+                other
+            );
             ExitCode::from(1)
         }
     }
@@ -407,7 +419,10 @@ fn cmd_config_show(file: Option<&str>) -> ExitCode {
         AiConfig::default()
     };
 
-    println!("Configuration{}:\n", file.map(|f| format!(" ({})", f)).unwrap_or_default());
+    println!(
+        "Configuration{}:\n",
+        file.map(|f| format!(" ({})", f)).unwrap_or_default()
+    );
     println!("  provider:          {:?}", config.provider);
     println!("  selected_model:    {}", config.selected_model);
     println!("  temperature:       {}", config.temperature);
@@ -504,7 +519,10 @@ fn cmd_config_set(path: &str, args: &[String]) -> ExitCode {
                     return ExitCode::from(1);
                 }
                 let new_provider = provider_from_name(&args[i]);
-                changes.push(format!("provider: {:?} -> {:?}", config.provider, new_provider));
+                changes.push(format!(
+                    "provider: {:?} -> {:?}",
+                    config.provider, new_provider
+                ));
                 config.provider = new_provider;
             }
             "--model" => {
@@ -525,7 +543,10 @@ fn cmd_config_set(path: &str, args: &[String]) -> ExitCode {
                     eprintln!("Error: --url requires a value");
                     return ExitCode::from(1);
                 }
-                changes.push(format!("custom_url: '{}' -> '{}'", config.custom_url, args[i]));
+                changes.push(format!(
+                    "custom_url: '{}' -> '{}'",
+                    config.custom_url, args[i]
+                ));
                 config.custom_url = args[i].clone();
             }
             "--temperature" => {
@@ -892,7 +913,9 @@ fn cmd_query(args: &[String]) -> ExitCode {
         }
 
         if assistant.config.selected_model.is_empty() {
-            eprintln!("Error: no model available. Specify --provider and --model, or install a model.");
+            eprintln!(
+                "Error: no model available. Specify --provider and --model, or install a model."
+            );
             return ExitCode::from(1);
         }
     }
@@ -972,7 +995,10 @@ fn cmd_query(args: &[String]) -> ExitCode {
             "elapsed_ms": elapsed.as_millis(),
             "error": errored,
         });
-        println!("{}", serde_json::to_string_pretty(&json).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json).unwrap_or_default()
+        );
     } else {
         eprintln!(
             "\n[{:?} / {} / {:.1}s]",
@@ -1146,7 +1172,11 @@ fn cmd_test(args: &[String]) -> ExitCode {
         a
     };
 
-    let label = if harness_mode { "test-harness" } else { "test-lib" };
+    let label = if harness_mode {
+        "test-harness"
+    } else {
+        "test-lib"
+    };
     let cmd_str = format!("cargo {}", cargo_args.join(" "));
     run_and_capture(label, &cmd_str, "cargo", &cargo_args, &output_dir)
 }
@@ -1164,7 +1194,11 @@ fn run_and_capture(
 ) -> ExitCode {
     // Create output directory
     if let Err(e) = std::fs::create_dir_all(output_dir) {
-        eprintln!("Error creating output dir '{}': {}", output_dir.display(), e);
+        eprintln!(
+            "Error creating output dir '{}': {}",
+            output_dir.display(),
+            e
+        );
         return ExitCode::from(1);
     }
 
@@ -1303,7 +1337,11 @@ fn run_and_capture(
             );
         }
         Err(e) => {
-            eprintln!("Warning: could not write log file '{}': {}", log_file.display(), e);
+            eprintln!(
+                "Warning: could not write log file '{}': {}",
+                log_file.display(),
+                e
+            );
         }
     }
 
@@ -1368,15 +1406,17 @@ fn provider_from_name(name: &str) -> ai_assistant::AiProvider {
         "perplexity" => ai_assistant::AiProvider::Perplexity,
         "openrouter" => ai_assistant::AiProvider::OpenRouter,
         other => {
-            eprintln!("Warning: unknown provider '{}', defaulting to Ollama", other);
+            eprintln!(
+                "Warning: unknown provider '{}', defaulting to Ollama",
+                other
+            );
             ai_assistant::AiProvider::Ollama
         }
     }
 }
 
 fn load_config(path: &str) -> Result<AiConfig, String> {
-    let content =
-        std::fs::read_to_string(path).map_err(|e| format!("cannot read file: {}", e))?;
+    let content = std::fs::read_to_string(path).map_err(|e| format!("cannot read file: {}", e))?;
     serde_json::from_str(&content).map_err(|e| format!("invalid JSON: {}", e))
 }
 
@@ -1449,10 +1489,7 @@ fn apply_provider_url(
 fn print_environment(report: &EnvironmentReport) {
     println!();
     println!("--- Environment ---");
-    println!(
-        "OS:      {} ({})",
-        report.runtime.os, report.runtime.arch
-    );
+    println!("OS:      {} ({})", report.runtime.os, report.runtime.arch);
     println!("CPUs:    {}", report.runtime.cpus);
     println!(
         "GPU:     {}",
@@ -1489,7 +1526,12 @@ fn print_environment(report: &EnvironmentReport) {
                 } else {
                     String::new()
                 };
-                format!(" ({} models: {}{})", model_count, preview.join(", "), suffix)
+                format!(
+                    " ({} models: {}{})",
+                    model_count,
+                    preview.join(", "),
+                    suffix
+                )
             } else {
                 " (no models)".to_string()
             };

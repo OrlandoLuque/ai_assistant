@@ -412,7 +412,7 @@ mod tests {
         // Cause enough errors to trigger auto-rotation
         manager.mark_error("openai", "k1");
         manager.mark_error("openai", "k1"); // This triggers rotation (2 >= max_errors=2)
-        // After rotation, next get_key should return k2
+                                            // After rotation, next get_key should return k2
         let key = manager.get_key("openai").unwrap();
         assert_eq!(key.id, "k2");
     }

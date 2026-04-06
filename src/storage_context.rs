@@ -158,8 +158,7 @@ impl StorageContext {
     /// Load a deserializable value from a JSON file in the data directory.
     pub fn load_json<T: for<'de> Deserialize<'de>>(&self, name: &str) -> Result<T, String> {
         let path = self.subsystem_path(name);
-        let data =
-            std::fs::read_to_string(&path).map_err(|e| format!("Read {}: {}", name, e))?;
+        let data = std::fs::read_to_string(&path).map_err(|e| format!("Read {}: {}", name, e))?;
         serde_json::from_str(&data).map_err(|e| format!("Deserialize {}: {}", name, e))
     }
 
@@ -202,7 +201,12 @@ impl StorageContext {
         if let Ok(entries) = std::fs::read_dir(&self.config.data_dir) {
             for entry in entries.flatten() {
                 if let Some(name) = entry.path().file_stem() {
-                    if entry.path().extension().map(|e| e == "json").unwrap_or(false) {
+                    if entry
+                        .path()
+                        .extension()
+                        .map(|e| e == "json")
+                        .unwrap_or(false)
+                    {
                         names.push(name.to_string_lossy().to_string());
                     }
                 }

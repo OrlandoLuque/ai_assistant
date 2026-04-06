@@ -6,8 +6,7 @@
 //! JSON Schema constraints, and grammar builders.
 
 use ai_assistant::{
-    Grammar, GrammarRule, GrammarAlternative, GrammarElement, SchemaToGrammar,
-    GrammarBuilder,
+    Grammar, GrammarAlternative, GrammarBuilder, GrammarElement, GrammarRule, SchemaToGrammar,
 };
 
 fn main() {
@@ -88,7 +87,10 @@ fn main() {
             println!("  Root rule: {}", compiled.root_rule);
             println!("  Rules: {}", compiled.rules.len());
             let compiled_gbnf = compiled.to_gbnf();
-            println!("  GBNF (first 200 chars): {}", &compiled_gbnf[..compiled_gbnf.len().min(200)]);
+            println!(
+                "  GBNF (first 200 chars): {}",
+                &compiled_gbnf[..compiled_gbnf.len().min(200)]
+            );
         }
         Err(e) => println!("Schema compilation error: {}", e),
     }

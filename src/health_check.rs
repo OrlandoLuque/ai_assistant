@@ -544,8 +544,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mut checker =
-            HealthChecker::new(config).with_check_fn(|_, _| Err("down".to_string()));
+        let mut checker = HealthChecker::new(config).with_check_fn(|_, _| Err("down".to_string()));
 
         checker.register("svc", "http://localhost:9999");
         checker.check("svc", "http://localhost:9999");

@@ -46,10 +46,7 @@ use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::timeout::TimeoutLayer;
 
 use crate::assistant::AiAssistant;
-use crate::server::{
-    AuthResult, CorsConfig, ServerConfig,
-    authenticate_request,
-};
+use crate::server::{authenticate_request, AuthResult, CorsConfig, ServerConfig};
 
 // ============================================================================
 // AppState — Granular Concurrency (Phase 2)
@@ -150,10 +147,7 @@ impl AxumServerMetrics {
     /// Otherwise, generate a new trace ID based on timestamp + counter hash.
     /// The returned trace ID should be included in the response via `X-Trace-Id`
     /// and propagated to any downstream distributed calls.
-    pub fn extract_or_generate_trace_id(
-        &self,
-        headers: &axum::http::HeaderMap,
-    ) -> String {
+    pub fn extract_or_generate_trace_id(&self, headers: &axum::http::HeaderMap) -> String {
         if let Some(val) = headers.get("x-trace-id") {
             if let Ok(s) = val.to_str() {
                 if !s.is_empty() {
@@ -173,9 +167,15 @@ impl AxumServerMetrics {
         self.request_duration_us_total
             .fetch_add(duration.as_micros() as u64, Ordering::Relaxed);
         match status {
-            200..=299 => { self.requests_2xx.fetch_add(1, Ordering::Relaxed); }
-            400..=499 => { self.requests_4xx.fetch_add(1, Ordering::Relaxed); }
-            500..=599 => { self.requests_5xx.fetch_add(1, Ordering::Relaxed); }
+            200..=299 => {
+                self.requests_2xx.fetch_add(1, Ordering::Relaxed);
+            }
+            400..=499 => {
+                self.requests_4xx.fetch_add(1, Ordering::Relaxed);
+            }
+            500..=599 => {
+                self.requests_5xx.fetch_add(1, Ordering::Relaxed);
+            }
             _ => {}
         }
     }
@@ -259,9 +259,12 @@ impl AxumRateLimiter {
         let now = Instant::now();
         let cutoff = now - self.window;
 
-        let mut entry = self.entries.entry(ip).or_insert_with(|| SlidingWindowEntry {
-            timestamps: Vec::new(),
-        });
+        let mut entry = self
+            .entries
+            .entry(ip)
+            .or_insert_with(|| SlidingWindowEntry {
+                timestamps: Vec::new(),
+            });
 
         // Remove expired timestamps
         entry.timestamps.retain(|t| *t > cutoff);
@@ -344,41 +347,48 @@ struct OpenAIErrorDetail {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         match self {
-            AppError::BadRequest(msg) => (
-                StatusCode::BAD_REQUEST,
-                Json(ErrorBody { error: msg }),
-            ).into_response(),
-            AppError::Unauthorized(msg) => (
-                StatusCode::UNAUTHORIZED,
-                Json(ErrorBody { error: msg }),
-            ).into_response(),
-            AppError::NotFound(msg) => (
-                StatusCode::NOT_FOUND,
-                Json(ErrorBody { error: msg }),
-            ).into_response(),
+            AppError::BadRequest(msg) => {
+                (StatusCode::BAD_REQUEST, Json(ErrorBody { error: msg })).into_response()
+            }
+            AppError::Unauthorized(msg) => {
+                (StatusCode::UNAUTHORIZED, Json(ErrorBody { error: msg })).into_response()
+            }
+            AppError::NotFound(msg) => {
+                (StatusCode::NOT_FOUND, Json(ErrorBody { error: msg })).into_response()
+            }
             AppError::UnprocessableEntity(msg) => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 Json(ErrorBody { error: msg }),
-            ).into_response(),
-            AppError::TooManyRequests { message, retry_after } => {
+            )
+                .into_response(),
+            AppError::TooManyRequests {
+                message,
+                retry_after,
+            } => {
                 let mut resp = (
                     StatusCode::TOO_MANY_REQUESTS,
                     Json(ErrorBody { error: message }),
-                ).into_response();
+                )
+                    .into_response();
                 resp.headers_mut().insert(
                     "Retry-After",
-                    retry_after.to_string().parse().unwrap_or_else(|_| "60".parse().unwrap()),
+                    retry_after
+                        .to_string()
+                        .parse()
+                        .unwrap_or_else(|_| "60".parse().unwrap()),
                 );
                 resp
             }
             AppError::Internal(msg) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorBody { error: msg }),
-            ).into_response(),
+            )
+                .into_response(),
             AppError::ServiceUnavailable(msg) => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(ErrorBody { error: msg }),
-            ).into_response(),
+            )
+                .into_response(),
         }
     }
 }
@@ -498,20 +508,24 @@ impl SessionAffinityManager {
     /// Assign a session to a node.
     pub fn set_node(&self, session_id: &str, node_index: usize) {
         self.affinity.insert(session_id.to_string(), node_index);
-        self.last_access.insert(session_id.to_string(), Instant::now());
+        self.last_access
+            .insert(session_id.to_string(), Instant::now());
     }
 
     /// Refresh the last-access time for a session.
     pub fn touch(&self, session_id: &str) {
-        self.last_access.insert(session_id.to_string(), Instant::now());
+        self.last_access
+            .insert(session_id.to_string(), Instant::now());
     }
 
     /// Remove expired affinity entries.
     pub fn cleanup_expired(&self) {
         let now = Instant::now();
-        self.last_access.retain(|_, last| now.duration_since(*last) < self.ttl);
+        self.last_access
+            .retain(|_, last| now.duration_since(*last) < self.ttl);
         // Remove affinity entries without last_access
-        self.affinity.retain(|k, _| self.last_access.contains_key(k));
+        self.affinity
+            .retain(|k, _| self.last_access.contains_key(k));
     }
 }
 
@@ -539,7 +553,12 @@ async fn auth_middleware(
     let headers: Vec<(String, String)> = req
         .headers()
         .iter()
-        .map(|(k, v)| (k.as_str().to_lowercase(), v.to_str().unwrap_or("").to_string()))
+        .map(|(k, v)| {
+            (
+                k.as_str().to_lowercase(),
+                v.to_str().unwrap_or("").to_string(),
+            )
+        })
         .collect();
 
     let result = authenticate_request(&headers, &path, auth_config);
@@ -596,7 +615,9 @@ async fn metrics_middleware(
 
     // Track per-endpoint counts
     let key = format!("{} {}", method, path);
-    state.metrics.endpoint_counts
+    state
+        .metrics
+        .endpoint_counts
         .entry(key)
         .and_modify(|c| *c += 1)
         .or_insert(1);
@@ -731,7 +752,10 @@ pub fn build_router(state: AppState, config: &ServerConfig) -> Router {
         .route("/config", get(get_config_handler).post(set_config_handler))
         .route("/metrics", get(metrics_handler))
         .route("/sessions", get(list_sessions_handler))
-        .route("/sessions/{id}", get(get_session_handler).delete(delete_session_handler))
+        .route(
+            "/sessions/{id}",
+            get(get_session_handler).delete(delete_session_handler),
+        )
         .route("/openapi.json", get(openapi_handler))
         .route("/ws", get(ws_handler))
         .route("/chat/completions", post(openai_completions_handler));
@@ -743,11 +767,22 @@ pub fn build_router(state: AppState, config: &ServerConfig) -> Router {
 
     // Admin routes (virtual models + publish control)
     let admin_routes = Router::new()
-        .route("/admin/virtual-models", get(admin_list_virtual_models).post(admin_create_virtual_model))
-        .route("/admin/virtual-models/{name}", get(admin_get_virtual_model).put(admin_update_virtual_model).delete(admin_delete_virtual_model))
+        .route(
+            "/admin/virtual-models",
+            get(admin_list_virtual_models).post(admin_create_virtual_model),
+        )
+        .route(
+            "/admin/virtual-models/{name}",
+            get(admin_get_virtual_model)
+                .put(admin_update_virtual_model)
+                .delete(admin_delete_virtual_model),
+        )
         .route("/admin/models", get(admin_list_models))
         .route("/admin/models/{name}/publish", post(admin_publish_model))
-        .route("/admin/models/{name}/unpublish", post(admin_unpublish_model));
+        .route(
+            "/admin/models/{name}/unpublish",
+            post(admin_unpublish_model),
+        );
 
     // Compose the full router
     #[allow(unused_mut)]
@@ -791,7 +826,7 @@ pub fn build_router(state: AppState, config: &ServerConfig) -> Router {
                 metrics_handler,
                 list_sessions_handler,
                 openapi_handler,
-            ),
+            )
         )]
         struct ApiDoc;
 
@@ -800,13 +835,25 @@ pub fn build_router(state: AppState, config: &ServerConfig) -> Router {
 
     let app = app
         .fallback(fallback_handler)
-        .layer(middleware::from_fn_with_state(state.clone(), metrics_middleware))
-        .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
-        .layer(middleware::from_fn_with_state(state.clone(), rate_limit_middleware))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            metrics_middleware,
+        ))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth_middleware,
+        ))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit_middleware,
+        ))
         .layer(cors_layer)
         .layer(CompressionLayer::new())
         .layer(RequestBodyLimitLayer::new(config.max_body_size))
-        .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, Duration::from_secs(config.read_timeout_secs)))
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(config.read_timeout_secs),
+        ))
         .with_state(state);
 
     app
@@ -927,24 +974,25 @@ async fn chat_handler(
 
     let result = tokio::task::spawn_blocking(move || {
         let mut ass = assistant.blocking_lock();
-        ass.send_message_with_notes(
-            message,
-            &knowledge_context,
-            &system_prompt,
-            "",
-        );
+        ass.send_message_with_notes(message, &knowledge_context, &system_prompt, "");
 
         let model = ass.config.selected_model.clone();
         loop {
             match ass.poll_response() {
                 Some(crate::messages::AiResponse::Complete(text)) => {
-                    return Ok(ChatResponse { content: text, model });
+                    return Ok(ChatResponse {
+                        content: text,
+                        model,
+                    });
                 }
                 Some(crate::messages::AiResponse::Error(e)) => {
                     return Err(e);
                 }
                 Some(crate::messages::AiResponse::Cancelled(partial)) => {
-                    return Ok(ChatResponse { content: partial, model });
+                    return Ok(ChatResponse {
+                        content: partial,
+                        model,
+                    });
                 }
                 Some(_) => continue,
                 None => std::thread::sleep(Duration::from_millis(10)),
@@ -972,7 +1020,10 @@ async fn chat_handler(
 async fn chat_stream_handler(
     State(state): State<AppState>,
     Json(chat_req): Json<ChatRequest>,
-) -> Result<Sse<impl futures_core::Stream<Item = Result<SseEvent, std::convert::Infallible>>>, AppError> {
+) -> Result<
+    Sse<impl futures_core::Stream<Item = Result<SseEvent, std::convert::Infallible>>>,
+    AppError,
+> {
     // Validate message length
     let max_len = {
         let config = state.server_config.read().await;
@@ -1261,13 +1312,21 @@ async fn openai_completions_handler(
                     sys = format!("{}\n{}", vsp, sys);
                 }
             }
-            (vmodel.enrichment.clone(), Some(vmodel.base_model.clone()), sys)
+            (
+                vmodel.enrichment.clone(),
+                Some(vmodel.base_model.clone()),
+                sys,
+            )
         }
         crate::virtual_model::ModelResolution::Physical { ref name, .. } => {
             (config.enrichment.clone(), Some(name.clone()), system_prompt)
         }
         crate::virtual_model::ModelResolution::PassThrough { ref name } => {
-            let model = if name.is_empty() { None } else { Some(name.clone()) };
+            let model = if name.is_empty() {
+                None
+            } else {
+                Some(name.clone())
+            };
             (config.enrichment.clone(), model, system_prompt)
         }
     };
@@ -1304,10 +1363,7 @@ async fn openai_completions_handler(
 
             // Generate with streaming + cancellation support
             let mut ass = assistant.blocking_lock();
-            let cancel_token = ass.send_message_cancellable(
-                stream_user_msg,
-                &knowledge_context,
-            );
+            let cancel_token = ass.send_message_cancellable(stream_user_msg, &knowledge_context);
             loop {
                 match ass.poll_response() {
                     Some(crate::messages::AiResponse::Chunk(token)) => {
@@ -1412,7 +1468,9 @@ async fn openai_completions_handler(
             }
         };
 
-        return Sse::new(stream).keep_alive(SseKeepAlive::default()).into_response();
+        return Sse::new(stream)
+            .keep_alive(SseKeepAlive::default())
+            .into_response();
     }
 
     // ── Non-streaming path (unchanged logic) ──
@@ -1432,8 +1490,7 @@ async fn openai_completions_handler(
 
         // Generate response
         let mut ass = assistant.blocking_lock();
-        let model = requested_model
-            .unwrap_or_else(|| ass.config.selected_model.clone());
+        let model = requested_model.unwrap_or_else(|| ass.config.selected_model.clone());
 
         ass.send_message_with_notes(user_message.clone(), &knowledge_context, &system_prompt, "");
 
@@ -1540,10 +1597,7 @@ async fn openai_completions_handler(
 }
 
 /// Apply enrichment sub-configs (compaction, thinking) to the assistant.
-fn apply_enrichment_config(
-    ass: &mut AiAssistant,
-    enrichment: &crate::server::EnrichmentConfig,
-) {
+fn apply_enrichment_config(ass: &mut AiAssistant, enrichment: &crate::server::EnrichmentConfig) {
     if enrichment.compaction.enabled {
         let cconf = &enrichment.compaction;
         ass.set_compaction_config(crate::conversation_compaction::CompactionConfig {
@@ -1568,10 +1622,7 @@ fn apply_enrichment_config(
 }
 
 /// Apply RAG enrichment config fields to the assistant.
-fn apply_rag_config(
-    ass: &mut AiAssistant,
-    rconf: &crate::server::RagEnrichmentConfig,
-) {
+fn apply_rag_config(ass: &mut AiAssistant, rconf: &crate::server::RagEnrichmentConfig) {
     ass.rag_config.knowledge_rag_enabled = rconf.knowledge_rag;
     ass.rag_config.conversation_rag_enabled = rconf.conversation_rag;
     ass.rag_config.max_knowledge_tokens = rconf.max_knowledge_tokens;
@@ -1589,7 +1640,9 @@ fn apply_rag_config(
 /// raw available_models list (backward compatible).
 async fn openai_models_handler(State(state): State<AppState>) -> Json<serde_json::Value> {
     let ass = state.assistant.lock().await;
-    let client_models = state.model_registry.list_client_visible(&ass.available_models);
+    let client_models = state
+        .model_registry
+        .list_client_visible(&ass.available_models);
 
     let data: Vec<serde_json::Value> = if client_models.is_empty() {
         // Fallback: no models published → show raw available models (backward compat)
@@ -1637,10 +1690,7 @@ async fn openapi_handler() -> Json<serde_json::Value> {
 }
 
 /// GET /ws — WebSocket upgrade handler.
-async fn ws_handler(
-    State(state): State<AppState>,
-    ws: WebSocketUpgrade,
-) -> Response {
+async fn ws_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {
     ws.on_upgrade(move |socket| handle_ws_session(socket, state))
 }
 
@@ -1665,7 +1715,9 @@ async fn handle_ws_session(mut socket: WebSocket, state: AppState) {
                     Ok(r) => r,
                     Err(e) => {
                         let err_json = serde_json::json!({"type": "error", "error": format!("Invalid JSON: {}", e)});
-                        let _ = socket.send(WsMessage::Text(err_json.to_string().into())).await;
+                        let _ = socket
+                            .send(WsMessage::Text(err_json.to_string().into()))
+                            .await;
                         continue;
                     }
                 };
@@ -1681,12 +1733,7 @@ async fn handle_ws_session(mut socket: WebSocket, state: AppState) {
                 // Spawn blocking LLM call — sends chunks through channel
                 tokio::task::spawn_blocking(move || {
                     let mut ass = assistant.blocking_lock();
-                    ass.send_message_with_notes(
-                        message,
-                        &knowledge_context,
-                        &system_prompt,
-                        "",
-                    );
+                    ass.send_message_with_notes(message, &knowledge_context, &system_prompt, "");
                     loop {
                         match ass.poll_response() {
                             Some(crate::messages::AiResponse::Chunk(token)) => {
@@ -1725,7 +1772,11 @@ async fn handle_ws_session(mut socket: WebSocket, state: AppState) {
                                 ass.config.selected_model.clone()
                             };
                             let msg = serde_json::json!({"type": "complete", "model": model});
-                            if socket.send(WsMessage::Text(msg.to_string().into())).await.is_err() {
+                            if socket
+                                .send(WsMessage::Text(msg.to_string().into()))
+                                .await
+                                .is_err()
+                            {
                                 had_error = true;
                             }
                             break;
@@ -1734,7 +1785,11 @@ async fn handle_ws_session(mut socket: WebSocket, state: AppState) {
                             serde_json::json!({"type": "error", "error": e})
                         }
                     };
-                    if socket.send(WsMessage::Text(ws_msg.to_string().into())).await.is_err() {
+                    if socket
+                        .send(WsMessage::Text(ws_msg.to_string().into()))
+                        .await
+                        .is_err()
+                    {
                         had_error = true;
                         break;
                     }
@@ -1824,9 +1879,7 @@ async fn admin_create_virtual_model(
 }
 
 /// GET /admin/virtual-models — List all virtual models (including unpublished).
-async fn admin_list_virtual_models(
-    State(state): State<AppState>,
-) -> Json<serde_json::Value> {
+async fn admin_list_virtual_models(State(state): State<AppState>) -> Json<serde_json::Value> {
     let models = state.model_registry.list_virtual();
     Json(serde_json::json!({"virtual_models": models}))
 }
@@ -1871,7 +1924,10 @@ async fn admin_update_virtual_model(
     if state.model_registry.update_virtual(updated) {
         Ok(Json(serde_json::json!({"updated": name})))
     } else {
-        Err(AppError::NotFound(format!("Virtual model '{}' not found", name)))
+        Err(AppError::NotFound(format!(
+            "Virtual model '{}' not found",
+            name
+        )))
     }
 }
 
@@ -1883,14 +1939,15 @@ async fn admin_delete_virtual_model(
     if state.model_registry.unregister_virtual(&name) {
         Ok(Json(serde_json::json!({"deleted": name})))
     } else {
-        Err(AppError::NotFound(format!("Virtual model '{}' not found", name)))
+        Err(AppError::NotFound(format!(
+            "Virtual model '{}' not found",
+            name
+        )))
     }
 }
 
 /// GET /admin/models — List all models with their publish status.
-async fn admin_list_models(
-    State(state): State<AppState>,
-) -> Json<serde_json::Value> {
+async fn admin_list_models(State(state): State<AppState>) -> Json<serde_json::Value> {
     let ass = state.assistant.lock().await;
     let physical: Vec<serde_json::Value> = ass
         .available_models
@@ -1943,12 +2000,9 @@ async fn admin_publish_model(
         .unwrap_or(crate::config::AiProvider::Ollama);
     let display_name = req.as_ref().and_then(|r| r.display_name.clone());
 
-    state.model_registry.set_published_with_display_name(
-        &name,
-        provider,
-        true,
-        display_name,
-    );
+    state
+        .model_registry
+        .set_published_with_display_name(&name, provider, true, display_name);
 
     Json(serde_json::json!({"published": name}))
 }
@@ -1958,11 +2012,9 @@ async fn admin_unpublish_model(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Json<serde_json::Value> {
-    state.model_registry.set_published(
-        &name,
-        crate::config::AiProvider::Ollama,
-        false,
-    );
+    state
+        .model_registry
+        .set_published(&name, crate::config::AiProvider::Ollama, false);
     Json(serde_json::json!({"unpublished": name}))
 }
 
@@ -1971,10 +2023,7 @@ async fn admin_unpublish_model(
 // ============================================================================
 
 #[cfg(all(feature = "containers", feature = "tools"))]
-async fn mcp_handler(
-    State(state): State<AppState>,
-    body: String,
-) -> impl IntoResponse {
+async fn mcp_handler(State(state): State<AppState>, body: String) -> impl IntoResponse {
     match &state.mcp_server {
         Some(server) => {
             let guard = match server.read() {
@@ -2191,9 +2240,10 @@ impl AxumServer {
 
 /// Build AppState from config and assistant.
 fn build_app_state(config: ServerConfig, assistant: AiAssistant) -> AppState {
-    let rate_limiter = config.rate_limiter.as_ref().map(|rl| {
-        Arc::new(AxumRateLimiter::new(rl.requests_per_minute, 60))
-    });
+    let rate_limiter = config
+        .rate_limiter
+        .as_ref()
+        .map(|rl| Arc::new(AxumRateLimiter::new(rl.requests_per_minute, 60)));
 
     AppState {
         assistant: Arc::new(tokio::sync::Mutex::new(assistant)),
@@ -2226,10 +2276,7 @@ fn build_app_state(config: ServerConfig, assistant: AiAssistant) -> AppState {
 /// - Eval suite tools (feature: eval-suite)
 #[cfg(feature = "tools")]
 fn build_unified_mcp_server() -> Arc<std::sync::RwLock<crate::mcp_protocol::McpServer>> {
-    let mut mcp = crate::mcp_protocol::McpServer::new(
-        "ai_assistant",
-        env!("CARGO_PKG_VERSION"),
-    );
+    let mut mcp = crate::mcp_protocol::McpServer::new("ai_assistant", env!("CARGO_PKG_VERSION"));
     let mut tool_count = 0u32;
 
     // ── Docker/Container tools ──────────────────────────────────────
@@ -2321,9 +2368,7 @@ fn build_unified_mcp_server() -> Arc<std::sync::RwLock<crate::mcp_protocol::McpS
 
     // ── Configuration tools ─────────────────────────────────────────
     {
-        let config = std::sync::Arc::new(std::sync::Mutex::new(
-            crate::AiConfig::default(),
-        ));
+        let config = std::sync::Arc::new(std::sync::Mutex::new(crate::AiConfig::default()));
         crate::config_file::register_config_tools(&mut mcp, config, true);
         tool_count += 4;
         log::info!("MCP: +4 Configuration tools");
@@ -2354,9 +2399,9 @@ fn init_enrichment(config: ServerConfig) -> ServerConfig {
 fn init_guardrail_pipeline(mut config: ServerConfig) -> ServerConfig {
     if config.enrichment.enable_guardrails && config.guardrail_pipeline.is_none() {
         use crate::guardrail_pipeline::{
-            AttackGuard, ContentLengthGuard, GuardrailPipeline, OutputPiiConfig,
-            OutputPiiGuard, OutputToxicityConfig, OutputToxicityGuard, PatternGuard,
-            PiiAction, PiiGuard, RateLimitGuard, ToxicityGuard,
+            AttackGuard, ContentLengthGuard, GuardrailPipeline, OutputPiiConfig, OutputPiiGuard,
+            OutputToxicityConfig, OutputToxicityGuard, PatternGuard, PiiAction, PiiGuard,
+            RateLimitGuard, ToxicityGuard,
         };
 
         let gconf = &config.enrichment.guardrails;
@@ -2510,12 +2555,15 @@ mod tests {
         let sessions: DashMap<String, SessionData> = DashMap::new();
 
         // Create
-        sessions.insert("s1".to_string(), SessionData {
-            id: "s1".to_string(),
-            last_active: 0,
-            message_count: 0,
-            affinity_node: None,
-        });
+        sessions.insert(
+            "s1".to_string(),
+            SessionData {
+                id: "s1".to_string(),
+                last_active: 0,
+                message_count: 0,
+                affinity_node: None,
+            },
+        );
         assert_eq!(sessions.len(), 1);
 
         // Read
@@ -2523,7 +2571,9 @@ mod tests {
         assert!(sessions.get("s2").is_none());
 
         // Update
-        sessions.entry("s1".to_string()).and_modify(|s| s.message_count = 10);
+        sessions
+            .entry("s1".to_string())
+            .and_modify(|s| s.message_count = 10);
         assert_eq!(sessions.get("s1").unwrap().message_count, 10);
 
         // Delete
@@ -2607,7 +2657,10 @@ mod tests {
     fn test_metrics_endpoint_counts() {
         let metrics = AxumServerMetrics::new();
         metrics.endpoint_counts.insert("GET /health".to_string(), 5);
-        metrics.endpoint_counts.entry("GET /health".to_string()).and_modify(|c| *c += 1);
+        metrics
+            .endpoint_counts
+            .entry("GET /health".to_string())
+            .and_modify(|c| *c += 1);
         assert_eq!(*metrics.endpoint_counts.get("GET /health").unwrap(), 6);
     }
 
@@ -2640,7 +2693,7 @@ mod tests {
         assert!(limiter.check(ip1));
         assert!(limiter.check(ip1));
         assert!(!limiter.check(ip1)); // ip1 blocked
-        assert!(limiter.check(ip2));  // ip2 still allowed
+        assert!(limiter.check(ip2)); // ip2 still allowed
     }
 
     #[test]
@@ -2674,7 +2727,10 @@ mod tests {
         let _ = AppError::Unauthorized("unauth".to_string());
         let _ = AppError::NotFound("not found".to_string());
         let _ = AppError::UnprocessableEntity("invalid".to_string());
-        let _ = AppError::TooManyRequests { message: "slow down".to_string(), retry_after: 60 };
+        let _ = AppError::TooManyRequests {
+            message: "slow down".to_string(),
+            retry_after: 60,
+        };
         let _ = AppError::Internal("oops".to_string());
         let _ = AppError::ServiceUnavailable("down".to_string());
     }
@@ -2712,7 +2768,8 @@ mod tests {
 
     #[test]
     fn test_chat_request_with_all_fields() {
-        let json = r#"{"message": "Hi", "system_prompt": "You are helpful", "knowledge_context": "docs"}"#;
+        let json =
+            r#"{"message": "Hi", "system_prompt": "You are helpful", "knowledge_context": "docs"}"#;
         let req: ChatRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.message, "Hi");
         assert_eq!(req.system_prompt, "You are helpful");
@@ -2782,7 +2839,9 @@ mod tests {
 
     #[test]
     fn test_error_body_serialization() {
-        let body = ErrorBody { error: "test error".to_string() };
+        let body = ErrorBody {
+            error: "test error".to_string(),
+        };
         let json = serde_json::to_string(&body).unwrap();
         assert!(json.contains("test error"));
     }
@@ -3005,10 +3064,7 @@ mod tests {
     async fn test_get_session_not_found() {
         let config = ServerConfig::default();
         let state = build_app_state(config, AiAssistant::new());
-        let result = get_session_handler(
-            State(state),
-            Path("nonexistent".to_string()),
-        ).await;
+        let result = get_session_handler(State(state), Path("nonexistent".to_string())).await;
         assert!(result.is_err());
     }
 
@@ -3016,10 +3072,7 @@ mod tests {
     async fn test_delete_session_not_found() {
         let config = ServerConfig::default();
         let state = build_app_state(config, AiAssistant::new());
-        let result = delete_session_handler(
-            State(state),
-            Path("nonexistent".to_string()),
-        ).await;
+        let result = delete_session_handler(State(state), Path("nonexistent".to_string())).await;
         assert!(result.is_err());
     }
 
@@ -3286,8 +3339,10 @@ mod tests {
     async fn test_stream_channel_sends_tokens() {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<StreamEvent>(16);
         tokio::task::spawn_blocking(move || {
-            tx.blocking_send(StreamEvent::Token("Hello".to_string())).unwrap();
-            tx.blocking_send(StreamEvent::Token(" world".to_string())).unwrap();
+            tx.blocking_send(StreamEvent::Token("Hello".to_string()))
+                .unwrap();
+            tx.blocking_send(StreamEvent::Token(" world".to_string()))
+                .unwrap();
             tx.blocking_send(StreamEvent::Done).unwrap();
         });
 
@@ -3306,8 +3361,10 @@ mod tests {
     async fn test_stream_channel_sends_error() {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<StreamEvent>(16);
         tokio::task::spawn_blocking(move || {
-            tx.blocking_send(StreamEvent::Token("partial".to_string())).unwrap();
-            tx.blocking_send(StreamEvent::Error("connection lost".to_string())).unwrap();
+            tx.blocking_send(StreamEvent::Token("partial".to_string()))
+                .unwrap();
+            tx.blocking_send(StreamEvent::Error("connection lost".to_string()))
+                .unwrap();
         });
 
         let mut got_error = false;
@@ -3334,7 +3391,9 @@ mod tests {
 
         let result = tokio::task::spawn_blocking(move || {
             tx.blocking_send(StreamEvent::Token("test".to_string()))
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
 
         assert!(result.is_err()); // Channel closed
     }
@@ -3393,7 +3452,7 @@ mod tests {
                 preserve_recent: 5,
                 preserve_first: 2,
                 min_importance: 0.5,
-            llm_enhanced: false,
+                llm_enhanced: false,
             },
             ..Default::default()
         };
@@ -3679,11 +3738,9 @@ mod tests {
         let state = build_app_state(config, AiAssistant::new());
 
         // Publish one physical model
-        state.model_registry.set_published(
-            "llama3:8b",
-            crate::config::AiProvider::Ollama,
-            true,
-        );
+        state
+            .model_registry
+            .set_published("llama3:8b", crate::config::AiProvider::Ollama, true);
 
         let models = vec![
             crate::models::ModelInfo {
@@ -3748,7 +3805,9 @@ mod tests {
             published: None,
             tags: None,
         };
-        admin_create_virtual_model(State(state.clone()), Json(req)).await.unwrap();
+        admin_create_virtual_model(State(state.clone()), Json(req))
+            .await
+            .unwrap();
 
         let req2 = CreateVirtualModelRequest {
             name: "dup".to_string(),
@@ -3769,18 +3828,21 @@ mod tests {
     async fn test_admin_list_virtual_models() {
         let config = ServerConfig::default();
         let state = build_app_state(config, AiAssistant::new());
-        state.model_registry.register_virtual(crate::virtual_model::VirtualModel {
-            name: "m1".to_string(),
-            description: "M1".to_string(),
-            base_model: "llama3:8b".to_string(),
-            base_provider: None,
-            enrichment: EnrichmentConfig::default(),
-            profile: None,
-            system_prompt: None,
-            published: true,
-            created_at: 0,
-            tags: vec![],
-        }).unwrap();
+        state
+            .model_registry
+            .register_virtual(crate::virtual_model::VirtualModel {
+                name: "m1".to_string(),
+                description: "M1".to_string(),
+                base_model: "llama3:8b".to_string(),
+                base_provider: None,
+                enrichment: EnrichmentConfig::default(),
+                profile: None,
+                system_prompt: None,
+                published: true,
+                created_at: 0,
+                tags: vec![],
+            })
+            .unwrap();
 
         let Json(resp) = admin_list_virtual_models(State(state)).await;
         let models = resp["virtual_models"].as_array().unwrap();
@@ -3791,18 +3853,21 @@ mod tests {
     async fn test_admin_get_virtual_model() {
         let config = ServerConfig::default();
         let state = build_app_state(config, AiAssistant::new());
-        state.model_registry.register_virtual(crate::virtual_model::VirtualModel {
-            name: "my-model".to_string(),
-            description: "Test".to_string(),
-            base_model: "llama3:8b".to_string(),
-            base_provider: None,
-            enrichment: EnrichmentConfig::default(),
-            profile: None,
-            system_prompt: None,
-            published: true,
-            created_at: 0,
-            tags: vec![],
-        }).unwrap();
+        state
+            .model_registry
+            .register_virtual(crate::virtual_model::VirtualModel {
+                name: "my-model".to_string(),
+                description: "Test".to_string(),
+                base_model: "llama3:8b".to_string(),
+                base_provider: None,
+                enrichment: EnrichmentConfig::default(),
+                profile: None,
+                system_prompt: None,
+                published: true,
+                created_at: 0,
+                tags: vec![],
+            })
+            .unwrap();
 
         let result = admin_get_virtual_model(State(state), Path("my-model".to_string())).await;
         assert!(result.is_ok());
@@ -3822,20 +3887,24 @@ mod tests {
     async fn test_admin_delete_virtual_model() {
         let config = ServerConfig::default();
         let state = build_app_state(config, AiAssistant::new());
-        state.model_registry.register_virtual(crate::virtual_model::VirtualModel {
-            name: "del-me".to_string(),
-            description: "Delete me".to_string(),
-            base_model: "llama3:8b".to_string(),
-            base_provider: None,
-            enrichment: EnrichmentConfig::default(),
-            profile: None,
-            system_prompt: None,
-            published: false,
-            created_at: 0,
-            tags: vec![],
-        }).unwrap();
+        state
+            .model_registry
+            .register_virtual(crate::virtual_model::VirtualModel {
+                name: "del-me".to_string(),
+                description: "Delete me".to_string(),
+                base_model: "llama3:8b".to_string(),
+                base_provider: None,
+                enrichment: EnrichmentConfig::default(),
+                profile: None,
+                system_prompt: None,
+                published: false,
+                created_at: 0,
+                tags: vec![],
+            })
+            .unwrap();
 
-        let result = admin_delete_virtual_model(State(state.clone()), Path("del-me".to_string())).await;
+        let result =
+            admin_delete_virtual_model(State(state.clone()), Path("del-me".to_string())).await;
         assert!(result.is_ok());
         assert!(state.model_registry.get_virtual("del-me").is_none());
     }
@@ -3852,11 +3921,8 @@ mod tests {
     async fn test_admin_publish_model() {
         let config = ServerConfig::default();
         let state = build_app_state(config, AiAssistant::new());
-        let Json(resp) = admin_publish_model(
-            State(state.clone()),
-            Path("llama3:8b".to_string()),
-            None,
-        ).await;
+        let Json(resp) =
+            admin_publish_model(State(state.clone()), Path("llama3:8b".to_string()), None).await;
         assert_eq!(resp["published"], "llama3:8b");
         assert!(state.model_registry.is_published("llama3:8b"));
     }
@@ -3865,10 +3931,13 @@ mod tests {
     async fn test_admin_unpublish_model() {
         let config = ServerConfig::default();
         let state = build_app_state(config, AiAssistant::new());
-        state.model_registry.set_published("llama3:8b", crate::config::AiProvider::Ollama, true);
+        state
+            .model_registry
+            .set_published("llama3:8b", crate::config::AiProvider::Ollama, true);
         assert!(state.model_registry.is_published("llama3:8b"));
 
-        let Json(resp) = admin_unpublish_model(State(state.clone()), Path("llama3:8b".to_string())).await;
+        let Json(resp) =
+            admin_unpublish_model(State(state.clone()), Path("llama3:8b".to_string())).await;
         assert_eq!(resp["unpublished"], "llama3:8b");
         assert!(!state.model_registry.is_published("llama3:8b"));
     }
@@ -3879,18 +3948,21 @@ mod tests {
         let state = build_app_state(config, AiAssistant::new());
 
         // Add a virtual model
-        state.model_registry.register_virtual(crate::virtual_model::VirtualModel {
-            name: "v1".to_string(),
-            description: "V1".to_string(),
-            base_model: "llama3:8b".to_string(),
-            base_provider: None,
-            enrichment: EnrichmentConfig::default(),
-            profile: None,
-            system_prompt: None,
-            published: true,
-            created_at: 0,
-            tags: vec![],
-        }).unwrap();
+        state
+            .model_registry
+            .register_virtual(crate::virtual_model::VirtualModel {
+                name: "v1".to_string(),
+                description: "V1".to_string(),
+                base_model: "llama3:8b".to_string(),
+                base_provider: None,
+                enrichment: EnrichmentConfig::default(),
+                profile: None,
+                system_prompt: None,
+                published: true,
+                created_at: 0,
+                tags: vec![],
+            })
+            .unwrap();
 
         let Json(resp) = admin_list_models(State(state)).await;
         assert!(resp["physical"].is_array());
@@ -3912,7 +3984,8 @@ mod tests {
             State(state.clone()),
             Path("llama3:8b".to_string()),
             Some(Json(req)),
-        ).await;
+        )
+        .await;
 
         let info = state.model_registry.get_published("llama3:8b").unwrap();
         assert_eq!(info.display_name, Some("My Llama".to_string()));

@@ -637,7 +637,9 @@ mod tests {
     #[test]
     fn test_benchmark_result_metadata() {
         let mut result = BenchmarkResult::new("test_bench", "A test benchmark");
-        result.metadata.insert("version".to_string(), "1.0".to_string());
+        result
+            .metadata
+            .insert("version".to_string(), "1.0".to_string());
         assert_eq!(result.name, "test_bench");
         assert_eq!(result.description, "A test benchmark");
         assert_eq!(result.metadata.get("version").unwrap(), "1.0");

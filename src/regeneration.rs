@@ -237,11 +237,19 @@ mod tests {
 
     #[test]
     fn test_length_preference_instructions() {
-        assert!(LengthPreference::VeryShort.to_instruction().contains("brief"));
+        assert!(LengthPreference::VeryShort
+            .to_instruction()
+            .contains("brief"));
         assert!(LengthPreference::Short.to_instruction().contains("short"));
-        assert!(LengthPreference::Medium.to_instruction().contains("moderate"));
-        assert!(LengthPreference::Long.to_instruction().contains("comprehensive"));
-        assert!(LengthPreference::VeryLong.to_instruction().contains("exhaustive"));
+        assert!(LengthPreference::Medium
+            .to_instruction()
+            .contains("moderate"));
+        assert!(LengthPreference::Long
+            .to_instruction()
+            .contains("comprehensive"));
+        assert!(LengthPreference::VeryLong
+            .to_instruction()
+            .contains("exhaustive"));
     }
 
     #[test]
@@ -295,7 +303,11 @@ mod tests {
             };
             let request = RegenerationRequest::new("Q", "A", feedback);
             let prompt = request.build_improved_prompt();
-            assert!(prompt.contains("Q"), "Issue {:?} should preserve question", issue);
+            assert!(
+                prompt.contains("Q"),
+                "Issue {:?} should preserve question",
+                issue
+            );
         }
     }
 
@@ -308,9 +320,15 @@ mod tests {
             style: None,
             length: None,
         };
-        assert!(manager.request_regeneration("c1", "Q", "A", feedback.clone()).is_some());
-        assert!(manager.request_regeneration("c1", "Q", "A", feedback.clone()).is_some());
-        assert!(manager.request_regeneration("c1", "Q", "A", feedback.clone()).is_none());
+        assert!(manager
+            .request_regeneration("c1", "Q", "A", feedback.clone())
+            .is_some());
+        assert!(manager
+            .request_regeneration("c1", "Q", "A", feedback.clone())
+            .is_some());
+        assert!(manager
+            .request_regeneration("c1", "Q", "A", feedback.clone())
+            .is_none());
     }
 
     #[test]

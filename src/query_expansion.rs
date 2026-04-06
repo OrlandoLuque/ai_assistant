@@ -521,9 +521,8 @@ impl QueryExpander {
 
         if let Some(enhancer) = llm {
             if self.config.llm_enhanced && enhancer.is_available() {
-                let llm_expansions = self.expand_with_llm(query, |prompt| {
-                    enhancer.generate(prompt, 300)
-                });
+                let llm_expansions =
+                    self.expand_with_llm(query, |prompt| enhancer.generate(prompt, 300));
 
                 for expanded in llm_expansions {
                     result.expansions.push(ExpandedQuery {
@@ -684,10 +683,16 @@ mod tests {
         // Should still produce synonym/keyword expansions
         assert!(!result.expansions.is_empty());
         assert!(
-            result.expansions.iter().any(|e| e.source == ExpansionSource::Original),
+            result
+                .expansions
+                .iter()
+                .any(|e| e.source == ExpansionSource::Original),
             "Should contain original query"
         );
-        assert_eq!(result.stats.llm_expansions, 0, "No LLM expansions without LLM");
+        assert_eq!(
+            result.stats.llm_expansions, 0,
+            "No LLM expansions without LLM"
+        );
     }
 
     #[test]
@@ -703,10 +708,16 @@ mod tests {
         let result = expander.expand_with_llm_enhancer("search for errors", Some(&mock));
         // Should have LLM-generated expansions
         assert!(
-            result.expansions.iter().any(|e| e.source == ExpansionSource::LlmGenerated),
+            result
+                .expansions
+                .iter()
+                .any(|e| e.source == ExpansionSource::LlmGenerated),
             "Should contain LLM-generated expansions"
         );
-        assert!(result.stats.llm_expansions > 0, "LLM expansion count should be > 0");
+        assert!(
+            result.stats.llm_expansions > 0,
+            "LLM expansion count should be > 0"
+        );
     }
 
     #[test]
@@ -720,6 +731,9 @@ mod tests {
         let result = expander.expand_with_llm_enhancer("search for errors", Some(&failing));
         // Should fall back to heuristic (not crash), no LLM expansions
         assert!(!result.expansions.is_empty());
-        assert_eq!(result.stats.llm_expansions, 0, "No LLM expansions on failure");
+        assert_eq!(
+            result.stats.llm_expansions, 0,
+            "No LLM expansions on failure"
+        );
     }
 }

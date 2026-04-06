@@ -66,8 +66,8 @@ impl StreamableHttpTransport {
     /// replied with immediate JSON or an SSE stream. For SSE responses the
     /// first `data:` line carrying a JSON object is parsed and returned.
     pub fn send_request(&mut self, request: &McpRequest) -> Result<McpResponse, String> {
-        let body = serde_json::to_value(request)
-            .map_err(|e| format!("Serialization error: {}", e))?;
+        let body =
+            serde_json::to_value(request).map_err(|e| format!("Serialization error: {}", e))?;
 
         let timeout = std::time::Duration::from_secs(self.timeout_secs.unwrap_or(30));
 
@@ -99,12 +99,14 @@ impl StreamableHttpTransport {
                 if content_type.contains("text/event-stream") {
                     // Parse SSE: read the body as text and extract the first
                     // JSON object from `data:` lines.
-                    let body_text = resp.into_string()
+                    let body_text = resp
+                        .into_string()
                         .map_err(|e| format!("Failed to read SSE body: {}", e))?;
                     Self::parse_sse_to_response(&body_text)
                 } else {
                     // Direct JSON response.
-                    let json_str = resp.into_string()
+                    let json_str = resp
+                        .into_string()
                         .map_err(|e| format!("Failed to read response body: {}", e))?;
                     serde_json::from_str::<McpResponse>(&json_str)
                         .map_err(|e| format!("Failed to parse JSON response: {}", e))
@@ -242,9 +244,7 @@ impl McpSessionStore for InMemorySessionStore {
     fn cleanup_expired(&mut self, max_age_secs: u64) {
         let now = chrono::Utc::now();
         self.sessions.retain(|_, session| {
-            let age = now
-                .signed_duration_since(session.last_active)
-                .num_seconds();
+            let age = now.signed_duration_since(session.last_active).num_seconds();
             age >= 0 && (age as u64) < max_age_secs
         });
     }

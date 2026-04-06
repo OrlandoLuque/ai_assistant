@@ -145,7 +145,12 @@ pub fn export_config(path: &Path, format: &str, output: &Path) -> Result<(), Str
     let target_format = match format.to_lowercase().as_str() {
         "toml" => ConfigFormat::Toml,
         "json" => ConfigFormat::Json,
-        _ => return Err(format!("Unsupported export format: '{}'. Use 'toml' or 'json'", format)),
+        _ => {
+            return Err(format!(
+                "Unsupported export format: '{}'. Use 'toml' or 'json'",
+                format
+            ))
+        }
     };
 
     let content = config
@@ -163,7 +168,8 @@ pub fn export_config(path: &Path, format: &str, output: &Path) -> Result<(), Str
 /// Loads the source, validates it, and writes it to the output path.
 /// Returns a list of validation warnings (empty if valid).
 pub fn import_config(input: &Path, output: &Path) -> Result<Vec<String>, String> {
-    let config = ConfigFile::load(input).map_err(|e| format!("Failed to load {}: {}", input.display(), e))?;
+    let config = ConfigFile::load(input)
+        .map_err(|e| format!("Failed to load {}: {}", input.display(), e))?;
 
     let mut warnings = Vec::new();
 
@@ -230,7 +236,12 @@ fn parse_flat_pairs(content: &str) -> BTreeMap<String, String> {
 }
 
 /// Rebuild config content after setting a key.
-fn rebuild_config(pairs: &BTreeMap<String, String>, original: &str, changed_key: &str, new_value: &str) -> String {
+fn rebuild_config(
+    pairs: &BTreeMap<String, String>,
+    original: &str,
+    changed_key: &str,
+    new_value: &str,
+) -> String {
     let (section, bare_key) = split_key(changed_key);
 
     let mut result = String::new();
@@ -342,7 +353,10 @@ mod tests {
             "[provider]\ntype = \"ollama\"\nmodel = \"llama3\"\napi_key = \"sk-secret123\"\n",
         );
         let output = show_config(&cfg, true).unwrap();
-        assert!(output.contains("***REDACTED***"), "api_key should be redacted");
+        assert!(
+            output.contains("***REDACTED***"),
+            "api_key should be redacted"
+        );
         assert!(!output.contains("sk-secret123"), "Secret should not appear");
         assert!(output.contains("ollama"), "Non-secret values should remain");
         let _ = std::fs::remove_file(&cfg);
@@ -379,7 +393,11 @@ mod tests {
         );
 
         let diffs = diff_configs(&cfg_a, &cfg_b);
-        assert!(diffs.len() >= 2, "Should have at least 2 diffs, got {}", diffs.len());
+        assert!(
+            diffs.len() >= 2,
+            "Should have at least 2 diffs, got {}",
+            diffs.len()
+        );
 
         let model_diff = diffs.iter().find(|d| d.key == "model");
         assert!(model_diff.is_some(), "Should find model diff");
@@ -404,7 +422,10 @@ mod tests {
 
         export_config(&cfg, "json", &json_out).unwrap();
         let json_content = std::fs::read_to_string(&json_out).unwrap();
-        assert!(json_content.contains("ollama"), "JSON export should contain provider type");
+        assert!(
+            json_content.contains("ollama"),
+            "JSON export should contain provider type"
+        );
 
         // Import back
         let reimport = {

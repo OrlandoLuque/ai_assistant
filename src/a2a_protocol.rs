@@ -43,7 +43,11 @@ pub struct AgentSkill {
 impl AgentCard {
     /// Create a new AgentCard with the given name, description, and URL.
     /// Defaults to version "1.0.0", no skills, no auth, no capabilities.
-    pub fn new(name: impl Into<String>, description: impl Into<String>, url: impl Into<String>) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        description: impl Into<String>,
+        url: impl Into<String>,
+    ) -> Self {
         Self {
             name: name.into(),
             description: description.into(),
@@ -82,11 +86,7 @@ impl AgentCard {
 
 impl AgentSkill {
     /// Create a new AgentSkill with the given name, description, and tags.
-    pub fn new(
-        name: impl Into<String>,
-        description: impl Into<String>,
-        tags: Vec<String>,
-    ) -> Self {
+    pub fn new(name: impl Into<String>, description: impl Into<String>, tags: Vec<String>) -> Self {
         Self {
             name: name.into(),
             description: description.into(),
@@ -561,9 +561,7 @@ impl A2AServer {
     }
 
     /// Evict oldest push configs when over the limit.
-    fn evict_push_configs_if_needed(
-        configs: &mut HashMap<String, PushNotificationConfig>,
-    ) {
+    fn evict_push_configs_if_needed(configs: &mut HashMap<String, PushNotificationConfig>) {
         if configs.len() <= MAX_PUSH_CONFIGS {
             return;
         }
@@ -584,9 +582,10 @@ impl A2AServer {
         let task_id = task_id.into();
         // Verify the task exists
         {
-            let tasks = self.tasks.lock().map_err(|e| {
-                AiError::Other(format!("Failed to lock tasks: {}", e))
-            })?;
+            let tasks = self
+                .tasks
+                .lock()
+                .map_err(|e| AiError::Other(format!("Failed to lock tasks: {}", e)))?;
             if !tasks.contains_key(&task_id) {
                 return Err(A2AError::TaskNotFound {
                     task_id: task_id.clone(),
@@ -594,9 +593,10 @@ impl A2AServer {
                 .into());
             }
         }
-        let mut push = self.push_configs.lock().map_err(|e| {
-            AiError::Other(format!("Failed to lock push_configs: {}", e))
-        })?;
+        let mut push = self
+            .push_configs
+            .lock()
+            .map_err(|e| AiError::Other(format!("Failed to lock push_configs: {}", e)))?;
         push.insert(task_id, config);
         Self::evict_push_configs_if_needed(&mut push);
         Ok(())
@@ -921,11 +921,7 @@ impl A2AClient {
     }
 
     /// Set an API key or other auth header (builder pattern).
-    pub fn with_api_key(
-        mut self,
-        header: impl Into<String>,
-        value: impl Into<String>,
-    ) -> Self {
+    pub fn with_api_key(mut self, header: impl Into<String>, value: impl Into<String>) -> Self {
         self.auth_header = Some((header.into(), value.into()));
         self
     }
@@ -1030,23 +1026,18 @@ fn current_timestamp() -> u64 {
 }
 
 /// Extract a message from JSON-RPC params: expects `{ "message": { "role": ..., "parts": ..., ... } }`.
-fn extract_message_from_params(
-    params: &Option<serde_json::Value>,
-) -> Result<A2AMessage, String> {
+fn extract_message_from_params(params: &Option<serde_json::Value>) -> Result<A2AMessage, String> {
     let params = params
         .as_ref()
         .ok_or_else(|| "Missing params".to_string())?;
     let msg_val = params
         .get("message")
         .ok_or_else(|| "Missing 'message' in params".to_string())?;
-    serde_json::from_value(msg_val.clone())
-        .map_err(|e| format!("Invalid message: {}", e))
+    serde_json::from_value(msg_val.clone()).map_err(|e| format!("Invalid message: {}", e))
 }
 
 /// Extract a task_id from JSON-RPC params: expects `{ "task_id": "..." }`.
-fn extract_task_id_from_params(
-    params: &Option<serde_json::Value>,
-) -> Result<String, String> {
+fn extract_task_id_from_params(params: &Option<serde_json::Value>) -> Result<String, String> {
     let params = params
         .as_ref()
         .ok_or_else(|| "Missing params".to_string())?;
@@ -1254,9 +1245,7 @@ impl AgentsMdDiscovery {
     /// Find an entry by exact name (case-insensitive).
     pub fn find_by_name(&self, name: &str) -> Option<&AgentsMdEntry> {
         let lower = name.to_lowercase();
-        self.entries
-            .iter()
-            .find(|e| e.name.to_lowercase() == lower)
+        self.entries.iter().find(|e| e.name.to_lowercase() == lower)
     }
 
     /// Return a slice of all loaded entries.
@@ -1394,9 +1383,7 @@ impl AcpBridge {
             .content_parts
             .iter()
             .map(|cp| match cp {
-                AcpContentPart::Text(text) => A2APart::Text(TextPart {
-                    text: text.clone(),
-                }),
+                AcpContentPart::Text(text) => A2APart::Text(TextPart { text: text.clone() }),
                 AcpContentPart::Data { mime_type, data } => A2APart::Data(DataPart {
                     mime_type: mime_type.clone(),
                     data: serde_json::Value::String(data.clone()),
@@ -1556,10 +1543,15 @@ mod tests {
 
     #[test]
     fn test_agent_card_serialization() {
-        let card = AgentCard::new("Agent", "desc", "http://a.local")
-            .with_skill(AgentSkill::new("skill1", "desc1", vec![]));
-        let json = serde_json::to_string(&card).expect("serialize AgentCard in test_agent_card_serialization");
-        let parsed: AgentCard = serde_json::from_str(&json).expect("deserialize AgentCard in test_agent_card_serialization");
+        let card = AgentCard::new("Agent", "desc", "http://a.local").with_skill(AgentSkill::new(
+            "skill1",
+            "desc1",
+            vec![],
+        ));
+        let json = serde_json::to_string(&card)
+            .expect("serialize AgentCard in test_agent_card_serialization");
+        let parsed: AgentCard = serde_json::from_str(&json)
+            .expect("deserialize AgentCard in test_agent_card_serialization");
         assert_eq!(parsed.name, "Agent");
         assert_eq!(parsed.skills.len(), 1);
     }
@@ -1598,8 +1590,10 @@ mod tests {
     #[test]
     fn test_task_transition_from_terminal() {
         let mut task = A2ATask::new();
-        task.transition(A2ATaskStatus::Working).expect("transition to Working in test_task_transition_from_terminal");
-        task.transition(A2ATaskStatus::Completed).expect("transition to Completed in test_task_transition_from_terminal");
+        task.transition(A2ATaskStatus::Working)
+            .expect("transition to Working in test_task_transition_from_terminal");
+        task.transition(A2ATaskStatus::Completed)
+            .expect("transition to Completed in test_task_transition_from_terminal");
         // Terminal state — no further transitions
         assert!(task.transition(A2ATaskStatus::Working).is_err());
         assert!(task.transition(A2ATaskStatus::Failed).is_err());
@@ -1610,9 +1604,11 @@ mod tests {
     fn test_task_lifecycle_full() {
         let mut task = A2ATask::new();
         assert_eq!(task.status, A2ATaskStatus::Submitted);
-        task.transition(A2ATaskStatus::Working).expect("transition to Working in test_task_lifecycle_full");
+        task.transition(A2ATaskStatus::Working)
+            .expect("transition to Working in test_task_lifecycle_full");
         assert_eq!(task.status, A2ATaskStatus::Working);
-        task.transition(A2ATaskStatus::Completed).expect("transition to Completed in test_task_lifecycle_full");
+        task.transition(A2ATaskStatus::Completed)
+            .expect("transition to Completed in test_task_lifecycle_full");
         assert_eq!(task.status, A2ATaskStatus::Completed);
         assert_eq!(task.history.len(), 3); // Submitted, Working, Completed
     }
@@ -1620,20 +1616,25 @@ mod tests {
     #[test]
     fn test_task_lifecycle_with_input_required() {
         let mut task = A2ATask::new();
-        task.transition(A2ATaskStatus::Working).expect("transition to Working in test_task_lifecycle_with_input_required");
+        task.transition(A2ATaskStatus::Working)
+            .expect("transition to Working in test_task_lifecycle_with_input_required");
         task.transition(A2ATaskStatus::InputRequired)
             .expect("transition to InputRequired in test_task_lifecycle_with_input_required");
         assert_eq!(task.status, A2ATaskStatus::InputRequired);
-        task.transition(A2ATaskStatus::Working).expect("resume Working in test_task_lifecycle_with_input_required");
-        task.transition(A2ATaskStatus::Completed).expect("transition to Completed in test_task_lifecycle_with_input_required");
+        task.transition(A2ATaskStatus::Working)
+            .expect("resume Working in test_task_lifecycle_with_input_required");
+        task.transition(A2ATaskStatus::Completed)
+            .expect("transition to Completed in test_task_lifecycle_with_input_required");
         assert_eq!(task.history.len(), 5);
     }
 
     #[test]
     fn test_task_lifecycle_canceled() {
         let mut task = A2ATask::new();
-        task.transition(A2ATaskStatus::Working).expect("transition to Working in test_task_lifecycle_canceled");
-        task.transition(A2ATaskStatus::Canceled).expect("transition to Canceled in test_task_lifecycle_canceled");
+        task.transition(A2ATaskStatus::Working)
+            .expect("transition to Working in test_task_lifecycle_canceled");
+        task.transition(A2ATaskStatus::Canceled)
+            .expect("transition to Canceled in test_task_lifecycle_canceled");
         assert_eq!(task.status, A2ATaskStatus::Canceled);
         assert!(task.status.is_terminal());
     }
@@ -1641,7 +1642,8 @@ mod tests {
     #[test]
     fn test_task_lifecycle_failed() {
         let mut task = A2ATask::new();
-        task.transition(A2ATaskStatus::Failed).expect("transition to Failed in test_task_lifecycle_failed");
+        task.transition(A2ATaskStatus::Failed)
+            .expect("transition to Failed in test_task_lifecycle_failed");
         assert_eq!(task.status, A2ATaskStatus::Failed);
         assert!(task.status.is_terminal());
     }
@@ -1666,7 +1668,10 @@ mod tests {
         task.add_artifact(artifact);
         assert_eq!(task.artifacts.len(), 1);
         assert_eq!(task.artifacts[0].name, "result.txt");
-        assert_eq!(task.artifacts[0].description, Some("The result file".to_string()));
+        assert_eq!(
+            task.artifacts[0].description,
+            Some("The result file".to_string())
+        );
         assert_eq!(task.artifacts[0].parts.len(), 1);
     }
 
@@ -1682,7 +1687,10 @@ mod tests {
         let mut task = A2ATask::new();
         task.metadata
             .insert("priority".to_string(), serde_json::json!("high"));
-        assert_eq!(task.metadata.get("priority"), Some(&serde_json::json!("high")));
+        assert_eq!(
+            task.metadata.get("priority"),
+            Some(&serde_json::json!("high"))
+        );
     }
 
     // ---- Message and Part tests ----
@@ -1756,8 +1764,10 @@ mod tests {
     #[test]
     fn test_message_serialization() {
         let msg = A2AMessage::text(MessageRole::Agent, "response");
-        let json = serde_json::to_string(&msg).expect("serialize A2AMessage in test_message_serialization");
-        let parsed: A2AMessage = serde_json::from_str(&json).expect("deserialize A2AMessage in test_message_serialization");
+        let json = serde_json::to_string(&msg)
+            .expect("serialize A2AMessage in test_message_serialization");
+        let parsed: A2AMessage = serde_json::from_str(&json)
+            .expect("deserialize A2AMessage in test_message_serialization");
         assert_eq!(parsed.role, MessageRole::Agent);
         assert_eq!(parsed.parts.len(), 1);
     }
@@ -1768,8 +1778,12 @@ mod tests {
         msg.metadata
             .insert("source".to_string(), serde_json::json!("api"));
         let json = serde_json::to_string(&msg).expect("serialize message with metadata");
-        let parsed: A2AMessage = serde_json::from_str(&json).expect("deserialize message with metadata");
-        assert_eq!(parsed.metadata.get("source"), Some(&serde_json::json!("api")));
+        let parsed: A2AMessage =
+            serde_json::from_str(&json).expect("deserialize message with metadata");
+        assert_eq!(
+            parsed.metadata.get("source"),
+            Some(&serde_json::json!("api"))
+        );
     }
 
     // ---- Task status display ----
@@ -1778,7 +1792,10 @@ mod tests {
     fn test_task_status_display() {
         assert_eq!(format!("{}", A2ATaskStatus::Submitted), "submitted");
         assert_eq!(format!("{}", A2ATaskStatus::Working), "working");
-        assert_eq!(format!("{}", A2ATaskStatus::InputRequired), "input-required");
+        assert_eq!(
+            format!("{}", A2ATaskStatus::InputRequired),
+            "input-required"
+        );
         assert_eq!(format!("{}", A2ATaskStatus::Completed), "completed");
         assert_eq!(format!("{}", A2ATaskStatus::Failed), "failed");
         assert_eq!(format!("{}", A2ATaskStatus::Canceled), "canceled");
@@ -1797,8 +1814,10 @@ mod tests {
     #[test]
     fn test_task_status_serialization() {
         let status = A2ATaskStatus::Working;
-        let json = serde_json::to_string(&status).expect("serialize TaskStatus in test_task_status_serialization");
-        let parsed: A2ATaskStatus = serde_json::from_str(&json).expect("deserialize TaskStatus in test_task_status_serialization");
+        let json = serde_json::to_string(&status)
+            .expect("serialize TaskStatus in test_task_status_serialization");
+        let parsed: A2ATaskStatus = serde_json::from_str(&json)
+            .expect("deserialize TaskStatus in test_task_status_serialization");
         assert_eq!(parsed, A2ATaskStatus::Working);
     }
 
@@ -1812,8 +1831,10 @@ mod tests {
             params: Some(serde_json::json!({"message": "hello"})),
             id: serde_json::json!(1),
         };
-        let json = serde_json::to_string(&req).expect("serialize JsonRpcRequest in test_json_rpc_request_serialization");
-        let parsed: JsonRpcRequest = serde_json::from_str(&json).expect("deserialize JsonRpcRequest in test_json_rpc_request_serialization");
+        let json = serde_json::to_string(&req)
+            .expect("serialize JsonRpcRequest in test_json_rpc_request_serialization");
+        let parsed: JsonRpcRequest = serde_json::from_str(&json)
+            .expect("deserialize JsonRpcRequest in test_json_rpc_request_serialization");
         assert_eq!(parsed.jsonrpc, "2.0");
         assert_eq!(parsed.method, "tasks/send");
         assert_eq!(parsed.id, serde_json::json!(1));
@@ -1841,7 +1862,10 @@ mod tests {
         assert_eq!(resp.jsonrpc, "2.0");
         assert!(resp.result.is_none());
         assert!(resp.error.is_some());
-        let err = resp.error.as_ref().expect("error in test_json_rpc_response_error");
+        let err = resp
+            .error
+            .as_ref()
+            .expect("error in test_json_rpc_response_error");
         assert_eq!(err.code, METHOD_NOT_FOUND);
     }
 
@@ -1849,7 +1873,8 @@ mod tests {
     fn test_json_rpc_response_serialization() {
         let resp = JsonRpcResponse::success(serde_json::json!("id-1"), serde_json::json!(42));
         let json = serde_json::to_string(&resp).expect("serialize JsonRpcResponse roundtrip");
-        let parsed: JsonRpcResponse = serde_json::from_str(&json).expect("deserialize JsonRpcResponse roundtrip");
+        let parsed: JsonRpcResponse =
+            serde_json::from_str(&json).expect("deserialize JsonRpcResponse roundtrip");
         assert_eq!(parsed.result, Some(serde_json::json!(42)));
     }
 
@@ -1947,7 +1972,10 @@ mod tests {
             serde_json::from_str(&resp_str).expect("parse agent/card response");
         assert!(resp.error.is_none());
         let result = resp.result.expect("agent/card result present");
-        assert_eq!(result.get("name").and_then(|v| v.as_str()), Some("EchoAgent"));
+        assert_eq!(
+            result.get("name").and_then(|v| v.as_str()),
+            Some("EchoAgent")
+        );
     }
 
     #[test]
@@ -1967,7 +1995,10 @@ mod tests {
             Some("Completed")
         );
         // Should have 2 messages: user + agent echo
-        let messages = result.get("messages").and_then(|v| v.as_array()).expect("messages array in tasks/send result");
+        let messages = result
+            .get("messages")
+            .and_then(|v| v.as_array())
+            .expect("messages array in tasks/send result");
         assert_eq!(messages.len(), 2);
     }
 
@@ -1996,10 +2027,7 @@ mod tests {
             serde_json::from_str(&get_resp_str).expect("parse tasks/get response");
         assert!(get_resp.error.is_none());
         let result = get_resp.result.expect("tasks/get result present");
-        assert_eq!(
-            result.get("id").and_then(|v| v.as_str()),
-            Some(task_id)
-        );
+        assert_eq!(result.get("id").and_then(|v| v.as_str()), Some(task_id));
     }
 
     #[test]
@@ -2038,8 +2066,8 @@ mod tests {
         let cancel_params = serde_json::json!({ "task_id": task_id });
         let cancel_resp_str =
             server.handle_request(&rpc_request("tasks/cancel", Some(cancel_params)));
-        let cancel_resp: JsonRpcResponse =
-            serde_json::from_str(&cancel_resp_str).expect("parse cancel response for completed task");
+        let cancel_resp: JsonRpcResponse = serde_json::from_str(&cancel_resp_str)
+            .expect("parse cancel response for completed task");
         // Cancel of a completed task should fail
         assert!(cancel_resp.error.is_some());
         let err = cancel_resp.error.expect("cancel error for completed task");
@@ -2051,7 +2079,8 @@ mod tests {
         // Manually insert a Working task, then cancel it
         let server = make_echo_server();
         let mut task = A2ATask::new();
-        task.transition(A2ATaskStatus::Working).expect("transition to Working in cancel_working_task");
+        task.transition(A2ATaskStatus::Working)
+            .expect("transition to Working in cancel_working_task");
         let task_id = task.id.clone();
         server
             .tasks
@@ -2102,7 +2131,9 @@ mod tests {
             "method": "agent/card",
             "id": 1
         });
-        let resp_str = server.handle_request(&serde_json::to_string(&bad_req).expect("serialize bad jsonrpc request"));
+        let resp_str = server.handle_request(
+            &serde_json::to_string(&bad_req).expect("serialize bad jsonrpc request"),
+        );
         let resp: JsonRpcResponse =
             serde_json::from_str(&resp_str).expect("parse invalid_jsonrpc response");
         assert!(resp.error.is_some());
@@ -2140,7 +2171,10 @@ mod tests {
         let resp: JsonRpcResponse =
             serde_json::from_str(&resp_str).expect("parse tasks_get_no_params response");
         assert!(resp.error.is_some());
-        assert_eq!(resp.error.expect("error in tasks_get_no_params").code, INVALID_PARAMS);
+        assert_eq!(
+            resp.error.expect("error in tasks_get_no_params").code,
+            INVALID_PARAMS
+        );
     }
 
     #[test]
@@ -2159,7 +2193,10 @@ mod tests {
         assert!(err.message.contains("handler intentionally failed"));
 
         // The failed task should be stored
-        let tasks = server.tasks.lock().expect("lock tasks mutex in failing_handler");
+        let tasks = server
+            .tasks
+            .lock()
+            .expect("lock tasks mutex in failing_handler");
         assert_eq!(tasks.len(), 1);
         let task = tasks.values().next().expect("one task in failing_handler");
         assert_eq!(task.status, A2ATaskStatus::Failed);
@@ -2176,8 +2213,8 @@ mod tests {
 
     #[test]
     fn test_client_with_api_key() {
-        let client = A2AClient::new("http://agent.local")
-            .with_api_key("Authorization", "Bearer sk-123");
+        let client =
+            A2AClient::new("http://agent.local").with_api_key("Authorization", "Bearer sk-123");
         assert_eq!(
             client.auth_header,
             Some(("Authorization".to_string(), "Bearer sk-123".to_string()))
@@ -2237,7 +2274,12 @@ mod tests {
         dir.register(AgentCard::new("Agent1", "v1", "http://a1.local"));
         dir.register(AgentCard::new("Agent1-updated", "v2", "http://a1.local"));
         assert_eq!(dir.len(), 1);
-        assert_eq!(dir.get("http://a1.local").expect("card after overwrite in register_overwrites").name, "Agent1-updated");
+        assert_eq!(
+            dir.get("http://a1.local")
+                .expect("card after overwrite in register_overwrites")
+                .name,
+            "Agent1-updated"
+        );
     }
 
     #[test]
@@ -2257,9 +2299,21 @@ mod tests {
     #[test]
     fn test_directory_find_by_name() {
         let mut dir = AgentDirectory::new();
-        dir.register(AgentCard::new("TranslatorBot", "translates", "http://t.local"));
-        dir.register(AgentCard::new("SummarizerBot", "summarizes", "http://s.local"));
-        dir.register(AgentCard::new("TranslateHelper", "also translates", "http://th.local"));
+        dir.register(AgentCard::new(
+            "TranslatorBot",
+            "translates",
+            "http://t.local",
+        ));
+        dir.register(AgentCard::new(
+            "SummarizerBot",
+            "summarizes",
+            "http://s.local",
+        ));
+        dir.register(AgentCard::new(
+            "TranslateHelper",
+            "also translates",
+            "http://th.local",
+        ));
 
         let results = dir.find_by_name("translat");
         assert_eq!(results.len(), 2);
@@ -2280,12 +2334,23 @@ mod tests {
         let mut dir = AgentDirectory::new();
         dir.register(
             AgentCard::new("NlpAgent", "NLP", "http://nlp.local")
-                .with_skill(AgentSkill::new("translate", "translates", vec!["nlp".to_string()]))
-                .with_skill(AgentSkill::new("sentiment", "analyze sentiment", vec!["nlp".to_string()])),
+                .with_skill(AgentSkill::new(
+                    "translate",
+                    "translates",
+                    vec!["nlp".to_string()],
+                ))
+                .with_skill(AgentSkill::new(
+                    "sentiment",
+                    "analyze sentiment",
+                    vec!["nlp".to_string()],
+                )),
         );
         dir.register(
-            AgentCard::new("CodeAgent", "Code", "http://code.local")
-                .with_skill(AgentSkill::new("generate-code", "generates code", vec!["code".to_string()])),
+            AgentCard::new("CodeAgent", "Code", "http://code.local").with_skill(AgentSkill::new(
+                "generate-code",
+                "generates code",
+                vec!["code".to_string()],
+            )),
         );
 
         let nlp_agents = dir.find_by_skill("nlp");
@@ -2329,7 +2394,8 @@ mod tests {
             timestamp: 1700000000,
         };
         let json = serde_json::to_string(&notif).expect("serialize PushNotification");
-        let parsed: PushNotification = serde_json::from_str(&json).expect("deserialize PushNotification");
+        let parsed: PushNotification =
+            serde_json::from_str(&json).expect("deserialize PushNotification");
         assert_eq!(parsed.task_id, "task-123");
         assert_eq!(parsed.status, A2ATaskStatus::Completed);
         assert!(parsed.message.is_some());
@@ -2343,8 +2409,10 @@ mod tests {
             events: vec![A2ATaskStatus::Completed, A2ATaskStatus::Failed],
             auth_token: Some("secret-token".to_string()),
         };
-        let json = serde_json::to_string(&config).expect("serialize PushNotificationConfig with auth");
-        let parsed: PushNotificationConfig = serde_json::from_str(&json).expect("deserialize PushNotificationConfig with auth");
+        let json =
+            serde_json::to_string(&config).expect("serialize PushNotificationConfig with auth");
+        let parsed: PushNotificationConfig =
+            serde_json::from_str(&json).expect("deserialize PushNotificationConfig with auth");
         assert_eq!(parsed.callback_url, "https://my-app.local/webhooks/a2a");
         assert_eq!(parsed.events.len(), 2);
         assert_eq!(parsed.auth_token, Some("secret-token".to_string()));
@@ -2357,8 +2425,10 @@ mod tests {
             events: vec![A2ATaskStatus::Working],
             auth_token: None,
         };
-        let json = serde_json::to_string(&config).expect("serialize PushNotificationConfig no auth");
-        let parsed: PushNotificationConfig = serde_json::from_str(&json).expect("deserialize PushNotificationConfig no auth");
+        let json =
+            serde_json::to_string(&config).expect("serialize PushNotificationConfig no auth");
+        let parsed: PushNotificationConfig =
+            serde_json::from_str(&json).expect("deserialize PushNotificationConfig no auth");
         assert!(parsed.auth_token.is_none());
     }
 
@@ -2371,7 +2441,8 @@ mod tests {
             "message": serde_json::to_value(&msg).expect("serialize msg for register_push setup")
         });
         let resp_str = server.handle_request(&rpc_request("tasks/send", Some(params)));
-        let resp: JsonRpcResponse = serde_json::from_str(&resp_str).expect("parse send response in register_push");
+        let resp: JsonRpcResponse =
+            serde_json::from_str(&resp_str).expect("parse send response in register_push");
         let task_id = resp
             .result
             .as_ref()
@@ -2386,10 +2457,14 @@ mod tests {
             events: vec![A2ATaskStatus::Completed, A2ATaskStatus::Failed],
             auth_token: Some("tok-123".to_string()),
         };
-        server.register_push(&task_id, config).expect("register push config for task");
+        server
+            .register_push(&task_id, config)
+            .expect("register push config for task");
 
         // Verify it was stored
-        let retrieved = server.get_push_config(&task_id).expect("push config should exist after register");
+        let retrieved = server
+            .get_push_config(&task_id)
+            .expect("push config should exist after register");
         assert_eq!(retrieved.callback_url, "http://hooks.local/notify");
         assert_eq!(retrieved.events.len(), 2);
     }
@@ -2453,9 +2528,16 @@ mod tests {
         });
         let resp_str = server.handle_request(&rpc_request("tasks/send", Some(params)));
         let resp: JsonRpcResponse = serde_json::from_str(&resp_str).unwrap();
-        assert!(resp.error.is_none(), "Expected success but got: {:?}", resp.error);
+        assert!(
+            resp.error.is_none(),
+            "Expected success but got: {:?}",
+            resp.error
+        );
         let result = resp.result.expect("result present");
-        assert_eq!(result.get("status").and_then(|v| v.as_str()), Some("Completed"));
+        assert_eq!(
+            result.get("status").and_then(|v| v.as_str()),
+            Some("Completed")
+        );
     }
 
     #[test]
@@ -2469,7 +2551,10 @@ mod tests {
         });
         let resp_str = server.handle_request(&rpc_request("tasks/send", Some(params)));
         let resp: JsonRpcResponse = serde_json::from_str(&resp_str).unwrap();
-        assert!(resp.error.is_none(), "Empty allowlist should permit all senders");
+        assert!(
+            resp.error.is_none(),
+            "Empty allowlist should permit all senders"
+        );
     }
 
     #[test]
@@ -2656,9 +2741,11 @@ mod tests {
     fn test_task_serialization_roundtrip() {
         let mut task = A2ATask::new();
         task.add_message(A2AMessage::text(MessageRole::User, "hello"));
-        task.transition(A2ATaskStatus::Working).expect("transition to Working in task_serialization_roundtrip");
+        task.transition(A2ATaskStatus::Working)
+            .expect("transition to Working in task_serialization_roundtrip");
         task.add_artifact(A2AArtifact::new("out", 0));
-        task.transition(A2ATaskStatus::Completed).expect("transition to Completed in task_serialization_roundtrip");
+        task.transition(A2ATaskStatus::Completed)
+            .expect("transition to Completed in task_serialization_roundtrip");
 
         let json = serde_json::to_string(&task).expect("serialize A2ATask roundtrip");
         let parsed: A2ATask = serde_json::from_str(&json).expect("deserialize A2ATask roundtrip");
@@ -2680,7 +2767,11 @@ mod tests {
 
     #[test]
     fn test_skill_creation() {
-        let skill = AgentSkill::new("summarize", "Summarizes text", vec!["nlp".to_string(), "text".to_string()]);
+        let skill = AgentSkill::new(
+            "summarize",
+            "Summarizes text",
+            vec!["nlp".to_string(), "text".to_string()],
+        );
         assert_eq!(skill.name, "summarize");
         assert_eq!(skill.description, "Summarizes text");
         assert_eq!(skill.tags.len(), 2);
@@ -2731,7 +2822,10 @@ mod tests {
         assert_eq!(entries[0].name, "MyAgent");
         assert_eq!(entries[0].description, "Does things");
         assert_eq!(entries[0].protocols, vec!["A2A", "MCP"]);
-        assert_eq!(entries[0].endpoint, Some("http://localhost:9090".to_string()));
+        assert_eq!(
+            entries[0].endpoint,
+            Some("http://localhost:9090".to_string())
+        );
         assert_eq!(entries[0].capabilities, vec!["summarize", "translate"]);
         assert_eq!(entries[0].version, Some("2.0.0".to_string()));
     }
@@ -2781,11 +2875,15 @@ mod tests {
 - Version: 3.0.0
 ";
         let parser = AgentsMdParser::new();
-        let entries = parser.parse(original_content).expect("parse original for roundtrip");
+        let entries = parser
+            .parse(original_content)
+            .expect("parse original for roundtrip");
         assert_eq!(entries.len(), 1);
 
         let markdown = AgentsMdParser::to_markdown(&entries);
-        let re_parsed = parser.parse(&markdown).expect("re-parse markdown roundtrip");
+        let re_parsed = parser
+            .parse(&markdown)
+            .expect("re-parse markdown roundtrip");
         assert_eq!(re_parsed.len(), 1);
         assert_eq!(re_parsed[0].name, entries[0].name);
         assert_eq!(re_parsed[0].description, entries[0].description);
@@ -2803,7 +2901,9 @@ mod tests {
 - Protocols: A2A
 ";
         let mut disc = AgentsMdDiscovery::new();
-        let count = disc.load_from_content(content).expect("load single entry from content");
+        let count = disc
+            .load_from_content(content)
+            .expect("load single entry from content");
         assert_eq!(count, 1);
         assert_eq!(disc.entry_count(), 1);
     }
@@ -2824,7 +2924,8 @@ mod tests {
 - Protocols: A2A
 ";
         let mut disc = AgentsMdDiscovery::new();
-        disc.load_from_content(content).expect("load entries for find_by_protocol test");
+        disc.load_from_content(content)
+            .expect("load entries for find_by_protocol test");
         let a2a = disc.find_by_protocol("A2A");
         assert_eq!(a2a.len(), 2);
         let acp = disc.find_by_protocol("ACP");
@@ -2842,10 +2943,16 @@ mod tests {
 - Protocols: A2A
 ";
         let mut disc = AgentsMdDiscovery::new();
-        disc.load_from_content(content).expect("load entry for find_by_name test");
+        disc.load_from_content(content)
+            .expect("load entry for find_by_name test");
         let found = disc.find_by_name("UniqueAgent");
         assert!(found.is_some());
-        assert_eq!(found.expect("UniqueAgent should be found by name").description, "Unique");
+        assert_eq!(
+            found
+                .expect("UniqueAgent should be found by name")
+                .description,
+            "Unique"
+        );
         // Case insensitive
         let found_lower = disc.find_by_name("uniqueagent");
         assert!(found_lower.is_some());
@@ -2866,7 +2973,8 @@ mod tests {
 - Description: Agent 2
 - Protocols: MCP
 ";
-        disc.load_from_content(content).expect("load entries for entry_count test");
+        disc.load_from_content(content)
+            .expect("load entries for entry_count test");
         assert_eq!(disc.entry_count(), 2);
         assert_eq!(disc.all_entries().len(), 2);
     }
@@ -2879,7 +2987,8 @@ mod tests {
 - Protocols: A2A
 ";
         let mut disc = AgentsMdDiscovery::new();
-        disc.load_from_content(content).expect("load entry for clear test");
+        disc.load_from_content(content)
+            .expect("load entry for clear test");
         assert_eq!(disc.entry_count(), 1);
         disc.clear();
         assert_eq!(disc.entry_count(), 0);
@@ -3033,7 +3142,11 @@ mod tests {
     #[test]
     fn test_acp_agent_adapter_to_agent_card_roundtrip() {
         let original = AgentCard::new("RoundBot", "Round-trip agent", "http://round.local")
-            .with_skill(AgentSkill::new("analyze", "analyze data", vec!["ml".to_string()]))
+            .with_skill(AgentSkill::new(
+                "analyze",
+                "analyze data",
+                vec!["ml".to_string()],
+            ))
             .with_capability("streaming", true);
 
         let adapter = AcpAgentAdapter::from_agent_card(&original);
@@ -3067,7 +3180,9 @@ mod tests {
 - Protocols: A2A
 ";
         let parser = AgentsMdParser::new();
-        let entries = parser.parse(content).expect("parse minimal agent missing optional fields");
+        let entries = parser
+            .parse(content)
+            .expect("parse minimal agent missing optional fields");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "MinimalAgent");
         assert_eq!(entries[0].description, "Minimal");

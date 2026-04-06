@@ -64,7 +64,10 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Some(other) => {
-            eprintln!("{}Unknown command: {}. Run ai_setup --help{}", RED, other, RESET);
+            eprintln!(
+                "{}Unknown command: {}. Run ai_setup --help{}",
+                RED, other, RESET
+            );
             ExitCode::from(1)
         }
     }
@@ -99,31 +102,94 @@ fn warn(msg: &str) {
 // =============================================================================
 
 fn print_help() -> ExitCode {
-    println!("{}ai_setup{} — AI Assistant Setup & Management CLI", BOLD, RESET);
+    println!(
+        "{}ai_setup{} — AI Assistant Setup & Management CLI",
+        BOLD, RESET
+    );
     println!();
     println!("{}Usage:{} ai_setup <command> [options]", BOLD, RESET);
     println!();
     println!("{}Commands:{}", BOLD, RESET);
-    println!("  {}init{}     [--yes]                Interactive setup wizard", CYAN, RESET);
-    println!("  {}check{}                           Check prerequisites (Ollama, Docker, GPU, API keys)", CYAN, RESET);
-    println!("  {}validate{} <config>               Validate a configuration file", CYAN, RESET);
-    println!("  {}version{}                         Show version, features, and platform info", CYAN, RESET);
-    println!("  {}config{}   show [--redact] [file]  Show configuration", CYAN, RESET);
-    println!("  {}config{}   get <key> [file]        Get a specific config value", CYAN, RESET);
-    println!("  {}config{}   set <key> <value> [file] Set a config value", CYAN, RESET);
-    println!("  {}config{}   diff <file_a> <file_b>  Compare two config files", CYAN, RESET);
-    println!("  {}export{}   <format> <output> [file] Export config (toml/json)", CYAN, RESET);
-    println!("  {}import{}   <input> [output]        Import config with validation", CYAN, RESET);
-    println!("  {}start{}    [--foreground] [--config <file>] Start the server node", CYAN, RESET);
-    println!("  {}stop{}                             Stop the server node", CYAN, RESET);
-    println!("  {}status{}                           Show node status", CYAN, RESET);
-    println!("  {}docker{}   build [features]        Build Docker image", CYAN, RESET);
-    println!("  {}docker{}   up [profiles...]        Start Docker Compose services", CYAN, RESET);
-    println!("  {}docker{}   down                    Stop Docker Compose services", CYAN, RESET);
-    println!("  {}docker{}   status                  Show container statuses", CYAN, RESET);
-    println!("  {}docker{}   logs <container> [tail]  Show container logs", CYAN, RESET);
-    println!("  {}backup{}   [--include-models] [--output <file>] Create backup", CYAN, RESET);
-    println!("  {}restore{}  <archive> [--target <dir>] Restore from backup", CYAN, RESET);
+    println!(
+        "  {}init{}     [--yes]                Interactive setup wizard",
+        CYAN, RESET
+    );
+    println!(
+        "  {}check{}                           Check prerequisites (Ollama, Docker, GPU, API keys)",
+        CYAN, RESET
+    );
+    println!(
+        "  {}validate{} <config>               Validate a configuration file",
+        CYAN, RESET
+    );
+    println!(
+        "  {}version{}                         Show version, features, and platform info",
+        CYAN, RESET
+    );
+    println!(
+        "  {}config{}   show [--redact] [file]  Show configuration",
+        CYAN, RESET
+    );
+    println!(
+        "  {}config{}   get <key> [file]        Get a specific config value",
+        CYAN, RESET
+    );
+    println!(
+        "  {}config{}   set <key> <value> [file] Set a config value",
+        CYAN, RESET
+    );
+    println!(
+        "  {}config{}   diff <file_a> <file_b>  Compare two config files",
+        CYAN, RESET
+    );
+    println!(
+        "  {}export{}   <format> <output> [file] Export config (toml/json)",
+        CYAN, RESET
+    );
+    println!(
+        "  {}import{}   <input> [output]        Import config with validation",
+        CYAN, RESET
+    );
+    println!(
+        "  {}start{}    [--foreground] [--config <file>] Start the server node",
+        CYAN, RESET
+    );
+    println!(
+        "  {}stop{}                             Stop the server node",
+        CYAN, RESET
+    );
+    println!(
+        "  {}status{}                           Show node status",
+        CYAN, RESET
+    );
+    println!(
+        "  {}docker{}   build [features]        Build Docker image",
+        CYAN, RESET
+    );
+    println!(
+        "  {}docker{}   up [profiles...]        Start Docker Compose services",
+        CYAN, RESET
+    );
+    println!(
+        "  {}docker{}   down                    Stop Docker Compose services",
+        CYAN, RESET
+    );
+    println!(
+        "  {}docker{}   status                  Show container statuses",
+        CYAN, RESET
+    );
+    println!(
+        "  {}docker{}   logs <container> [tail]  Show container logs",
+        CYAN, RESET
+    );
+    println!(
+        "  {}backup{}   [--include-models] [--output <file>] Create backup",
+        CYAN, RESET
+    );
+    println!(
+        "  {}restore{}  <archive> [--target <dir>] Restore from backup",
+        CYAN, RESET
+    );
     println!("  {}install{}  <target>                Install a prerequisite (ollama, docker, model <name>)", CYAN, RESET);
     println!();
     println!("{}Examples:{}", BOLD, RESET);
@@ -173,10 +239,7 @@ fn cmd_init(args: &[String]) -> ExitCode {
 
     // Step 2: Determine config path
     let config_path = default_config_path();
-    println!(
-        "{}Step 2: Configuration{}",
-        BOLD, RESET
-    );
+    println!("{}Step 2: Configuration{}", BOLD, RESET);
     println!("  Config path: {}{}{}", DIM, config_path.display(), RESET);
 
     let config_exists = config_path.exists();
@@ -231,7 +294,10 @@ fn cmd_init(args: &[String]) -> ExitCode {
         let mut answer = String::new();
         let _ = std::io::stdin().lock().read_line(&mut answer);
         if answer.trim().eq_ignore_ascii_case("n") {
-            println!("  Please edit the config manually at: {}", config_path.display());
+            println!(
+                "  Please edit the config manually at: {}",
+                config_path.display()
+            );
             return ExitCode::SUCCESS;
         }
     }
@@ -278,11 +344,11 @@ level = "info"
 
     println!();
     println!("{}Setup complete!{}", GREEN, RESET);
-    println!("  Run {}ai_setup check{} to verify your environment.", BOLD, RESET);
     println!(
-        "  Run {}ai_setup start{} to start the server.",
+        "  Run {}ai_setup check{} to verify your environment.",
         BOLD, RESET
     );
+    println!("  Run {}ai_setup start{} to start the server.", BOLD, RESET);
 
     ExitCode::SUCCESS
 }
@@ -340,24 +406,20 @@ fn cmd_validate(args: &[String]) -> ExitCode {
     };
 
     match ConfigFile::load(&path) {
-        Ok(config) => {
-            match config.validate_detailed() {
-                Ok(()) => {
-                    ok(&format!("{} is valid", path.display()));
-                    ExitCode::SUCCESS
-                }
-                Err(errors) => {
-                    println!();
-                    println!(
-                        "{}Validation errors in {}:{}", RED, path.display(), RESET
-                    );
-                    for err in &errors {
-                        fail(&format!("{}", err));
-                    }
-                    ExitCode::from(1)
-                }
+        Ok(config) => match config.validate_detailed() {
+            Ok(()) => {
+                ok(&format!("{} is valid", path.display()));
+                ExitCode::SUCCESS
             }
-        }
+            Err(errors) => {
+                println!();
+                println!("{}Validation errors in {}:{}", RED, path.display(), RESET);
+                for err in &errors {
+                    fail(&format!("{}", err));
+                }
+                ExitCode::from(1)
+            }
+        },
         Err(e) => {
             fail(&format!("Failed to load {}: {}", path.display(), e));
             ExitCode::from(1)
@@ -370,8 +432,17 @@ fn cmd_validate(args: &[String]) -> ExitCode {
 // =============================================================================
 
 fn cmd_version() -> ExitCode {
-    println!("{}ai_assistant{} v{}", BOLD, RESET, env!("CARGO_PKG_VERSION"));
-    println!("  Platform:  {} / {}", std::env::consts::OS, std::env::consts::ARCH);
+    println!(
+        "{}ai_assistant{} v{}",
+        BOLD,
+        RESET,
+        env!("CARGO_PKG_VERSION")
+    );
+    println!(
+        "  Platform:  {} / {}",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    );
     println!("  Features:  full");
 
     #[cfg(debug_assertions)]
@@ -418,7 +489,10 @@ fn cmd_config(args: &[String]) -> ExitCode {
                     return ExitCode::from(1);
                 }
             };
-            let path = args.get(2).map(PathBuf::from).unwrap_or_else(default_config_path);
+            let path = args
+                .get(2)
+                .map(PathBuf::from)
+                .unwrap_or_else(default_config_path);
 
             match config_ops::get_config_value(&path, key) {
                 Ok(val) => {
@@ -446,7 +520,10 @@ fn cmd_config(args: &[String]) -> ExitCode {
                     return ExitCode::from(1);
                 }
             };
-            let path = args.get(3).map(PathBuf::from).unwrap_or_else(default_config_path);
+            let path = args
+                .get(3)
+                .map(PathBuf::from)
+                .unwrap_or_else(default_config_path);
 
             match config_ops::set_config_value(&path, key, value) {
                 Ok(result) => {
@@ -492,7 +569,10 @@ fn cmd_config(args: &[String]) -> ExitCode {
                 println!("  {}No differences found.{}", DIM, RESET);
             } else {
                 println!();
-                println!("  {}{:<20} {:<15} {:<20} {}{}", BOLD, "Section.Key", "File A", "File B", RESET, "");
+                println!(
+                    "  {}{:<20} {:<15} {:<20} {}{}",
+                    BOLD, "Section.Key", "File A", "File B", RESET, ""
+                );
                 println!("  {}{}", DIM, "-".repeat(55));
                 for d in &diffs {
                     let full_key = if d.section.is_empty() {
@@ -504,10 +584,18 @@ fn cmd_config(args: &[String]) -> ExitCode {
                         "  {:<20} {}{:<20}{} {}{:<20}{}",
                         full_key,
                         RED,
-                        if d.value_a.is_empty() { "(absent)" } else { &d.value_a },
+                        if d.value_a.is_empty() {
+                            "(absent)"
+                        } else {
+                            &d.value_a
+                        },
                         RESET,
                         GREEN,
-                        if d.value_b.is_empty() { "(absent)" } else { &d.value_b },
+                        if d.value_b.is_empty() {
+                            "(absent)"
+                        } else {
+                            &d.value_b
+                        },
                         RESET
                     );
                 }
@@ -540,7 +628,10 @@ fn cmd_export(args: &[String]) -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let source = args.get(2).map(PathBuf::from).unwrap_or_else(default_config_path);
+    let source = args
+        .get(2)
+        .map(PathBuf::from)
+        .unwrap_or_else(default_config_path);
 
     match config_ops::export_config(&source, format, &output) {
         Ok(()) => {
@@ -638,7 +729,12 @@ fn cmd_status(_args: &[String]) -> ExitCode {
 
             if info.running {
                 ok(&format!("Running (PID: {}, port: {})", info.pid, info.port));
-                println!("  Health: {}{}{}", if info.health == "ok" { GREEN } else { YELLOW }, info.health, RESET);
+                println!(
+                    "  Health: {}{}{}",
+                    if info.health == "ok" { GREEN } else { YELLOW },
+                    info.health,
+                    RESET
+                );
                 if info.uptime_secs > 0 {
                     println!("  Uptime: {} seconds", info.uptime_secs);
                 }
@@ -749,10 +845,7 @@ fn cmd_docker(args: &[String]) -> ExitCode {
                     return ExitCode::from(1);
                 }
             };
-            let tail: usize = args
-                .get(2)
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(50);
+            let tail: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(50);
 
             match docker_ops::docker_logs(container, tail) {
                 Ok(logs) => {

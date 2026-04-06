@@ -40,9 +40,15 @@ pub struct RedisConfig {
     pub key_prefix: String,
 }
 
-fn default_pool_size() -> usize { 10 }
-fn default_connect_timeout_ms() -> u64 { 5000 }
-fn default_key_prefix() -> String { "ai_assistant:".to_string() }
+fn default_pool_size() -> usize {
+    10
+}
+fn default_connect_timeout_ms() -> u64 {
+    5000
+}
+fn default_key_prefix() -> String {
+    "ai_assistant:".to_string()
+}
 
 impl Default for RedisConfig {
     fn default() -> Self {
@@ -119,8 +125,12 @@ impl RedisBackend {
 
         let (count,): (u64,) = redis::pipe()
             .atomic()
-            .cmd("INCR").arg(&redis_key)
-            .cmd("EXPIRE").arg(&redis_key).arg(window_secs).ignore()
+            .cmd("INCR")
+            .arg(&redis_key)
+            .cmd("EXPIRE")
+            .arg(&redis_key)
+            .arg(window_secs)
+            .ignore()
             .query_async(&mut self.manager)
             .await
             .map_err(|e| format!("Redis rate limit error: {}", e))?;
@@ -130,7 +140,11 @@ impl RedisBackend {
             current_count: count,
             limit,
             remaining: if count <= limit { limit - count } else { 0 },
-            retry_after_secs: if count > limit { Some(window_secs) } else { None },
+            retry_after_secs: if count > limit {
+                Some(window_secs)
+            } else {
+                None
+            },
         })
     }
 
@@ -203,11 +217,7 @@ impl RedisBackend {
     }
 
     /// Touch a session (extend TTL).
-    pub async fn session_touch(
-        &mut self,
-        session_id: &str,
-        ttl: Duration,
-    ) -> Result<bool, String> {
+    pub async fn session_touch(&mut self, session_id: &str, ttl: Duration) -> Result<bool, String> {
         let key = self.prefixed_key(&format!("sess:{}", session_id));
         let set: bool = redis::cmd("EXPIRE")
             .arg(&key)
@@ -384,7 +394,10 @@ mod tests {
         };
         // We can't test prefixed_key directly since it needs a backend,
         // but we can verify the config
-        assert_eq!(format!("{}rl:192.168.1.1", config.key_prefix), "test:rl:192.168.1.1");
+        assert_eq!(
+            format!("{}rl:192.168.1.1", config.key_prefix),
+            "test:rl:192.168.1.1"
+        );
         assert_eq!(format!("{}sess:abc", config.key_prefix), "test:sess:abc");
     }
 }

@@ -2,7 +2,7 @@
 //!
 //! API reference: https://www.openhab.org/docs/configuration/restdocs.html
 
-use super::backend::{DeviceState, HomeBackend, validate_entity_id, validate_backend_url};
+use super::backend::{validate_backend_url, validate_entity_id, DeviceState, HomeBackend};
 use serde::{Deserialize, Serialize};
 
 /// OpenHAB backend configuration.
@@ -51,7 +51,9 @@ impl OpenHabBackend {
         if let Some(ref token) = self.config.api_token {
             req = req.set("Authorization", &format!("Bearer {}", token));
         }
-        let response = req.call().map_err(|e| format!("OpenHAB GET error: {}", e))?;
+        let response = req
+            .call()
+            .map_err(|e| format!("OpenHAB GET error: {}", e))?;
         response
             .into_json::<serde_json::Value>()
             .map_err(|e| format!("JSON parse error: {}", e))
@@ -125,7 +127,9 @@ impl OpenHabBackend {
 impl HomeBackend for OpenHabBackend {
     fn list_devices(&self, domain: Option<&str>) -> Result<Vec<DeviceState>, String> {
         let items = self.get("/rest/items")?;
-        let arr = items.as_array().ok_or("Expected JSON array from /rest/items")?;
+        let arr = items
+            .as_array()
+            .ok_or("Expected JSON array from /rest/items")?;
         let devices: Vec<DeviceState> = arr
             .iter()
             .map(Self::parse_item)
@@ -168,11 +172,10 @@ impl HomeBackend for OpenHabBackend {
             "turn_on" => "ON".to_string(),
             "turn_off" => "OFF".to_string(),
             "toggle" => "TOGGLE".to_string(),
-            "set_temperature" | "set_value" => {
-                data.and_then(|d| d.get("value").or(d.get("temperature")))
-                    .map(|v| v.to_string().trim_matches('"').to_string())
-                    .unwrap_or_else(|| "0".into())
-            }
+            "set_temperature" | "set_value" => data
+                .and_then(|d| d.get("value").or(d.get("temperature")))
+                .map(|v| v.to_string().trim_matches('"').to_string())
+                .unwrap_or_else(|| "0".into()),
             "open" => "UP".to_string(),
             "close" => "DOWN".to_string(),
             "stop" => "STOP".to_string(),

@@ -187,10 +187,7 @@ impl std::fmt::Debug for CallbackApprovalGate {
 pub struct AutoApproveGate;
 
 impl HitlApprovalGate for AutoApproveGate {
-    fn request_approval(
-        &self,
-        _request: &ApprovalRequest,
-    ) -> Result<ApprovalDecision, HitlError> {
+    fn request_approval(&self, _request: &ApprovalRequest) -> Result<ApprovalDecision, HitlError> {
         Ok(ApprovalDecision::Approve)
     }
 
@@ -216,10 +213,7 @@ impl AutoDenyGate {
 }
 
 impl HitlApprovalGate for AutoDenyGate {
-    fn request_approval(
-        &self,
-        _request: &ApprovalRequest,
-    ) -> Result<ApprovalDecision, HitlError> {
+    fn request_approval(&self, _request: &ApprovalRequest) -> Result<ApprovalDecision, HitlError> {
         Ok(ApprovalDecision::Deny {
             reason: self.reason.clone(),
         })
@@ -977,7 +971,14 @@ mod tests {
     fn test_approval_request_new() {
         let mut args = HashMap::new();
         args.insert("path".into(), serde_json::json!("/tmp/file"));
-        let req = ApprovalRequest::new("r-1", "write_file", args, "agent-x", "writing", ImpactLevel::High);
+        let req = ApprovalRequest::new(
+            "r-1",
+            "write_file",
+            args,
+            "agent-x",
+            "writing",
+            ImpactLevel::High,
+        );
         assert_eq!(req.request_id, "r-1");
         assert_eq!(req.tool_name, "write_file");
         assert_eq!(req.agent_id, "agent-x");
@@ -1101,9 +1102,7 @@ mod tests {
         log.record(make_log_entry("a", ApprovalDecision::Approve, "g"));
         log.record(make_log_entry(
             "b",
-            ApprovalDecision::Deny {
-                reason: "x".into(),
-            },
+            ApprovalDecision::Deny { reason: "x".into() },
             "g",
         ));
         log.record(make_log_entry("c", ApprovalDecision::Approve, "g"));
@@ -1126,9 +1125,7 @@ mod tests {
 
         log.record(make_log_entry(
             "b",
-            ApprovalDecision::Deny {
-                reason: "x".into(),
-            },
+            ApprovalDecision::Deny { reason: "x".into() },
             "g",
         ));
         assert!((log.approval_rate() - 0.5).abs() < f64::EPSILON);

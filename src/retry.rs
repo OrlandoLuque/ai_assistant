@@ -330,7 +330,10 @@ impl RetryExecutor {
     where
         F: FnMut() -> Result<T>,
     {
-        self.execute_inner(&mut operation, None::<fn(RateLimitInfo) -> RateLimitDecision>)
+        self.execute_inner(
+            &mut operation,
+            None::<fn(RateLimitInfo) -> RateLimitDecision>,
+        )
     }
 
     /// Execute with a callback for rate limit decisions.
@@ -409,14 +412,24 @@ impl RetryExecutor {
                                     success: false,
                                 };
                             }
-                            RateLimitStrategy::WaitForReset { max_wait_secs, default_wait_secs } => {
+                            RateLimitStrategy::WaitForReset {
+                                max_wait_secs,
+                                default_wait_secs,
+                            } => {
                                 let wait_secs = retry_after.unwrap_or(default_wait_secs);
-                                let wait_secs = if max_wait_secs > 0 { wait_secs.min(max_wait_secs) } else { wait_secs };
+                                let wait_secs = if max_wait_secs > 0 {
+                                    wait_secs.min(max_wait_secs)
+                                } else {
+                                    wait_secs
+                                };
                                 let wait = Duration::from_secs(wait_secs);
 
                                 error_history.push(RetryAttempt {
                                     attempt,
-                                    error: Some(format!("{} (waiting {}s for rate limit reset)", error_str, wait_secs)),
+                                    error: Some(format!(
+                                        "{} (waiting {}s for rate limit reset)",
+                                        error_str, wait_secs
+                                    )),
                                     duration: attempt_duration,
                                     delay_after: Some(wait),
                                 });
@@ -446,7 +459,10 @@ impl RetryExecutor {
                                         let wait = Duration::from_secs(wait_secs);
                                         error_history.push(RetryAttempt {
                                             attempt,
-                                            error: Some(format!("{} (user chose: wait {}s)", error_str, wait_secs)),
+                                            error: Some(format!(
+                                                "{} (user chose: wait {}s)",
+                                                error_str, wait_secs
+                                            )),
                                             duration: attempt_duration,
                                             delay_after: Some(wait),
                                         });
@@ -457,18 +473,29 @@ impl RetryExecutor {
                                     RateLimitDecision::RetryNow => {
                                         error_history.push(RetryAttempt {
                                             attempt,
-                                            error: Some(format!("{} (user chose: retry now)", error_str)),
+                                            error: Some(format!(
+                                                "{} (user chose: retry now)",
+                                                error_str
+                                            )),
                                             duration: attempt_duration,
                                             delay_after: None,
                                         });
                                         attempt += 1;
                                         continue;
                                     }
-                                    RateLimitDecision::SwitchProvider | RateLimitDecision::Abort => {
+                                    RateLimitDecision::SwitchProvider
+                                    | RateLimitDecision::Abort => {
                                         error_history.push(RetryAttempt {
                                             attempt,
-                                            error: Some(format!("{} (user chose: {})", error_str,
-                                                if decision == RateLimitDecision::Abort { "abort" } else { "switch provider" })),
+                                            error: Some(format!(
+                                                "{} (user chose: {})",
+                                                error_str,
+                                                if decision == RateLimitDecision::Abort {
+                                                    "abort"
+                                                } else {
+                                                    "switch provider"
+                                                }
+                                            )),
                                             duration: attempt_duration,
                                             delay_after: None,
                                         });
@@ -525,11 +552,7 @@ impl RetryExecutor {
 
     /// Execute with a callback for each retry attempt.
     /// Rate limit strategy is still respected.
-    pub fn execute_with_callback<T, F, C>(
-        &self,
-        operation: F,
-        on_retry: C,
-    ) -> RetryResult<T>
+    pub fn execute_with_callback<T, F, C>(&self, operation: F, on_retry: C) -> RetryResult<T>
     where
         F: FnMut() -> Result<T>,
         C: FnMut(u32, &str, Duration),
@@ -802,9 +825,10 @@ impl ResilientExecutor {
                     .collect();
 
                 let category = crate::message_queue::FailureCategory::from_error(&last_error);
-                let msg = crate::message_queue::QueueMessage::new(
-                    &format!("Failed operation after {} attempts", result.attempts),
-                );
+                let msg = crate::message_queue::QueueMessage::new(&format!(
+                    "Failed operation after {} attempts",
+                    result.attempts
+                ));
                 dlq.add_detailed(
                     msg,
                     last_error.clone(),
@@ -873,8 +897,18 @@ fn parse_retry_after(error: &str) -> Option<u64> {
 fn extract_provider(error: &str) -> String {
     let lower = error.to_lowercase();
     let providers = [
-        "openai", "anthropic", "claude", "gemini", "google", "bedrock",
-        "ollama", "lmstudio", "together", "groq", "huggingface", "cohere",
+        "openai",
+        "anthropic",
+        "claude",
+        "gemini",
+        "google",
+        "bedrock",
+        "ollama",
+        "lmstudio",
+        "together",
+        "groq",
+        "huggingface",
+        "cohere",
     ];
     for p in &providers {
         if lower.contains(p) {
@@ -1112,12 +1146,9 @@ mod tests {
         use crate::adaptive_timeout::{AdaptiveTimeout, AdaptiveTimeoutConfig};
 
         let at = Arc::new(AdaptiveTimeout::new(AdaptiveTimeoutConfig::responsive()));
-        let mut executor = ResilientExecutor::new(
-            RetryConfig::no_retry(),
-            5,
-            Duration::from_secs(30),
-        )
-        .with_adaptive_timeout(at.clone());
+        let mut executor =
+            ResilientExecutor::new(RetryConfig::no_retry(), 5, Duration::from_secs(30))
+                .with_adaptive_timeout(at.clone());
 
         // Execute a successful operation
         let result = executor.execute(|| Ok(42));
@@ -1155,11 +1186,8 @@ mod tests {
 
     #[test]
     fn test_resilient_executor_no_dlq_without_config() {
-        let mut executor = ResilientExecutor::new(
-            RetryConfig::no_retry(),
-            5,
-            Duration::from_secs(30),
-        );
+        let mut executor =
+            ResilientExecutor::new(RetryConfig::no_retry(), 5, Duration::from_secs(30));
 
         // No DLQ attached — failure should not panic
         let result: Result<i32> = executor.execute(|| Err(anyhow!("some error")));
@@ -1175,9 +1203,7 @@ mod tests {
             ..RetryConfig::default()
         });
 
-        let result: RetryResult<i32> = executor.execute(|| {
-            Err(anyhow!("429 Too Many Requests"))
-        });
+        let result: RetryResult<i32> = executor.execute(|| Err(anyhow!("429 Too Many Requests")));
 
         assert!(!result.success);
         assert_eq!(result.attempts, 1); // No retries — immediate fallback
@@ -1280,7 +1306,10 @@ mod tests {
 
     #[test]
     fn test_parse_retry_after() {
-        assert_eq!(parse_retry_after("429 Too Many Requests, retry after 30 seconds"), Some(30));
+        assert_eq!(
+            parse_retry_after("429 Too Many Requests, retry after 30 seconds"),
+            Some(30)
+        );
         assert_eq!(parse_retry_after("rate limit, retry-after: 60"), Some(60));
         assert_eq!(parse_retry_after("no retry info here"), None);
         assert_eq!(parse_retry_after("retry_after=45"), Some(45));
@@ -1299,7 +1328,10 @@ mod tests {
         assert_eq!(config.max_retries, 3);
         assert!(matches!(
             config.rate_limit_strategy,
-            RateLimitStrategy::WaitForReset { max_wait_secs: 300, default_wait_secs: 60 }
+            RateLimitStrategy::WaitForReset {
+                max_wait_secs: 300,
+                default_wait_secs: 60
+            }
         ));
     }
 

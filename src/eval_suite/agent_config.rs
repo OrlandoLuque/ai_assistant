@@ -143,7 +143,9 @@ impl EvalAgentConfig {
 
     /// Get the model assigned to a subtask, falling back to `default_model`.
     pub fn model_for_subtask(&self, subtask: &str) -> &ModelIdentifier {
-        self.subtask_models.get(subtask).unwrap_or(&self.default_model)
+        self.subtask_models
+            .get(subtask)
+            .unwrap_or(&self.default_model)
     }
 
     /// Get the temperature for a subtask, falling back to global temperature.
@@ -205,7 +207,10 @@ impl EvalAgentConfig {
                 let new_str = new
                     .map(|m| m.to_string())
                     .unwrap_or_else(|| other.default_model.to_string());
-                diffs.push(format!("SubtaskModel({}): {} -> {}", subtask, old_str, new_str));
+                diffs.push(format!(
+                    "SubtaskModel({}): {} -> {}",
+                    subtask, old_str, new_str
+                ));
             }
         }
 
@@ -264,10 +269,7 @@ impl EvalAgentConfig {
             let old = self.subtask_cot.get(subtask).copied();
             let new = other.subtask_cot.get(subtask).copied();
             if old != new {
-                diffs.push(format!(
-                    "SubtaskCoT({}): {:?} -> {:?}",
-                    subtask, old, new
-                ));
+                diffs.push(format!("SubtaskCoT({}): {:?} -> {:?}", subtask, old, new));
             }
         }
 
@@ -343,30 +345,44 @@ impl SearchDimension {
     /// Human-readable label for a specific variant index.
     pub fn variant_label(&self, idx: usize) -> String {
         match self {
-            Self::SubtaskModel { candidates, .. } => {
-                candidates.get(idx).map(|m| m.to_string()).unwrap_or_else(|| format!("idx:{}", idx))
-            }
-            Self::Temperature { values } => {
-                values.get(idx).map(|v| format!("{:.2}", v)).unwrap_or_else(|| format!("idx:{}", idx))
-            }
-            Self::SubtaskTemperature { values, .. } => {
-                values.get(idx).map(|v| format!("{:.2}", v)).unwrap_or_else(|| format!("idx:{}", idx))
-            }
+            Self::SubtaskModel { candidates, .. } => candidates
+                .get(idx)
+                .map(|m| m.to_string())
+                .unwrap_or_else(|| format!("idx:{}", idx)),
+            Self::Temperature { values } => values
+                .get(idx)
+                .map(|v| format!("{:.2}", v))
+                .unwrap_or_else(|| format!("idx:{}", idx)),
+            Self::SubtaskTemperature { values, .. } => values
+                .get(idx)
+                .map(|v| format!("{:.2}", v))
+                .unwrap_or_else(|| format!("idx:{}", idx)),
             Self::ChainOfThought => {
-                if idx == 0 { "false".to_string() } else { "true".to_string() }
+                if idx == 0 {
+                    "false".to_string()
+                } else {
+                    "true".to_string()
+                }
             }
             Self::SubtaskChainOfThought { .. } => {
-                if idx == 0 { "false".to_string() } else { "true".to_string() }
+                if idx == 0 {
+                    "false".to_string()
+                } else {
+                    "true".to_string()
+                }
             }
-            Self::RagLevel { values } => {
-                values.get(idx).map(|v| format!("{}", v)).unwrap_or_else(|| format!("idx:{}", idx))
-            }
-            Self::MaxTokens { values } => {
-                values.get(idx).map(|v| format!("{}", v)).unwrap_or_else(|| format!("idx:{}", idx))
-            }
-            Self::SubtaskMaxTokens { values, .. } => {
-                values.get(idx).map(|v| format!("{}", v)).unwrap_or_else(|| format!("idx:{}", idx))
-            }
+            Self::RagLevel { values } => values
+                .get(idx)
+                .map(|v| format!("{}", v))
+                .unwrap_or_else(|| format!("idx:{}", idx)),
+            Self::MaxTokens { values } => values
+                .get(idx)
+                .map(|v| format!("{}", v))
+                .unwrap_or_else(|| format!("idx:{}", idx)),
+            Self::SubtaskMaxTokens { values, .. } => values
+                .get(idx)
+                .map(|v| format!("{}", v))
+                .unwrap_or_else(|| format!("idx:{}", idx)),
         }
     }
 
@@ -374,7 +390,10 @@ impl SearchDimension {
     pub fn apply_variant(&self, config: &EvalAgentConfig, idx: usize) -> EvalAgentConfig {
         let mut new_config = config.clone();
         match self {
-            Self::SubtaskModel { subtask, candidates } => {
+            Self::SubtaskModel {
+                subtask,
+                candidates,
+            } => {
                 if let Some(model) = candidates.get(idx) {
                     new_config
                         .subtask_models
@@ -495,7 +514,10 @@ impl MultiModelGenerator {
 impl std::fmt::Debug for MultiModelGenerator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MultiModelGenerator")
-            .field("registered_models", &self.generators.keys().collect::<Vec<_>>())
+            .field(
+                "registered_models",
+                &self.generators.keys().collect::<Vec<_>>(),
+            )
             .finish()
     }
 }
@@ -669,8 +691,7 @@ mod tests {
     fn test_cost_for_model() {
         let gpt4 = model("gpt-4", "openai");
         let llama = model("llama3", "ollama");
-        let config = EvalAgentConfig::new("test", gpt4.clone())
-            .with_model_cost(&gpt4, 0.03);
+        let config = EvalAgentConfig::new("test", gpt4.clone()).with_model_cost(&gpt4, 0.03);
 
         assert!((config.cost_for_model(&gpt4) - 0.03).abs() < 1e-10);
         assert_eq!(config.cost_for_model(&llama), 0.0); // not set → 0.0
@@ -709,8 +730,7 @@ mod tests {
 
     #[test]
     fn test_search_dimension_apply_variant() {
-        let config = EvalAgentConfig::new("base", model("gpt-4", "openai"))
-            .with_temperature(0.7);
+        let config = EvalAgentConfig::new("base", model("gpt-4", "openai")).with_temperature(0.7);
 
         // Apply temperature variant
         let dim_temp = SearchDimension::Temperature {
@@ -757,8 +777,14 @@ mod tests {
         gen.register_model("openai/gpt-4", |_| Ok("gpt4_response".to_string()));
         gen.register_model("ollama/llama3", |_| Ok("llama_response".to_string()));
 
-        assert_eq!(gen.generate("openai/gpt-4", "test").unwrap(), "gpt4_response");
-        assert_eq!(gen.generate("ollama/llama3", "test").unwrap(), "llama_response");
+        assert_eq!(
+            gen.generate("openai/gpt-4", "test").unwrap(),
+            "gpt4_response"
+        );
+        assert_eq!(
+            gen.generate("ollama/llama3", "test").unwrap(),
+            "llama_response"
+        );
         assert!(gen.has_model("openai/gpt-4"));
         assert!(!gen.has_model("anthropic/claude"));
         assert_eq!(gen.model_count(), 2);
@@ -792,7 +818,9 @@ mod tests {
         assert!(diffs.iter().any(|d| d.contains("Temperature")));
         assert!(diffs.iter().any(|d| d.contains("ChainOfThought")));
         assert!(diffs.iter().any(|d| d.contains("RagLevel")));
-        assert!(diffs.iter().any(|d| d.contains("SubtaskModel(CodeGeneration)")));
+        assert!(diffs
+            .iter()
+            .any(|d| d.contains("SubtaskModel(CodeGeneration)")));
         assert!(diffs.len() >= 4);
     }
 }

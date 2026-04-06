@@ -75,7 +75,11 @@ impl MemoryFilter {
         }
         if !self.categories.is_empty() {
             let pred_lower = fact.predicate.to_lowercase();
-            if !self.categories.iter().any(|c| c.to_lowercase() == pred_lower) {
+            if !self
+                .categories
+                .iter()
+                .any(|c| c.to_lowercase() == pred_lower)
+            {
                 return false;
             }
         }
@@ -110,7 +114,9 @@ impl MemoryFilter {
         if !self.categories.is_empty() {
             let has_matching_tag = episode.tags.iter().any(|tag| {
                 let tag_lower = tag.to_lowercase();
-                self.categories.iter().any(|c| c.to_lowercase() == tag_lower)
+                self.categories
+                    .iter()
+                    .any(|c| c.to_lowercase() == tag_lower)
             });
             if !has_matching_tag {
                 return false;

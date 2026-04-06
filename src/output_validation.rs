@@ -750,7 +750,10 @@ mod tests {
         };
         let validator_relaxed = OutputValidator::new(config_relaxed);
         let result_relaxed = validator_relaxed.validate(&plain_text);
-        assert!(result_relaxed.valid, "Non-strict mode should pass on warnings");
+        assert!(
+            result_relaxed.valid,
+            "Non-strict mode should pass on warnings"
+        );
     }
 
     #[test]

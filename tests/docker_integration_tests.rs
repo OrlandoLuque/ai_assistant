@@ -13,12 +13,11 @@
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
+use ai_assistant::code_sandbox::Language;
 use ai_assistant::container_executor::{
-    ContainerConfig, ContainerError, ContainerExecutor, ContainerStatus, CreateOptions,
-    NetworkMode,
+    ContainerConfig, ContainerError, ContainerExecutor, ContainerStatus, CreateOptions, NetworkMode,
 };
 use ai_assistant::container_sandbox::{ContainerSandbox, ContainerSandboxConfig, ExecutionBackend};
-use ai_assistant::code_sandbox::Language;
 use ai_assistant::shared_folder::SharedFolder;
 
 // =============================================================================
@@ -63,7 +62,12 @@ impl TestExecutor {
         })
     }
 
-    fn create(&mut self, image: &str, name: &str, opts: CreateOptions) -> Result<String, ContainerError> {
+    fn create(
+        &mut self,
+        image: &str,
+        name: &str,
+        opts: CreateOptions,
+    ) -> Result<String, ContainerError> {
         let id = self.executor.create(image, name, opts)?;
         self.tracked_ids.push(id.clone());
         Ok(id)
@@ -204,11 +208,7 @@ fn test_docker_exec_nonzero_exit() {
 
     let result = te
         .executor
-        .exec(
-            &id,
-            &["sh", "-c", "exit 42"],
-            Duration::from_secs(10),
-        )
+        .exec(&id, &["sh", "-c", "exit 42"], Duration::from_secs(10))
         .expect("exec");
 
     assert_eq!(result.exit_code, 42);
@@ -229,11 +229,7 @@ fn test_docker_exec_timeout() {
 
     let result = te
         .executor
-        .exec(
-            &id,
-            &["sleep", "60"],
-            Duration::from_secs(2),
-        )
+        .exec(&id, &["sleep", "60"], Duration::from_secs(2))
         .expect("exec");
 
     assert!(result.timed_out, "should have timed out");
@@ -267,11 +263,7 @@ fn test_docker_copy_roundtrip() {
     // Verify the file is inside the container
     let check = te
         .executor
-        .exec(
-            &id,
-            &["cat", "/tmp/test_input.txt"],
-            Duration::from_secs(5),
-        )
+        .exec(&id, &["cat", "/tmp/test_input.txt"], Duration::from_secs(5))
         .expect("cat");
     assert!(
         check.stdout.contains("Hello from the host filesystem!"),
@@ -364,12 +356,16 @@ fn test_docker_list_and_status() {
     let name1 = unique_name("list1");
     let mut opts1 = CreateOptions::default();
     opts1.cmd = Some(vec!["sleep".into(), "300".into()]);
-    let id1 = te.create("busybox:latest", &name1, opts1).expect("create 1");
+    let id1 = te
+        .create("busybox:latest", &name1, opts1)
+        .expect("create 1");
 
     let name2 = unique_name("list2");
     let mut opts2 = CreateOptions::default();
     opts2.cmd = Some(vec!["sleep".into(), "300".into()]);
-    let id2 = te.create("busybox:latest", &name2, opts2).expect("create 2");
+    let id2 = te
+        .create("busybox:latest", &name2, opts2)
+        .expect("create 2");
 
     // Start only the first container
     te.executor.start(&id1).expect("start 1");
@@ -390,13 +386,17 @@ fn test_docker_cleanup_all() {
     let name1 = unique_name("clean1");
     let mut opts1 = CreateOptions::default();
     opts1.cmd = Some(vec!["sleep".into(), "300".into()]);
-    let id1 = te.create("busybox:latest", &name1, opts1).expect("create 1");
+    let id1 = te
+        .create("busybox:latest", &name1, opts1)
+        .expect("create 1");
     te.executor.start(&id1).expect("start 1");
 
     let name2 = unique_name("clean2");
     let mut opts2 = CreateOptions::default();
     opts2.cmd = Some(vec!["sleep".into(), "300".into()]);
-    let id2 = te.create("busybox:latest", &name2, opts2).expect("create 2");
+    let id2 = te
+        .create("busybox:latest", &name2, opts2)
+        .expect("create 2");
     te.executor.start(&id2).expect("start 2");
 
     let removed = te.executor.cleanup_all();
@@ -423,7 +423,11 @@ fn test_sandbox_bash_execution() {
     let mut sandbox = ContainerSandbox::new(config).expect("sandbox");
     let result = sandbox.execute(&Language::Bash, "echo sandbox_output_42");
 
-    assert_eq!(result.exit_code, 0, "exit code should be 0: stderr={}", result.stderr);
+    assert_eq!(
+        result.exit_code, 0,
+        "exit code should be 0: stderr={}",
+        result.stderr
+    );
     assert!(
         result.stdout.contains("sandbox_output_42"),
         "stdout should contain output: {}",
@@ -447,7 +451,11 @@ fn test_sandbox_warm_reuse() {
 
     // Second execution — should reuse the same container
     let result2 = sandbox.execute(&Language::Bash, "echo second_run");
-    assert_eq!(result2.exit_code, 0, "second run failed: {}", result2.stderr);
+    assert_eq!(
+        result2.exit_code, 0,
+        "second run failed: {}",
+        result2.stderr
+    );
     assert!(result2.stdout.contains("second_run"));
 }
 
@@ -506,7 +514,10 @@ fn test_shared_folder_host_to_container_via_mount() {
         .executor
         .exec(
             &id,
-            &["cat", &format!("{}/test_mount.txt", folder.container_path())],
+            &[
+                "cat",
+                &format!("{}/test_mount.txt", folder.container_path()),
+            ],
             Duration::from_secs(5),
         )
         .expect("exec cat");
@@ -542,11 +553,7 @@ fn test_shared_folder_container_to_host() {
     );
     let result = te
         .executor
-        .exec(
-            &id,
-            &["sh", "-c", &write_cmd],
-            Duration::from_secs(5),
-        )
+        .exec(&id, &["sh", "-c", &write_cmd], Duration::from_secs(5))
         .expect("exec write");
     assert_eq!(result.exit_code, 0);
 
@@ -584,7 +591,10 @@ fn test_shared_folder_subdirectory_mount() {
         .executor
         .exec(
             &id,
-            &["cat", &format!("{}/sub/dir/nested.txt", folder.container_path())],
+            &[
+                "cat",
+                &format!("{}/sub/dir/nested.txt", folder.container_path()),
+            ],
             Duration::from_secs(5),
         )
         .expect("exec cat nested");
@@ -705,7 +715,10 @@ fn test_docker_remove_nonexistent() {
         .executor
         .remove("nonexistent_container_id_12345abcdef", false);
 
-    assert!(result.is_err(), "removing nonexistent container should fail");
+    assert!(
+        result.is_err(),
+        "removing nonexistent container should fail"
+    );
 }
 
 // =============================================================================
@@ -720,7 +733,11 @@ fn test_sandbox_python() {
     let mut sandbox = ContainerSandbox::new(config).expect("sandbox");
     let result = sandbox.execute(&Language::Python, "print(2 + 2)");
 
-    assert_eq!(result.exit_code, 0, "Python execution failed: {}", result.stderr);
+    assert_eq!(
+        result.exit_code, 0,
+        "Python execution failed: {}",
+        result.stderr
+    );
     assert!(
         result.stdout.contains("4"),
         "Python output should contain 4: {}",
@@ -733,17 +750,13 @@ fn test_document_pipeline_conversion() {
     skip_if_no_heavy_images!();
 
     use ai_assistant::document_pipeline::{
-        DocumentPipelineConfig, DocumentPipeline, DocumentRequest, OutputFormat,
+        DocumentPipeline, DocumentPipelineConfig, DocumentRequest, OutputFormat,
     };
 
     let config = DocumentPipelineConfig::default();
     let executor = ContainerExecutor::new(ContainerConfig::default()).expect("executor");
     let folder = SharedFolder::temp().expect("temp folder");
-    let mut pipeline = DocumentPipeline::new(
-        config,
-        Arc::new(RwLock::new(executor)),
-        folder,
-    );
+    let mut pipeline = DocumentPipeline::new(config, Arc::new(RwLock::new(executor)), folder);
 
     let request = DocumentRequest::new("# Hello\n\nThis is a **test**.", OutputFormat::Html);
     let result = pipeline.create(&request);

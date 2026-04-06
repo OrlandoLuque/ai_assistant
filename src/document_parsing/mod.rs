@@ -25,44 +25,39 @@
 //! All XML/HTML parsing is done using regex patterns rather than full XML parsers,
 //! which keeps dependencies minimal while handling the common cases.
 
-mod types;
-mod parser;
-pub(crate) mod xml_helpers;
-mod ocr_engine;
 mod image_extraction;
+mod ocr_engine;
 mod ocr_pipeline;
+mod parser;
 #[cfg(test)]
 mod tests;
+mod types;
+pub(crate) mod xml_helpers;
 
 // Re-export all public types so they remain accessible as document_parsing::TypeName
 
 // From types.rs
 pub use types::{
-    DocumentFormat, DocumentSection, PageContent, PdfTable,
-    DocumentMetadata, ParsedDocument, DocumentParserConfig,
+    DocumentFormat, DocumentMetadata, DocumentParserConfig, DocumentSection, PageContent,
+    ParsedDocument, PdfTable,
 };
 
 // From parser.rs
 pub use parser::DocumentParser;
 
 // From xml_helpers.rs
-pub use xml_helpers::{
-    strip_xml_tags, extract_xml_text, extract_xml_metadata, normalize_text,
-};
+pub use xml_helpers::{extract_xml_metadata, extract_xml_text, normalize_text, strip_xml_tags};
 
 // From ocr_engine.rs
-pub use ocr_engine::{
-    OcrConfig, GlyphTemplate, OcrLine, OcrResult, OcrEngine,
-};
+pub use ocr_engine::{GlyphTemplate, OcrConfig, OcrEngine, OcrLine, OcrResult};
 
 // From image_extraction.rs
 pub use image_extraction::{
-    ImageFormat, ExtractedImage, ImageExtractionConfig,
-    ImageExtractor, DocumentImageAnalysis,
+    DocumentImageAnalysis, ExtractedImage, ImageExtractionConfig, ImageExtractor, ImageFormat,
 };
 
 // From ocr_pipeline.rs
 pub use ocr_pipeline::{
-    OcrBackend, TemplateOcrBackend, TesseractConfig,
-    TesseractOcrBackend, OcrPipelineConfig, OcrPipeline,
+    OcrBackend, OcrPipeline, OcrPipelineConfig, TemplateOcrBackend, TesseractConfig,
+    TesseractOcrBackend,
 };

@@ -109,7 +109,9 @@ pub trait ApprovalHandler: Send + Sync {
 /// This handler bypasses ALL approval checks, including HITL gates.
 /// It should ONLY be used in test code. Using it in production disables
 /// the entire human-in-the-loop safety system.
-#[deprecated(note = "Use an explicit ApprovalHandler in production — AutoApproveAll bypasses all safety checks")]
+#[deprecated(
+    note = "Use an explicit ApprovalHandler in production — AutoApproveAll bypasses all safety checks"
+)]
 pub struct AutoApproveAll;
 
 impl ApprovalHandler for AutoApproveAll {
@@ -349,7 +351,9 @@ impl AgentPolicy {
             InternetMode::AllowList(domains) => {
                 // Extract domain from URL and match on subdomain boundaries
                 let domain = extract_domain(url);
-                domains.iter().any(|d| domain == d.as_str() || domain.ends_with(&format!(".{}", d)))
+                domains
+                    .iter()
+                    .any(|d| domain == d.as_str() || domain.ends_with(&format!(".{}", d)))
             }
         }
     }

@@ -4,8 +4,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::episodic::Episode;
-use super::procedural::Procedure;
 use super::helpers::keyword_overlap;
+use super::procedural::Procedure;
 
 // ============================================================
 // Basic Consolidation
@@ -105,8 +105,10 @@ impl MemoryConsolidator {
                 .map(|&idx| episodes[idx].content.clone())
                 .collect();
 
-            let created_from: Vec<String> =
-                cluster.iter().map(|&idx| episodes[idx].id.clone()).collect();
+            let created_from: Vec<String> = cluster
+                .iter()
+                .map(|&idx| episodes[idx].id.clone())
+                .collect();
 
             let name = if shared_tags.is_empty() {
                 format!("procedure_{}", uuid::Uuid::new_v4())
@@ -144,10 +146,8 @@ impl MemoryConsolidator {
     /// overlap in content/context fields.
     fn episode_similarity(&self, a: &Episode, b: &Episode) -> f64 {
         // Tag Jaccard
-        let tags_a: std::collections::HashSet<&str> =
-            a.tags.iter().map(|t| t.as_str()).collect();
-        let tags_b: std::collections::HashSet<&str> =
-            b.tags.iter().map(|t| t.as_str()).collect();
+        let tags_a: std::collections::HashSet<&str> = a.tags.iter().map(|t| t.as_str()).collect();
+        let tags_b: std::collections::HashSet<&str> = b.tags.iter().map(|t| t.as_str()).collect();
         let tag_sim = if tags_a.is_empty() && tags_b.is_empty() {
             0.0
         } else {
@@ -218,11 +218,27 @@ impl PatternFactExtractor {
     /// Create a pattern extractor pre-loaded with common patterns.
     pub fn with_default_patterns() -> Self {
         let patterns = vec![
-            (r"(\w+)".to_string(), "prefers".to_string(), r"(\w+)".to_string()),
+            (
+                r"(\w+)".to_string(),
+                "prefers".to_string(),
+                r"(\w+)".to_string(),
+            ),
             (r"(\w+)".to_string(), "is".to_string(), r"(\w+)".to_string()),
-            (r"(\w+)".to_string(), "uses".to_string(), r"(\w+)".to_string()),
-            (r"(\w+)".to_string(), "likes".to_string(), r"(\w+)".to_string()),
-            (r"(\w+)".to_string(), "works with".to_string(), r"(\w+)".to_string()),
+            (
+                r"(\w+)".to_string(),
+                "uses".to_string(),
+                r"(\w+)".to_string(),
+            ),
+            (
+                r"(\w+)".to_string(),
+                "likes".to_string(),
+                r"(\w+)".to_string(),
+            ),
+            (
+                r"(\w+)".to_string(),
+                "works with".to_string(),
+                r"(\w+)".to_string(),
+            ),
         ];
         Self { patterns }
     }
@@ -251,18 +267,10 @@ impl PatternFactExtractor {
             let after = text[pred_pos + predicate_keyword.len()..].trim();
 
             // Extract subject: last word(s) before predicate
-            let subject = before
-                .split_whitespace()
-                .last()
-                .unwrap_or("")
-                .to_string();
+            let subject = before.split_whitespace().last().unwrap_or("").to_string();
 
             // Extract object: first word(s) after predicate
-            let object = after
-                .split_whitespace()
-                .next()
-                .unwrap_or("")
-                .to_string();
+            let object = after.split_whitespace().next().unwrap_or("").to_string();
 
             if !subject.is_empty() && !object.is_empty() {
                 let now = chrono::Utc::now();
@@ -349,9 +357,8 @@ impl LlmFactExtractor {
     /// Looks for patterns: Subject Verb Object where Verb is a known linking/action verb.
     fn extract_triple(sentence: &str, episode_id: &str) -> Option<SemanticFact> {
         let linking_verbs = [
-            "is", "are", "was", "were", "uses", "prefers", "likes", "needs",
-            "requires", "provides", "supports", "handles", "creates", "runs",
-            "works", "depends",
+            "is", "are", "was", "were", "uses", "prefers", "likes", "needs", "requires",
+            "provides", "supports", "handles", "creates", "runs", "works", "depends",
         ];
 
         let words: Vec<&str> = sentence
@@ -470,8 +477,11 @@ impl FactStore {
             return;
         }
         // Sort by confidence descending — highest-confidence facts survive truncation
-        self.facts
-            .sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
+        self.facts.sort_by(|a, b| {
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         self.facts.truncate(MAX_SEMANTIC_FACTS);
     }
 

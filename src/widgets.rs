@@ -462,11 +462,7 @@ pub fn chat_input_multiline(
             });
 
             let hint = if enter_sends { "Enter" } else { "Ctrl+Enter" };
-            ui.label(
-                RichText::new(hint)
-                    .size(9.0)
-                    .color(Color32::DARK_GRAY),
-            );
+            ui.label(RichText::new(hint).size(9.0).color(Color32::DARK_GRAY));
         });
     });
 
@@ -4067,7 +4063,7 @@ pub fn knowledge_selection_external(
 // RAG Tier Selection Widgets
 // ============================================================================
 
-use crate::rag_tiers::{RagTierConfig, RagFeatures, RagTier};
+use crate::rag_tiers::{RagFeatures, RagTier, RagTierConfig};
 
 /// Colors for RAG tier UI elements
 #[derive(Clone)]
@@ -4635,7 +4631,10 @@ pub fn rag_features_editor(ui: &mut Ui, features: &mut RagFeatures) -> bool {
                 .checkbox(&mut features.semantic_dedup_fusion, "Semantic dedup fusion")
                 .changed();
             changed |= ui
-                .checkbox(&mut features.context_budget_allocation, "Context budget alloc")
+                .checkbox(
+                    &mut features.context_budget_allocation,
+                    "Context budget alloc",
+                )
                 .changed();
             ui.end_row();
 

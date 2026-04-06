@@ -19,7 +19,8 @@ fn main() {
     println!("--- 1. PgVectorConfig ---\n");
 
     let config = PgVectorConfig {
-        connection_string: "host=localhost dbname=vectors user=postgres password=secret".to_string(),
+        connection_string: "host=localhost dbname=vectors user=postgres password=secret"
+            .to_string(),
         table_name: "embeddings".to_string(),
         dimensions: 384,
     };
@@ -34,7 +35,10 @@ fn main() {
         table_name: "openai_embeddings".to_string(),
         dimensions: 1536,
     };
-    println!("\n  Custom config: table={}, dims={}", config_1536.table_name, config_1536.dimensions);
+    println!(
+        "\n  Custom config: table={}, dims={}",
+        config_1536.table_name, config_1536.dimensions
+    );
 
     let db = PgVectorDb::new(config);
 
@@ -101,7 +105,10 @@ fn main() {
     // Larger embedding
     let large_vec: Vec<f32> = (0..384).map(|i| (i as f32 * 0.01).sin()).collect();
     let large_formatted = PgVectorDb::format_vector(&large_vec);
-    println!("\n  384-dim vector: {} chars formatted", large_formatted.len());
+    println!(
+        "\n  384-dim vector: {} chars formatted",
+        large_formatted.len()
+    );
     println!("  First 60 chars: {}...", &large_formatted[..60]);
 
     // ------------------------------------------------------------------

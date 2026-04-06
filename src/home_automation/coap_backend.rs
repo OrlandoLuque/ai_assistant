@@ -7,7 +7,7 @@
 //! CoAP (RFC 7252) uses UDP with confirmable messages, exponential backoff
 //! retransmission, and optional observation for subscriptions.
 
-use super::backend::{DeviceState, HomeBackend, validate_entity_id};
+use super::backend::{validate_entity_id, DeviceState, HomeBackend};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::{SocketAddr, UdpSocket};
@@ -268,14 +268,20 @@ impl CoapBackend {
 
     /// Register a CoAP device.
     pub fn register_device(&self, entry: CoapDeviceEntry) -> Result<(), String> {
-        let mut devices = self.devices.lock().map_err(|e| format!("Lock error: {}", e))?;
+        let mut devices = self
+            .devices
+            .lock()
+            .map_err(|e| format!("Lock error: {}", e))?;
         devices.insert(entry.entity_id.clone(), entry);
         Ok(())
     }
 
     /// Get next message ID.
     fn next_message_id(&self) -> u16 {
-        let mut counter = self.message_counter.lock().unwrap_or_else(|e| e.into_inner());
+        let mut counter = self
+            .message_counter
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         *counter = counter.wrapping_add(1);
         *counter
     }
@@ -283,7 +289,10 @@ impl CoapBackend {
     /// Check rate limit (#24).
     fn check_rate_limit(&self) -> Result<(), String> {
         let now = now_epoch();
-        let mut times = self.request_times.lock().map_err(|e| format!("Lock: {}", e))?;
+        let mut times = self
+            .request_times
+            .lock()
+            .map_err(|e| format!("Lock: {}", e))?;
         times.retain(|&t| now - t < 1); // Keep last second
         if times.len() as u32 >= self.config.max_requests_per_second {
             return Err(format!(
@@ -300,8 +309,7 @@ impl CoapBackend {
     fn coap_get(&self, addr: &str, port: u16, path: &str) -> Result<String, String> {
         self.check_rate_limit()?;
 
-        let socket = UdpSocket::bind("0.0.0.0:0")
-            .map_err(|e| format!("UDP bind error: {}", e))?;
+        let socket = UdpSocket::bind("0.0.0.0:0").map_err(|e| format!("UDP bind error: {}", e))?;
         socket
             .set_read_timeout(Some(Duration::from_millis(self.config.default_timeout_ms)))
             .map_err(|e| format!("Timeout error: {}", e))?;
@@ -333,7 +341,10 @@ impl CoapBackend {
                     }
                     return Err("Invalid CoAP response".into());
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::WouldBlock
+                        || e.kind() == std::io::ErrorKind::TimedOut =>
+                {
                     if attempt < self.config.max_retransmissions {
                         timeout_ms = (timeout_ms as f64 * 1.5) as u64; // Random factor ~1.5
                         socket
@@ -352,8 +363,7 @@ impl CoapBackend {
     fn coap_put(&self, addr: &str, port: u16, path: &str, payload: &str) -> Result<String, String> {
         self.check_rate_limit()?;
 
-        let socket = UdpSocket::bind("0.0.0.0:0")
-            .map_err(|e| format!("UDP bind error: {}", e))?;
+        let socket = UdpSocket::bind("0.0.0.0:0").map_err(|e| format!("UDP bind error: {}", e))?;
         socket
             .set_read_timeout(Some(Duration::from_millis(self.config.default_timeout_ms)))
             .map_err(|e| format!("Timeout error: {}", e))?;
@@ -422,7 +432,10 @@ impl HomeBackend for CoapBackend {
         // Try to read current value via CoAP GET
         let value = match self.coap_get(&device.address, device.port, &device.resource_path) {
             Ok(v) => v,
-            Err(_) => device.last_value.clone().unwrap_or_else(|| "unavailable".into()),
+            Err(_) => device
+                .last_value
+                .clone()
+                .unwrap_or_else(|| "unavailable".into()),
         };
 
         Ok(DeviceState {
@@ -459,7 +472,12 @@ impl HomeBackend for CoapBackend {
             return Err("Payload too large for CoAP (max 64KB)".into());
         }
 
-        let result = self.coap_put(&device.address, device.port, &device.resource_path, &payload)?;
+        let result = self.coap_put(
+            &device.address,
+            device.port,
+            &device.resource_path,
+            &payload,
+        )?;
         Ok(serde_json::json!({
             "sent": true,
             "entity_id": entity_id,

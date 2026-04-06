@@ -697,7 +697,8 @@ mod tests {
     #[test]
     fn test_extraction_regex() {
         let executor = ChainExecutor::default();
-        let result = executor.extract_one("ID: 42 found", &ExtractionMethod::Regex(r"\d+".to_string()));
+        let result =
+            executor.extract_one("ID: 42 found", &ExtractionMethod::Regex(r"\d+".to_string()));
         assert_eq!(result, Some("42".to_string()));
     }
 

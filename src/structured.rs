@@ -1090,10 +1090,8 @@ impl StructuredOutputRequest {
                 self.extract_from_anthropic_response(&response)
             }
             StructuredOutputStrategy::PromptEngineering => {
-                let schema_json = serde_json::to_string_pretty(
-                    &self.schema.to_openai_format(),
-                )
-                .unwrap_or_default();
+                let schema_json = serde_json::to_string_pretty(&self.schema.to_openai_format())
+                    .unwrap_or_default();
 
                 for attempt in 0..=self.max_retries {
                     let enhanced_prompt = format!(
@@ -1917,8 +1915,7 @@ mod tests {
 
     #[test]
     fn test_schema_property_with_enum() {
-        let prop =
-            SchemaProperty::string().with_enum(vec!["a".to_string(), "b".to_string()]);
+        let prop = SchemaProperty::string().with_enum(vec!["a".to_string(), "b".to_string()]);
         assert_eq!(
             prop.enum_values,
             Some(vec!["a".to_string(), "b".to_string()])
@@ -1940,8 +1937,7 @@ mod tests {
     #[test]
     fn test_schema_property_with_property_on_non_object() {
         // with_property on a string property should be a no-op since properties is None
-        let prop =
-            SchemaProperty::string().with_property("child", SchemaProperty::integer());
+        let prop = SchemaProperty::string().with_property("child", SchemaProperty::integer());
         assert!(prop.properties.is_none());
     }
 
@@ -1956,7 +1952,9 @@ mod tests {
     fn test_validation_number_min_max() {
         let schema = JsonSchema::new("test").with_property(
             "score",
-            SchemaProperty::number().with_minimum(0.0).with_maximum(100.0),
+            SchemaProperty::number()
+                .with_minimum(0.0)
+                .with_maximum(100.0),
         );
 
         let valid = serde_json::json!({ "score": 50.5 });
@@ -1977,7 +1975,9 @@ mod tests {
     fn test_validation_string_length_constraints() {
         let schema = JsonSchema::new("test").with_property(
             "code",
-            SchemaProperty::string().with_min_length(3).with_max_length(10),
+            SchemaProperty::string()
+                .with_min_length(3)
+                .with_max_length(10),
         );
 
         let valid = serde_json::json!({ "code": "ABC123" });
@@ -2019,10 +2019,8 @@ mod tests {
 
     #[test]
     fn test_validation_array_item_types() {
-        let schema = JsonSchema::new("test").with_property(
-            "nums",
-            SchemaProperty::array(SchemaProperty::integer()),
-        );
+        let schema = JsonSchema::new("test")
+            .with_property("nums", SchemaProperty::array(SchemaProperty::integer()));
 
         let valid = serde_json::json!({ "nums": [1, 2, 3] });
         assert!(SchemaValidator::validate(&valid, &schema).valid);
@@ -2036,8 +2034,7 @@ mod tests {
 
     #[test]
     fn test_validation_boolean_type() {
-        let schema = JsonSchema::new("test")
-            .with_property("active", SchemaProperty::boolean());
+        let schema = JsonSchema::new("test").with_property("active", SchemaProperty::boolean());
 
         let valid = serde_json::json!({ "active": true });
         assert!(SchemaValidator::validate(&valid, &schema).valid);
@@ -2099,8 +2096,7 @@ mod tests {
 
     #[test]
     fn test_validation_integer_rejects_float() {
-        let schema = JsonSchema::new("test")
-            .with_property("count", SchemaProperty::integer());
+        let schema = JsonSchema::new("test").with_property("count", SchemaProperty::integer());
 
         // 3.5 is a float, not an integer
         let invalid = serde_json::json!({ "count": 3.5 });
@@ -2304,9 +2300,7 @@ mod tests {
                 .with_required("name"),
         );
 
-        let result = gen
-            .parse_response("item", r#"{"name": "widget"}"#)
-            .unwrap();
+        let result = gen.parse_response("item", r#"{"name": "widget"}"#).unwrap();
         assert!(result.valid);
         assert_eq!(result.value.unwrap()["name"], "widget");
     }
@@ -2396,8 +2390,7 @@ mod tests {
 
     #[test]
     fn test_json_schema_to_openai_format() {
-        let schema = JsonSchema::new("test_fmt")
-            .with_property("a", SchemaProperty::string());
+        let schema = JsonSchema::new("test_fmt").with_property("a", SchemaProperty::string());
 
         let fmt = schema.to_openai_format();
         assert_eq!(fmt["type"], "json_schema");
@@ -2409,10 +2402,7 @@ mod tests {
     fn test_structured_output_request_defaults() {
         let schema = JsonSchema::new("req_test");
         let req = StructuredOutputRequest::new(schema);
-        assert_eq!(
-            *req.strategy(),
-            StructuredOutputStrategy::PromptEngineering
-        );
+        assert_eq!(*req.strategy(), StructuredOutputStrategy::PromptEngineering);
     }
 
     #[test]
@@ -2550,10 +2540,7 @@ mod tests {
     #[test]
     fn test_enforcer_build_response_format_param_with_schema() {
         let mut gen = StructuredOutputGenerator::new();
-        gen.register_schema(
-            JsonSchema::new("item")
-                .with_property("a", SchemaProperty::string()),
-        );
+        gen.register_schema(JsonSchema::new("item").with_property("a", SchemaProperty::string()));
         let enforcer = StructuredOutputEnforcer::new(gen, EnforcementConfig::default());
 
         let param = enforcer.build_response_format_param("item");
@@ -2597,10 +2584,7 @@ mod tests {
     #[test]
     fn test_enforcer_constrained_prompt_schema_not_in_prompt() {
         let mut gen = StructuredOutputGenerator::new();
-        gen.register_schema(
-            JsonSchema::new("item")
-                .with_property("x", SchemaProperty::integer()),
-        );
+        gen.register_schema(JsonSchema::new("item").with_property("x", SchemaProperty::integer()));
         let config = EnforcementConfig {
             include_schema_in_prompt: false,
             ..Default::default()
@@ -2672,8 +2656,7 @@ mod tests {
 
     #[test]
     fn test_structured_request_prompt_no_examples() {
-        let schema = JsonSchema::new("simple")
-            .with_property("a", SchemaProperty::string());
+        let schema = JsonSchema::new("simple").with_property("a", SchemaProperty::string());
         let req = StructuredRequest::new(schema).with_prompt("Do something");
 
         let prompt = req.build_prompt();
@@ -2785,10 +2768,7 @@ mod tests {
         let req = StructuredOutputRequest::new(schema)
             .with_strategy(StructuredOutputStrategy::OpenAiNative);
 
-        let result = req.execute(
-            &|_, _, _| Err("network timeout".to_string()),
-            "prompt",
-        );
+        let result = req.execute(&|_, _, _| Err("network timeout".to_string()), "prompt");
 
         assert!(result.is_err());
         let err = format!("{}", result.unwrap_err());
@@ -2835,8 +2815,7 @@ mod tests {
         let markdown = "```python\n{\"key\": \"val\"}\n```";
         let extracted = extract_json_from_response(markdown);
         assert!(extracted.is_some());
-        let parsed: serde_json::Value =
-            serde_json::from_str(extracted.unwrap()).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(extracted.unwrap()).unwrap();
         assert_eq!(parsed["key"], "val");
     }
 }

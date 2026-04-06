@@ -223,7 +223,8 @@ impl ContextBudgetAllocator {
         user_message_tokens: usize,
         response_reserve: usize,
     ) -> usize {
-        let used = system_prompt_tokens + conversation_tokens + user_message_tokens + response_reserve;
+        let used =
+            system_prompt_tokens + conversation_tokens + user_message_tokens + response_reserve;
         model_context_window.saturating_sub(used)
     }
 
@@ -260,8 +261,7 @@ impl ContextBudgetAllocator {
             } else {
                 // Try extractive compression if strategy allows
                 match &self.strategy {
-                    OverflowStrategy::ExtractiveCompression
-                    | OverflowStrategy::Hybrid { .. } => {
+                    OverflowStrategy::ExtractiveCompression | OverflowStrategy::Hybrid { .. } => {
                         // Try to fit a compressed version
                         let remaining = budget.saturating_sub(tokens_used);
                         if remaining > 50 && item.score > 0.5 {
@@ -357,8 +357,7 @@ impl ContextBudgetAllocator {
                 included.push(item);
             } else {
                 match &self.strategy {
-                    OverflowStrategy::ExtractiveCompression
-                    | OverflowStrategy::Hybrid { .. } => {
+                    OverflowStrategy::ExtractiveCompression | OverflowStrategy::Hybrid { .. } => {
                         let remaining = budget.saturating_sub(tokens_used);
                         if remaining > 50 && item.score > 0.5 {
                             let compressed = extractive_compress(&item.content, remaining);
@@ -497,11 +496,8 @@ fn extractive_compress(text: &str, max_tokens: usize) -> String {
     }
 
     // Re-order by original position for coherence
-    let original_order: HashMap<&str, usize> = sentences
-        .iter()
-        .enumerate()
-        .map(|(i, &s)| (s, i))
-        .collect();
+    let original_order: HashMap<&str, usize> =
+        sentences.iter().enumerate().map(|(i, &s)| (s, i)).collect();
     result.sort_by_key(|s| original_order.get(s).copied().unwrap_or(usize::MAX));
 
     result.join(". ")
@@ -715,11 +711,7 @@ pub struct ClosureSource<F: Fn(&str) -> Vec<ContextItem> + Send + Sync> {
 
 impl<F: Fn(&str) -> Vec<ContextItem> + Send + Sync> ClosureSource<F> {
     /// Create a new closure-based source.
-    pub fn new(
-        name: impl Into<String>,
-        source_type: ContextSourceType,
-        func: F,
-    ) -> Self {
+    pub fn new(name: impl Into<String>, source_type: ContextSourceType, func: F) -> Self {
         Self {
             func,
             name: name.into(),
@@ -776,8 +768,10 @@ impl<F: Fn(&str) -> String + Send + Sync> ContextSource for LegacyStringSource<F
             return Vec::new();
         }
         let tokens = estimate_tokens(&content);
-        vec![ContextItem::new(content, tokens, self.default_score, self.source_type)
-            .with_label(self.name.clone())]
+        vec![
+            ContextItem::new(content, tokens, self.default_score, self.source_type)
+                .with_label(self.name.clone()),
+        ]
     }
 
     fn source_name(&self) -> &str {
@@ -825,16 +819,26 @@ mod tests {
         let mut allocator = ContextBudgetAllocator::default();
         allocator.add_source(Box::new(StaticSource {
             items: vec![
-                make_item("High relevance RAG chunk about Rust ownership", 0.95, ContextSourceType::Rag),
-                make_item("Low relevance chunk about history", 0.3, ContextSourceType::Rag),
+                make_item(
+                    "High relevance RAG chunk about Rust ownership",
+                    0.95,
+                    ContextSourceType::Rag,
+                ),
+                make_item(
+                    "Low relevance chunk about history",
+                    0.3,
+                    ContextSourceType::Rag,
+                ),
             ],
             name: "rag".into(),
             stype: ContextSourceType::Rag,
         }));
         allocator.add_source(Box::new(StaticSource {
-            items: vec![
-                make_item("User prefers JSON format", 0.8, ContextSourceType::Memory),
-            ],
+            items: vec![make_item(
+                "User prefers JSON format",
+                0.8,
+                ContextSourceType::Memory,
+            )],
             name: "memory".into(),
             stype: ContextSourceType::Memory,
         }));
@@ -860,7 +864,7 @@ mod tests {
         }));
 
         let result = allocator.build("query", 150); // only ~150 tokens budget
-        // Should fit 1 item, maybe 2, but not all 3
+                                                    // Should fit 1 item, maybe 2, but not all 3
         assert!(result.tokens_used <= 150);
         assert!(!result.dropped.is_empty());
     }
@@ -869,22 +873,22 @@ mod tests {
     fn test_allocator_cross_source_scoring() {
         let mut allocator = ContextBudgetAllocator::default();
         allocator.add_source(Box::new(StaticSource {
-            items: vec![
-                make_item("RAG low score", 0.3, ContextSourceType::Rag),
-            ],
+            items: vec![make_item("RAG low score", 0.3, ContextSourceType::Rag)],
             name: "rag".into(),
             stype: ContextSourceType::Rag,
         }));
         allocator.add_source(Box::new(StaticSource {
-            items: vec![
-                make_item("Memory high score", 0.95, ContextSourceType::Memory),
-            ],
+            items: vec![make_item(
+                "Memory high score",
+                0.95,
+                ContextSourceType::Memory,
+            )],
             name: "memory".into(),
             stype: ContextSourceType::Memory,
         }));
 
         let result = allocator.build("query", 20); // very tight budget
-        // Memory (0.95) should be included before RAG (0.3)
+                                                   // Memory (0.95) should be included before RAG (0.3)
         if result.included.len() == 1 {
             assert_eq!(result.included[0].source, ContextSourceType::Memory);
         }
@@ -903,9 +907,7 @@ mod tests {
     fn test_allocator_utilization() {
         let mut allocator = ContextBudgetAllocator::default();
         allocator.add_source(Box::new(StaticSource {
-            items: vec![
-                make_item("Some content here", 0.9, ContextSourceType::Rag),
-            ],
+            items: vec![make_item("Some content here", 0.9, ContextSourceType::Rag)],
             name: "rag".into(),
             stype: ContextSourceType::Rag,
         }));
@@ -919,23 +921,23 @@ mod tests {
     fn test_allocator_source_breakdown() {
         let mut allocator = ContextBudgetAllocator::default();
         allocator.add_source(Box::new(StaticSource {
-            items: vec![
-                make_item("RAG content", 0.9, ContextSourceType::Rag),
-            ],
+            items: vec![make_item("RAG content", 0.9, ContextSourceType::Rag)],
             name: "rag".into(),
             stype: ContextSourceType::Rag,
         }));
         allocator.add_source(Box::new(StaticSource {
-            items: vec![
-                make_item("Memory content", 0.8, ContextSourceType::Memory),
-            ],
+            items: vec![make_item("Memory content", 0.8, ContextSourceType::Memory)],
             name: "memory".into(),
             stype: ContextSourceType::Memory,
         }));
 
         let result = allocator.build("query", 1000);
-        assert!(result.source_breakdown.contains_key(&ContextSourceType::Rag));
-        assert!(result.source_breakdown.contains_key(&ContextSourceType::Memory));
+        assert!(result
+            .source_breakdown
+            .contains_key(&ContextSourceType::Rag));
+        assert!(result
+            .source_breakdown
+            .contains_key(&ContextSourceType::Memory));
     }
 
     #[test]
@@ -965,12 +967,10 @@ mod tests {
 
     #[test]
     fn test_legacy_string_source() {
-        let source = LegacyStringSource::new(
-            "test-memory",
-            ContextSourceType::Memory,
-            0.7,
-            |_query| "User likes Rust and JSON".to_string(),
-        );
+        let source =
+            LegacyStringSource::new("test-memory", ContextSourceType::Memory, 0.7, |_query| {
+                "User likes Rust and JSON".to_string()
+            });
 
         let items = source.query_items("hello");
         assert_eq!(items.len(), 1);
@@ -980,12 +980,9 @@ mod tests {
 
     #[test]
     fn test_legacy_string_source_empty() {
-        let source = LegacyStringSource::new(
-            "empty",
-            ContextSourceType::Memory,
-            0.7,
-            |_query| String::new(),
-        );
+        let source = LegacyStringSource::new("empty", ContextSourceType::Memory, 0.7, |_query| {
+            String::new()
+        });
 
         let items = source.query_items("hello");
         assert!(items.is_empty());
@@ -1020,10 +1017,23 @@ mod tests {
     #[test]
     fn test_compressor_prompt_includes_scores() {
         let items = vec![
-            make_item("Rust uses ownership for memory safety", 0.95, ContextSourceType::Rag),
-            make_item("User prefers concise answers", 0.7, ContextSourceType::Memory),
+            make_item(
+                "Rust uses ownership for memory safety",
+                0.95,
+                ContextSourceType::Rag,
+            ),
+            make_item(
+                "User prefers concise answers",
+                0.7,
+                ContextSourceType::Memory,
+            ),
         ];
-        let prompt = build_compressor_prompt("How does Rust manage memory?", &items, CompressionLevel::Medium, 200);
+        let prompt = build_compressor_prompt(
+            "How does Rust manage memory?",
+            &items,
+            CompressionLevel::Medium,
+            200,
+        );
         assert!(prompt.contains("[score 0.95]"));
         assert!(prompt.contains("[score 0.70]"));
         assert!(prompt.contains("[RAG]"));

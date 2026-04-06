@@ -169,7 +169,6 @@ pub struct RagFeatures {
     pub multimodal: bool,
 
     // === Context & Distribution (V62+) ===
-
     /// Semantic deduplication with LLM fusion — merges similar chunks
     /// into a single fused chunk preserving nuances from all originals.
     /// More expensive than basic `deduplication` but higher quality.
@@ -197,7 +196,6 @@ pub struct RagFeatures {
     pub emotion_aware: bool,
 
     // === Relevance Hardening (V66+) ===
-
     /// Lightweight topic matching — Jaccard keyword overlap penalizes
     /// keyword-relevant but topic-irrelevant chunks.
     /// Cost: None (pure Rust) | Requires: None
@@ -1876,8 +1874,7 @@ impl RagTierStore {
 
     /// Export custom (non-builtin) tiers as JSON.
     pub fn export_custom(&self) -> Result<String, String> {
-        let custom: Vec<&RagTierDefinition> =
-            self.tiers.values().filter(|d| !d.builtin).collect();
+        let custom: Vec<&RagTierDefinition> = self.tiers.values().filter(|d| !d.builtin).collect();
         serde_json::to_string_pretty(&custom).map_err(|e| format!("Serialize error: {}", e))
     }
 
@@ -1910,7 +1907,10 @@ impl RagTierStore {
     }
 
     /// Load custom tiers from a StorageContext (adds to builtin tiers).
-    pub fn load_custom(&mut self, ctx: &crate::storage_context::StorageContext) -> Result<usize, String> {
+    pub fn load_custom(
+        &mut self,
+        ctx: &crate::storage_context::StorageContext,
+    ) -> Result<usize, String> {
         if !ctx.exists("rag_tiers_custom") {
             return Ok(0);
         }
@@ -2305,10 +2305,7 @@ mod tests {
         assert!(e_max.unwrap() > 0);
 
         // Thorough should have more than Enhanced
-        assert!(
-            t_min > e_min,
-            "Thorough min calls should exceed Enhanced"
-        );
+        assert!(t_min > e_min, "Thorough min calls should exceed Enhanced");
     }
 
     #[test]
@@ -2417,7 +2414,10 @@ mod tests {
         stats.record_retrieval(15, 8, 200);
 
         let summary = stats.summary();
-        assert!(!summary.is_empty(), "summary() must return a non-empty string");
+        assert!(
+            !summary.is_empty(),
+            "summary() must return a non-empty string"
+        );
         assert!(
             summary.contains("1 queries"),
             "summary should mention query count"
@@ -2537,10 +2537,7 @@ mod tests {
         assert!(f.deduplication);
         assert!(f.discourse_chunking);
         // New at Enhanced
-        assert!(
-            f.diversity_mmr,
-            "Enhanced tier should enable diversity_mmr"
-        );
+        assert!(f.diversity_mmr, "Enhanced tier should enable diversity_mmr");
         assert!(
             f.memory_augmented,
             "Enhanced tier should enable memory_augmented"
@@ -2674,9 +2671,17 @@ mod tests {
         features.web_search_augmentation = true;
         let config = RagTierConfig::with_features(features);
         let (min, max) = config.estimate_extra_calls();
-        assert!(min >= 3, "cascade(2)+web(1) should give min >= 3, got {}", min);
+        assert!(
+            min >= 3,
+            "cascade(2)+web(1) should give min >= 3, got {}",
+            min
+        );
         assert!(max.is_some());
-        assert!(max.unwrap() >= 5, "cascade(3)+web(2) should give max >= 5, got {}", max.unwrap());
+        assert!(
+            max.unwrap() >= 5,
+            "cascade(3)+web(2) should give max >= 5, got {}",
+            max.unwrap()
+        );
     }
 
     #[test]
@@ -2774,11 +2779,8 @@ mod tests {
         let mock = crate::llm_enhance::MockLlm::new(
             r#"{"tier":"thorough","reason":"Complex multi-faceted query"}"#,
         );
-        let (tier, suggestion) = suggest_tier_with_llm(
-            "Compare and contrast X and Y in detail",
-            true,
-            Some(&mock),
-        );
+        let (tier, suggestion) =
+            suggest_tier_with_llm("Compare and contrast X and Y in detail", true, Some(&mock));
         assert_eq!(tier, RagTier::Thorough);
         assert!(suggestion.is_some());
         assert_eq!(suggestion.unwrap().tier, "thorough");
@@ -2787,11 +2789,7 @@ mod tests {
     #[test]
     fn test_suggest_tier_with_llm_fallback() {
         let failing = crate::llm_enhance::FailingMockLlm;
-        let (tier, suggestion) = suggest_tier_with_llm(
-            "What is Rust?",
-            true,
-            Some(&failing),
-        );
+        let (tier, suggestion) = suggest_tier_with_llm("What is Rust?", true, Some(&failing));
         // Should fall back to heuristic
         assert!(suggestion.is_none());
         // Heuristic should return something reasonable
@@ -2800,14 +2798,8 @@ mod tests {
 
     #[test]
     fn test_suggest_tier_with_llm_disabled() {
-        let mock = crate::llm_enhance::MockLlm::new(
-            r#"{"tier":"full","reason":"Use everything"}"#,
-        );
-        let (tier, suggestion) = suggest_tier_with_llm(
-            "hello",
-            false,
-            Some(&mock),
-        );
+        let mock = crate::llm_enhance::MockLlm::new(r#"{"tier":"full","reason":"Use everything"}"#);
+        let (tier, suggestion) = suggest_tier_with_llm("hello", false, Some(&mock));
         // Should use heuristic, not LLM
         assert!(suggestion.is_none());
         assert_ne!(tier, RagTier::Full); // Heuristic would not suggest Full for "hello"

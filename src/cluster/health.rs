@@ -52,10 +52,7 @@ pub struct ClusterHealthManager {
 
 impl ClusterHealthManager {
     /// Create a new health manager.
-    pub fn new(
-        node_id: String,
-        heartbeat_mgr: Arc<RwLock<HeartbeatManager>>,
-    ) -> Self {
+    pub fn new(node_id: String, heartbeat_mgr: Arc<RwLock<HeartbeatManager>>) -> Self {
         Self {
             node_id,
             ready: AtomicBool::new(true),
@@ -66,9 +63,9 @@ impl ClusterHealthManager {
             max_in_flight: 10000,
             started_at: Instant::now(),
             latency_tracker: LatencyTracker::new(
-                1000,                            // window: last 1000 requests
-                Duration::from_secs(5),          // P95 threshold: 5s
-                Duration::from_secs(10),         // P99 threshold: 10s
+                1000,                    // window: last 1000 requests
+                Duration::from_secs(5),  // P95 threshold: 5s
+                Duration::from_secs(10), // P99 threshold: 10s
             ),
             system_load: SystemLoadMonitor::new(0.90, 0.85), // CPU 90%, memory 85%
         }
@@ -92,7 +89,11 @@ impl ClusterHealthManager {
             in_flight: AtomicU64::new(0),
             max_in_flight: 10000,
             started_at: Instant::now(),
-            latency_tracker: LatencyTracker::new(1000, latency_p95_threshold, latency_p99_threshold),
+            latency_tracker: LatencyTracker::new(
+                1000,
+                latency_p95_threshold,
+                latency_p99_threshold,
+            ),
             system_load: SystemLoadMonitor::new(cpu_threshold, memory_threshold),
         }
     }
@@ -120,26 +121,42 @@ impl ClusterHealthManager {
         let mut reasons = Vec::new();
         if let Some(p95) = self.latency_tracker.p95() {
             if p95 >= self.latency_tracker.p95_threshold {
-                reasons.push(format!("latency_p95={:.0}ms (threshold={:.0}ms)",
-                    p95.as_millis(), self.latency_tracker.p95_threshold.as_millis()));
+                reasons.push(format!(
+                    "latency_p95={:.0}ms (threshold={:.0}ms)",
+                    p95.as_millis(),
+                    self.latency_tracker.p95_threshold.as_millis()
+                ));
             }
         }
         if let Some(p99) = self.latency_tracker.p99() {
             if p99 >= self.latency_tracker.p99_threshold {
-                reasons.push(format!("latency_p99={:.0}ms (threshold={:.0}ms)",
-                    p99.as_millis(), self.latency_tracker.p99_threshold.as_millis()));
+                reasons.push(format!(
+                    "latency_p99={:.0}ms (threshold={:.0}ms)",
+                    p99.as_millis(),
+                    self.latency_tracker.p99_threshold.as_millis()
+                ));
             }
         }
         let load = self.system_load.current_load();
         if load.cpu_percent >= self.system_load.cpu_threshold * 100.0 {
-            reasons.push(format!("cpu={:.1}% (threshold={:.0}%)",
-                load.cpu_percent, self.system_load.cpu_threshold * 100.0));
+            reasons.push(format!(
+                "cpu={:.1}% (threshold={:.0}%)",
+                load.cpu_percent,
+                self.system_load.cpu_threshold * 100.0
+            ));
         }
         if load.memory_percent >= self.system_load.memory_threshold * 100.0 {
-            reasons.push(format!("memory={:.1}% (threshold={:.0}%)",
-                load.memory_percent, self.system_load.memory_threshold * 100.0));
+            reasons.push(format!(
+                "memory={:.1}% (threshold={:.0}%)",
+                load.memory_percent,
+                self.system_load.memory_threshold * 100.0
+            ));
         }
-        if reasons.is_empty() { None } else { Some(reasons.join(", ")) }
+        if reasons.is_empty() {
+            None
+        } else {
+            Some(reasons.join(", "))
+        }
     }
 
     /// Record a completed request latency.
@@ -210,7 +227,8 @@ impl ClusterHealthManager {
     /// Record a peer failure (for circuit breaker).
     pub fn record_peer_failure(&self, peer_id: &NodeId) {
         let key = peer_id.to_hex();
-        let mut entry = self.circuit_breakers
+        let mut entry = self
+            .circuit_breakers
             .entry(key)
             .or_insert_with(CircuitBreaker::new);
         entry.record_failure();
@@ -318,13 +336,16 @@ impl LatencyTracker {
         // Saturate count at window size.
         let prev = self.count.fetch_add(1, Ordering::Relaxed);
         if prev >= self.samples.len() as u64 {
-            self.count.store(self.samples.len() as u64, Ordering::Relaxed);
+            self.count
+                .store(self.samples.len() as u64, Ordering::Relaxed);
         }
     }
 
     /// Get the number of samples recorded (capped at window size).
     pub fn sample_count(&self) -> u64 {
-        self.count.load(Ordering::Relaxed).min(self.samples.len() as u64)
+        self.count
+            .load(Ordering::Relaxed)
+            .min(self.samples.len() as u64)
     }
 
     /// Compute a percentile (0.0 to 1.0) from the current samples.
@@ -501,7 +522,8 @@ impl SystemLoadMonitor {
         if !line.starts_with("cpu ") {
             return None;
         }
-        let fields: Vec<u64> = line.split_whitespace()
+        let fields: Vec<u64> = line
+            .split_whitespace()
             .skip(1)
             .filter_map(|s| s.parse().ok())
             .collect();
@@ -519,9 +541,16 @@ impl SystemLoadMonitor {
         // Use GetSystemTimes via windows-sys or manual FFI.
         // GetSystemTimes returns FILETIME for idle, kernel, user.
         #[repr(C)]
-        struct FileTime { lo: u32, hi: u32 }
+        struct FileTime {
+            lo: u32,
+            hi: u32,
+        }
         extern "system" {
-            fn GetSystemTimes(idle: *mut FileTime, kernel: *mut FileTime, user: *mut FileTime) -> i32;
+            fn GetSystemTimes(
+                idle: *mut FileTime,
+                kernel: *mut FileTime,
+                user: *mut FileTime,
+            ) -> i32;
         }
         unsafe {
             let (mut idle_ft, mut kernel_ft, mut user_ft) = (
@@ -557,18 +586,22 @@ impl SystemLoadMonitor {
         let mut available_kb: u64 = 0;
         for line in content.lines() {
             if line.starts_with("MemTotal:") {
-                total_kb = line.split_whitespace()
+                total_kb = line
+                    .split_whitespace()
                     .nth(1)
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(0);
             } else if line.starts_with("MemAvailable:") {
-                available_kb = line.split_whitespace()
+                available_kb = line
+                    .split_whitespace()
                     .nth(1)
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(0);
             }
         }
-        if total_kb == 0 { return 0.0; }
+        if total_kb == 0 {
+            return 0.0;
+        }
         ((total_kb - available_kb) as f64 / total_kb as f64) * 100.0
     }
 
@@ -774,10 +807,10 @@ mod tests {
         ClusterHealthManager::with_thresholds(
             "test-node".to_string(),
             Arc::new(RwLock::new(hb)),
-            Duration::from_secs(60),   // P95 threshold: 60s (won't trigger)
-            Duration::from_secs(120),  // P99 threshold: 120s (won't trigger)
-            1.0,                        // CPU: 100% (won't trigger)
-            1.0,                        // Memory: 100% (won't trigger)
+            Duration::from_secs(60),  // P95 threshold: 60s (won't trigger)
+            Duration::from_secs(120), // P99 threshold: 120s (won't trigger)
+            1.0,                      // CPU: 100% (won't trigger)
+            1.0,                      // Memory: 100% (won't trigger)
         )
     }
 
@@ -956,14 +989,23 @@ mod tests {
         let p99 = lt.p99().unwrap();
 
         // P50 should be around 50ms
-        assert!(p50.as_millis() >= 45 && p50.as_millis() <= 55,
-            "P50 was {}ms", p50.as_millis());
+        assert!(
+            p50.as_millis() >= 45 && p50.as_millis() <= 55,
+            "P50 was {}ms",
+            p50.as_millis()
+        );
         // P95 should be around 95ms
-        assert!(p95.as_millis() >= 90 && p95.as_millis() <= 100,
-            "P95 was {}ms", p95.as_millis());
+        assert!(
+            p95.as_millis() >= 90 && p95.as_millis() <= 100,
+            "P95 was {}ms",
+            p95.as_millis()
+        );
         // P99 should be around 99ms
-        assert!(p99.as_millis() >= 95 && p99.as_millis() <= 100,
-            "P99 was {}ms", p99.as_millis());
+        assert!(
+            p99.as_millis() >= 95 && p99.as_millis() <= 100,
+            "P99 was {}ms",
+            p99.as_millis()
+        );
     }
 
     #[test]
@@ -1073,8 +1115,8 @@ mod tests {
             Arc::new(RwLock::new(hb)),
             Duration::from_millis(50),  // very low P95 threshold
             Duration::from_millis(100), // very low P99 threshold
-            1.0,  // CPU threshold 100% (won't trigger)
-            1.0,  // Mem threshold 100% (won't trigger)
+            1.0,                        // CPU threshold 100% (won't trigger)
+            1.0,                        // Mem threshold 100% (won't trigger)
         );
         // Fast requests → not degraded
         for _ in 0..100 {

@@ -154,7 +154,8 @@ impl MemoryExtractor {
             },
             ExtractionRule {
                 name: "date_weekday".to_string(),
-                pattern: r"(?i)on (Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)".to_string(),
+                pattern: r"(?i)on (Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)"
+                    .to_string(),
                 extraction_type: ExtractionRuleType::DatePattern,
                 confidence: 0.75,
             },
@@ -237,11 +238,8 @@ impl MemoryExtractor {
                 let text_lower = text.to_lowercase();
 
                 // English + Spanish name prefixes
-                let name_prefixes: &[(&str, usize)] = &[
-                    ("my name is ", 11),
-                    ("mi nombre es ", 13),
-                    ("me llamo ", 9),
-                ];
+                let name_prefixes: &[(&str, usize)] =
+                    &[("my name is ", 11), ("mi nombre es ", 13), ("me llamo ", 9)];
                 for &(prefix, skip) in name_prefixes {
                     if let Some(pos) = text_lower.find(prefix) {
                         let after = &text[pos + skip..];
@@ -316,7 +314,7 @@ impl MemoryExtractor {
 
                 // Spanish preference patterns: "prefiero X", "me gusta X", "no me gusta X"
                 let es_pref_patterns: &[(&str, usize, bool)] = &[
-                    ("no me gusta ", 12, true),   // negative preference (check first)
+                    ("no me gusta ", 12, true), // negative preference (check first)
                     ("prefiero ", 9, false),
                     ("me gusta ", 9, false),
                 ];
@@ -528,7 +526,12 @@ impl MemoryExtractor {
                         let mut start = i;
                         while start > 0 {
                             let prev = chars[start - 1];
-                            if prev.is_alphanumeric() || prev == '.' || prev == '+' || prev == '-' || prev == '_' {
+                            if prev.is_alphanumeric()
+                                || prev == '.'
+                                || prev == '+'
+                                || prev == '-'
+                                || prev == '_'
+                            {
                                 start -= 1;
                             } else {
                                 break;
@@ -698,13 +701,15 @@ mod tests {
         let mock = crate::llm_enhance::MockLlm::new(
             "[{\"name\":\"OpenAI\",\"type\":\"organization\"},{\"name\":\"San Francisco\",\"type\":\"location\"}]",
         );
-        let entities = extractor.extract_entities_with_llm(
-            "OpenAI is based in San Francisco",
-            Some(&mock),
-        );
+        let entities =
+            extractor.extract_entities_with_llm("OpenAI is based in San Francisco", Some(&mock));
         assert_eq!(entities.len(), 2);
-        assert!(entities.iter().any(|e| e.name == "OpenAI" && e.entity_type == "organization"));
-        assert!(entities.iter().any(|e| e.name == "San Francisco" && e.entity_type == "location"));
+        assert!(entities
+            .iter()
+            .any(|e| e.name == "OpenAI" && e.entity_type == "organization"));
+        assert!(entities
+            .iter()
+            .any(|e| e.name == "San Francisco" && e.entity_type == "location"));
     }
 
     #[test]
@@ -801,7 +806,9 @@ mod tests {
         // "prefiero X"
         let results = extractor.extract("prefiero el modo oscuro");
         assert!(
-            results.iter().any(|e| matches!(e, MemoryExtraction::Preference { .. })),
+            results
+                .iter()
+                .any(|e| matches!(e, MemoryExtraction::Preference { .. })),
             "Should extract preference from 'prefiero el modo oscuro', got: {:?}",
             results
         );

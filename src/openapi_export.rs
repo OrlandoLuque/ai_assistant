@@ -1356,9 +1356,15 @@ mod tests {
         assert!(paths.contains_key("/ws"), "missing /ws");
         assert!(paths.contains_key("/openapi.json"), "missing /openapi.json");
         // Versioned paths
-        assert!(paths.contains_key("/api/v1/health"), "missing /api/v1/health");
+        assert!(
+            paths.contains_key("/api/v1/health"),
+            "missing /api/v1/health"
+        );
         assert!(paths.contains_key("/api/v1/chat"), "missing /api/v1/chat");
-        assert!(paths.contains_key("/api/v1/openapi.json"), "missing /api/v1/openapi.json");
+        assert!(
+            paths.contains_key("/api/v1/openapi.json"),
+            "missing /api/v1/openapi.json"
+        );
     }
 
     #[test]
@@ -1376,9 +1382,18 @@ mod tests {
         let spec = generate_server_api_spec();
         let schemas = &spec["components"]["schemas"];
         assert!(schemas.is_object());
-        assert!(schemas["ChatRequest"].is_object(), "missing ChatRequest schema");
-        assert!(schemas["ChatResponse"].is_object(), "missing ChatResponse schema");
-        assert!(schemas["ErrorResponse"].is_object(), "missing ErrorResponse schema");
+        assert!(
+            schemas["ChatRequest"].is_object(),
+            "missing ChatRequest schema"
+        );
+        assert!(
+            schemas["ChatResponse"].is_object(),
+            "missing ChatResponse schema"
+        );
+        assert!(
+            schemas["ErrorResponse"].is_object(),
+            "missing ErrorResponse schema"
+        );
     }
 
     #[test]
@@ -1395,7 +1410,10 @@ mod tests {
         let chat_req = &spec["components"]["schemas"]["ChatRequest"];
         assert_eq!(chat_req["type"], "object");
         let props = chat_req["properties"].as_object().unwrap();
-        assert!(props.contains_key("message"), "ChatRequest must have 'message' field");
+        assert!(
+            props.contains_key("message"),
+            "ChatRequest must have 'message' field"
+        );
         let required = chat_req["required"].as_array().unwrap();
         assert!(required.contains(&serde_json::json!("message")));
     }
@@ -1406,7 +1424,13 @@ mod tests {
         let health = &spec["components"]["schemas"]["HealthResponse"];
         assert_eq!(health["type"], "object");
         let props = health["properties"].as_object().unwrap();
-        assert!(props.contains_key("status"), "HealthResponse must have 'status' field");
-        assert!(props.contains_key("uptime_secs"), "HealthResponse must have 'uptime_secs' field");
+        assert!(
+            props.contains_key("status"),
+            "HealthResponse must have 'status' field"
+        );
+        assert!(
+            props.contains_key("uptime_secs"),
+            "HealthResponse must have 'uptime_secs' field"
+        );
     }
 }

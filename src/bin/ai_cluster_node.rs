@@ -30,9 +30,9 @@ use ai_assistant::server::{AuthConfig, ServerConfig, TlsConfig};
 use ai_assistant::server_axum::AxumServer;
 
 #[cfg(feature = "p2p")]
-use std::sync::{Arc, Mutex};
-#[cfg(feature = "p2p")]
 use ai_assistant::p2p::{P2PConfig, P2PManager, P2PTransport};
+#[cfg(feature = "p2p")]
+use std::sync::{Arc, Mutex};
 
 // ============================================================================
 // CLI argument types
@@ -116,12 +116,22 @@ fn main() -> ExitCode {
                 println!();
                 println!("Cluster config:");
                 println!("  node-id: {}", node_id);
-                println!("  bootstrap-peers: {}", if bootstrap_peers.is_empty() { "(seed node)".to_string() } else { bootstrap_peers.join(", ") });
+                println!(
+                    "  bootstrap-peers: {}",
+                    if bootstrap_peers.is_empty() {
+                        "(seed node)".to_string()
+                    } else {
+                        bootstrap_peers.join(", ")
+                    }
+                );
                 println!("  quic-port: {}", quic_port);
                 println!("  data-dir: {}", data_dir);
                 if cli.enable_p2p {
                     println!("  p2p-port: {}", cli.p2p_port.unwrap_or(12345));
-                    println!("  p2p-bootstrap: {}", cli.p2p_bootstrap.as_deref().unwrap_or("(none)"));
+                    println!(
+                        "  p2p-bootstrap: {}",
+                        cli.p2p_bootstrap.as_deref().unwrap_or("(none)")
+                    );
                 }
                 return ExitCode::SUCCESS;
             }
@@ -187,7 +197,7 @@ fn main() -> ExitCode {
             enabled: true,
             listen_port: p2p_port_val,
             bootstrap_nodes: p2p_bootstrap_addrs,
-            enable_upnp: false,  // server node, no UPnP needed
+            enable_upnp: false, // server node, no UPnP needed
             enable_nat_pmp: false,
             stun_servers: vec![],
             ..Default::default()
@@ -198,10 +208,7 @@ fn main() -> ExitCode {
             eprintln!("Warning: P2P bootstrap failed: {}", e);
         }
 
-        let transport = P2PTransport::new(
-            Arc::new(Mutex::new(manager)),
-            p2p_listen,
-        );
+        let transport = P2PTransport::new(Arc::new(Mutex::new(manager)), p2p_listen);
         Some(transport)
     } else {
         None
@@ -228,7 +235,10 @@ fn main() -> ExitCode {
     let addr = server.config().bind_address();
 
     if let Ok(info) = update_rx.try_recv() {
-        eprintln!("  Update available: v{} \u{2192} v{}", info.current, info.latest);
+        eprintln!(
+            "  Update available: v{} \u{2192} v{}",
+            info.current, info.latest
+        );
         eprintln!("  Download: {}", info.url);
         eprintln!();
     }
@@ -316,8 +326,12 @@ fn build_config(cli: &CliArgs) -> Result<ServerConfig, String> {
         ServerConfig::default()
     };
 
-    if let Some(ref host) = cli.host { config.host = host.clone(); }
-    if let Some(port) = cli.port { config.port = port; }
+    if let Some(ref host) = cli.host {
+        config.host = host.clone();
+    }
+    if let Some(port) = cli.port {
+        config.port = port;
+    }
     if let Some(ref key) = cli.api_key {
         let mut auth = AuthConfig::default();
         auth.enabled = true;
@@ -342,42 +356,92 @@ fn build_config(cli: &CliArgs) -> Result<ServerConfig, String> {
 
 fn parse_args(args: &[String]) -> Result<CliArgs, String> {
     let mut cli = CliArgs {
-        host: None, port: None, config_path: None, api_key: None,
-        tls_cert: None, tls_key: None, node_id: None, bootstrap_peers: None,
-        join_token: None, quic_port: None, data_dir: None,
-        enable_p2p: false, p2p_port: None, p2p_bootstrap: None,
-        dry_run: false, help: false,
+        host: None,
+        port: None,
+        config_path: None,
+        api_key: None,
+        tls_cert: None,
+        tls_key: None,
+        node_id: None,
+        bootstrap_peers: None,
+        join_token: None,
+        quic_port: None,
+        data_dir: None,
+        enable_p2p: false,
+        p2p_port: None,
+        p2p_bootstrap: None,
+        dry_run: false,
+        help: false,
     };
 
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
-            "--host" => { i += 1; cli.host = Some(next_val(args, i, "--host")?); }
+            "--host" => {
+                i += 1;
+                cli.host = Some(next_val(args, i, "--host")?);
+            }
             "--port" => {
                 i += 1;
                 let val = next_val(args, i, "--port")?;
-                cli.port = Some(val.parse().map_err(|_| format!("Invalid port: '{}'", val))?);
+                cli.port = Some(
+                    val.parse()
+                        .map_err(|_| format!("Invalid port: '{}'", val))?,
+                );
             }
-            "--config" => { i += 1; cli.config_path = Some(next_val(args, i, "--config")?); }
-            "--api-key" => { i += 1; cli.api_key = Some(next_val(args, i, "--api-key")?); }
-            "--tls-cert" => { i += 1; cli.tls_cert = Some(next_val(args, i, "--tls-cert")?); }
-            "--tls-key" => { i += 1; cli.tls_key = Some(next_val(args, i, "--tls-key")?); }
-            "--node-id" => { i += 1; cli.node_id = Some(next_val(args, i, "--node-id")?); }
-            "--bootstrap-peers" => { i += 1; cli.bootstrap_peers = Some(next_val(args, i, "--bootstrap-peers")?); }
-            "--join-token" => { i += 1; cli.join_token = Some(next_val(args, i, "--join-token")?); }
+            "--config" => {
+                i += 1;
+                cli.config_path = Some(next_val(args, i, "--config")?);
+            }
+            "--api-key" => {
+                i += 1;
+                cli.api_key = Some(next_val(args, i, "--api-key")?);
+            }
+            "--tls-cert" => {
+                i += 1;
+                cli.tls_cert = Some(next_val(args, i, "--tls-cert")?);
+            }
+            "--tls-key" => {
+                i += 1;
+                cli.tls_key = Some(next_val(args, i, "--tls-key")?);
+            }
+            "--node-id" => {
+                i += 1;
+                cli.node_id = Some(next_val(args, i, "--node-id")?);
+            }
+            "--bootstrap-peers" => {
+                i += 1;
+                cli.bootstrap_peers = Some(next_val(args, i, "--bootstrap-peers")?);
+            }
+            "--join-token" => {
+                i += 1;
+                cli.join_token = Some(next_val(args, i, "--join-token")?);
+            }
             "--quic-port" => {
                 i += 1;
                 let val = next_val(args, i, "--quic-port")?;
-                cli.quic_port = Some(val.parse().map_err(|_| format!("Invalid quic-port: '{}'", val))?);
+                cli.quic_port = Some(
+                    val.parse()
+                        .map_err(|_| format!("Invalid quic-port: '{}'", val))?,
+                );
             }
-            "--data-dir" => { i += 1; cli.data_dir = Some(next_val(args, i, "--data-dir")?); }
+            "--data-dir" => {
+                i += 1;
+                cli.data_dir = Some(next_val(args, i, "--data-dir")?);
+            }
             "--enable-p2p" => cli.enable_p2p = true,
             "--p2p-port" => {
                 i += 1;
                 let val = next_val(args, i, "--p2p-port")?;
-                cli.p2p_port = Some(val.parse().map_err(|_| format!("Invalid p2p-port: '{}'", val))?);
+                cli.p2p_port = Some(
+                    val.parse()
+                        .map_err(|_| format!("Invalid p2p-port: '{}'", val))?,
+                );
             }
-            "--p2p-bootstrap" => { i += 1; cli.p2p_bootstrap = Some(next_val(args, i, "--p2p-bootstrap")?); }
+            "--p2p-bootstrap" => {
+                i += 1;
+                cli.p2p_bootstrap = Some(next_val(args, i, "--p2p-bootstrap")?);
+            }
             "--dry-run" => cli.dry_run = true,
             "-h" | "--help" => cli.help = true,
             other => return Err(format!("Unknown argument: '{}'", other)),
@@ -388,7 +452,9 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
 }
 
 fn next_val(args: &[String], index: usize, flag: &str) -> Result<String, String> {
-    args.get(index).cloned().ok_or_else(|| format!("{} requires a value", flag))
+    args.get(index)
+        .cloned()
+        .ok_or_else(|| format!("{} requires a value", flag))
 }
 
 fn print_usage() {
@@ -446,12 +512,18 @@ mod tests {
     #[test]
     fn test_parse_args_cluster() {
         let a = args(&[
-            "--node-id", "node1",
-            "--port", "8091",
-            "--quic-port", "9001",
-            "--bootstrap-peers", "10.0.0.1:9001,10.0.0.2:9001",
-            "--join-token", "abc123",
-            "--data-dir", "/data/node1",
+            "--node-id",
+            "node1",
+            "--port",
+            "8091",
+            "--quic-port",
+            "9001",
+            "--bootstrap-peers",
+            "10.0.0.1:9001,10.0.0.2:9001",
+            "--join-token",
+            "abc123",
+            "--data-dir",
+            "/data/node1",
         ]);
         let cli = parse_args(&a).unwrap();
         assert_eq!(cli.node_id.as_deref(), Some("node1"));
@@ -465,10 +537,13 @@ mod tests {
     #[test]
     fn test_parse_args_p2p() {
         let a = args(&[
-            "--node-id", "n1",
+            "--node-id",
+            "n1",
             "--enable-p2p",
-            "--p2p-port", "13000",
-            "--p2p-bootstrap", "10.0.0.5:12345,10.0.0.6:12345",
+            "--p2p-port",
+            "13000",
+            "--p2p-bootstrap",
+            "10.0.0.5:12345,10.0.0.6:12345",
         ]);
         let cli = parse_args(&a).unwrap();
         assert!(cli.enable_p2p);
@@ -492,11 +567,22 @@ mod tests {
     #[test]
     fn test_build_config_defaults() {
         let cli = CliArgs {
-            host: None, port: None, config_path: None, api_key: None,
-            tls_cert: None, tls_key: None, node_id: Some("n1".to_string()),
-            bootstrap_peers: None, join_token: None, quic_port: None,
-            data_dir: None, enable_p2p: false, p2p_port: None, p2p_bootstrap: None,
-            dry_run: false, help: false,
+            host: None,
+            port: None,
+            config_path: None,
+            api_key: None,
+            tls_cert: None,
+            tls_key: None,
+            node_id: Some("n1".to_string()),
+            bootstrap_peers: None,
+            join_token: None,
+            quic_port: None,
+            data_dir: None,
+            enable_p2p: false,
+            p2p_port: None,
+            p2p_bootstrap: None,
+            dry_run: false,
+            help: false,
         };
         let config = build_config(&cli).unwrap();
         assert_eq!(config.host, "127.0.0.1");
@@ -505,14 +591,22 @@ mod tests {
     #[test]
     fn test_build_config_overrides() {
         let cli = CliArgs {
-            host: Some("0.0.0.0".to_string()), port: Some(8091),
-            config_path: None, api_key: None,
-            tls_cert: None, tls_key: None, node_id: Some("n1".to_string()),
+            host: Some("0.0.0.0".to_string()),
+            port: Some(8091),
+            config_path: None,
+            api_key: None,
+            tls_cert: None,
+            tls_key: None,
+            node_id: Some("n1".to_string()),
             bootstrap_peers: Some("10.0.0.1:9001".to_string()),
-            join_token: Some("tok".to_string()), quic_port: Some(9001),
+            join_token: Some("tok".to_string()),
+            quic_port: Some(9001),
             data_dir: Some("/tmp/data".to_string()),
-            enable_p2p: false, p2p_port: None, p2p_bootstrap: None,
-            dry_run: false, help: false,
+            enable_p2p: false,
+            p2p_port: None,
+            p2p_bootstrap: None,
+            dry_run: false,
+            help: false,
         };
         let config = build_config(&cli).unwrap();
         assert_eq!(config.host, "0.0.0.0");

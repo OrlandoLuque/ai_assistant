@@ -7,8 +7,8 @@
 //! Note: actual generation requires API keys for external services.
 
 use ai_assistant::{
-    ImageGenConfig, DallEProvider, ImageQuality, ImageProviderRouter,
-    VideoGenConfig, RunwayProvider, VideoResolution, AspectRatio, VideoProviderRouter,
+    AspectRatio, DallEProvider, ImageGenConfig, ImageProviderRouter, ImageQuality, RunwayProvider,
+    VideoGenConfig, VideoProviderRouter, VideoResolution,
 };
 
 fn main() {
@@ -54,7 +54,10 @@ fn main() {
     };
 
     println!("\nVideo Generation Config:");
-    println!("  Duration: {}s @ {} FPS", video_config.duration_seconds, video_config.fps);
+    println!(
+        "  Duration: {}s @ {} FPS",
+        video_config.duration_seconds, video_config.fps
+    );
     println!("  Resolution: {:?}", video_config.resolution);
     println!("  Aspect ratio: {:?}", video_config.aspect_ratio);
     println!("  Style: {:?}", video_config.style);

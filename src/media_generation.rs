@@ -68,7 +68,10 @@ mod inner {
             t
         };
 
-        let bytes: Vec<u8> = input.bytes().filter(|b| *b != b'\n' && *b != b'\r' && *b != b' ').collect();
+        let bytes: Vec<u8> = input
+            .bytes()
+            .filter(|b| *b != b'\n' && *b != b'\r' && *b != b' ')
+            .collect();
         let len = bytes.len();
         if len == 0 {
             return Ok(Vec::new());
@@ -386,12 +389,12 @@ mod inner {
 
             match response {
                 Ok(resp) => {
-                    let json: serde_json::Value = resp.into_json().map_err(|e| {
-                        MediaGenerationError::GenerationFailed {
-                            provider: self.provider_name().to_string(),
-                            reason: format!("failed to parse response: {}", e),
-                        }
-                    })?;
+                    let json: serde_json::Value =
+                        resp.into_json()
+                            .map_err(|e| MediaGenerationError::GenerationFailed {
+                                provider: self.provider_name().to_string(),
+                                reason: format!("failed to parse response: {}", e),
+                            })?;
 
                     let data = json["data"]
                         .as_array()
@@ -404,18 +407,18 @@ mod inner {
                     let revised_prompt = data["revised_prompt"].as_str().map(|s| s.to_string());
 
                     let image_bytes = if let Some(b64) = data["b64_json"].as_str() {
-                        base64_decode(b64).map_err(|e| {
-                            MediaGenerationError::GenerationFailed {
-                                provider: self.provider_name().to_string(),
-                                reason: format!("base64 decode failed: {}", e),
-                            }
+                        base64_decode(b64).map_err(|e| MediaGenerationError::GenerationFailed {
+                            provider: self.provider_name().to_string(),
+                            reason: format!("base64 decode failed: {}", e),
                         })?
                     } else if let Some(url) = data["url"].as_str() {
                         // SSRF protection: reject private/internal URLs
                         if !is_safe_url(url) {
                             return Err(MediaGenerationError::GenerationFailed {
                                 provider: self.provider_name().to_string(),
-                                reason: "SSRF blocked: image URL points to a private/internal address".to_string(),
+                                reason:
+                                    "SSRF blocked: image URL points to a private/internal address"
+                                        .to_string(),
                             }
                             .into());
                         }
@@ -459,14 +462,15 @@ mod inner {
                 }
                 Err(ureq::Error::Status(code, resp)) => {
                     let body_text = resp.into_string().unwrap_or_default();
-                    let reason = if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body_text) {
-                        json["error"]["message"]
-                            .as_str()
-                            .unwrap_or(&body_text)
-                            .to_string()
-                    } else {
-                        body_text
-                    };
+                    let reason =
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body_text) {
+                            json["error"]["message"]
+                                .as_str()
+                                .unwrap_or(&body_text)
+                                .to_string()
+                        } else {
+                            body_text
+                        };
                     if code == 429 {
                         Err(MediaGenerationError::GenerationFailed {
                             provider: self.provider_name().to_string(),
@@ -484,10 +488,7 @@ mod inner {
                         if reason.to_lowercase().contains("content_policy")
                             || reason.to_lowercase().contains("safety")
                         {
-                            Err(MediaGenerationError::ContentPolicyViolation {
-                                reason,
-                            }
-                            .into())
+                            Err(MediaGenerationError::ContentPolicyViolation { reason }.into())
                         } else {
                             Err(MediaGenerationError::InvalidParams {
                                 param: "request".to_string(),
@@ -577,10 +578,7 @@ mod inner {
             let start = std::time::Instant::now();
 
             // Stability AI v2beta API
-            let url = format!(
-                "{}/{}/text-to-image",
-                self.endpoint, self.model
-            );
+            let url = format!("{}/{}/text-to-image", self.endpoint, self.model);
 
             let aspect_ratio = if config.width == config.height {
                 "1:1".to_string()
@@ -627,12 +625,12 @@ mod inner {
 
             match response {
                 Ok(resp) => {
-                    let json: serde_json::Value = resp.into_json().map_err(|e| {
-                        MediaGenerationError::GenerationFailed {
-                            provider: self.provider_name().to_string(),
-                            reason: format!("failed to parse response: {}", e),
-                        }
-                    })?;
+                    let json: serde_json::Value =
+                        resp.into_json()
+                            .map_err(|e| MediaGenerationError::GenerationFailed {
+                                provider: self.provider_name().to_string(),
+                                reason: format!("failed to parse response: {}", e),
+                            })?;
 
                     let artifacts = json["artifacts"]
                         .as_array()
@@ -642,29 +640,27 @@ mod inner {
                             reason: "no artifacts in response".to_string(),
                         })?;
 
-                    let finish_reason = artifacts["finishReason"]
-                        .as_str()
-                        .unwrap_or("");
+                    let finish_reason = artifacts["finishReason"].as_str().unwrap_or("");
                     if finish_reason == "CONTENT_FILTERED" {
                         return Err(MediaGenerationError::ContentPolicyViolation {
-                            reason: "content was filtered by Stability AI safety system".to_string(),
+                            reason: "content was filtered by Stability AI safety system"
+                                .to_string(),
                         }
                         .into());
                     }
 
-                    let b64 = artifacts["base64"]
-                        .as_str()
-                        .ok_or_else(|| MediaGenerationError::GenerationFailed {
-                            provider: self.provider_name().to_string(),
-                            reason: "no base64 data in artifact".to_string(),
-                        })?;
-
-                    let image_bytes = base64_decode(b64).map_err(|e| {
+                    let b64 = artifacts["base64"].as_str().ok_or_else(|| {
                         MediaGenerationError::GenerationFailed {
                             provider: self.provider_name().to_string(),
-                            reason: format!("base64 decode failed: {}", e),
+                            reason: "no base64 data in artifact".to_string(),
                         }
                     })?;
+
+                    let image_bytes =
+                        base64_decode(b64).map_err(|e| MediaGenerationError::GenerationFailed {
+                            provider: self.provider_name().to_string(),
+                            reason: format!("base64 decode failed: {}", e),
+                        })?;
 
                     let seed_used = artifacts["seed"].as_u64();
                     let elapsed_ms = start.elapsed().as_millis() as u64;
@@ -681,14 +677,12 @@ mod inner {
                 }
                 Err(ureq::Error::Status(code, resp)) => {
                     let body_text = resp.into_string().unwrap_or_default();
-                    let reason = if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body_text) {
-                        json["message"]
-                            .as_str()
-                            .unwrap_or(&body_text)
-                            .to_string()
-                    } else {
-                        body_text
-                    };
+                    let reason =
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body_text) {
+                            json["message"].as_str().unwrap_or(&body_text).to_string()
+                        } else {
+                            body_text
+                        };
                     if code == 401 || code == 403 {
                         Err(MediaGenerationError::ProviderUnavailable {
                             provider: self.provider_name().to_string(),
@@ -861,10 +855,7 @@ mod inner {
         ///
         /// `model_version` should be the full version ID, e.g.
         /// `"stability-ai/sdxl:version_hash"`.
-        pub fn new(
-            api_token: impl Into<String>,
-            model_version: impl Into<String>,
-        ) -> Self {
+        pub fn new(api_token: impl Into<String>, model_version: impl Into<String>) -> Self {
             Self {
                 api_token: api_token.into(),
                 model_version: model_version.into(),
@@ -926,15 +917,13 @@ mod inner {
                 .send_json(&body);
 
             match response {
-                Ok(resp) => {
-                    resp.into_json().map_err(|e| {
-                        MediaGenerationError::GenerationFailed {
-                            provider: self.provider_name().to_string(),
-                            reason: format!("failed to parse prediction response: {}", e),
-                        }
-                        .into()
-                    })
-                }
+                Ok(resp) => resp.into_json().map_err(|e| {
+                    MediaGenerationError::GenerationFailed {
+                        provider: self.provider_name().to_string(),
+                        reason: format!("failed to parse prediction response: {}", e),
+                    }
+                    .into()
+                }),
                 Err(ureq::Error::Status(code, resp)) => {
                     let body_text = resp.into_string().unwrap_or_default();
                     if code == 401 || code == 403 {
@@ -1047,9 +1036,7 @@ mod inner {
             // Step 2: Get the polling URL
             let poll_url = prediction["urls"]["get"]
                 .as_str()
-                .or_else(|| {
-                    prediction["id"].as_str().map(|_| "")
-                })
+                .or_else(|| prediction["id"].as_str().map(|_| ""))
                 .ok_or_else(|| MediaGenerationError::GenerationFailed {
                     provider: self.provider_name().to_string(),
                     reason: "no polling URL in prediction response".to_string(),
@@ -1081,7 +1068,8 @@ mod inner {
             if !is_safe_url(output_url) {
                 return Err(MediaGenerationError::GenerationFailed {
                     provider: self.provider_name().to_string(),
-                    reason: "SSRF blocked: output URL points to a private/internal address".to_string(),
+                    reason: "SSRF blocked: output URL points to a private/internal address"
+                        .to_string(),
                 }
                 .into());
             }
@@ -1532,10 +1520,7 @@ mod inner {
             if self.duration_seconds > 120.0 {
                 return Err(MediaGenerationError::InvalidParams {
                     param: "duration_seconds".to_string(),
-                    reason: format!(
-                        "duration {}s exceeds maximum 120s",
-                        self.duration_seconds
-                    ),
+                    reason: format!("duration {}s exceeds maximum 120s", self.duration_seconds),
                 }
                 .into());
             }
@@ -1622,11 +1607,7 @@ mod inner {
     /// asynchronous: submit a job, poll status, then download when complete.
     pub trait VideoGenerationProvider: Send + Sync {
         /// Submit a new video generation job.
-        fn submit_job(
-            &self,
-            prompt: &str,
-            config: &VideoGenConfig,
-        ) -> Result<VideoJob, AiError>;
+        fn submit_job(&self, prompt: &str, config: &VideoGenConfig) -> Result<VideoJob, AiError>;
 
         /// Check the current status of a previously submitted job.
         fn check_status(&self, job: &VideoJob) -> Result<VideoJobStatus, AiError>;
@@ -1664,11 +1645,7 @@ mod inner {
     }
 
     impl VideoGenerationProvider for RunwayProvider {
-        fn submit_job(
-            &self,
-            prompt: &str,
-            config: &VideoGenConfig,
-        ) -> Result<VideoJob, AiError> {
+        fn submit_job(&self, prompt: &str, config: &VideoGenConfig) -> Result<VideoJob, AiError> {
             config.validate()?;
             if prompt.is_empty() {
                 return Err(MediaGenerationError::InvalidParams {
@@ -1729,11 +1706,7 @@ mod inner {
     }
 
     impl VideoGenerationProvider for SoraProvider {
-        fn submit_job(
-            &self,
-            prompt: &str,
-            config: &VideoGenConfig,
-        ) -> Result<VideoJob, AiError> {
+        fn submit_job(&self, prompt: &str, config: &VideoGenConfig) -> Result<VideoJob, AiError> {
             config.validate()?;
             if prompt.is_empty() {
                 return Err(MediaGenerationError::InvalidParams {
@@ -1788,11 +1761,7 @@ mod inner {
     }
 
     impl VideoGenerationProvider for ReplicateVideoProvider {
-        fn submit_job(
-            &self,
-            prompt: &str,
-            config: &VideoGenConfig,
-        ) -> Result<VideoJob, AiError> {
+        fn submit_job(&self, prompt: &str, config: &VideoGenConfig) -> Result<VideoJob, AiError> {
             config.validate()?;
             if prompt.is_empty() {
                 return Err(MediaGenerationError::InvalidParams {
@@ -2295,7 +2264,10 @@ mod inner {
                     }
                     .into());
                 }
-                Ok(VideoJob::new(format!("mock-job-{}", prompt.len()), &self.name))
+                Ok(VideoJob::new(
+                    format!("mock-job-{}", prompt.len()),
+                    &self.name,
+                ))
             }
 
             fn check_status(&self, _job: &VideoJob) -> Result<VideoJobStatus, AiError> {
@@ -2573,7 +2545,9 @@ mod inner {
         fn test_image_router_generate_unknown_provider() {
             let router = ImageProviderRouter::new();
             let config = ImageGenConfig::default();
-            let err = router.generate("nonexistent", "prompt", &config).unwrap_err();
+            let err = router
+                .generate("nonexistent", "prompt", &config)
+                .unwrap_err();
             assert!(err.to_string().contains("nonexistent"));
         }
 
@@ -2991,7 +2965,9 @@ mod inner {
                 VideoJobStatus::Queued,
             )));
             let config = VideoGenConfig::default();
-            let job = router.submit("mock-router", "a dancing robot", &config).unwrap();
+            let job = router
+                .submit("mock-router", "a dancing robot", &config)
+                .unwrap();
             assert_eq!(job.provider, "mock-router");
             assert_eq!(job.status, VideoJobStatus::Queued);
         }
@@ -3068,7 +3044,10 @@ mod inner {
                 AnalysisOutputFormat::KeyMoments
             );
             // All four are distinct from each other.
-            assert_ne!(AnalysisOutputFormat::Summary, AnalysisOutputFormat::Detailed);
+            assert_ne!(
+                AnalysisOutputFormat::Summary,
+                AnalysisOutputFormat::Detailed
+            );
             assert_ne!(
                 AnalysisOutputFormat::Timeline,
                 AnalysisOutputFormat::KeyMoments
@@ -3096,9 +3075,7 @@ mod inner {
         #[test]
         fn test_video_analyzer_compute_timestamps_fixed_interval() {
             let config = VideoAnalysisConfig {
-                extraction_strategy: FrameExtractionStrategy::FixedInterval {
-                    interval_ms: 3000,
-                },
+                extraction_strategy: FrameExtractionStrategy::FixedInterval { interval_ms: 3000 },
                 max_frames: 20,
                 ..Default::default()
             };
@@ -3180,11 +3157,7 @@ mod inner {
                 frame_index: 3,
                 timestamp_ms: 7500,
                 description: "A car on a highway".to_string(),
-                objects_detected: vec![
-                    "car".to_string(),
-                    "road".to_string(),
-                    "sign".to_string(),
-                ],
+                objects_detected: vec!["car".to_string(), "road".to_string(), "sign".to_string()],
                 confidence: 0.92,
             };
             assert_eq!(fd.frame_index, 3);

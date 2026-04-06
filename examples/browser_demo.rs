@@ -6,9 +6,7 @@
 //!
 //! Run with: cargo run --example browser_demo --features "browser"
 
-use ai_assistant::{
-    find_chrome_binary, BrowserError, BrowserPageContent, BrowserSession,
-};
+use ai_assistant::{find_chrome_binary, BrowserError, BrowserPageContent, BrowserSession};
 
 fn main() {
     println!("=== Browser Automation Demo ===\n");

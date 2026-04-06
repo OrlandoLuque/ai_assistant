@@ -258,7 +258,9 @@ impl ContainerExecutor {
         let start = std::time::Instant::now();
 
         // Security: reject shell metacharacters to prevent injection via sh -c
-        const SHELL_META: &[char] = &[';', '|', '&', '$', '`', '(', ')', '>', '<', '{', '}', '\n', '\r'];
+        const SHELL_META: &[char] = &[
+            ';', '|', '&', '$', '`', '(', ')', '>', '<', '{', '}', '\n', '\r',
+        ];
         for ch in SHELL_META {
             if command.contains(*ch) {
                 return Err(ContainerError::PolicyViolation(format!(
@@ -441,22 +443,31 @@ pub fn register_container_tools(
 /// Useful for documentation and introspection.
 pub fn container_tool_definitions() -> Vec<ToolDef> {
     vec![
-        ToolBuilder::new("container_create", "Create a new Docker container from an image")
-            .param(ParamSchema::string("image", "Docker image to use"))
-            .param(ParamSchema::string("name", "Container name").optional())
-            .param(ParamSchema::string("env", "Environment variables as JSON object").optional())
-            .param(
-                ParamSchema::string("mounts", "Bind mounts as JSON array of \"host:container\"")
-                    .optional(),
-            )
-            .category("container")
-            .build(),
+        ToolBuilder::new(
+            "container_create",
+            "Create a new Docker container from an image",
+        )
+        .param(ParamSchema::string("image", "Docker image to use"))
+        .param(ParamSchema::string("name", "Container name").optional())
+        .param(ParamSchema::string("env", "Environment variables as JSON object").optional())
+        .param(
+            ParamSchema::string("mounts", "Bind mounts as JSON array of \"host:container\"")
+                .optional(),
+        )
+        .category("container")
+        .build(),
         ToolBuilder::new("container_start", "Start a stopped Docker container")
-            .param(ParamSchema::string("container_id", "ID of the container to start"))
+            .param(ParamSchema::string(
+                "container_id",
+                "ID of the container to start",
+            ))
             .category("container")
             .build(),
         ToolBuilder::new("container_stop", "Stop a running Docker container")
-            .param(ParamSchema::string("container_id", "ID of the container to stop"))
+            .param(ParamSchema::string(
+                "container_id",
+                "ID of the container to stop",
+            ))
             .param(
                 ParamSchema::integer("timeout", "Seconds to wait before killing (default: 10)")
                     .optional(),
@@ -464,22 +475,28 @@ pub fn container_tool_definitions() -> Vec<ToolDef> {
             .category("container")
             .build(),
         ToolBuilder::new("container_remove", "Remove a Docker container")
-            .param(ParamSchema::string("container_id", "ID of the container to remove"))
+            .param(ParamSchema::string(
+                "container_id",
+                "ID of the container to remove",
+            ))
             .param(ParamSchema::boolean("force", "Force removal of running container").optional())
             .category("container")
             .build(),
-        ToolBuilder::new("container_exec", "Execute a command inside a running container")
-            .param(ParamSchema::string(
-                "container_id",
-                "ID of the container to exec into",
-            ))
-            .param(ParamSchema::string("command", "Shell command to execute"))
-            .param(
-                ParamSchema::integer("timeout", "Execution timeout in seconds (default: 30)")
-                    .optional(),
-            )
-            .category("container")
-            .build(),
+        ToolBuilder::new(
+            "container_exec",
+            "Execute a command inside a running container",
+        )
+        .param(ParamSchema::string(
+            "container_id",
+            "ID of the container to exec into",
+        ))
+        .param(ParamSchema::string("command", "Shell command to execute"))
+        .param(
+            ParamSchema::integer("timeout", "Execution timeout in seconds (default: 30)")
+                .optional(),
+        )
+        .category("container")
+        .build(),
         ToolBuilder::new("container_logs", "Retrieve logs from a Docker container")
             .param(ParamSchema::string("container_id", "ID of the container"))
             .param(
@@ -518,16 +535,18 @@ fn register_container_create(
     executor: Arc<RwLock<ContainerExecutor>>,
     sandbox: Arc<RwLock<SandboxValidator>>,
 ) {
-    let def = ToolBuilder::new("container_create", "Create a new Docker container from an image")
-        .param(ParamSchema::string("image", "Docker image to use"))
-        .param(ParamSchema::string("name", "Container name").optional())
-        .param(ParamSchema::string("env", "Environment variables as JSON object").optional())
-        .param(
-            ParamSchema::string("mounts", "Bind mounts as JSON array of \"host:container\"")
-                .optional(),
-        )
-        .category("container")
-        .build();
+    let def = ToolBuilder::new(
+        "container_create",
+        "Create a new Docker container from an image",
+    )
+    .param(ParamSchema::string("image", "Docker image to use"))
+    .param(ParamSchema::string("name", "Container name").optional())
+    .param(ParamSchema::string("env", "Environment variables as JSON object").optional())
+    .param(
+        ParamSchema::string("mounts", "Bind mounts as JSON array of \"host:container\"").optional(),
+    )
+    .category("container")
+    .build();
 
     let handler: ToolHandler = Arc::new(move |call: &ToolCall| {
         let image = call
@@ -707,19 +726,18 @@ fn register_container_exec(
     executor: Arc<RwLock<ContainerExecutor>>,
     sandbox: Arc<RwLock<SandboxValidator>>,
 ) {
-    let def =
-        ToolBuilder::new("container_exec", "Execute a command inside a running container")
-            .param(ParamSchema::string(
-                "container_id",
-                "ID of the container to exec into",
-            ))
-            .param(ParamSchema::string("command", "Shell command to execute"))
-            .param(
-                ParamSchema::integer("timeout", "Execution timeout in seconds (default: 30)")
-                    .optional(),
-            )
-            .category("container")
-            .build();
+    let def = ToolBuilder::new(
+        "container_exec",
+        "Execute a command inside a running container",
+    )
+    .param(ParamSchema::string(
+        "container_id",
+        "ID of the container to exec into",
+    ))
+    .param(ParamSchema::string("command", "Shell command to execute"))
+    .param(ParamSchema::integer("timeout", "Execution timeout in seconds (default: 30)").optional())
+    .category("container")
+    .build();
 
     let handler: ToolHandler = Arc::new(move |call: &ToolCall| {
         let container_id = call
@@ -779,10 +797,7 @@ fn register_container_logs(
     sandbox: Arc<RwLock<SandboxValidator>>,
 ) {
     let def = ToolBuilder::new("container_logs", "Retrieve logs from a Docker container")
-        .param(ParamSchema::string(
-            "container_id",
-            "ID of the container",
-        ))
+        .param(ParamSchema::string("container_id", "ID of the container"))
         .param(
             ParamSchema::integer("tail", "Number of lines from the end (default: 100)").optional(),
         )
@@ -817,10 +832,7 @@ fn register_container_logs(
     registry.register(def, handler);
 }
 
-fn register_container_list(
-    registry: &mut ToolRegistry,
-    executor: Arc<RwLock<ContainerExecutor>>,
-) {
+fn register_container_list(registry: &mut ToolRegistry, executor: Arc<RwLock<ContainerExecutor>>) {
     let def = ToolBuilder::new("container_list", "List all Docker containers")
         .category("container")
         .build();
@@ -869,9 +881,7 @@ fn register_container_run_code(
         "Programming language: python, javascript, or bash",
     ))
     .param(ParamSchema::string("code", "Source code to execute"))
-    .param(
-        ParamSchema::integer("timeout", "Execution timeout in seconds (default: 30)").optional(),
-    )
+    .param(ParamSchema::integer("timeout", "Execution timeout in seconds (default: 30)").optional())
     .category("container")
     .build();
 
@@ -1031,11 +1041,7 @@ mod tests {
             .unwrap();
         assert!(id_param.required);
 
-        let timeout_param = def
-            .parameters
-            .iter()
-            .find(|p| p.name == "timeout")
-            .unwrap();
+        let timeout_param = def.parameters.iter().find(|p| p.name == "timeout").unwrap();
         assert!(!timeout_param.required);
     }
 
@@ -1069,18 +1075,10 @@ mod tests {
             .unwrap();
         assert!(id_param.required);
 
-        let cmd_param = def
-            .parameters
-            .iter()
-            .find(|p| p.name == "command")
-            .unwrap();
+        let cmd_param = def.parameters.iter().find(|p| p.name == "command").unwrap();
         assert!(cmd_param.required);
 
-        let timeout_param = def
-            .parameters
-            .iter()
-            .find(|p| p.name == "timeout")
-            .unwrap();
+        let timeout_param = def.parameters.iter().find(|p| p.name == "timeout").unwrap();
         assert!(!timeout_param.required);
     }
 
@@ -1130,11 +1128,7 @@ mod tests {
         let code_param = def.parameters.iter().find(|p| p.name == "code").unwrap();
         assert!(code_param.required);
 
-        let timeout_param = def
-            .parameters
-            .iter()
-            .find(|p| p.name == "timeout")
-            .unwrap();
+        let timeout_param = def.parameters.iter().find(|p| p.name == "timeout").unwrap();
         assert!(!timeout_param.required);
     }
 
@@ -1172,10 +1166,7 @@ mod tests {
         let registry = test_registry();
         let call = ToolCall::new(
             "container_exec",
-            HashMap::from([(
-                "container_id".to_string(),
-                serde_json::json!("abc123"),
-            )]),
+            HashMap::from([("container_id".to_string(), serde_json::json!("abc123"))]),
         );
         let result = registry.execute(&call);
         assert!(
@@ -1256,11 +1247,7 @@ mod tests {
         // Verify the timeout parameter is optional (default 10 is applied in handler)
         let registry = test_registry();
         let def = registry.get("container_stop").unwrap();
-        let timeout_param = def
-            .parameters
-            .iter()
-            .find(|p| p.name == "timeout")
-            .unwrap();
+        let timeout_param = def.parameters.iter().find(|p| p.name == "timeout").unwrap();
         assert!(!timeout_param.required, "timeout should be optional");
         assert_eq!(
             timeout_param.param_type,
@@ -1368,10 +1355,7 @@ mod tests {
             ContainerError::ContainerNotFound("abc".into()).to_string(),
             "Container not found: abc"
         );
-        assert_eq!(
-            ContainerError::Timeout.to_string(),
-            "Operation timed out"
-        );
+        assert_eq!(ContainerError::Timeout.to_string(), "Operation timed out");
         assert_eq!(
             ContainerError::PolicyViolation("no root".into()).to_string(),
             "Policy violation: no root"

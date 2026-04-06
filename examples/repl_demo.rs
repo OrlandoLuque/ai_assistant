@@ -18,7 +18,10 @@ fn main() {
     config.show_metrics = true;
     config.show_timestamps = true;
     let mut engine = ReplEngine::new(config);
-    println!("Created REPL engine (prompt: {:?})\n", engine.config().prompt_string);
+    println!(
+        "Created REPL engine (prompt: {:?})\n",
+        engine.config().prompt_string
+    );
 
     // 2. Process a /help command
     match engine.process_input("/help") {
@@ -72,7 +75,10 @@ fn main() {
     );
 
     // 7. Show command history
-    println!("\nCommand history ({} entries):", engine.command_history().len());
+    println!(
+        "\nCommand history ({} entries):",
+        engine.command_history().len()
+    );
     for (i, entry) in engine.command_history().iter().enumerate() {
         println!("  [{}] {}", i + 1, entry);
     }

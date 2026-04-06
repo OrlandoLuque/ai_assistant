@@ -22,9 +22,9 @@
 
 use std::process::ExitCode;
 
-use ai_assistant::AiResponse;
 use ai_assistant::server::{AuthConfig, ServerConfig, TlsConfig};
 use ai_assistant::server_axum::AxumServer;
+use ai_assistant::AiResponse;
 
 // Docker handle type — conditional on feature
 #[cfg(feature = "containers")]
@@ -141,7 +141,10 @@ fn main() -> ExitCode {
     let addr = server.config().bind_address();
 
     if let Ok(info) = update_rx.try_recv() {
-        eprintln!("  Update available: v{} \u{2192} v{}", info.current, info.latest);
+        eprintln!(
+            "  Update available: v{} \u{2192} v{}",
+            info.current, info.latest
+        );
         eprintln!("  Download: {}", info.url);
         eprintln!();
     }
@@ -312,7 +315,10 @@ fn handle_docker_command(
             if containers.is_empty() {
                 return "No managed containers.".to_string();
             }
-            let mut out = format!("{:<16} {:<20} {:<25} {:<10}\n", "ID", "NAME", "IMAGE", "STATUS");
+            let mut out = format!(
+                "{:<16} {:<20} {:<25} {:<10}\n",
+                "ID", "NAME", "IMAGE", "STATUS"
+            );
             out.push_str(&"-".repeat(71));
             out.push('\n');
             for r in containers {
@@ -332,7 +338,9 @@ fn handle_docker_command(
         "create" => {
             let image = match parts.get(2) {
                 Some(img) => *img,
-                None => return "Usage: /docker create <image> [--name NAME] [--cmd CMD...]".to_string(),
+                None => {
+                    return "Usage: /docker create <image> [--name NAME] [--cmd CMD...]".to_string()
+                }
             };
             let mut name = "mcp_container".to_string();
             let mut cmd: Option<Vec<String>> = None;
@@ -351,7 +359,9 @@ fn handle_docker_command(
                         cmd = Some(parts[i + 1..].iter().map(|s| s.to_string()).collect());
                         break;
                     }
-                    _ => { i += 1; }
+                    _ => {
+                        i += 1;
+                    }
                 }
             }
             let opts = ai_assistant::CreateOptions {
@@ -363,7 +373,12 @@ fn handle_docker_command(
                 Err(e) => return format!("Error: lock poisoned: {}", e),
             };
             match guard.create(image, &name, opts) {
-                Ok(id) => format!("Created container {} (image: {}, name: {})", &id[..12.min(id.len())], image, name),
+                Ok(id) => format!(
+                    "Created container {} (image: {}, name: {})",
+                    &id[..12.min(id.len())],
+                    image,
+                    name
+                ),
                 Err(e) => format!("Error: {}", e),
             }
         }
@@ -437,7 +452,9 @@ fn handle_docker_command(
                         out.push_str(&result.stdout);
                     }
                     if !result.stderr.is_empty() {
-                        if !out.is_empty() { out.push('\n'); }
+                        if !out.is_empty() {
+                            out.push('\n');
+                        }
                         out.push_str("[stderr] ");
                         out.push_str(&result.stderr);
                     }
@@ -502,8 +519,7 @@ fn handle_docker_command(
             format!("Cleaned up {} container(s)", count)
         }
 
-        "help" | _ => {
-            "Docker commands:\n\
+        "help" | _ => "Docker commands:\n\
              \x20 /docker list              List all containers\n\
              \x20 /docker create <image>    Create container (--name NAME, --cmd CMD...)\n\
              \x20 /docker start <id>        Start a container\n\
@@ -514,8 +530,7 @@ fn handle_docker_command(
              \x20 /docker status <id>       Show container status\n\
              \x20 /docker cleanup           Remove all managed containers\n\
              \x20 /docker help              Show this help"
-                .to_string()
-        }
+            .to_string(),
     }
 }
 
@@ -581,16 +596,34 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
-            "--host" => { i += 1; cli.host = Some(next_val(args, i, "--host")?); }
+            "--host" => {
+                i += 1;
+                cli.host = Some(next_val(args, i, "--host")?);
+            }
             "--port" => {
                 i += 1;
                 let val = next_val(args, i, "--port")?;
-                cli.port = Some(val.parse().map_err(|_| format!("Invalid port: '{}'", val))?);
+                cli.port = Some(
+                    val.parse()
+                        .map_err(|_| format!("Invalid port: '{}'", val))?,
+                );
             }
-            "--config" => { i += 1; cli.config_path = Some(next_val(args, i, "--config")?); }
-            "--api-key" => { i += 1; cli.api_key = Some(next_val(args, i, "--api-key")?); }
-            "--tls-cert" => { i += 1; cli.tls_cert = Some(next_val(args, i, "--tls-cert")?); }
-            "--tls-key" => { i += 1; cli.tls_key = Some(next_val(args, i, "--tls-key")?); }
+            "--config" => {
+                i += 1;
+                cli.config_path = Some(next_val(args, i, "--config")?);
+            }
+            "--api-key" => {
+                i += 1;
+                cli.api_key = Some(next_val(args, i, "--api-key")?);
+            }
+            "--tls-cert" => {
+                i += 1;
+                cli.tls_cert = Some(next_val(args, i, "--tls-cert")?);
+            }
+            "--tls-key" => {
+                i += 1;
+                cli.tls_key = Some(next_val(args, i, "--tls-key")?);
+            }
             "--repl" => cli.repl = true,
             "--auto-config" => cli.auto_config = true,
             "--dry-run" => cli.dry_run = true,
@@ -604,7 +637,9 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
 }
 
 fn next_val(args: &[String], index: usize, flag: &str) -> Result<String, String> {
-    args.get(index).cloned().ok_or_else(|| format!("{} requires a value", flag))
+    args.get(index)
+        .cloned()
+        .ok_or_else(|| format!("{} requires a value", flag))
 }
 
 fn print_usage() {
@@ -663,7 +698,16 @@ mod tests {
 
     #[test]
     fn test_parse_args_all() {
-        let a = args(&["--host", "0.0.0.0", "--port", "3000", "--repl", "--auto-config", "--dry-run", "--containers"]);
+        let a = args(&[
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "3000",
+            "--repl",
+            "--auto-config",
+            "--dry-run",
+            "--containers",
+        ]);
         let cli = parse_args(&a).unwrap();
         assert_eq!(cli.host.as_deref(), Some("0.0.0.0"));
         assert_eq!(cli.port, Some(3000));
@@ -697,9 +741,17 @@ mod tests {
     #[test]
     fn test_build_config_defaults() {
         let cli = CliArgs {
-            host: None, port: None, config_path: None, api_key: None,
-            tls_cert: None, tls_key: None, repl: false, auto_config: false,
-            dry_run: false, containers: false, help: false,
+            host: None,
+            port: None,
+            config_path: None,
+            api_key: None,
+            tls_cert: None,
+            tls_key: None,
+            repl: false,
+            auto_config: false,
+            dry_run: false,
+            containers: false,
+            help: false,
         };
         let config = build_config(&cli).unwrap();
         assert_eq!(config.host, "127.0.0.1");
@@ -709,10 +761,17 @@ mod tests {
     #[test]
     fn test_build_config_overrides() {
         let cli = CliArgs {
-            host: Some("0.0.0.0".to_string()), port: Some(3000),
-            config_path: None, api_key: Some("key".to_string()),
-            tls_cert: None, tls_key: None, repl: false, auto_config: false,
-            dry_run: false, containers: false, help: false,
+            host: Some("0.0.0.0".to_string()),
+            port: Some(3000),
+            config_path: None,
+            api_key: Some("key".to_string()),
+            tls_cert: None,
+            tls_key: None,
+            repl: false,
+            auto_config: false,
+            dry_run: false,
+            containers: false,
+            help: false,
         };
         let config = build_config(&cli).unwrap();
         assert_eq!(config.host, "0.0.0.0");
@@ -723,9 +782,17 @@ mod tests {
     #[test]
     fn test_build_config_tls_mismatch() {
         let cli = CliArgs {
-            host: None, port: None, config_path: None, api_key: None,
-            tls_cert: Some("c.pem".to_string()), tls_key: None,
-            repl: false, auto_config: false, dry_run: false, containers: false, help: false,
+            host: None,
+            port: None,
+            config_path: None,
+            api_key: None,
+            tls_cert: Some("c.pem".to_string()),
+            tls_key: None,
+            repl: false,
+            auto_config: false,
+            dry_run: false,
+            containers: false,
+            help: false,
         };
         assert!(build_config(&cli).is_err());
     }

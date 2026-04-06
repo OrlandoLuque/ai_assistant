@@ -358,10 +358,7 @@ impl ToolRegistry {
 
         for result in results {
             if result.success {
-                output.push_str(&format!(
-                    "[Tool: {}]\n{}\n\n",
-                    result.name, result.output
-                ));
+                output.push_str(&format!("[Tool: {}]\n{}\n\n", result.name, result.output));
             } else {
                 output.push_str(&format!(
                     "[Tool: {} - Error]\n{}\n\n",

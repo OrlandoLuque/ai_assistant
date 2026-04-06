@@ -81,10 +81,9 @@ impl Breakpoint {
                 event.event_type == DebugEventType::StepComplete
                     && event.step_number == *step_number
             }
-            Breakpoint::OnConfidenceBelow { threshold } => event
-                .confidence
-                .map(|c| c < *threshold)
-                .unwrap_or(false),
+            Breakpoint::OnConfidenceBelow { threshold } => {
+                event.confidence.map(|c| c < *threshold).unwrap_or(false)
+            }
             Breakpoint::OnError => event.is_error,
             Breakpoint::OnCostAbove { threshold } => {
                 event.cost.map(|c| c > *threshold).unwrap_or(false)
@@ -496,9 +495,11 @@ impl PerformanceProfiler {
 
     /// The step with the highest cost.
     pub fn most_expensive_step(&self) -> Option<&StepProfile> {
-        self.step_metrics
-            .iter()
-            .max_by(|a, b| a.cost.partial_cmp(&b.cost).unwrap_or(std::cmp::Ordering::Equal))
+        self.step_metrics.iter().max_by(|a, b| {
+            a.cost
+                .partial_cmp(&b.cost)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
     }
 
     /// Produce an aggregate summary of all recorded steps.
@@ -597,9 +598,7 @@ impl StateInspector {
 
     /// Look up the first snapshot captured at the given step number.
     pub fn snapshot_at(&self, step_number: usize) -> Option<&StateSnapshot> {
-        self.snapshots
-            .iter()
-            .find(|s| s.step_number == step_number)
+        self.snapshots.iter().find(|s| s.step_number == step_number)
     }
 
     /// Read-only view of all snapshots.
@@ -621,14 +620,8 @@ impl StateInspector {
         let keys_a: std::collections::HashSet<&String> = snap_a.state_data.keys().collect();
         let keys_b: std::collections::HashSet<&String> = snap_b.state_data.keys().collect();
 
-        let added_keys: Vec<String> = keys_b
-            .difference(&keys_a)
-            .map(|k| (*k).clone())
-            .collect();
-        let removed_keys: Vec<String> = keys_a
-            .difference(&keys_b)
-            .map(|k| (*k).clone())
-            .collect();
+        let added_keys: Vec<String> = keys_b.difference(&keys_a).map(|k| (*k).clone()).collect();
+        let removed_keys: Vec<String> = keys_a.difference(&keys_b).map(|k| (*k).clone()).collect();
         let changed_keys: Vec<String> = keys_a
             .intersection(&keys_b)
             .filter(|k| snap_a.state_data[**k] != snap_b.state_data[**k])
@@ -880,10 +873,24 @@ mod tests {
     #[test]
     fn test_breakpoint_on_confidence_below_matches() {
         let bp = Breakpoint::OnConfidenceBelow { threshold: 0.5 };
-        let event = make_event(DebugEventType::StepComplete, 1, None, Some(0.3), None, false);
+        let event = make_event(
+            DebugEventType::StepComplete,
+            1,
+            None,
+            Some(0.3),
+            None,
+            false,
+        );
         assert!(bp.matches(&event));
 
-        let event2 = make_event(DebugEventType::StepComplete, 1, None, Some(0.7), None, false);
+        let event2 = make_event(
+            DebugEventType::StepComplete,
+            1,
+            None,
+            Some(0.7),
+            None,
+            false,
+        );
         assert!(!bp.matches(&event2));
 
         // No confidence => no match
@@ -894,10 +901,24 @@ mod tests {
     #[test]
     fn test_breakpoint_on_cost_above_matches() {
         let bp = Breakpoint::OnCostAbove { threshold: 1.0 };
-        let event = make_event(DebugEventType::StepComplete, 1, None, None, Some(1.5), false);
+        let event = make_event(
+            DebugEventType::StepComplete,
+            1,
+            None,
+            None,
+            Some(1.5),
+            false,
+        );
         assert!(bp.matches(&event));
 
-        let event2 = make_event(DebugEventType::StepComplete, 1, None, None, Some(0.5), false);
+        let event2 = make_event(
+            DebugEventType::StepComplete,
+            1,
+            None,
+            None,
+            Some(0.5),
+            false,
+        );
         assert!(!bp.matches(&event2));
 
         // No cost => no match
@@ -934,8 +955,22 @@ mod tests {
         let mut rec = ExecutionRecorder::new("agent-1", 100);
         rec.start();
 
-        let e1 = make_event(DebugEventType::ToolCallStart, 0, Some("search"), None, None, false);
-        let e2 = make_event(DebugEventType::ToolCallEnd, 0, Some("search"), None, None, false);
+        let e1 = make_event(
+            DebugEventType::ToolCallStart,
+            0,
+            Some("search"),
+            None,
+            None,
+            false,
+        );
+        let e2 = make_event(
+            DebugEventType::ToolCallEnd,
+            0,
+            Some("search"),
+            None,
+            None,
+            false,
+        );
         let e3 = make_event(DebugEventType::StepComplete, 1, None, None, None, false);
 
         rec.record(e1).unwrap();
@@ -999,12 +1034,33 @@ mod tests {
     fn test_replay_next_peek_reset_progress() {
         let mut rec = ExecutionRecorder::new("agent-r", 100);
         rec.start();
-        rec.record(make_event(DebugEventType::StepComplete, 0, None, None, None, false))
-            .unwrap();
-        rec.record(make_event(DebugEventType::StepComplete, 1, None, None, None, false))
-            .unwrap();
-        rec.record(make_event(DebugEventType::StepComplete, 2, None, None, None, false))
-            .unwrap();
+        rec.record(make_event(
+            DebugEventType::StepComplete,
+            0,
+            None,
+            None,
+            None,
+            false,
+        ))
+        .unwrap();
+        rec.record(make_event(
+            DebugEventType::StepComplete,
+            1,
+            None,
+            None,
+            None,
+            false,
+        ))
+        .unwrap();
+        rec.record(make_event(
+            DebugEventType::StepComplete,
+            2,
+            None,
+            None,
+            None,
+            false,
+        ))
+        .unwrap();
         rec.stop();
 
         let mut replay = ExecutionReplay::new(&rec);
@@ -1172,10 +1228,7 @@ mod tests {
         assert_eq!(summary.total_duration_ms, 530);
         assert_eq!(summary.total_tokens, 405);
         assert!((summary.total_cost - 0.121).abs() < 1e-9);
-        assert_eq!(
-            summary.slowest_step_name.as_deref(),
-            Some("slow_moderate")
-        );
+        assert_eq!(summary.slowest_step_name.as_deref(), Some("slow_moderate"));
         assert_eq!(
             summary.most_expensive_step_name.as_deref(),
             Some("fast_expensive")
@@ -1225,7 +1278,7 @@ mod tests {
         data_b.insert("beta".to_string(), serde_json::json!("new")); // changed
         data_b.insert("gamma".to_string(), serde_json::json!(true)); // unchanged
         data_b.insert("delta".to_string(), serde_json::json!(99)); // added
-        // alpha is removed
+                                                                   // alpha is removed
         inspector.capture(1, "step_b", data_b);
 
         let diff = inspector.diff(0, 1).unwrap();
@@ -1270,7 +1323,14 @@ mod tests {
         dbg.start();
 
         // Non-matching event
-        let e1 = make_event(DebugEventType::StepComplete, 0, None, None, Some(0.5), false);
+        let e1 = make_event(
+            DebugEventType::StepComplete,
+            0,
+            None,
+            None,
+            Some(0.5),
+            false,
+        );
         let triggered = dbg.process_event(e1);
         assert!(triggered.is_empty());
 
@@ -1280,7 +1340,14 @@ mod tests {
         assert_eq!(triggered.len(), 1);
 
         // High cost triggers OnCostAbove
-        let e3 = make_event(DebugEventType::StepComplete, 2, None, None, Some(5.0), false);
+        let e3 = make_event(
+            DebugEventType::StepComplete,
+            2,
+            None,
+            None,
+            Some(5.0),
+            false,
+        );
         let triggered = dbg.process_event(e3);
         assert_eq!(triggered.len(), 1);
 
@@ -1327,12 +1394,15 @@ mod tests {
 
         let mut replay = dbg.create_replay();
         assert_eq!(replay.total_events(), 3);
-        assert_eq!(replay.next().unwrap().event_type, DebugEventType::PlanningStart);
-        assert_eq!(replay.next().unwrap().event_type, DebugEventType::PlanningEnd);
         assert_eq!(
-            replay.next().unwrap().tool_name.as_deref(),
-            Some("search")
+            replay.next().unwrap().event_type,
+            DebugEventType::PlanningStart
         );
+        assert_eq!(
+            replay.next().unwrap().event_type,
+            DebugEventType::PlanningEnd
+        );
+        assert_eq!(replay.next().unwrap().tool_name.as_deref(), Some("search"));
         assert!(replay.is_complete());
     }
 

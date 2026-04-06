@@ -242,15 +242,22 @@ impl LoadShedder {
             reasons.push(format!("queue_depth={}", context.queue_depth));
         }
         if latency_exceeded {
-            reasons.push(format!("p95={}ms", context.p95_latency.map_or(0, |l| l.as_millis() as u64)));
+            reasons.push(format!(
+                "p95={}ms",
+                context.p95_latency.map_or(0, |l| l.as_millis() as u64)
+            ));
         }
         let reason = reasons.join(", ");
 
         match self.config.strategy {
             SheddingStrategy::PriorityBased => self.evaluate_priority_based(context, reason),
-            SheddingStrategy::Probabilistic => {
-                self.evaluate_probabilistic(context, cpu_exceeded, memory_exceeded, queue_exceeded, reason)
-            }
+            SheddingStrategy::Probabilistic => self.evaluate_probabilistic(
+                context,
+                cpu_exceeded,
+                memory_exceeded,
+                queue_exceeded,
+                reason,
+            ),
             SheddingStrategy::OldestFirst => self.evaluate_oldest_first(context, reason),
             SheddingStrategy::Adaptive => self.evaluate_adaptive(
                 context,
@@ -285,10 +292,7 @@ impl LoadShedder {
 
     /// Get current statistics.
     pub fn stats(&self) -> SheddingStats {
-        self.stats
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
+        self.stats.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// Reset all statistics.
@@ -332,8 +336,7 @@ impl LoadShedder {
         reason: String,
     ) -> SheddingDecision {
         // Count how many thresholds are exceeded → higher = more likely to shed
-        let exceeded_count =
-            cpu_exceeded as u32 + memory_exceeded as u32 + queue_exceeded as u32;
+        let exceeded_count = cpu_exceeded as u32 + memory_exceeded as u32 + queue_exceeded as u32;
         let shed_probability = match exceeded_count {
             0 => return SheddingDecision::Accept,
             1 => 0.25,
@@ -388,7 +391,7 @@ impl LoadShedder {
 
         // Severity score: combine overload count with priority
         let priority_factor = match context.priority {
-            RequestPriority::High => 0.0,   // protected
+            RequestPriority::High => 0.0, // protected
             RequestPriority::Normal => 0.5,
             RequestPriority::Low => 1.0,
         };

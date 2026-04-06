@@ -6,10 +6,7 @@
 //! session management, and the voice pipeline.
 //! Note: actual audio I/O requires a running audio system.
 
-use ai_assistant::{
-    VoiceAgentConfig, VoiceAgent, VadConfig,
-    InterruptionPolicy, TurnPolicy,
-};
+use ai_assistant::{InterruptionPolicy, TurnPolicy, VadConfig, VoiceAgent, VoiceAgentConfig};
 
 fn main() {
     println!("=== Real-Time Voice Agent Demo ===\n");
@@ -25,7 +22,10 @@ fn main() {
     println!("VAD Configuration:");
     println!("  Energy threshold: {}", vad_config.energy_threshold);
     println!("  Silence duration: {}ms", vad_config.silence_duration_ms);
-    println!("  Min speech duration: {}ms", vad_config.min_speech_duration_ms);
+    println!(
+        "  Min speech duration: {}ms",
+        vad_config.min_speech_duration_ms
+    );
     println!("  Frame size: {}ms", vad_config.frame_size_ms);
 
     // 2. Configure the voice agent

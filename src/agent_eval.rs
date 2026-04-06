@@ -324,10 +324,8 @@ impl TrajectoryAnalyzer {
             current.total_duration_ms as f64,
         );
         let cost_change_pct = pct_change(baseline.total_cost, current.total_cost);
-        let efficiency_change_pct =
-            pct_change(baseline.step_efficiency, current.step_efficiency);
-        let accuracy_change_pct =
-            pct_change(baseline.tool_accuracy, current.tool_accuracy);
+        let efficiency_change_pct = pct_change(baseline.step_efficiency, current.step_efficiency);
+        let accuracy_change_pct = pct_change(baseline.tool_accuracy, current.tool_accuracy);
 
         // "improved" = duration went down OR stayed same, AND efficiency went up or stayed same
         let improved = current.total_duration_ms <= baseline.total_duration_ms
@@ -709,10 +707,7 @@ fn compute_breakdowns(steps: &[EvalTrajectoryStep]) -> Vec<StepBreakdown> {
 }
 
 /// Generate human-readable recommendations from metrics and breakdowns.
-fn generate_recommendations(
-    metrics: &AgentMetrics,
-    breakdowns: &[StepBreakdown],
-) -> Vec<String> {
+fn generate_recommendations(metrics: &AgentMetrics, breakdowns: &[StepBreakdown]) -> Vec<String> {
     let mut recs = Vec::new();
 
     // High failure rate overall
@@ -746,9 +741,7 @@ fn generate_recommendations(
     // Too many tool calls relative to total steps
     if metrics.total_steps > 3 && metrics.tool_call_count as f64 / metrics.total_steps as f64 > 0.8
     {
-        recs.push(
-            "Agent is heavily tool-dependent — consider caching or planning steps".into(),
-        );
+        recs.push("Agent is heavily tool-dependent — consider caching or planning steps".into());
     }
 
     // High average latency
@@ -913,10 +906,24 @@ mod tests {
     fn test_total_duration_ms() {
         let mut rec = TrajectoryRecorder::new("a");
         rec.start();
-        rec.record_step(make_step_full("a", StepActionType::ToolCall, true, 200, 10, 0.0))
-            .unwrap();
-        rec.record_step(make_step_full("b", StepActionType::ToolCall, true, 300, 10, 0.0))
-            .unwrap();
+        rec.record_step(make_step_full(
+            "a",
+            StepActionType::ToolCall,
+            true,
+            200,
+            10,
+            0.0,
+        ))
+        .unwrap();
+        rec.record_step(make_step_full(
+            "b",
+            StepActionType::ToolCall,
+            true,
+            300,
+            10,
+            0.0,
+        ))
+        .unwrap();
         assert_eq!(rec.total_duration_ms(), 500);
     }
 
@@ -924,10 +931,24 @@ mod tests {
     fn test_total_tokens() {
         let mut rec = TrajectoryRecorder::new("a");
         rec.start();
-        rec.record_step(make_step_full("a", StepActionType::LlmQuery, true, 10, 100, 0.0))
-            .unwrap();
-        rec.record_step(make_step_full("b", StepActionType::LlmQuery, true, 10, 250, 0.0))
-            .unwrap();
+        rec.record_step(make_step_full(
+            "a",
+            StepActionType::LlmQuery,
+            true,
+            10,
+            100,
+            0.0,
+        ))
+        .unwrap();
+        rec.record_step(make_step_full(
+            "b",
+            StepActionType::LlmQuery,
+            true,
+            10,
+            250,
+            0.0,
+        ))
+        .unwrap();
         assert_eq!(rec.total_tokens(), 350);
     }
 
@@ -935,10 +956,24 @@ mod tests {
     fn test_total_cost() {
         let mut rec = TrajectoryRecorder::new("a");
         rec.start();
-        rec.record_step(make_step_full("a", StepActionType::LlmQuery, true, 10, 10, 0.05))
-            .unwrap();
-        rec.record_step(make_step_full("b", StepActionType::LlmQuery, true, 10, 10, 0.03))
-            .unwrap();
+        rec.record_step(make_step_full(
+            "a",
+            StepActionType::LlmQuery,
+            true,
+            10,
+            10,
+            0.05,
+        ))
+        .unwrap();
+        rec.record_step(make_step_full(
+            "b",
+            StepActionType::LlmQuery,
+            true,
+            10,
+            10,
+            0.03,
+        ))
+        .unwrap();
         let total = rec.total_cost();
         assert!((total - 0.08).abs() < 1e-9);
     }

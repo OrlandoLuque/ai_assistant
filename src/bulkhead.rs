@@ -575,16 +575,19 @@ mod tests {
     #[test]
     fn test_registry_try_acquire() {
         let mut reg = BulkheadRegistry::new();
-        reg.register("svc", BulkheadConfig {
-            max_concurrent: 1,
-            ..BulkheadConfig::default()
-        });
+        reg.register(
+            "svc",
+            BulkheadConfig {
+                max_concurrent: 1,
+                ..BulkheadConfig::default()
+            },
+        );
 
-        let _p = reg.try_acquire("svc").expect("should acquire from registry");
-
-        let err = reg
+        let _p = reg
             .try_acquire("svc")
-            .expect_err("should be full");
+            .expect("should acquire from registry");
+
+        let err = reg.try_acquire("svc").expect_err("should be full");
         assert_eq!(err, BulkheadError::Full);
     }
 
@@ -652,10 +655,7 @@ mod tests {
     #[test]
     fn test_error_display() {
         let full = BulkheadError::Full;
-        assert_eq!(
-            full.to_string(),
-            "bulkhead is full — no permits available"
-        );
+        assert_eq!(full.to_string(), "bulkhead is full — no permits available");
 
         let timeout = BulkheadError::Timeout;
         assert_eq!(

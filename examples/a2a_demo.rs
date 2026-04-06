@@ -6,8 +6,7 @@
 //! task lifecycle, JSON-RPC 2.0 messaging, and agent directory.
 
 use ai_assistant::{
-    AgentCard, AgentSkill, A2ATask, A2ATaskStatus, JsonRpcRequest, JsonRpcResponse,
-    AgentDirectory,
+    A2ATask, A2ATaskStatus, AgentCard, AgentDirectory, AgentSkill, JsonRpcRequest, JsonRpcResponse,
 };
 
 fn main() {

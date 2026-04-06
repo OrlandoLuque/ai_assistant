@@ -54,7 +54,9 @@ fn main() {
             "--callouts" => {
                 i += 1;
                 let c = args.get(i).and_then(|s| s.parse::<u8>().ok()).unwrap_or(3);
-                if let HostPreset::Squad { ref mut callouts } = preset { *callouts = c; }
+                if let HostPreset::Squad { ref mut callouts } = preset {
+                    *callouts = c;
+                }
             }
             "--help" | "-h" => {
                 print_help();
@@ -78,7 +80,9 @@ fn main() {
     };
 
     let config = HostConfig {
-        bind_addr, slot_count: slots, preset,
+        bind_addr,
+        slot_count: slots,
+        preset,
         ..HostConfig::default()
     };
     let host = Arc::new(GroupQueueHost::new(config));
@@ -132,12 +136,15 @@ fn ctrlc_handler<F: Fn() + Send + 'static>(f: F) {
                 add: BOOL,
             ) -> BOOL;
         }
-        unsafe { SetConsoleCtrlHandler(Some(handler), 1); }
-        std::thread::spawn(move || {
-            loop {
-                if FIRED.load(Ordering::Relaxed) { f(); return; }
-                std::thread::sleep(std::time::Duration::from_millis(100));
+        unsafe {
+            SetConsoleCtrlHandler(Some(handler), 1);
+        }
+        std::thread::spawn(move || loop {
+            if FIRED.load(Ordering::Relaxed) {
+                f();
+                return;
             }
+            std::thread::sleep(std::time::Duration::from_millis(100));
         });
     }
     #[cfg(not(windows))]

@@ -405,9 +405,10 @@ impl DocumentPipeline {
         // 5. Execute
         let start = std::time::Instant::now();
         let result = {
-            let exec = self.executor.read().map_err(|_| {
-                DocumentError::ConversionFailed("executor lock poisoned".into())
-            })?;
+            let exec = self
+                .executor
+                .read()
+                .map_err(|_| DocumentError::ConversionFailed("executor lock poisoned".into()))?;
             exec.exec(&container_id, &cmd_strs, self.config.timeout)
                 .map_err(DocumentError::ContainerError)?
         };
@@ -559,9 +560,10 @@ impl DocumentPipeline {
         opts.working_dir = Some("/workspace".into());
         opts.cmd = Some(vec!["sleep".into(), "7200".into()]); // 2 hour keep-alive
 
-        let mut exec = self.executor.write().map_err(|_| {
-            DocumentError::ConversionFailed("executor lock poisoned".into())
-        })?;
+        let mut exec = self
+            .executor
+            .write()
+            .map_err(|_| DocumentError::ConversionFailed("executor lock poisoned".into()))?;
         let id = exec
             .create(&self.config.image, &name, opts)
             .map_err(DocumentError::ContainerError)?;
@@ -808,9 +810,8 @@ mod tests {
 
     #[test]
     fn test_document_request_with_source_format() {
-        let req =
-            DocumentRequest::new("<h1>Hello</h1>", OutputFormat::Pdf)
-                .with_source_format(SourceFormat::Html);
+        let req = DocumentRequest::new("<h1>Hello</h1>", OutputFormat::Pdf)
+            .with_source_format(SourceFormat::Html);
         assert_eq!(req.source_format, SourceFormat::Html);
         assert_eq!(req.content, "<h1>Hello</h1>");
     }
@@ -937,10 +938,7 @@ mod tests {
         assert_eq!(DocumentPipeline::detect_source_format("video.mp4"), None);
         assert_eq!(DocumentPipeline::detect_source_format("binary.exe"), None);
         assert_eq!(DocumentPipeline::detect_source_format("archive.zip"), None);
-        assert_eq!(
-            DocumentPipeline::detect_source_format("unknown.xyz"),
-            None
-        );
+        assert_eq!(DocumentPipeline::detect_source_format("unknown.xyz"), None);
     }
 
     // =========================================================================
@@ -1021,8 +1019,7 @@ mod tests {
             .with_metadata("title", "My Report")
             .with_metadata("author", "AI");
 
-        let cmd =
-            DocumentPipeline::build_pandoc_command(&req, "input_report.md", "report.pdf");
+        let cmd = DocumentPipeline::build_pandoc_command(&req, "input_report.md", "report.pdf");
 
         assert_eq!(cmd[0], "pandoc");
         assert_eq!(cmd[1], "/workspace/input_report.md");
@@ -1034,8 +1031,7 @@ mod tests {
         // Should contain metadata flags
         let cmd_joined = cmd.join(" ");
         assert!(
-            cmd_joined.contains("-M title=My Report")
-                || cmd_joined.contains("-M author=AI"),
+            cmd_joined.contains("-M title=My Report") || cmd_joined.contains("-M author=AI"),
             "Command should contain metadata flags: {}",
             cmd_joined
         );
@@ -1052,11 +1048,8 @@ mod tests {
             .with_source_format(SourceFormat::Html)
             .with_stylesheet("body { color: red; }");
 
-        let cmd_html = DocumentPipeline::build_pandoc_command(
-            &req_html,
-            "input_page.html",
-            "page.html",
-        );
+        let cmd_html =
+            DocumentPipeline::build_pandoc_command(&req_html, "input_page.html", "page.html");
         assert!(
             cmd_html.contains(&"--css".to_string()),
             "HTML with stylesheet should include --css: {:?}",
@@ -1086,11 +1079,8 @@ mod tests {
             metadata: HashMap::new(),
         };
 
-        let cmd_extra = DocumentPipeline::build_pandoc_command(
-            &req_extra,
-            "input_out.md",
-            "out.docx",
-        );
+        let cmd_extra =
+            DocumentPipeline::build_pandoc_command(&req_extra, "input_out.md", "out.docx");
         assert!(
             cmd_extra.contains(&"--toc".to_string()),
             "Extra args should include --toc: {:?}",

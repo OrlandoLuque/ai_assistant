@@ -413,7 +413,8 @@ mod tests {
 
     #[test]
     fn test_estimate_tokens_for_model_code() {
-        let code = "fn main() {\n    let x: Vec<i32> = vec![1, 2, 3];\n    println!(\"{:?}\", x);\n}";
+        let code =
+            "fn main() {\n    let x: Vec<i32> = vec![1, 2, 3];\n    println!(\"{:?}\", x);\n}";
         let bpe_count = estimate_tokens_for_model(code, "gpt-4o");
         assert!(bpe_count > 0);
         assert!(bpe_count < code.len());

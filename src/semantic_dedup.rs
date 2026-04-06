@@ -135,7 +135,9 @@ impl SemanticDeduplicator {
                     // Level 2: Similar — group for fusion
                     // Check if either chunk is already in a group
                     let existing_group = similar_groups.iter_mut().find(|g| {
-                        g.chunks.iter().any(|c| c.id == chunks[i].id || c.id == chunks[j].id)
+                        g.chunks
+                            .iter()
+                            .any(|c| c.id == chunks[i].id || c.id == chunks[j].id)
                     });
 
                     if let Some(group) = existing_group {
@@ -180,11 +182,11 @@ impl SemanticDeduplicator {
         // The actual fusion would happen via LLM call (build_fusion_prompt)
         let groups_fused = similar_groups.len();
         for group in &similar_groups {
-            if let Some(best) = group
-                .chunks
-                .iter()
-                .max_by(|a, b| a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal))
-            {
+            if let Some(best) = group.chunks.iter().max_by(|a, b| {
+                a.score
+                    .partial_cmp(&b.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            }) {
                 // Mark as needing fusion — for now keep the best chunk
                 // The caller can use build_fusion_prompt() to get the LLM fusion prompt
                 kept.push(best.clone());
@@ -251,9 +253,7 @@ impl SemanticDeduplicator {
             let group_tokens = estimate_tokens(&group_text);
 
             // Check if adding this group would exceed the batch limit
-            if current_tokens + group_tokens > max_tokens_per_batch
-                && groups_in_batch > 0
-            {
+            if current_tokens + group_tokens > max_tokens_per_batch && groups_in_batch > 0 {
                 current_batch.push_str("For each group, output: [Group N] merged text\n");
                 batches.push(current_batch);
 
@@ -398,7 +398,11 @@ mod tests {
         let dedup = SemanticDeduplicator::new(config);
         let chunks = vec![
             make_chunk("a", "timeout is 30 seconds for HTTP connections", 0.9),
-            make_chunk("b", "timeout is 30 seconds for HTTP but 60 for WebSocket", 0.85),
+            make_chunk(
+                "b",
+                "timeout is 30 seconds for HTTP but 60 for WebSocket",
+                0.85,
+            ),
             make_chunk("c", "Python is great for ML", 0.7),
         ];
         let result = dedup.deduplicate(chunks);

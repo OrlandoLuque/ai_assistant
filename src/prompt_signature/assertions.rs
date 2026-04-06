@@ -46,10 +46,7 @@ impl PromptAssertion for LengthAssertion {
         if let Some(min) = self.min_chars {
             if char_count < min {
                 return AssertionResult::Fail {
-                    reason: format!(
-                        "Output has {} chars, below minimum of {}",
-                        char_count, min
-                    ),
+                    reason: format!("Output has {} chars, below minimum of {}", char_count, min),
                 };
             }
         }
@@ -107,10 +104,7 @@ impl PromptAssertion for FormatAssertion {
             AssertionResult::Pass
         } else {
             AssertionResult::Fail {
-                reason: format!(
-                    "Output does not match pattern '{}'",
-                    self.pattern
-                ),
+                reason: format!("Output does not match pattern '{}'", self.pattern),
             }
         }
     }

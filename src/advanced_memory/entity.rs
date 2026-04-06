@@ -194,12 +194,10 @@ impl EntityStore {
     /// attributes/relations are folded into the target (`id1`).
     pub fn merge(&mut self, id1: &str, id2: &str) -> Result<(), AiError> {
         if id1 == id2 {
-            return Err(AiError::AdvancedMemory(
-                AdvancedMemoryError::StoreFailed {
-                    memory_type: "entity".to_string(),
-                    reason: "Cannot merge an entity with itself".to_string(),
-                },
-            ));
+            return Err(AiError::AdvancedMemory(AdvancedMemoryError::StoreFailed {
+                memory_type: "entity".to_string(),
+                reason: "Cannot merge an entity with itself".to_string(),
+            }));
         }
 
         let source = self.entities.remove(id2).ok_or_else(|| {
@@ -217,11 +215,12 @@ impl EntityStore {
             Some(t) => t,
             None => {
                 self.entities.insert(id2.to_string(), source);
-                self.name_index
-                    .insert(source_normalized, id2.to_string());
-                return Err(AiError::AdvancedMemory(AdvancedMemoryError::EntityNotFound {
-                    name: id1.to_string(),
-                }));
+                self.name_index.insert(source_normalized, id2.to_string());
+                return Err(AiError::AdvancedMemory(
+                    AdvancedMemoryError::EntityNotFound {
+                        name: id1.to_string(),
+                    },
+                ));
             }
         };
 

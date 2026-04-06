@@ -3,8 +3,7 @@
 use crate::error::AiError;
 
 use super::types::{
-    EvalMetric, EvaluationBudget, OptimizationResult, PromptExample, Signature,
-    TrainingExample,
+    EvalMetric, EvaluationBudget, OptimizationResult, PromptExample, Signature, TrainingExample,
 };
 
 // ============================================================================
@@ -145,10 +144,7 @@ pub struct GridSearchOptimizer {
 
 impl GridSearchOptimizer {
     /// Create a new grid search optimizer.
-    pub fn new(
-        instruction_variants: Vec<String>,
-        metric: Box<dyn EvalMetric>,
-    ) -> Self {
+    pub fn new(instruction_variants: Vec<String>, metric: Box<dyn EvalMetric>) -> Self {
         Self {
             instruction_variants,
             metric,
@@ -278,10 +274,7 @@ impl RandomSearchOptimizer {
         let mut scores_history: Vec<f64> = Vec::new();
         let mut trials_run = 0usize;
 
-        let base_instructions = signature
-            .instructions
-            .as_deref()
-            .unwrap_or("");
+        let base_instructions = signature.instructions.as_deref().unwrap_or("");
 
         for trial in 0..self.num_trials {
             if !budget.try_use() {
@@ -355,11 +348,7 @@ pub struct BayesianOptimizer {
 
 impl BayesianOptimizer {
     /// Create a new Bayesian optimizer.
-    pub fn new(
-        num_trials: usize,
-        exploration_weight: f64,
-        metric: Box<dyn EvalMetric>,
-    ) -> Self {
+    pub fn new(num_trials: usize, exploration_weight: f64, metric: Box<dyn EvalMetric>) -> Self {
         Self {
             num_trials,
             exploration_weight,
@@ -395,11 +384,8 @@ impl BayesianOptimizer {
         let mut k_matrix: Vec<Vec<f64>> = vec![vec![0.0; n]; n];
         for i in 0..n {
             for j in 0..n {
-                k_matrix[i][j] = Self::rbf_kernel(
-                    observations[i].0,
-                    observations[j].0,
-                    length_scale,
-                );
+                k_matrix[i][j] =
+                    Self::rbf_kernel(observations[i].0, observations[j].0, length_scale);
                 if i == j {
                     k_matrix[i][j] += noise;
                 }
@@ -547,8 +533,7 @@ impl BayesianOptimizer {
                 let mut best_idx = 0;
                 for (idx, _) in instruction_pool.iter().enumerate() {
                     let x = idx as f64;
-                    let (mean, std_dev) =
-                        Self::gp_predict(&observations, x, length_scale, noise);
+                    let (mean, std_dev) = Self::gp_predict(&observations, x, length_scale, noise);
                     let ucb_val = self.ucb(mean, std_dev);
                     if ucb_val > best_ucb {
                         best_ucb = ucb_val;

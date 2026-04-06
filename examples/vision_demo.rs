@@ -46,14 +46,14 @@ fn main() {
     println!("    detail     : {:?}", b64_image.detail);
 
     // With detail level override
-    let high_detail = ImageInput::from_url("https://example.com/diagram.png")
-        .with_detail(ImageDetail::High);
+    let high_detail =
+        ImageInput::from_url("https://example.com/diagram.png").with_detail(ImageDetail::High);
     println!("\n  High-detail image:");
     println!("    detail     : {:?}", high_detail.detail);
     println!("    est tokens : {}", high_detail.estimate_tokens());
 
-    let low_detail = ImageInput::from_url("https://example.com/thumb.jpg")
-        .with_detail(ImageDetail::Low);
+    let low_detail =
+        ImageInput::from_url("https://example.com/thumb.jpg").with_detail(ImageDetail::Low);
     println!("  Low-detail image:");
     println!("    detail     : {:?}", low_detail.detail);
     println!("    est tokens : {}", low_detail.estimate_tokens());
@@ -66,9 +66,7 @@ fn main() {
 
     let user_msg = VisionMessage::user(
         "What objects do you see in this image?",
-        vec![
-            ImageInput::from_url("https://example.com/scene.jpg"),
-        ],
+        vec![ImageInput::from_url("https://example.com/scene.jpg")],
     );
     println!("  User message:");
     println!("    role   : {}", user_msg.role);
@@ -86,13 +84,24 @@ fn main() {
     // System and assistant messages (no images)
     let sys_msg = VisionMessage::system("You are a visual analysis assistant.");
     let asst_msg = VisionMessage::assistant("I can see a cat sitting on a windowsill.");
-    println!("\n  System message  : role={}, images={}", sys_msg.role, sys_msg.images.len());
-    println!("  Assistant message: role={}, images={}", asst_msg.role, asst_msg.images.len());
+    println!(
+        "\n  System message  : role={}, images={}",
+        sys_msg.role,
+        sys_msg.images.len()
+    );
+    println!(
+        "  Assistant message: role={}, images={}",
+        asst_msg.role,
+        asst_msg.images.len()
+    );
 
     // Convert to API formats
     let openai_fmt = user_msg.to_openai_format();
     println!("\n  OpenAI format (role): {}", openai_fmt["role"]);
-    println!("  OpenAI content is array: {}", openai_fmt["content"].is_array());
+    println!(
+        "  OpenAI content is array: {}",
+        openai_fmt["content"].is_array()
+    );
 
     let ollama_fmt = user_msg.to_ollama_format();
     println!("  Ollama format (role): {}", ollama_fmt["role"]);
@@ -171,9 +180,11 @@ fn main() {
         let (nw, nh) = preprocessor.calculate_dimensions(*w, *h);
         println!(
             "    {:>5}x{:<5}  {:<13}  {}x{}",
-            w, h,
+            w,
+            h,
             if needs { "yes" } else { "no" },
-            nw, nh,
+            nw,
+            nh,
         );
     }
     println!();
@@ -198,7 +209,10 @@ fn main() {
     println!("  Added img2   : {}", added2);
     println!("  Added img3   : {}", added3);
     println!("  Added img4   : {}", added4);
-    println!("  Added img5   : {} (should be false -- batch is full)", added5);
+    println!(
+        "  Added img5   : {} (should be false -- batch is full)",
+        added5
+    );
 
     println!("  Is full      : {}", batch.is_full());
     println!("  Remaining    : {}", batch.remaining());
@@ -216,14 +230,13 @@ fn main() {
 
     let detail_levels = [ImageDetail::Low, ImageDetail::High, ImageDetail::Auto];
     for detail in &detail_levels {
-        let img = ImageInput::from_url("https://example.com/sample.jpg")
-            .with_detail(*detail);
+        let img = ImageInput::from_url("https://example.com/sample.jpg").with_detail(*detail);
         println!("  {:?} detail -> ~{} tokens", detail, img.estimate_tokens());
     }
 
     // OpenAI format for a high-detail image
-    let sample = ImageInput::from_url("https://example.com/chart.png")
-        .with_detail(ImageDetail::High);
+    let sample =
+        ImageInput::from_url("https://example.com/chart.png").with_detail(ImageDetail::High);
     let fmt = sample.to_openai_format();
     println!("\n  OpenAI format for High-detail image:");
     println!("    type: {}", fmt["type"]);

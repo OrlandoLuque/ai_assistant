@@ -1429,15 +1429,16 @@ impl MultiLayerGraph {
         if let Some(sid) = session_id {
             if let Some(session) = self.session_graphs.get(sid) {
                 for entity in &session.entities {
-                    let entry = entity_map
-                        .entry(entity.name.clone())
-                        .or_insert_with(|| UnifiedEntity {
-                            name: entity.name.clone(),
-                            entity_type: entity.entity_type.clone(),
-                            layers: Vec::new(),
-                            merged_attributes: HashMap::new(),
-                            confidence: 0.0,
-                        });
+                    let entry =
+                        entity_map
+                            .entry(entity.name.clone())
+                            .or_insert_with(|| UnifiedEntity {
+                                name: entity.name.clone(),
+                                entity_type: entity.entity_type.clone(),
+                                layers: Vec::new(),
+                                merged_attributes: HashMap::new(),
+                                confidence: 0.0,
+                            });
                     if !entry.layers.contains(&GraphLayer::Session) {
                         entry.layers.push(GraphLayer::Session);
                     }
@@ -1461,15 +1462,16 @@ impl MultiLayerGraph {
             // If no session specified, include all sessions
             for session in self.session_graphs.values() {
                 for entity in &session.entities {
-                    let entry = entity_map
-                        .entry(entity.name.clone())
-                        .or_insert_with(|| UnifiedEntity {
-                            name: entity.name.clone(),
-                            entity_type: entity.entity_type.clone(),
-                            layers: Vec::new(),
-                            merged_attributes: HashMap::new(),
-                            confidence: 0.0,
-                        });
+                    let entry =
+                        entity_map
+                            .entry(entity.name.clone())
+                            .or_insert_with(|| UnifiedEntity {
+                                name: entity.name.clone(),
+                                entity_type: entity.entity_type.clone(),
+                                layers: Vec::new(),
+                                merged_attributes: HashMap::new(),
+                                confidence: 0.0,
+                            });
                     if !entry.layers.contains(&GraphLayer::Session) {
                         entry.layers.push(GraphLayer::Session);
                     }
@@ -1489,15 +1491,16 @@ impl MultiLayerGraph {
         // Collect internet entities (non-expired)
         for entry in &self.internet_graph.entries {
             if !entry.is_expired() {
-                let unified = entity_map
-                    .entry(entry.entity.clone())
-                    .or_insert_with(|| UnifiedEntity {
-                        name: entry.entity.clone(),
-                        entity_type: "InternetEntity".to_string(),
-                        layers: Vec::new(),
-                        merged_attributes: HashMap::new(),
-                        confidence: 0.0,
-                    });
+                let unified =
+                    entity_map
+                        .entry(entry.entity.clone())
+                        .or_insert_with(|| UnifiedEntity {
+                            name: entry.entity.clone(),
+                            entity_type: "InternetEntity".to_string(),
+                            layers: Vec::new(),
+                            merged_attributes: HashMap::new(),
+                            confidence: 0.0,
+                        });
                 if !unified.layers.contains(&GraphLayer::Internet) {
                     unified.layers.push(GraphLayer::Internet);
                 }
@@ -1545,15 +1548,16 @@ impl MultiLayerGraph {
         for (layer_name, entities) in &self.custom_layers {
             let layer = GraphLayer::Custom(layer_name.clone());
             for entity in entities {
-                let unified = entity_map
-                    .entry(entity.name.clone())
-                    .or_insert_with(|| UnifiedEntity {
-                        name: entity.name.clone(),
-                        entity_type: entity.entity_type.clone(),
-                        layers: Vec::new(),
-                        merged_attributes: HashMap::new(),
-                        confidence: 0.0,
-                    });
+                let unified =
+                    entity_map
+                        .entry(entity.name.clone())
+                        .or_insert_with(|| UnifiedEntity {
+                            name: entity.name.clone(),
+                            entity_type: entity.entity_type.clone(),
+                            layers: Vec::new(),
+                            merged_attributes: HashMap::new(),
+                            confidence: 0.0,
+                        });
                 if !unified.layers.contains(&layer) {
                     unified.layers.push(layer.clone());
                 }
@@ -1601,14 +1605,8 @@ impl MultiLayerGraph {
         // Build adjacency from relations
         let mut adjacency: HashMap<String, Vec<String>> = HashMap::new();
         for (from, _rel, to) in &relations {
-            adjacency
-                .entry(from.clone())
-                .or_default()
-                .push(to.clone());
-            adjacency
-                .entry(to.clone())
-                .or_default()
-                .push(from.clone());
+            adjacency.entry(from.clone()).or_default().push(to.clone());
+            adjacency.entry(to.clone()).or_default().push(from.clone());
         }
 
         // Connected components via BFS
@@ -1651,11 +1649,7 @@ impl MultiLayerGraph {
 
                 clusters.push(GraphCluster {
                     id: format!("cluster_{}", cluster_idx),
-                    label: format!(
-                        "{} cluster {}",
-                        layer.display_name(),
-                        cluster_idx
-                    ),
+                    label: format!("{} cluster {}", layer.display_name(), cluster_idx),
                     entity_names: component,
                     layer: layer.clone(),
                     cohesion,
@@ -1813,10 +1807,7 @@ impl MultiLayerGraph {
         match policy {
             ConflictPolicy::LastWriteWins => {
                 // Pick the one with the highest timestamp
-                candidates
-                    .iter()
-                    .max_by_key(|e| e.timestamp)
-                    .cloned()
+                candidates.iter().max_by_key(|e| e.timestamp).cloned()
             }
             ConflictPolicy::HighestConfidence => {
                 // Pick the one with the highest confidence score
@@ -1850,10 +1841,7 @@ impl MultiLayerGraph {
             ConflictPolicy::Manual => {
                 // For manual resolution, return the earliest candidate (by timestamp)
                 // as a placeholder; the caller should present all options to the user
-                candidates
-                    .iter()
-                    .min_by_key(|e| e.timestamp)
-                    .cloned()
+                candidates.iter().min_by_key(|e| e.timestamp).cloned()
             }
         }
     }
@@ -2146,10 +2134,7 @@ impl MultiLayerGraph {
     }
 
     /// Collect session relations for diff comparison
-    fn collect_session_relations(
-        &self,
-        session_id: Option<&str>,
-    ) -> Vec<(String, String, String)> {
+    fn collect_session_relations(&self, session_id: Option<&str>) -> Vec<(String, String, String)> {
         let mut rels = Vec::new();
         if let Some(sid) = session_id {
             if let Some(session) = self.session_graphs.get(sid) {
@@ -2397,7 +2382,10 @@ mod tests {
     #[test]
     fn test_conflict_policy_variants() {
         assert_eq!(ConflictPolicy::LastWriteWins, ConflictPolicy::LastWriteWins);
-        assert_ne!(ConflictPolicy::LastWriteWins, ConflictPolicy::HighestConfidence);
+        assert_ne!(
+            ConflictPolicy::LastWriteWins,
+            ConflictPolicy::HighestConfidence
+        );
         assert_ne!(ConflictPolicy::Merge, ConflictPolicy::Manual);
         let all = [
             ConflictPolicy::LastWriteWins,
@@ -2426,7 +2414,11 @@ mod tests {
         let config = LayerConfig::new(90);
         mlg.configure_layer(GraphLayer::Session, config);
         assert!(mlg.get_layer_config(&GraphLayer::Session).is_some());
-        assert_eq!(mlg.get_layer_config(&GraphLayer::Session).map(|c| c.priority), Some(90));
+        assert_eq!(
+            mlg.get_layer_config(&GraphLayer::Session)
+                .map(|c| c.priority),
+            Some(90)
+        );
     }
 
     #[test]
@@ -2539,12 +2531,15 @@ mod tests {
         let mut mlg = MultiLayerGraph::new();
         mlg.add_custom_layer("limited");
         let layer = GraphLayer::Custom("limited".to_string());
-        mlg.configure_layer(layer, LayerConfig {
-            priority: 10,
-            sync_policy: SyncPolicy::Shared,
-            conflict_policy: ConflictPolicy::LastWriteWins,
-            max_entities: Some(2),
-        });
+        mlg.configure_layer(
+            layer,
+            LayerConfig {
+                priority: 10,
+                sync_policy: SyncPolicy::Shared,
+                conflict_policy: ConflictPolicy::LastWriteWins,
+                max_entities: Some(2),
+            },
+        );
 
         let make_entity = |name: &str| LayeredEntity {
             name: name.to_string(),
@@ -2658,7 +2653,9 @@ mod tests {
         let view = mlg.query_unified(None);
         assert_eq!(view.entities.len(), 1);
         assert_eq!(view.entities[0].name, "CustomItem");
-        assert!(view.entities[0].layers.contains(&GraphLayer::Custom("extra".to_string())));
+        assert!(view.entities[0]
+            .layers
+            .contains(&GraphLayer::Custom("extra".to_string())));
     }
 
     #[test]
@@ -2841,11 +2838,7 @@ mod tests {
         let _ = mlg.add_to_custom_layer("mydata", make_entity("Y"));
 
         // Custom layers have no relations mechanism yet, so no clusters >= 2
-        let clusters = mlg.cluster_entities(
-            &GraphLayer::Custom("mydata".to_string()),
-            None,
-            1,
-        );
+        let clusters = mlg.cluster_entities(&GraphLayer::Custom("mydata".to_string()), None, 1);
         // Each entity is its own cluster of size 1
         assert_eq!(clusters.len(), 2);
     }
@@ -2954,7 +2947,11 @@ mod tests {
     #[test]
     fn test_resolve_conflict_not_found() {
         let mlg = MultiLayerGraph::new();
-        let result = mlg.resolve_conflict("nonexistent", &GraphLayer::Session, &ConflictPolicy::LastWriteWins);
+        let result = mlg.resolve_conflict(
+            "nonexistent",
+            &GraphLayer::Session,
+            &ConflictPolicy::LastWriteWins,
+        );
         assert!(result.is_none());
     }
 
@@ -2964,7 +2961,8 @@ mod tests {
         let session = mlg.get_or_create_session("s1");
         session.add_entity("Solo", "Ship", "test");
 
-        let result = mlg.resolve_conflict("Solo", &GraphLayer::Session, &ConflictPolicy::LastWriteWins);
+        let result =
+            mlg.resolve_conflict("Solo", &GraphLayer::Session, &ConflictPolicy::LastWriteWins);
         assert!(result.is_some());
         assert_eq!(result.expect("should exist").name, "Solo");
     }
@@ -2994,7 +2992,8 @@ mod tests {
             ttl_seconds: None,
         });
 
-        let result = mlg.resolve_conflict("Ship", &GraphLayer::Session, &ConflictPolicy::LastWriteWins);
+        let result =
+            mlg.resolve_conflict("Ship", &GraphLayer::Session, &ConflictPolicy::LastWriteWins);
         assert!(result.is_some());
         let resolved = result.expect("should resolve");
         assert_eq!(resolved.source, "new");
@@ -3025,7 +3024,11 @@ mod tests {
             ttl_seconds: None,
         });
 
-        let result = mlg.resolve_conflict("Ship", &GraphLayer::Session, &ConflictPolicy::HighestConfidence);
+        let result = mlg.resolve_conflict(
+            "Ship",
+            &GraphLayer::Session,
+            &ConflictPolicy::HighestConfidence,
+        );
         assert!(result.is_some());
         assert_eq!(result.expect("resolved").source, "high_conf");
     }
@@ -3146,7 +3149,8 @@ mod tests {
     #[test]
     fn test_graph_diff_not_empty() {
         let mut diff = GraphDiff::empty();
-        diff.added_entities.push((GraphLayer::Session, "New".to_string()));
+        diff.added_entities
+            .push((GraphLayer::Session, "New".to_string()));
         assert!(!diff.is_empty());
     }
 
@@ -3199,7 +3203,10 @@ mod tests {
 
         let diff = g1.diff(&g2, Some("s1"));
         assert_eq!(diff.added_relations.len(), 1);
-        assert_eq!(diff.added_relations[0], ("A".to_string(), "links".to_string(), "B".to_string()));
+        assert_eq!(
+            diff.added_relations[0],
+            ("A".to_string(), "links".to_string(), "B".to_string())
+        );
     }
 
     #[test]
@@ -3219,36 +3226,45 @@ mod tests {
     fn test_graph_diff_custom_layer() {
         let mut g1 = MultiLayerGraph::new();
         g1.add_custom_layer("custom");
-        let _ = g1.add_to_custom_layer("custom", LayeredEntity {
-            name: "Existing".to_string(),
-            entity_type: "T".to_string(),
-            layer: GraphLayer::Custom("custom".to_string()),
-            confidence: ConfidenceLevel::Inferred,
-            source: "test".to_string(),
-            timestamp: 0,
-            ttl_seconds: None,
-        });
+        let _ = g1.add_to_custom_layer(
+            "custom",
+            LayeredEntity {
+                name: "Existing".to_string(),
+                entity_type: "T".to_string(),
+                layer: GraphLayer::Custom("custom".to_string()),
+                confidence: ConfidenceLevel::Inferred,
+                source: "test".to_string(),
+                timestamp: 0,
+                ttl_seconds: None,
+            },
+        );
 
         let mut g2 = MultiLayerGraph::new();
         g2.add_custom_layer("custom");
-        let _ = g2.add_to_custom_layer("custom", LayeredEntity {
-            name: "Existing".to_string(),
-            entity_type: "T".to_string(),
-            layer: GraphLayer::Custom("custom".to_string()),
-            confidence: ConfidenceLevel::Inferred,
-            source: "test".to_string(),
-            timestamp: 0,
-            ttl_seconds: None,
-        });
-        let _ = g2.add_to_custom_layer("custom", LayeredEntity {
-            name: "NewCustom".to_string(),
-            entity_type: "T".to_string(),
-            layer: GraphLayer::Custom("custom".to_string()),
-            confidence: ConfidenceLevel::Inferred,
-            source: "test".to_string(),
-            timestamp: 0,
-            ttl_seconds: None,
-        });
+        let _ = g2.add_to_custom_layer(
+            "custom",
+            LayeredEntity {
+                name: "Existing".to_string(),
+                entity_type: "T".to_string(),
+                layer: GraphLayer::Custom("custom".to_string()),
+                confidence: ConfidenceLevel::Inferred,
+                source: "test".to_string(),
+                timestamp: 0,
+                ttl_seconds: None,
+            },
+        );
+        let _ = g2.add_to_custom_layer(
+            "custom",
+            LayeredEntity {
+                name: "NewCustom".to_string(),
+                entity_type: "T".to_string(),
+                layer: GraphLayer::Custom("custom".to_string()),
+                confidence: ConfidenceLevel::Inferred,
+                source: "test".to_string(),
+                timestamp: 0,
+                ttl_seconds: None,
+            },
+        );
 
         let diff = g1.diff(&g2, None);
         assert_eq!(diff.added_entities.len(), 1);
@@ -3263,8 +3279,10 @@ mod tests {
         session.add_entity("Remove", "T", "test");
 
         let mut diff = GraphDiff::empty();
-        diff.added_entities.push((GraphLayer::Session, "Added".to_string()));
-        diff.removed_entities.push((GraphLayer::Session, "Remove".to_string()));
+        diff.added_entities
+            .push((GraphLayer::Session, "Added".to_string()));
+        diff.removed_entities
+            .push((GraphLayer::Session, "Remove".to_string()));
 
         g1.apply_diff(&diff, "s1", &MergeStrategy::Union);
 
@@ -3283,8 +3301,10 @@ mod tests {
         session.add_entity("AlsoKeep", "T", "test");
 
         let mut diff = GraphDiff::empty();
-        diff.added_entities.push((GraphLayer::Session, "New".to_string()));
-        diff.removed_entities.push((GraphLayer::Session, "AlsoKeep".to_string()));
+        diff.added_entities
+            .push((GraphLayer::Session, "New".to_string()));
+        diff.removed_entities
+            .push((GraphLayer::Session, "AlsoKeep".to_string()));
 
         // Ours strategy: add but don't remove
         g1.apply_diff(&diff, "s1", &MergeStrategy::Ours);
@@ -3303,8 +3323,10 @@ mod tests {
         session.add_entity("Old", "T", "test");
 
         let mut diff = GraphDiff::empty();
-        diff.added_entities.push((GraphLayer::Session, "Their".to_string()));
-        diff.removed_entities.push((GraphLayer::Session, "Old".to_string()));
+        diff.added_entities
+            .push((GraphLayer::Session, "Their".to_string()));
+        diff.removed_entities
+            .push((GraphLayer::Session, "Old".to_string()));
 
         g1.apply_diff(&diff, "s1", &MergeStrategy::Theirs);
 
@@ -3320,9 +3342,12 @@ mod tests {
         g1.get_or_create_session("s1");
 
         let mut diff = GraphDiff::empty();
-        diff.added_entities.push((GraphLayer::Session, "X".to_string()));
-        diff.added_entities.push((GraphLayer::Session, "Y".to_string()));
-        diff.added_relations.push(("X".to_string(), "connects".to_string(), "Y".to_string()));
+        diff.added_entities
+            .push((GraphLayer::Session, "X".to_string()));
+        diff.added_entities
+            .push((GraphLayer::Session, "Y".to_string()));
+        diff.added_relations
+            .push(("X".to_string(), "connects".to_string(), "Y".to_string()));
 
         g1.apply_diff(&diff, "s1", &MergeStrategy::Union);
 
@@ -3337,7 +3362,10 @@ mod tests {
         g1.add_custom_layer("extra");
 
         let mut diff = GraphDiff::empty();
-        diff.added_entities.push((GraphLayer::Custom("extra".to_string()), "CustomNew".to_string()));
+        diff.added_entities.push((
+            GraphLayer::Custom("extra".to_string()),
+            "CustomNew".to_string(),
+        ));
 
         g1.apply_diff(&diff, "s1", &MergeStrategy::Union);
 
@@ -3355,7 +3383,8 @@ mod tests {
         session.add_relation("A", "rel", "B");
 
         let mut diff = GraphDiff::empty();
-        diff.removed_relations.push(("A".to_string(), "rel".to_string(), "B".to_string()));
+        diff.removed_relations
+            .push(("A".to_string(), "rel".to_string(), "B".to_string()));
 
         g1.apply_diff(&diff, "s1", &MergeStrategy::Union);
 
@@ -3388,8 +3417,13 @@ mod tests {
     #[test]
     fn test_graph_diff_serialize() {
         let mut diff = GraphDiff::empty();
-        diff.added_entities.push((GraphLayer::Session, "Entity".to_string()));
-        diff.modified_entities.push((GraphLayer::User, "Modified".to_string(), "changed type".to_string()));
+        diff.added_entities
+            .push((GraphLayer::Session, "Entity".to_string()));
+        diff.modified_entities.push((
+            GraphLayer::User,
+            "Modified".to_string(),
+            "changed type".to_string(),
+        ));
 
         let json = serde_json::to_string(&diff).expect("serialize");
         let deserialized: GraphDiff = serde_json::from_str(&json).expect("deserialize");
@@ -3415,7 +3449,10 @@ mod tests {
         let json = serde_json::to_string(&ir).expect("serialize");
         let deserialized: InferredRelation = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(deserialized.source_entity, "A");
-        assert_eq!(deserialized.target_layer, GraphLayer::Custom("x".to_string()));
+        assert_eq!(
+            deserialized.target_layer,
+            GraphLayer::Custom("x".to_string())
+        );
     }
 
     // =========================================================================
@@ -3477,7 +3514,10 @@ mod tests {
             ],
             merged_attributes: {
                 let mut m = HashMap::new();
-                m.insert("key".to_string(), serde_json::Value::String("val".to_string()));
+                m.insert(
+                    "key".to_string(),
+                    serde_json::Value::String("val".to_string()),
+                );
                 m
             },
             confidence: 0.95,

@@ -55,13 +55,11 @@ impl ProblemScorer for DefaultScorer {
                     test_cases,
                 )
             }
-            AnswerFormat::CodeEdit { original_code, .. } => {
-                score_code_edit(
-                    response,
-                    problem.reference_solution.as_deref(),
-                    original_code,
-                )
-            }
+            AnswerFormat::CodeEdit { original_code, .. } => score_code_edit(
+                response,
+                problem.reference_solution.as_deref(),
+                original_code,
+            ),
             AnswerFormat::TerminalSequence {
                 expected_commands,
                 verification,
@@ -180,7 +178,12 @@ fn extract_answer_letter(response: &str) -> Option<String> {
     let lower = trimmed.to_lowercase();
 
     // Pattern 1: single letter response (highest confidence)
-    if trimmed.len() == 1 && trimmed.chars().next().map_or(false, |c| c.is_ascii_alphabetic()) {
+    if trimmed.len() == 1
+        && trimmed
+            .chars()
+            .next()
+            .map_or(false, |c| c.is_ascii_alphabetic())
+    {
         return Some(trimmed.to_uppercase());
     }
 
@@ -243,8 +246,12 @@ fn extract_answer_letter(response: &str) -> Option<String> {
                     let upper = ch.to_ascii_uppercase();
                     if upper >= 'A' && upper <= 'F' {
                         let next = after.chars().nth(1);
-                        if next == Some(')') || next == Some('.') || next == Some(' ')
-                            || next == Some('*') || next == Some(',') || next.is_none()
+                        if next == Some(')')
+                            || next == Some('.')
+                            || next == Some(' ')
+                            || next == Some('*')
+                            || next == Some(',')
+                            || next.is_none()
                         {
                             return Some(upper.to_string());
                         }
@@ -298,8 +305,7 @@ fn extract_answer_letter(response: &str) -> Option<String> {
             && next == ')'
         {
             // Make sure it's not inside a word (check previous char)
-            let prev_is_separator =
-                i == 0 || !bytes[i - 1].is_ascii_alphabetic();
+            let prev_is_separator = i == 0 || !bytes[i - 1].is_ascii_alphabetic();
             if prev_is_separator {
                 return Some(ch.to_uppercase().to_string());
             }
@@ -340,7 +346,11 @@ fn extract_numeric_answer(response: &str) -> Option<f64> {
     let mut pos = 0;
     while pos < trimmed.len() {
         let c = trimmed.as_bytes()[pos] as char;
-        if c.is_ascii_digit() || (c == '-' && pos + 1 < trimmed.len() && (trimmed.as_bytes()[pos + 1] as char).is_ascii_digit()) {
+        if c.is_ascii_digit()
+            || (c == '-'
+                && pos + 1 < trimmed.len()
+                && (trimmed.as_bytes()[pos + 1] as char).is_ascii_digit())
+        {
             let start = pos;
             pos += 1;
             while pos < trimmed.len() {
@@ -488,7 +498,10 @@ fn edit_diff_similarity(original: &str, response: &str, reference: &str) -> f64 
 }
 
 /// Jaccard similarity between two sets.
-fn jaccard_similarity(a: &std::collections::HashSet<&str>, b: &std::collections::HashSet<&str>) -> f64 {
+fn jaccard_similarity(
+    a: &std::collections::HashSet<&str>,
+    b: &std::collections::HashSet<&str>,
+) -> f64 {
     let intersection = a.intersection(b).count() as f64;
     let union = a.union(b).count() as f64;
     if union == 0.0 {
@@ -534,10 +547,8 @@ fn score_terminal_sequence(
     let extracted_set: std::collections::HashSet<&str> =
         extracted_norm.iter().map(|s| s.as_str()).collect();
 
-    let overlap = expected_set
-        .intersection(&extracted_set)
-        .count() as f64
-        / expected_set.len() as f64;
+    let overlap =
+        expected_set.intersection(&extracted_set).count() as f64 / expected_set.len() as f64;
 
     // Order bonus: LCS ratio
     let lcs_len = longest_common_subsequence(&extracted_norm, &expected_norm);
@@ -547,7 +558,9 @@ fn score_terminal_sequence(
     let verify_bonus = match verification {
         Some((cmd, expected_output)) => {
             let has_cmd = response.to_lowercase().contains(&cmd.to_lowercase());
-            let has_output = response.to_lowercase().contains(&expected_output.to_lowercase());
+            let has_output = response
+                .to_lowercase()
+                .contains(&expected_output.to_lowercase());
             if has_cmd && has_output {
                 1.0
             } else if has_cmd || has_output {
@@ -654,14 +667,16 @@ fn strip_numbered_prefix(s: &str) -> Option<&str> {
 /// Simple heuristic to check if a string looks like a shell command.
 fn looks_like_command(s: &str) -> bool {
     let cmd_starters = [
-        "ls", "cd", "cp", "mv", "rm", "mkdir", "cat", "echo", "grep", "find", "sed", "awk",
-        "tar", "gzip", "chmod", "chown", "curl", "wget", "ssh", "scp", "git", "docker",
-        "npm", "pip", "apt", "yum", "brew", "make", "cargo", "python", "node", "java",
-        "sudo", "touch", "head", "tail", "sort", "uniq", "wc", "diff", "patch", "export",
-        "source", "which", "xargs", "tee", "kill", "ps", "top", "df", "du", "mount",
+        "ls", "cd", "cp", "mv", "rm", "mkdir", "cat", "echo", "grep", "find", "sed", "awk", "tar",
+        "gzip", "chmod", "chown", "curl", "wget", "ssh", "scp", "git", "docker", "npm", "pip",
+        "apt", "yum", "brew", "make", "cargo", "python", "node", "java", "sudo", "touch", "head",
+        "tail", "sort", "uniq", "wc", "diff", "patch", "export", "source", "which", "xargs", "tee",
+        "kill", "ps", "top", "df", "du", "mount",
     ];
     let first_word = s.split_whitespace().next().unwrap_or("");
-    cmd_starters.iter().any(|&c| first_word == c || first_word.ends_with(c))
+    cmd_starters
+        .iter()
+        .any(|&c| first_word == c || first_word.ends_with(c))
 }
 
 /// Compute the length of the longest common subsequence of two string slices.
@@ -733,7 +748,10 @@ pub fn accuracy(results: &[ProblemResult]) -> f64 {
     if results.is_empty() {
         return 0.0;
     }
-    let passed = results.iter().filter(|r| r.passed.iter().any(|&p| p)).count();
+    let passed = results
+        .iter()
+        .filter(|r| r.passed.iter().any(|&p| p))
+        .count();
     passed as f64 / results.len() as f64
 }
 
@@ -818,11 +836,8 @@ impl EloCalculator {
 
     /// Get models ranked by ELO rating (highest first).
     pub fn ranked(&self) -> Vec<(ModelIdentifier, f64)> {
-        let mut ranked: Vec<(ModelIdentifier, f64)> = self
-            .ratings
-            .iter()
-            .map(|(k, v)| (k.clone(), *v))
-            .collect();
+        let mut ranked: Vec<(ModelIdentifier, f64)> =
+            self.ratings.iter().map(|(k, v)| (k.clone(), *v)).collect();
         ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         ranked
     }
@@ -834,8 +849,8 @@ impl EloCalculator {
 
 #[cfg(test)]
 mod tests {
+    use super::super::dataset::{make_code_problem, make_mc_problem, make_numeric_problem};
     use super::*;
-    use super::super::dataset::{make_mc_problem, make_numeric_problem, make_code_problem};
 
     #[test]
     fn test_score_multiple_choice_correct() {
@@ -956,7 +971,11 @@ mod tests {
 
     #[test]
     fn test_accuracy_calculation() {
-        let model = ModelIdentifier { name: "test".into(), provider: "test".into(), variant: None };
+        let model = ModelIdentifier {
+            name: "test".into(),
+            provider: "test".into(),
+            variant: None,
+        };
         let results = vec![
             ProblemResult {
                 problem_id: "1".into(),
@@ -988,7 +1007,11 @@ mod tests {
 
     #[test]
     fn test_mean_score_calculation() {
-        let model = ModelIdentifier { name: "test".into(), provider: "test".into(), variant: None };
+        let model = ModelIdentifier {
+            name: "test".into(),
+            provider: "test".into(),
+            variant: None,
+        };
         let results = vec![
             ProblemResult {
                 problem_id: "1".into(),
@@ -1031,8 +1054,16 @@ mod tests {
     #[test]
     fn test_elo_calculator() {
         let mut elo = EloCalculator::new(32.0);
-        let model_a = ModelIdentifier { name: "gpt-4".into(), provider: "openai".into(), variant: None };
-        let model_b = ModelIdentifier { name: "llama3".into(), provider: "ollama".into(), variant: Some("8b".into()) };
+        let model_a = ModelIdentifier {
+            name: "gpt-4".into(),
+            provider: "openai".into(),
+            variant: None,
+        };
+        let model_b = ModelIdentifier {
+            name: "llama3".into(),
+            provider: "ollama".into(),
+            variant: Some("8b".into()),
+        };
 
         // Model A wins
         elo.update_from_pairwise(&model_a, &model_b, 0.9, 0.6);
@@ -1045,8 +1076,16 @@ mod tests {
     #[test]
     fn test_elo_draw() {
         let mut elo = EloCalculator::new(32.0);
-        let model_a = ModelIdentifier { name: "a".into(), provider: "p".into(), variant: None };
-        let model_b = ModelIdentifier { name: "b".into(), provider: "p".into(), variant: None };
+        let model_a = ModelIdentifier {
+            name: "a".into(),
+            provider: "p".into(),
+            variant: None,
+        };
+        let model_b = ModelIdentifier {
+            name: "b".into(),
+            provider: "p".into(),
+            variant: None,
+        };
 
         elo.update_from_pairwise(&model_a, &model_b, 0.5, 0.5);
 
@@ -1059,9 +1098,21 @@ mod tests {
     #[test]
     fn test_elo_ranked() {
         let mut elo = EloCalculator::new(32.0);
-        let model_a = ModelIdentifier { name: "a".into(), provider: "p".into(), variant: None };
-        let model_b = ModelIdentifier { name: "b".into(), provider: "p".into(), variant: None };
-        let model_c = ModelIdentifier { name: "c".into(), provider: "p".into(), variant: None };
+        let model_a = ModelIdentifier {
+            name: "a".into(),
+            provider: "p".into(),
+            variant: None,
+        };
+        let model_b = ModelIdentifier {
+            name: "b".into(),
+            provider: "p".into(),
+            variant: None,
+        };
+        let model_c = ModelIdentifier {
+            name: "c".into(),
+            provider: "p".into(),
+            variant: None,
+        };
 
         elo.update_from_pairwise(&model_a, &model_b, 0.9, 0.1);
         elo.update_from_pairwise(&model_b, &model_c, 0.9, 0.1);
@@ -1076,7 +1127,10 @@ mod tests {
     fn test_extract_answer_letter_patterns() {
         // Basic patterns
         assert_eq!(extract_answer_letter("B"), Some("B".to_string()));
-        assert_eq!(extract_answer_letter("The answer is C"), Some("C".to_string()));
+        assert_eq!(
+            extract_answer_letter("The answer is C"),
+            Some("C".to_string())
+        );
         assert_eq!(extract_answer_letter("Answer: A"), Some("A".to_string()));
         assert_eq!(extract_answer_letter("(D)"), Some("D".to_string()));
         assert_eq!(extract_answer_letter("B)"), Some("B".to_string()));
@@ -1087,7 +1141,9 @@ mod tests {
             Some("B".to_string()),
         );
         assert_eq!(
-            extract_answer_letter("After analyzing the options, the correct answer is D) Some flowers are roses."),
+            extract_answer_letter(
+                "After analyzing the options, the correct answer is D) Some flowers are roses."
+            ),
             Some("D".to_string()),
         );
         assert_eq!(
@@ -1116,7 +1172,9 @@ mod tests {
             category: super::super::dataset::ProblemCategory::AgentTask,
             prompt: "Do something".into(),
             system_prompt: None,
-            answer_format: AnswerFormat::AgentTrajectory { success_criteria: "done".into() },
+            answer_format: AnswerFormat::AgentTrajectory {
+                success_criteria: "done".into(),
+            },
             reference_solution: None,
             test_cases: None,
             metadata: HashMap::new(),
@@ -1220,7 +1278,10 @@ mod tests {
     fn test_score_terminal_all_commands() {
         let score = score_terminal_sequence(
             "```bash\n$ find . -name '*.py'\n$ grep TODO *.py\n```",
-            &["find . -name '*.py'".to_string(), "grep TODO *.py".to_string()],
+            &[
+                "find . -name '*.py'".to_string(),
+                "grep TODO *.py".to_string(),
+            ],
             None,
         );
         assert!(score > 0.8); // Both commands found in order
@@ -1230,12 +1291,18 @@ mod tests {
     fn test_score_terminal_partial_commands() {
         let score = score_terminal_sequence(
             "```bash\n$ find . -name '*.py'\n```",
-            &["find . -name '*.py'".to_string(), "grep TODO *.py".to_string()],
+            &[
+                "find . -name '*.py'".to_string(),
+                "grep TODO *.py".to_string(),
+            ],
             None,
         );
         let full_score = score_terminal_sequence(
             "```bash\n$ find . -name '*.py'\n$ grep TODO *.py\n```",
-            &["find . -name '*.py'".to_string(), "grep TODO *.py".to_string()],
+            &[
+                "find . -name '*.py'".to_string(),
+                "grep TODO *.py".to_string(),
+            ],
             None,
         );
         assert!(score < full_score); // Partial < full
@@ -1246,12 +1313,20 @@ mod tests {
     fn test_score_terminal_order_matters() {
         let ordered = score_terminal_sequence(
             "```bash\n$ cd /tmp\n$ mkdir test\n$ touch test/file.txt\n```",
-            &["cd /tmp".to_string(), "mkdir test".to_string(), "touch test/file.txt".to_string()],
+            &[
+                "cd /tmp".to_string(),
+                "mkdir test".to_string(),
+                "touch test/file.txt".to_string(),
+            ],
             None,
         );
         let reversed = score_terminal_sequence(
             "```bash\n$ touch test/file.txt\n$ mkdir test\n$ cd /tmp\n```",
-            &["cd /tmp".to_string(), "mkdir test".to_string(), "touch test/file.txt".to_string()],
+            &[
+                "cd /tmp".to_string(),
+                "mkdir test".to_string(),
+                "touch test/file.txt".to_string(),
+            ],
             None,
         );
         // Same commands but correct order should score >= reversed
@@ -1275,13 +1350,26 @@ mod tests {
         use super::super::dataset::*;
 
         // CompetitiveProgrammingCode
-        let cp = make_competitive_problem("cp/1", "Sum of N", "print(sum(range(int(input()))))", "python", vec![("5", "10")], "easy");
+        let cp = make_competitive_problem(
+            "cp/1",
+            "Sum of N",
+            "print(sum(range(int(input()))))",
+            "python",
+            vec![("5", "10")],
+            "easy",
+        );
         let scorer = DefaultScorer;
         let score = scorer.score(&cp, "print(sum(range(int(input()))))");
         assert!(score > 0.5);
 
         // CodeEdit
-        let ce = make_code_edit_problem("ce/1", "Add guard", "fn f() {}", "fn f() { guard(); }", "rust");
+        let ce = make_code_edit_problem(
+            "ce/1",
+            "Add guard",
+            "fn f() {}",
+            "fn f() { guard(); }",
+            "rust",
+        );
         let score = scorer.score(&ce, "fn f() { guard(); }");
         assert_eq!(score, 1.0);
 

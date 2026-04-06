@@ -99,9 +99,7 @@ pub enum ModelResolution {
     /// Virtual model — apply enrichment pipeline.
     Virtual(VirtualModel),
     /// Not found in registry — fall back to default behavior.
-    PassThrough {
-        name: String,
-    },
+    PassThrough { name: String },
 }
 
 /// A model as seen by API clients (OpenAI /v1/models response format).
@@ -189,7 +187,10 @@ impl ModelRegistry {
 
     /// List all virtual models (including unpublished).
     pub fn list_virtual(&self) -> Vec<VirtualModel> {
-        self.virtual_models.iter().map(|v| v.value().clone()).collect()
+        self.virtual_models
+            .iter()
+            .map(|v| v.value().clone())
+            .collect()
     }
 
     /// List only published virtual models.
@@ -351,8 +352,7 @@ impl ModelRegistry {
 
     /// Load the registry from a JSON file. Returns a new registry.
     pub fn load_from_file(path: &Path) -> Result<Self, String> {
-        let json =
-            std::fs::read_to_string(path).map_err(|e| format!("Read error: {}", e))?;
+        let json = std::fs::read_to_string(path).map_err(|e| format!("Read error: {}", e))?;
         let snapshot: RegistrySnapshot =
             serde_json::from_str(&json).map_err(|e| format!("Parse error: {}", e))?;
 
@@ -361,7 +361,9 @@ impl ModelRegistry {
             registry.virtual_models.insert(vmodel.name.clone(), vmodel);
         }
         for pmodel in snapshot.published_models {
-            registry.published_models.insert(pmodel.name.clone(), pmodel);
+            registry
+                .published_models
+                .insert(pmodel.name.clone(), pmodel);
         }
         Ok(registry)
     }
@@ -489,18 +491,30 @@ mod tests {
     #[test]
     fn test_list_virtual_models() {
         let registry = ModelRegistry::new();
-        registry.register_virtual(make_virtual_model("a", true)).unwrap();
-        registry.register_virtual(make_virtual_model("b", false)).unwrap();
-        registry.register_virtual(make_virtual_model("c", true)).unwrap();
+        registry
+            .register_virtual(make_virtual_model("a", true))
+            .unwrap();
+        registry
+            .register_virtual(make_virtual_model("b", false))
+            .unwrap();
+        registry
+            .register_virtual(make_virtual_model("c", true))
+            .unwrap();
         assert_eq!(registry.list_virtual().len(), 3);
     }
 
     #[test]
     fn test_list_published_virtual_models() {
         let registry = ModelRegistry::new();
-        registry.register_virtual(make_virtual_model("a", true)).unwrap();
-        registry.register_virtual(make_virtual_model("b", false)).unwrap();
-        registry.register_virtual(make_virtual_model("c", true)).unwrap();
+        registry
+            .register_virtual(make_virtual_model("a", true))
+            .unwrap();
+        registry
+            .register_virtual(make_virtual_model("b", false))
+            .unwrap();
+        registry
+            .register_virtual(make_virtual_model("c", true))
+            .unwrap();
         let published = registry.list_published_virtual();
         assert_eq!(published.len(), 2);
     }
@@ -556,7 +570,9 @@ mod tests {
     #[test]
     fn test_resolve_virtual_model() {
         let registry = ModelRegistry::new();
-        registry.register_virtual(make_virtual_model("my-rag", true)).unwrap();
+        registry
+            .register_virtual(make_virtual_model("my-rag", true))
+            .unwrap();
         match registry.resolve("my-rag") {
             ModelResolution::Virtual(v) => assert_eq!(v.base_model, "llama3:8b"),
             _ => panic!("Expected Virtual resolution"),
@@ -589,10 +605,15 @@ mod tests {
     fn test_resolve_virtual_takes_priority_over_physical() {
         let registry = ModelRegistry::new();
         // Same name as both virtual and physical
-        registry.register_virtual(make_virtual_model("dual", true)).unwrap();
+        registry
+            .register_virtual(make_virtual_model("dual", true))
+            .unwrap();
         registry.set_published("dual", AiProvider::Ollama, true);
         // Virtual should win
-        assert!(matches!(registry.resolve("dual"), ModelResolution::Virtual(_)));
+        assert!(matches!(
+            registry.resolve("dual"),
+            ModelResolution::Virtual(_)
+        ));
     }
 
     // ── Client Visible Listing ──────────────────────────────────────────
@@ -619,7 +640,9 @@ mod tests {
     #[test]
     fn test_list_client_visible_published_virtual() {
         let registry = ModelRegistry::new();
-        registry.register_virtual(make_virtual_model("my-rag", true)).unwrap();
+        registry
+            .register_virtual(make_virtual_model("my-rag", true))
+            .unwrap();
         let available: Vec<ModelInfo> = vec![];
         let visible = registry.list_client_visible(&available);
         assert_eq!(visible.len(), 1);
@@ -632,8 +655,12 @@ mod tests {
     fn test_list_client_visible_mixed() {
         let registry = ModelRegistry::new();
         registry.set_published("llama3:8b", AiProvider::Ollama, true);
-        registry.register_virtual(make_virtual_model("my-rag", true)).unwrap();
-        registry.register_virtual(make_virtual_model("hidden", false)).unwrap();
+        registry
+            .register_virtual(make_virtual_model("my-rag", true))
+            .unwrap();
+        registry
+            .register_virtual(make_virtual_model("hidden", false))
+            .unwrap();
         let available = vec![make_model_info("llama3:8b"), make_model_info("mistral:7b")];
         let visible = registry.list_client_visible(&available);
         // llama3:8b (published) + my-rag (published virtual) = 2
@@ -701,8 +728,12 @@ mod tests {
     #[test]
     fn test_save_and_load_registry() {
         let registry = ModelRegistry::new();
-        registry.register_virtual(make_virtual_model("v1", true)).unwrap();
-        registry.register_virtual(make_virtual_model("v2", false)).unwrap();
+        registry
+            .register_virtual(make_virtual_model("v1", true))
+            .unwrap();
+        registry
+            .register_virtual(make_virtual_model("v2", false))
+            .unwrap();
         registry.set_published("llama3:8b", AiProvider::Ollama, true);
 
         let path = std::env::temp_dir().join("test_model_registry.json");

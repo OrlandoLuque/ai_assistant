@@ -653,9 +653,14 @@ mod tests {
     #[test]
     fn test_cost_estimate_format() {
         let est = CostEstimate {
-            input_tokens: 1000, output_tokens: 500, images: 0,
-            cost: 0.005, currency: "USD".into(), model: "m".into(),
-            provider: "p".into(), pricing_tier: None,
+            input_tokens: 1000,
+            output_tokens: 500,
+            images: 0,
+            cost: 0.005,
+            currency: "USD".into(),
+            model: "m".into(),
+            provider: "p".into(),
+            pricing_tier: None,
         };
         let formatted = est.format();
         assert!(formatted.contains("1000"));
@@ -669,9 +674,14 @@ mod tests {
         let mut tracker = CostTracker::new();
         for i in 0..4 {
             tracker.add(CostEstimate {
-                input_tokens: 100 * (i + 1), output_tokens: 50 * (i + 1), images: 0,
-                cost: 0.01 * (i + 1) as f64, currency: "USD".into(),
-                model: "gpt-4".into(), provider: "openai".into(), pricing_tier: None,
+                input_tokens: 100 * (i + 1),
+                output_tokens: 50 * (i + 1),
+                images: 0,
+                cost: 0.01 * (i + 1) as f64,
+                currency: "USD".into(),
+                model: "gpt-4".into(),
+                provider: "openai".into(),
+                pricing_tier: None,
             });
         }
         assert_eq!(tracker.request_count, 4);
@@ -686,9 +696,14 @@ mod tests {
     fn test_cost_tracker_reset() {
         let mut tracker = CostTracker::new();
         tracker.add(CostEstimate {
-            input_tokens: 100, output_tokens: 50, images: 0,
-            cost: 0.01, currency: "USD".into(), model: "m".into(),
-            provider: "p".into(), pricing_tier: None,
+            input_tokens: 100,
+            output_tokens: 50,
+            images: 0,
+            cost: 0.01,
+            currency: "USD".into(),
+            model: "m".into(),
+            provider: "p".into(),
+            pricing_tier: None,
         });
         tracker.reset();
         assert_eq!(tracker.request_count, 0);

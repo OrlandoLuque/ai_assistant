@@ -660,12 +660,8 @@ impl ProfileLoader {
         if profile.resources.max_memory_mb == 0 {
             errors.push("max_memory_mb must be > 0".to_string());
         }
-        if profile.resources.max_cpu_percent <= 0.0
-            || profile.resources.max_cpu_percent > 100.0
-        {
-            errors.push(
-                "max_cpu_percent must be > 0 and <= 100".to_string(),
-            );
+        if profile.resources.max_cpu_percent <= 0.0 || profile.resources.max_cpu_percent > 100.0 {
+            errors.push("max_cpu_percent must be > 0 and <= 100".to_string());
         }
         if profile.resources.max_runtime_secs == 0 {
             errors.push("max_runtime_secs must be > 0".to_string());
@@ -790,17 +786,24 @@ mod tests {
 
     #[test]
     fn test_parse_json_all_optional_fields() {
-        let def = AgentDefinitionLoader::from_json(full_json()).expect("parse JSON for all_optional_fields");
+        let def = AgentDefinitionLoader::from_json(full_json())
+            .expect("parse JSON for all_optional_fields");
         // Check all optional fields on agent
         assert!(def.agent.description.is_some());
         assert!(def.agent.system_prompt.is_some());
         // Check memory optional fields
-        let mem = def.memory.as_ref().expect("memory section in all_optional_fields");
+        let mem = def
+            .memory
+            .as_ref()
+            .expect("memory section in all_optional_fields");
         assert_eq!(mem.memory_type, "episodic");
         assert_eq!(mem.max_episodes, Some(1000));
         assert!(mem.consolidation_enabled);
         // Check guardrails optional fields
-        let gr = def.guardrails.as_ref().expect("guardrails section in all_optional_fields");
+        let gr = def
+            .guardrails
+            .as_ref()
+            .expect("guardrails section in all_optional_fields");
         assert_eq!(gr.max_tokens_per_response, Some(2000));
         assert!(gr.block_pii);
         assert_eq!(gr.max_turns, Some(50));
@@ -812,7 +815,8 @@ mod tests {
 
     #[test]
     fn test_validate_valid_definition() {
-        let def = AgentDefinitionLoader::from_json(full_json()).expect("parse for validate_valid_definition");
+        let def = AgentDefinitionLoader::from_json(full_json())
+            .expect("parse for validate_valid_definition");
         let warnings = AgentDefinitionLoader::validate(&def).expect("validate valid definition");
         // Should produce zero errors or warnings (all fields are valid).
         assert!(
@@ -841,8 +845,9 @@ mod tests {
         let json = r#"{ "agent": { "name": "" } }"#;
         let def = AgentDefinitionLoader::from_json(json).expect("parse empty name JSON");
         let warnings = AgentDefinitionLoader::validate(&def).expect("validate empty name");
-        assert!(warnings.iter().any(|w| w.field == "agent.name"
-            && w.severity == WarningSeverity::Error));
+        assert!(warnings
+            .iter()
+            .any(|w| w.field == "agent.name" && w.severity == WarningSeverity::Error));
     }
 
     // ── 7. Validate unknown role (warning) ──────────────────────────────
@@ -852,8 +857,9 @@ mod tests {
         let json = r#"{ "agent": { "name": "x", "role": "Wizard" } }"#;
         let def = AgentDefinitionLoader::from_json(json).expect("parse unknown role JSON");
         let warnings = AgentDefinitionLoader::validate(&def).expect("validate unknown role");
-        assert!(warnings.iter().any(|w| w.field == "agent.role"
-            && w.severity == WarningSeverity::Warning));
+        assert!(warnings
+            .iter()
+            .any(|w| w.field == "agent.role" && w.severity == WarningSeverity::Warning));
     }
 
     // ── 8. Validate unknown autonomy level (warning) ────────────────────
@@ -863,8 +869,9 @@ mod tests {
         let json = r#"{ "agent": { "name": "x", "autonomy_level": "rogue" } }"#;
         let def = AgentDefinitionLoader::from_json(json).expect("parse unknown autonomy JSON");
         let warnings = AgentDefinitionLoader::validate(&def).expect("validate unknown autonomy");
-        assert!(warnings.iter().any(|w| w.field == "agent.autonomy_level"
-            && w.severity == WarningSeverity::Warning));
+        assert!(warnings
+            .iter()
+            .any(|w| w.field == "agent.autonomy_level" && w.severity == WarningSeverity::Warning));
     }
 
     // ── 9. Validate tool with empty name (error) ────────────────────────
@@ -877,8 +884,9 @@ mod tests {
         }"#;
         let def = AgentDefinitionLoader::from_json(json).expect("parse tool empty name JSON");
         let warnings = AgentDefinitionLoader::validate(&def).expect("validate tool empty name");
-        assert!(warnings.iter().any(|w| w.field == "tools[0].name"
-            && w.severity == WarningSeverity::Error));
+        assert!(warnings
+            .iter()
+            .any(|w| w.field == "tools[0].name" && w.severity == WarningSeverity::Error));
     }
 
     // ── 10. Validate memory with unknown type (error) ───────────────────
@@ -891,8 +899,9 @@ mod tests {
         }"#;
         let def = AgentDefinitionLoader::from_json(json).expect("parse unknown memory type JSON");
         let warnings = AgentDefinitionLoader::validate(&def).expect("validate unknown memory type");
-        assert!(warnings.iter().any(|w| w.field == "memory.memory_type"
-            && w.severity == WarningSeverity::Error));
+        assert!(warnings
+            .iter()
+            .any(|w| w.field == "memory.memory_type" && w.severity == WarningSeverity::Error));
     }
 
     // ── 11. Round-trip: serialize then deserialize ───────────────────────
@@ -914,9 +923,8 @@ mod tests {
         let path = dir.join("agent_def_test_12.json");
         std::fs::write(&path, full_json()).expect("write temp JSON file for from_file test");
 
-        let def =
-            AgentDefinitionLoader::from_file(path.to_str().expect("temp path to str"))
-                .expect("load agent definition from file");
+        let def = AgentDefinitionLoader::from_file(path.to_str().expect("temp path to str"))
+            .expect("load agent definition from file");
         assert_eq!(def.agent.name, "research_assistant");
 
         // Cleanup
@@ -1033,7 +1041,10 @@ tags = "research, analysis"
         let mem = def.memory.as_ref().expect("memory section in TOML test");
         assert_eq!(mem.memory_type, "episodic");
         assert_eq!(mem.max_episodes, Some(1000));
-        let gr = def.guardrails.as_ref().expect("guardrails section in TOML test");
+        let gr = def
+            .guardrails
+            .as_ref()
+            .expect("guardrails section in TOML test");
         assert_eq!(gr.max_tokens_per_response, Some(2000));
         assert!(gr.block_pii);
     }
@@ -1046,8 +1057,10 @@ tags = "research, analysis"
             "agent": { "name": "x" },
             "guardrails": { "max_tokens_per_response": 0 }
         }"#;
-        let def = AgentDefinitionLoader::from_json(json).expect("parse zero max_tokens guardrail JSON");
-        let warnings = AgentDefinitionLoader::validate(&def).expect("validate zero max_tokens guardrail");
+        let def =
+            AgentDefinitionLoader::from_json(json).expect("parse zero max_tokens guardrail JSON");
+        let warnings =
+            AgentDefinitionLoader::validate(&def).expect("validate zero max_tokens guardrail");
         assert!(warnings
             .iter()
             .any(|w| w.field == "guardrails.max_tokens_per_response"
@@ -1160,7 +1173,8 @@ tags = "research, analysis"
     fn test_profile_loader_to_json_roundtrip() {
         let original = ProfileLoader::with_defaults();
         let json = ProfileLoader::to_json(&original).expect("serialize DeploymentProfile");
-        let restored = ProfileLoader::from_json(&json).expect("deserialize DeploymentProfile roundtrip");
+        let restored =
+            ProfileLoader::from_json(&json).expect("deserialize DeploymentProfile roundtrip");
         assert_eq!(restored.name, original.name);
         assert_eq!(restored.sandbox_backend, original.sandbox_backend);
         assert_eq!(

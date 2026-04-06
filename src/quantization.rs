@@ -895,8 +895,11 @@ mod tests {
     fn test_compare_formats() {
         let detector = QuantizationDetector::new();
 
-        let comparison =
-            detector.compare_formats(&QuantFormat::GGUF_Q8_0, &QuantFormat::GGUF_Q4_K_M, ModelSize::Medium);
+        let comparison = detector.compare_formats(
+            &QuantFormat::GGUF_Q8_0,
+            &QuantFormat::GGUF_Q4_K_M,
+            ModelSize::Medium,
+        );
 
         // Q8_0 has higher quality than Q4_K_M
         assert!(comparison.quality_diff > 0.0);

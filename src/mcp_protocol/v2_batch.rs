@@ -148,11 +148,8 @@ impl BatchExecutor {
         responses: Vec<JsonRpcResponse>,
     ) -> BatchResponse {
         // Build a set of request IDs for correlation
-        let request_ids: std::collections::HashSet<String> = batch
-            .requests
-            .iter()
-            .map(|r| r.id.to_string())
-            .collect();
+        let request_ids: std::collections::HashSet<String> =
+            batch.requests.iter().map(|r| r.id.to_string()).collect();
 
         // Filter to only responses whose id matches a request in the batch
         let correlated: Vec<JsonRpcResponse> = responses

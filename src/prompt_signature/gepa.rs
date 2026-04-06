@@ -234,7 +234,11 @@ impl GEPAOptimizer {
 
             // Vary number of demos
             let max_demos = examples.len().min(5);
-            let num_demos = if max_demos > 0 { (i % max_demos) + 1 } else { 0 };
+            let num_demos = if max_demos > 0 {
+                (i % max_demos) + 1
+            } else {
+                0
+            };
             let demos: Vec<PromptExample> = examples
                 .iter()
                 .take(num_demos)
@@ -309,7 +313,11 @@ impl GEPAOptimizer {
     }
 
     /// Crossover: combine demos from two parents.
-    pub(crate) fn crossover(parent_a: &CompiledPrompt, parent_b: &CompiledPrompt, seed: usize) -> CompiledPrompt {
+    pub(crate) fn crossover(
+        parent_a: &CompiledPrompt,
+        parent_b: &CompiledPrompt,
+        seed: usize,
+    ) -> CompiledPrompt {
         let mut child_examples = Vec::new();
         // Interleave examples from both parents
         let max_len = parent_a.examples.len().max(parent_b.examples.len());
@@ -414,7 +422,9 @@ impl GEPAOptimizer {
 
         // Evaluate initial population
         if !budget.try_use() {
-            return Err(AiError::other("GEPA budget exhausted before first evaluation"));
+            return Err(AiError::other(
+                "GEPA budget exhausted before first evaluation",
+            ));
         }
         Self::evaluate_population(signature, &mut solutions, examples, metrics);
         ParetoFront::compute(&mut solutions);
@@ -430,17 +440,17 @@ impl GEPAOptimizer {
             // Elitism: carry over the best individuals
             let mut elite_indices: Vec<usize> = (0..solutions.len()).collect();
             elite_indices.sort_by(|&a, &b| {
-                solutions[a]
-                    .rank
-                    .cmp(&solutions[b].rank)
-                    .then(
-                        solutions[b]
-                            .crowding_distance
-                            .partial_cmp(&solutions[a].crowding_distance)
-                            .unwrap_or(std::cmp::Ordering::Equal),
-                    )
+                solutions[a].rank.cmp(&solutions[b].rank).then(
+                    solutions[b]
+                        .crowding_distance
+                        .partial_cmp(&solutions[a].crowding_distance)
+                        .unwrap_or(std::cmp::Ordering::Equal),
+                )
             });
-            for &idx in elite_indices.iter().take(self.config.elitism_count.min(solutions.len())) {
+            for &idx in elite_indices
+                .iter()
+                .take(self.config.elitism_count.min(solutions.len()))
+            {
                 next_gen.push(solutions[idx].clone());
             }
 

@@ -136,7 +136,12 @@ impl ConfigLock {
     /// Attempt to unlock a section. Returns true if successful.
     pub fn unlock_section(&mut self, section: ConfigSection, source: &str) -> bool {
         if self.fully_locked {
-            self.log("unlock_section_denied_fully_locked", Some(section), false, source);
+            self.log(
+                "unlock_section_denied_fully_locked",
+                Some(section),
+                false,
+                source,
+            );
             return false;
         }
         let removed = self.locked_sections.remove(&section);
@@ -355,15 +360,24 @@ pub enum SecurityAlert {
     /// Lock bypass attempt detected.
     LockBypassAttempt { source: String, section: String },
     /// Learning subsystem anomaly.
-    LearningAnomaly { subsystem: String, description: String },
+    LearningAnomaly {
+        subsystem: String,
+        description: String,
+    },
 }
 
 impl std::fmt::Display for SecurityAlert {
     #[allow(unreachable_patterns)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::KeyRotationDue { days_since_rotation } => {
-                write!(f, "Key rotation due ({} days since last rotation)", days_since_rotation)
+            Self::KeyRotationDue {
+                days_since_rotation,
+            } => {
+                write!(
+                    f,
+                    "Key rotation due ({} days since last rotation)",
+                    days_since_rotation
+                )
             }
             Self::NoBackupKey => write!(f, "No backup key exists — risk of data loss"),
             Self::InsecureFilePermissions { path, current } => {
@@ -377,9 +391,16 @@ impl std::fmt::Display for SecurityAlert {
             }
             Self::NoEncryptionConfigured => write!(f, "No encryption configured"),
             Self::LockBypassAttempt { source, section } => {
-                write!(f, "Lock bypass attempt from {} on section {}", source, section)
+                write!(
+                    f,
+                    "Lock bypass attempt from {} on section {}",
+                    source, section
+                )
             }
-            Self::LearningAnomaly { subsystem, description } => {
+            Self::LearningAnomaly {
+                subsystem,
+                description,
+            } => {
                 write!(f, "Learning anomaly in {}: {}", subsystem, description)
             }
             _ => write!(f, "Security alert"),
@@ -564,7 +585,9 @@ mod tests {
 
     #[test]
     fn test_security_alert_display() {
-        let alert = SecurityAlert::KeyRotationDue { days_since_rotation: 95 };
+        let alert = SecurityAlert::KeyRotationDue {
+            days_since_rotation: 95,
+        };
         let s = format!("{}", alert);
         assert!(s.contains("95 days"));
     }

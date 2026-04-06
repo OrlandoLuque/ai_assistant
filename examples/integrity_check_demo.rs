@@ -47,7 +47,7 @@ fn main() {
 
     // Build with a known hash
     let config = IntegrityConfig::with_hash(
-        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     )
     .abort_on_failure(false);
 
@@ -73,16 +73,23 @@ fn main() {
         ("Valid", IntegrityResult::Valid),
         ("Skipped", IntegrityResult::Skipped),
         ("NoHashConfigured", IntegrityResult::NoHashConfigured),
-        ("HashMismatch", IntegrityResult::HashMismatch {
-            expected: "abc123...".to_string(),
-            actual: "def456...".to_string(),
-        }),
-        ("ReadError", IntegrityResult::ReadError("file not found".to_string())),
+        (
+            "HashMismatch",
+            IntegrityResult::HashMismatch {
+                expected: "abc123...".to_string(),
+                actual: "def456...".to_string(),
+            },
+        ),
+        (
+            "ReadError",
+            IntegrityResult::ReadError("file not found".to_string()),
+        ),
         ("SignatureInvalid", IntegrityResult::SignatureInvalid),
     ];
 
     for (name, result) in &results {
-        println!("  {:<20} is_valid={:<5}  was_verified={:<5}  display=\"{}\"",
+        println!(
+            "  {:<20} is_valid={:<5}  was_verified={:<5}  display=\"{}\"",
             name,
             result.is_valid(),
             result.was_verified(),
@@ -114,8 +121,8 @@ fn main() {
 
     // Simulate what a production binary would do:
     // startup_integrity_check() reads BINARY_INTEGRITY_HASH from env
-    let expected_hash = std::env::var("BINARY_INTEGRITY_HASH")
-        .unwrap_or_else(|_| "not_set".to_string());
+    let expected_hash =
+        std::env::var("BINARY_INTEGRITY_HASH").unwrap_or_else(|_| "not_set".to_string());
 
     println!("  BINARY_INTEGRITY_HASH env: {:?}", expected_hash);
 
@@ -124,9 +131,8 @@ fn main() {
     println!("  startup_integrity_check() completed (no-op in debug builds)");
 
     // For more control, use IntegrityChecker directly:
-    let checker = IntegrityChecker::new(
-        IntegrityConfig::with_hash(&expected_hash).abort_on_failure(false),
-    );
+    let checker =
+        IntegrityChecker::new(IntegrityConfig::with_hash(&expected_hash).abort_on_failure(false));
     let startup_result = checker.verify();
     println!("  Manual verify result: {}", startup_result);
     println!("  is_valid: {}", startup_result.is_valid());

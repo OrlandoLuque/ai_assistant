@@ -59,7 +59,9 @@ fn main() {
     }
 
     // 5. Get results at 95% confidence
-    let result = mgr.get_results(&exp_id, 0.95).expect("failed to get results");
+    let result = mgr
+        .get_results(&exp_id, 0.95)
+        .expect("failed to get results");
     println!("\n--- Experiment Results ---");
     println!("Significant: {}", result.is_significant);
     println!("p-value:     {:.6}", result.p_value);
@@ -69,10 +71,7 @@ fn main() {
     }
 
     for vs in &result.variants {
-        println!(
-            "\n  Variant: {} (n={})",
-            vs.variant_name, vs.sample_size
-        );
+        println!("\n  Variant: {} (n={})", vs.variant_name, vs.sample_size);
         println!("    Mean: {:.2}, StdDev: {:.2}", vs.mean, vs.std_dev);
         println!("    Min: {:.2}, Max: {:.2}", vs.min, vs.max);
         println!(

@@ -389,11 +389,10 @@ impl MockHttpServer {
 
     /// Enqueue a plain text response
     pub fn enqueue_text(&self, status: u16, body: &str) {
-        self.responses.lock().unwrap().push((
-            status,
-            "text/plain".to_string(),
-            body.to_string(),
-        ));
+        self.responses
+            .lock()
+            .unwrap()
+            .push((status, "text/plain".to_string(), body.to_string()));
     }
 
     /// Get the last received request (method, path, body).
@@ -682,12 +681,8 @@ mod tests {
         server.enqueue_json(200, serde_json::json!({"n": 2}));
 
         let client = UreqClient;
-        let r1 = client
-            .get_json(&format!("{}/a", server.url()), 5)
-            .unwrap();
-        let r2 = client
-            .get_json(&format!("{}/b", server.url()), 5)
-            .unwrap();
+        let r1 = client.get_json(&format!("{}/a", server.url()), 5).unwrap();
+        let r2 = client.get_json(&format!("{}/b", server.url()), 5).unwrap();
 
         assert_eq!(r1["n"], 1);
         assert_eq!(r2["n"], 2);
@@ -710,8 +705,7 @@ mod tests {
         server.enqueue_text(200, "Hello, world!");
 
         // Use a raw TCP connection to verify the text response
-        let mut stream =
-            std::net::TcpStream::connect(server.addr).unwrap();
+        let mut stream = std::net::TcpStream::connect(server.addr).unwrap();
         stream
             .set_read_timeout(Some(std::time::Duration::from_secs(5)))
             .ok();

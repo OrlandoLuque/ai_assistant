@@ -33,23 +33,16 @@ mod inner {
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
     pub enum StepType {
         /// An LLM inference call.
-        LlmCall {
-            model: String,
-            temperature: f32,
-        },
+        LlmCall { model: String, temperature: f32 },
         /// A tool invocation.
-        ToolUse {
-            tool_name: String,
-        },
+        ToolUse { tool_name: String },
         /// A decision point where one option was chosen among alternatives.
         Decision {
             options: Vec<String>,
             chosen: String,
         },
         /// An observation from the environment.
-        Observation {
-            source: String,
-        },
+        Observation { source: String },
     }
 
     impl fmt::Display for StepType {
@@ -435,8 +428,7 @@ mod inner {
 
     impl TrajectoryScorer for EfficiencyScorer {
         fn score(&self, trajectory: &Trajectory) -> f64 {
-            let step_score = 1.0
-                - (trajectory.steps.len() as f64 / self.max_steps as f64).min(1.0);
+            let step_score = 1.0 - (trajectory.steps.len() as f64 / self.max_steps as f64).min(1.0);
             let token_penalty =
                 (trajectory.total_tokens as f64 / 1000.0) * self.token_penalty_per_1k;
             (step_score - token_penalty).clamp(0.0, 1.0)
@@ -692,9 +684,9 @@ mod inner {
         pub fn split_train_test(self, ratio: f64) -> (Self, Self) {
             let ratio = ratio.clamp(0.0, 1.0);
             let split_index = (self.trajectories.len() as f64 * ratio).round() as usize;
-            let (train, test) = self.trajectories.split_at(
-                split_index.min(self.trajectories.len()),
-            );
+            let (train, test) = self
+                .trajectories
+                .split_at(split_index.min(self.trajectories.len()));
             (Self::new(train.to_vec()), Self::new(test.to_vec()))
         }
 
@@ -914,10 +906,7 @@ mod inner {
                                 StepType::ToolUse { tool_name } => {
                                     messages.push(DatasetMessage {
                                         role: "assistant".to_string(),
-                                        content: format!(
-                                            "[tool:{}] {}",
-                                            tool_name, step.output
-                                        ),
+                                        content: format!("[tool:{}] {}", tool_name, step.output),
                                     });
                                 }
                                 StepType::Observation { source } => {
@@ -932,10 +921,7 @@ mod inner {
                                 StepType::Decision { chosen, .. } => {
                                     messages.push(DatasetMessage {
                                         role: "assistant".to_string(),
-                                        content: format!(
-                                            "[decision:{}] {}",
-                                            chosen, step.output
-                                        ),
+                                        content: format!("[decision:{}] {}", chosen, step.output),
                                     });
                                 }
                             }
@@ -1295,8 +1281,7 @@ mod inner {
             }
 
             // Step 3: Build dataset
-            let dataset =
-                TrajectoryDataset::new(filtered.into_iter().cloned().collect());
+            let dataset = TrajectoryDataset::new(filtered.into_iter().cloned().collect());
 
             let dataset_config = DatasetConfig {
                 format: self.config.format.clone(),
@@ -1532,14 +1517,8 @@ mod inner {
                 .expect("finish 2");
 
             assert_eq!(collector.list_trajectories().len(), 2);
-            assert_eq!(
-                collector.get_trajectory(&id1).expect("t1").steps.len(),
-                1
-            );
-            assert_eq!(
-                collector.get_trajectory(&id2).expect("t2").steps.len(),
-                2
-            );
+            assert_eq!(collector.get_trajectory(&id1).expect("t1").steps.len(), 1);
+            assert_eq!(collector.get_trajectory(&id2).expect("t2").steps.len(), 2);
         }
 
         #[test]
@@ -1829,8 +1808,8 @@ mod inner {
                 ),
             ];
 
-            let filter = TrajectoryFilter::new(0.0)
-                .with_required_outcome(RequiredOutcome::SuccessOnly);
+            let filter =
+                TrajectoryFilter::new(0.0).with_required_outcome(RequiredOutcome::SuccessOnly);
             let filtered = filter.filter(&trajectories);
             assert_eq!(filtered.len(), 1);
             assert_eq!(filtered[0].id, "t1");
@@ -1839,8 +1818,8 @@ mod inner {
         #[test]
         fn test_filter_combined_criteria() {
             let trajectories = vec![
-                simple_success_trajectory("ok", 3),    // success, 3 steps, 300 tokens
-                simple_success_trajectory("big", 25),  // success, 25 steps, 2500 tokens
+                simple_success_trajectory("ok", 3), // success, 3 steps, 300 tokens
+                simple_success_trajectory("big", 25), // success, 25 steps, 2500 tokens
                 make_trajectory(
                     "fail",
                     vec![make_step(
@@ -1931,21 +1910,15 @@ mod inner {
             let trajectories: Vec<Trajectory> = (0..5)
                 .map(|i| simple_success_trajectory(&format!("t{}", i), 1))
                 .collect();
-            let original_ids: Vec<String> =
-                trajectories.iter().map(|t| t.id.clone()).collect();
+            let original_ids: Vec<String> = trajectories.iter().map(|t| t.id.clone()).collect();
 
             let mut dataset = TrajectoryDataset::new(trajectories);
             dataset.shuffle();
 
             // After shuffle, all IDs should still be present
-            let shuffled_ids: Vec<String> =
-                dataset.iter().map(|t| t.id.clone()).collect();
+            let shuffled_ids: Vec<String> = dataset.iter().map(|t| t.id.clone()).collect();
             for id in &original_ids {
-                assert!(
-                    shuffled_ids.contains(id),
-                    "ID {} missing after shuffle",
-                    id
-                );
+                assert!(shuffled_ids.contains(id), "ID {} missing after shuffle", id);
             }
             assert_eq!(shuffled_ids.len(), original_ids.len());
         }
@@ -1955,8 +1928,7 @@ mod inner {
             let empty = TrajectoryDataset::new(vec![]);
             assert!(empty.is_empty());
 
-            let non_empty =
-                TrajectoryDataset::new(vec![simple_success_trajectory("t1", 1)]);
+            let non_empty = TrajectoryDataset::new(vec![simple_success_trajectory("t1", 1)]);
             assert!(!non_empty.is_empty());
         }
 
@@ -2004,17 +1976,13 @@ mod inner {
 
         #[test]
         fn test_jsonl_store_write_and_read() {
-            let dir = std::env::temp_dir().join(format!(
-                "distillation_test_{}",
-                Uuid::new_v4()
-            ));
+            let dir = std::env::temp_dir().join(format!("distillation_test_{}", Uuid::new_v4()));
             std::fs::create_dir_all(&dir).expect("mkdir");
             let path = dir.join("trajectories.jsonl");
             let path_str = path.to_string_lossy().to_string();
 
             {
-                let mut store =
-                    JsonlTrajectoryStore::new(&path_str).expect("create store");
+                let mut store = JsonlTrajectoryStore::new(&path_str).expect("create store");
                 let t1 = simple_success_trajectory("t1", 2);
                 let t2 = simple_success_trajectory("t2", 3);
                 store.save(&t1).expect("save t1");
@@ -2027,8 +1995,7 @@ mod inner {
 
             // Reopen and verify persistence
             {
-                let store =
-                    JsonlTrajectoryStore::new(&path_str).expect("reopen store");
+                let store = JsonlTrajectoryStore::new(&path_str).expect("reopen store");
                 assert_eq!(store.count(), 2);
                 assert!(store.load("t2").expect("load").is_some());
             }
@@ -2039,16 +2006,13 @@ mod inner {
 
         #[test]
         fn test_jsonl_store_delete() {
-            let dir = std::env::temp_dir().join(format!(
-                "distillation_del_test_{}",
-                Uuid::new_v4()
-            ));
+            let dir =
+                std::env::temp_dir().join(format!("distillation_del_test_{}", Uuid::new_v4()));
             std::fs::create_dir_all(&dir).expect("mkdir");
             let path = dir.join("trajectories.jsonl");
             let path_str = path.to_string_lossy().to_string();
 
-            let mut store =
-                JsonlTrajectoryStore::new(&path_str).expect("create store");
+            let mut store = JsonlTrajectoryStore::new(&path_str).expect("create store");
             store
                 .save(&simple_success_trajectory("t1", 1))
                 .expect("save t1");
@@ -2067,16 +2031,13 @@ mod inner {
 
         #[test]
         fn test_jsonl_store_list() {
-            let dir = std::env::temp_dir().join(format!(
-                "distillation_list_test_{}",
-                Uuid::new_v4()
-            ));
+            let dir =
+                std::env::temp_dir().join(format!("distillation_list_test_{}", Uuid::new_v4()));
             std::fs::create_dir_all(&dir).expect("mkdir");
             let path = dir.join("trajectories.jsonl");
             let path_str = path.to_string_lossy().to_string();
 
-            let mut store =
-                JsonlTrajectoryStore::new(&path_str).expect("create store");
+            let mut store = JsonlTrajectoryStore::new(&path_str).expect("create store");
             store
                 .save(&simple_success_trajectory("a", 1))
                 .expect("save");
@@ -2179,8 +2140,7 @@ mod inner {
                 .collect();
             let dataset = TrajectoryDataset::new(trajectories);
 
-            let config = DatasetConfig::new(DatasetFormat::OpenAIJsonl)
-                .with_max_examples(3);
+            let config = DatasetConfig::new(DatasetFormat::OpenAIJsonl).with_max_examples(3);
 
             let entries = DatasetBuilder::build(&dataset, &config).expect("build");
             assert_eq!(entries.len(), 3);
@@ -2200,10 +2160,8 @@ mod inner {
             };
 
             let jsonl =
-                DatasetBuilder::to_jsonl(&[entry], &DatasetFormat::OpenAIJsonl)
-                    .expect("to_jsonl");
-            let parsed: serde_json::Value =
-                serde_json::from_str(&jsonl).expect("parse");
+                DatasetBuilder::to_jsonl(&[entry], &DatasetFormat::OpenAIJsonl).expect("to_jsonl");
+            let parsed: serde_json::Value = serde_json::from_str(&jsonl).expect("parse");
             let messages = parsed["messages"].as_array().expect("messages array");
             assert_eq!(messages.len(), 3);
             assert_eq!(messages[0]["role"], "system");
@@ -2221,10 +2179,8 @@ mod inner {
             };
 
             let jsonl =
-                DatasetBuilder::to_jsonl(&[entry], &DatasetFormat::Alpaca)
-                    .expect("to_jsonl");
-            let parsed: serde_json::Value =
-                serde_json::from_str(&jsonl).expect("parse");
+                DatasetBuilder::to_jsonl(&[entry], &DatasetFormat::Alpaca).expect("to_jsonl");
+            let parsed: serde_json::Value = serde_json::from_str(&jsonl).expect("parse");
             assert_eq!(parsed["instruction"], "translate");
             assert_eq!(parsed["output"], "translated");
         }
@@ -2252,10 +2208,8 @@ mod inner {
             };
 
             let jsonl =
-                DatasetBuilder::to_jsonl(&[entry], &DatasetFormat::ShareGPT)
-                    .expect("to_jsonl");
-            let parsed: serde_json::Value =
-                serde_json::from_str(&jsonl).expect("parse");
+                DatasetBuilder::to_jsonl(&[entry], &DatasetFormat::ShareGPT).expect("to_jsonl");
+            let parsed: serde_json::Value = serde_json::from_str(&jsonl).expect("parse");
             let convos = parsed["conversations"]
                 .as_array()
                 .expect("conversations array");
@@ -2278,10 +2232,8 @@ mod inner {
                 template: r#"{"prompt":"{{input}}","completion":"{{output}}"}"#.to_string(),
             };
 
-            let jsonl =
-                DatasetBuilder::to_jsonl(&[entry], &format).expect("to_jsonl");
-            let parsed: serde_json::Value =
-                serde_json::from_str(&jsonl).expect("parse");
+            let jsonl = DatasetBuilder::to_jsonl(&[entry], &format).expect("to_jsonl");
+            let parsed: serde_json::Value = serde_json::from_str(&jsonl).expect("parse");
             assert_eq!(parsed["prompt"], "hello");
             assert_eq!(parsed["completion"], "world");
         }
@@ -2292,10 +2244,7 @@ mod inner {
 
         #[test]
         fn test_flywheel_full_cycle() {
-            let dir = std::env::temp_dir().join(format!(
-                "flywheel_test_{}",
-                Uuid::new_v4()
-            ));
+            let dir = std::env::temp_dir().join(format!("flywheel_test_{}", Uuid::new_v4()));
             std::fs::create_dir_all(&dir).expect("mkdir");
             let output_path = dir.join("dataset.jsonl");
             let output_str = output_path.to_string_lossy().to_string();
@@ -2317,11 +2266,7 @@ mod inner {
                 max_examples_per_cycle: None,
             };
 
-            let mut flywheel = DataFlywheel::new(
-                config,
-                Box::new(store),
-                Box::new(LogTrigger),
-            );
+            let mut flywheel = DataFlywheel::new(config, Box::new(store), Box::new(LogTrigger));
 
             let cycle = flywheel.run_cycle().expect("run_cycle");
             assert_eq!(cycle.status, CycleStatus::Completed);
@@ -2343,10 +2288,7 @@ mod inner {
 
         #[test]
         fn test_flywheel_insufficient_trajectories() {
-            let dir = std::env::temp_dir().join(format!(
-                "flywheel_insuff_{}",
-                Uuid::new_v4()
-            ));
+            let dir = std::env::temp_dir().join(format!("flywheel_insuff_{}", Uuid::new_v4()));
             std::fs::create_dir_all(&dir).expect("mkdir");
             let output_path = dir.join("dataset.jsonl");
             let output_str = output_path.to_string_lossy().to_string();
@@ -2365,11 +2307,7 @@ mod inner {
                 max_examples_per_cycle: None,
             };
 
-            let mut flywheel = DataFlywheel::new(
-                config,
-                Box::new(store),
-                Box::new(LogTrigger),
-            );
+            let mut flywheel = DataFlywheel::new(config, Box::new(store), Box::new(LogTrigger));
 
             let result = flywheel.run_cycle();
             assert!(result.is_err());
@@ -2388,10 +2326,7 @@ mod inner {
         fn test_flywheel_trigger_callback() {
             use std::sync::{Arc, Mutex};
 
-            let dir = std::env::temp_dir().join(format!(
-                "flywheel_trigger_{}",
-                Uuid::new_v4()
-            ));
+            let dir = std::env::temp_dir().join(format!("flywheel_trigger_{}", Uuid::new_v4()));
             std::fs::create_dir_all(&dir).expect("mkdir");
             let output_path = dir.join("dataset.jsonl");
             let output_str = output_path.to_string_lossy().to_string();
@@ -2415,8 +2350,7 @@ mod inner {
                 }
             }
 
-            let calls: Arc<Mutex<Vec<(String, usize)>>> =
-                Arc::new(Mutex::new(Vec::new()));
+            let calls: Arc<Mutex<Vec<(String, usize)>>> = Arc::new(Mutex::new(Vec::new()));
 
             let mut store = InMemoryTrajectoryStore::new();
             for i in 0..10 {
@@ -2438,11 +2372,7 @@ mod inner {
                 calls: Arc::clone(&calls),
             };
 
-            let mut flywheel = DataFlywheel::new(
-                config,
-                Box::new(store),
-                Box::new(trigger),
-            );
+            let mut flywheel = DataFlywheel::new(config, Box::new(store), Box::new(trigger));
 
             flywheel.run_cycle().expect("run_cycle");
 
@@ -2456,10 +2386,7 @@ mod inner {
 
         #[test]
         fn test_flywheel_no_passing_trajectories() {
-            let dir = std::env::temp_dir().join(format!(
-                "flywheel_nopass_{}",
-                Uuid::new_v4()
-            ));
+            let dir = std::env::temp_dir().join(format!("flywheel_nopass_{}", Uuid::new_v4()));
             std::fs::create_dir_all(&dir).expect("mkdir");
             let output_path = dir.join("dataset.jsonl");
             let output_str = output_path.to_string_lossy().to_string();
@@ -2492,11 +2419,7 @@ mod inner {
                 max_examples_per_cycle: None,
             };
 
-            let mut flywheel = DataFlywheel::new(
-                config,
-                Box::new(store),
-                Box::new(LogTrigger),
-            );
+            let mut flywheel = DataFlywheel::new(config, Box::new(store), Box::new(LogTrigger));
 
             let result = flywheel.run_cycle();
             assert!(result.is_err());
@@ -2559,8 +2482,7 @@ mod inner {
         fn test_trajectory_serde_roundtrip() {
             let t = diverse_trajectory("round-trip");
             let json = serde_json::to_string(&t).expect("serialize");
-            let deserialized: Trajectory =
-                serde_json::from_str(&json).expect("deserialize");
+            let deserialized: Trajectory = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(deserialized.id, "round-trip");
             assert_eq!(deserialized.steps.len(), 5);
         }
@@ -2577,8 +2499,7 @@ mod inner {
                 }],
             };
             let json = serde_json::to_string(&entry).expect("serialize");
-            let deserialized: DatasetEntry =
-                serde_json::from_str(&json).expect("deserialize");
+            let deserialized: DatasetEntry = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(deserialized.system.as_deref(), Some("sys"));
             assert_eq!(deserialized.messages.len(), 1);
         }

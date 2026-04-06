@@ -7,8 +7,7 @@
 //! Run with: cargo run --example distributed_agents_demo --features "distributed-agents"
 
 use ai_assistant::{
-    AgentNodeInfo, DistributedAgentManager, MapReduceStatus, NodeId,
-    TaskDistributionStatus,
+    AgentNodeInfo, DistributedAgentManager, MapReduceStatus, NodeId, TaskDistributionStatus,
 };
 
 fn main() {
@@ -60,9 +59,16 @@ fn main() {
     let t2 = mgr.submit_task("Fix authentication bug", "coder", 10);
     let t3 = mgr.submit_task("Update README with new API docs", "writer", 3);
 
-    println!("Submitted {} tasks (pending: {})", mgr.task_count(), mgr.pending_tasks().len());
+    println!(
+        "Submitted {} tasks (pending: {})",
+        mgr.task_count(),
+        mgr.pending_tasks().len()
+    );
     for task in mgr.list_tasks() {
-        println!("  [{}] prio={} desc=\"{}\"", task.id, task.priority, task.description);
+        println!(
+            "  [{}] prio={} desc=\"{}\"",
+            task.id, task.priority, task.description
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -115,7 +121,11 @@ fn main() {
     println!("Created MR job: {}", mr_id);
 
     // Record map results
-    mgr.record_map_result(&mr_id, "Analyze chapter 1", "Chapter 1: introduces the problem space");
+    mgr.record_map_result(
+        &mr_id,
+        "Analyze chapter 1",
+        "Chapter 1: introduces the problem space",
+    );
     mgr.record_map_result(&mr_id, "Analyze chapter 2", "Chapter 2: proposes solutions");
     mgr.record_map_result(&mr_id, "Analyze chapter 3", "Chapter 3: evaluates results");
 

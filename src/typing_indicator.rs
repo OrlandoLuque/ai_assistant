@@ -247,8 +247,12 @@ mod tests {
     fn test_typing_state_display_text() {
         assert_eq!(TypingState::Idle.display_text(), "");
         assert!(TypingState::Typing.display_text().contains("typing"));
-        assert!(TypingState::Processing.display_text().contains("Processing"));
-        assert!(TypingState::Generating.display_text().contains("Generating"));
+        assert!(TypingState::Processing
+            .display_text()
+            .contains("Processing"));
+        assert!(TypingState::Generating
+            .display_text()
+            .contains("Generating"));
         assert_eq!(TypingState::Finished.display_text(), "");
         assert!(TypingState::Error.display_text().contains("Error"));
     }

@@ -587,16 +587,16 @@ mod tests {
 
     #[test]
     fn test_primary_provider() {
-        let chain = FallbackChain::new()
-            .add_provider(FallbackProvider::new("first", "http://localhost:1"));
+        let chain =
+            FallbackChain::new().add_provider(FallbackProvider::new("first", "http://localhost:1"));
         let primary = chain.primary();
         assert!(primary.is_some());
     }
 
     #[test]
     fn test_disable_enable() {
-        let mut chain = FallbackChain::new()
-            .add_provider(FallbackProvider::new("p1", "http://localhost:1"));
+        let mut chain =
+            FallbackChain::new().add_provider(FallbackProvider::new("p1", "http://localhost:1"));
         chain.disable("p1");
         assert_eq!(chain.available_providers().len(), 0);
         chain.enable("p1");

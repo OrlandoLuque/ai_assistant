@@ -2074,7 +2074,10 @@ mod tests {
         session.set_provider_url("http://localhost:11434");
         session.set_model_name("llama3");
         assert_eq!(session.provider_type.as_deref(), Some("ollama"));
-        assert_eq!(session.provider_url.as_deref(), Some("http://localhost:11434"));
+        assert_eq!(
+            session.provider_url.as_deref(),
+            Some("http://localhost:11434")
+        );
         assert_eq!(session.model_name.as_deref(), Some("llama3"));
     }
 
@@ -2083,7 +2086,10 @@ mod tests {
         let mut session = RagDebugSession::new("s", "q");
         session.set_provider("anthropic", "https://api.anthropic.com", "claude-3");
         assert_eq!(session.provider_type.as_deref(), Some("anthropic"));
-        assert_eq!(session.provider_url.as_deref(), Some("https://api.anthropic.com"));
+        assert_eq!(
+            session.provider_url.as_deref(),
+            Some("https://api.anthropic.com")
+        );
         assert_eq!(session.model_name.as_deref(), Some("claude-3"));
     }
 
@@ -2206,162 +2212,236 @@ mod tests {
     fn test_step_type_name_all_variants() {
         let cases: Vec<(RagDebugStep, &str)> = vec![
             (
-                RagDebugStep::QueryReceived { query: "q".into(), timestamp_ms: 0 },
+                RagDebugStep::QueryReceived {
+                    query: "q".into(),
+                    timestamp_ms: 0,
+                },
                 "query_received",
             ),
             (
                 RagDebugStep::QueryAnalysis {
-                    query: "q".into(), intent: None, complexity: None,
-                    keywords: vec![], duration_ms: 0,
+                    query: "q".into(),
+                    intent: None,
+                    complexity: None,
+                    keywords: vec![],
+                    duration_ms: 0,
                 },
                 "query_analysis",
             ),
             (
                 RagDebugStep::QueryExpansion {
-                    original: "q".into(), expanded: vec![], method: "llm".into(), duration_ms: 0,
+                    original: "q".into(),
+                    expanded: vec![],
+                    method: "llm".into(),
+                    duration_ms: 0,
                 },
                 "query_expansion",
             ),
             (
                 RagDebugStep::MultiQuery {
-                    original: "q".into(), sub_queries: vec![], duration_ms: 0,
+                    original: "q".into(),
+                    sub_queries: vec![],
+                    duration_ms: 0,
                 },
                 "multi_query",
             ),
             (
                 RagDebugStep::HyDE {
-                    query: "q".into(), hypothetical_doc: "h".into(), duration_ms: 0,
+                    query: "q".into(),
+                    hypothetical_doc: "h".into(),
+                    duration_ms: 0,
                 },
                 "hyde",
             ),
             (
                 RagDebugStep::KeywordSearch {
-                    query: "q".into(), results_count: 0, top_score: None, duration_ms: 0,
+                    query: "q".into(),
+                    results_count: 0,
+                    top_score: None,
+                    duration_ms: 0,
                 },
                 "keyword_search",
             ),
             (
                 RagDebugStep::SemanticSearch {
-                    query: "q".into(), embedding_model: "m".into(),
-                    results_count: 0, top_similarity: None, duration_ms: 0,
+                    query: "q".into(),
+                    embedding_model: "m".into(),
+                    results_count: 0,
+                    top_similarity: None,
+                    duration_ms: 0,
                 },
                 "semantic_search",
             ),
             (
                 RagDebugStep::HybridFusion {
-                    keyword_results: 0, semantic_results: 0, fused_results: 0,
-                    method: "rrf".into(), weights: None, duration_ms: 0,
+                    keyword_results: 0,
+                    semantic_results: 0,
+                    fused_results: 0,
+                    method: "rrf".into(),
+                    weights: None,
+                    duration_ms: 0,
                 },
                 "hybrid_fusion",
             ),
             (
                 RagDebugStep::Reranking {
-                    input_count: 0, output_count: 0, method: "llm".into(),
-                    score_changes: vec![], duration_ms: 0,
+                    input_count: 0,
+                    output_count: 0,
+                    method: "llm".into(),
+                    score_changes: vec![],
+                    duration_ms: 0,
                 },
                 "reranking",
             ),
             (
                 RagDebugStep::ContextualCompression {
-                    input_chunks: 0, input_tokens: 0, output_chunks: 0,
-                    output_tokens: 0, compression_ratio: 1.0, duration_ms: 0,
+                    input_chunks: 0,
+                    input_tokens: 0,
+                    output_chunks: 0,
+                    output_tokens: 0,
+                    compression_ratio: 1.0,
+                    duration_ms: 0,
                 },
                 "contextual_compression",
             ),
             (
                 RagDebugStep::SentenceWindow {
-                    matched_sentences: 0, window_size: 0, expanded_chunks: 0, duration_ms: 0,
+                    matched_sentences: 0,
+                    window_size: 0,
+                    expanded_chunks: 0,
+                    duration_ms: 0,
                 },
                 "sentence_window",
             ),
             (
                 RagDebugStep::ParentDocument {
-                    child_matches: 0, parent_docs_retrieved: 0, duration_ms: 0,
+                    child_matches: 0,
+                    parent_docs_retrieved: 0,
+                    duration_ms: 0,
                 },
                 "parent_document",
             ),
             (
                 RagDebugStep::SelfReflection {
-                    query: "q".into(), context_summary: "c".into(),
-                    is_sufficient: true, confidence: 0.9, reason: None, duration_ms: 0,
+                    query: "q".into(),
+                    context_summary: "c".into(),
+                    is_sufficient: true,
+                    confidence: 0.9,
+                    reason: None,
+                    duration_ms: 0,
                 },
                 "self_reflection",
             ),
             (
                 RagDebugStep::CorrectiveRag {
-                    retrieval_quality: 0.5, action_taken: "retry".into(),
-                    reason: None, duration_ms: 0,
+                    retrieval_quality: 0.5,
+                    action_taken: "retry".into(),
+                    reason: None,
+                    duration_ms: 0,
                 },
                 "corrective_rag",
             ),
             (
                 RagDebugStep::AdaptiveStrategy {
-                    query: "q".into(), selected_strategy: "hybrid".into(),
-                    reason: "best".into(), duration_ms: 0,
+                    query: "q".into(),
+                    selected_strategy: "hybrid".into(),
+                    reason: "best".into(),
+                    duration_ms: 0,
                 },
                 "adaptive_strategy",
             ),
             (
                 RagDebugStep::AgenticIteration {
-                    iteration: 1, action: "search".into(), observation: "ok".into(),
-                    is_complete: false, duration_ms: 0,
+                    iteration: 1,
+                    action: "search".into(),
+                    observation: "ok".into(),
+                    is_complete: false,
+                    duration_ms: 0,
                 },
                 "agentic_iteration",
             ),
             (
                 RagDebugStep::GraphTraversal {
-                    start_entities: vec![], traversal_depth: 0,
-                    nodes_visited: 0, relationships_found: 0, duration_ms: 0,
+                    start_entities: vec![],
+                    traversal_depth: 0,
+                    nodes_visited: 0,
+                    relationships_found: 0,
+                    duration_ms: 0,
                 },
                 "graph_traversal",
             ),
             (
                 RagDebugStep::RaptorRetrieval {
-                    level: 0, summaries_retrieved: 0, leaf_chunks_retrieved: 0, duration_ms: 0,
+                    level: 0,
+                    summaries_retrieved: 0,
+                    leaf_chunks_retrieved: 0,
+                    duration_ms: 0,
                 },
                 "raptor_retrieval",
             ),
             (
                 RagDebugStep::LlmCall {
-                    purpose: "p".into(), model: "m".into(),
-                    input_tokens: 0, output_tokens: 0,
-                    prompt_preview: None, response_preview: None, duration_ms: 0,
+                    purpose: "p".into(),
+                    model: "m".into(),
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    prompt_preview: None,
+                    response_preview: None,
+                    duration_ms: 0,
                 },
                 "llm_call",
             ),
             (
                 RagDebugStep::ChunkRetrieved {
-                    source: "s".into(), chunk_id: "c".into(),
-                    score: 0.5, token_count: 0, preview: "p".into(),
+                    source: "s".into(),
+                    chunk_id: "c".into(),
+                    score: 0.5,
+                    token_count: 0,
+                    preview: "p".into(),
                 },
                 "chunk_retrieved",
             ),
             (
                 RagDebugStep::ContextAssembly {
-                    total_chunks: 0, total_tokens: 0, sources: vec![],
-                    truncated: false, duration_ms: 0,
+                    total_chunks: 0,
+                    total_tokens: 0,
+                    sources: vec![],
+                    truncated: false,
+                    duration_ms: 0,
                 },
                 "context_assembly",
             ),
             (
                 RagDebugStep::Error {
-                    step: "s".into(), message: "m".into(), recoverable: false,
+                    step: "s".into(),
+                    message: "m".into(),
+                    recoverable: false,
                 },
                 "error",
             ),
             (
-                RagDebugStep::Warning { step: "s".into(), message: "m".into() },
+                RagDebugStep::Warning {
+                    step: "s".into(),
+                    message: "m".into(),
+                },
                 "warning",
             ),
             (
                 RagDebugStep::Custom {
-                    name: "n".into(), data: HashMap::new(), duration_ms: None,
+                    name: "n".into(),
+                    data: HashMap::new(),
+                    duration_ms: None,
                 },
                 "custom",
             ),
         ];
         for (step, expected_name) in &cases {
-            assert_eq!(step_type_name(step), *expected_name, "failed for {}", expected_name);
+            assert_eq!(
+                step_type_name(step),
+                *expected_name,
+                "failed for {}",
+                expected_name
+            );
         }
     }
 
@@ -2372,7 +2452,10 @@ mod tests {
     #[test]
     fn test_format_step_query_received() {
         let cfg = RagDebugConfig::default();
-        let step = RagDebugStep::QueryReceived { query: "hello world".into(), timestamp_ms: 100 };
+        let step = RagDebugStep::QueryReceived {
+            query: "hello world".into(),
+            timestamp_ms: 100,
+        };
         let out = format_step(&step, &cfg);
         assert!(out.contains("Query received"));
         assert!(out.contains("hello world"));
@@ -2523,8 +2606,14 @@ mod tests {
 
     #[test]
     fn test_format_step_chunk_retrieved_with_and_without_details() {
-        let cfg_chunks = RagDebugConfig { log_chunks: true, ..Default::default() };
-        let cfg_no_chunks = RagDebugConfig { log_chunks: false, ..Default::default() };
+        let cfg_chunks = RagDebugConfig {
+            log_chunks: true,
+            ..Default::default()
+        };
+        let cfg_no_chunks = RagDebugConfig {
+            log_chunks: false,
+            ..Default::default()
+        };
         let step = RagDebugStep::ChunkRetrieved {
             source: "doc.txt".into(),
             chunk_id: "c1".into(),
@@ -2661,7 +2750,12 @@ mod tests {
         let sessions = logger.all_sessions();
         assert_eq!(sessions[0].steps.len(), 1);
         match &sessions[0].steps[0] {
-            RagDebugStep::QueryExpansion { method, expanded, duration_ms, .. } => {
+            RagDebugStep::QueryExpansion {
+                method,
+                expanded,
+                duration_ms,
+                ..
+            } => {
                 assert_eq!(method, "synonym");
                 assert_eq!(expanded.len(), 2);
                 assert_eq!(*duration_ms, 45);

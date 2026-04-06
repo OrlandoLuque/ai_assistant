@@ -663,9 +663,15 @@ mod tests {
         assert_eq!(ModerationCategory::SelfHarm.display_name(), "Self-Harm");
         assert_eq!(ModerationCategory::Sexual.display_name(), "Sexual Content");
         assert_eq!(ModerationCategory::Harassment.display_name(), "Harassment");
-        assert_eq!(ModerationCategory::Misinformation.display_name(), "Misinformation");
+        assert_eq!(
+            ModerationCategory::Misinformation.display_name(),
+            "Misinformation"
+        );
         assert_eq!(ModerationCategory::Spam.display_name(), "Spam");
-        assert_eq!(ModerationCategory::PersonalAttack.display_name(), "Personal Attack");
+        assert_eq!(
+            ModerationCategory::PersonalAttack.display_name(),
+            "Personal Attack"
+        );
         assert_eq!(ModerationCategory::Profanity.display_name(), "Profanity");
         assert_eq!(ModerationCategory::Drugs.display_name(), "Drug Content");
         assert_eq!(ModerationCategory::Weapons.display_name(), "Weapons");

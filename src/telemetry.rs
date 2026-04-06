@@ -284,7 +284,10 @@ mod tests {
 
     #[test]
     fn test_record_error() {
-        let config = TelemetryConfig { enabled: true, ..Default::default() };
+        let config = TelemetryConfig {
+            enabled: true,
+            ..Default::default()
+        };
         let collector = TelemetryCollector::new(config);
         collector.record_error("openai", "timeout");
         let agg = collector.get_aggregated();
@@ -294,7 +297,10 @@ mod tests {
 
     #[test]
     fn test_flush() {
-        let config = TelemetryConfig { enabled: true, ..Default::default() };
+        let config = TelemetryConfig {
+            enabled: true,
+            ..Default::default()
+        };
         let collector = TelemetryCollector::new(config);
         collector.record(TelemetryEvent::new("a"));
         collector.record(TelemetryEvent::new("b"));
@@ -305,7 +311,10 @@ mod tests {
 
     #[test]
     fn test_timed_operation() {
-        let config = TelemetryConfig { enabled: true, ..Default::default() };
+        let config = TelemetryConfig {
+            enabled: true,
+            ..Default::default()
+        };
         let collector = Arc::new(TelemetryCollector::new(config));
         let op = TimedOperation::start(collector.clone(), "op1");
         let duration = op.finish();
@@ -319,7 +328,10 @@ mod tests {
     fn test_is_enabled() {
         let default = TelemetryCollector::default();
         assert!(!default.is_enabled());
-        let enabled = TelemetryCollector::new(TelemetryConfig { enabled: true, ..Default::default() });
+        let enabled = TelemetryCollector::new(TelemetryConfig {
+            enabled: true,
+            ..Default::default()
+        });
         assert!(enabled.is_enabled());
     }
 

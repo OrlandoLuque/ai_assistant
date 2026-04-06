@@ -96,11 +96,9 @@ pub fn role_system_prompt(role: &AgentRole) -> String {
              is missed. Be rigorous and systematic."
                 .to_string()
         }
-        AgentRole::Custom => {
-            "You are an AI assistant. Complete the assigned task using the tools \
+        AgentRole::Custom => "You are an AI assistant. Complete the assigned task using the tools \
              available to you. Be clear, accurate, and thorough."
-                .to_string()
-        }
+            .to_string(),
     }
 }
 
@@ -162,8 +160,7 @@ where
 ///
 /// The factory is injected into AgentPool so it can create response generators
 /// for any agent (including the supervisor) without coupling to a specific provider.
-pub type ResponseGeneratorFactory =
-    Arc<dyn Fn(Option<&str>) -> ResponseGenerator + Send + Sync>;
+pub type ResponseGeneratorFactory = Arc<dyn Fn(Option<&str>) -> ResponseGenerator + Send + Sync>;
 
 /// Create a default response generator factory from a closure.
 pub fn make_response_generator_factory<F>(f: F) -> ResponseGeneratorFactory
@@ -296,7 +293,12 @@ pub fn create_agent_from_definition(
     response_generator: ResponseGenerator,
     available_tools: &ToolRegistry,
 ) -> Result<AutonomousAgent, AgentCreationError> {
-    create_agent_from_definition_with_options(def, response_generator, available_tools, AgentCreateOptions::default())
+    create_agent_from_definition_with_options(
+        def,
+        response_generator,
+        available_tools,
+        AgentCreateOptions::default(),
+    )
 }
 
 /// Create an AutonomousAgent with additional options (cancellation token, mailbox).
@@ -307,11 +309,12 @@ pub fn create_agent_from_definition_with_options(
     options: AgentCreateOptions,
 ) -> Result<AutonomousAgent, AgentCreationError> {
     // Validate the definition
-    let warnings = crate::agent_definition::AgentDefinitionLoader::validate(def)
-        .map_err(|e| AgentCreationError {
+    let warnings = crate::agent_definition::AgentDefinitionLoader::validate(def).map_err(|e| {
+        AgentCreationError {
             message: format!("Validation failed: {}", e),
             validation_errors: vec![],
-        })?;
+        }
+    })?;
 
     // Reject if any Error-severity warnings
     let errors: Vec<String> = warnings
@@ -354,7 +357,9 @@ pub fn create_agent_from_definition_with_options(
     // Only fully autonomous agents auto-approve; others require explicit approval.
     let approval_handler: Arc<dyn crate::agent_policy::ApprovalHandler> = {
         use crate::agent_policy::AutonomyLevel;
-        let autonomy = def.agent.autonomy_level
+        let autonomy = def
+            .agent
+            .autonomy_level
             .as_deref()
             .map(parse_autonomy_level)
             .unwrap_or(AutonomyLevel::Normal);
@@ -552,24 +557,58 @@ impl Ord for PoolTask {
 #[non_exhaustive]
 pub enum TriggerReason {
     /// Agent has been idle for too many iterations.
-    StuckDetected { agent_id: String, idle_streak: usize },
+    StuckDetected {
+        agent_id: String,
+        idle_streak: usize,
+    },
     /// Agent is approaching its budget limit.
-    BudgetWarning { agent_id: String, cost: f64, budget: f64 },
+    BudgetWarning {
+        agent_id: String,
+        cost: f64,
+        budget: f64,
+    },
     /// Agent is approaching its iteration limit.
-    NearIterationLimit { agent_id: String, iteration: usize, max: usize },
+    NearIterationLimit {
+        agent_id: String,
+        iteration: usize,
+        max: usize,
+    },
 }
 
 impl std::fmt::Display for TriggerReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TriggerReason::StuckDetected { agent_id, idle_streak } => {
-                write!(f, "Agent '{}' stuck ({} idle iterations)", agent_id, idle_streak)
+            TriggerReason::StuckDetected {
+                agent_id,
+                idle_streak,
+            } => {
+                write!(
+                    f,
+                    "Agent '{}' stuck ({} idle iterations)",
+                    agent_id, idle_streak
+                )
             }
-            TriggerReason::BudgetWarning { agent_id, cost, budget } => {
-                write!(f, "Agent '{}' budget warning (${:.4} / ${:.4})", agent_id, cost, budget)
+            TriggerReason::BudgetWarning {
+                agent_id,
+                cost,
+                budget,
+            } => {
+                write!(
+                    f,
+                    "Agent '{}' budget warning (${:.4} / ${:.4})",
+                    agent_id, cost, budget
+                )
             }
-            TriggerReason::NearIterationLimit { agent_id, iteration, max } => {
-                write!(f, "Agent '{}' near iteration limit ({}/{})", agent_id, iteration, max)
+            TriggerReason::NearIterationLimit {
+                agent_id,
+                iteration,
+                max,
+            } => {
+                write!(
+                    f,
+                    "Agent '{}' near iteration limit ({}/{})",
+                    agent_id, iteration, max
+                )
             }
         }
     }
@@ -607,8 +646,7 @@ impl Default for SupervisorConfig {
 }
 
 /// Callback invoked at the end of each agent iteration.
-pub type IterationHook =
-    Arc<dyn Fn(&str, usize, &IterationOutcome) + Send + Sync>;
+pub type IterationHook = Arc<dyn Fn(&str, usize, &IterationOutcome) + Send + Sync>;
 
 /// Status of a running agent in the pool.
 #[derive(Debug, Clone)]
@@ -835,11 +873,7 @@ impl AgentPool {
     ///
     /// The result will be available via `drain_completed()`.
     /// The agent can be cancelled via `cancel_agent()` and receives messages via `send_message()`.
-    pub fn spawn_agent(
-        &mut self,
-        agent_name: &str,
-        task: PoolTask,
-    ) -> Result<(), String> {
+    pub fn spawn_agent(&mut self, agent_name: &str, task: PoolTask) -> Result<(), String> {
         if self.shutting_down {
             return Err("Pool is shutting down".to_string());
         }
@@ -949,12 +983,7 @@ impl AgentPool {
     }
 
     /// Send a message to a running agent via its mailbox.
-    pub fn send_message(
-        &self,
-        agent_id: &str,
-        from: &str,
-        content: &str,
-    ) -> Result<(), String> {
+    pub fn send_message(&self, agent_id: &str, from: &str, content: &str) -> Result<(), String> {
         let sender = self
             .mailbox_senders
             .get(agent_id)
@@ -1007,7 +1036,10 @@ impl AgentPool {
             match handle.join() {
                 Ok(()) => completed += 1,
                 Err(_) => {
-                    eprintln!("[agent_pool] Agent '{}' thread panicked during shutdown", id);
+                    eprintln!(
+                        "[agent_pool] Agent '{}' thread panicked during shutdown",
+                        id
+                    );
                 }
             }
         }
@@ -1108,7 +1140,12 @@ impl AgentPool {
     /// Check thresholds and trigger supervisor if needed.
     ///
     /// Called by the iteration hook. Evaluates numeric thresholds only (no LLM).
-    pub fn check_thresholds(&mut self, agent_id: &str, iteration: usize, outcome: &IterationOutcome) {
+    pub fn check_thresholds(
+        &mut self,
+        agent_id: &str,
+        iteration: usize,
+        outcome: &IterationOutcome,
+    ) {
         if !self.supervisor_config.enabled {
             return;
         }
@@ -1136,7 +1173,11 @@ impl AgentPool {
 
             // Check near iteration limit (get max_iterations from definition)
             if let Some(def) = self.definitions.get(agent_id) {
-                let max = def.guardrails.as_ref().and_then(|g| g.max_turns).unwrap_or(50);
+                let max = def
+                    .guardrails
+                    .as_ref()
+                    .and_then(|g| g.max_turns)
+                    .unwrap_or(50);
                 if max > self.supervisor_config.iteration_warning_margin
                     && iteration >= max - self.supervisor_config.iteration_warning_margin
                 {
@@ -1220,8 +1261,7 @@ mod mcts_wiring {
         }
 
         fn is_terminal(&self) -> bool {
-            self.completed_actions.len() >= self.max_depth
-                || self.available_actions().is_empty()
+            self.completed_actions.len() >= self.max_depth || self.available_actions().is_empty()
         }
 
         fn reward(&self) -> f64 {
@@ -1266,10 +1306,7 @@ mod mcts_wiring {
                 .map(|(_, desc)| desc.to_lowercase())
                 .unwrap_or_default();
 
-            let matching_words = goal_words
-                .iter()
-                .filter(|w| tool_desc.contains(*w))
-                .count();
+            let matching_words = goal_words.iter().filter(|w| tool_desc.contains(*w)).count();
             let relevance = if goal_words.is_empty() {
                 0.0
             } else {
@@ -1301,14 +1338,17 @@ mod mcts_wiring {
                         .any(|hint| hint.to_lowercase().contains(&action.to_lowercase()))
                 })
                 .count();
-            if matched > 0 { 0.1 } else { 0.0 }
+            if matched > 0 {
+                0.1
+            } else {
+                0.0
+            }
         } else {
             0.0
         };
 
         // Weighted combination
-        let score =
-            avg_relevance * 0.6 + diversity * 0.2 + progress * 0.1 + memory_bonus;
+        let score = avg_relevance * 0.6 + diversity * 0.2 + progress * 0.1 + memory_bonus;
 
         score.min(1.0)
     }
@@ -1321,10 +1361,7 @@ mod mcts_wiring {
     /// # Arguments
     /// * `planner` - The MCTS planner with configured iterations and exploration
     /// * `state` - The current agent planning state
-    pub fn plan_next_actions(
-        planner: &MctsPlanner,
-        state: &AgentPlanningState,
-    ) -> Vec<String> {
+    pub fn plan_next_actions(planner: &MctsPlanner, state: &AgentPlanningState) -> Vec<String> {
         if state.available_actions().is_empty() {
             return Vec::new();
         }
@@ -1394,8 +1431,16 @@ mod tests {
         ];
         for role in &roles {
             let prompt = role_system_prompt(role);
-            assert!(!prompt.is_empty(), "Prompt for {:?} should not be empty", role);
-            assert!(prompt.len() > 20, "Prompt for {:?} should be substantial", role);
+            assert!(
+                !prompt.is_empty(),
+                "Prompt for {:?} should not be empty",
+                role
+            );
+            assert!(
+                prompt.len() > 20,
+                "Prompt for {:?} should be substantial",
+                role
+            );
         }
     }
 
@@ -1450,9 +1495,7 @@ mod tests {
 
     #[test]
     fn test_make_response_generator() {
-        let gen = make_response_generator(|msgs| {
-            format!("Response to {} messages", msgs.len())
-        });
+        let gen = make_response_generator(|msgs| format!("Response to {} messages", msgs.len()));
         let msgs = vec![chat_to_loop_message("user", "Hello")];
         let result = gen(&msgs);
         assert_eq!(result, "Response to 1 messages");
@@ -1611,17 +1654,20 @@ mod tests {
             .with_capability("web_search")
             .with_capability("file_read");
 
-        let task = PoolTask::new("t1", "search the web")
-            .with_capabilities(vec!["web_search".to_string()]);
+        let task =
+            PoolTask::new("t1", "search the web").with_capabilities(vec!["web_search".to_string()]);
 
         let score = score_agent_for_task(&agent, &task);
-        assert!((score - 100.0).abs() < f64::EPSILON, "Full capability match = 100");
+        assert!(
+            (score - 100.0).abs() < f64::EPSILON,
+            "Full capability match = 100"
+        );
     }
 
     #[test]
     fn test_score_agent_partial_capability_match() {
-        let agent = Agent::new("a1", "Agent 1", AgentRole::Researcher)
-            .with_capability("web_search");
+        let agent =
+            Agent::new("a1", "Agent 1", AgentRole::Researcher).with_capability("web_search");
 
         let task = PoolTask::new("t1", "do both")
             .with_capabilities(vec!["web_search".to_string(), "file_write".to_string()]);
@@ -1634,8 +1680,7 @@ mod tests {
     fn test_score_agent_role_affinity() {
         let agent = Agent::new("a1", "Agent 1", AgentRole::Researcher);
 
-        let task = PoolTask::new("t1", "research")
-            .with_preferred_role(AgentRole::Researcher);
+        let task = PoolTask::new("t1", "research").with_preferred_role(AgentRole::Researcher);
 
         let score = score_agent_for_task(&agent, &task);
         assert!((score - 30.0).abs() < f64::EPSILON, "Role match only = 30");
@@ -1643,8 +1688,8 @@ mod tests {
 
     #[test]
     fn test_score_agent_capability_plus_role() {
-        let agent = Agent::new("a1", "Agent 1", AgentRole::Researcher)
-            .with_capability("web_search");
+        let agent =
+            Agent::new("a1", "Agent 1", AgentRole::Researcher).with_capability("web_search");
 
         let task = PoolTask::new("t1", "research")
             .with_capabilities(vec!["web_search".to_string()])
@@ -1656,8 +1701,7 @@ mod tests {
 
     #[test]
     fn test_score_agent_description_fallback() {
-        let agent = Agent::new("a1", "Agent 1", AgentRole::Custom)
-            .with_capability("search");
+        let agent = Agent::new("a1", "Agent 1", AgentRole::Custom).with_capability("search");
 
         let task = PoolTask::new("t1", "do something")
             .with_description("We need to search for information");
@@ -1740,8 +1784,7 @@ mod tests {
         let mut pool = make_test_pool();
         pool.register_definition(make_test_definition());
 
-        let task = PoolTask::new("t1", "analyze data")
-            .with_preferred_role(AgentRole::Analyst);
+        let task = PoolTask::new("t1", "analyze data").with_preferred_role(AgentRole::Analyst);
 
         let best = pool.find_best_agent(&task);
         assert_eq!(best, Some("test-agent".to_string()));
@@ -1814,7 +1857,10 @@ mod tests {
         for i in 0..10 {
             pool.check_thresholds("a1", i, &IterationOutcome::Continue);
         }
-        assert!(pool.trigger_log.is_empty(), "Supervisor disabled, no triggers");
+        assert!(
+            pool.trigger_log.is_empty(),
+            "Supervisor disabled, no triggers"
+        );
     }
 
     #[test]
@@ -1849,7 +1895,10 @@ mod tests {
         // 3rd idle iteration: trigger
         pool.check_thresholds("a1", 3, &IterationOutcome::Continue);
         assert_eq!(pool.trigger_log.len(), 1);
-        assert!(matches!(&pool.trigger_log[0], TriggerReason::StuckDetected { .. }));
+        assert!(matches!(
+            &pool.trigger_log[0],
+            TriggerReason::StuckDetected { .. }
+        ));
     }
 
     #[test]
@@ -1926,7 +1975,10 @@ mod tests {
         // Iteration 15: trigger (>= 15)
         pool.check_thresholds("test-agent", 15, &IterationOutcome::Done("x".into()));
         assert_eq!(pool.trigger_log.len(), 1);
-        assert!(matches!(&pool.trigger_log[0], TriggerReason::NearIterationLimit { .. }));
+        assert!(matches!(
+            &pool.trigger_log[0],
+            TriggerReason::NearIterationLimit { .. }
+        ));
     }
 
     // ---- E10g: TriggerReason Display ----
@@ -2017,8 +2069,10 @@ mod tests {
             "tools": [{"name": "text_edit"}]
         }"#;
 
-        let def_analyst = crate::agent_definition::AgentDefinitionLoader::from_json(json_analyst).unwrap();
-        let def_writer = crate::agent_definition::AgentDefinitionLoader::from_json(json_writer).unwrap();
+        let def_analyst =
+            crate::agent_definition::AgentDefinitionLoader::from_json(json_analyst).unwrap();
+        let def_writer =
+            crate::agent_definition::AgentDefinitionLoader::from_json(json_writer).unwrap();
 
         let mut pool = make_test_pool();
         pool.register_definition(def_analyst);
@@ -2113,7 +2167,11 @@ mod tests {
         // Either Ok (message delivered) or Err containing "send failed" (agent finished)
         // but NOT "No mailbox" — the mailbox was registered
         if let Err(ref e) = result {
-            assert!(!e.contains("No mailbox"), "Mailbox should have been registered: {}", e);
+            assert!(
+                !e.contains("No mailbox"),
+                "Mailbox should have been registered: {}",
+                e
+            );
         }
 
         // Nonexistent agent
@@ -2128,9 +2186,8 @@ mod tests {
 
     #[test]
     fn test_pool_panic_recovery() {
-        let factory = make_response_generator_factory(|_| {
-            make_response_generator(|_| panic!("test panic"))
-        });
+        let factory =
+            make_response_generator_factory(|_| make_response_generator(|_| panic!("test panic")));
         let mut pool = AgentPool::new(3, factory, ToolRegistry::new());
         pool.register_definition(make_test_definition());
 
@@ -2142,7 +2199,11 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert!(results[0].result.is_err());
         let err = results[0].result.as_ref().unwrap_err();
-        assert!(err.contains("panicked"), "Error should mention panic: {}", err);
+        assert!(
+            err.contains("panicked"),
+            "Error should mention panic: {}",
+            err
+        );
     }
 
     // ---- E10l: Graceful shutdown ----
@@ -2248,8 +2309,7 @@ mod tests {
 
     #[test]
     fn test_pool_task_model_override() {
-        let task = PoolTask::new("t1", "task")
-            .with_model_override("gpt-4-turbo");
+        let task = PoolTask::new("t1", "task").with_model_override("gpt-4-turbo");
         assert_eq!(task.model_override.as_deref(), Some("gpt-4-turbo"));
     }
 
@@ -2431,7 +2491,10 @@ mod tests {
             let diverse_reward = s2.reward();
 
             // The reward should be positive since we used diverse tools
-            assert!(diverse_reward > 0.0, "Diverse tool use should yield positive reward");
+            assert!(
+                diverse_reward > 0.0,
+                "Diverse tool use should yield positive reward"
+            );
         }
 
         #[test]
@@ -2476,12 +2539,8 @@ mod tests {
         #[test]
         fn test_mcts_plan_memory_bonus() {
             let tools = make_test_tools();
-            let state_no_memory = AgentPlanningState::from_registry(
-                "search data",
-                &tools,
-                3,
-                Vec::new(),
-            );
+            let state_no_memory =
+                AgentPlanningState::from_registry("search data", &tools, 3, Vec::new());
 
             let state_with_memory = AgentPlanningState::from_registry(
                 "search data",
@@ -2490,8 +2549,12 @@ mod tests {
                 vec!["Previously used web_search successfully for data retrieval".to_string()],
             );
 
-            let s1 = state_no_memory.apply_action(&"web_search".to_string()).unwrap();
-            let s2 = state_with_memory.apply_action(&"web_search".to_string()).unwrap();
+            let s1 = state_no_memory
+                .apply_action(&"web_search".to_string())
+                .unwrap();
+            let s2 = state_with_memory
+                .apply_action(&"web_search".to_string())
+                .unwrap();
 
             assert!(
                 s2.reward() >= s1.reward(),

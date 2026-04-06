@@ -209,7 +209,11 @@ impl MemoryStore {
 
     /// Search memories by text (simple keyword matching)
     pub fn search(&mut self, query: &str) -> Vec<&MemoryEntry> {
-        crate::diag_debug!("[memory] search: query_len={}, total_memories={}", query.len(), self.memories.len());
+        crate::diag_debug!(
+            "[memory] search: query_len={}, total_memories={}",
+            query.len(),
+            self.memories.len()
+        );
         let query_lower = query.to_lowercase();
         let query_words: Vec<&str> = query_lower.split_whitespace().collect();
 
@@ -414,7 +418,11 @@ impl MemoryStore {
             estimated_tokens += memory_tokens;
         }
 
-        crate::diag_debug!("[memory] build_context: result {} chars, ~{} tokens", context.len(), estimated_tokens);
+        crate::diag_debug!(
+            "[memory] build_context: result {} chars, ~{} tokens",
+            context.len(),
+            estimated_tokens
+        );
         context
     }
 }
@@ -560,7 +568,11 @@ impl MemoryManager {
 
     /// Process a message and update memories
     pub fn process_message(&mut self, message: &ChatMessage) {
-        crate::diag_debug!("[memory] process_message: role={:?}, content_len={}", message.role, message.content.len());
+        crate::diag_debug!(
+            "[memory] process_message: role={:?}, content_len={}",
+            message.role,
+            message.content.len()
+        );
         // Add to pending for summarization
         self.long_term.add_message(message.clone());
 
@@ -579,7 +591,11 @@ impl MemoryManager {
 
     /// Store a fact in long-term memory
     pub fn remember_fact(&mut self, fact: &str, importance: f32) -> String {
-        crate::diag_debug!("[memory] remember_fact: importance={:.2}, text={:.200}", importance, fact);
+        crate::diag_debug!(
+            "[memory] remember_fact: importance={:.2}, text={:.200}",
+            importance,
+            fact
+        );
         let memory = MemoryEntry::new(fact, MemoryType::Fact).with_importance(importance);
         self.long_term.add(memory)
     }
@@ -603,7 +619,10 @@ impl MemoryManager {
 
     /// Build context for a query
     pub fn build_context(&mut self, query: &str, max_tokens: usize) -> String {
-        crate::diag_debug!("[memory] MemoryManager::build_context: max_tokens={}", max_tokens);
+        crate::diag_debug!(
+            "[memory] MemoryManager::build_context: max_tokens={}",
+            max_tokens
+        );
         let mut context = String::new();
 
         // Add working memory summary
@@ -621,8 +640,14 @@ impl MemoryManager {
             context.push_str(&long_term_context);
         }
 
-        crate::diag_debug!("[memory] MemoryManager::build_context: result {} chars", context.len());
-        crate::diag_trace!("[memory] MemoryManager::build_context: content={:.500}", context);
+        crate::diag_debug!(
+            "[memory] MemoryManager::build_context: result {} chars",
+            context.len()
+        );
+        crate::diag_trace!(
+            "[memory] MemoryManager::build_context: content={:.500}",
+            context
+        );
         context
     }
 
@@ -677,12 +702,15 @@ impl ReferenceResolver {
     pub fn track_lists_in_message(&mut self, message: &str, topic: &str, turn_index: usize) {
         let items = Self::extract_list_items(message);
         if items.len() >= 2 {
-            self.tracked_lists.insert(0, TrackedList {
-                items,
-                topic: topic.to_string(),
-                timestamp: Utc::now(),
-                turn_index,
-            });
+            self.tracked_lists.insert(
+                0,
+                TrackedList {
+                    items,
+                    topic: topic.to_string(),
+                    timestamp: Utc::now(),
+                    turn_index,
+                },
+            );
             if self.tracked_lists.len() > self.max_lists {
                 self.tracked_lists.truncate(self.max_lists);
             }
@@ -700,7 +728,8 @@ impl ReferenceResolver {
             // Numbered: "1. ", "1) ", "1- ", "12. " etc.
             if let Some(rest) = trimmed.strip_prefix(|c: char| c.is_ascii_digit()) {
                 let rest = rest.trim_start_matches(|c: char| c.is_ascii_digit());
-                if let Some(content) = rest.strip_prefix(". ")
+                if let Some(content) = rest
+                    .strip_prefix(". ")
                     .or_else(|| rest.strip_prefix(") "))
                     .or_else(|| rest.strip_prefix("- "))
                 {
@@ -712,7 +741,8 @@ impl ReferenceResolver {
                 }
             }
             // Bulleted: "- ", "* ", "+ "
-            if let Some(content) = trimmed.strip_prefix("- ")
+            if let Some(content) = trimmed
+                .strip_prefix("- ")
                 .or_else(|| trimmed.strip_prefix("* "))
                 .or_else(|| trimmed.strip_prefix("+ "))
             {
@@ -726,7 +756,8 @@ impl ReferenceResolver {
             if trimmed.len() >= 3 {
                 let first = trimmed.as_bytes()[0];
                 if first.is_ascii_lowercase() {
-                    if let Some(content) = trimmed[1..].strip_prefix(". ")
+                    if let Some(content) = trimmed[1..]
+                        .strip_prefix(". ")
                         .or_else(|| trimmed[1..].strip_prefix(") "))
                     {
                         let content = content.trim();
@@ -763,9 +794,7 @@ impl ReferenceResolver {
         }
 
         // Fallback: delegate to external search (conversation archive, memory, RAG)
-        fallback_search(user_message).map(|ctx| {
-            format!("[Reference resolved via search: {}]", ctx)
-        })
+        fallback_search(user_message).map(|ctx| format!("[Reference resolved via search: {}]", ctx))
     }
 
     /// Try to resolve a user reference like "the second one", "option 3",
@@ -791,13 +820,13 @@ impl ReferenceResolver {
             &self.tracked_lists[0]
         } else {
             // Try to match by topic keywords
-            let best = self.tracked_lists.iter()
-                .max_by_key(|list| {
-                    let topic_lower = list.topic.to_lowercase();
-                    msg_lower.split_whitespace()
-                        .filter(|w| w.len() > 2 && topic_lower.contains(w))
-                        .count()
-                });
+            let best = self.tracked_lists.iter().max_by_key(|list| {
+                let topic_lower = list.topic.to_lowercase();
+                msg_lower
+                    .split_whitespace()
+                    .filter(|w| w.len() > 2 && topic_lower.contains(w))
+                    .count()
+            });
             best.unwrap_or(&self.tracked_lists[0])
         };
 
@@ -806,24 +835,32 @@ impl ReferenceResolver {
             if idx < target_list.items.len() {
                 Some(format!(
                     "[Reference resolved: item {} from list about '{}': {}]",
-                    idx + 1, target_list.topic, target_list.items[idx]
+                    idx + 1,
+                    target_list.topic,
+                    target_list.items[idx]
                 ))
             } else {
                 Some(format!(
                     "[Reference: the list about '{}' has {} items, but item {} was requested]",
-                    target_list.topic, target_list.items.len(), idx + 1
+                    target_list.topic,
+                    target_list.items.len(),
+                    idx + 1
                 ))
             }
         } else {
             // General list reference
-            let items_str: String = target_list.items.iter()
+            let items_str: String = target_list
+                .items
+                .iter()
                 .enumerate()
                 .map(|(i, item)| format!("{}. {}", i + 1, item))
                 .collect::<Vec<_>>()
                 .join("\n");
             Some(format!(
                 "[Reference resolved: list about '{}' ({} items):\n{}]",
-                target_list.topic, target_list.items.len(), items_str
+                target_list.topic,
+                target_list.items.len(),
+                items_str
             ))
         }
     }
@@ -831,15 +868,40 @@ impl ReferenceResolver {
     /// Check if a message contains reference patterns.
     fn has_reference_pattern(msg: &str) -> bool {
         let patterns = [
-            "the first", "the second", "the third", "the fourth", "the fifth",
-            "el primer", "el segundo", "el tercer", "el cuarto", "el quinto",
-            "la primer", "la segund", "la tercer", "la cuart", "la quint",
-            "option ", "opción ", "opcion ",
-            "item ", "punto ", "element",
-            "number ", "número ", "numero ",
-            "that list", "the list", "esa lista", "la lista",
-            "lo anterior", "the previous", "lo de antes",
-            "which one", "cuál", "cual",
+            "the first",
+            "the second",
+            "the third",
+            "the fourth",
+            "the fifth",
+            "el primer",
+            "el segundo",
+            "el tercer",
+            "el cuarto",
+            "el quinto",
+            "la primer",
+            "la segund",
+            "la tercer",
+            "la cuart",
+            "la quint",
+            "option ",
+            "opción ",
+            "opcion ",
+            "item ",
+            "punto ",
+            "element",
+            "number ",
+            "número ",
+            "numero ",
+            "that list",
+            "the list",
+            "esa lista",
+            "la lista",
+            "lo anterior",
+            "the previous",
+            "lo de antes",
+            "which one",
+            "cuál",
+            "cual",
         ];
         patterns.iter().any(|p| msg.contains(p))
     }
@@ -848,16 +910,33 @@ impl ReferenceResolver {
     fn extract_item_index(msg: &str) -> Option<usize> {
         // Ordinals (English + Spanish)
         let ordinals = [
-            ("first", 0), ("primer", 0), ("1st", 0),
-            ("second", 1), ("segund", 1), ("2nd", 1),
-            ("third", 2), ("tercer", 2), ("3rd", 3),
-            ("fourth", 3), ("cuart", 3), ("4th", 3),
-            ("fifth", 4), ("quint", 4), ("5th", 4),
-            ("sixth", 5), ("sext", 5),
-            ("seventh", 6), ("séptim", 6), ("septim", 6),
-            ("eighth", 7), ("octav", 7),
-            ("ninth", 8), ("noven", 8),
-            ("tenth", 9), ("décim", 9), ("decim", 9),
+            ("first", 0),
+            ("primer", 0),
+            ("1st", 0),
+            ("second", 1),
+            ("segund", 1),
+            ("2nd", 1),
+            ("third", 2),
+            ("tercer", 2),
+            ("3rd", 3),
+            ("fourth", 3),
+            ("cuart", 3),
+            ("4th", 3),
+            ("fifth", 4),
+            ("quint", 4),
+            ("5th", 4),
+            ("sixth", 5),
+            ("sext", 5),
+            ("seventh", 6),
+            ("séptim", 6),
+            ("septim", 6),
+            ("eighth", 7),
+            ("octav", 7),
+            ("ninth", 8),
+            ("noven", 8),
+            ("tenth", 9),
+            ("décim", 9),
+            ("decim", 9),
         ];
 
         for (word, idx) in &ordinals {
@@ -868,14 +947,25 @@ impl ReferenceResolver {
 
         // Cardinal with context: "option 3", "punto 5", "number 2"
         let cardinal_prefixes = [
-            "option ", "opción ", "opcion ", "item ", "punto ",
-            "number ", "número ", "numero ", "element ", "elemento ",
+            "option ",
+            "opción ",
+            "opcion ",
+            "item ",
+            "punto ",
+            "number ",
+            "número ",
+            "numero ",
+            "element ",
+            "elemento ",
         ];
         for prefix in &cardinal_prefixes {
             if let Some(pos) = msg.find(prefix) {
                 let after = &msg[pos + prefix.len()..];
                 if let Some(num) = after.split_whitespace().next() {
-                    if let Ok(n) = num.trim_matches(|c: char| !c.is_ascii_digit()).parse::<usize>() {
+                    if let Ok(n) = num
+                        .trim_matches(|c: char| !c.is_ascii_digit())
+                        .parse::<usize>()
+                    {
                         if n > 0 {
                             return Some(n - 1); // 0-based
                         }

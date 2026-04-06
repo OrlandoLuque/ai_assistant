@@ -10,7 +10,7 @@
 //! - `MemoryHandle`: ergonomic wrapper over `mpsc::Sender<MemoryCommand>` with
 //!   request-response via `sync_channel(0)` rendezvous
 
-use crate::advanced_memory::{AdvancedMemoryManager, Episode, EpisodicStore, EntityRecord};
+use crate::advanced_memory::{AdvancedMemoryManager, EntityRecord, Episode, EpisodicStore};
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -84,10 +84,7 @@ pub enum EntityCmd {
 #[non_exhaustive]
 pub enum PlanCmd {
     /// Save a plan.
-    Save {
-        plan_id: String,
-        plan_json: String,
-    },
+    Save { plan_id: String, plan_json: String },
     /// Load a plan by ID. Response via rendezvous channel.
     Load {
         plan_id: String,
@@ -286,11 +283,7 @@ fn process_episodic(cmd: EpisodicCmd, manager: &mut AdvancedMemoryManager) {
             let results = manager.recall_episodes(&query_embedding, top_k);
             let _ = reply.send(results);
         }
-        EpisodicCmd::RecallByTags {
-            tags,
-            top_k,
-            reply,
-        } => {
+        EpisodicCmd::RecallByTags { tags, top_k, reply } => {
             let results = recall_by_tags(&manager.episodic, &tags, top_k);
             let _ = reply.send(results);
         }
@@ -334,10 +327,7 @@ fn process_entity(cmd: EntityCmd, manager: &mut AdvancedMemoryManager) {
     }
 }
 
-fn process_plan(
-    cmd: PlanCmd,
-    plan_store: &mut std::collections::HashMap<String, String>,
-) {
+fn process_plan(cmd: PlanCmd, plan_store: &mut std::collections::HashMap<String, String>) {
     match cmd {
         PlanCmd::Save { plan_id, plan_json } => {
             plan_store.insert(plan_id, plan_json);
@@ -382,7 +372,11 @@ fn recall_by_tags(store: &EpisodicStore, tags: &[String], top_k: usize) -> Vec<E
         .map(|ep| {
             let overlap = tags
                 .iter()
-                .filter(|t| ep.tags.iter().any(|et| et.to_lowercase() == t.to_lowercase()))
+                .filter(|t| {
+                    ep.tags
+                        .iter()
+                        .any(|et| et.to_lowercase() == t.to_lowercase())
+                })
                 .count();
             (overlap, ep)
         })
@@ -486,7 +480,9 @@ impl MemoryHandle {
 
     /// Add an entity record.
     pub fn add_entity(&self, record: EntityRecord) {
-        let _ = self.sender.send(MemoryCommand::Entity(EntityCmd::Add(record)));
+        let _ = self
+            .sender
+            .send(MemoryCommand::Entity(EntityCmd::Add(record)));
     }
 
     /// Query entity by name (blocking with 100ms timeout).
@@ -602,9 +598,7 @@ impl MemoryHandle {
 
     /// Shutdown the memory service.
     pub fn shutdown(&self) {
-        let _ = self
-            .sender
-            .send(MemoryCommand::System(SystemCmd::Shutdown));
+        let _ = self.sender.send(MemoryCommand::System(SystemCmd::Shutdown));
     }
 }
 
@@ -768,7 +762,9 @@ mod tests {
 
         let results = handle.recall_by_tags(vec!["search".to_string()], 5);
         assert_eq!(results.len(), 2, "Should find 2 episodes with 'search' tag");
-        assert!(results.iter().all(|r| r.tags.contains(&"search".to_string())));
+        assert!(results
+            .iter()
+            .all(|r| r.tags.contains(&"search".to_string())));
 
         svc.shutdown();
     }
@@ -881,8 +877,7 @@ mod tests {
         let svc = start_memory_service(MemoryServiceConfig::default());
         let handle = svc.handle();
 
-        let plan_json =
-            r#"{"id":"plan1","steps":[{"action":"search","status":"pending"},{"action":"write","status":"pending"}]}"#;
+        let plan_json = r#"{"id":"plan1","steps":[{"action":"search","status":"pending"},{"action":"write","status":"pending"}]}"#;
         handle.save_plan("plan1", plan_json);
 
         std::thread::sleep(Duration::from_millis(50));
@@ -910,7 +905,11 @@ mod tests {
         let handle_b = svc.handle();
 
         // Agent A adds an episode
-        handle_a.add_episode(make_episode("from_a", "agent A did research", &["research"]));
+        handle_a.add_episode(make_episode(
+            "from_a",
+            "agent A did research",
+            &["research"],
+        ));
         std::thread::sleep(Duration::from_millis(50));
 
         // Agent B can recall it
@@ -1011,10 +1010,16 @@ mod tests {
 
         // Pool 1 should not see pool 2's data
         let results1 = handle1.recall_by_tags(vec!["pool2".to_string()], 5);
-        assert!(results1.is_empty(), "Pool 1 should not see pool 2's episodes");
+        assert!(
+            results1.is_empty(),
+            "Pool 1 should not see pool 2's episodes"
+        );
 
         let results2 = handle2.recall_by_tags(vec!["pool1".to_string()], 5);
-        assert!(results2.is_empty(), "Pool 2 should not see pool 1's episodes");
+        assert!(
+            results2.is_empty(),
+            "Pool 2 should not see pool 1's episodes"
+        );
 
         svc1.shutdown();
         svc2.shutdown();

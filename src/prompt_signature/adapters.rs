@@ -206,9 +206,7 @@ pub struct AdapterRouter {
 impl AdapterRouter {
     /// Create a new empty router.
     pub fn new() -> Self {
-        Self {
-            routes: Vec::new(),
-        }
+        Self { routes: Vec::new() }
     }
 
     /// Register an adapter for a provider name pattern.

@@ -43,8 +43,14 @@ impl std::fmt::Display for DiscoveredServiceType {
 
 /// Service types to scan for.
 pub const MDNS_SERVICES: &[(&str, DiscoveredServiceType)] = &[
-    ("_home-assistant._tcp.local.", DiscoveredServiceType::HomeAssistant),
-    ("_openhab-server._tcp.local.", DiscoveredServiceType::OpenHab),
+    (
+        "_home-assistant._tcp.local.",
+        DiscoveredServiceType::HomeAssistant,
+    ),
+    (
+        "_openhab-server._tcp.local.",
+        DiscoveredServiceType::OpenHab,
+    ),
     ("_mqtt._tcp.local.", DiscoveredServiceType::MqttBroker),
 ];
 
@@ -83,7 +89,10 @@ mod tests {
 
     #[test]
     fn test_discovered_service_type_display() {
-        assert_eq!(DiscoveredServiceType::HomeAssistant.to_string(), "Home Assistant");
+        assert_eq!(
+            DiscoveredServiceType::HomeAssistant.to_string(),
+            "Home Assistant"
+        );
         assert_eq!(DiscoveredServiceType::MqttBroker.to_string(), "MQTT Broker");
     }
 

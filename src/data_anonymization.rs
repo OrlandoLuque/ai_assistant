@@ -387,7 +387,10 @@ mod tests {
     #[test]
     fn test_hash_strategy() {
         let mut anonymizer = DataAnonymizer::new();
-        anonymizer.add_rule(AnonymizationRule::new(DataType::Email, AnonymizationStrategy::Hash));
+        anonymizer.add_rule(AnonymizationRule::new(
+            DataType::Email,
+            AnonymizationStrategy::Hash,
+        ));
         let r1 = anonymizer.anonymize("Email: a@b.com");
         let r2 = anonymizer.anonymize("Email: a@b.com");
         let v1 = r1.mapping.get("a@b.com").unwrap();
@@ -399,7 +402,10 @@ mod tests {
     #[test]
     fn test_mask_strategy() {
         let mut anonymizer = DataAnonymizer::new();
-        anonymizer.add_rule(AnonymizationRule::new(DataType::Email, AnonymizationStrategy::Mask));
+        anonymizer.add_rule(AnonymizationRule::new(
+            DataType::Email,
+            AnonymizationStrategy::Mask,
+        ));
         let result = anonymizer.anonymize("user@example.com is my email");
         let masked = result.mapping.get("user@example.com").unwrap();
         assert!(masked.starts_with("us"));
@@ -410,7 +416,10 @@ mod tests {
     #[test]
     fn test_generalize_ip() {
         let mut anonymizer = DataAnonymizer::new();
-        anonymizer.add_rule(AnonymizationRule::new(DataType::IpAddress, AnonymizationStrategy::Generalize));
+        anonymizer.add_rule(AnonymizationRule::new(
+            DataType::IpAddress,
+            AnonymizationStrategy::Generalize,
+        ));
         let result = anonymizer.anonymize("IP is 10.20.30.40");
         let gen = result.mapping.get("10.20.30.40").unwrap();
         assert_eq!(gen, "10.20.x.x");
@@ -435,7 +444,10 @@ mod tests {
     #[test]
     fn test_reset_pseudonyms() {
         let mut anonymizer = DataAnonymizer::new();
-        anonymizer.add_rule(AnonymizationRule::new(DataType::Email, AnonymizationStrategy::Pseudonymize));
+        anonymizer.add_rule(AnonymizationRule::new(
+            DataType::Email,
+            AnonymizationStrategy::Pseudonymize,
+        ));
         let r1 = anonymizer.anonymize("a@b.com");
         let p1 = r1.mapping.get("a@b.com").unwrap().clone();
         anonymizer.reset_pseudonyms();

@@ -268,11 +268,20 @@ impl FailureCategory {
         let lower = error.to_lowercase();
         if lower.contains("timeout") || lower.contains("timed out") {
             Self::Timeout
-        } else if lower.contains("rate limit") || lower.contains("429") || lower.contains("too many requests") {
+        } else if lower.contains("rate limit")
+            || lower.contains("429")
+            || lower.contains("too many requests")
+        {
             Self::RateLimited
-        } else if lower.contains("unavailable") || lower.contains("503") || lower.contains("connection refused") {
+        } else if lower.contains("unavailable")
+            || lower.contains("503")
+            || lower.contains("connection refused")
+        {
             Self::ProviderUnavailable
-        } else if lower.contains("invalid") || lower.contains("400") || lower.contains("bad request") {
+        } else if lower.contains("invalid")
+            || lower.contains("400")
+            || lower.contains("bad request")
+        {
             Self::InvalidRequest
         } else {
             Self::Unknown
@@ -478,10 +487,7 @@ impl DeadLetterQueue {
 
     /// Number of entries currently in the queue.
     pub fn len(&self) -> usize {
-        self.entries
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .len()
+        self.entries.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
 
     /// Returns true if the queue has no entries.
@@ -782,8 +788,20 @@ mod tests {
 
         let stats = dlq.stats();
         assert_eq!(stats.total, 3);
-        assert_eq!(*stats.by_category.get(&FailureCategory::Timeout).unwrap_or(&0), 2);
-        assert_eq!(*stats.by_category.get(&FailureCategory::RateLimited).unwrap_or(&0), 1);
+        assert_eq!(
+            *stats
+                .by_category
+                .get(&FailureCategory::Timeout)
+                .unwrap_or(&0),
+            2
+        );
+        assert_eq!(
+            *stats
+                .by_category
+                .get(&FailureCategory::RateLimited)
+                .unwrap_or(&0),
+            1
+        );
         assert!(stats.oldest_age_ms.is_some());
     }
 
@@ -802,9 +820,27 @@ mod tests {
     #[test]
     fn test_dlq_max_size_eviction_detailed() {
         let dlq = DeadLetterQueue::new(2);
-        dlq.add_detailed(QueueMessage::new("m1"), "r1".to_string(), FailureCategory::Timeout, 1, vec![]);
-        dlq.add_detailed(QueueMessage::new("m2"), "r2".to_string(), FailureCategory::RateLimited, 1, vec![]);
-        dlq.add_detailed(QueueMessage::new("m3"), "r3".to_string(), FailureCategory::Unknown, 1, vec![]);
+        dlq.add_detailed(
+            QueueMessage::new("m1"),
+            "r1".to_string(),
+            FailureCategory::Timeout,
+            1,
+            vec![],
+        );
+        dlq.add_detailed(
+            QueueMessage::new("m2"),
+            "r2".to_string(),
+            FailureCategory::RateLimited,
+            1,
+            vec![],
+        );
+        dlq.add_detailed(
+            QueueMessage::new("m3"),
+            "r3".to_string(),
+            FailureCategory::Unknown,
+            1,
+            vec![],
+        );
         assert_eq!(dlq.len(), 2);
 
         // m1 was evicted (oldest), m2 and m3 remain
@@ -815,23 +851,56 @@ mod tests {
 
     #[test]
     fn test_failure_category_from_error() {
-        assert_eq!(FailureCategory::from_error("Request timed out"), FailureCategory::Timeout);
-        assert_eq!(FailureCategory::from_error("timeout waiting for response"), FailureCategory::Timeout);
-        assert_eq!(FailureCategory::from_error("HTTP 429 Too Many Requests"), FailureCategory::RateLimited);
-        assert_eq!(FailureCategory::from_error("rate limit exceeded"), FailureCategory::RateLimited);
-        assert_eq!(FailureCategory::from_error("Service unavailable 503"), FailureCategory::ProviderUnavailable);
-        assert_eq!(FailureCategory::from_error("Connection refused"), FailureCategory::ProviderUnavailable);
-        assert_eq!(FailureCategory::from_error("Invalid API key 400"), FailureCategory::InvalidRequest);
-        assert_eq!(FailureCategory::from_error("Bad request"), FailureCategory::InvalidRequest);
-        assert_eq!(FailureCategory::from_error("some random error"), FailureCategory::Unknown);
+        assert_eq!(
+            FailureCategory::from_error("Request timed out"),
+            FailureCategory::Timeout
+        );
+        assert_eq!(
+            FailureCategory::from_error("timeout waiting for response"),
+            FailureCategory::Timeout
+        );
+        assert_eq!(
+            FailureCategory::from_error("HTTP 429 Too Many Requests"),
+            FailureCategory::RateLimited
+        );
+        assert_eq!(
+            FailureCategory::from_error("rate limit exceeded"),
+            FailureCategory::RateLimited
+        );
+        assert_eq!(
+            FailureCategory::from_error("Service unavailable 503"),
+            FailureCategory::ProviderUnavailable
+        );
+        assert_eq!(
+            FailureCategory::from_error("Connection refused"),
+            FailureCategory::ProviderUnavailable
+        );
+        assert_eq!(
+            FailureCategory::from_error("Invalid API key 400"),
+            FailureCategory::InvalidRequest
+        );
+        assert_eq!(
+            FailureCategory::from_error("Bad request"),
+            FailureCategory::InvalidRequest
+        );
+        assert_eq!(
+            FailureCategory::from_error("some random error"),
+            FailureCategory::Unknown
+        );
     }
 
     #[test]
     fn test_dlq_failure_category_display() {
         assert_eq!(FailureCategory::Timeout.to_string(), "Timeout");
         assert_eq!(FailureCategory::RateLimited.to_string(), "RateLimited");
-        assert_eq!(FailureCategory::ProviderUnavailable.to_string(), "ProviderUnavailable");
-        assert_eq!(FailureCategory::InvalidRequest.to_string(), "InvalidRequest");
+        assert_eq!(
+            FailureCategory::ProviderUnavailable.to_string(),
+            "ProviderUnavailable"
+        );
+        assert_eq!(
+            FailureCategory::InvalidRequest.to_string(),
+            "InvalidRequest"
+        );
         assert_eq!(FailureCategory::Unknown.to_string(), "Unknown");
     }
 
@@ -840,7 +909,10 @@ mod tests {
         assert_eq!(QueueError::Full.to_string(), "Queue is full");
         assert_eq!(QueueError::Empty.to_string(), "Queue is empty");
         assert_eq!(QueueError::Timeout.to_string(), "Operation timed out");
-        assert_eq!(QueueError::ConnectionFailed.to_string(), "Connection failed");
+        assert_eq!(
+            QueueError::ConnectionFailed.to_string(),
+            "Connection failed"
+        );
     }
 
     #[test]

@@ -358,9 +358,7 @@ impl AgentOrchestrator {
                                             let desc_lower = task.description.to_lowercase();
                                             a.capabilities
                                                 .iter()
-                                                .filter(|c| {
-                                                    desc_lower.contains(&c.to_lowercase())
-                                                })
+                                                .filter(|c| desc_lower.contains(&c.to_lowercase()))
                                                 .count()
                                         })
                                         .unwrap_or(0)
@@ -1492,11 +1490,9 @@ impl PatternRunner {
             let agent = &self.agents[agent_idx];
             let task = &tasks[task_idx];
 
-            let response = format!(
-                "[{}] processed task: {}",
-                agent.name, task
-            );
-            self.transcript.push(PatternMessage::new(&agent.id, &response, round));
+            let response = format!("[{}] processed task: {}", agent.name, task);
+            self.transcript
+                .push(PatternMessage::new(&agent.id, &response, round));
 
             task_idx += 1;
             if task_idx % agent_count == 0 || task_idx >= tasks.len() {
@@ -1538,7 +1534,8 @@ impl PatternRunner {
                     "[{}] argues (round {}): re '{}' -- from perspective of {}",
                     agent.name, round, current_input, agent.role
                 );
-                self.transcript.push(PatternMessage::new(&agent.id, &response, round));
+                self.transcript
+                    .push(PatternMessage::new(&agent.id, &response, round));
                 current_input = response;
             }
 
@@ -1562,7 +1559,8 @@ impl PatternRunner {
                 "[Judge {}] synthesis after {} rounds of debate on: {}",
                 judge_name, round, input
             );
-            self.transcript.push(PatternMessage::new(judge_id, &synthesis, round));
+            self.transcript
+                .push(PatternMessage::new(judge_id, &synthesis, round));
             Some(synthesis)
         } else {
             // No judge: use last message as final output
@@ -1596,7 +1594,8 @@ impl PatternRunner {
                     "[{}] (round {}) responds to: {}",
                     agent.name, round, current_input
                 );
-                self.transcript.push(PatternMessage::new(&agent.id, &response, round));
+                self.transcript
+                    .push(PatternMessage::new(&agent.id, &response, round));
                 current_input = response;
             }
 
@@ -1632,7 +1631,8 @@ impl PatternRunner {
                 "[{}] pipeline step {}: processed '{}'",
                 agent.name, i, current_input
             );
-            self.transcript.push(PatternMessage::new(&agent.id, &response, 0));
+            self.transcript
+                .push(PatternMessage::new(&agent.id, &response, 0));
             current_input = response;
         }
 
@@ -1653,7 +1653,8 @@ impl PatternRunner {
             // With only one agent, it just responds directly
             let agent = &self.agents[0];
             let response = format!("[{}] responds: {}", agent.name, input);
-            self.transcript.push(PatternMessage::new(&agent.id, &response, 0));
+            self.transcript
+                .push(PatternMessage::new(&agent.id, &response, 0));
             return Ok(PatternResult {
                 messages: self.transcript.clone(),
                 rounds_completed: 1,
@@ -1672,7 +1673,8 @@ impl PatternRunner {
                 "[{}] master delegates (round {}): '{}'",
                 master.name, round, current_input
             );
-            self.transcript.push(PatternMessage::new(&master.id, &master_response, round));
+            self.transcript
+                .push(PatternMessage::new(&master.id, &master_response, round));
 
             // Each sub-agent processes the delegated task
             for i in 1..agent_count {
@@ -1681,7 +1683,8 @@ impl PatternRunner {
                     "[{}] sub-response to master (round {}): handling '{}'",
                     sub_agent.name, round, current_input
                 );
-                self.transcript.push(PatternMessage::new(&sub_agent.id, &sub_response, round));
+                self.transcript
+                    .push(PatternMessage::new(&sub_agent.id, &sub_response, round));
                 current_input = sub_response;
             }
 
@@ -1690,7 +1693,8 @@ impl PatternRunner {
                 "[{}] master synthesis (round {}): combined sub-agent results",
                 master.name, round
             );
-            self.transcript.push(PatternMessage::new(&master.id, &synthesis, round));
+            self.transcript
+                .push(PatternMessage::new(&master.id, &synthesis, round));
             current_input = synthesis;
 
             round += 1;
@@ -1720,11 +1724,9 @@ impl PatternRunner {
         let mut responses = Vec::new();
 
         for agent in &self.agents {
-            let response = format!(
-                "[{}] broadcast response: {}",
-                agent.name, input
-            );
-            self.transcript.push(PatternMessage::new(&agent.id, &response, 0));
+            let response = format!("[{}] broadcast response: {}", agent.name, input);
+            self.transcript
+                .push(PatternMessage::new(&agent.id, &response, 0));
             responses.push(response);
         }
 
@@ -1765,9 +1767,9 @@ impl PatternRunner {
             Some(TerminationCondition::JudgeDecision) => {
                 // Check if the judge has spoken in the current round
                 if let Some(ref judge_id) = self.config.judge_agent_id {
-                    self.transcript.iter().any(|m| {
-                        m.agent_id == *judge_id && m.content.contains("synthesis")
-                    })
+                    self.transcript
+                        .iter()
+                        .any(|m| m.agent_id == *judge_id && m.content.contains("synthesis"))
                 } else {
                     false
                 }
@@ -1892,9 +1894,11 @@ impl HandoffManager {
     pub fn detect_circular_handoff(&self, from: &str, to: &str) -> bool {
         // Look through the recent handoff history for a to->from transfer
         // which would indicate an A->B->A loop if we now do from->to
-        self.handoff_history.iter().rev().take(10).any(|h| {
-            h.success && h.from_agent == to && h.to_agent == from
-        })
+        self.handoff_history
+            .iter()
+            .rev()
+            .take(10)
+            .any(|h| h.success && h.from_agent == to && h.to_agent == from)
     }
 
     /// Execute a handoff request.
@@ -2023,10 +2027,7 @@ impl ResponseSynthesizer {
     pub fn parse_synthesis_response(response: &str) -> Option<ResponseSynthesis> {
         if let Some(json_str) = crate::llm_enhance::extract_json(response) {
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
-                let synthesis = val
-                    .get("synthesis")
-                    .and_then(|s| s.as_str())
-                    .unwrap_or("");
+                let synthesis = val.get("synthesis").and_then(|s| s.as_str()).unwrap_or("");
                 let confidence = val
                     .get("confidence")
                     .and_then(|v| v.as_f64())
@@ -2836,8 +2837,18 @@ mod tests {
             .with_max_rounds(5)
             .with_task_queue(vec!["task-a".into(), "task-b".into(), "task-c".into()]);
         let mut runner = PatternRunner::new(ConversationPattern::Swarm, config);
-        runner.add_agent(PatternAgent::new("a1", "Alice", "worker", "You process tasks."));
-        runner.add_agent(PatternAgent::new("a2", "Bob", "worker", "You process tasks."));
+        runner.add_agent(PatternAgent::new(
+            "a1",
+            "Alice",
+            "worker",
+            "You process tasks.",
+        ));
+        runner.add_agent(PatternAgent::new(
+            "a2",
+            "Bob",
+            "worker",
+            "You process tasks.",
+        ));
 
         let result = runner.run("go").unwrap();
         assert!(result.rounds_completed >= 1);
@@ -2878,7 +2889,12 @@ mod tests {
         let config = PatternConfig::new();
         let mut runner = PatternRunner::new(ConversationPattern::Sequential, config);
         runner.add_agent(PatternAgent::new("s1", "Step1", "processor", "First step."));
-        runner.add_agent(PatternAgent::new("s2", "Step2", "processor", "Second step."));
+        runner.add_agent(PatternAgent::new(
+            "s2",
+            "Step2",
+            "processor",
+            "Second step.",
+        ));
         runner.add_agent(PatternAgent::new("s3", "Step3", "processor", "Third step."));
 
         let result = runner.run("initial input").unwrap();
@@ -2894,8 +2910,18 @@ mod tests {
     fn test_conversation_pattern_nested_chat_basic() {
         let config = PatternConfig::new().with_max_rounds(2);
         let mut runner = PatternRunner::new(ConversationPattern::NestedChat, config);
-        runner.add_agent(PatternAgent::new("master", "Master", "coordinator", "Delegate."));
-        runner.add_agent(PatternAgent::new("sub1", "Sub1", "worker", "Handle sub-task."));
+        runner.add_agent(PatternAgent::new(
+            "master",
+            "Master",
+            "coordinator",
+            "Delegate.",
+        ));
+        runner.add_agent(PatternAgent::new(
+            "sub1",
+            "Sub1",
+            "worker",
+            "Handle sub-task.",
+        ));
 
         let result = runner.run("complex task").unwrap();
         assert_eq!(result.rounds_completed, 2);
@@ -2991,9 +3017,7 @@ mod tests {
 
     #[test]
     fn test_debate_with_judge() {
-        let config = PatternConfig::new()
-            .with_max_rounds(2)
-            .with_judge("judge");
+        let config = PatternConfig::new().with_max_rounds(2).with_judge("judge");
         let mut runner = PatternRunner::new(ConversationPattern::Debate, config);
         runner.add_agent(PatternAgent::new("d1", "Pro", "debater", "Argue for."));
         runner.add_agent(PatternAgent::new("d2", "Con", "debater", "Argue against."));
@@ -3092,7 +3116,11 @@ mod tests {
         let result = runner.run("query").unwrap();
         assert_eq!(result.messages.len(), 2);
 
-        let agent_ids: Vec<&str> = result.messages.iter().map(|m| m.agent_id.as_str()).collect();
+        let agent_ids: Vec<&str> = result
+            .messages
+            .iter()
+            .map(|m| m.agent_id.as_str())
+            .collect();
         assert!(agent_ids.contains(&"b1"));
         assert!(agent_ids.contains(&"b2"));
     }
@@ -3236,8 +3264,7 @@ mod tests {
         mgr.register_agent(PatternAgent::new("a1", "A1", "w", "P."));
         mgr.register_agent(PatternAgent::new("a2", "A2", "w", "P."));
 
-        let request =
-            HandoffRequest::new("a1", "a2", "summarize", ContextTransferPolicy::Summary);
+        let request = HandoffRequest::new("a1", "a2", "summarize", ContextTransferPolicy::Summary);
         let result = mgr.request_handoff(request).unwrap();
         assert!(result.success);
         assert_eq!(result.transferred_messages, 1);
@@ -3249,8 +3276,12 @@ mod tests {
         mgr.register_agent(PatternAgent::new("a1", "A1", "w", "P."));
         mgr.register_agent(PatternAgent::new("a2", "A2", "w", "P."));
 
-        let request =
-            HandoffRequest::new("a1", "a2", "recent context", ContextTransferPolicy::LastN(5));
+        let request = HandoffRequest::new(
+            "a1",
+            "a2",
+            "recent context",
+            ContextTransferPolicy::LastN(5),
+        );
         let result = mgr.request_handoff(request).unwrap();
         assert!(result.success);
         assert_eq!(result.transferred_messages, 5);
@@ -3262,8 +3293,7 @@ mod tests {
         mgr.register_agent(PatternAgent::new("a1", "A1", "w", "P."));
         mgr.register_agent(PatternAgent::new("a2", "A2", "w", "P."));
 
-        let request =
-            HandoffRequest::new("a1", "a2", "clean start", ContextTransferPolicy::None);
+        let request = HandoffRequest::new("a1", "a2", "clean start", ContextTransferPolicy::None);
         let result = mgr.request_handoff(request).unwrap();
         assert!(result.success);
         assert_eq!(result.transferred_messages, 0);
@@ -3274,8 +3304,7 @@ mod tests {
         let mut mgr = HandoffManager::new();
         mgr.register_agent(PatternAgent::new("a1", "A1", "w", "P."));
 
-        let request =
-            HandoffRequest::new("a1", "unknown", "reason", ContextTransferPolicy::Full);
+        let request = HandoffRequest::new("a1", "unknown", "reason", ContextTransferPolicy::Full);
         let result = mgr.request_handoff(request);
         assert_eq!(result, Err(OrchestrationError::AgentNotFound));
     }
@@ -3285,8 +3314,7 @@ mod tests {
         let mut mgr = HandoffManager::new();
         mgr.register_agent(PatternAgent::new("a2", "A2", "w", "P."));
 
-        let request =
-            HandoffRequest::new("unknown", "a2", "reason", ContextTransferPolicy::Full);
+        let request = HandoffRequest::new("unknown", "a2", "reason", ContextTransferPolicy::Full);
         let result = mgr.request_handoff(request);
         assert_eq!(result, Err(OrchestrationError::AgentNotFound));
     }
@@ -3401,7 +3429,10 @@ mod tests {
         let synthesizer = ResponseSynthesizer::new(config);
         let responses = vec![
             ("Agent-A", "Short answer."),
-            ("Agent-B", "A much longer and more detailed answer with context and explanation."),
+            (
+                "Agent-B",
+                "A much longer and more detailed answer with context and explanation.",
+            ),
         ];
         let result = synthesizer.synthesize_responses_with_llm(&responses, None);
         // Heuristic picks longest
@@ -3411,9 +3442,7 @@ mod tests {
 
     #[test]
     fn test_synthesize_responses_with_mock_llm() {
-        let config = SynthesisConfig {
-            llm_enhanced: true,
-        };
+        let config = SynthesisConfig { llm_enhanced: true };
         let synthesizer = ResponseSynthesizer::new(config);
         let mock = crate::llm_enhance::MockLlm::new(
             "{\"synthesis\":\"Combined insight from both agents: the optimal approach is X.\",\"confidence\":0.92}",
@@ -3423,15 +3452,17 @@ mod tests {
             ("Reviewer", "Approach X has good coverage."),
         ];
         let result = synthesizer.synthesize_responses_with_llm(&responses, Some(&mock));
-        assert!(result.synthesis.contains("Combined insight"), "Expected LLM synthesis, got: {}", result.synthesis);
+        assert!(
+            result.synthesis.contains("Combined insight"),
+            "Expected LLM synthesis, got: {}",
+            result.synthesis
+        );
         assert!((result.confidence - 0.92).abs() < 0.01);
     }
 
     #[test]
     fn test_synthesize_responses_llm_fallback_on_failure() {
-        let config = SynthesisConfig {
-            llm_enhanced: true,
-        };
+        let config = SynthesisConfig { llm_enhanced: true };
         let synthesizer = ResponseSynthesizer::new(config);
         let failing = crate::llm_enhance::FailingMockLlm;
         let responses = vec![

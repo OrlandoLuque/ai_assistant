@@ -143,11 +143,21 @@ fn main() -> ExitCode {
         println!("  port: {}", port);
         println!("  backends: {:?}", backend_addrs);
         println!("  health-interval: {}s", health_interval);
-        println!("  api-key: {}", if cli.api_key.is_some() { "(set)" } else { "(none)" });
+        println!(
+            "  api-key: {}",
+            if cli.api_key.is_some() {
+                "(set)"
+            } else {
+                "(none)"
+            }
+        );
         return ExitCode::SUCCESS;
     }
 
-    let backends: Vec<Backend> = backend_addrs.iter().map(|a| Backend::new(a.clone())).collect();
+    let backends: Vec<Backend> = backend_addrs
+        .iter()
+        .map(|a| Backend::new(a.clone()))
+        .collect();
 
     let state = ProxyState {
         backends: Arc::new(backends),
@@ -165,7 +175,10 @@ fn main() -> ExitCode {
         });
 
     if let Ok(info) = update_rx.try_recv() {
-        eprintln!("  Update available: v{} \u{2192} v{}", info.current, info.latest);
+        eprintln!(
+            "  Update available: v{} \u{2192} v{}",
+            info.current, info.latest
+        );
         eprintln!("  Download: {}", info.url);
         eprintln!();
     }
@@ -235,15 +248,16 @@ async fn proxy_health_handler(State(state): State<ProxyState>) -> Json<ProxyHeal
 
     let all_healthy = backends.iter().any(|b| b.healthy);
     Json(ProxyHealthResponse {
-        status: if all_healthy { "ok".to_string() } else { "degraded".to_string() },
+        status: if all_healthy {
+            "ok".to_string()
+        } else {
+            "degraded".to_string()
+        },
         backends,
     })
 }
 
-async fn proxy_forward_handler(
-    State(state): State<ProxyState>,
-    req: Request,
-) -> Response {
+async fn proxy_forward_handler(State(state): State<ProxyState>, req: Request) -> Response {
     // Check API key if configured
     if let Some(ref expected_key) = state.api_key {
         let auth_ok = req
@@ -272,8 +286,11 @@ async fn proxy_forward_handler(
         if !auth_ok {
             return (
                 StatusCode::UNAUTHORIZED,
-                Json(ProxyError { error: "Unauthorized".to_string() }),
-            ).into_response();
+                Json(ProxyError {
+                    error: "Unauthorized".to_string(),
+                }),
+            )
+                .into_response();
         }
     }
 
@@ -305,13 +322,18 @@ async fn proxy_forward_handler(
     if !backend.healthy.load(Ordering::Relaxed) {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(ProxyError { error: "No healthy backends available".to_string() }),
-        ).into_response();
+            Json(ProxyError {
+                error: "No healthy backends available".to_string(),
+            }),
+        )
+            .into_response();
     }
 
     // Forward the request
     let (parts, body) = req.into_parts();
-    let path = parts.uri.path_and_query()
+    let path = parts
+        .uri
+        .path_and_query()
         .map(|pq| pq.as_str())
         .unwrap_or("/");
 
@@ -329,8 +351,11 @@ async fn proxy_forward_handler(
         _ => {
             return (
                 StatusCode::METHOD_NOT_ALLOWED,
-                Json(ProxyError { error: "Method not allowed".to_string() }),
-            ).into_response();
+                Json(ProxyError {
+                    error: "Method not allowed".to_string(),
+                }),
+            )
+                .into_response();
         }
     };
 
@@ -349,8 +374,11 @@ async fn proxy_forward_handler(
         Err(e) => {
             return (
                 StatusCode::BAD_REQUEST,
-                Json(ProxyError { error: format!("Failed to read request body: {}", e) }),
-            ).into_response();
+                Json(ProxyError {
+                    error: format!("Failed to read request body: {}", e),
+                }),
+            )
+                .into_response();
         }
     };
 
@@ -372,19 +400,18 @@ async fn proxy_forward_handler(
             }
 
             match resp.bytes().await {
-                Ok(bytes) => {
-                    response_builder
-                        .body(Body::from(bytes))
-                        .unwrap_or_else(|_| {
-                            (StatusCode::INTERNAL_SERVER_ERROR, "Internal error").into_response()
-                        })
-                }
-                Err(e) => {
-                    (
-                        StatusCode::BAD_GATEWAY,
-                        Json(ProxyError { error: format!("Backend read error: {}", e) }),
-                    ).into_response()
-                }
+                Ok(bytes) => response_builder
+                    .body(Body::from(bytes))
+                    .unwrap_or_else(|_| {
+                        (StatusCode::INTERNAL_SERVER_ERROR, "Internal error").into_response()
+                    }),
+                Err(e) => (
+                    StatusCode::BAD_GATEWAY,
+                    Json(ProxyError {
+                        error: format!("Backend read error: {}", e),
+                    }),
+                )
+                    .into_response(),
             }
         }
         Err(e) => {
@@ -394,8 +421,11 @@ async fn proxy_forward_handler(
             }
             (
                 StatusCode::BAD_GATEWAY,
-                Json(ProxyError { error: format!("Backend error: {}", e) }),
-            ).into_response()
+                Json(ProxyError {
+                    error: format!("Backend error: {}", e),
+                }),
+            )
+                .into_response()
         }
     }
 }
@@ -495,7 +525,10 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
             "--port" => {
                 i += 1;
                 let val = next_val(args, i, "--port")?;
-                cli.port = Some(val.parse().map_err(|_| format!("Invalid port: '{}'", val))?);
+                cli.port = Some(
+                    val.parse()
+                        .map_err(|_| format!("Invalid port: '{}'", val))?,
+                );
             }
             "--backends" => {
                 i += 1;
@@ -505,7 +538,8 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
                 i += 1;
                 let val = next_val(args, i, "--health-interval")?;
                 cli.health_interval = Some(
-                    val.parse().map_err(|_| format!("Invalid health-interval: '{}'", val))?,
+                    val.parse()
+                        .map_err(|_| format!("Invalid health-interval: '{}'", val))?,
                 );
             }
             "--api-key" => {
@@ -565,10 +599,14 @@ mod tests {
     #[test]
     fn test_parse_args_full() {
         let a = args(&[
-            "--port", "9090",
-            "--backends", "10.0.0.1:8090,10.0.0.2:8090",
-            "--health-interval", "15",
-            "--api-key", "secret",
+            "--port",
+            "9090",
+            "--backends",
+            "10.0.0.1:8090,10.0.0.2:8090",
+            "--health-interval",
+            "15",
+            "--api-key",
+            "secret",
             "--dry-run",
         ]);
         let cli = parse_args(&a).unwrap();

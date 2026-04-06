@@ -1171,17 +1171,30 @@ impl PipelineRouter {
             PipelineTaskType::Summarization
         } else if lower.contains("translate") || lower.contains("translation") {
             PipelineTaskType::Translation
-        } else if lower.contains("code") || lower.contains("function") || lower.contains("implement")
-            || lower.contains("program") || lower.contains("script")
+        } else if lower.contains("code")
+            || lower.contains("function")
+            || lower.contains("implement")
+            || lower.contains("program")
+            || lower.contains("script")
         {
             PipelineTaskType::CodeGeneration
-        } else if lower.contains("classify") || lower.contains("categorize") || lower.contains("label") {
+        } else if lower.contains("classify")
+            || lower.contains("categorize")
+            || lower.contains("label")
+        {
             PipelineTaskType::Classification
-        } else if lower.contains("extract") || lower.contains("parse") || lower.contains("find all") {
+        } else if lower.contains("extract") || lower.contains("parse") || lower.contains("find all")
+        {
             PipelineTaskType::Extraction
-        } else if lower.contains("write a story") || lower.contains("creative") || lower.contains("poem") {
+        } else if lower.contains("write a story")
+            || lower.contains("creative")
+            || lower.contains("poem")
+        {
             PipelineTaskType::Creative
-        } else if lower.contains("analyze") || lower.contains("analysis") || lower.contains("compare") {
+        } else if lower.contains("analyze")
+            || lower.contains("analysis")
+            || lower.contains("compare")
+        {
             PipelineTaskType::Analysis
         } else {
             PipelineTaskType::Chat
@@ -1741,14 +1754,13 @@ mod tests {
 
     #[test]
     fn test_router_add_rule() {
-        let router = PipelineRouter::new("openai", "gpt-4o")
-            .add_rule(RoutingRule {
-                task_pattern: "code".to_string(),
-                preferred_provider: "anthropic".to_string(),
-                preferred_model: "claude-3.5-sonnet".to_string(),
-                priority: 10,
-                max_cost_per_token: None,
-            });
+        let router = PipelineRouter::new("openai", "gpt-4o").add_rule(RoutingRule {
+            task_pattern: "code".to_string(),
+            preferred_provider: "anthropic".to_string(),
+            preferred_model: "claude-3.5-sonnet".to_string(),
+            priority: 10,
+            max_cost_per_token: None,
+        });
         assert_eq!(router.rules.len(), 1);
     }
 
@@ -1762,14 +1774,13 @@ mod tests {
 
     #[test]
     fn test_router_route_with_rule() {
-        let router = PipelineRouter::new("openai", "gpt-4o")
-            .add_rule(RoutingRule {
-                task_pattern: "code".to_string(),
-                preferred_provider: "anthropic".to_string(),
-                preferred_model: "claude-3.5-sonnet".to_string(),
-                priority: 10,
-                max_cost_per_token: None,
-            });
+        let router = PipelineRouter::new("openai", "gpt-4o").add_rule(RoutingRule {
+            task_pattern: "code".to_string(),
+            preferred_provider: "anthropic".to_string(),
+            preferred_model: "claude-3.5-sonnet".to_string(),
+            priority: 10,
+            max_cost_per_token: None,
+        });
         let decision = router.route(&PipelineTaskType::CodeGeneration, "write code");
         assert_eq!(decision.provider, "anthropic");
         assert_eq!(decision.model, "claude-3.5-sonnet");
@@ -1777,8 +1788,7 @@ mod tests {
 
     #[test]
     fn test_router_with_weights() {
-        let router = PipelineRouter::new("openai", "gpt-4o")
-            .with_weights(0.5, 0.3, 0.2);
+        let router = PipelineRouter::new("openai", "gpt-4o").with_weights(0.5, 0.3, 0.2);
         assert!((router.cost_weight - 0.5).abs() < f64::EPSILON);
         assert!((router.quality_weight - 0.3).abs() < f64::EPSILON);
         assert!((router.speed_weight - 0.2).abs() < f64::EPSILON);
@@ -1863,8 +1873,8 @@ mod tests {
     #[test]
     fn test_cacheable_prompt_static_ratio() {
         let prompt = CacheablePrompt::new()
-            .add_static("1234567890", "key")  // 10 chars
-            .add_dynamic("12345");            // 5 chars
+            .add_static("1234567890", "key") // 10 chars
+            .add_dynamic("12345"); // 5 chars
         let ratio = prompt.static_ratio();
         assert!((ratio - 10.0 / 15.0).abs() < 0.01);
     }
@@ -1882,9 +1892,7 @@ mod tests {
 
     #[test]
     fn test_classify_task_with_llm_mock() {
-        let mock = crate::llm_enhance::MockLlm::new(
-            r#"{"task":"code","complexity":"high"}"#,
-        );
+        let mock = crate::llm_enhance::MockLlm::new(r#"{"task":"code","complexity":"high"}"#);
         let (task, classification) =
             TaskType::classify_task_with_llm("Build a REST API in Rust", true, Some(&mock));
         assert_eq!(task, TaskType::Coding);
@@ -1906,9 +1914,7 @@ mod tests {
 
     #[test]
     fn test_classify_task_with_llm_disabled() {
-        let mock = crate::llm_enhance::MockLlm::new(
-            r#"{"task":"creative","complexity":"low"}"#,
-        );
+        let mock = crate::llm_enhance::MockLlm::new(r#"{"task":"creative","complexity":"low"}"#);
         let (task, classification) =
             TaskType::classify_task_with_llm("Write code that sorts", false, Some(&mock));
         // Should use heuristic, not LLM

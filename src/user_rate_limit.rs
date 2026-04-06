@@ -319,11 +319,14 @@ mod tests {
     #[test]
     fn test_custom_user_config() {
         let mut limiter = UserRateLimiter::default();
-        limiter.set_user_config("vip", UserRateLimitConfig {
-            requests_per_minute: 100,
-            burst_allowance: 10,
-            ..Default::default()
-        });
+        limiter.set_user_config(
+            "vip",
+            UserRateLimitConfig {
+                requests_per_minute: 100,
+                burst_allowance: 10,
+                ..Default::default()
+            },
+        );
         // VIP user can make many more requests
         for _ in 0..25 {
             let result = limiter.check("vip", 10);

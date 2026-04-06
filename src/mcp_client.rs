@@ -161,9 +161,18 @@ pub struct ToolCallResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum ToolResultContent {
-    Text { text: String },
-    Image { data: String, mime_type: String },
-    Resource { uri: String, mime_type: Option<String>, text: Option<String> },
+    Text {
+        text: String,
+    },
+    Image {
+        data: String,
+        mime_type: String,
+    },
+    Resource {
+        uri: String,
+        mime_type: Option<String>,
+        text: Option<String>,
+    },
 }
 
 // =============================================================================
@@ -278,16 +287,15 @@ impl RemoteMcpClient {
         // Add authentication header if configured.
         req = self.apply_auth_header(req);
 
-        let body_str = serde_json::to_string(&body).map_err(|e| {
-            McpClientError::ConnectionFailed {
+        let body_str =
+            serde_json::to_string(&body).map_err(|e| McpClientError::ConnectionFailed {
                 url: self.config.url.clone(),
                 reason: format!("failed to serialize request: {}", e),
-            }
-        })?;
+            })?;
 
-        let response = req.send_string(&body_str).map_err(|e| {
-            self.map_ureq_error(e)
-        })?;
+        let response = req
+            .send_string(&body_str)
+            .map_err(|e| self.map_ureq_error(e))?;
 
         // Extract session ID from Mcp-Session-Id header.
         let session_id = response
@@ -296,19 +304,18 @@ impl RemoteMcpClient {
             .map(|s| s.to_string());
 
         // Parse response body.
-        let resp_text = response.into_string().map_err(|e| {
-            McpClientError::ConnectionFailed {
+        let resp_text = response
+            .into_string()
+            .map_err(|e| McpClientError::ConnectionFailed {
                 url: self.config.url.clone(),
                 reason: format!("failed to read response body: {}", e),
-            }
-        })?;
+            })?;
 
-        let resp_json: serde_json::Value = serde_json::from_str(&resp_text).map_err(|e| {
-            McpClientError::ProtocolMismatch {
+        let resp_json: serde_json::Value =
+            serde_json::from_str(&resp_text).map_err(|e| McpClientError::ProtocolMismatch {
                 expected: "valid JSON-RPC response".to_string(),
                 got: format!("parse error: {}", e),
-            }
-        })?;
+            })?;
 
         // Check for JSON-RPC error.
         if let Some(error) = resp_json.get("error") {
@@ -336,7 +343,11 @@ impl RemoteMcpClient {
         self.server_capabilities = Some(capabilities);
         self.connected = true;
         self.simulated = false;
-        log::info!("MCP client connected: url={}, session_id={:?}", self.config.url, self.session_id);
+        log::info!(
+            "MCP client connected: url={}, session_id={:?}",
+            self.config.url,
+            self.session_id
+        );
 
         Ok(())
     }
@@ -345,15 +356,21 @@ impl RemoteMcpClient {
     fn connect_simulated(&mut self) -> Result<(), McpClientError> {
         // Generate a deterministic but unique-looking session id based on the
         // URL so that tests are reproducible.
-        let session_hash = self.config.url.bytes().fold(0u64, |acc, b| {
-            acc.wrapping_mul(31).wrapping_add(b as u64)
-        });
+        let session_hash = self
+            .config
+            .url
+            .bytes()
+            .fold(0u64, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u64));
         self.session_id = Some(format!("mcp-sess-{:016x}", session_hash));
 
         self.server_capabilities = Some(ServerCapabilities::default());
         self.connected = true;
         self.simulated = true;
-        log::info!("MCP client connected (simulated): url={}, session_id={:?}", self.config.url, self.session_id);
+        log::info!(
+            "MCP client connected (simulated): url={}, session_id={:?}",
+            self.config.url,
+            self.session_id
+        );
 
         Ok(())
     }
@@ -469,10 +486,7 @@ impl RemoteMcpClient {
         }
 
         // Block private IPv4 ranges
-        let octets: Vec<u8> = host
-            .split('.')
-            .filter_map(|s| s.parse().ok())
-            .collect();
+        let octets: Vec<u8> = host.split('.').filter_map(|s| s.parse().ok()).collect();
         if octets.len() == 4 {
             let (a, b) = (octets[0], octets[1]);
             if a == 127                          // 127.0.0.0/8
@@ -480,7 +494,8 @@ impl RemoteMcpClient {
                 || (a == 172 && (16..=31).contains(&b)) // 172.16.0.0/12
                 || (a == 192 && b == 168)        // 192.168.0.0/16
                 || (a == 169 && b == 254)        // 169.254.0.0/16 link-local
-                || a == 0                        // 0.0.0.0/8
+                || a == 0
+            // 0.0.0.0/8
             {
                 return Some(format!("SSRF: blocked request to private IP ({})", host));
             }
@@ -570,10 +585,7 @@ impl RemoteMcpClient {
 
         if let Some(arr) = result.get("content").and_then(|c| c.as_array()) {
             for item in arr {
-                let item_type = item
-                    .get("type")
-                    .and_then(|t| t.as_str())
-                    .unwrap_or("text");
+                let item_type = item.get("type").and_then(|t| t.as_str()).unwrap_or("text");
 
                 match item_type {
                     "image" => {
@@ -751,30 +763,28 @@ impl RemoteMcpClient {
             req = req.set("Mcp-Session-Id", session_id);
         }
 
-        let body_str = serde_json::to_string(&body).map_err(|e| {
-            McpClientError::ConnectionFailed {
+        let body_str =
+            serde_json::to_string(&body).map_err(|e| McpClientError::ConnectionFailed {
                 url: self.config.url.clone(),
                 reason: format!("failed to serialize request: {}", e),
-            }
-        })?;
+            })?;
 
-        let response = req.send_string(&body_str).map_err(|e| {
-            self.map_ureq_error(e)
-        })?;
+        let response = req
+            .send_string(&body_str)
+            .map_err(|e| self.map_ureq_error(e))?;
 
-        let resp_text = response.into_string().map_err(|e| {
-            McpClientError::ConnectionFailed {
+        let resp_text = response
+            .into_string()
+            .map_err(|e| McpClientError::ConnectionFailed {
                 url: self.config.url.clone(),
                 reason: format!("failed to read response body: {}", e),
-            }
-        })?;
+            })?;
 
-        let resp_json: serde_json::Value = serde_json::from_str(&resp_text).map_err(|e| {
-            McpClientError::ProtocolMismatch {
+        let resp_json: serde_json::Value =
+            serde_json::from_str(&resp_text).map_err(|e| McpClientError::ProtocolMismatch {
                 expected: "valid JSON-RPC response".to_string(),
                 got: format!("parse error: {}", e),
-            }
-        })?;
+            })?;
 
         // Check for JSON-RPC error.
         if let Some(error) = resp_json.get("error") {
@@ -804,9 +814,9 @@ impl RemoteMcpClient {
             McpClientAuth::BearerToken(token) => {
                 req.set("Authorization", &format!("Bearer {}", token))
             }
-            McpClientAuth::OAuth { token: Some(tok), .. } => {
-                req.set("Authorization", &format!("Bearer {}", tok))
-            }
+            McpClientAuth::OAuth {
+                token: Some(tok), ..
+            } => req.set("Authorization", &format!("Bearer {}", tok)),
             _ => req,
         }
     }
@@ -817,10 +827,13 @@ impl RemoteMcpClient {
             ureq::Error::Status(401, _) | ureq::Error::Status(403, _) => {
                 McpClientError::AuthFailed {
                     url: self.config.url.clone(),
-                    reason: format!("HTTP {}", match error {
-                        ureq::Error::Status(code, _) => code.to_string(),
-                        _ => "auth error".to_string(),
-                    }),
+                    reason: format!(
+                        "HTTP {}",
+                        match error {
+                            ureq::Error::Status(code, _) => code.to_string(),
+                            _ => "auth error".to_string(),
+                        }
+                    ),
                 }
             }
             ureq::Error::Status(code, resp) => {
@@ -848,18 +861,14 @@ impl RemoteMcpClient {
                             reason: format!("transport error: {}", error),
                         }
                     }
-                    ureq::ErrorKind::ConnectionFailed => {
-                        McpClientError::ConnectionFailed {
-                            url: self.config.url.clone(),
-                            reason: format!("connection refused: {}", error),
-                        }
-                    }
-                    ureq::ErrorKind::Dns => {
-                        McpClientError::ConnectionFailed {
-                            url: self.config.url.clone(),
-                            reason: format!("DNS resolution failed: {}", error),
-                        }
-                    }
+                    ureq::ErrorKind::ConnectionFailed => McpClientError::ConnectionFailed {
+                        url: self.config.url.clone(),
+                        reason: format!("connection refused: {}", error),
+                    },
+                    ureq::ErrorKind::Dns => McpClientError::ConnectionFailed {
+                        url: self.config.url.clone(),
+                        reason: format!("DNS resolution failed: {}", error),
+                    },
                     _ => {
                         // Check if the error message contains "timed out" or
                         // similar indicators.
@@ -906,8 +915,9 @@ impl RemoteMcpClient {
                     .get("inputSchema")
                     .cloned()
                     .unwrap_or(serde_json::json!({}));
-                let annotations = tool_val.get("annotations").map(|ann| {
-                    RemoteToolAnnotations {
+                let annotations = tool_val
+                    .get("annotations")
+                    .map(|ann| RemoteToolAnnotations {
                         read_only: ann
                             .get("readOnly")
                             .and_then(|v| v.as_bool())
@@ -924,8 +934,7 @@ impl RemoteMcpClient {
                             .get("openWorld")
                             .and_then(|v| v.as_bool())
                             .unwrap_or(false),
-                    }
-                });
+                    });
 
                 self.tools_cache.push(RemoteTool {
                     name,
@@ -1108,10 +1117,7 @@ impl McpClientPool {
     /// [`register`](Self::register), returns
     /// [`McpClientError::ConnectionFailed`].  If the pool has reached
     /// `max_connections`, returns [`McpClientError::ConnectionFailed`] as well.
-    pub fn get_or_connect(
-        &mut self,
-        name: &str,
-    ) -> Result<&RemoteMcpClient, McpClientError> {
+    pub fn get_or_connect(&mut self, name: &str) -> Result<&RemoteMcpClient, McpClientError> {
         // Already connected?
         if self.clients.contains_key(name) {
             return Ok(&self.clients[name]);
@@ -1130,12 +1136,13 @@ impl McpClientPool {
         }
 
         // Look up the config.
-        let config = self.configs.get(name).ok_or_else(|| {
-            McpClientError::ConnectionFailed {
+        let config = self
+            .configs
+            .get(name)
+            .ok_or_else(|| McpClientError::ConnectionFailed {
                 url: name.to_string(),
                 reason: "unknown server name".to_string(),
-            }
-        })?;
+            })?;
 
         let mut client = RemoteMcpClient::new(config.clone());
         client.connect()?;
@@ -1581,9 +1588,7 @@ mod tests {
 
     #[test]
     fn test_tool_result_content_variants() {
-        let text = ToolResultContent::Text {
-            text: "hi".into(),
-        };
+        let text = ToolResultContent::Text { text: "hi".into() };
         let image = ToolResultContent::Image {
             data: "abc".into(),
             mime_type: "image/jpeg".into(),
@@ -1960,7 +1965,11 @@ mod tests {
         let content = client.parse_tool_result_content(&result);
         assert_eq!(content.len(), 1);
         match &content[0] {
-            ToolResultContent::Resource { uri, mime_type, text } => {
+            ToolResultContent::Resource {
+                uri,
+                mime_type,
+                text,
+            } => {
                 assert_eq!(uri, "file:///data.json");
                 assert_eq!(mime_type.as_deref(), Some("application/json"));
                 assert_eq!(text.as_deref(), Some("{\"key\":\"val\"}"));

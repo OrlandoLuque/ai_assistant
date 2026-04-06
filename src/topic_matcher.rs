@@ -366,14 +366,11 @@ pub fn parse_self_query_response(response: &str) -> SelfQueryFilter {
     };
 
     if let Ok(json) = serde_json::from_str::<serde_json::Value>(json_str) {
-        let sections = json
-            .get("sections")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect()
-            });
+        let sections = json.get("sections").and_then(|v| v.as_array()).map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        });
 
         let keywords = json
             .get("keywords")
@@ -385,8 +382,14 @@ pub fn parse_self_query_response(response: &str) -> SelfQueryFilter {
             })
             .unwrap_or_default();
 
-        let date_after = json.get("date_after").and_then(|v| v.as_str()).map(|s| s.to_string());
-        let date_before = json.get("date_before").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let date_after = json
+            .get("date_after")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let date_before = json
+            .get("date_before")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
         let date_range = match (date_after, date_before) {
             (Some(a), Some(b)) => Some((a, b)),
             (Some(a), None) => Some((a, String::new())),
@@ -518,31 +521,24 @@ pub fn parse_granular_response(response: &str, sentences: &[String]) -> Granular
 fn default_stopwords() -> HashSet<String> {
     let words = [
         // English (59)
-        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
-        "have", "has", "had", "do", "does", "did", "will", "would", "could",
-        "should", "may", "might", "must", "shall", "can", "need", "dare",
-        "ought", "used", "to", "of", "in", "for", "on", "with", "at", "by",
-        "from", "as", "into", "through", "during", "before", "after", "above",
-        "below", "between", "under", "again", "further", "then", "once",
-        "here", "there", "when", "where", "why", "how",
-        // Spanish (30)
-        "el", "la", "los", "las", "un", "una", "unos", "unas", "de", "del",
-        "al", "en", "con", "por", "para", "sobre", "entre", "sin", "hasta",
-        "como", "pero", "que", "este", "esta", "esto", "ese", "esa", "eso",
-        "ser", "estar",
-        // Common verbs (both languages)
-        "and", "but", "not", "all", "each", "every", "some", "any", "its",
-        "this", "that", "these", "those", "what", "which", "who", "whom",
-        "very", "just", "also", "more", "most", "much", "many", "such",
-        "only", "other", "than", "too", "more", "less",
+        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
+        "do", "does", "did", "will", "would", "could", "should", "may", "might", "must", "shall",
+        "can", "need", "dare", "ought", "used", "to", "of", "in", "for", "on", "with", "at", "by",
+        "from", "as", "into", "through", "during", "before", "after", "above", "below", "between",
+        "under", "again", "further", "then", "once", "here", "there", "when", "where", "why",
+        "how", // Spanish (30)
+        "el", "la", "los", "las", "un", "una", "unos", "unas", "de", "del", "al", "en", "con",
+        "por", "para", "sobre", "entre", "sin", "hasta", "como", "pero", "que", "este", "esta",
+        "esto", "ese", "esa", "eso", "ser", "estar", // Common verbs (both languages)
+        "and", "but", "not", "all", "each", "every", "some", "any", "its", "this", "that", "these",
+        "those", "what", "which", "who", "whom", "very", "just", "also", "more", "most", "much",
+        "many", "such", "only", "other", "than", "too", "more", "less",
         // Common utility words
-        "hacer", "tener", "poder", "decir", "ayudar", "querer", "gustar",
-        "haber", "puede", "tiene", "hace", "dice",
-        "help", "want", "like", "make", "take", "give", "know", "think",
-        "come", "find", "tell", "work",
-        // Code keywords (filtered for code chunks, #5)
-        "function", "return", "const", "class", "import", "export",
-        "public", "private", "static", "void", "null", "true", "false",
+        "hacer", "tener", "poder", "decir", "ayudar", "querer", "gustar", "haber", "puede", "tiene",
+        "hace", "dice", "help", "want", "like", "make", "take", "give", "know", "think", "come",
+        "find", "tell", "work", // Code keywords (filtered for code chunks, #5)
+        "function", "return", "const", "class", "import", "export", "public", "private", "static",
+        "void", "null", "true", "false",
     ];
     words.iter().map(|w| w.to_string()).collect()
 }
@@ -585,7 +581,10 @@ mod tests {
     fn test_topic_overlap_on_topic() {
         let m = matcher();
         let query_topics = m.extract_topics("herramientas para pintar paredes de casa");
-        let result = m.score_chunk(&query_topics, "las mejores brochas y rodillos para pintar la casa");
+        let result = m.score_chunk(
+            &query_topics,
+            "las mejores brochas y rodillos para pintar la casa",
+        );
         assert_eq!(result.match_level, TopicMatchLevel::OnTopic);
         assert!(result.score_factor >= 0.99);
         assert!(!result.common_topics.is_empty());
@@ -595,7 +594,10 @@ mod tests {
     fn test_topic_overlap_off_topic() {
         let m = matcher();
         let query_topics = m.extract_topics("pintar las paredes de la casa con rodillo");
-        let result = m.score_chunk(&query_topics, "sensores zigbee de temperatura y humedad para domótica");
+        let result = m.score_chunk(
+            &query_topics,
+            "sensores zigbee de temperatura y humedad para domótica",
+        );
         assert_eq!(result.match_level, TopicMatchLevel::OffTopic);
         assert!(result.score_factor < 0.3);
         assert!(result.common_topics.is_empty());
@@ -605,10 +607,16 @@ mod tests {
     fn test_topic_overlap_partial() {
         let m = matcher();
         let query_topics = m.extract_topics("automatizar la iluminación de casa");
-        let result = m.score_chunk(&query_topics, "mejorar la iluminación del jardín con plantas");
+        let result = m.score_chunk(
+            &query_topics,
+            "mejorar la iluminación del jardín con plantas",
+        );
         // "iluminación" is common, but topics diverge
         assert!(result.overlap_score > 0.0);
-        assert!(result.overlap_score < m.config.on_topic_threshold || result.match_level == TopicMatchLevel::OnTopic);
+        assert!(
+            result.overlap_score < m.config.on_topic_threshold
+                || result.match_level == TopicMatchLevel::OnTopic
+        );
     }
 
     #[test]
@@ -618,7 +626,10 @@ mod tests {
             ..Default::default()
         });
         let query_topics = m.extract_topics("recetas de cocina italiana");
-        let result = m.score_chunk(&query_topics, "programación en rust para sistemas distribuidos");
+        let result = m.score_chunk(
+            &query_topics,
+            "programación en rust para sistemas distribuidos",
+        );
         assert_eq!(result.match_level, TopicMatchLevel::OffTopic);
         assert!((result.score_factor - 0.2).abs() < 0.01);
     }
@@ -627,7 +638,10 @@ mod tests {
     fn test_score_penalty_on_topic() {
         let m = matcher();
         let query_topics = m.extract_topics("configurar sensores zigbee");
-        let result = m.score_chunk(&query_topics, "guía de configuración de sensores zigbee con zigbee2mqtt");
+        let result = m.score_chunk(
+            &query_topics,
+            "guía de configuración de sensores zigbee con zigbee2mqtt",
+        );
         assert_eq!(result.match_level, TopicMatchLevel::OnTopic);
         assert!((result.score_factor - 1.0).abs() < 0.01);
     }
@@ -691,10 +705,13 @@ mod tests {
 
     #[test]
     fn test_llm_classifier_prompt() {
-        let prompt = build_topic_classify_prompt("pintar casa", &[
-            ("c1".into(), "herramientas de pintura".into()),
-            ("c2".into(), "sensores zigbee".into()),
-        ]);
+        let prompt = build_topic_classify_prompt(
+            "pintar casa",
+            &[
+                ("c1".into(), "herramientas de pintura".into()),
+                ("c2".into(), "sensores zigbee".into()),
+            ],
+        );
         assert!(prompt.contains("pintar casa"));
         assert!(prompt.contains("herramientas de pintura"));
         assert!(prompt.contains("ON_TOPIC"));
@@ -714,7 +731,10 @@ mod tests {
     fn test_self_query_filter_parse() {
         let response = r#"{"sections": ["cocina", "recetas"], "keywords": ["pasta", "italiana"], "date_after": "2025-01-01", "date_before": null}"#;
         let filter = parse_self_query_response(response);
-        assert_eq!(filter.section_filter, Some(vec!["cocina".into(), "recetas".into()]));
+        assert_eq!(
+            filter.section_filter,
+            Some(vec!["cocina".into(), "recetas".into()])
+        );
         assert_eq!(filter.extracted_keywords, vec!["pasta", "italiana"]);
         assert!(filter.date_range.is_some());
     }

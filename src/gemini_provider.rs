@@ -54,9 +54,7 @@ impl GeminiProvider {
     pub fn from_env() -> Result<Self> {
         let key = std::env::var("GOOGLE_API_KEY")
             .or_else(|_| std::env::var("GEMINI_API_KEY"))
-            .context(
-                "Neither GOOGLE_API_KEY nor GEMINI_API_KEY environment variable is set",
-            )?;
+            .context("Neither GOOGLE_API_KEY nor GEMINI_API_KEY environment variable is set")?;
         Ok(Self::new(&key))
     }
 
@@ -68,11 +66,12 @@ impl GeminiProvider {
 
     /// Check if the Gemini API is reachable.
     pub fn check_health(&self) -> bool {
-        let url = format!(
-            "{}/v1beta/models?pageSize=1",
-            self.base_url
-        );
-        match ureq::get(&url).set("x-goog-api-key", &self.api_key).timeout(Duration::from_secs(5)).call() {
+        let url = format!("{}/v1beta/models?pageSize=1", self.base_url);
+        match ureq::get(&url)
+            .set("x-goog-api-key", &self.api_key)
+            .timeout(Duration::from_secs(5))
+            .call()
+        {
             Ok(resp) => {
                 let is_ok = resp.status() == 200;
                 self.available.store(is_ok, Ordering::SeqCst);
@@ -306,11 +305,12 @@ impl ProviderPlugin for GeminiProvider {
     }
 
     fn list_models(&self) -> Result<Vec<ModelInfo>> {
-        let url = format!(
-            "{}/v1beta/models",
-            self.base_url
-        );
-        match ureq::get(&url).set("x-goog-api-key", &self.api_key).timeout(self.timeout).call() {
+        let url = format!("{}/v1beta/models", self.base_url);
+        match ureq::get(&url)
+            .set("x-goog-api-key", &self.api_key)
+            .timeout(self.timeout)
+            .call()
+        {
             Ok(resp) => {
                 let body: Value = resp
                     .into_json()
@@ -333,10 +333,7 @@ impl ProviderPlugin for GeminiProvider {
         system_prompt: &str,
     ) -> Result<String> {
         let model = Self::full_model_name(&config.selected_model);
-        let url = format!(
-            "{}/v1beta/{}:generateContent",
-            self.base_url, model
-        );
+        let url = format!("{}/v1beta/{}:generateContent", self.base_url, model);
         let body = Self::build_request_body(config, messages, system_prompt, None);
 
         let resp = ureq::post(&url)
@@ -406,10 +403,7 @@ impl ProviderPlugin for GeminiProvider {
         tools: &[ToolDefinition],
     ) -> Result<(String, Vec<ToolCall>)> {
         let model = Self::full_model_name(&config.selected_model);
-        let url = format!(
-            "{}/v1beta/{}:generateContent",
-            self.base_url, model
-        );
+        let url = format!("{}/v1beta/{}:generateContent", self.base_url, model);
         let body = Self::build_request_body(config, messages, system_prompt, Some(tools));
 
         let resp = ureq::post(&url)
@@ -557,7 +551,8 @@ mod tests {
     #[test]
     fn test_gemini_streaming_response_parsing() {
         // Simulate an SSE data payload
-        let data = r#"{"candidates":[{"content":{"parts":[{"text":"streaming chunk"}],"role":"model"}}]}"#;
+        let data =
+            r#"{"candidates":[{"content":{"parts":[{"text":"streaming chunk"}],"role":"model"}}]}"#;
         let result = GeminiProvider::parse_sse_chunk(data);
         assert_eq!(result, Some("streaming chunk".to_string()));
 
@@ -637,11 +632,17 @@ mod tests {
         assert_eq!(tool_calls.len(), 1);
         assert_eq!(tool_calls[0].name, "get_weather");
         assert_eq!(
-            tool_calls[0].arguments.get("location").and_then(|v| v.as_str()),
+            tool_calls[0]
+                .arguments
+                .get("location")
+                .and_then(|v| v.as_str()),
             Some("London")
         );
         assert_eq!(
-            tool_calls[0].arguments.get("units").and_then(|v| v.as_str()),
+            tool_calls[0]
+                .arguments
+                .get("units")
+                .and_then(|v| v.as_str()),
             Some("celsius")
         );
     }
@@ -665,10 +666,7 @@ mod tests {
             temperature: 0.5,
             ..AiConfig::default()
         };
-        let messages = vec![
-            ChatMessage::user("Hello"),
-            ChatMessage::assistant("Hi!"),
-        ];
+        let messages = vec![ChatMessage::user("Hello"), ChatMessage::assistant("Hi!")];
 
         let body = GeminiProvider::build_request_body(&config, &messages, "Be helpful", None);
 

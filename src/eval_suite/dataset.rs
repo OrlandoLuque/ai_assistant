@@ -220,12 +220,11 @@ pub struct BenchmarkDataset {
 impl BenchmarkDataset {
     /// Load a benchmark dataset from a JSONL file (one problem per line).
     pub fn from_jsonl(path: &str, suite_type: BenchmarkSuiteType) -> Result<Self, EvalSuiteError> {
-        let content = std::fs::read_to_string(path).map_err(|e| {
-            EvalSuiteError::DatasetLoadFailed {
+        let content =
+            std::fs::read_to_string(path).map_err(|e| EvalSuiteError::DatasetLoadFailed {
                 path: path.to_string(),
                 reason: e.to_string(),
-            }
-        })?;
+            })?;
 
         let mut problems = Vec::new();
         for (line_num, line) in content.lines().enumerate() {
@@ -264,12 +263,11 @@ impl BenchmarkDataset {
 
     /// Load a benchmark dataset from a JSON file (array of problems).
     pub fn from_json(path: &str, suite_type: BenchmarkSuiteType) -> Result<Self, EvalSuiteError> {
-        let content = std::fs::read_to_string(path).map_err(|e| {
-            EvalSuiteError::DatasetLoadFailed {
+        let content =
+            std::fs::read_to_string(path).map_err(|e| EvalSuiteError::DatasetLoadFailed {
                 path: path.to_string(),
                 reason: e.to_string(),
-            }
-        })?;
+            })?;
 
         let problems: Vec<BenchmarkProblem> =
             serde_json::from_str(&content).map_err(|e| EvalSuiteError::DatasetLoadFailed {
@@ -317,7 +315,12 @@ impl BenchmarkDataset {
         Self {
             name: self.name.clone(),
             suite_type: self.suite_type.clone(),
-            problems: self.problems.iter().filter(|p| predicate(p)).cloned().collect(),
+            problems: self
+                .problems
+                .iter()
+                .filter(|p| predicate(p))
+                .cloned()
+                .collect(),
             metadata: self.metadata.clone(),
         }
     }
@@ -642,16 +645,34 @@ mod tests {
     fn sample_problems() -> Vec<BenchmarkProblem> {
         vec![
             make_mc_problem("mmlu/1", "What is 2+2?", vec!["3", "4", "5", "6"], "B"),
-            make_mc_problem("mmlu/2", "Capital of France?", vec!["London", "Paris", "Berlin", "Rome"], "B"),
-            make_numeric_problem("gsm8k/1", "If Alice has 5 apples and gives 2 away, how many?", 3.0, 0.01),
-            make_code_problem("humaneval/0", "Write a function that adds two numbers", "def add(a, b): return a + b", "python"),
+            make_mc_problem(
+                "mmlu/2",
+                "Capital of France?",
+                vec!["London", "Paris", "Berlin", "Rome"],
+                "B",
+            ),
+            make_numeric_problem(
+                "gsm8k/1",
+                "If Alice has 5 apples and gives 2 away, how many?",
+                3.0,
+                0.01,
+            ),
+            make_code_problem(
+                "humaneval/0",
+                "Write a function that adds two numbers",
+                "def add(a, b): return a + b",
+                "python",
+            ),
             BenchmarkProblem {
                 id: "custom/1".to_string(),
                 suite: BenchmarkSuiteType::Custom("MyBench".to_string()),
                 category: ProblemCategory::Reasoning,
                 prompt: "What comes next: 1, 1, 2, 3, 5, ?".to_string(),
                 system_prompt: Some("You are a math tutor.".to_string()),
-                answer_format: AnswerFormat::Numeric { correct: 8.0, tolerance: 0.0 },
+                answer_format: AnswerFormat::Numeric {
+                    correct: 8.0,
+                    tolerance: 0.0,
+                },
                 reference_solution: Some("8".to_string()),
                 test_cases: None,
                 metadata: {
@@ -668,7 +689,8 @@ mod tests {
     #[test]
     fn test_from_problems_inline() {
         let problems = sample_problems();
-        let ds = BenchmarkDataset::from_problems("test", BenchmarkSuiteType::Mmlu, problems.clone());
+        let ds =
+            BenchmarkDataset::from_problems("test", BenchmarkSuiteType::Mmlu, problems.clone());
         assert_eq!(ds.name, "test");
         assert_eq!(ds.len(), 5);
         assert!(!ds.is_empty());
@@ -677,7 +699,8 @@ mod tests {
 
     #[test]
     fn test_filter_by_category() {
-        let ds = BenchmarkDataset::from_problems("test", BenchmarkSuiteType::Mmlu, sample_problems());
+        let ds =
+            BenchmarkDataset::from_problems("test", BenchmarkSuiteType::Mmlu, sample_problems());
         let math_only = ds.filter(|p| p.category == ProblemCategory::Math);
         assert_eq!(math_only.len(), 1);
         assert_eq!(math_only.problems[0].id, "gsm8k/1");
@@ -685,7 +708,8 @@ mod tests {
 
     #[test]
     fn test_filter_by_difficulty() {
-        let ds = BenchmarkDataset::from_problems("test", BenchmarkSuiteType::Mmlu, sample_problems());
+        let ds =
+            BenchmarkDataset::from_problems("test", BenchmarkSuiteType::Mmlu, sample_problems());
         let easy = ds.filter(|p| p.difficulty.as_deref() == Some("easy"));
         assert_eq!(easy.len(), 1);
         assert_eq!(easy.problems[0].id, "custom/1");
@@ -693,7 +717,8 @@ mod tests {
 
     #[test]
     fn test_filter_empty_result() {
-        let ds = BenchmarkDataset::from_problems("test", BenchmarkSuiteType::Mmlu, sample_problems());
+        let ds =
+            BenchmarkDataset::from_problems("test", BenchmarkSuiteType::Mmlu, sample_problems());
         let empty = ds.filter(|_| false);
         assert!(empty.is_empty());
         assert_eq!(empty.len(), 0);
@@ -701,7 +726,8 @@ mod tests {
 
     #[test]
     fn test_sample_deterministic() {
-        let ds = BenchmarkDataset::from_problems("test", BenchmarkSuiteType::Mmlu, sample_problems());
+        let ds =
+            BenchmarkDataset::from_problems("test", BenchmarkSuiteType::Mmlu, sample_problems());
         let s1 = ds.sample(3, 42);
         let s2 = ds.sample(3, 42);
         assert_eq!(s1.len(), 3);
@@ -714,7 +740,8 @@ mod tests {
 
     #[test]
     fn test_sample_different_seeds() {
-        let ds = BenchmarkDataset::from_problems("test", BenchmarkSuiteType::Mmlu, sample_problems());
+        let ds =
+            BenchmarkDataset::from_problems("test", BenchmarkSuiteType::Mmlu, sample_problems());
         let s1 = ds.sample(3, 42);
         let s2 = ds.sample(3, 99);
         // Different seeds should (very likely) produce different orderings
@@ -726,21 +753,24 @@ mod tests {
 
     #[test]
     fn test_sample_larger_than_dataset() {
-        let ds = BenchmarkDataset::from_problems("test", BenchmarkSuiteType::Mmlu, sample_problems());
+        let ds =
+            BenchmarkDataset::from_problems("test", BenchmarkSuiteType::Mmlu, sample_problems());
         let s = ds.sample(100, 42);
         assert_eq!(s.len(), ds.len()); // Capped at dataset size
     }
 
     #[test]
     fn test_categories() {
-        let ds = BenchmarkDataset::from_problems("test", BenchmarkSuiteType::Mmlu, sample_problems());
+        let ds =
+            BenchmarkDataset::from_problems("test", BenchmarkSuiteType::Mmlu, sample_problems());
         let cats = ds.categories();
         assert!(cats.len() >= 3); // Knowledge, Math, Coding, Reasoning
     }
 
     #[test]
     fn test_difficulties() {
-        let ds = BenchmarkDataset::from_problems("test", BenchmarkSuiteType::Mmlu, sample_problems());
+        let ds =
+            BenchmarkDataset::from_problems("test", BenchmarkSuiteType::Mmlu, sample_problems());
         let diffs = ds.difficulties();
         assert!(diffs.contains(&"easy".to_string()));
     }
@@ -751,23 +781,39 @@ mod tests {
         assert_eq!(BenchmarkSuiteType::Mmlu.to_string(), "MMLU");
         assert_eq!(BenchmarkSuiteType::Gsm8k.to_string(), "GSM8K");
         assert_eq!(BenchmarkSuiteType::SweBench.to_string(), "SWE-bench");
-        assert_eq!(BenchmarkSuiteType::Custom("MyBench".into()).to_string(), "MyBench");
+        assert_eq!(
+            BenchmarkSuiteType::Custom("MyBench".into()).to_string(),
+            "MyBench"
+        );
     }
 
     #[test]
     fn test_problem_category_display() {
         assert_eq!(ProblemCategory::Coding.to_string(), "Coding");
         assert_eq!(ProblemCategory::Math.to_string(), "Math");
-        assert_eq!(ProblemCategory::Custom("Special".into()).to_string(), "Special");
+        assert_eq!(
+            ProblemCategory::Custom("Special".into()).to_string(),
+            "Special"
+        );
     }
 
     #[test]
     fn test_answer_format_variants() {
-        let code = AnswerFormat::Code { language: "python".to_string() };
-        let mc = AnswerFormat::MultipleChoice { options: vec!["A".into()], correct: "A".into() };
-        let num = AnswerFormat::Numeric { correct: 42.0, tolerance: 0.1 };
+        let code = AnswerFormat::Code {
+            language: "python".to_string(),
+        };
+        let mc = AnswerFormat::MultipleChoice {
+            options: vec!["A".into()],
+            correct: "A".into(),
+        };
+        let num = AnswerFormat::Numeric {
+            correct: 42.0,
+            tolerance: 0.1,
+        };
         let free = AnswerFormat::FreeText;
-        let agent = AnswerFormat::AgentTrajectory { success_criteria: "done".to_string() };
+        let agent = AnswerFormat::AgentTrajectory {
+            success_criteria: "done".to_string(),
+        };
         // Just verify they can be serialized
         assert!(serde_json::to_string(&code).is_ok());
         assert!(serde_json::to_string(&mc).is_ok());
@@ -787,14 +833,16 @@ mod tests {
 
     #[test]
     fn test_dataset_metadata() {
-        let mut ds = BenchmarkDataset::from_problems("test", BenchmarkSuiteType::Mmlu, sample_problems());
+        let mut ds =
+            BenchmarkDataset::from_problems("test", BenchmarkSuiteType::Mmlu, sample_problems());
         ds.metadata.insert("version".to_string(), "1.0".to_string());
         assert_eq!(ds.metadata.get("version").unwrap(), "1.0");
     }
 
     #[test]
     fn test_from_jsonl_file_not_found() {
-        let result = BenchmarkDataset::from_jsonl("/nonexistent/path.jsonl", BenchmarkSuiteType::Mmlu);
+        let result =
+            BenchmarkDataset::from_jsonl("/nonexistent/path.jsonl", BenchmarkSuiteType::Mmlu);
         assert!(result.is_err());
         if let Err(EvalSuiteError::DatasetLoadFailed { path, .. }) = result {
             assert_eq!(path, "/nonexistent/path.jsonl");
@@ -803,7 +851,8 @@ mod tests {
 
     #[test]
     fn test_from_json_file_not_found() {
-        let result = BenchmarkDataset::from_json("/nonexistent/path.json", BenchmarkSuiteType::Mmlu);
+        let result =
+            BenchmarkDataset::from_json("/nonexistent/path.json", BenchmarkSuiteType::Mmlu);
         assert!(result.is_err());
         if let Err(EvalSuiteError::DatasetLoadFailed { path, .. }) = result {
             assert_eq!(path, "/nonexistent/path.json");
@@ -813,7 +862,10 @@ mod tests {
     #[test]
     fn test_make_helpers() {
         let mc = make_mc_problem("t/1", "Q?", vec!["A", "B"], "A");
-        assert!(matches!(mc.answer_format, AnswerFormat::MultipleChoice { .. }));
+        assert!(matches!(
+            mc.answer_format,
+            AnswerFormat::MultipleChoice { .. }
+        ));
 
         let num = make_numeric_problem("t/2", "Q?", 42.0, 0.1);
         assert!(matches!(num.answer_format, AnswerFormat::Numeric { .. }));
@@ -826,16 +878,28 @@ mod tests {
 
     #[test]
     fn test_new_suite_type_display() {
-        assert_eq!(BenchmarkSuiteType::LiveCodeBench.to_string(), "LiveCodeBench");
-        assert_eq!(BenchmarkSuiteType::AiderPolyglot.to_string(), "Aider-Polyglot");
-        assert_eq!(BenchmarkSuiteType::TerminalBench.to_string(), "Terminal-Bench");
+        assert_eq!(
+            BenchmarkSuiteType::LiveCodeBench.to_string(),
+            "LiveCodeBench"
+        );
+        assert_eq!(
+            BenchmarkSuiteType::AiderPolyglot.to_string(),
+            "Aider-Polyglot"
+        );
+        assert_eq!(
+            BenchmarkSuiteType::TerminalBench.to_string(),
+            "Terminal-Bench"
+        );
         assert_eq!(BenchmarkSuiteType::Apps.to_string(), "APPS");
         assert_eq!(BenchmarkSuiteType::CodeContests.to_string(), "CodeContests");
     }
 
     #[test]
     fn test_new_category_display() {
-        assert_eq!(ProblemCategory::CompetitiveProgramming.to_string(), "CompetitiveProgramming");
+        assert_eq!(
+            ProblemCategory::CompetitiveProgramming.to_string(),
+            "CompetitiveProgramming"
+        );
         assert_eq!(ProblemCategory::CodeEditing.to_string(), "CodeEditing");
         assert_eq!(ProblemCategory::TerminalTask.to_string(), "TerminalTask");
     }
@@ -860,7 +924,12 @@ mod tests {
         assert_eq!(p.metadata.get("timestamp").unwrap(), "1700000000");
         assert_eq!(p.metadata.get("source_platform").unwrap(), "codeforces");
         assert_eq!(p.difficulty, Some("easy".to_string()));
-        if let AnswerFormat::CompetitiveProgrammingCode { language, test_cases, .. } = &p.answer_format {
+        if let AnswerFormat::CompetitiveProgrammingCode {
+            language,
+            test_cases,
+            ..
+        } = &p.answer_format
+        {
             assert_eq!(language, "python");
             assert_eq!(test_cases.len(), 2);
             assert_eq!(test_cases[0], ("3\n1 2 3".to_string(), "6".to_string()));
@@ -882,7 +951,10 @@ mod tests {
         assert_eq!(p.suite, BenchmarkSuiteType::Apps);
         assert_eq!(p.category, ProblemCategory::CompetitiveProgramming);
         assert_eq!(p.difficulty, Some("interview".to_string()));
-        assert!(matches!(p.answer_format, AnswerFormat::CompetitiveProgrammingCode { .. }));
+        assert!(matches!(
+            p.answer_format,
+            AnswerFormat::CompetitiveProgrammingCode { .. }
+        ));
     }
 
     #[test]
@@ -897,7 +969,12 @@ mod tests {
         assert_eq!(p.suite, BenchmarkSuiteType::AiderPolyglot);
         assert_eq!(p.category, ProblemCategory::CodeEditing);
         assert_eq!(p.metadata.get("language").unwrap(), "python");
-        if let AnswerFormat::CodeEdit { language, original_code, .. } = &p.answer_format {
+        if let AnswerFormat::CodeEdit {
+            language,
+            original_code,
+            ..
+        } = &p.answer_format
+        {
             assert_eq!(language, "python");
             assert!(original_code.contains("def divide"));
         } else {
@@ -920,7 +997,12 @@ mod tests {
         );
         assert_eq!(p.suite, BenchmarkSuiteType::TerminalBench);
         assert_eq!(p.category, ProblemCategory::TerminalTask);
-        if let AnswerFormat::TerminalSequence { environment, expected_commands, .. } = &p.answer_format {
+        if let AnswerFormat::TerminalSequence {
+            environment,
+            expected_commands,
+            ..
+        } = &p.answer_format
+        {
             assert!(environment.contains("Ubuntu"));
             assert_eq!(expected_commands.len(), 2);
         } else {
@@ -943,7 +1025,13 @@ mod tests {
         };
         let json = serde_json::to_string(&fmt).expect("serialize");
         let back: AnswerFormat = serde_json::from_str(&json).expect("deserialize");
-        if let AnswerFormat::CompetitiveProgrammingCode { language, test_cases, time_limit_ms, memory_limit_mb } = back {
+        if let AnswerFormat::CompetitiveProgrammingCode {
+            language,
+            test_cases,
+            time_limit_ms,
+            memory_limit_mb,
+        } = back
+        {
             assert_eq!(language, "cpp");
             assert_eq!(test_cases.len(), 2);
             assert_eq!(time_limit_ms, Some(2000));
@@ -962,7 +1050,12 @@ mod tests {
         };
         let json = serde_json::to_string(&fmt).expect("serialize");
         let back: AnswerFormat = serde_json::from_str(&json).expect("deserialize");
-        if let AnswerFormat::CodeEdit { language, original_code, verification } = back {
+        if let AnswerFormat::CodeEdit {
+            language,
+            original_code,
+            verification,
+        } = back
+        {
             assert_eq!(language, "rust");
             assert_eq!(original_code, "fn main() {}");
             assert_eq!(verification, Some("cargo test".to_string()));
@@ -980,10 +1073,18 @@ mod tests {
         };
         let json = serde_json::to_string(&fmt).expect("serialize");
         let back: AnswerFormat = serde_json::from_str(&json).expect("deserialize");
-        if let AnswerFormat::TerminalSequence { environment, expected_commands, verification } = back {
+        if let AnswerFormat::TerminalSequence {
+            environment,
+            expected_commands,
+            verification,
+        } = back
+        {
             assert_eq!(environment, "debian:latest");
             assert_eq!(expected_commands.len(), 2);
-            assert_eq!(verification, Some(("cat result.txt".to_string(), "success".to_string())));
+            assert_eq!(
+                verification,
+                Some(("cat result.txt".to_string(), "success".to_string()))
+            );
         } else {
             panic!("Wrong variant after deserialization");
         }
@@ -994,11 +1095,39 @@ mod tests {
     #[test]
     fn test_filter_by_contamination_cutoff() {
         let problems = vec![
-            make_livecode_problem("lcb/1", "P1", "ref1", "python", vec![("1", "1")], 1690000000, "easy", "leetcode"),
-            make_livecode_problem("lcb/2", "P2", "ref2", "python", vec![("2", "2")], 1700000000, "medium", "codeforces"),
-            make_livecode_problem("lcb/3", "P3", "ref3", "python", vec![("3", "3")], 1710000000, "hard", "atcoder"),
+            make_livecode_problem(
+                "lcb/1",
+                "P1",
+                "ref1",
+                "python",
+                vec![("1", "1")],
+                1690000000,
+                "easy",
+                "leetcode",
+            ),
+            make_livecode_problem(
+                "lcb/2",
+                "P2",
+                "ref2",
+                "python",
+                vec![("2", "2")],
+                1700000000,
+                "medium",
+                "codeforces",
+            ),
+            make_livecode_problem(
+                "lcb/3",
+                "P3",
+                "ref3",
+                "python",
+                vec![("3", "3")],
+                1710000000,
+                "hard",
+                "atcoder",
+            ),
         ];
-        let ds = BenchmarkDataset::from_problems("lcb", BenchmarkSuiteType::LiveCodeBench, problems);
+        let ds =
+            BenchmarkDataset::from_problems("lcb", BenchmarkSuiteType::LiveCodeBench, problems);
 
         // Cutoff at 1700000000 → only problems after that timestamp
         let filtered = filter_by_contamination_cutoff(&ds, 1700000000);
@@ -1022,7 +1151,11 @@ mod tests {
             make_competitive_problem("apps/1", "P3", "ref", "cpp", vec![("1", "1")], "easy"),
             make_code_edit_problem("aider/1", "Edit", "code", "edited", "python"),
         ];
-        let ds = BenchmarkDataset::from_problems("mixed", BenchmarkSuiteType::Custom("mixed".into()), problems);
+        let ds = BenchmarkDataset::from_problems(
+            "mixed",
+            BenchmarkSuiteType::Custom("mixed".into()),
+            problems,
+        );
 
         let python = filter_by_language(&ds, "python");
         assert_eq!(python.len(), 2); // he/1 + aider/1

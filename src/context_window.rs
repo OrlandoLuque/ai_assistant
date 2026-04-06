@@ -1006,11 +1006,12 @@ mod tests {
         let fired = Arc::new(Mutex::new(Vec::new()));
         let fired_clone = Arc::clone(&fired);
 
-        let mut monitor = ContextOverflowMonitor::new(1000).on_overflow(move |level, usage, max| {
-            if let Ok(mut v) = fired_clone.lock() {
-                v.push((level, usage, max));
-            }
-        });
+        let mut monitor =
+            ContextOverflowMonitor::new(1000).on_overflow(move |level, usage, max| {
+                if let Ok(mut v) = fired_clone.lock() {
+                    v.push((level, usage, max));
+                }
+            });
 
         // Normal -> no callback
         monitor.update(500);

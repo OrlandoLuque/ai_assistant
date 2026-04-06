@@ -3,8 +3,7 @@
 use crate::error::AiError;
 
 use super::types::{
-    EvalMetric, EvaluationBudget, OptimizationResult, PromptExample, Signature,
-    TrainingExample,
+    EvalMetric, EvaluationBudget, OptimizationResult, PromptExample, Signature, TrainingExample,
 };
 
 // ============================================================================
@@ -110,10 +109,7 @@ impl InstructionProposer {
             if !signature.inputs.is_empty() {
                 let field_names: Vec<&str> =
                     signature.inputs.iter().map(|f| f.name.as_str()).collect();
-                enriched.push_str(&format!(
-                    " Input fields: {}.",
-                    field_names.join(", ")
-                ));
+                enriched.push_str(&format!(" Input fields: {}.", field_names.join(", ")));
             }
             if !signature.outputs.is_empty() {
                 let field_names: Vec<&str> =
@@ -133,10 +129,7 @@ impl InstructionProposer {
                     } else {
                         first_input.as_str()
                     };
-                    enriched.push_str(&format!(
-                        " Example input snippet: \"{}...\"",
-                        snippet
-                    ));
+                    enriched.push_str(&format!(" Example input snippet: \"{}...\"", snippet));
                 }
             }
 
@@ -243,7 +236,11 @@ impl MIPROv2Optimizer {
             }
         }
 
-        if count > 0 { total / count as f64 } else { 0.0 }
+        if count > 0 {
+            total / count as f64
+        } else {
+            0.0
+        }
     }
 
     /// Run the full 3-stage MIPROv2 optimization pipeline.
@@ -258,11 +255,8 @@ impl MIPROv2Optimizer {
         let demos = self.bootstrap_demos(signature, examples, metric);
 
         // Stage 2: Propose instruction candidates
-        let instructions = InstructionProposer::propose(
-            signature,
-            &demos,
-            self.config.num_instruction_candidates,
-        );
+        let instructions =
+            InstructionProposer::propose(signature, &demos, self.config.num_instruction_candidates);
 
         if instructions.is_empty() {
             return Err(AiError::other(

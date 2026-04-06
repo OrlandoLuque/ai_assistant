@@ -251,9 +251,9 @@ impl ExecutionFingerprint {
 
     /// Generate a pseudo-random hex id from timestamp and hash.
     fn pseudo_random_id(ts: u64, hash: &str) -> String {
-        let hash_bytes: u64 = hash
-            .bytes()
-            .fold(0u64, |acc, b| acc.wrapping_mul(31).wrapping_add(u64::from(b)));
+        let hash_bytes: u64 = hash.bytes().fold(0u64, |acc, b| {
+            acc.wrapping_mul(31).wrapping_add(u64::from(b))
+        });
         let mixed = ts
             .wrapping_mul(6364136223846793005)
             .wrapping_add(hash_bytes);
@@ -294,8 +294,10 @@ impl FeedbackHook for LatencyHook {
             let ratio = self.max_acceptable_ms as f64 / latency as f64;
             ratio.clamp(0.0, 1.0)
         };
-        FeedbackScore::new("latency", score)
-            .with_details(&format!("latency={}ms, max={}ms", latency, self.max_acceptable_ms))
+        FeedbackScore::new("latency", score).with_details(&format!(
+            "latency={}ms, max={}ms",
+            latency, self.max_acceptable_ms
+        ))
     }
 }
 
@@ -333,8 +335,10 @@ impl FeedbackHook for CostHook {
         } else {
             1.0 - (cost / self.max_cost)
         };
-        FeedbackScore::new("cost", score)
-            .with_details(&format!("tokens={}, cost={:.6}, max={:.6}", tokens, cost, self.max_cost))
+        FeedbackScore::new("cost", score).with_details(&format!(
+            "tokens={}, cost={:.6}, max={:.6}",
+            tokens, cost, self.max_cost
+        ))
     }
 }
 
@@ -469,12 +473,15 @@ impl FeedbackHook for ToxicityHook {
             .filter(|w| lower.contains(&w.to_lowercase()))
             .collect();
         if found.is_empty() {
-            FeedbackScore::new("toxicity", 1.0)
-                .with_details("no toxic words detected")
+            FeedbackScore::new("toxicity", 1.0).with_details("no toxic words detected")
         } else {
             FeedbackScore::new("toxicity", 0.0).with_details(&format!(
                 "blocked words found: {}",
-                found.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+                found
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ))
         }
     }
@@ -524,7 +531,9 @@ impl OnlineEvaluator {
             alert_callback: None,
             consecutive_failures: HashMap::new(),
             sample_count: 0,
-            rng_state: now_unix_secs().wrapping_mul(6364136223846793005).wrapping_add(1),
+            rng_state: now_unix_secs()
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1),
         }
     }
 
@@ -586,10 +595,7 @@ impl OnlineEvaluator {
 
     /// Return all collected scores.
     pub fn get_scores(&self) -> Vec<FeedbackScore> {
-        self.scores
-            .lock()
-            .map(|s| s.clone())
-            .unwrap_or_default()
+        self.scores.lock().map(|s| s.clone()).unwrap_or_default()
     }
 
     /// Compute the average score for a given hook.
@@ -623,10 +629,7 @@ impl OnlineEvaluator {
 
     /// Return all fired alert events.
     pub fn get_alert_log(&self) -> Vec<AlertEvent> {
-        self.alert_log
-            .lock()
-            .map(|l| l.clone())
-            .unwrap_or_default()
+        self.alert_log.lock().map(|l| l.clone()).unwrap_or_default()
     }
 
     /// Return number of registered hooks.
@@ -879,7 +882,11 @@ mod tests {
             &ctx,
         );
         // Shared terms should yield high similarity
-        assert!(score.score > 0.3, "Expected relevant score > 0.3, got {}", score.score);
+        assert!(
+            score.score > 0.3,
+            "Expected relevant score > 0.3, got {}",
+            score.score
+        );
     }
 
     #[test]
@@ -891,7 +898,11 @@ mod tests {
             "The recipe for chocolate cake requires flour, sugar, and cocoa powder.",
             &ctx,
         );
-        assert!(score.score < 0.3, "Expected irrelevant score < 0.3, got {}", score.score);
+        assert!(
+            score.score < 0.3,
+            "Expected irrelevant score < 0.3, got {}",
+            score.score
+        );
     }
 
     #[test]
@@ -980,8 +991,7 @@ mod tests {
 
     #[test]
     fn test_evaluator_sampling_rate_zero() {
-        let mut eval = OnlineEvaluator::new()
-            .with_sampling(EvalSamplingConfig::new(0.0));
+        let mut eval = OnlineEvaluator::new().with_sampling(EvalSamplingConfig::new(0.0));
         eval.add_hook(Box::new(LatencyHook::new(200)));
         let ctx = EvalContext::default();
         // With 0% sampling, nothing should be evaluated
@@ -994,8 +1004,7 @@ mod tests {
 
     #[test]
     fn test_evaluator_sampling_rate_full() {
-        let mut eval = OnlineEvaluator::new()
-            .with_sampling(EvalSamplingConfig::new(1.0));
+        let mut eval = OnlineEvaluator::new().with_sampling(EvalSamplingConfig::new(1.0));
         eval.add_hook(Box::new(LatencyHook::new(200)));
         let ctx = EvalContext::new().with_latency_ms(50);
         for _ in 0..5 {
@@ -1007,8 +1016,7 @@ mod tests {
 
     #[test]
     fn test_evaluator_sampling_rate_partial() {
-        let mut eval = OnlineEvaluator::new()
-            .with_sampling(EvalSamplingConfig::new(0.5));
+        let mut eval = OnlineEvaluator::new().with_sampling(EvalSamplingConfig::new(0.5));
         eval.add_hook(Box::new(LatencyHook::new(200)));
         let ctx = EvalContext::new().with_latency_ms(50);
         let mut sampled = 0;
@@ -1019,7 +1027,11 @@ mod tests {
             }
         }
         // With 50% sampling, expect roughly 30-70 out of 100
-        assert!(sampled > 10, "Expected at least some samples, got {}", sampled);
+        assert!(
+            sampled > 10,
+            "Expected at least some samples, got {}",
+            sampled
+        );
         assert!(sampled < 90, "Expected some skips, got {}", sampled);
     }
 
@@ -1277,12 +1289,11 @@ mod tests {
 
     #[test]
     fn test_evaluator_max_samples_per_hour() {
-        let mut eval = OnlineEvaluator::new()
-            .with_sampling(EvalSamplingConfig {
-                sample_rate: 1.0,
-                min_samples_per_hour: 0,
-                max_samples_per_hour: 3,
-            });
+        let mut eval = OnlineEvaluator::new().with_sampling(EvalSamplingConfig {
+            sample_rate: 1.0,
+            min_samples_per_hour: 0,
+            max_samples_per_hour: 3,
+        });
         eval.add_hook(Box::new(LatencyHook::new(200)));
         let ctx = EvalContext::new().with_latency_ms(50);
 

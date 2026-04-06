@@ -165,10 +165,7 @@ impl JudgeMetric {
             per_criterion.push(CriterionScore {
                 criterion_name: criterion.name.clone(),
                 score: criterion_score,
-                reasoning: format!(
-                    "Score for '{}' based on overall evaluation",
-                    criterion.name
-                ),
+                reasoning: format!("Score for '{}' based on overall evaluation", criterion.name),
             });
         }
 

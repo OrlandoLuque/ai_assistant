@@ -311,10 +311,7 @@ fn contains_critical_pattern(js: &str) -> bool {
 
 /// Extract host from a URL string.
 fn extract_host(url: &str) -> String {
-    let without_scheme = url
-        .split("://")
-        .nth(1)
-        .unwrap_or(url);
+    let without_scheme = url.split("://").nth(1).unwrap_or(url);
     let host_port = without_scheme.split('/').next().unwrap_or("");
     let host = host_port.split(':').next().unwrap_or("");
     host.to_string()
@@ -422,7 +419,9 @@ mod tests {
     #[test]
     fn test_blocks_data_urls() {
         let policy = BrowserPolicy::restrictive();
-        assert!(!policy.validate_url("data:text/html,<script>alert(1)</script>").is_allowed());
+        assert!(!policy
+            .validate_url("data:text/html,<script>alert(1)</script>")
+            .is_allowed());
     }
 
     #[test]
@@ -434,7 +433,9 @@ mod tests {
     #[test]
     fn test_blocks_private_ips() {
         let policy = BrowserPolicy::restrictive();
-        assert!(!policy.validate_url("https://192.168.1.1/admin").is_allowed());
+        assert!(!policy
+            .validate_url("https://192.168.1.1/admin")
+            .is_allowed());
         assert!(!policy.validate_url("https://10.0.0.1/").is_allowed());
         assert!(!policy.validate_url("https://127.0.0.1/").is_allowed());
         assert!(!policy.validate_url("https://localhost/").is_allowed());
@@ -443,15 +444,21 @@ mod tests {
     #[test]
     fn test_blocks_metadata_endpoints() {
         let policy = BrowserPolicy::restrictive();
-        assert!(!policy.validate_url("https://169.254.169.254/latest/meta-data/").is_allowed());
-        assert!(!policy.validate_url("https://metadata.google.internal/").is_allowed());
+        assert!(!policy
+            .validate_url("https://169.254.169.254/latest/meta-data/")
+            .is_allowed());
+        assert!(!policy
+            .validate_url("https://metadata.google.internal/")
+            .is_allowed());
     }
 
     #[test]
     fn test_allows_public_https() {
         let policy = BrowserPolicy::restrictive();
         assert!(policy.validate_url("https://example.com").is_allowed());
-        assert!(policy.validate_url("https://docs.rust-lang.org/book/").is_allowed());
+        assert!(policy
+            .validate_url("https://docs.rust-lang.org/book/")
+            .is_allowed());
     }
 
     #[test]
@@ -465,7 +472,9 @@ mod tests {
     fn test_js_readonly_blocks_fetch() {
         let policy = BrowserPolicy::restrictive();
         assert!(!policy.validate_js("fetch('https://evil.com')").is_allowed());
-        assert!(!policy.validate_js("new WebSocket('ws://evil.com')").is_allowed());
+        assert!(!policy
+            .validate_js("new WebSocket('ws://evil.com')")
+            .is_allowed());
         assert!(!policy.validate_js("document.cookie").is_allowed());
     }
 
@@ -479,7 +488,9 @@ mod tests {
     #[test]
     fn test_js_readonly_allows_queries() {
         let policy = BrowserPolicy::restrictive();
-        assert!(policy.validate_js("document.querySelector('h1').textContent").is_allowed());
+        assert!(policy
+            .validate_js("document.querySelector('h1').textContent")
+            .is_allowed());
         assert!(policy.validate_js("document.title").is_allowed());
     }
 
@@ -494,19 +505,26 @@ mod tests {
     fn test_blocks_rtc_and_clipboard() {
         let policy = BrowserPolicy::restrictive();
         assert!(!policy.validate_js("new RTCPeerConnection()").is_allowed());
-        assert!(!policy.validate_js("navigator.clipboard.readText()").is_allowed());
+        assert!(!policy
+            .validate_js("navigator.clipboard.readText()")
+            .is_allowed());
     }
 
     #[test]
     fn test_blocks_service_worker() {
         let policy = BrowserPolicy::restrictive();
-        assert!(!policy.validate_js("navigator.serviceWorker.register('/sw.js')").is_allowed());
+        assert!(!policy
+            .validate_js("navigator.serviceWorker.register('/sw.js')")
+            .is_allowed());
     }
 
     #[test]
     fn test_tool_permission_display() {
         assert_eq!(ToolPermission::Execute.to_string(), "execute");
-        assert_eq!(ToolPermission::DataExfiltration.to_string(), "data_exfiltration");
+        assert_eq!(
+            ToolPermission::DataExfiltration.to_string(),
+            "data_exfiltration"
+        );
     }
 
     #[test]
@@ -520,10 +538,10 @@ mod tests {
     #[test]
     fn test_domain_allowlist() {
         let mut policy = BrowserPolicy::restrictive();
-        policy.domain_allowlist = Some(HashSet::from([
-            "docs.rust-lang.org".to_string(),
-        ]));
-        assert!(policy.validate_url("https://docs.rust-lang.org/book/").is_allowed());
+        policy.domain_allowlist = Some(HashSet::from(["docs.rust-lang.org".to_string()]));
+        assert!(policy
+            .validate_url("https://docs.rust-lang.org/book/")
+            .is_allowed());
         assert!(!policy.validate_url("https://other.com/").is_allowed());
     }
 }

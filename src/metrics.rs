@@ -970,7 +970,10 @@ mod tests {
         // Insert q4 — should evict q2 (LRU), not q1
         cache.insert("q4".to_string(), "result4".to_string());
 
-        assert!(cache.get("q1").is_some(), "q1 should survive (recently accessed)");
+        assert!(
+            cache.get("q1").is_some(),
+            "q1 should survive (recently accessed)"
+        );
         assert!(cache.get("q4").is_some(), "q4 should exist (just inserted)");
     }
 

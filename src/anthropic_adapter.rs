@@ -472,16 +472,16 @@ mod tests {
 
         let asst = AnthropicMessage::assistant("Hi there");
         assert_eq!(asst.role, "assistant");
-        assert_eq!(asst.content, serde_json::Value::String("Hi there".to_string()));
+        assert_eq!(
+            asst.content,
+            serde_json::Value::String("Hi there".to_string())
+        );
     }
 
     #[test]
     fn test_user_with_image() {
-        let msg = AnthropicMessage::user_with_image(
-            "Describe this image",
-            "aW1hZ2VkYXRh",
-            "image/png",
-        );
+        let msg =
+            AnthropicMessage::user_with_image("Describe this image", "aW1hZ2VkYXRh", "image/png");
         assert_eq!(msg.role, "user");
 
         let content = msg.content.as_array().expect("content should be an array");
@@ -530,9 +530,7 @@ mod tests {
 
     #[test]
     fn test_request_serialization() {
-        let messages = vec![
-            AnthropicMessage::user("What is Rust?"),
-        ];
+        let messages = vec![AnthropicMessage::user("What is Rust?")];
         let req = AnthropicRequest::new("claude-3-haiku-20240307", messages)
             .with_system("Be concise")
             .with_max_tokens(512);
@@ -547,7 +545,9 @@ mod tests {
         assert_eq!(parsed["stream"], false);
 
         // messages array
-        let msgs = parsed["messages"].as_array().expect("messages should be array");
+        let msgs = parsed["messages"]
+            .as_array()
+            .expect("messages should be array");
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0]["role"], "user");
         assert_eq!(msgs[0]["content"], "What is Rust?");
@@ -584,10 +584,7 @@ mod tests {
             message: "Too many requests".to_string(),
             error_type: "rate_limit_error".to_string(),
         };
-        assert_eq!(
-            format!("{}", api_err),
-            "API error 429: Too many requests"
-        );
+        assert_eq!(format!("{}", api_err), "API error 429: Too many requests");
 
         let rate_err_with = AnthropicAdapterError::RateLimit {
             retry_after: Some(Duration::from_secs(30)),

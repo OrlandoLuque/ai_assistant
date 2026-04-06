@@ -6,11 +6,10 @@
 //! policy engine, and approval workflows.
 
 use ai_assistant::{
-    ApprovalRequest, ApprovalDecision, HitlApprovalGate, ImpactLevel,
-    AutoApproveGate, AutoDenyGate, CallbackApprovalGate,
-    EscalationPolicy, EscalationThreshold, EscalationTrigger, EscalationAction,
-    EscalationEvaluator, PolicyEngine, ApprovalPolicy, PolicyRule, PolicyCondition,
-    PolicyAction,
+    ApprovalDecision, ApprovalPolicy, ApprovalRequest, AutoApproveGate, AutoDenyGate,
+    CallbackApprovalGate, EscalationAction, EscalationEvaluator, EscalationPolicy,
+    EscalationThreshold, EscalationTrigger, HitlApprovalGate, ImpactLevel, PolicyAction,
+    PolicyCondition, PolicyEngine, PolicyRule,
 };
 
 fn main() {
@@ -18,32 +17,51 @@ fn main() {
 
     // 1. Create approval requests for different tools
     let read_req = ApprovalRequest::new(
-        "req-001", "read_file",
+        "req-001",
+        "read_file",
         std::collections::HashMap::new(),
-        "agent-1", "Reading configuration file",
+        "agent-1",
+        "Reading configuration file",
         ImpactLevel::Low,
     );
 
     let delete_req = ApprovalRequest::new(
-        "req-002", "delete_file",
+        "req-002",
+        "delete_file",
         [("path".to_string(), serde_json::json!("/data/temp.log"))].into(),
-        "agent-1", "Deleting temporary log file",
+        "agent-1",
+        "Deleting temporary log file",
         ImpactLevel::High,
     );
 
-    println!("Request 1: {} (impact: {:?})", read_req.tool_name, read_req.estimated_impact);
-    println!("Request 2: {} (impact: {:?})", delete_req.tool_name, delete_req.estimated_impact);
+    println!(
+        "Request 1: {} (impact: {:?})",
+        read_req.tool_name, read_req.estimated_impact
+    );
+    println!(
+        "Request 2: {} (impact: {:?})",
+        delete_req.tool_name, delete_req.estimated_impact
+    );
 
     // 2. Test different approval gates
     let auto_approve = AutoApproveGate;
     let auto_deny = AutoDenyGate::new("All operations blocked during maintenance");
 
     println!("\n--- Auto-Approve Gate ---");
-    println!("  read_file: {:?}", auto_approve.request_approval(&read_req).unwrap());
-    println!("  delete_file: {:?}", auto_approve.request_approval(&delete_req).unwrap());
+    println!(
+        "  read_file: {:?}",
+        auto_approve.request_approval(&read_req).unwrap()
+    );
+    println!(
+        "  delete_file: {:?}",
+        auto_approve.request_approval(&delete_req).unwrap()
+    );
 
     println!("\n--- Auto-Deny Gate ---");
-    println!("  read_file: {:?}", auto_deny.request_approval(&read_req).unwrap());
+    println!(
+        "  read_file: {:?}",
+        auto_deny.request_approval(&read_req).unwrap()
+    );
 
     // 3. Callback gate: approve low-impact, deny high-impact
     let smart_gate = CallbackApprovalGate::new("smart-gate", |req| {
@@ -57,8 +75,14 @@ fn main() {
     });
 
     println!("\n--- Smart Gate (callback) ---");
-    println!("  read_file: {:?}", smart_gate.request_approval(&read_req).unwrap());
-    println!("  delete_file: {:?}", smart_gate.request_approval(&delete_req).unwrap());
+    println!(
+        "  read_file: {:?}",
+        smart_gate.request_approval(&read_req).unwrap()
+    );
+    println!(
+        "  delete_file: {:?}",
+        smart_gate.request_approval(&delete_req).unwrap()
+    );
 
     // 4. Escalation policy with confidence thresholds
     let policy = EscalationPolicy {
@@ -90,7 +114,10 @@ fn main() {
     evaluator.record_error();
     evaluator.record_error();
     evaluator.record_error();
-    println!("  After 3 errors, check_all(0.95): {:?}", evaluator.check_all_triggers(0.95));
+    println!(
+        "  After 3 errors, check_all(0.95): {:?}",
+        evaluator.check_all_triggers(0.95)
+    );
 
     // 5. Policy engine with named rules
     let mut engine = PolicyEngine::new();

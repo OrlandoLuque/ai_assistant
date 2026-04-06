@@ -1,10 +1,10 @@
 //! Unified manager that owns all three memory stores plus the consolidator.
 
-use crate::error::AiError;
-use super::episodic::{Episode, EpisodicStore};
-use super::procedural::{Procedure, ProceduralStore};
-use super::entity::{EntityRecord, EntityStore};
 use super::consolidation::{ConsolidationResult, MemoryConsolidator};
+use super::entity::{EntityRecord, EntityStore};
+use super::episodic::{Episode, EpisodicStore};
+use super::procedural::{ProceduralStore, Procedure};
+use crate::error::AiError;
 
 /// Unified manager that owns all three memory stores plus the consolidator.
 pub struct AdvancedMemoryManager {

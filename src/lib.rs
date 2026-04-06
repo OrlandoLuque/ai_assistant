@@ -167,77 +167,77 @@ mod session;
 pub mod adaptive_thinking;
 pub mod async_support;
 
-/// Prelude module — import commonly-used types with `use ai_assistant::prelude::*;`
-pub mod prelude;
-pub mod batch;
-pub mod cache_compression;
-pub mod caching;
-pub mod cloud_providers;
-pub mod config_file;
-pub mod connection_pool;
-pub mod context_budget;
+pub mod adaptive_timeout;
 pub mod agent_methodology;
-pub mod browser_policy;
-pub mod config_security;
-pub mod distributed_rag;
-pub mod knowledge_watcher;
-pub mod learning_control;
-pub mod network_policy;
-pub mod p2p_security;
-pub mod semantic_dedup;
-pub mod storage_context;
-pub mod tool_safety;
-pub mod crawl_policy;
-pub mod data_source_client;
-pub mod event_source;
-pub mod topic_matcher;
 pub mod audio_filter;
 pub mod audio_model_registry;
 pub mod audio_priority_protocol;
-pub mod group_queue_runtime;
-pub mod group_queue_host;
+pub mod batch;
+pub mod browser_policy;
+pub mod bulkhead;
+pub mod cache_compression;
+pub mod caching;
+pub mod cloud_providers;
+#[cfg(feature = "server-cluster")]
+pub mod cluster;
+pub mod config_file;
 pub mod config_optimizer;
-pub mod llm_enhance;
-#[cfg(feature = "tools")]
-pub mod mcp_voice_tools;
-#[cfg(feature = "audio")]
-pub mod mock_speech;
+pub mod config_security;
+pub mod connection_pool;
+pub mod context_budget;
+pub mod crawl_policy;
+pub mod data_source_client;
 pub mod debug;
 pub mod diff;
+pub mod distributed_rag;
 pub mod error;
+pub mod event_source;
 pub mod events;
 pub mod fallback;
-pub mod formatting;
-pub mod http_client;
-pub mod internal_storage;
-pub mod secure_credentials;
-pub mod llm_judge;
-pub mod log_redaction;
-pub mod memory_management;
-pub mod persistence;
-pub mod plugins;
-pub mod profiles;
-pub mod progress;
-pub mod request_queue;
-pub mod retry;
-pub mod adaptive_timeout;
-pub mod bulkhead;
-pub mod load_shedding;
 #[cfg(any(test, feature = "chaos-testing"))]
 pub mod fault_injection;
+pub mod formatting;
+pub mod group_queue_host;
+pub mod group_queue_runtime;
+pub mod http_client;
+pub mod internal_storage;
+pub mod knowledge_watcher;
+pub mod learning_control;
+pub mod llm_enhance;
+pub mod llm_judge;
+pub mod load_shedding;
+pub mod log_redaction;
+#[cfg(feature = "tools")]
+pub mod mcp_voice_tools;
+pub mod memory_management;
+#[cfg(feature = "audio")]
+pub mod mock_speech;
+pub mod network_policy;
+pub mod p2p_security;
+pub mod persistence;
+pub mod plugins;
+/// Prelude module — import commonly-used types with `use ai_assistant::prelude::*;`
+pub mod prelude;
+pub mod profiles;
+pub mod progress;
+#[cfg(feature = "redis-backend")]
+pub mod redis_backend;
+pub mod request_queue;
+pub mod retry;
 pub mod search;
+pub mod secure_credentials;
+pub mod semantic_dedup;
 pub mod server;
 #[cfg(feature = "server-axum")]
 pub mod server_axum;
-#[cfg(feature = "server-axum")]
-pub mod virtual_model;
-#[cfg(feature = "server-cluster")]
-pub mod cluster;
-#[cfg(feature = "redis-backend")]
-pub mod redis_backend;
+pub mod storage_context;
 pub mod streaming;
 pub mod structured;
 pub mod templates;
+pub mod tool_safety;
+pub mod topic_matcher;
+#[cfg(feature = "server-axum")]
+pub mod virtual_model;
 pub mod wasm;
 pub mod wasm_hooks;
 
@@ -248,23 +248,22 @@ pub use assistant::{
 };
 pub use config::{AiConfig, AiProvider};
 pub use context::{
-    clear_context_size_cache, context_size_cache_len, estimate_tokens,
-    estimate_tokens_for_model, get_model_context_size, get_model_context_size_cached,
-    ContextUsage,
+    clear_context_size_cache, context_size_cache_len, estimate_tokens, estimate_tokens_for_model,
+    get_model_context_size, get_model_context_size_cached, ContextUsage,
 };
 pub use messages::{AiResponse, ChatMessage};
 pub use models::{ModelCapabilityInfo, ModelInfo, ModelRegistry};
 pub use providers::{
     build_system_prompt, build_system_prompt_with_notes, fetch_model_context_size,
     generate_response, generate_response_streaming, generate_response_streaming_cancellable,
-    ConnectionPoolHandle, PoolHandleConfig, ProviderConfig as LlmProviderConfig,
-    ProviderHealthStatus, ProviderRateState, ProviderRegistry as LlmProviderRegistry,
-    RateLimitHeaders, ResilientError, ResilientProviderRegistry,
-    AuditEntry as ProviderAuditEntry, AuditSummary, AuditedProvider,
+    AuditEntry as ProviderAuditEntry, AuditSummary, AuditedProvider, ConnectionPoolHandle,
+    PoolHandleConfig, ProviderConfig as LlmProviderConfig, ProviderHealthStatus, ProviderRateState,
+    ProviderRegistry as LlmProviderRegistry, RateLimitHeaders, ResilientError,
+    ResilientProviderRegistry,
 };
 pub use session::{
-    ChatSession, ChatSessionStore, JournalEntry, JournalEntryType, JournalSession, RecoveryResult,
-    ResponseStyle, UserPreferences, recover_session,
+    recover_session, ChatSession, ChatSessionStore, JournalEntry, JournalEntryType, JournalSession,
+    RecoveryResult, ResponseStyle, UserPreferences,
 };
 
 pub use error::{
@@ -273,13 +272,21 @@ pub use error::{
     ValidationError as AiValidationError,
 };
 
-pub use adaptive_timeout::{AdaptiveTimeout, AdaptiveTimeoutConfig, AdaptiveTimeoutStats, Percentile};
-pub use bulkhead::{Bulkhead, BulkheadConfig, BulkheadError, BulkheadPermit, BulkheadRegistry, BulkheadStats};
-pub use load_shedding::{LoadContext, LoadShedder, LoadSheddingConfig, SheddingDecision, SheddingStats, SheddingStrategy};
+pub use adaptive_timeout::{
+    AdaptiveTimeout, AdaptiveTimeoutConfig, AdaptiveTimeoutStats, Percentile,
+};
+pub use bulkhead::{
+    Bulkhead, BulkheadConfig, BulkheadError, BulkheadPermit, BulkheadRegistry, BulkheadStats,
+};
+pub use load_shedding::{
+    LoadContext, LoadShedder, LoadSheddingConfig, SheddingDecision, SheddingStats, SheddingStrategy,
+};
 pub use message_queue::{DeadLetterEntry, DlqStats, FailureCategory};
 
 #[cfg(any(test, feature = "chaos-testing"))]
-pub use fault_injection::{FaultInjector, FaultResult, FaultRule, FaultStats, FaultTarget, FaultType};
+pub use fault_injection::{
+    FaultInjector, FaultResult, FaultRule, FaultStats, FaultTarget, FaultType,
+};
 
 pub use progress::{
     logging_callback, silent_callback, MultiProgressTracker, OperationHandle, Progress,
@@ -356,10 +363,9 @@ pub use caching::{
 
 pub use structured::{
     extract_json_from_response, EnforcementConfig, EnforcementResult, JsonSchema, SchemaBuilder,
-    SchemaProperty, SchemaType, SchemaValidator, StructuredOutputEnforcer,
-    StructuredOutputError, StructuredOutputGenerator, StructuredOutputRequest,
-    StructuredOutputStrategy, StructuredParseResult, StructuredRequest, ValidationError,
-    ValidationResult,
+    SchemaProperty, SchemaType, SchemaValidator, StructuredOutputEnforcer, StructuredOutputError,
+    StructuredOutputGenerator, StructuredOutputRequest, StructuredOutputStrategy,
+    StructuredParseResult, StructuredRequest, ValidationError, ValidationResult,
 };
 
 pub use diff::{
@@ -385,10 +391,9 @@ pub use cache_compression::{
 };
 
 pub use agent_methodology::{
-    AgentMethodology, CommunicationStyle, GateAction, GateCheck, PhaseConfig,
-    PlanningPolicy, QualityGate, RecoveryStrategy, ReviewPolicy, ReviewTriggers,
-    RiskTolerance, TaskApproach, ReasoningStrategy, WorkflowProtocol,
-    WorkflowPhase as MethodologyPhase,
+    AgentMethodology, CommunicationStyle, GateAction, GateCheck, PhaseConfig, PlanningPolicy,
+    QualityGate, ReasoningStrategy, RecoveryStrategy, ReviewPolicy, ReviewTriggers, RiskTolerance,
+    TaskApproach, WorkflowPhase as MethodologyPhase, WorkflowProtocol,
 };
 
 pub use browser_policy::{
@@ -396,29 +401,27 @@ pub use browser_policy::{
 };
 
 pub use distributed_rag::{
-    DistributedRagConfig, DistributedRagResult, DocumentScope,
-    IceCandidate as P2pIceCandidate, IceCandidateType as P2pIceCandidateType,
-    IceConfig as P2pIceConfig, IceState as P2pIceState, SharedChunkMeta,
-    TurnServerConfig as P2pTurnServerConfig,
+    DistributedRagConfig, DistributedRagResult, DocumentScope, IceCandidate as P2pIceCandidate,
+    IceCandidateType as P2pIceCandidateType, IceConfig as P2pIceConfig, IceState as P2pIceState,
+    SharedChunkMeta, TurnServerConfig as P2pTurnServerConfig,
 };
 
 pub use event_source::{
-    EventAction, EventFilter, EventRule, EventSourceConfig, EventSourceManager,
-    EventSourceType, IncomingEvent,
+    EventAction, EventFilter, EventRule, EventSourceConfig, EventSourceManager, EventSourceType,
+    IncomingEvent,
 };
 
 pub use topic_matcher::{
-    GranularScoringResult, LlmTopicVerdict, SelfQueryFilter, TopicMatchConfig,
-    TopicMatchLevel, TopicMatchResult, TopicMatcher, autocut_scores,
+    autocut_scores, GranularScoringResult, LlmTopicVerdict, SelfQueryFilter, TopicMatchConfig,
+    TopicMatchLevel, TopicMatchResult, TopicMatcher,
 };
 
 pub use audio_filter::{
     AcousticEchoCanceller, ActiveSpeakerInfo, AudioEffect, AudioEffectChain, AudioSeparator,
     AutoGainControl, AutoTune, Compressor, DiarizationResult, DiarizedSpeaker, Distortion,
     EchoEffect, EffectCategory, IntelligentNoiseReducer, MegaphoneEffect, MfccSpeakerVerifier,
-    NoiseGate, NoiseSuppressor, PitchShifter, Reverb, RobotVoice, SeparatedTrack,
-    SpeakerDiarizer, SpeakerGate, SpeakerIdentification, SpeakerProfile, SpeakerVerifier,
-    VoiceEmbedding,
+    NoiseGate, NoiseSuppressor, PitchShifter, Reverb, RobotVoice, SeparatedTrack, SpeakerDiarizer,
+    SpeakerGate, SpeakerIdentification, SpeakerProfile, SpeakerVerifier, VoiceEmbedding,
 };
 
 pub use audio_model_registry::{
@@ -426,10 +429,9 @@ pub use audio_model_registry::{
 };
 
 pub use config_optimizer::{
-    compute_reward, config_distance, get_code_version,
-    AblationResult as ConfigAblationResult, ConfigArm, ConfigOptimizer,
-    ConfigPoint, ConfigValue, EvaluationResult, OptimizationGoal, OptimizationPhase,
-    OptimizerConfig as ConfigOptimizerConfig, SurrogateModel,
+    compute_reward, config_distance, get_code_version, AblationResult as ConfigAblationResult,
+    ConfigArm, ConfigOptimizer, ConfigPoint, ConfigValue, EvaluationResult, OptimizationGoal,
+    OptimizationPhase, OptimizerConfig as ConfigOptimizerConfig, SurrogateModel,
 };
 
 pub use llm_enhance::{
@@ -441,9 +443,9 @@ pub use llm_enhance::{
 pub use mock_speech::MockSpeechProvider;
 
 pub use config_security::{
-    ConfigLock, ConfigSection as LockableConfigSection,
-    IntegrityChecker as ConfigIntegrityChecker, IntegrityResult as ConfigIntegrityResult,
-    LockAuditEntry, SecurityAlert, SecurityAlertManager, UnlockRequirement,
+    ConfigLock, ConfigSection as LockableConfigSection, IntegrityChecker as ConfigIntegrityChecker,
+    IntegrityResult as ConfigIntegrityResult, LockAuditEntry, SecurityAlert, SecurityAlertManager,
+    UnlockRequirement,
 };
 pub use knowledge_watcher::{KnowledgeWatcher, WatchEvent, WatcherConfig};
 pub use learning_control::{LearningFreezeConfig, LearningSubsystem};
@@ -451,8 +453,8 @@ pub use network_policy::{NetworkPolicy, PolicyDecision};
 pub use semantic_dedup::{DedupResult, SemanticDedupConfig, SemanticDeduplicator, SimilarGroup};
 
 pub use p2p_security::{
-    AdmissionDecision, MessageAuthorization, MessageCategory, PeerAccessControl, TrustLevel,
-    constant_time_eq, node_id_from_cert_bytes, verify_node_id_against_cert,
+    constant_time_eq, node_id_from_cert_bytes, verify_node_id_against_cert, AdmissionDecision,
+    MessageAuthorization, MessageCategory, PeerAccessControl, TrustLevel,
 };
 pub use storage_context::{
     DirtyFlags, StorageConfig, StorageContext, Subsystem as StorageSubsystem,
@@ -464,9 +466,10 @@ pub use tool_safety::{
 };
 
 pub use context_budget::{
-    AllocationResult, ClosureSource, CompressionLevel as ContextCompressionLevel,
-    ContextBudgetAllocator, ContextItem, ContextSource, ContextSourceType, LegacyStringSource,
-    LlmCompressor, OverflowStrategy, StrategyBandit, build_compressor_prompt,
+    build_compressor_prompt, AllocationResult, ClosureSource,
+    CompressionLevel as ContextCompressionLevel, ContextBudgetAllocator, ContextItem,
+    ContextSource, ContextSourceType, LegacyStringSource, LlmCompressor, OverflowStrategy,
+    StrategyBandit,
 };
 
 pub use internal_storage::{
@@ -475,8 +478,7 @@ pub use internal_storage::{
 };
 
 pub use llm_judge::{
-    BatchEvalResult, EvalCriterion, JudgeResult, LlmJudge, PairwiseResult,
-    RagFaithfulnessResult,
+    BatchEvalResult, EvalCriterion, JudgeResult, LlmJudge, PairwiseResult, RagFaithfulnessResult,
 };
 
 pub use log_redaction::{contains_sensitive, redact, redact_with_config, RedactionConfig};
@@ -486,6 +488,8 @@ pub use http_client::{
     parse_kobold_models, parse_ollama_models, parse_openai_models, HttpClient, UreqClient,
 };
 
+#[cfg(feature = "server-tls")]
+pub use server::load_tls_config;
 pub use server::{
     AiServer, AuditEntry as ServerAuditEntry, AuditEventType as ServerAuditEventType,
     AuditLog as ServerAuditLog, AuthConfig, AuthResult, CompactionEnrichmentConfig,
@@ -494,12 +498,10 @@ pub use server::{
     ModelSelectionEnrichmentConfig, RagEnrichmentConfig, ServerConfig, ServerHandle,
     ServerRateLimiter, StructuredError, ThinkingEnrichmentConfig, TlsConfig,
 };
-#[cfg(feature = "server-tls")]
-pub use server::load_tls_config;
 
 pub use secure_credentials::{
-    CallbackSource, CredentialError, CredentialResolver, CredentialSource, EnvVarSource, FileSource,
-    SecureString, StaticSource,
+    CallbackSource, CredentialError, CredentialResolver, CredentialSource, EnvVarSource,
+    FileSource, SecureString, StaticSource,
 };
 
 pub use cloud_providers::{
@@ -557,11 +559,10 @@ pub mod task_decomposition;
 #[cfg(feature = "multi-agent")]
 pub use multi_agent::{
     Agent, AgentMessage, AgentOrchestrator, AgentRole, AgentStatus, AgentTask, BusMessage,
-    CollaborationSession, ContextEntry, ConversationPattern, ContextTransferPolicy,
-    HandoffManager, HandoffRequest, HandoffResult, MessageBus, MessageType, OrchestrationError,
+    CollaborationSession, ContextEntry, ContextTransferPolicy, ConversationPattern, HandoffManager,
+    HandoffRequest, HandoffResult, MessageBus, MessageType, OrchestrationError,
     OrchestrationStatus, OrchestrationStrategy, PatternAgent, PatternConfig, PatternMessage,
-    PatternResult, PatternRunner, SharedContext, TaskDispatcher, TaskStatus,
-    TerminationCondition,
+    PatternResult, PatternRunner, SharedContext, TaskDispatcher, TaskStatus, TerminationCondition,
 };
 
 #[cfg(feature = "multi-agent")]
@@ -613,6 +614,7 @@ pub mod distributed;
 
 #[cfg(feature = "distributed")]
 pub use distributed::{
+    fnv1a_hash,
     // MapReduce
     DataChunk,
     Dht,
@@ -628,15 +630,14 @@ pub use distributed::{
     MapOutput,
     MapReduceBuilder,
     MapReduceJob,
+    MapWorkerRegistry,
+    NodeCapabilities,
     // DHT
     NodeId,
     ORSet,
     PNCounter,
-    MapWorkerRegistry,
-    NodeCapabilities,
     ReduceOutput,
     RoutingTable,
-    fnv1a_hash,
 };
 
 #[cfg(feature = "distributed-network")]
@@ -663,8 +664,8 @@ pub mod node_security;
 pub use consistent_hash::ConsistentHashRing;
 #[cfg(feature = "distributed-network")]
 pub use distributed_log::{
-    DistributedLogEntry, ExportFormat as LogExportFormat, LogCollector, LogCollectorConfig,
-    LogLevel as DistributedLogLevel, TraceContext, generate_trace_id,
+    generate_trace_id, DistributedLogEntry, ExportFormat as LogExportFormat, LogCollector,
+    LogCollectorConfig, LogLevel as DistributedLogLevel, TraceContext,
 };
 #[cfg(feature = "distributed-network")]
 pub use distributed_network::{
@@ -676,7 +677,7 @@ pub use failure_detector::{
     FailureClassification, HeartbeatConfig, HeartbeatManager, NodeStatus, PhiAccrualDetector,
 };
 #[cfg(feature = "distributed-network")]
-pub use merkle_sync::{AntiEntropySync, MerkleProof, MerkleTree, MerkleSyncDelta};
+pub use merkle_sync::{AntiEntropySync, MerkleProof, MerkleSyncDelta, MerkleTree};
 #[cfg(feature = "distributed-network")]
 pub use node_security::{CertificateManager, ChallengeResponse, JoinToken, NodeIdentity};
 
@@ -687,11 +688,11 @@ pub use node_security::{CertificateManager, ChallengeResponse, JoinToken, NodeId
 pub mod gpu_sharing;
 
 pub use gpu_sharing::{
-    AuditResult as GpuAuditResult, CommitRevealState, GpuBenchmarkChallenge, GpuCapability,
-    GpuChallengeResult, GpuNetworkConfig, GpuSharingConfig, GpuSharingNode,
-    InferenceRequest as GpuInferenceRequest, InferenceResponse as GpuInferenceResponse,
-    ModelOffer, NodeCapabilityAd, PricingConfig, ProviderSelector, RequestGoal, RouteDecision,
-    RoutingConfig, RoutingStrategy, SharingMode, TransactionReceipt, route_request,
+    route_request, AuditResult as GpuAuditResult, CommitRevealState, GpuBenchmarkChallenge,
+    GpuCapability, GpuChallengeResult, GpuNetworkConfig, GpuSharingConfig, GpuSharingNode,
+    InferenceRequest as GpuInferenceRequest, InferenceResponse as GpuInferenceResponse, ModelOffer,
+    NodeCapabilityAd, PricingConfig, ProviderSelector, RequestGoal, RouteDecision, RoutingConfig,
+    RoutingStrategy, SharingMode, TransactionReceipt,
 };
 
 // =============================================================================
@@ -730,18 +731,18 @@ pub use butler::{
     AdvisorConfig, AdvisorReport, AdvisorSummary, ButlerAdvisor, ButlerRecommendation,
     OptimizationCategory, RecommendationPriority,
 };
+#[cfg(any(feature = "autonomous", feature = "containers"))]
+pub mod container_backend;
+#[cfg(feature = "autonomous")]
+pub mod container_tools;
 #[cfg(feature = "distributed-agents")]
 pub mod distributed_agents;
 #[cfg(feature = "autonomous")]
 pub mod interactive_commands;
 #[cfg(feature = "autonomous")]
-pub mod mode_manager;
-#[cfg(any(feature = "autonomous", feature = "containers"))]
-pub mod container_backend;
-#[cfg(feature = "autonomous")]
-pub mod container_tools;
-#[cfg(feature = "autonomous")]
 pub mod mcts_planner;
+#[cfg(feature = "autonomous")]
+pub mod mode_manager;
 #[cfg(feature = "autonomous")]
 pub mod os_tools;
 #[cfg(feature = "scheduler")]
@@ -815,9 +816,9 @@ pub use multi_agent::{MultiAgentSession, MultiAgentSessionSummary};
 #[cfg(feature = "autonomous")]
 pub use mcts_planner::{
     AgentMctsState, AggregationStrategy, ExecutionFeedback, LlmPRM, MctsConfig, MctsNode,
-    MctsPlanner, MctsResult, MctsState, PrmAggregator, PrmRule, PrmRuleCheck,
-    ProcessRewardModel, RefinementConfig, RefinementLoop, RefinementResult, RefinementStrategy,
-    RuleBasedPRM, SimulationPolicy, StepScore,
+    MctsPlanner, MctsResult, MctsState, PrmAggregator, PrmRule, PrmRuleCheck, ProcessRewardModel,
+    RefinementConfig, RefinementLoop, RefinementResult, RefinementStrategy, RuleBasedPRM,
+    SimulationPolicy, StepScore,
 };
 
 // =============================================================================
@@ -913,12 +914,12 @@ pub use advanced_guardrails::{
 #[cfg(feature = "security")]
 pub use guardrail_pipeline::{
     AttackGuard, ContentLengthGuard, Guard, GuardAction, GuardCheckResult, GuardStage,
-    GuardrailPipeline, NaturalLanguageGuard, OutputPiiConfig, OutputPiiGuard,
-    OutputToxicityConfig, OutputToxicityGuard, PatternGuard, PiiGuard, PipelineResult,
-    PolicyCompiler, PolicyPriority, PolicyScope, PolicyStatement, PolicyViolation,
-    RateLimitGuard, SemanticChecker, StreamGuardAction, StreamingGuard,
-    StreamingGuardrailConfig, StreamingGuardrailMetrics, StreamingGuardrailPipeline,
-    StreamingPatternGuard, StreamingPiiGuard, StreamingToxicityGuard, ToxicityGuard,
+    GuardrailPipeline, NaturalLanguageGuard, OutputPiiConfig, OutputPiiGuard, OutputToxicityConfig,
+    OutputToxicityGuard, PatternGuard, PiiGuard, PipelineResult, PolicyCompiler, PolicyPriority,
+    PolicyScope, PolicyStatement, PolicyViolation, RateLimitGuard, SemanticChecker,
+    StreamGuardAction, StreamingGuard, StreamingGuardrailConfig, StreamingGuardrailMetrics,
+    StreamingGuardrailPipeline, StreamingPatternGuard, StreamingPiiGuard, StreamingToxicityGuard,
+    ToxicityGuard,
 };
 
 // =============================================================================
@@ -942,11 +943,11 @@ pub mod quality;
 #[cfg(feature = "analytics")]
 pub mod response_effectiveness;
 #[cfg(feature = "analytics")]
+pub mod scalability_monitor;
+#[cfg(feature = "analytics")]
 pub mod streaming_metrics;
 #[cfg(feature = "analytics")]
 pub mod telemetry;
-#[cfg(feature = "analytics")]
-pub mod scalability_monitor;
 #[cfg(feature = "analytics")]
 pub mod user_engagement;
 
@@ -958,10 +959,9 @@ pub use metrics::{
 
 #[cfg(feature = "analytics")]
 pub use analysis::{
-    ConversationSentimentAnalysis, EmojiCategory, EmoticonAnalysis, EmoticonDetector,
-    EmoticonMatch, Sentiment, SentimentAnalysis, SentimentAnalyzer, SentimentTrend,
-    SessionSummarizer, SessionSummary, SummaryConfig, Topic, TopicDetector,
-    cluster_topics_by_embedding,
+    cluster_topics_by_embedding, ConversationSentimentAnalysis, EmojiCategory, EmoticonAnalysis,
+    EmoticonDetector, EmoticonMatch, Sentiment, SentimentAnalysis, SentimentAnalyzer,
+    SentimentTrend, SessionSummarizer, SessionSummary, SummaryConfig, Topic, TopicDetector,
 };
 
 #[cfg(feature = "analytics")]
@@ -1179,20 +1179,20 @@ pub use provider_plugins::{
 
 #[cfg(feature = "tools")]
 pub mod agentic_loop;
-#[cfg(feature = "tools")]
-pub mod mcp_client;
-#[cfg(feature = "tools")]
-pub mod mcp_protocol;
+#[cfg(feature = "home-automation")]
+pub mod home_automation;
 #[cfg(all(feature = "tools", feature = "autonomous"))]
 pub mod mcp_agent_tools;
 #[cfg(feature = "tools")]
-pub mod mcp_task_tools;
+pub mod mcp_client;
 #[cfg(feature = "tools")]
 pub mod mcp_event_tools;
-#[cfg(feature = "home-automation")]
-pub mod home_automation;
 #[cfg(all(feature = "tools", feature = "home-automation"))]
 pub mod mcp_home_tools;
+#[cfg(feature = "tools")]
+pub mod mcp_protocol;
+#[cfg(feature = "tools")]
+pub mod mcp_task_tools;
 #[cfg(feature = "tools")]
 pub mod model_integration;
 #[cfg(feature = "tools")]
@@ -1206,13 +1206,12 @@ pub mod unified_tools;
 
 #[cfg(feature = "tools")]
 pub use unified_tools::{
-    builtin_tools as unified_builtin_tools, evaluate_math,
-    parse_tool_calls, ParamSchema, ParamType as UnifiedParamType,
-    ProviderCapabilities as UnifiedProviderCapabilities, ProviderPlugin as UnifiedProviderPlugin,
-    ProviderRegistry as UnifiedProviderRegistry, ToolBuilder, ToolCall as UnifiedToolCall,
-    ToolChoice as UnifiedToolChoice, ToolDef as UnifiedToolDef, ToolError as UnifiedToolError,
-    ToolHandler as UnifiedToolHandler, ToolOutput as UnifiedToolOutput,
-    ToolRegistry as UnifiedToolRegistry,
+    builtin_tools as unified_builtin_tools, evaluate_math, parse_tool_calls, ParamSchema,
+    ParamType as UnifiedParamType, ProviderCapabilities as UnifiedProviderCapabilities,
+    ProviderPlugin as UnifiedProviderPlugin, ProviderRegistry as UnifiedProviderRegistry,
+    ToolBuilder, ToolCall as UnifiedToolCall, ToolChoice as UnifiedToolChoice,
+    ToolDef as UnifiedToolDef, ToolError as UnifiedToolError, ToolHandler as UnifiedToolHandler,
+    ToolOutput as UnifiedToolOutput, ToolRegistry as UnifiedToolRegistry,
 };
 
 #[cfg(feature = "tools")]
@@ -1232,28 +1231,25 @@ pub use tool_calling::{
 
 #[cfg(feature = "tools")]
 pub use mcp_protocol::{
-    AnnotatedTool, AuthorizationServerMetadata, DynamicClientRegistration,
-    InMemorySessionStore, McpClient, McpContent, McpError, McpPrompt, McpPromptMessage,
-    McpRequest, McpResource, McpResourceContent, McpResponse, McpServer, McpServerCapabilities,
-    McpSession, McpSessionStore, McpTool, McpV2OAuthConfig, OAuthToken, OAuthTokenManager,
-    PkceChallenge, StreamableHttpTransport, ToolAnnotationRegistry, ToolAnnotations,
-    TransportMode, MCP_VERSION,
+    AnnotatedTool, AuthorizationServerMetadata, DynamicClientRegistration, InMemorySessionStore,
+    McpClient, McpContent, McpError, McpPrompt, McpPromptMessage, McpRequest, McpResource,
+    McpResourceContent, McpResponse, McpServer, McpServerCapabilities, McpSession, McpSessionStore,
+    McpTool, McpV2OAuthConfig, OAuthToken, OAuthTokenManager, PkceChallenge,
+    StreamableHttpTransport, ToolAnnotationRegistry, ToolAnnotations, TransportMode, MCP_VERSION,
 };
 
 #[cfg(feature = "tools")]
 pub use mcp_client::{
     ClientInfo as McpRemoteClientInfo, McpClientAuth, McpClientConfig, McpClientPool,
     RemoteMcpClient, RemoteResource, RemoteTool, RemoteToolAnnotations, RemoteToolRegistry,
-    ResourceContent as McpResourceContentRemote,
-    ServerCapabilities as McpRemoteServerCapabilities, ToolCallResult as McpToolCallResult,
-    ToolResultContent as McpToolResultContent,
+    ResourceContent as McpResourceContentRemote, ServerCapabilities as McpRemoteServerCapabilities,
+    ToolCallResult as McpToolCallResult, ToolResultContent as McpToolResultContent,
 };
 
 #[cfg(feature = "tools")]
 pub use agentic_loop::{
-    AgentBuilder, LoopConfig, AgentLoopResult, LoopMessage,
-    LoopRole, LoopState, LoopStatus, AgenticLoop,
-    IterationResult,
+    AgentBuilder, AgentLoopResult, AgenticLoop, IterationResult, LoopConfig, LoopMessage, LoopRole,
+    LoopState, LoopStatus,
 };
 
 #[cfg(feature = "tools")]
@@ -1401,10 +1397,9 @@ pub use auto_model_selection::{
     FallbackStrategy, ModelCapabilities as AutoModelCapabilities,
     ModelCostEntry as SelectorCostEntry, ModelCostRegistry as SelectorCostRegistry,
     ModelInvocation, ModelPerformanceStats, ModelProfile as AutoModelProfile, ModelStats,
-    PerformanceTracker as SelectorPerformanceTracker, PipelineRouter,
-    PipelineRoutingDecision, PipelineTaskType, PromptSegment,
-    Requirements as ModelRequirementsAuto, RoutingRule as PipelineRoutingRule,
-    SelectionResult, SmartSelector, TaskType as AutoTaskType,
+    PerformanceTracker as SelectorPerformanceTracker, PipelineRouter, PipelineRoutingDecision,
+    PipelineTaskType, PromptSegment, Requirements as ModelRequirementsAuto,
+    RoutingRule as PipelineRoutingRule, SelectionResult, SmartSelector, TaskType as AutoTaskType,
 };
 
 #[cfg(feature = "eval")]
@@ -1429,8 +1424,8 @@ pub use output_validation::{
 #[cfg(feature = "eval")]
 pub use red_team::{
     AttackCategory, AttackGenerator, AttackInstance, AttackSeverity, AttackTemplate,
-    CategoryReport, DefenseEvaluator, DetectionMethod, RedTeamConfig, RedTeamReport,
-    RedTeamResult, RedTeamSuite,
+    CategoryReport, DefenseEvaluator, DetectionMethod, RedTeamConfig, RedTeamReport, RedTeamResult,
+    RedTeamSuite,
 };
 
 // =============================================================================
@@ -1497,9 +1492,9 @@ pub use persistence::{CacheEntry, PersistentCache};
 
 #[cfg(feature = "rag")]
 pub use unified_persistence::{
-    ImportReport, MemoryEntry as UnifiedMemoryEntry, MemorySnapshot, MigrationReport,
-    SchemaVersion, SessionSummary as UnifiedSessionSummary, SnapshotSummary, SqliteMemoryStore,
-    SqliteSessionStore, UnifiedDb, UserScope, classify_data_scope,
+    classify_data_scope, ImportReport, MemoryEntry as UnifiedMemoryEntry, MemorySnapshot,
+    MigrationReport, SchemaVersion, SessionSummary as UnifiedSessionSummary, SnapshotSummary,
+    SqliteMemoryStore, SqliteSessionStore, UnifiedDb, UserScope,
 };
 
 #[cfg(feature = "rag")]
@@ -1510,9 +1505,8 @@ pub use rag_advanced::{
 
 #[cfg(feature = "rag")]
 pub use rag_tiers::{
-    auto_select_tier, HybridWeights, QueryComplexity, RagTierConfig, RagTierDefinition,
-    RagTierStore, RagFeatures, RagRequirement, RagStats, RagTier, TierSelectionHints,
-    UserPreference,
+    auto_select_tier, HybridWeights, QueryComplexity, RagFeatures, RagRequirement, RagStats,
+    RagTier, RagTierConfig, RagTierDefinition, RagTierStore, TierSelectionHints, UserPreference,
 };
 
 // Knowledge graph exports - use module path to avoid naming conflicts
@@ -1536,15 +1530,17 @@ pub use rag_debug::{
 
 #[cfg(feature = "rag")]
 pub use rag_pipeline::{
-    PipelineChunkPosition, EmbeddingCallback, GraphCallback, GraphRelation,
-    LlmCallback, RagPipeline, RagPipelineConfig, RagPipelineError, RagPipelineResult,
-    RagPipelineStats, RetrievalCallback, RetrievedChunk,
+    EmbeddingCallback, GraphCallback, GraphRelation, LlmCallback, PipelineChunkPosition,
+    RagPipeline, RagPipelineConfig, RagPipelineError, RagPipelineResult, RagPipelineStats,
+    RetrievalCallback, RetrievedChunk,
 };
 
 #[cfg(feature = "rag")]
 pub use rag_methods::{
     AdaptiveStrategyConfig,
     AdaptiveStrategySelector,
+    // Query Enhancement
+    AdvancedQueryExpander,
     CompressionConfig,
     ContextualCompressor,
     CragAction,
@@ -1554,9 +1550,9 @@ pub use rag_methods::{
     CrossEncoderReranker,
     CrossEncoderScore,
     EmbeddingGenerate,
-    GraphEntity,
     EntityMention,
     GraphDatabase,
+    GraphEntity,
     GraphRagConfig,
     // Advanced
     GraphRagRetriever,
@@ -1569,8 +1565,6 @@ pub use rag_methods::{
     MethodResult,
     MultiQueryConfig,
     MultiQueryDecomposer,
-    // Query Enhancement
-    AdvancedQueryExpander,
     QueryExpanderConfig,
     RaptorConfig,
     RaptorNode,
@@ -1596,15 +1590,14 @@ pub use query_expansion::{
 
 #[cfg(feature = "rag")]
 pub use citations::{
-    Citation, CitationConfig, CitationGenerator, CitationStyle, CitationVerifier, CitedText,
-    Source, SourceType, UnverifiedCitation, CitationVerificationResult,
+    Citation, CitationConfig, CitationGenerator, CitationStyle, CitationVerificationResult,
+    CitationVerifier, CitedText, Source, SourceType, UnverifiedCitation,
 };
 
 #[cfg(feature = "rag")]
 pub use auto_indexing::{
-    AutoIndexConfig, AutoIndexer, IndexChunkMetadata, ChunkPosition,
+    AutoIndexConfig, AutoIndexer, AutoIndexingResult, ChunkPosition, IndexChunkMetadata,
     IndexChunkingStrategy, IndexState, IndexStats, IndexableChunk, IndexedDocumentMeta,
-    AutoIndexingResult,
 };
 
 #[cfg(feature = "rag")]
@@ -1645,9 +1638,7 @@ pub mod widgets;
 // =============================================================================
 
 pub mod setup;
-pub use setup::{
-    backup, config_ops, docker_ops, node_manager, prereq,
-};
+pub use setup::{backup, config_ops, docker_ops, node_manager, prereq};
 
 // =============================================================================
 // ADDITIONAL MODULES (always available, lightweight)
@@ -1662,7 +1653,6 @@ pub mod compute_proof;
 pub mod credit_system;
 
 // REPL/CLI engine
-pub mod repl;
 pub mod conflict_resolution;
 pub mod content_versioning;
 pub mod context_window;
@@ -1693,6 +1683,7 @@ pub mod memory_pinning;
 pub mod message_queue;
 pub mod model_warmup;
 pub mod multimodal_rag;
+pub mod repl;
 
 pub use multimodal_rag::{
     ImageCaptionExtractor, ModalityType, MultiModalChunk, MultiModalConfig, MultiModalDocument,
@@ -1711,14 +1702,14 @@ pub mod reranker;
 
 pub use reranker::{
     CascadeReranker, CrossEncoderReranker as NeuralCrossEncoderReranker, DiversityReranker,
-    Reranker, ReciprocalRankFusion, RerankerConfig, RerankerPipeline, ScoredDocument,
+    ReciprocalRankFusion, Reranker, RerankerConfig, RerankerPipeline, ScoredDocument,
 };
 
+pub mod advanced_routing;
 pub mod request_coalescing;
 pub mod request_signing;
 pub mod response_ranking;
 pub mod routing;
-pub mod advanced_routing;
 pub mod smart_suggestions;
 pub mod summarization;
 pub mod task_planning;
@@ -1727,9 +1718,9 @@ pub mod token_budget;
 pub mod token_counter;
 pub mod translation_analysis;
 pub mod typing_indicator;
+pub mod ui_hooks;
 pub mod user_rate_limit;
 pub mod web_search;
-pub mod ui_hooks;
 pub mod webhooks;
 
 pub use ui_hooks::{
@@ -1742,8 +1733,8 @@ pub use dag_executor::{
 };
 
 pub use agent_graph::{
-    AgentEdge as GraphAgentEdge, AgentGraph, AgentNode as GraphAgentNode,
-    EdgeType, ExecutionTrace, GraphAnalytics, GraphError, StepStatus as GraphStepStatus, TraceStep,
+    AgentEdge as GraphAgentEdge, AgentGraph, AgentNode as GraphAgentNode, EdgeType, ExecutionTrace,
+    GraphAnalytics, GraphError, StepStatus as GraphStepStatus, TraceStep,
 };
 
 // Export all lightweight modules
@@ -1772,17 +1763,16 @@ pub use routing::{
 };
 
 pub use advanced_routing::{
-    AdaptivePerQueryRouter, AdvancedRoutingError, ArmFeedback, ArmVisibility, BanditArm,
-    BanditConfig, BanditNfaSynthesizer, BanditRouter, BanditSnapshot, BanditStrategy, BetaParams,
-    ContextSnapshot, ContextualDiscovery, ContextualObservation,
-    DfaRouter, DfaSnapshot, DfaState, DiscoveredSplit,
+    merge_and_compile_nfas, register_routing_tools, AdaptivePerQueryRouter, AdvancedRoutingError,
+    ArmFeedback, ArmVisibility, BanditArm, BanditConfig, BanditNfaSynthesizer, BanditRouter,
+    BanditSnapshot, BanditStrategy, BetaParams, ContextSnapshot, ContextualDiscovery,
+    ContextualObservation, DfaRouter, DfaSnapshot, DfaState, DiscoveredSplit,
     DiscoveryConfig as RoutingDiscoveryConfig, DomainSplit, EnsembleRouter,
-    EnsembleStrategy as RoutingEnsembleStrategy, FeatureDimension, FeatureImportance,
-    ModelTier, NfaDfaCompiler, NfaRouter, NfaRuleBuilder, NfaSnapshot, NfaState, NfaSymbol,
-    PipelineConfig, PipelineSnapshot, QueryFeatureExtractor, QueryFeatures, RewardPolicy,
-    RoutingContext, RoutingDag, RoutingDagNode, RoutingDagNodeType, RoutingOutcome,
-    RoutingPipeline, RoutingPreferences, RoutingVoter, SnapshotFormat, SubRouterVote,
-    merge_and_compile_nfas, register_routing_tools,
+    EnsembleStrategy as RoutingEnsembleStrategy, FeatureDimension, FeatureImportance, ModelTier,
+    NfaDfaCompiler, NfaRouter, NfaRuleBuilder, NfaSnapshot, NfaState, NfaSymbol, PipelineConfig,
+    PipelineSnapshot, QueryFeatureExtractor, QueryFeatures, RewardPolicy, RoutingContext,
+    RoutingDag, RoutingDagNode, RoutingDagNodeType, RoutingOutcome, RoutingPipeline,
+    RoutingPreferences, RoutingVoter, SnapshotFormat, SubRouterVote,
 };
 
 #[cfg(feature = "eval-suite")]
@@ -1803,8 +1793,8 @@ pub use cost_integration::{
 };
 
 pub use entities::{
-    EntityCustomPattern, Entity, EntityExtractor, EntityExtractorConfig, EntityType, Fact, FactExtractor,
-    FactExtractorConfig, FactStore, FactType,
+    Entity, EntityCustomPattern, EntityExtractor, EntityExtractorConfig, EntityType, Fact,
+    FactExtractor, FactExtractorConfig, FactStore, FactType,
 };
 
 pub use health_check::{
@@ -1879,7 +1869,9 @@ pub use api_key_rotation::{ApiKey, ApiKeyManager, KeyStats, KeyStatus, RotationC
 
 pub use forecasting::{CapacityEstimate, Trend, UsageDataPoint, UsageForecast, UsageForecaster};
 
-pub use request_signing::{RequestSigner, RequestVerifier, SignatureAlgorithm, SignatureError, SignedRequest};
+pub use request_signing::{
+    RequestSigner, RequestVerifier, SignatureAlgorithm, SignatureError, SignedRequest,
+};
 
 pub use webhooks::{
     verify_webhook_signature, DeliveryResult, WebhookConfig, WebhookEvent, WebhookManager,
@@ -1903,8 +1895,8 @@ pub use conversation_templates::{
 
 pub use context_window::{
     AutoTokenConfig, ContextMessage, ContextOverflowMonitor, ContextWindow, ContextWindowConfig,
-    EvictionStrategy as ContextEvictionStrategy,
-    OverflowLevel as WindowOverflowLevel, OverflowThresholds as WindowOverflowThresholds,
+    EvictionStrategy as ContextEvictionStrategy, OverflowLevel as WindowOverflowLevel,
+    OverflowThresholds as WindowOverflowThresholds,
 };
 
 pub use conversation_compaction::{
@@ -2134,9 +2126,7 @@ pub use mcp_docker_tools::register_mcp_docker_tools;
 pub mod container_sandbox;
 
 #[cfg(feature = "containers")]
-pub use container_sandbox::{
-    ContainerSandbox, ContainerSandboxConfig, ExecutionBackend,
-};
+pub use container_sandbox::{ContainerSandbox, ContainerSandboxConfig, ExecutionBackend};
 
 // =============================================================================
 // DOCUMENT PIPELINE (container-based document creation & conversion)
@@ -2156,9 +2146,9 @@ pub use document_pipeline::{
 // =============================================================================
 
 #[cfg(feature = "audio")]
-pub mod speech;
-#[cfg(feature = "audio")]
 pub mod emotion_detection;
+#[cfg(feature = "audio")]
+pub mod speech;
 
 #[cfg(feature = "audio")]
 pub use emotion_detection::{
@@ -2187,10 +2177,9 @@ pub mod a2a_protocol;
 
 #[cfg(feature = "a2a")]
 pub use a2a_protocol::{
-    A2AArtifact, A2AClient, A2AMessage, A2APart, A2AServer, A2ATask, A2ATaskStatus,
-    AgentCard, AgentDirectory, AgentSkill, DataPart, FilePart, JsonRpcError, JsonRpcRequest,
-    JsonRpcResponse, MessageRole, PushNotification, PushNotificationConfig, TaskHandler,
-    TaskStatusUpdate, TextPart,
+    A2AArtifact, A2AClient, A2AMessage, A2APart, A2AServer, A2ATask, A2ATaskStatus, AgentCard,
+    AgentDirectory, AgentSkill, DataPart, FilePart, JsonRpcError, JsonRpcRequest, JsonRpcResponse,
+    MessageRole, PushNotification, PushNotificationConfig, TaskHandler, TaskStatusUpdate, TextPart,
 };
 
 // =============================================================================
@@ -2219,7 +2208,7 @@ pub mod prompt_signature;
 #[cfg(feature = "prompt-signatures")]
 pub use prompt_signature::{
     AdapterRouter, AssertedSignature, AssertionResult, BayesianOptimizer, BootstrapFewShot,
-    ChatAdapter, CompletionAdapter, CompiledPrompt, ContainsAnswer, ContainsAssertion,
+    ChatAdapter, CompiledPrompt, CompletionAdapter, ContainsAnswer, ContainsAssertion,
     CustomAssertion, DiscreteSearchStrategy, EvalMetric, EvaluationBudget, ExactMatch, F1Score,
     FieldType, FormatAssertion, FormattedMessage, FormattedPrompt, FunctionCallingAdapter,
     GEPAConfig, GEPAOptimizer, GridSearchOptimizer, ImprovementRule, InstructionProposer,
@@ -2237,17 +2226,15 @@ pub mod advanced_memory;
 
 #[cfg(feature = "advanced-memory")]
 pub use advanced_memory::{
-    AdvancedMemoryManager, ConsolidationPipelineResult, ConsolidationResult,
-    ConsolidationSchedule, EnhancedConsolidator, EntityQuery, EntityRecord, EntityRelation,
-    EntityStore,
-    Episode, EpisodicStore, EvolutionConfig, EvolutionReport, EvolutionStatistics,
+    cosine_similarity as memory_cosine_similarity, new_episode, AdvancedMemoryManager,
+    AutoPersistenceConfig, ConsolidationPipelineResult, ConsolidationResult, ConsolidationSchedule,
+    EnhancedConsolidator, EntityQuery, EntityRecord, EntityRelation, EntityStore, Episode,
+    EpisodicStore, EvolutionConfig, EvolutionReport, EvolutionStatistics,
     FactExtractor as MemoryFactExtractor, FactStore as MemoryFactStore, FeedbackOutcome,
-    LlmFactExtractor, MemoryConsolidator, PatternFactExtractor, Procedure, ProceduralStore,
+    LlmFactExtractor, MemoryConsolidator, PatternFactExtractor, ProceduralStore, Procedure,
     ProcedureCategory, ProcedureEvolver, ProcedureExport, ProcedureFeedback,
     ProcedureImportOptions, ProcedureImportResult, SemanticFact, TemporalEdge, TemporalEdgeType,
     TemporalGraph, TemporalQuery, TemporalQueryType,
-    cosine_similarity as memory_cosine_similarity, new_episode,
-    AutoPersistenceConfig,
 };
 
 #[cfg(feature = "advanced-memory")]
@@ -2255,8 +2242,8 @@ pub mod memory_service;
 
 #[cfg(feature = "advanced-memory")]
 pub use memory_service::{
-    start_memory_service, EpisodicCmd, EntityCmd, MemoryCommand, MemoryHandle,
-    MemoryServiceConfig, MemoryServiceHandle, PlanCmd, SystemCmd,
+    start_memory_service, EntityCmd, EpisodicCmd, MemoryCommand, MemoryHandle, MemoryServiceConfig,
+    MemoryServiceHandle, PlanCmd, SystemCmd,
 };
 
 // =============================================================================
@@ -2279,13 +2266,12 @@ pub use online_eval::{
 pub mod context_composer;
 
 pub use context_composer::{
-    BudgetAllocation, CompactableMessage as ComposerMessage, CompactedConversation,
-    ComposedContext, ComposedSection, ContextCompiler, ContextComposer, ContextComposerConfig,
-    ContextOverflowDetector, ContextSection,
-    ConversationCompactor as ContextConversationCompactor, OverflowAction,
+    estimate_tokens as composer_estimate_tokens, generate_mini_summary, BudgetAllocation,
+    CompactableMessage as ComposerMessage, CompactedConversation, ComposedContext, ComposedSection,
+    ContextCompiler, ContextComposer, ContextComposerConfig, ContextOverflowDetector,
+    ContextSection, ConversationCompactor as ContextConversationCompactor, OverflowAction,
     OverflowLevel as ComposerOverflowLevel, OverflowThresholds as ComposerOverflowThresholds,
     SectionBudget, SectionPriority, TokenBudgetAllocator, ToolSearchIndex,
-    estimate_tokens as composer_estimate_tokens, generate_mini_summary,
 };
 
 // =============================================================================
@@ -2298,9 +2284,9 @@ pub mod voice_agent;
 #[cfg(feature = "voice-agent")]
 pub use voice_agent::{
     AudioChunk, AudioFormat as VoiceAudioFormat, ConversationTurn as VoiceTurn, InMemoryTransport,
-    InterruptionEvent, InterruptionPolicy, PipelineLatency, TurnManager, TurnPolicy,
-    TurnSpeaker, VadConfig, VadDetector, VadEvent, VoiceAgent, VoiceAgentConfig, VoiceSession,
-    VoiceLlmCallback, VoiceSessionState, VoiceTransport,
+    InterruptionEvent, InterruptionPolicy, PipelineLatency, TurnManager, TurnPolicy, TurnSpeaker,
+    VadConfig, VadDetector, VadEvent, VoiceAgent, VoiceAgentConfig, VoiceLlmCallback, VoiceSession,
+    VoiceSessionState, VoiceTransport,
 };
 
 // =============================================================================
@@ -2340,9 +2326,9 @@ pub mod distillation;
 #[cfg(feature = "distillation")]
 pub use distillation::{
     CompositeScorer as DistillationCompositeScorer, CycleStatus, DataFlywheel, DatasetBuilder,
-    DatasetConfig, DatasetEntry, DatasetFormat, DatasetMessage, DiversityScorer,
-    EfficiencyScorer, FlatteningStrategy, FlywheelConfig, FlywheelCycle, FlywheelTrigger,
-    InMemoryTrajectoryStore, JsonlTrajectoryStore, LogTrigger, OutcomeScorer, RequiredOutcome,
+    DatasetConfig, DatasetEntry, DatasetFormat, DatasetMessage, DiversityScorer, EfficiencyScorer,
+    FlatteningStrategy, FlywheelConfig, FlywheelCycle, FlywheelTrigger, InMemoryTrajectoryStore,
+    JsonlTrajectoryStore, LogTrigger, OutcomeScorer, RequiredOutcome,
     StepType as DistillationStepType, Trajectory, TrajectoryCollector, TrajectoryDataset,
     TrajectoryFilter, TrajectoryId, TrajectoryOutcome, TrajectoryScorer, TrajectoryStep,
     TrajectoryStore, WebhookTrigger,
@@ -2366,10 +2352,10 @@ pub mod agent_wiring;
 pub use agent_wiring::{
     agent_from_definition, chat_to_loop_message, create_agent_from_definition,
     create_agent_from_definition_with_options, filter_tool_registry, loop_message_to_pair,
-    make_response_generator, make_response_generator_factory, parse_agent_role,
-    role_system_prompt, score_agent_for_task, AgentCreateOptions, AgentCreationError,
-    AgentPool, IterationHook, PoolAgentStatus, PoolTask, PoolTaskResult, ResponseGenerator,
-    ResponseGeneratorFactory, SupervisorConfig, TriggerReason,
+    make_response_generator, make_response_generator_factory, parse_agent_role, role_system_prompt,
+    score_agent_for_task, AgentCreateOptions, AgentCreationError, AgentPool, IterationHook,
+    PoolAgentStatus, PoolTask, PoolTaskResult, ResponseGenerator, ResponseGeneratorFactory,
+    SupervisorConfig, TriggerReason,
 };
 
 #[cfg(all(feature = "autonomous", feature = "devtools"))]
@@ -2387,18 +2373,16 @@ pub use mcp_task_tools::{
 pub use mcp_event_tools::register_event_tools;
 
 #[cfg(all(feature = "tools", feature = "home-automation"))]
-pub use mcp_home_tools::{register_home_tools, register_home_management_tools};
+pub use mcp_home_tools::{register_home_management_tools, register_home_tools};
 
 #[cfg(feature = "home-automation")]
 pub use home_automation::{
+    discover_services, parse_ha_state_changed, parse_openhab_state_changed, validate_custom_device,
     AlertCondition, CoapBackend, CoapConfig, CoapDeviceEntry, CommandTarget,
-    CustomDeviceDefinition, DeviceRegistry, DeviceState as HomeDeviceState,
-    DeviceStateChange, DiscoveredService, DiscoveredServiceType,
-    EventListenerConfig, HomeBackend, HomeConfig, HomeEventListenerManager,
-    ListenerSource, ListenerStatus, MqttConfig, MqttHomeBackend,
-    OpenHabBackend, OpenHabConfig, StateSource, ThresholdAlert,
-    TopicConvention, discover_services, parse_ha_state_changed,
-    parse_openhab_state_changed, validate_custom_device,
+    CustomDeviceDefinition, DeviceRegistry, DeviceState as HomeDeviceState, DeviceStateChange,
+    DiscoveredService, DiscoveredServiceType, EventListenerConfig, HomeBackend, HomeConfig,
+    HomeEventListenerManager, ListenerSource, ListenerStatus, MqttConfig, MqttHomeBackend,
+    OpenHabBackend, OpenHabConfig, StateSource, ThresholdAlert, TopicConvention,
 };
 
 // Keep the HA backend re-export from mcp_home_tools for backwards compat

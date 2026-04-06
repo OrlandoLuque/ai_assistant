@@ -868,9 +868,7 @@ impl ResilientWsStream {
     pub fn should_reconnect(&self) -> bool {
         match &self.state {
             WsConnectionState::Disconnected { .. } => true,
-            WsConnectionState::Reconnecting { attempt } => {
-                *attempt < self.config.max_attempts
-            }
+            WsConnectionState::Reconnecting { attempt } => *attempt < self.config.max_attempts,
             _ => false,
         }
     }
@@ -1178,8 +1176,8 @@ mod tests {
 
     #[test]
     fn test_ws_reconnect_callback_invoked() {
-        use std::sync::Arc;
         use std::sync::atomic::{AtomicU32, Ordering};
+        use std::sync::Arc;
 
         let reconnect_count = Arc::new(AtomicU32::new(0));
         let disconnect_count = Arc::new(AtomicU32::new(0));
@@ -1190,9 +1188,15 @@ mod tests {
         let gc = give_up_count.clone();
 
         let mut ws = ResilientWsStream::new(WsReconnectConfig::quick());
-        ws.on_reconnect(move |_| { rc.fetch_add(1, Ordering::Relaxed); });
-        ws.on_disconnect(move |_| { dc.fetch_add(1, Ordering::Relaxed); });
-        ws.on_give_up(move |_| { gc.fetch_add(1, Ordering::Relaxed); });
+        ws.on_reconnect(move |_| {
+            rc.fetch_add(1, Ordering::Relaxed);
+        });
+        ws.on_disconnect(move |_| {
+            dc.fetch_add(1, Ordering::Relaxed);
+        });
+        ws.on_give_up(move |_| {
+            gc.fetch_add(1, Ordering::Relaxed);
+        });
 
         ws.handle_disconnect("reset");
         assert_eq!(disconnect_count.load(Ordering::Relaxed), 1);
@@ -1236,8 +1240,14 @@ mod tests {
     #[test]
     fn test_ws_connection_state_name() {
         assert_eq!(WsConnectionState::Connected.name(), "Connected");
-        assert_eq!(WsConnectionState::Reconnecting { attempt: 1 }.name(), "Reconnecting");
-        assert_eq!(WsConnectionState::Disconnected { reason: "x".into() }.name(), "Disconnected");
+        assert_eq!(
+            WsConnectionState::Reconnecting { attempt: 1 }.name(),
+            "Reconnecting"
+        );
+        assert_eq!(
+            WsConnectionState::Disconnected { reason: "x".into() }.name(),
+            "Disconnected"
+        );
         assert_eq!(WsConnectionState::GaveUp { attempts: 5 }.name(), "GaveUp");
     }
 }

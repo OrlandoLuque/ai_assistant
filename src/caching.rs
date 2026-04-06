@@ -278,16 +278,12 @@ impl ResponseCache {
 
     /// Evict the least recently used entry (LRU).
     fn evict_oldest(&mut self) {
-        if let Some((&lru_fp, _)) = self
-            .entries
-            .iter()
-            .min_by_key(|(_, e)| {
-                e.last_used
-                    .or(e.created_at)
-                    .map(|t| t.elapsed())
-                    .unwrap_or(Duration::MAX)
-            })
-        {
+        if let Some((&lru_fp, _)) = self.entries.iter().min_by_key(|(_, e)| {
+            e.last_used
+                .or(e.created_at)
+                .map(|t| t.elapsed())
+                .unwrap_or(Duration::MAX)
+        }) {
             self.entries.remove(&lru_fp);
             self.stats.evicted += 1;
         }
@@ -620,7 +616,11 @@ impl ResponseCacheMiddleware {
 
     /// Normalize a prompt: lowercase, collapse whitespace, trim.
     pub fn normalize_prompt(prompt: &str) -> String {
-        prompt.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+        prompt
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
     }
 
     /// Hash a normalized prompt string.
@@ -634,7 +634,11 @@ impl ResponseCacheMiddleware {
 
     pub fn stats(&self) -> CacheMiddlewareStats {
         let total = self.hit_count + self.miss_count;
-        let hit_rate = if total > 0 { self.hit_count as f64 / total as f64 } else { 0.0 };
+        let hit_rate = if total > 0 {
+            self.hit_count as f64 / total as f64
+        } else {
+            0.0
+        };
         let total_tokens_saved: u64 = self.cache.values().map(|v| v.tokens_saved).sum();
         CacheMiddlewareStats {
             entries: self.cache.len(),
@@ -774,7 +778,8 @@ impl CostTracker {
     }
 
     pub fn budget_remaining(&self) -> Option<f64> {
-        self.budget_limit.map(|limit| (limit - self.total_cost()).max(0.0))
+        self.budget_limit
+            .map(|limit| (limit - self.total_cost()).max(0.0))
     }
 
     pub fn alerts(&self) -> &[BudgetCostAlert] {
@@ -794,7 +799,9 @@ impl CostTracker {
             (_, m) if m.contains("gpt-4o") => (2.50, 10.0),
             (_, m) if m.contains("gpt-4") => (30.0, 60.0),
             (_, m) if m.contains("gpt-3.5") => (0.50, 1.50),
-            (_, m) if m.contains("claude-3.5-sonnet") || m.contains("claude-3-5-sonnet") => (3.0, 15.0),
+            (_, m) if m.contains("claude-3.5-sonnet") || m.contains("claude-3-5-sonnet") => {
+                (3.0, 15.0)
+            }
             (_, m) if m.contains("claude-3-haiku") => (0.25, 1.25),
             (_, m) if m.contains("claude") => (3.0, 15.0),
             (_, m) if m.contains("gemini-1.5-pro") => (1.25, 5.0),
@@ -933,13 +940,16 @@ mod tests {
     #[test]
     fn test_cache_middleware_put_get() {
         let mut cache = ResponseCacheMiddleware::new(100, 3600);
-        cache.put("test prompt", CachedLlmResponse {
-            response: "test response".to_string(),
-            model: "gpt-4".to_string(),
-            provider: "openai".to_string(),
-            cached_at: std::time::Instant::now(),
-            tokens_saved: 100,
-        });
+        cache.put(
+            "test prompt",
+            CachedLlmResponse {
+                response: "test response".to_string(),
+                model: "gpt-4".to_string(),
+                provider: "openai".to_string(),
+                cached_at: std::time::Instant::now(),
+                tokens_saved: 100,
+            },
+        );
         let result = cache.get("test prompt");
         assert!(result.is_some());
         assert_eq!(result.unwrap().response, "test response");
@@ -955,13 +965,16 @@ mod tests {
     #[test]
     fn test_cache_middleware_ttl_expiry() {
         let mut cache = ResponseCacheMiddleware::new(100, 0); // 0 TTL = immediate expiry
-        cache.put("test", CachedLlmResponse {
-            response: "expired".to_string(),
-            model: "m".to_string(),
-            provider: "p".to_string(),
-            cached_at: std::time::Instant::now() - std::time::Duration::from_secs(1),
-            tokens_saved: 10,
-        });
+        cache.put(
+            "test",
+            CachedLlmResponse {
+                response: "expired".to_string(),
+                model: "m".to_string(),
+                provider: "p".to_string(),
+                cached_at: std::time::Instant::now() - std::time::Duration::from_secs(1),
+                tokens_saved: 10,
+            },
+        );
         std::thread::sleep(std::time::Duration::from_millis(10));
         assert!(cache.get("test").is_none());
     }
@@ -970,13 +983,16 @@ mod tests {
     fn test_cache_middleware_eviction() {
         let mut cache = ResponseCacheMiddleware::new(2, 3600);
         for i in 0..3 {
-            cache.put(&format!("prompt {}", i), CachedLlmResponse {
-                response: format!("resp {}", i),
-                model: "m".to_string(),
-                provider: "p".to_string(),
-                cached_at: std::time::Instant::now(),
-                tokens_saved: 10,
-            });
+            cache.put(
+                &format!("prompt {}", i),
+                CachedLlmResponse {
+                    response: format!("resp {}", i),
+                    model: "m".to_string(),
+                    provider: "p".to_string(),
+                    cached_at: std::time::Instant::now(),
+                    tokens_saved: 10,
+                },
+            );
         }
         // Max is 2, oldest should be evicted
         assert_eq!(cache.stats().entries, 2);
@@ -985,13 +1001,16 @@ mod tests {
     #[test]
     fn test_cache_middleware_stats() {
         let mut cache = ResponseCacheMiddleware::new(100, 3600);
-        cache.put("q1", CachedLlmResponse {
-            response: "r1".to_string(),
-            model: "m".to_string(),
-            provider: "p".to_string(),
-            cached_at: std::time::Instant::now(),
-            tokens_saved: 50,
-        });
+        cache.put(
+            "q1",
+            CachedLlmResponse {
+                response: "r1".to_string(),
+                model: "m".to_string(),
+                provider: "p".to_string(),
+                cached_at: std::time::Instant::now(),
+                tokens_saved: 50,
+            },
+        );
         cache.get("q1"); // hit
         cache.get("q2"); // miss
         let stats = cache.stats();

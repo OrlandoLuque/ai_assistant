@@ -1339,7 +1339,11 @@ pub trait GraphDatabase {
     ) -> Result<Vec<Relationship>, String>;
 
     /// Get related entities
-    fn get_related_entities(&self, entity: &str, max_depth: usize) -> Result<Vec<GraphEntity>, String>;
+    fn get_related_entities(
+        &self,
+        entity: &str,
+        max_depth: usize,
+    ) -> Result<Vec<GraphEntity>, String>;
 }
 
 /// Graph RAG retriever (skeleton)
@@ -1681,9 +1685,7 @@ pub struct DiversityRetriever {
 
 impl DiversityRetriever {
     pub fn new(config: MmrConfig) -> Self {
-        Self {
-            config,
-        }
+        Self { config }
     }
 
     pub fn with_defaults() -> Self {
@@ -1695,7 +1697,11 @@ impl DiversityRetriever {
     }
 
     /// Rerank candidates using MMR to balance relevance and diversity
-    pub fn rerank(&self, _query: &str, candidates: &[ScoredItem<String>]) -> Vec<ScoredItem<String>> {
+    pub fn rerank(
+        &self,
+        _query: &str,
+        candidates: &[ScoredItem<String>],
+    ) -> Vec<ScoredItem<String>> {
         if candidates.is_empty() {
             return Vec::new();
         }
@@ -1854,8 +1860,7 @@ impl QueryClassifier {
             || lower.contains("in addition")
             || lower.contains("compared to")
             || lower.contains("relationship between")
-            || lower.contains("how does")
-                && lower.contains("relate to")
+            || lower.contains("how does") && lower.contains("relate to")
         {
             return (RouterQueryComplexity::MultiHop, 0.75);
         }
@@ -2140,10 +2145,7 @@ mod tests {
         assert!(!result.is_empty(), "Should return reranked results");
         // The diverse item (Python) should appear somewhere in the results
         let has_python = result.iter().any(|r| r.item.contains("Python"));
-        assert!(
-            has_python,
-            "Diverse item should be included in results"
-        );
+        assert!(has_python, "Diverse item should be included in results");
     }
 
     #[test]
@@ -2223,7 +2225,10 @@ mod tests {
         ];
         assert_eq!(variants.len(), 5, "Should have 5 complexity variants");
         assert_eq!(RouterQueryComplexity::Simple, RouterQueryComplexity::Simple);
-        assert_ne!(RouterQueryComplexity::Simple, RouterQueryComplexity::Factual);
+        assert_ne!(
+            RouterQueryComplexity::Simple,
+            RouterQueryComplexity::Factual
+        );
     }
 
     #[test]
@@ -2237,7 +2242,8 @@ mod tests {
     #[test]
     fn test_query_classifier_factual() {
         let classifier = QueryClassifier::new();
-        let (complexity, _confidence) = classifier.classify("What is the capital of France and its population?");
+        let (complexity, _confidence) =
+            classifier.classify("What is the capital of France and its population?");
         assert_eq!(complexity, RouterQueryComplexity::Factual);
     }
 
@@ -2289,7 +2295,8 @@ mod tests {
     #[test]
     fn test_hierarchical_router_route_analytical() {
         let router = HierarchicalRouter::with_defaults();
-        let decision = router.route("Analyze the performance characteristics and explain why the system degrades");
+        let decision = router
+            .route("Analyze the performance characteristics and explain why the system degrades");
         assert_eq!(decision.complexity, RouterQueryComplexity::Analytical);
         assert_eq!(decision.chosen_retriever, "raptor");
     }
@@ -2339,7 +2346,10 @@ mod tests {
     fn test_diversity_retriever_empty_candidates() {
         let retriever = DiversityRetriever::with_defaults();
         let result = retriever.rerank("query", &[]);
-        assert!(result.is_empty(), "Empty candidates should return empty results");
+        assert!(
+            result.is_empty(),
+            "Empty candidates should return empty results"
+        );
     }
 
     // ========================================================================
@@ -2633,7 +2643,11 @@ mod tests {
         let evaluator = SelfRagEvaluator::new();
         // YES with high confidence => UseAsIs
         let llm = ConfigurableMockLlm::new("YES|85|Contains specific ship specifications");
-        let result = evaluator.evaluate("Aurora MR speed?", "The Aurora MR has a top speed of 210 m/s.", &llm);
+        let result = evaluator.evaluate(
+            "Aurora MR speed?",
+            "The Aurora MR has a top speed of 210 m/s.",
+            &llm,
+        );
         assert!(result.is_ok());
         let method_result = result.expect("evaluate should succeed");
         assert!(method_result.result.is_sufficient);
@@ -2650,7 +2664,11 @@ mod tests {
         let evaluator = SelfRagEvaluator::new();
         // NO with very low confidence => ExpandSearch
         let llm = ConfigurableMockLlm::new("NO|15|No relevant information found");
-        let result = evaluator.evaluate("quantum drive theory?", "Unrelated text about cooking.", &llm);
+        let result = evaluator.evaluate(
+            "quantum drive theory?",
+            "Unrelated text about cooking.",
+            &llm,
+        );
         assert!(result.is_ok());
         let method_result = result.expect("evaluate should succeed");
         assert!(!method_result.result.is_sufficient);
@@ -2704,7 +2722,8 @@ mod tests {
     fn test_crag_evaluator_correct_action() {
         let evaluator = CragEvaluator::new();
         // High score => Correct
-        let llm = ConfigurableMockLlm::new("85|Documents contain comprehensive relevant information");
+        let llm =
+            ConfigurableMockLlm::new("85|Documents contain comprehensive relevant information");
         let docs = vec!["The Aurora MR has a top speed of 210 m/s."];
         let result = evaluator.evaluate("Aurora MR speed?", &docs, &llm);
         assert!(result.is_ok());
@@ -2803,9 +2822,8 @@ mod tests {
             entity_types: vec![],
         };
         let retriever = GraphRagRetriever::new(config);
-        let llm = ConfigurableMockLlm::new(
-            "PERSON: Alice\nPERSON: Bob\nPERSON: Charlie\nPERSON: Dave",
-        );
+        let llm =
+            ConfigurableMockLlm::new("PERSON: Alice\nPERSON: Bob\nPERSON: Charlie\nPERSON: Dave");
         let result = retriever.extract_entities("Alice, Bob, Charlie, Dave met.", &llm);
         assert!(result.is_ok());
         let method_result = result.expect("extract_entities should succeed");
@@ -2968,7 +2986,10 @@ mod tests {
         let encoder = MockCrossEncoder;
         let items = vec![
             ScoredItem::new("short".to_string(), 0.9),
-            ScoredItem::new("a much longer document text here for testing purposes".to_string(), 0.5),
+            ScoredItem::new(
+                "a much longer document text here for testing purposes".to_string(),
+                0.5,
+            ),
             ScoredItem::new("medium length document".to_string(), 0.7),
         ];
         let result = reranker.rerank("query", items, &encoder);
@@ -3047,7 +3068,9 @@ mod tests {
         };
         let expander = AdvancedQueryExpander::with_config(config);
         // Some lines are too short (<=3 chars) and should be filtered
-        let llm = ConfigurableMockLlm::new("OK\n\nA valid query expansion here\nno\nAnother valid expansion line");
+        let llm = ConfigurableMockLlm::new(
+            "OK\n\nA valid query expansion here\nno\nAnother valid expansion line",
+        );
         let result = expander.expand("test", &llm);
         assert!(result.is_ok());
         let method_result = result.expect("expand should succeed");
@@ -3061,7 +3084,10 @@ mod tests {
     fn test_query_expander_synonym_expand_no_matches() {
         let expander = AdvancedQueryExpander::new();
         let synonyms = expander.synonym_expand("quantum entanglement theory");
-        assert!(synonyms.is_empty(), "No synonym matches should return empty");
+        assert!(
+            synonyms.is_empty(),
+            "No synonym matches should return empty"
+        );
     }
 
     // --- MultiQueryDecomposer with LLM tests ---
@@ -3088,7 +3114,10 @@ mod tests {
     #[test]
     fn test_mmr_scorer_empty_texts() {
         let score = MmrScorer::similarity("", "", &DiversityMetric::Cosine);
-        assert!((score - 0.0).abs() < f64::EPSILON, "Empty texts should have 0 similarity");
+        assert!(
+            (score - 0.0).abs() < f64::EPSILON,
+            "Empty texts should have 0 similarity"
+        );
         let score = MmrScorer::similarity("", "", &DiversityMetric::Jaccard);
         assert!((score - 0.0).abs() < f64::EPSILON);
         let score = MmrScorer::similarity("", "", &DiversityMetric::Overlap);

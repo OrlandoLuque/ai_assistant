@@ -786,7 +786,11 @@ mod tests {
         // Test MB range
         let p2 = Progress::new("upload", 0, 0).with_bytes(5_242_880, 10_485_760);
         let human2 = p2.bytes_human().unwrap();
-        assert!(human2.contains("MB"), "Expected MB format, got '{}'", human2);
+        assert!(
+            human2.contains("MB"),
+            "Expected MB format, got '{}'",
+            human2
+        );
 
         // Test bytes range
         let p3 = Progress::new("upload", 0, 0).with_bytes(512, 1024);
@@ -796,7 +800,11 @@ mod tests {
         // Test GB range
         let p4 = Progress::new("upload", 0, 0).with_bytes(2_147_483_648, 4_294_967_296);
         let human4 = p4.bytes_human().unwrap();
-        assert!(human4.contains("GB"), "Expected GB format, got '{}'", human4);
+        assert!(
+            human4.contains("GB"),
+            "Expected GB format, got '{}'",
+            human4
+        );
     }
 
     #[test]

@@ -25,11 +25,11 @@
 //! - Heartbeat interval 5 s; client dropped after 15 s silence.
 //! - LAN / trusted network only. No encryption, no NAT traversal.
 
-use crate::audio_priority_protocol::{PriorityTable, SlotId, Priority, SlotAssignment};
+use crate::audio_priority_protocol::{Priority, PriorityTable, SlotAssignment, SlotId};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
-use std::net::{TcpListener, TcpStream, SocketAddr};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -78,9 +78,18 @@ pub enum ClientMessage {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum HostMessage {
-    Joined { slot: u8, table: Vec<SlotAssignmentWire>, preset: String, slot_count: u8 },
-    Rejected { reason: String },
-    TableUpdate { table: Vec<SlotAssignmentWire> },
+    Joined {
+        slot: u8,
+        table: Vec<SlotAssignmentWire>,
+        preset: String,
+        slot_count: u8,
+    },
+    Rejected {
+        reason: String,
+    },
+    TableUpdate {
+        table: Vec<SlotAssignmentWire>,
+    },
     Ping,
     Goodbye,
 }
@@ -106,7 +115,11 @@ impl HostPreset {
     }
 
     pub fn as_label(&self) -> &'static str {
-        match self { HostPreset::Flat => "flat", HostPreset::Squad { .. } => "squad", HostPreset::Meeting => "meeting" }
+        match self {
+            HostPreset::Flat => "flat",
+            HostPreset::Squad { .. } => "squad",
+            HostPreset::Meeting => "meeting",
+        }
     }
 }
 
@@ -166,15 +179,20 @@ impl GroupQueueHost {
     }
 
     pub fn shutdown(&self) {
-        self.shutdown.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.shutdown
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Start the server loop (blocking). Use in its own thread.
     pub fn run(&self) -> std::io::Result<()> {
         let listener = TcpListener::bind(self.config.bind_addr)?;
         listener.set_nonblocking(true)?;
-        eprintln!("[host] listening on {} · slots={} · preset={}",
-            self.config.bind_addr, self.config.slot_count, self.config.preset.as_label());
+        eprintln!(
+            "[host] listening on {} · slots={} · preset={}",
+            self.config.bind_addr,
+            self.config.slot_count,
+            self.config.preset.as_label()
+        );
         let clients = self.clients.clone();
         let table = self.table.clone();
         let timeout = self.config.heartbeat_timeout;
@@ -192,7 +210,9 @@ impl GroupQueueHost {
         });
 
         loop {
-            if shutdown.load(std::sync::atomic::Ordering::Relaxed) { break; }
+            if shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+                break;
+            }
             match listener.accept() {
                 Ok((stream, addr)) => {
                     let clients_c = clients.clone();
@@ -200,7 +220,9 @@ impl GroupQueueHost {
                     let slot_count = self.config.slot_count;
                     let preset = self.config.preset.clone();
                     std::thread::spawn(move || {
-                        if let Err(e) = Self::handle_client(stream, addr, clients_c, table_c, slot_count, preset) {
+                        if let Err(e) = Self::handle_client(
+                            stream, addr, clients_c, table_c, slot_count, preset,
+                        ) {
                             eprintln!("[host] client {} error: {}", addr, e);
                         }
                     });
@@ -222,9 +244,14 @@ impl GroupQueueHost {
         let now = Instant::now();
         let dropped: Vec<SlotId> = {
             let cl = clients.lock().unwrap_or_else(|e| e.into_inner());
-            cl.iter().filter(|(_, c)| now.duration_since(c.last_seen) > timeout).map(|(k, _)| *k).collect()
+            cl.iter()
+                .filter(|(_, c)| now.duration_since(c.last_seen) > timeout)
+                .map(|(k, _)| *k)
+                .collect()
         };
-        if dropped.is_empty() { return; }
+        if dropped.is_empty() {
+            return;
+        }
         let mut cl = clients.lock().unwrap_or_else(|e| e.into_inner());
         let mut t = table.lock().unwrap_or_else(|e| e.into_inner());
         for slot in &dropped {
@@ -241,13 +268,20 @@ impl GroupQueueHost {
         Self::broadcast_table(clients, &t);
     }
 
-    fn broadcast_table(clients: &Arc<Mutex<HashMap<SlotId, ConnectedClient>>>, table: &PriorityTable) {
-        let wire: Vec<SlotAssignmentWire> = table.assigned_slots().iter()
+    fn broadcast_table(
+        clients: &Arc<Mutex<HashMap<SlotId, ConnectedClient>>>,
+        table: &PriorityTable,
+    ) {
+        let wire: Vec<SlotAssignmentWire> = table
+            .assigned_slots()
+            .iter()
             .filter_map(|s| table.get(*s))
             .map(SlotAssignmentWire::from)
             .collect();
         let msg = HostMessage::TableUpdate { table: wire };
-        let Ok(line) = serde_json::to_string(&msg) else { return; };
+        let Ok(line) = serde_json::to_string(&msg) else {
+            return;
+        };
         let clients_l = clients.lock().unwrap_or_else(|e| e.into_inner());
         for (_, client) in clients_l.iter() {
             if let Ok(mut w) = client.writer.lock() {
@@ -276,10 +310,15 @@ impl GroupQueueHost {
                 Ok(l) => l,
                 Err(_) => break,
             };
-            if line.is_empty() { continue; }
+            if line.is_empty() {
+                continue;
+            }
             let msg: ClientMessage = match serde_json::from_str(&line) {
                 Ok(m) => m,
-                Err(e) => { eprintln!("[host] bad msg from {}: {}", addr, e); continue; }
+                Err(e) => {
+                    eprintln!("[host] bad msg from {}: {}", addr, e);
+                    continue;
+                }
             };
             match msg {
                 ClientMessage::Join { name, .. } => {
@@ -291,8 +330,12 @@ impl GroupQueueHost {
                     let slot = match free {
                         Some(s) => s,
                         None => {
-                            let reject = HostMessage::Rejected { reason: "All slots full".into() };
-                            if let (Ok(mut w), Ok(line)) = (writer.lock(), serde_json::to_string(&reject)) {
+                            let reject = HostMessage::Rejected {
+                                reason: "All slots full".into(),
+                            };
+                            if let (Ok(mut w), Ok(line)) =
+                                (writer.lock(), serde_json::to_string(&reject))
+                            {
                                 let _ = writeln!(w, "{}", line);
                             }
                             return Ok(());
@@ -311,12 +354,20 @@ impl GroupQueueHost {
                     // Send Joined + broadcast TableUpdate
                     {
                         let t = table.lock().unwrap_or_else(|e| e.into_inner());
-                        let wire: Vec<SlotAssignmentWire> = t.assigned_slots().iter()
-                            .filter_map(|s| t.get(*s)).map(SlotAssignmentWire::from).collect();
+                        let wire: Vec<SlotAssignmentWire> = t
+                            .assigned_slots()
+                            .iter()
+                            .filter_map(|s| t.get(*s))
+                            .map(SlotAssignmentWire::from)
+                            .collect();
                         let resp = HostMessage::Joined {
-                            slot: slot.as_u8(), table: wire, preset: preset.as_label().into(), slot_count,
+                            slot: slot.as_u8(),
+                            table: wire,
+                            preset: preset.as_label().into(),
+                            slot_count,
                         };
-                        if let (Ok(mut w), Ok(line)) = (writer.lock(), serde_json::to_string(&resp)) {
+                        if let (Ok(mut w), Ok(line)) = (writer.lock(), serde_json::to_string(&resp))
+                        {
                             let _ = writeln!(w, "{}", line);
                             let _ = w.flush();
                         }
@@ -324,20 +375,33 @@ impl GroupQueueHost {
                     // Register client
                     {
                         let mut cl = clients.lock().unwrap_or_else(|e| e.into_inner());
-                        cl.insert(slot, ConnectedClient {
-                            slot, name: name.clone(), last_seen: Instant::now(),
-                            writer: writer.clone(), addr,
-                        });
+                        cl.insert(
+                            slot,
+                            ConnectedClient {
+                                slot,
+                                name: name.clone(),
+                                last_seen: Instant::now(),
+                                writer: writer.clone(),
+                                addr,
+                            },
+                        );
                     }
                     // Broadcast
                     let t = table.lock().unwrap_or_else(|e| e.into_inner());
                     Self::broadcast_table(&clients, &t);
-                    eprintln!("[host] slot {} assigned to {} ({})", slot.as_u8(), name, addr);
+                    eprintln!(
+                        "[host] slot {} assigned to {} ({})",
+                        slot.as_u8(),
+                        name,
+                        addr
+                    );
                 }
                 ClientMessage::Heartbeat => {
                     if let Some(s) = my_slot {
                         let mut cl = clients.lock().unwrap_or_else(|e| e.into_inner());
-                        if let Some(c) = cl.get_mut(&s) { c.last_seen = Instant::now(); }
+                        if let Some(c) = cl.get_mut(&s) {
+                            c.last_seen = Instant::now();
+                        }
                     }
                 }
                 ClientMessage::Leave => {
@@ -388,7 +452,13 @@ pub struct ClientStatus {
 
 impl Default for ClientStatus {
     fn default() -> Self {
-        Self { connected: false, my_slot: None, error: None, slot_count: 8, preset: "flat".into() }
+        Self {
+            connected: false,
+            my_slot: None,
+            error: None,
+            slot_count: 8,
+            preset: "flat".into(),
+        }
     }
 }
 
@@ -408,7 +478,10 @@ impl GroupQueueHostClient {
     }
 
     pub fn status(&self) -> ClientStatus {
-        self.status.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.status
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     pub fn snapshot_table(&self) -> PriorityTable {
@@ -416,7 +489,8 @@ impl GroupQueueHostClient {
     }
 
     pub fn shutdown(&self) {
-        self.shutdown.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.shutdown
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Connect in a background thread. Spawns reader + heartbeat loops.
@@ -448,7 +522,10 @@ impl GroupQueueHostClient {
             let writer = Arc::new(Mutex::new(stream));
 
             // Send Join
-            let join = ClientMessage::Join { name: name.clone(), version: 1 };
+            let join = ClientMessage::Join {
+                name: name.clone(),
+                version: 1,
+            };
             if let Ok(line) = serde_json::to_string(&join) {
                 if let Ok(mut w) = writer.lock() {
                     let _ = writeln!(w, "{}", line);
@@ -464,7 +541,9 @@ impl GroupQueueHostClient {
                     std::thread::sleep(Duration::from_secs(5));
                     if let Ok(line) = serde_json::to_string(&ClientMessage::Heartbeat) {
                         if let Ok(mut w) = writer_hb.lock() {
-                            if writeln!(w, "{}", line).is_err() { break; }
+                            if writeln!(w, "{}", line).is_err() {
+                                break;
+                            }
                             let _ = w.flush();
                         }
                     }
@@ -473,7 +552,9 @@ impl GroupQueueHostClient {
 
             // Read loop
             for line_res in reader.lines() {
-                if shutdown.load(std::sync::atomic::Ordering::Relaxed) { break; }
+                if shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
                 let line = match line_res {
                     Ok(l) => l,
                     Err(e) => {
@@ -483,23 +564,37 @@ impl GroupQueueHostClient {
                         break;
                     }
                 };
-                if line.is_empty() { continue; }
+                if line.is_empty() {
+                    continue;
+                }
                 let msg: HostMessage = match serde_json::from_str(&line) {
                     Ok(m) => m,
-                    Err(e) => { eprintln!("[client] bad msg: {}", e); continue; }
+                    Err(e) => {
+                        eprintln!("[client] bad msg: {}", e);
+                        continue;
+                    }
                 };
                 match msg {
-                    HostMessage::Joined { slot, table: wire, preset, slot_count } => {
+                    HostMessage::Joined {
+                        slot,
+                        table: wire,
+                        preset,
+                        slot_count,
+                    } => {
                         {
                             let mut t = table.lock().unwrap_or_else(|e| e.into_inner());
                             *t = PriorityTable::new();
-                            for a in &wire { t.assign(a.to_assignment()); }
+                            for a in &wire {
+                                t.assign(a.to_assignment());
+                            }
                         }
                         {
                             let mut s = status.lock().unwrap_or_else(|e| e.into_inner());
-                            s.connected = true; s.error = None;
+                            s.connected = true;
+                            s.error = None;
                             s.my_slot = Some(SlotId(slot.min(SlotId::MAX)));
-                            s.preset = preset; s.slot_count = slot_count;
+                            s.preset = preset;
+                            s.slot_count = slot_count;
                         }
                     }
                     HostMessage::Rejected { reason } => {
@@ -511,7 +606,9 @@ impl GroupQueueHostClient {
                     HostMessage::TableUpdate { table: wire } => {
                         let mut t = table.lock().unwrap_or_else(|e| e.into_inner());
                         *t = PriorityTable::new();
-                        for a in &wire { t.assign(a.to_assignment()); }
+                        for a in &wire {
+                            t.assign(a.to_assignment());
+                        }
                     }
                     HostMessage::Ping => {}
                     HostMessage::Goodbye => {
@@ -527,7 +624,11 @@ impl GroupQueueHostClient {
     }
 }
 
-impl Default for GroupQueueHostClient { fn default() -> Self { Self::new() } }
+impl Default for GroupQueueHostClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 // ============================================================================
 // Tests
@@ -540,7 +641,9 @@ mod tests {
     #[test]
     fn wire_roundtrip() {
         let a = SlotAssignment {
-            slot: SlotId(3), priority: Priority(7), can_override: true,
+            slot: SlotId(3),
+            priority: Priority(7),
+            can_override: true,
             display_name: "Alice".into(),
         };
         let wire = SlotAssignmentWire::from(&a);
@@ -553,7 +656,10 @@ mod tests {
 
     #[test]
     fn client_message_serde_roundtrip() {
-        let m = ClientMessage::Join { name: "Bob".into(), version: 1 };
+        let m = ClientMessage::Join {
+            name: "Bob".into(),
+            version: 1,
+        };
         let s = serde_json::to_string(&m).unwrap();
         assert!(s.contains("\"type\":\"join\""));
         let back: ClientMessage = serde_json::from_str(&s).unwrap();
@@ -563,7 +669,10 @@ mod tests {
     #[test]
     fn host_message_serde_roundtrip() {
         let m = HostMessage::Joined {
-            slot: 2, table: vec![], preset: "flat".into(), slot_count: 8,
+            slot: 2,
+            table: vec![],
+            preset: "flat".into(),
+            slot_count: 8,
         };
         let s = serde_json::to_string(&m).unwrap();
         assert!(s.contains("\"type\":\"joined\""));
@@ -606,7 +715,10 @@ mod tests {
 
     #[test]
     fn host_creates_with_preset() {
-        let cfg = HostConfig { preset: HostPreset::Squad { callouts: 3 }, ..HostConfig::default() };
+        let cfg = HostConfig {
+            preset: HostPreset::Squad { callouts: 3 },
+            ..HostConfig::default()
+        };
         let h = GroupQueueHost::new(cfg);
         assert_eq!(h.client_count(), 0);
         let table = h.snapshot_table();
@@ -617,16 +729,22 @@ mod tests {
     fn host_end_to_end_join_and_table_update() {
         // Launch host on random port
         let cfg = HostConfig {
-            bind_addr: "127.0.0.1:0".parse().unwrap(), ..HostConfig::default()
+            bind_addr: "127.0.0.1:0".parse().unwrap(),
+            ..HostConfig::default()
         };
         // Re-bind to get actual port
         let listener = TcpListener::bind(cfg.bind_addr).unwrap();
         let actual_addr = listener.local_addr().unwrap();
         drop(listener);
-        let cfg = HostConfig { bind_addr: actual_addr, ..cfg };
+        let cfg = HostConfig {
+            bind_addr: actual_addr,
+            ..cfg
+        };
         let host = Arc::new(GroupQueueHost::new(cfg.clone()));
         let host_run = host.clone();
-        std::thread::spawn(move || { let _ = host_run.run(); });
+        std::thread::spawn(move || {
+            let _ = host_run.run();
+        });
         std::thread::sleep(Duration::from_millis(200));
 
         // Connect client
@@ -635,10 +753,16 @@ mod tests {
         // Wait for connection
         for _ in 0..30 {
             std::thread::sleep(Duration::from_millis(100));
-            if client.status().connected { break; }
+            if client.status().connected {
+                break;
+            }
         }
         let status = client.status();
-        assert!(status.connected, "client should connect, error: {:?}", status.error);
+        assert!(
+            status.connected,
+            "client should connect, error: {:?}",
+            status.error
+        );
         assert_eq!(status.my_slot, Some(SlotId(0)));
         let t = client.snapshot_table();
         assert_eq!(t.get(SlotId(0)).unwrap().display_name, "TestClient");

@@ -97,25 +97,21 @@ pub type PiiTokenMap = HashMap<String, String>;
 // ---------------------------------------------------------------------------
 
 const STOP_WORDS: &[&str] = &[
-    "The", "This", "That", "These", "Those", "There", "Their", "Then", "Than",
-    "They", "What", "When", "Where", "Which", "While", "With", "Will", "Would",
-    "Should", "Could", "About", "After", "Also", "Because", "Before", "Between",
-    "Both", "Each", "Even", "Every", "From", "Have", "Here", "How", "Into",
-    "Just", "Like", "Make", "Many", "More", "Most", "Much", "Must", "Never",
-    "Only", "Other", "Over", "Same", "Some", "Such", "Sure", "Take", "Very",
-    "Were", "Your", "Being", "Does", "Done", "Good", "Great", "Help", "Keep",
-    "Know", "Last", "Long", "Look", "Made", "Need", "Next", "Part", "Real",
-    "Right", "Said", "Still", "Think", "Time", "Under", "Used", "Want", "Well",
-    "Work", "Year", "Call", "Come", "Find", "First", "Give", "High", "Little",
-    "Live", "Name", "New", "Now", "Old", "Open", "Our", "Own", "See", "Set",
-    "She", "Show", "Small", "Start", "Tell", "Three", "Try", "Turn", "Use",
-    "Why", "And", "But", "For", "Not", "You", "All", "Any", "Are", "Can",
-    "Had", "Has", "Her", "Him", "His", "Its", "Let", "May", "Nor", "Off",
-    "One", "Out", "Put", "Run", "Say", "Too", "Two", "Was", "Way", "Who",
-    "Yes", "Yet",
-    // Spanish common words
-    "El", "La", "Los", "Las", "Un", "Una", "Del", "Al", "Con", "Sin", "Por",
-    "Para", "Como", "Pero", "Que", "Es", "En", "De", "No", "Se",
+    "The", "This", "That", "These", "Those", "There", "Their", "Then", "Than", "They", "What",
+    "When", "Where", "Which", "While", "With", "Will", "Would", "Should", "Could", "About",
+    "After", "Also", "Because", "Before", "Between", "Both", "Each", "Even", "Every", "From",
+    "Have", "Here", "How", "Into", "Just", "Like", "Make", "Many", "More", "Most", "Much", "Must",
+    "Never", "Only", "Other", "Over", "Same", "Some", "Such", "Sure", "Take", "Very", "Were",
+    "Your", "Being", "Does", "Done", "Good", "Great", "Help", "Keep", "Know", "Last", "Long",
+    "Look", "Made", "Need", "Next", "Part", "Real", "Right", "Said", "Still", "Think", "Time",
+    "Under", "Used", "Want", "Well", "Work", "Year", "Call", "Come", "Find", "First", "Give",
+    "High", "Little", "Live", "Name", "New", "Now", "Old", "Open", "Our", "Own", "See", "Set",
+    "She", "Show", "Small", "Start", "Tell", "Three", "Try", "Turn", "Use", "Why", "And", "But",
+    "For", "Not", "You", "All", "Any", "Are", "Can", "Had", "Has", "Her", "Him", "His", "Its",
+    "Let", "May", "Nor", "Off", "One", "Out", "Put", "Run", "Say", "Too", "Two", "Was", "Way",
+    "Who", "Yes", "Yet", // Spanish common words
+    "El", "La", "Los", "Las", "Un", "Una", "Del", "Al", "Con", "Sin", "Por", "Para", "Como", "Pero",
+    "Que", "Es", "En", "De", "No", "Se",
 ];
 
 // ---------------------------------------------------------------------------
@@ -320,8 +316,7 @@ impl PiiTokenizer {
                 // or multi-word runs.
                 if end - start >= 2 || (end - start == 1 && start > 0) {
                     for j in start..end {
-                        let clean = words[j]
-                            .trim_end_matches(|c: char| c.is_ascii_punctuation());
+                        let clean = words[j].trim_end_matches(|c: char| c.is_ascii_punctuation());
                         if !clean.is_empty() {
                             names_to_mask.push(clean.to_string());
                         }
@@ -363,7 +358,9 @@ impl PiiTokenizer {
             return false;
         }
         // Rest should be mostly lowercase.
-        let rest_lower = clean[first.len_utf8()..].chars().all(|c| c.is_lowercase() || c == '-' || c == '\'');
+        let rest_lower = clean[first.len_utf8()..]
+            .chars()
+            .all(|c| c.is_lowercase() || c == '-' || c == '\'');
         if !rest_lower {
             return false;
         }
@@ -409,10 +406,7 @@ mod tests {
         assert!(!masked.contains("John"), "masked = {}", masked);
         assert!(!masked.contains("Mary"), "masked = {}", masked);
         // We should have at least 2 name entries.
-        let name_entries: Vec<_> = map
-            .keys()
-            .filter(|k| k.starts_with("[nombre"))
-            .collect();
+        let name_entries: Vec<_> = map.keys().filter(|k| k.starts_with("[nombre")).collect();
         assert!(name_entries.len() >= 2, "map = {:?}", map);
     }
 

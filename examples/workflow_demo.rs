@@ -5,9 +5,7 @@
 //! Demonstrates workflow graph construction, node handlers,
 //! checkpointing, and execution with state.
 
-use ai_assistant::{
-    SimpleEvent, WorkflowGraph, WorkflowNode, WorkflowRunner, WorkflowState,
-};
+use ai_assistant::{SimpleEvent, WorkflowGraph, WorkflowNode, WorkflowRunner, WorkflowState};
 
 fn main() {
     println!("=== Event-Driven Workflow Demo ===\n");

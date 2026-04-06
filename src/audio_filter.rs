@@ -243,7 +243,11 @@ impl SpeakerGate {
 
         if best_score >= self.threshold {
             // Update active speakers
-            if let Some(info) = self.active_speakers.iter_mut().find(|s| s.speaker_id == best_id) {
+            if let Some(info) = self
+                .active_speakers
+                .iter_mut()
+                .find(|s| s.speaker_id == best_id)
+            {
                 info.is_speaking = true;
                 info.last_confidence = best_score;
                 info.last_seen_ms = now;
@@ -268,7 +272,11 @@ impl SpeakerGate {
         } else {
             self.unknown_counter += 1;
             let unknown_id = format!("unknown_{}", self.unknown_counter);
-            if let Some(info) = self.active_speakers.iter_mut().find(|s| s.speaker_id.starts_with("unknown")) {
+            if let Some(info) = self
+                .active_speakers
+                .iter_mut()
+                .find(|s| s.speaker_id.starts_with("unknown"))
+            {
                 info.rejected_count += 1;
                 info.last_seen_ms = now;
             } else {
@@ -358,10 +366,7 @@ pub enum DiarizationResult {
         confidence: f32,
     },
     /// New speaker detected — created a new cluster.
-    NewSpeaker {
-        label: String,
-        index: usize,
-    },
+    NewSpeaker { label: String, index: usize },
     /// Audio too short or silent to classify.
     Inconclusive,
 }
@@ -534,7 +539,7 @@ impl MfccSpeakerVerifier {
         }
 
         let frame_size = (sample_rate as usize * 25) / 1000; // 25ms frames
-        let hop_size = (sample_rate as usize * 10) / 1000;   // 10ms hop
+        let hop_size = (sample_rate as usize * 10) / 1000; // 10ms hop
 
         let mut all_coeffs = vec![vec![0.0f32; self.num_coefficients]; 0];
 
@@ -568,8 +573,8 @@ impl MfccSpeakerVerifier {
             let mean = sum / frame.len() as f32;
             coeffs[2] = mean;
 
-            let variance: f32 = frame.iter().map(|s| (s.abs() - mean).powi(2)).sum::<f32>()
-                / frame.len() as f32;
+            let variance: f32 =
+                frame.iter().map(|s| (s.abs() - mean).powi(2)).sum::<f32>() / frame.len() as f32;
             coeffs[3] = variance.sqrt();
 
             // Higher order features (fill remaining coefficients)
@@ -621,8 +626,8 @@ impl SpeakerVerifier for MfccSpeakerVerifier {
             return Err("Audio too short (need at least 1 second)".into());
         }
         // Anti-spoofing: reject flat audio (#1)
-        let variance: f64 = audio.iter().map(|&s| (s as f64).powi(2)).sum::<f64>()
-            / audio.len() as f64;
+        let variance: f64 =
+            audio.iter().map(|&s| (s as f64).powi(2)).sum::<f64>() / audio.len() as f64;
         if variance < 1.0 {
             return Err("Audio appears to be silence or flat signal (anti-spoofing)".into());
         }
@@ -664,7 +669,9 @@ impl NoiseGate {
 }
 
 impl AudioEffect for NoiseGate {
-    fn name(&self) -> &str { "Noise Gate" }
+    fn name(&self) -> &str {
+        "Noise Gate"
+    }
     fn process(&mut self, samples: &mut [i16], _sample_rate: u32) {
         let rms = compute_rms(samples);
         if rms < self.threshold_rms {
@@ -673,10 +680,18 @@ impl AudioEffect for NoiseGate {
             }
         }
     }
-    fn is_enabled(&self) -> bool { self.enabled }
-    fn set_enabled(&mut self, enabled: bool) { self.enabled = enabled; }
-    fn category(&self) -> EffectCategory { EffectCategory::InputProcessing }
-    fn estimated_latency_us(&self) -> u64 { 50 } // ~0ms
+    fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+    fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+    fn category(&self) -> EffectCategory {
+        EffectCategory::InputProcessing
+    }
+    fn estimated_latency_us(&self) -> u64 {
+        50
+    } // ~0ms
 }
 
 /// Auto Gain Control — adjusts volume to target level.
@@ -699,23 +714,34 @@ impl AutoGainControl {
 }
 
 impl AudioEffect for AutoGainControl {
-    fn name(&self) -> &str { "Auto Gain Control" }
+    fn name(&self) -> &str {
+        "Auto Gain Control"
+    }
     fn process(&mut self, samples: &mut [i16], _sample_rate: u32) {
         let rms = compute_rms(samples);
         if rms > 0.0001 {
             let target_gain = self.target_rms / rms;
             let clamped_gain = target_gain.clamp(0.1, 10.0);
-            self.current_gain = self.current_gain * (1.0 - self.smoothing) + clamped_gain * self.smoothing;
+            self.current_gain =
+                self.current_gain * (1.0 - self.smoothing) + clamped_gain * self.smoothing;
         }
         for s in samples.iter_mut() {
             let v = (*s as f32 * self.current_gain).clamp(-32767.0, 32767.0);
             *s = v as i16;
         }
     }
-    fn is_enabled(&self) -> bool { self.enabled }
-    fn set_enabled(&mut self, enabled: bool) { self.enabled = enabled; }
-    fn category(&self) -> EffectCategory { EffectCategory::InputProcessing }
-    fn estimated_latency_us(&self) -> u64 { 50 }
+    fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+    fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+    fn category(&self) -> EffectCategory {
+        EffectCategory::InputProcessing
+    }
+    fn estimated_latency_us(&self) -> u64 {
+        50
+    }
 }
 
 /// Compressor — reduces dynamic range.
@@ -736,7 +762,9 @@ impl Compressor {
 }
 
 impl AudioEffect for Compressor {
-    fn name(&self) -> &str { "Compressor" }
+    fn name(&self) -> &str {
+        "Compressor"
+    }
     fn process(&mut self, samples: &mut [i16], _sample_rate: u32) {
         let rms = compute_rms(samples);
         if rms > self.threshold_rms {
@@ -748,10 +776,18 @@ impl AudioEffect for Compressor {
             }
         }
     }
-    fn is_enabled(&self) -> bool { self.enabled }
-    fn set_enabled(&mut self, enabled: bool) { self.enabled = enabled; }
-    fn category(&self) -> EffectCategory { EffectCategory::Enhancement }
-    fn estimated_latency_us(&self) -> u64 { 100 }
+    fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+    fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+    fn category(&self) -> EffectCategory {
+        EffectCategory::Enhancement
+    }
+    fn estimated_latency_us(&self) -> u64 {
+        100
+    }
 }
 
 /// Simple distortion effect.
@@ -772,7 +808,9 @@ impl Distortion {
 }
 
 impl AudioEffect for Distortion {
-    fn name(&self) -> &str { "Distortion" }
+    fn name(&self) -> &str {
+        "Distortion"
+    }
     fn process(&mut self, samples: &mut [i16], _sample_rate: u32) {
         let max = (i16::MAX as f32) * self.clip_threshold;
         for s in samples.iter_mut() {
@@ -780,10 +818,18 @@ impl AudioEffect for Distortion {
             *s = v.clamp(-max, max) as i16;
         }
     }
-    fn is_enabled(&self) -> bool { self.enabled }
-    fn set_enabled(&mut self, enabled: bool) { self.enabled = enabled; }
-    fn category(&self) -> EffectCategory { EffectCategory::Creative }
-    fn estimated_latency_us(&self) -> u64 { 50 }
+    fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+    fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+    fn category(&self) -> EffectCategory {
+        EffectCategory::Creative
+    }
+    fn estimated_latency_us(&self) -> u64 {
+        50
+    }
 }
 
 /// Simple reverb (Schroeder-style, 4 comb filters).
@@ -817,7 +863,9 @@ impl Reverb {
 }
 
 impl AudioEffect for Reverb {
-    fn name(&self) -> &str { "Reverb" }
+    fn name(&self) -> &str {
+        "Reverb"
+    }
     fn process(&mut self, samples: &mut [i16], _sample_rate: u32) {
         for s in samples.iter_mut() {
             let input = *s as f32 / i16::MAX as f32;
@@ -832,10 +880,18 @@ impl AudioEffect for Reverb {
             *s = (mixed * i16::MAX as f32).clamp(-32767.0, 32767.0) as i16;
         }
     }
-    fn is_enabled(&self) -> bool { self.enabled }
-    fn set_enabled(&mut self, enabled: bool) { self.enabled = enabled; }
-    fn category(&self) -> EffectCategory { EffectCategory::Creative }
-    fn estimated_latency_us(&self) -> u64 { 5000 } // ~5ms
+    fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+    fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+    fn category(&self) -> EffectCategory {
+        EffectCategory::Creative
+    }
+    fn estimated_latency_us(&self) -> u64 {
+        5000
+    } // ~5ms
 }
 
 // ============================================================================
@@ -873,7 +929,9 @@ impl AcousticEchoCanceller {
 }
 
 impl AudioEffect for AcousticEchoCanceller {
-    fn name(&self) -> &str { "Echo Cancellation (AEC)" }
+    fn name(&self) -> &str {
+        "Echo Cancellation (AEC)"
+    }
 
     fn process(&mut self, samples: &mut [i16], _sample_rate: u32) {
         let ref_vec: Vec<f32> = self.reference_buffer.iter().copied().collect();
@@ -919,10 +977,18 @@ impl AudioEffect for AcousticEchoCanceller {
         }
     }
 
-    fn is_enabled(&self) -> bool { self.enabled }
-    fn set_enabled(&mut self, enabled: bool) { self.enabled = enabled; }
-    fn category(&self) -> EffectCategory { EffectCategory::InputProcessing }
-    fn estimated_latency_us(&self) -> u64 { 5000 } // ~5ms
+    fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+    fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+    fn category(&self) -> EffectCategory {
+        EffectCategory::InputProcessing
+    }
+    fn estimated_latency_us(&self) -> u64 {
+        5000
+    } // ~5ms
 }
 
 // ============================================================================
@@ -971,7 +1037,14 @@ impl AudioEffectChain {
     pub fn list_effects(&self) -> Vec<(&str, bool, EffectCategory, u64)> {
         self.effects
             .iter()
-            .map(|e| (e.name(), e.is_enabled(), e.category(), e.estimated_latency_us()))
+            .map(|e| {
+                (
+                    e.name(),
+                    e.is_enabled(),
+                    e.category(),
+                    e.estimated_latency_us(),
+                )
+            })
             .collect()
     }
 
@@ -1007,7 +1080,10 @@ fn compute_rms(samples: &[i16]) -> f32 {
     if samples.is_empty() {
         return 0.0;
     }
-    let sum: f64 = samples.iter().map(|&s| (s as f64 / i16::MAX as f64).powi(2)).sum();
+    let sum: f64 = samples
+        .iter()
+        .map(|&s| (s as f64 / i16::MAX as f64).powi(2))
+        .sum();
     (sum / samples.len() as f64).sqrt() as f32
 }
 
@@ -1109,8 +1185,7 @@ impl AudioEffect for PitchShifter {
             let idx = pos as usize;
             if idx + 1 < input_len {
                 let frac = (pos - idx as f64) as f32;
-                let interpolated =
-                    self.buffer[idx] * (1.0 - frac) + self.buffer[idx + 1] * frac;
+                let interpolated = self.buffer[idx] * (1.0 - frac) + self.buffer[idx + 1] * frac;
                 output.push(interpolated);
             } else if idx < input_len {
                 output.push(self.buffer[idx]);
@@ -1186,8 +1261,7 @@ impl AudioEffect for RobotVoice {
             return;
         }
 
-        let phase_inc =
-            2.0 * std::f64::consts::PI * self.frequency as f64 / sample_rate as f64;
+        let phase_inc = 2.0 * std::f64::consts::PI * self.frequency as f64 / sample_rate as f64;
 
         for s in samples.iter_mut() {
             let modulator = self.phase.sin() as f32;
@@ -1255,9 +1329,8 @@ impl AutoTune {
         let float_samples: Vec<f32> = samples.iter().map(|&s| s as f32).collect();
 
         // Check for silence
-        let rms = (float_samples.iter().map(|s| s * s).sum::<f32>()
-            / float_samples.len() as f32)
-            .sqrt();
+        let rms =
+            (float_samples.iter().map(|s| s * s).sum::<f32>() / float_samples.len() as f32).sqrt();
         if rms < 500.0 {
             return None;
         }
@@ -1452,8 +1525,7 @@ impl AudioEffect for EchoEffect {
             let mixed = dry * (1.0 - self.mix) + delayed as f32 * self.mix;
 
             // Write to buffer: current input + feedback from delayed
-            let to_buffer = (dry + delayed as f32 * self.feedback)
-                .clamp(-32767.0, 32767.0) as i16;
+            let to_buffer = (dry + delayed as f32 * self.feedback).clamp(-32767.0, 32767.0) as i16;
             self.buffer[self.write_pos] = to_buffer;
 
             // Output
@@ -1517,9 +1589,7 @@ impl AudioEffect for MegaphoneEffect {
 
         // Single-pole IIR coefficients for approximate bandpass:
         // High-pass at ~300 Hz: alpha_hp = 1 / (1 + 2pi * fc / fs)
-        let hp_alpha = 1.0
-            / (1.0
-                + 2.0 * std::f32::consts::PI * 300.0 / sample_rate as f32);
+        let hp_alpha = 1.0 / (1.0 + 2.0 * std::f32::consts::PI * 300.0 / sample_rate as f32);
 
         // Low-pass at ~3000 Hz: alpha_lp = 2pi * fc / (2pi * fc + fs)
         let lp_rc = 1.0 / (2.0 * std::f32::consts::PI * 3000.0);
@@ -1548,7 +1618,10 @@ impl AudioEffect for MegaphoneEffect {
             *s = (clipped * i16::MAX as f32).clamp(-32767.0, 32767.0) as i16;
         }
 
-        self.prev_sample = samples.last().map(|&s| s as f32 / i16::MAX as f32).unwrap_or(0.0);
+        self.prev_sample = samples
+            .last()
+            .map(|&s| s as f32 / i16::MAX as f32)
+            .unwrap_or(0.0);
     }
 
     fn is_enabled(&self) -> bool {
@@ -1639,12 +1712,8 @@ impl IntelligentNoiseReducer {
             / samples.len() as f32;
 
         // Spectral flatness approximation via ratio of geometric/arithmetic mean of |samples|
-        let abs_samples: Vec<f32> = samples
-            .iter()
-            .map(|&s| (s as f32).abs().max(1.0))
-            .collect();
-        let log_mean =
-            abs_samples.iter().map(|s| s.ln()).sum::<f32>() / abs_samples.len() as f32;
+        let abs_samples: Vec<f32> = samples.iter().map(|&s| (s as f32).abs().max(1.0)).collect();
+        let log_mean = abs_samples.iter().map(|s| s.ln()).sum::<f32>() / abs_samples.len() as f32;
         let geo_mean = log_mean.exp();
         let arith_mean = abs_samples.iter().sum::<f32>() / abs_samples.len() as f32;
         let flatness = geo_mean / arith_mean.max(1.0); // 0=tonal(voice), 1=flat(noise)
@@ -1792,7 +1861,10 @@ mod tests {
         let similarity = verifier.compare(&emb_low, &emb_high);
         // Pure sine waves may have high cosine similarity in simplified MFCC
         // but the embeddings should not be identical
-        assert!(emb_low.vector != emb_high.vector, "Embeddings should differ");
+        assert!(
+            emb_low.vector != emb_high.vector,
+            "Embeddings should differ"
+        );
         // Similarity can be high for synthetic signals — real speech differs more
         assert!(similarity <= 1.0);
     }
@@ -1894,7 +1966,9 @@ mod tests {
         assert_eq!(diarizer.speaker_count(), 0);
 
         // Generate speech-like audio (loud enough to not be inconclusive)
-        let audio: Vec<i16> = (0..32000).map(|i| ((i % 73) as i16 * 400) - 14000).collect();
+        let audio: Vec<i16> = (0..32000)
+            .map(|i| ((i % 73) as i16 * 400) - 14000)
+            .collect();
         let result = diarizer.process(&audio, 16000);
 
         match result {
@@ -1913,7 +1987,9 @@ mod tests {
         let mut diarizer = SpeakerDiarizer::with_defaults(verifier);
 
         // Same audio twice should be assigned to same cluster
-        let audio: Vec<i16> = (0..32000).map(|i| ((i % 73) as i16 * 400) - 14000).collect();
+        let audio: Vec<i16> = (0..32000)
+            .map(|i| ((i % 73) as i16 * 400) - 14000)
+            .collect();
         let _ = diarizer.process(&audio, 16000); // creates Speaker 1
 
         let result = diarizer.process(&audio, 16000); // should match Speaker 1
@@ -1934,7 +2010,9 @@ mod tests {
         let verifier = Box::new(MfccSpeakerVerifier::new());
         let mut diarizer = SpeakerDiarizer::with_defaults(verifier);
 
-        let audio: Vec<i16> = (0..32000).map(|i| ((i % 73) as i16 * 400) - 14000).collect();
+        let audio: Vec<i16> = (0..32000)
+            .map(|i| ((i % 73) as i16 * 400) - 14000)
+            .collect();
         let _ = diarizer.process(&audio, 16000);
         assert!(diarizer.speaker_count() > 0);
 
@@ -1960,18 +2038,27 @@ mod tests {
         let mut diarizer = SpeakerDiarizer::new(verifier, 0.99, 2); // very high threshold, max 2
 
         // With threshold 0.99, almost nothing will match, so each call creates a new cluster
-        let a1: Vec<i16> = (0..32000).map(|i| ((i as i32 % 50) * 400 - 10000) as i16).collect();
+        let a1: Vec<i16> = (0..32000)
+            .map(|i| ((i as i32 % 50) * 400 - 10000) as i16)
+            .collect();
         let _ = diarizer.process(&a1, 16000);
 
-        let a2: Vec<i16> = (0..32000).map(|i| ((i as i32 % 120) * 200 - 12000) as i16).collect();
+        let a2: Vec<i16> = (0..32000)
+            .map(|i| ((i as i32 % 120) * 200 - 12000) as i16)
+            .collect();
         let _ = diarizer.process(&a2, 16000);
 
         // At max — should not create a third
-        let a3: Vec<i16> = (0..32000).map(|i| ((i as i32 % 200) * 150 - 5000) as i16).collect();
+        let a3: Vec<i16> = (0..32000)
+            .map(|i| ((i as i32 % 200) * 150 - 5000) as i16)
+            .collect();
         let result = diarizer.process(&a3, 16000);
         assert!(diarizer.speaker_count() <= 2);
         // Should be Assigned (forced) since we hit the limit
-        assert!(!matches!(result, DiarizationResult::NewSpeaker { .. }) || diarizer.speaker_count() <= 2);
+        assert!(
+            !matches!(result, DiarizationResult::NewSpeaker { .. })
+                || diarizer.speaker_count() <= 2
+        );
     }
 
     #[test]
@@ -2033,8 +2120,16 @@ mod tests {
             id: "test".into(),
             name: "Test".into(),
             embeddings: vec![
-                VoiceEmbedding { vector: vec![1.0, 2.0, 3.0], model_id: "test".into(), sample_duration_ms: 1000 },
-                VoiceEmbedding { vector: vec![3.0, 4.0, 5.0], model_id: "test".into(), sample_duration_ms: 1000 },
+                VoiceEmbedding {
+                    vector: vec![1.0, 2.0, 3.0],
+                    model_id: "test".into(),
+                    sample_duration_ms: 1000,
+                },
+                VoiceEmbedding {
+                    vector: vec![3.0, 4.0, 5.0],
+                    model_id: "test".into(),
+                    sample_duration_ms: 1000,
+                },
             ],
             mean_embedding: Vec::new(),
             threshold: 0.7,
@@ -2074,14 +2169,19 @@ mod tests {
         shifter.process(&mut processed, 16000);
         // Darth Vader shifts down: reads slower, so output uses only the first portion
         // of the input. The output should differ from the original.
-        assert_ne!(original, processed, "Darth Vader shift should modify the audio");
+        assert_ne!(
+            original, processed,
+            "Darth Vader shift should modify the audio"
+        );
         // With -8 semitones, ratio < 1, so it reads only about 63% of input.
         // The last sample should still come from valid input (not zero).
         let last = *processed.last().unwrap_or(&0);
         // For a continuous sine, the last sample from a slower read should be non-zero
         // (it's reading the middle of the sine wave, not past the end).
-        assert!(last != 0 || processed.iter().any(|&s| s != 0),
-            "Pitch-down should produce non-trivial output");
+        assert!(
+            last != 0 || processed.iter().any(|&s| s != 0),
+            "Pitch-down should produce non-trivial output"
+        );
     }
 
     #[test]
@@ -2128,7 +2228,7 @@ mod tests {
         let mut echo = EchoEffect::default_echo();
         // Start with silence then a burst
         let mut samples = vec![0i16; 4800]; // 300ms at 16kHz
-        // Put a pulse at the beginning
+                                            // Put a pulse at the beginning
         samples[0] = 16000;
         echo.process(&mut samples, 16000);
         // The echo of the initial pulse should appear at ~300ms = 4800 samples
@@ -2139,7 +2239,10 @@ mod tests {
         let sum: i64 = samples.iter().map(|&s| s.abs() as i64).sum();
         assert!(sum > 0, "Echo should produce non-zero output");
         // The first sample should contain the dry pulse
-        assert!(samples[0].abs() > 0, "First sample should have the dry pulse");
+        assert!(
+            samples[0].abs() > 0,
+            "First sample should have the dry pulse"
+        );
     }
 
     #[test]
@@ -2201,7 +2304,11 @@ mod tests {
         let mut noise: Vec<i16> = (0..800)
             .map(|i| {
                 // Alternating high-frequency noise-like pattern
-                if i % 2 == 0 { 10000 } else { -10000 }
+                if i % 2 == 0 {
+                    10000
+                } else {
+                    -10000
+                }
             })
             .collect();
         let noise_rms_before = compute_rms_i16(&noise);
@@ -2274,7 +2381,10 @@ mod tests {
         chain.process_frame(&mut samples, 16000);
 
         // All effects enabled — audio should be significantly modified
-        assert_ne!(original, samples, "Chain of all effects should modify audio");
+        assert_ne!(
+            original, samples,
+            "Chain of all effects should modify audio"
+        );
 
         // Verify all 6 effects are listed
         let effects = chain.list_effects();

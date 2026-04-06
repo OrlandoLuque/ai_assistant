@@ -335,8 +335,7 @@ fn erf_approx(x: f64) -> f64 {
     let t = 1.0 / (1.0 + 0.3275911 * x);
     let poly = t
         * (0.254829592
-            + t * (-0.284496736
-                + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
+            + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
     sign * (1.0 - poly * (-x * x).exp())
 }
 
@@ -405,24 +404,21 @@ fn single_value_distance(a: &ConfigValue, b: &ConfigValue) -> f64 {
 }
 
 /// Generate a deterministic candidate configuration.
-fn generate_candidate(
-    feature_names: &[String],
-    index: usize,
-    total: usize,
-) -> ConfigPoint {
+fn generate_candidate(feature_names: &[String], index: usize, total: usize) -> ConfigPoint {
     let mut point = ConfigPoint::new();
     for (i, name) in feature_names.iter().enumerate() {
         // Use a simple deterministic pattern based on index
         let phase = (index as f64 * std::f64::consts::PI * (i + 1) as f64 / total as f64).sin();
-        let value = if name.contains("temperature") || name.contains("top_p") || name.contains("penalty") {
-            ConfigValue::Float((phase * 0.5 + 0.5).clamp(0.0, 1.0))
-        } else if name.contains("tokens") || name.contains("size") || name.contains("count") {
-            ConfigValue::Uint(((phase * 0.5 + 0.5) * 2048.0) as usize)
-        } else if name.contains("model") || name.contains("provider") {
-            ConfigValue::Str(format!("variant_{}", index % 4))
-        } else {
-            ConfigValue::Bool(phase > 0.0)
-        };
+        let value =
+            if name.contains("temperature") || name.contains("top_p") || name.contains("penalty") {
+                ConfigValue::Float((phase * 0.5 + 0.5).clamp(0.0, 1.0))
+            } else if name.contains("tokens") || name.contains("size") || name.contains("count") {
+                ConfigValue::Uint(((phase * 0.5 + 0.5) * 2048.0) as usize)
+            } else if name.contains("model") || name.contains("provider") {
+                ConfigValue::Str(format!("variant_{}", index % 4))
+            } else {
+                ConfigValue::Bool(phase > 0.0)
+            };
         point.insert(name.clone(), value);
     }
     point
@@ -489,8 +485,14 @@ impl ConfigOptimizer {
             ("chunk_size".to_string(), ConfigValue::Uint(512)),
             ("chunk_overlap".to_string(), ConfigValue::Uint(64)),
             ("retrieval_count".to_string(), ConfigValue::Uint(5)),
-            ("model_provider".to_string(), ConfigValue::Str("ollama".to_string())),
-            ("model_name".to_string(), ConfigValue::Str("llama3".to_string())),
+            (
+                "model_provider".to_string(),
+                ConfigValue::Str("ollama".to_string()),
+            ),
+            (
+                "model_name".to_string(),
+                ConfigValue::Str("llama3".to_string()),
+            ),
         ]
     }
 
@@ -575,8 +577,12 @@ impl ConfigOptimizer {
     /// and transition to BayesianSearch.
     pub fn finalize_ablation(&mut self) {
         // Sort by absolute impact (descending)
-        self.ablation_results
-            .sort_by(|a, b| b.impact.abs().partial_cmp(&a.impact.abs()).unwrap_or(std::cmp::Ordering::Equal));
+        self.ablation_results.sort_by(|a, b| {
+            b.impact
+                .abs()
+                .partial_cmp(&a.impact.abs())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         // Re-assign ranks
         for (i, result) in self.ablation_results.iter_mut().enumerate() {
@@ -612,7 +618,9 @@ impl ConfigOptimizer {
         }
 
         // Suggest the next point
-        let candidate = self.surrogate.suggest_next(&self.important_features, self.best_score);
+        let candidate = self
+            .surrogate
+            .suggest_next(&self.important_features, self.best_score);
 
         // Evaluate
         let score = benchmark_fn(&candidate);
@@ -748,10 +756,7 @@ impl ConfigOptimizer {
     // -----------------------------------------------------------------------
 
     /// Automatically select the appropriate phase and run one round.
-    pub fn run_round(
-        &mut self,
-        benchmark_fn: &dyn Fn(&ConfigPoint) -> f64,
-    ) -> EvaluationResult {
+    pub fn run_round(&mut self, benchmark_fn: &dyn Fn(&ConfigPoint) -> f64) -> EvaluationResult {
         // Auto-run ablation if not done yet
         if self.phase == OptimizationPhase::Ablation {
             let features = Self::discover_features();
@@ -764,9 +769,7 @@ impl ConfigOptimizer {
                 .map(|r| r.feature_name.clone())
                 .collect();
 
-            let next_feature = features
-                .iter()
-                .find(|(name, _)| !ablated.contains(name));
+            let next_feature = features.iter().find(|(name, _)| !ablated.contains(name));
 
             if let Some((name, _)) = next_feature {
                 let name = name.clone();
@@ -804,18 +807,21 @@ impl ConfigOptimizer {
         }
 
         // Done phase — return last result or a no-op
-        self.evaluations.last().cloned().unwrap_or(EvaluationResult {
-            config_point: ConfigPoint::new(),
-            quality_score: self.best_score,
-            latency_ms: None,
-            tokens_per_second: None,
-            cost_usd: 0.0,
-            code_version: self.code_version.clone(),
-            timestamp: current_timestamp(),
-            phase: OptimizationPhase::Done,
-            mode: "quality".to_string(),
-            benchmark_name: "done".to_string(),
-        })
+        self.evaluations
+            .last()
+            .cloned()
+            .unwrap_or(EvaluationResult {
+                config_point: ConfigPoint::new(),
+                quality_score: self.best_score,
+                latency_ms: None,
+                tokens_per_second: None,
+                cost_usd: 0.0,
+                code_version: self.code_version.clone(),
+                timestamp: current_timestamp(),
+                phase: OptimizationPhase::Done,
+                mode: "quality".to_string(),
+                benchmark_name: "done".to_string(),
+            })
     }
 
     // -----------------------------------------------------------------------
@@ -920,16 +926,25 @@ impl ConfigOptimizer {
     pub fn save(&self, path: &std::path::Path) -> Result<(), String> {
         let json = serde_json::to_string_pretty(self)
             .map_err(|e| format!("Failed to serialize optimizer: {}", e))?;
-        std::fs::write(path, json)
-            .map_err(|e| format!("Failed to write optimizer state to {}: {}", path.display(), e))
+        std::fs::write(path, json).map_err(|e| {
+            format!(
+                "Failed to write optimizer state to {}: {}",
+                path.display(),
+                e
+            )
+        })
     }
 
     /// Load optimizer state from a JSON file.
     pub fn load(path: &std::path::Path) -> Result<Self, String> {
-        let data = std::fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read optimizer state from {}: {}", path.display(), e))?;
-        serde_json::from_str(&data)
-            .map_err(|e| format!("Failed to deserialize optimizer: {}", e))
+        let data = std::fs::read_to_string(path).map_err(|e| {
+            format!(
+                "Failed to read optimizer state from {}: {}",
+                path.display(),
+                e
+            )
+        })?;
+        serde_json::from_str(&data).map_err(|e| format!("Failed to deserialize optimizer: {}", e))
     }
 
     // -----------------------------------------------------------------------
@@ -1013,24 +1028,12 @@ impl ConfigOptimizer {
             .iter()
             .map(|r| r.feature_name.clone())
             .collect();
-        let feature_impacts: Vec<f64> = self
-            .ablation_results
-            .iter()
-            .map(|r| r.impact)
-            .collect();
+        let feature_impacts: Vec<f64> = self.ablation_results.iter().map(|r| r.impact).collect();
 
-        let score_evolution: Vec<f64> = self
-            .evaluations
-            .iter()
-            .map(|e| e.quality_score)
-            .collect();
+        let score_evolution: Vec<f64> = self.evaluations.iter().map(|e| e.quality_score).collect();
         let score_labels: Vec<usize> = (1..=score_evolution.len()).collect();
 
-        let quality_vals: Vec<f64> = self
-            .evaluations
-            .iter()
-            .map(|e| e.quality_score)
-            .collect();
+        let quality_vals: Vec<f64> = self.evaluations.iter().map(|e| e.quality_score).collect();
         let latency_vals: Vec<f64> = self
             .evaluations
             .iter()
@@ -1042,15 +1045,23 @@ impl ConfigOptimizer {
         let arm_thompson: Vec<f64> = self.arms.iter().map(|a| a.thompson_score()).collect();
 
         // JSON-encode
-        let feature_names_json = serde_json::to_string(&feature_names).unwrap_or_else(|_| "[]".to_string());
-        let feature_impacts_json = serde_json::to_string(&feature_impacts).unwrap_or_else(|_| "[]".to_string());
-        let score_labels_json = serde_json::to_string(&score_labels).unwrap_or_else(|_| "[]".to_string());
-        let score_evolution_json = serde_json::to_string(&score_evolution).unwrap_or_else(|_| "[]".to_string());
-        let quality_json = serde_json::to_string(&quality_vals).unwrap_or_else(|_| "[]".to_string());
-        let latency_json = serde_json::to_string(&latency_vals).unwrap_or_else(|_| "[]".to_string());
+        let feature_names_json =
+            serde_json::to_string(&feature_names).unwrap_or_else(|_| "[]".to_string());
+        let feature_impacts_json =
+            serde_json::to_string(&feature_impacts).unwrap_or_else(|_| "[]".to_string());
+        let score_labels_json =
+            serde_json::to_string(&score_labels).unwrap_or_else(|_| "[]".to_string());
+        let score_evolution_json =
+            serde_json::to_string(&score_evolution).unwrap_or_else(|_| "[]".to_string());
+        let quality_json =
+            serde_json::to_string(&quality_vals).unwrap_or_else(|_| "[]".to_string());
+        let latency_json =
+            serde_json::to_string(&latency_vals).unwrap_or_else(|_| "[]".to_string());
         let arm_ids_json = serde_json::to_string(&arm_ids).unwrap_or_else(|_| "[]".to_string());
-        let arm_rewards_json = serde_json::to_string(&arm_rewards).unwrap_or_else(|_| "[]".to_string());
-        let arm_thompson_json = serde_json::to_string(&arm_thompson).unwrap_or_else(|_| "[]".to_string());
+        let arm_rewards_json =
+            serde_json::to_string(&arm_rewards).unwrap_or_else(|_| "[]".to_string());
+        let arm_thompson_json =
+            serde_json::to_string(&arm_thompson).unwrap_or_else(|_| "[]".to_string());
 
         format!(
             r#"<!DOCTYPE html>
@@ -1266,8 +1277,7 @@ pub fn compute_reward(result: &EvaluationResult, goal: &OptimizationGoal) -> f64
             }
             let latency_score = (1.0 - latency / (latency + 1000.0)).clamp(0.0, 1.0);
             let cost_score = (1.0 - cost / (cost + 1.0)).clamp(0.0, 1.0);
-            (quality_w * quality + latency_w * latency_score + cost_w * cost_score)
-                / total_w
+            (quality_w * quality + latency_w * latency_score + cost_w * cost_score) / total_w
         }
     }
 }
@@ -1321,7 +1331,10 @@ mod tests {
         a.insert("y".to_string(), ConfigValue::Bool(true));
 
         let dist = config_distance(&a, &a);
-        assert!((dist - 0.0).abs() < 1e-10, "Same config should have distance 0");
+        assert!(
+            (dist - 0.0).abs() < 1e-10,
+            "Same config should have distance 0"
+        );
     }
 
     #[test]
@@ -1332,7 +1345,10 @@ mod tests {
         b.insert("x".to_string(), ConfigValue::Bool(false));
 
         let dist = config_distance(&a, &b);
-        assert!((dist - 1.0).abs() < 1e-10, "Opposite bools should have distance 1");
+        assert!(
+            (dist - 1.0).abs() < 1e-10,
+            "Opposite bools should have distance 1"
+        );
     }
 
     #[test]
@@ -1347,7 +1363,11 @@ mod tests {
 
         let dist = config_distance(&a, &b);
         // x: |0-1|/max(1,1) = 1.0, y: same = 0.0, average = 0.5
-        assert!((dist - 0.5).abs() < 1e-10, "Mixed distance should be 0.5, got {}", dist);
+        assert!(
+            (dist - 0.5).abs() < 1e-10,
+            "Mixed distance should be 0.5, got {}",
+            dist
+        );
     }
 
     #[test]
@@ -1377,7 +1397,11 @@ mod tests {
         let (mean, _uncertainty) = model.predict(&query);
 
         // With 2 observations and k=5, both are neighbors. Mean = (0.3+0.9)/2 = 0.6
-        assert!((mean - 0.6).abs() < 1e-10, "Mean should be 0.6, got {}", mean);
+        assert!(
+            (mean - 0.6).abs() < 1e-10,
+            "Mean should be 0.6, got {}",
+            mean
+        );
     }
 
     #[test]
@@ -1568,7 +1592,11 @@ mod tests {
         };
 
         let reward = compute_reward(&result, &OptimizationGoal::Balanced);
-        assert!(reward > 0.0 && reward <= 1.0, "Balanced reward should be in (0,1], got {}", reward);
+        assert!(
+            reward > 0.0 && reward <= 1.0,
+            "Balanced reward should be in (0,1], got {}",
+            reward
+        );
 
         // Quality component: 0.5 * 0.8 = 0.4
         // Latency component: 0.3 * (1 - 200/1200) = 0.3 * 0.833 ≈ 0.25
@@ -1597,11 +1625,19 @@ mod tests {
             ..good_result.clone()
         };
 
-        let reward_good = compute_reward(&good_result, &OptimizationGoal::CheapestAboveThreshold(0.8));
-        let reward_bad = compute_reward(&bad_result, &OptimizationGoal::CheapestAboveThreshold(0.8));
+        let reward_good =
+            compute_reward(&good_result, &OptimizationGoal::CheapestAboveThreshold(0.8));
+        let reward_bad =
+            compute_reward(&bad_result, &OptimizationGoal::CheapestAboveThreshold(0.8));
 
-        assert!(reward_good > reward_bad, "Above-threshold should have higher reward");
-        assert!(reward_good > 0.9, "Very cheap + above threshold should score high");
+        assert!(
+            reward_good > reward_bad,
+            "Above-threshold should have higher reward"
+        );
+        assert!(
+            reward_good > 0.9,
+            "Very cheap + above threshold should score high"
+        );
     }
 
     #[test]
@@ -1617,8 +1653,14 @@ mod tests {
     fn test_report_html_contains_chartjs() {
         let optimizer = ConfigOptimizer::new(OptimizerConfig::default());
         let html = optimizer.report_html();
-        assert!(html.contains("chart.js"), "HTML should reference Chart.js CDN");
-        assert!(html.contains("<canvas"), "HTML should contain canvas elements");
+        assert!(
+            html.contains("chart.js"),
+            "HTML should reference Chart.js CDN"
+        );
+        assert!(
+            html.contains("<canvas"),
+            "HTML should contain canvas elements"
+        );
         assert!(html.contains("Feature Importance"));
         assert!(html.contains("Score Evolution"));
     }
@@ -1627,7 +1669,10 @@ mod tests {
     fn test_discover_features_not_empty() {
         let features = ConfigOptimizer::discover_features();
         assert!(!features.is_empty());
-        assert!(features.len() >= 10, "Should have at least 10 configurable features");
+        assert!(
+            features.len() >= 10,
+            "Should have at least 10 configurable features"
+        );
 
         let names: Vec<&str> = features.iter().map(|(n, _)| n.as_str()).collect();
         assert!(names.contains(&"temperature"));

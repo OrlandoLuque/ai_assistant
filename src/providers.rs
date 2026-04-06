@@ -597,15 +597,18 @@ pub fn generate_response_streaming(
     let pii_conversation: Vec<ChatMessage>;
     let conversation = if config.provider.is_cloud() {
         let mut tokenizer = crate::pii_tokenizer::PiiTokenizer::with_default();
-        pii_conversation = conversation.iter().map(|msg| {
-            let (masked_content, map) = tokenizer.mask(&msg.content);
-            pii_map.extend(map);
-            ChatMessage {
-                role: msg.role.clone(),
-                content: masked_content,
-                ..msg.clone()
-            }
-        }).collect();
+        pii_conversation = conversation
+            .iter()
+            .map(|msg| {
+                let (masked_content, map) = tokenizer.mask(&msg.content);
+                pii_map.extend(map);
+                ChatMessage {
+                    role: msg.role.clone(),
+                    content: masked_content,
+                    ..msg.clone()
+                }
+            })
+            .collect();
         pii_conversation.as_slice()
     } else {
         conversation
@@ -621,12 +624,19 @@ pub fn generate_response_streaming(
     );
     crate::diag_debug!(
         "[provider] streaming to {:?}: model={}, messages={}, system_prompt_len={}",
-        config.provider, config.selected_model, conversation.len(), system_prompt.len()
+        config.provider,
+        config.selected_model,
+        conversation.len(),
+        system_prompt.len()
     );
     crate::safe_diag_trace!("[provider] system_prompt={:.1000}", system_prompt);
     #[cfg(feature = "diagnostic-logging")]
     if let Some(last) = conversation.last() {
-        crate::safe_diag_trace!("[provider] last_message ({:?}): {:.500}", last.role, last.content);
+        crate::safe_diag_trace!(
+            "[provider] last_message ({:?}): {:.500}",
+            last.role,
+            last.content
+        );
     }
 
     let result = match &config.provider {
@@ -663,7 +673,8 @@ pub fn generate_response_streaming(
                 "[llm] provider=Gemini model={} fallback=non-streaming reason=gemini_custom_api",
                 config.selected_model
             );
-            let response = crate::cloud_providers::generate_gemini_cloud(config, conversation, system_prompt)?;
+            let response =
+                crate::cloud_providers::generate_gemini_cloud(config, conversation, system_prompt)?;
             let _ = tx.send(AiResponse::Complete(response));
             Ok(())
         }
@@ -705,15 +716,18 @@ pub fn generate_response(
     let pii_conversation: Vec<ChatMessage>;
     let conversation = if config.provider.is_cloud() {
         let mut tokenizer = crate::pii_tokenizer::PiiTokenizer::with_default();
-        pii_conversation = conversation.iter().map(|msg| {
-            let (masked_content, map) = tokenizer.mask(&msg.content);
-            pii_map.extend(map);
-            ChatMessage {
-                role: msg.role.clone(),
-                content: masked_content,
-                ..msg.clone()
-            }
-        }).collect();
+        pii_conversation = conversation
+            .iter()
+            .map(|msg| {
+                let (masked_content, map) = tokenizer.mask(&msg.content);
+                pii_map.extend(map);
+                ChatMessage {
+                    role: msg.role.clone(),
+                    content: masked_content,
+                    ..msg.clone()
+                }
+            })
+            .collect();
         pii_conversation.as_slice()
     } else {
         conversation
@@ -727,12 +741,19 @@ pub fn generate_response(
     );
     crate::diag_debug!(
         "[provider] sending to {:?}: model={}, messages={}, system_prompt_len={}",
-        config.provider, config.selected_model, conversation.len(), system_prompt.len()
+        config.provider,
+        config.selected_model,
+        conversation.len(),
+        system_prompt.len()
     );
     crate::safe_diag_trace!("[provider] system_prompt={:.1000}", system_prompt);
     #[cfg(feature = "diagnostic-logging")]
     if let Some(last) = conversation.last() {
-        crate::safe_diag_trace!("[provider] last_message ({:?}): {:.500}", last.role, last.content);
+        crate::safe_diag_trace!(
+            "[provider] last_message ({:?}): {:.500}",
+            last.role,
+            last.content
+        );
     }
 
     let result = match &config.provider {
@@ -751,9 +772,7 @@ pub fn generate_response(
         | AiProvider::DeepSeek
         | AiProvider::Mistral
         | AiProvider::Perplexity
-        | AiProvider::OpenRouter => {
-            generate_openai_response(config, conversation, system_prompt)
-        }
+        | AiProvider::OpenRouter => generate_openai_response(config, conversation, system_prompt),
         AiProvider::Gemini => {
             crate::cloud_providers::generate_gemini_cloud(config, conversation, system_prompt)
         }
@@ -979,15 +998,18 @@ pub fn generate_response_streaming_cancellable(
     let pii_conversation: Vec<ChatMessage>;
     let conversation = if config.provider.is_cloud() {
         let mut tokenizer = crate::pii_tokenizer::PiiTokenizer::with_default();
-        pii_conversation = conversation.iter().map(|msg| {
-            let (masked_content, map) = tokenizer.mask(&msg.content);
-            _pii_map.extend(map);
-            ChatMessage {
-                role: msg.role.clone(),
-                content: masked_content,
-                ..msg.clone()
-            }
-        }).collect();
+        pii_conversation = conversation
+            .iter()
+            .map(|msg| {
+                let (masked_content, map) = tokenizer.mask(&msg.content);
+                _pii_map.extend(map);
+                ChatMessage {
+                    role: msg.role.clone(),
+                    content: masked_content,
+                    ..msg.clone()
+                }
+            })
+            .collect();
         pii_conversation.as_slice()
     } else {
         conversation
@@ -1071,7 +1093,8 @@ pub fn generate_response_streaming_cancellable(
                 "[llm] provider=Gemini model={} fallback=non-streaming reason=gemini_custom_api",
                 config.selected_model
             );
-            let response = crate::cloud_providers::generate_gemini_cloud(config, conversation, system_prompt)?;
+            let response =
+                crate::cloud_providers::generate_gemini_cloud(config, conversation, system_prompt)?;
             let _ = tx.send(AiResponse::Complete(response));
             Ok(())
         }
@@ -1149,32 +1172,26 @@ pub fn fetch_model_context_size(config: &AiConfig, model_name: &str) -> Option<u
             // Bedrock typically runs Claude models with 200K context
             Some(200_000)
         }
-        AiProvider::Groq => {
-            match model_name {
-                m if m.contains("llama-3.3-70b") => Some(128_000),
-                m if m.contains("llama-3.1") => Some(131_072),
-                m if m.contains("mixtral") => Some(32_768),
-                m if m.contains("gemma") => Some(8_192),
-                _ => Some(128_000),
-            }
-        }
+        AiProvider::Groq => match model_name {
+            m if m.contains("llama-3.3-70b") => Some(128_000),
+            m if m.contains("llama-3.1") => Some(131_072),
+            m if m.contains("mixtral") => Some(32_768),
+            m if m.contains("gemma") => Some(8_192),
+            _ => Some(128_000),
+        },
         AiProvider::Together | AiProvider::Fireworks => Some(128_000),
-        AiProvider::DeepSeek => {
-            match model_name {
-                m if m.contains("deepseek-chat") || m.contains("deepseek-v3") => Some(64_000),
-                m if m.contains("deepseek-coder") => Some(128_000),
-                m if m.contains("deepseek-reasoner") => Some(64_000),
-                _ => Some(64_000),
-            }
-        }
-        AiProvider::Mistral => {
-            match model_name {
-                m if m.contains("large") => Some(128_000),
-                m if m.contains("medium") || m.contains("small") => Some(32_000),
-                m if m.contains("codestral") => Some(256_000),
-                _ => Some(128_000),
-            }
-        }
+        AiProvider::DeepSeek => match model_name {
+            m if m.contains("deepseek-chat") || m.contains("deepseek-v3") => Some(64_000),
+            m if m.contains("deepseek-coder") => Some(128_000),
+            m if m.contains("deepseek-reasoner") => Some(64_000),
+            _ => Some(64_000),
+        },
+        AiProvider::Mistral => match model_name {
+            m if m.contains("large") => Some(128_000),
+            m if m.contains("medium") || m.contains("small") => Some(32_000),
+            m if m.contains("codestral") => Some(256_000),
+            _ => Some(128_000),
+        },
         AiProvider::Perplexity => Some(128_000),
         AiProvider::OpenRouter => Some(128_000),
     }
@@ -1391,7 +1408,8 @@ impl ProviderRegistry {
     /// Remove a canonical entry (and any aliases pointing to it).
     pub fn remove(&mut self, provider_model: &str) {
         self.entries.remove(provider_model);
-        self.aliases.retain(|_alias, target| target != provider_model);
+        self.aliases
+            .retain(|_alias, target| target != provider_model);
     }
 
     /// Return the number of canonical entries (excluding aliases).
@@ -1752,7 +1770,9 @@ impl ConnectionPoolHandle {
                 .build();
             self.agents.insert(host.to_string(), agent);
         }
-        self.agents.get(host).expect("agent must exist after insert in get_agent")
+        self.agents
+            .get(host)
+            .expect("agent must exist after insert in get_agent")
     }
 }
 
@@ -2003,15 +2023,8 @@ impl ResilientProviderRegistry {
             if let Some(ref injector) = self.fault_injector {
                 let result = injector.check(name, &format!("provider:{}", name));
                 if result.injected {
-                    let fault_desc = result
-                        .rule_name
-                        .as_deref()
-                        .unwrap_or("unknown");
-                    log::warn!(
-                        "[llm] fault_injected provider={} rule={}",
-                        name,
-                        fault_desc
-                    );
+                    let fault_desc = result.rule_name.as_deref().unwrap_or("unknown");
+                    log::warn!("[llm] fault_injected provider={} rule={}", name, fault_desc);
                     errors.push((name.clone(), format!("Injected fault: {}", fault_desc)));
                     self.record_failure(name);
                     continue;
@@ -2043,18 +2056,12 @@ impl ResilientProviderRegistry {
             };
 
             tried_any = true;
-            log::info!(
-                "[llm] resilient provider={} attempting_request",
-                name
-            );
+            log::info!("[llm] resilient provider={} attempting_request", name);
 
             match operation(cfg) {
                 Ok(value) => {
                     self.record_success(name);
-                    log::info!(
-                        "[llm] resilient provider={} status=ok",
-                        name
-                    );
+                    log::info!("[llm] resilient provider={} status=ok", name);
                     return Ok((value, name.clone()));
                 }
                 Err(e) => {
@@ -2130,8 +2137,7 @@ impl ResilientProviderRegistry {
 
     /// Manually set the health status for a provider.
     pub fn set_health_status(&mut self, provider_name: &str, status: ProviderHealthStatus) {
-        self.health_status
-            .insert(provider_name.to_string(), status);
+        self.health_status.insert(provider_name.to_string(), status);
     }
 
     /// Perform a lightweight health check against a provider by issuing a
@@ -2140,15 +2146,8 @@ impl ResilientProviderRegistry {
     /// The result is stored in the internal health-status map and also returned.
     pub fn check_health(&mut self, provider: &ProviderConfig) -> ProviderHealthStatus {
         let url = format!("{}/", provider.base_url);
-        log::debug!(
-            "[llm] health_check provider={} url={}",
-            provider.name,
-            url
-        );
-        let status = match ureq::get(&url)
-            .timeout(Duration::from_secs(5))
-            .call()
-        {
+        log::debug!("[llm] health_check provider={} url={}", provider.name, url);
+        let status = match ureq::get(&url).timeout(Duration::from_secs(5)).call() {
             Ok(_) => ProviderHealthStatus::Healthy,
             Err(ureq::Error::Status(code, _)) if code < 500 => ProviderHealthStatus::Degraded,
             Err(_) => ProviderHealthStatus::Unhealthy,
@@ -2227,10 +2226,7 @@ impl ResilientProviderRegistry {
     pub fn is_rate_limited(&self, provider_name: &str) -> bool {
         if let Some(state) = self.rate_limits.get(provider_name) {
             // Check if we have a reset_at and it's in the future
-            let within_window = state
-                .reset_at
-                .map(|r| Instant::now() < r)
-                .unwrap_or(false);
+            let within_window = state.reset_at.map(|r| Instant::now() < r).unwrap_or(false);
 
             if !within_window {
                 return false;
@@ -2374,8 +2370,10 @@ impl AuditedProvider {
             0.0
         };
 
-        let mut by_provider: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-        let mut by_model: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        let mut by_provider: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        let mut by_model: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
         for entry in log.iter() {
             *by_provider.entry(entry.provider.clone()).or_insert(0) += 1;
             *by_model.entry(entry.model.clone()).or_insert(0) += 1;
@@ -2513,7 +2511,10 @@ mod provider_registry_tests {
         // claude alias
         let claude = reg.resolve("claude");
         assert!(claude.is_some());
-        assert_eq!(claude.expect("just checked").selected_model, "claude-sonnet");
+        assert_eq!(
+            claude.expect("just checked").selected_model,
+            "claude-sonnet"
+        );
     }
 
     #[test]
@@ -2569,7 +2570,9 @@ mod provider_registry_tests {
             AiProvider::OpenAI,
         );
         assert_eq!(
-            reg.resolve("anthropic/claude-haiku").expect("exists").provider,
+            reg.resolve("anthropic/claude-haiku")
+                .expect("exists")
+                .provider,
             AiProvider::Anthropic,
         );
         assert_eq!(
@@ -2832,9 +2835,15 @@ mod resilient_registry_tests {
         // Record 3 failures
         reg.record_failure("primary");
         reg.record_failure("primary");
-        assert!(!reg.is_circuit_open("primary"), "2 failures should not open circuit");
+        assert!(
+            !reg.is_circuit_open("primary"),
+            "2 failures should not open circuit"
+        );
         reg.record_failure("primary");
-        assert!(reg.is_circuit_open("primary"), "3 failures should open circuit");
+        assert!(
+            reg.is_circuit_open("primary"),
+            "3 failures should open circuit"
+        );
 
         // Now generate_with_fallback should return NoAvailableProviders
         let result = reg.generate_with_fallback(|_| -> Result<String, String> {
@@ -2900,7 +2909,10 @@ mod resilient_registry_tests {
 
         assert!(result.is_ok());
         let (_, name) = result.expect("should skip primary");
-        assert_eq!(name, "backup", "primary should be skipped because unhealthy");
+        assert_eq!(
+            name, "backup",
+            "primary should be skipped because unhealthy"
+        );
     }
 
     #[test]
@@ -2928,7 +2940,10 @@ mod resilient_registry_tests {
         assert_eq!(reg.health_status("primary"), ProviderHealthStatus::Healthy);
 
         reg.set_health_status("primary", ProviderHealthStatus::Unhealthy);
-        assert_eq!(reg.health_status("primary"), ProviderHealthStatus::Unhealthy);
+        assert_eq!(
+            reg.health_status("primary"),
+            ProviderHealthStatus::Unhealthy
+        );
     }
 
     // -- Item 3.2: Connection pool handle tests ----------------------------
@@ -2951,7 +2966,11 @@ mod resilient_registry_tests {
         let _agent1 = pool.get_agent("http://localhost:11434");
         let _agent2 = pool.get_agent("http://localhost:1234");
 
-        assert_eq!(pool.agents.len(), 2, "different hosts should get different agents");
+        assert_eq!(
+            pool.agents.len(),
+            2,
+            "different hosts should get different agents"
+        );
     }
 
     #[test]
@@ -3037,7 +3056,10 @@ mod resilient_registry_tests {
             retry_after_secs: None,
         };
         reg.update_rate_limits("primary", &rl_headers);
-        assert!(reg.is_rate_limited("primary"), "primary should be rate-limited");
+        assert!(
+            reg.is_rate_limited("primary"),
+            "primary should be rate-limited"
+        );
 
         let result = reg.generate_with_fallback(|p| -> Result<String, String> {
             Ok(format!("ok from {}", p.name))
@@ -3081,7 +3103,10 @@ mod resilient_registry_tests {
         // make Instant::now() >= reset_at, so the provider is available.
         // We test that is_rate_limited returns false after the window expires.
         std::thread::sleep(std::time::Duration::from_millis(5));
-        assert!(!reg.is_rate_limited("primary"), "after reset, should not be rate-limited");
+        assert!(
+            !reg.is_rate_limited("primary"),
+            "after reset, should not be rate-limited"
+        );
     }
 
     #[test]
@@ -3095,7 +3120,10 @@ mod resilient_registry_tests {
             retry_after_secs: Some(300),
         };
         reg.update_rate_limits("primary", &rl_headers);
-        assert!(reg.is_rate_limited("primary"), "retry-after should rate-limit");
+        assert!(
+            reg.is_rate_limited("primary"),
+            "retry-after should rate-limit"
+        );
     }
 
     // -- Priority ordering tests -------------------------------------------
@@ -3278,7 +3306,11 @@ mod resilient_registry_tests {
             output_tokens: Some(50),
             latency_ms: 200,
             success,
-            error: if success { None } else { Some("timeout".to_string()) },
+            error: if success {
+                None
+            } else {
+                Some("timeout".to_string())
+            },
         }
     }
 
@@ -3386,11 +3418,7 @@ mod resilient_registry_tests {
             let ap_clone = ap.clone();
             handles.push(std::thread::spawn(move || {
                 for j in 0..10 {
-                    ap_clone.record(sample_entry(
-                        &format!("p{}", i),
-                        &format!("m{}", j),
-                        true,
-                    ));
+                    ap_clone.record(sample_entry(&format!("p{}", i), &format!("m{}", j), true));
                 }
             }));
         }

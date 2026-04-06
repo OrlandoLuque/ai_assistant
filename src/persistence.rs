@@ -1342,10 +1342,7 @@ mod tests {
     fn test_backup_config_default() {
         let config = BackupConfig::default();
         assert!(config.enabled, "backups should be enabled by default");
-        assert!(
-            config.max_backups > 0,
-            "max_backups should be positive"
-        );
+        assert!(config.max_backups > 0, "max_backups should be positive");
         assert!(
             config.interval_hours > 0,
             "interval_hours should be positive"
@@ -1370,7 +1367,10 @@ mod tests {
         fs::write(&db_path, b"deletable content").unwrap();
 
         let backup = manager.create_backup(&db_path).unwrap();
-        assert!(backup.path.exists(), "backup file should exist after create");
+        assert!(
+            backup.path.exists(),
+            "backup file should exist after create"
+        );
 
         manager.delete_backup(&backup.path).unwrap();
         assert!(
@@ -1460,14 +1460,8 @@ mod tests {
     #[test]
     fn test_migration_config_default() {
         let config = MigrationConfig::default();
-        assert!(
-            config.min_messages > 0,
-            "min_messages should be positive"
-        );
-        assert!(
-            config.max_age_days > 0,
-            "max_age_days should be positive"
-        );
+        assert!(config.min_messages > 0, "min_messages should be positive");
+        assert!(config.max_age_days > 0, "max_age_days should be positive");
         assert!(
             config.index_for_search,
             "index_for_search should be true by default"
@@ -1530,7 +1524,10 @@ mod tests {
         let config = PersistentCacheConfig::default();
 
         let _cache = PersistentCache::open(&db_path, config).unwrap();
-        assert!(db_path.exists(), "cache database file should exist after open");
+        assert!(
+            db_path.exists(),
+            "cache database file should exist after open"
+        );
     }
 
     #[cfg(feature = "rag")]
@@ -1587,7 +1584,10 @@ mod tests {
         };
 
         let mut cache = PersistentCache::open(&db_path, config).unwrap();
-        assert!(!cache.exists("key1").unwrap(), "key should not exist before set");
+        assert!(
+            !cache.exists("key1").unwrap(),
+            "key should not exist before set"
+        );
 
         cache.set("key1", &"value").unwrap();
         assert!(cache.exists("key1").unwrap(), "key should exist after set");

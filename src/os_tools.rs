@@ -263,7 +263,9 @@ fn register_file_info(registry: &mut ToolRegistry, sandbox: Arc<RwLock<SandboxVa
 // ============================================================================
 
 /// Characters that enable shell injection when passed to `sh -c` or `cmd /C`.
-const SHELL_METACHARACTERS: &[char] = &[';', '|', '&', '$', '`', '(', ')', '>', '<', '{', '}', '\n', '\r'];
+const SHELL_METACHARACTERS: &[char] = &[
+    ';', '|', '&', '$', '`', '(', ')', '>', '<', '{', '}', '\n', '\r',
+];
 
 /// Reject commands containing shell metacharacters (prevents injection via `sh -c`).
 fn validate_no_shell_metacharacters(cmd: &str) -> Result<(), ToolError> {
@@ -280,7 +282,10 @@ fn validate_no_shell_metacharacters(cmd: &str) -> Result<(), ToolError> {
 
 fn register_run_command(registry: &mut ToolRegistry, sandbox: Arc<RwLock<SandboxValidator>>) {
     let def = ToolBuilder::new("run_command", "Execute a command (no shell interpretation)")
-        .param(ParamSchema::string("command", "The command to execute (program + arguments)"))
+        .param(ParamSchema::string(
+            "command",
+            "The command to execute (program + arguments)",
+        ))
         .category("shell")
         .build();
 
@@ -441,24 +446,32 @@ fn register_http_get(registry: &mut ToolRegistry, sandbox: Arc<RwLock<SandboxVal
             let host = host_with_port.split(':').next().unwrap_or(host_with_port);
             if let Ok(ip) = host.parse::<std::net::IpAddr>() {
                 let is_private = match ip {
-                    std::net::IpAddr::V4(v4) => v4.is_loopback() || v4.is_private() || v4.is_link_local()
+                    std::net::IpAddr::V4(v4) => {
+                        v4.is_loopback() || v4.is_private() || v4.is_link_local()
                         || v4.octets()[0] == 169 && v4.octets()[1] == 254  // link-local
                         || v4.octets() == [0, 0, 0, 0]
-                        || v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64,  // CGNAT
-                    std::net::IpAddr::V6(v6) => v6.is_loopback()
-                        || (v6.segments()[0] & 0xFE00) == 0xFC00,  // ULA
+                        || v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64
+                    } // CGNAT
+                    std::net::IpAddr::V6(v6) => {
+                        v6.is_loopback() || (v6.segments()[0] & 0xFE00) == 0xFC00
+                    } // ULA
                 };
                 if is_private {
                     return Err(ToolError::ExecutionFailed(
-                        "SSRF blocked: requests to private/internal IP addresses are not allowed".into()
+                        "SSRF blocked: requests to private/internal IP addresses are not allowed"
+                            .into(),
                     ));
                 }
             }
             // Block common internal hostnames (including localhost with any port)
             let lower = host.to_lowercase();
-            if lower == "localhost" || lower.ends_with(".local") || lower.ends_with(".internal") || lower == "metadata.google.internal" {
+            if lower == "localhost"
+                || lower.ends_with(".local")
+                || lower.ends_with(".internal")
+                || lower == "metadata.google.internal"
+            {
                 return Err(ToolError::ExecutionFailed(
-                    "SSRF blocked: requests to internal hostnames are not allowed".into()
+                    "SSRF blocked: requests to internal hostnames are not allowed".into(),
                 ));
             }
             // Block AWS/cloud metadata endpoint by string match (covers
@@ -466,7 +479,7 @@ fn register_http_get(registry: &mut ToolRegistry, sandbox: Arc<RwLock<SandboxVal
             // but kept as an explicit string guard for defence-in-depth)
             if host_with_port.starts_with("169.254.169.254") {
                 return Err(ToolError::ExecutionFailed(
-                    "SSRF blocked: requests to cloud metadata endpoint are not allowed".into()
+                    "SSRF blocked: requests to cloud metadata endpoint are not allowed".into(),
                 ));
             }
         }

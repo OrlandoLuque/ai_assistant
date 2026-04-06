@@ -66,7 +66,7 @@ use serde::{Deserialize, Serialize};
 use crate::rag_debug::{
     RagDebugConfig, RagDebugLogger, RagDebugStep, RagQuerySession, ScoreChange,
 };
-use crate::rag_tiers::{RagTierConfig, RagFeatures, RagRequirement, RagStats, RagTier};
+use crate::rag_tiers::{RagFeatures, RagRequirement, RagStats, RagTier, RagTierConfig};
 
 // ============================================================================
 // Pipeline Result Types
@@ -1980,7 +1980,10 @@ mod tests {
     fn test_check_requirements_fast_satisfied() {
         let pipeline = RagPipeline::new(RagTierConfig::with_tier(RagTier::Fast));
         let missing = pipeline.check_requirements(false, false, false);
-        assert!(missing.is_empty(), "Fast tier should have no missing requirements");
+        assert!(
+            missing.is_empty(),
+            "Fast tier should have no missing requirements"
+        );
     }
 
     #[test]
@@ -1999,11 +2002,9 @@ mod tests {
     fn test_check_requirements_semantic_satisfied() {
         let pipeline = RagPipeline::new(RagTierConfig::with_tier(RagTier::Semantic));
         let missing = pipeline.check_requirements(true, false, false);
-        assert!(
-            !missing
-                .iter()
-                .any(|r| matches!(r, RagRequirement::EmbeddingModel)),
-        );
+        assert!(!missing
+            .iter()
+            .any(|r| matches!(r, RagRequirement::EmbeddingModel)),);
     }
 
     #[test]
@@ -2062,8 +2063,7 @@ mod tests {
         let llm = MockLlm;
         let retrieval = MockRetrieval;
 
-        let result = pipeline
-            .process("What is the cargo capacity?", &llm, None, &retrieval, None);
+        let result = pipeline.process("What is the cargo capacity?", &llm, None, &retrieval, None);
         assert!(result.is_ok());
         let result = result.unwrap();
         assert!(!result.context.is_empty());

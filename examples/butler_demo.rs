@@ -9,9 +9,7 @@
 // The `butler` feature transitively enables `autonomous`, which makes
 // both the `butler` module and many autonomous-related types available.
 
-use ai_assistant::butler::{
-    Butler, DetectionResult, EnvironmentReport, ProjectType, RuntimeInfo,
-};
+use ai_assistant::butler::{Butler, DetectionResult, EnvironmentReport, ProjectType, RuntimeInfo};
 
 fn main() {
     println!("=== Butler Environment Detection Demo ===\n");
@@ -49,7 +47,12 @@ fn main() {
     // -----------------------------------------------------------------------
     println!("Detected LLM providers: {}", report.llm_providers.len());
     for p in &report.llm_providers {
-        println!("  - {} at {} ({} models)", p.name, p.url, p.available_models.len());
+        println!(
+            "  - {} at {} ({} models)",
+            p.name,
+            p.url,
+            p.available_models.len()
+        );
     }
 
     match &report.project_type {
@@ -70,7 +73,10 @@ fn main() {
     }
 
     if let Some(vcs) = &report.vcs {
-        println!("VCS: {} (branch: {}, has remotes: {})", vcs.vcs_type, vcs.branch, vcs.has_remotes);
+        println!(
+            "VCS: {} (branch: {}, has remotes: {})",
+            vcs.vcs_type, vcs.branch, vcs.has_remotes
+        );
     } else {
         println!("VCS: not detected");
     }
@@ -82,7 +88,10 @@ fn main() {
     );
 
     println!("Capabilities: {:?}", report.capabilities);
-    println!("Suggested agent profile: {}", report.suggested_agent_profile);
+    println!(
+        "Suggested agent profile: {}",
+        report.suggested_agent_profile
+    );
     println!("Suggested operation mode: {:?}", report.suggested_mode);
 
     // -----------------------------------------------------------------------
@@ -100,7 +109,13 @@ fn main() {
     let profile = butler.suggest_agent_profile(&report);
     println!("\n--- Suggested AgentProfile ---");
     println!("  Name: {}", profile.name);
-    println!("  System prompt: {:?}", profile.system_prompt.as_deref().map(|s| &s[..s.len().min(60)]));
+    println!(
+        "  System prompt: {:?}",
+        profile
+            .system_prompt
+            .as_deref()
+            .map(|s| &s[..s.len().min(60)])
+    );
     println!("  Tools: {:?}", profile.tools);
 
     // -----------------------------------------------------------------------

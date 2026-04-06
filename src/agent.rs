@@ -598,7 +598,9 @@ impl AgentCallback for LoggingCallback {
         if self.verbose {
             log::debug!(
                 "[{}] Executing tool '{}' with input: {}",
-                agent_id, tool, input
+                agent_id,
+                tool,
+                input
             );
         }
     }

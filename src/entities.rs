@@ -1617,9 +1617,7 @@ mod tests {
         store.add_fact(
             Fact::new("User likes Rust", "likes", "Rust", "s1", 0.9).with_subject("user"),
         );
-        store.add_fact(
-            Fact::new("Bot knows Rust", "knows", "Rust", "s2", 0.8).with_subject("bot"),
-        );
+        store.add_fact(Fact::new("Bot knows Rust", "knows", "Rust", "s2", 0.8).with_subject("bot"));
 
         let user_facts = store.facts_by_subject("user");
         assert_eq!(user_facts.len(), 1);
@@ -1635,15 +1633,12 @@ mod tests {
     #[test]
     fn test_fact_store_facts_by_predicate() {
         let mut store = FactStore::new();
-        store.add_fact(
-            Fact::new("Likes Rust", "likes", "Rust", "s1", 0.9).with_subject("user"),
-        );
+        store.add_fact(Fact::new("Likes Rust", "likes", "Rust", "s1", 0.9).with_subject("user"));
         store.add_fact(
             Fact::new("Likes Python", "likes", "Python", "s2", 0.85).with_subject("user"),
         );
         store.add_fact(
-            Fact::new("Wants web", "wants to", "build a web app", "s3", 0.8)
-                .with_subject("user"),
+            Fact::new("Wants web", "wants to", "build a web app", "s3", 0.8).with_subject("user"),
         );
 
         let likes = store.facts_by_predicate("likes");
@@ -1660,12 +1655,17 @@ mod tests {
     fn test_fact_store_user_goals() {
         let mut store = FactStore::new();
         store.add_fact(
-            Fact::new("Want server", "wants to", "build a server", "s1", 0.9)
-                .with_subject("user"),
+            Fact::new("Want server", "wants to", "build a server", "s1", 0.9).with_subject("user"),
         );
         store.add_fact(
-            Fact::new("Want deploy", "wants to", "deploy to production", "s2", 0.85)
-                .with_subject("user"),
+            Fact::new(
+                "Want deploy",
+                "wants to",
+                "deploy to production",
+                "s2",
+                0.85,
+            )
+            .with_subject("user"),
         );
 
         let goals = store.user_goals();
@@ -1700,9 +1700,7 @@ mod tests {
     #[test]
     fn test_fact_store_export_json() {
         let mut store = FactStore::new();
-        store.add_fact(
-            Fact::new("Likes Rust", "likes", "Rust", "s1", 0.9).with_subject("user"),
-        );
+        store.add_fact(Fact::new("Likes Rust", "likes", "Rust", "s1", 0.9).with_subject("user"));
 
         let json = store.export();
         assert!(!json.is_empty());
@@ -1737,12 +1735,9 @@ mod tests {
     #[test]
     fn test_build_context_summary_with_facts() {
         let mut store = FactStore::new();
-        store.add_fact(
-            Fact::new("Likes Rust", "likes", "Rust", "s1", 0.9).with_subject("user"),
-        );
-        store.add_fact(
-            Fact::new("Goal", "wants to", "build APIs", "s2", 0.85).with_subject("user"),
-        );
+        store.add_fact(Fact::new("Likes Rust", "likes", "Rust", "s1", 0.9).with_subject("user"));
+        store
+            .add_fact(Fact::new("Goal", "wants to", "build APIs", "s2", 0.85).with_subject("user"));
 
         let summary = store.build_context_summary(9);
         assert!(!summary.is_empty());
@@ -1821,13 +1816,7 @@ mod tests {
         let mut store = FactStore::new();
         // Directly add facts beyond MAX to test evict_if_needed
         for i in 0..(MAX_ENTITY_FACTS + 10) {
-            let mut fact = Fact::new(
-                &format!("s-{}", i),
-                "pred",
-                &format!("o-{}", i),
-                "src",
-                0.5,
-            );
+            let mut fact = Fact::new(&format!("s-{}", i), "pred", &format!("o-{}", i), "src", 0.5);
             // Give later facts higher reinforcement so they survive
             fact.reinforcement_count = i as u32;
             store.facts.push(fact);

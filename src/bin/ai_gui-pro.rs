@@ -22,34 +22,53 @@ use petgraph::graph::{Graph as PetGraph, NodeIndex};
 
 use std::sync::Arc;
 
+use ai_assistant::butler::{Butler, EnvironmentReport, FeatureFlagAnalysis};
 use ai_assistant::{
-    AiAssistant, AiConfig, AiResponse,
-    // Analysis
-    AdvisorReport, ConversationSentimentAnalysis, SentimentAnalyzer,
-    SessionSummarizer, SessionSummary, SummaryConfig, Topic, TopicDetector,
-    // Knowledge graph
-    KGStats, KnowledgeGraph, KnowledgeGraphConfig,
-    PatternEntityExtractor,
-    // Security
-    AuditEvent, AuditEventType,
-    // RAG
-    AppKeyProvider, KpkgReader,
-    // Butler (advisor types re-exported, Butler itself via module)
-    RecommendationPriority,
     // Widgets
     widgets::{self, ChatColors, RagStatus},
+    // Analysis
+    AdvisorReport,
+    AiAssistant,
+    AiConfig,
+    AiResponse,
+    // RAG
+    AppKeyProvider,
+    // Security
+    AuditEvent,
+    AuditEventType,
+    // Sandbox
+    CodeSandbox,
     // Context
-    ContextMode, ContextUsage, FreshContextEffectiveness, FreshContextWarning,
-    // Models
-    ModelInfo,
+    ContextMode,
+    ContextUsage,
+    ConversationSentimentAnalysis,
     // Scheduler
     CronExpression,
-    // Sandbox
-    CodeSandbox, SandboxLanguage,
     // Debug / diagnostics
-    DebugConfig, DebugLevel, DebugLogger, GuiLogger,
+    DebugConfig,
+    DebugLevel,
+    DebugLogger,
+    FreshContextEffectiveness,
+    FreshContextWarning,
+    GuiLogger,
+    // Knowledge graph
+    KGStats,
+    KnowledgeGraph,
+    KnowledgeGraphConfig,
+    KpkgReader,
+    // Models
+    ModelInfo,
+    PatternEntityExtractor,
+    // Butler (advisor types re-exported, Butler itself via module)
+    RecommendationPriority,
+    SandboxLanguage,
+    SentimentAnalyzer,
+    SessionSummarizer,
+    SessionSummary,
+    SummaryConfig,
+    Topic,
+    TopicDetector,
 };
-use ai_assistant::butler::{Butler, EnvironmentReport, FeatureFlagAnalysis};
 
 // =============================================================================
 // Types
@@ -64,36 +83,80 @@ enum AppPhase {
 
 #[derive(PartialEq, Clone, Copy)]
 enum SidebarCategory {
-    Chat, Agents, Knowledge, Generate, Optimize, System,
+    Chat,
+    Agents,
+    Knowledge,
+    Generate,
+    Optimize,
+    System,
 }
 
 impl SidebarCategory {
     fn label(&self) -> &'static str {
-        match self { Self::Chat => "CHAT", Self::Agents => "AGENTS", Self::Knowledge => "KNOWLEDGE", Self::Generate => "GENERATE", Self::Optimize => "OPTIMIZE", Self::System => "SYSTEM" }
+        match self {
+            Self::Chat => "CHAT",
+            Self::Agents => "AGENTS",
+            Self::Knowledge => "KNOWLEDGE",
+            Self::Generate => "GENERATE",
+            Self::Optimize => "OPTIMIZE",
+            Self::System => "SYSTEM",
+        }
     }
-    fn all() -> &'static [Self] { &[Self::Chat, Self::Agents, Self::Knowledge, Self::Generate, Self::Optimize, Self::System] }
+    fn all() -> &'static [Self] {
+        &[
+            Self::Chat,
+            Self::Agents,
+            Self::Knowledge,
+            Self::Generate,
+            Self::Optimize,
+            Self::System,
+        ]
+    }
 }
 
 #[derive(PartialEq, Clone, Copy)]
 enum SidebarPanel {
-    Chat, Sessions,
-    AgentPool, ToolsMcp, Automation,
-    RagSources, Memory, CloudStorage,
-    Media, Audio,
-    PromptLab, Evaluation,
-    Security, Analytics, DevTools, Cluster, Butler, Settings,
+    Chat,
+    Sessions,
+    AgentPool,
+    ToolsMcp,
+    Automation,
+    RagSources,
+    Memory,
+    CloudStorage,
+    Media,
+    Audio,
+    PromptLab,
+    Evaluation,
+    Security,
+    Analytics,
+    DevTools,
+    Cluster,
+    Butler,
+    Settings,
 }
 
 impl SidebarPanel {
     fn label(&self) -> &'static str {
         match self {
-            Self::Chat => "Chat", Self::Sessions => "Sessions",
-            Self::AgentPool => "Agent Pool", Self::ToolsMcp => "Tools / MCP", Self::Automation => "Automation",
-            Self::RagSources => "RAG Sources", Self::Memory => "Memory", Self::CloudStorage => "Cloud Storage",
-            Self::Media => "Media", Self::Audio => "Audio",
-            Self::PromptLab => "Prompt Lab", Self::Evaluation => "Evaluation",
-            Self::Security => "Security", Self::Analytics => "Analytics", Self::DevTools => "DevTools",
-            Self::Cluster => "Cluster", Self::Butler => "Butler", Self::Settings => "Settings",
+            Self::Chat => "Chat",
+            Self::Sessions => "Sessions",
+            Self::AgentPool => "Agent Pool",
+            Self::ToolsMcp => "Tools / MCP",
+            Self::Automation => "Automation",
+            Self::RagSources => "RAG Sources",
+            Self::Memory => "Memory",
+            Self::CloudStorage => "Cloud Storage",
+            Self::Media => "Media",
+            Self::Audio => "Audio",
+            Self::PromptLab => "Prompt Lab",
+            Self::Evaluation => "Evaluation",
+            Self::Security => "Security",
+            Self::Analytics => "Analytics",
+            Self::DevTools => "DevTools",
+            Self::Cluster => "Cluster",
+            Self::Butler => "Butler",
+            Self::Settings => "Settings",
         }
     }
     #[allow(dead_code)]
@@ -114,22 +177,44 @@ impl SidebarPanel {
             SidebarCategory::Knowledge => &[Self::RagSources, Self::Memory, Self::CloudStorage],
             SidebarCategory::Generate => &[Self::Media, Self::Audio],
             SidebarCategory::Optimize => &[Self::PromptLab, Self::Evaluation],
-            SidebarCategory::System => &[Self::Security, Self::Analytics, Self::DevTools, Self::Cluster, Self::Butler, Self::Settings],
+            SidebarCategory::System => &[
+                Self::Security,
+                Self::Analytics,
+                Self::DevTools,
+                Self::Cluster,
+                Self::Butler,
+                Self::Settings,
+            ],
         }
     }
 }
 
 #[derive(PartialEq, Clone, Copy)]
 #[allow(dead_code)]
-enum AutomationTab { Scheduler, Browser, Sandbox, Workflows }
+enum AutomationTab {
+    Scheduler,
+    Browser,
+    Sandbox,
+    Workflows,
+}
 
 #[derive(PartialEq, Clone, Copy)]
 #[allow(dead_code)]
-enum MemoryTab { Episodic, Procedural, Entity }
+enum MemoryTab {
+    Episodic,
+    Procedural,
+    Entity,
+}
 
 #[derive(PartialEq, Clone, Copy)]
 #[allow(dead_code)]
-enum SecurityTab { Overview, Guardrails, Pii, Rbac, AuditLog }
+enum SecurityTab {
+    Overview,
+    Guardrails,
+    Pii,
+    Rbac,
+    AuditLog,
+}
 
 #[derive(PartialEq, Clone, Copy)]
 enum MonitorTab {
@@ -201,23 +286,29 @@ impl ModelCategory {
 
     fn icon(&self) -> &'static str {
         match self {
-            Self::Chat => "\u{1f4ac}",       // speech bubble
-            Self::Creative => "\u{270d}",     // writing hand
-            Self::Code => "\u{1f4bb}",        // laptop
-            Self::Math => "\u{1f9ee}",        // abacus
-            Self::Vision => "\u{1f441}",      // eye
-            Self::Multilingual => "\u{1f310}", // globe
-            Self::Embedding => "\u{1f50d}",   // magnifying glass
-            Self::SmallFast => "\u{26a1}",    // lightning
+            Self::Chat => "\u{1f4ac}",          // speech bubble
+            Self::Creative => "\u{270d}",       // writing hand
+            Self::Code => "\u{1f4bb}",          // laptop
+            Self::Math => "\u{1f9ee}",          // abacus
+            Self::Vision => "\u{1f441}",        // eye
+            Self::Multilingual => "\u{1f310}",  // globe
+            Self::Embedding => "\u{1f50d}",     // magnifying glass
+            Self::SmallFast => "\u{26a1}",      // lightning
             Self::LargePowerful => "\u{1f9e0}", // brain
         }
     }
 
     fn all() -> &'static [ModelCategory] {
         &[
-            Self::Chat, Self::Creative, Self::Code, Self::Math,
-            Self::Vision, Self::Multilingual, Self::Embedding,
-            Self::SmallFast, Self::LargePowerful,
+            Self::Chat,
+            Self::Creative,
+            Self::Code,
+            Self::Math,
+            Self::Vision,
+            Self::Multilingual,
+            Self::Embedding,
+            Self::SmallFast,
+            Self::LargePowerful,
         ]
     }
 }
@@ -233,69 +324,296 @@ struct CatalogModel {
 fn model_catalog() -> Vec<CatalogModel> {
     vec![
         // ── Chat (General) ──────────────────────────────────────────────
-        CatalogModel { name: "llama3.2",   size_estimate: "~2.0 GB",  description: "Meta Llama 3.2, great all-rounder",       category: ModelCategory::Chat },
-        CatalogModel { name: "mistral",    size_estimate: "~4.1 GB",  description: "Mistral 7B, strong reasoning",            category: ModelCategory::Chat },
-        CatalogModel { name: "gemma2",     size_estimate: "~5.0 GB",  description: "Google Gemma 2, efficient and capable",    category: ModelCategory::Chat },
-        CatalogModel { name: "phi3",       size_estimate: "~2.3 GB",  description: "Microsoft Phi-3, compact but powerful",    category: ModelCategory::Chat },
-        CatalogModel { name: "qwen2.5",    size_estimate: "~4.7 GB",  description: "Alibaba Qwen 2.5, well-rounded 7B",       category: ModelCategory::Chat },
-        CatalogModel { name: "neural-chat",size_estimate: "~4.1 GB",  description: "Intel fine-tuned Mistral for conversation",category: ModelCategory::Chat },
-
+        CatalogModel {
+            name: "llama3.2",
+            size_estimate: "~2.0 GB",
+            description: "Meta Llama 3.2, great all-rounder",
+            category: ModelCategory::Chat,
+        },
+        CatalogModel {
+            name: "mistral",
+            size_estimate: "~4.1 GB",
+            description: "Mistral 7B, strong reasoning",
+            category: ModelCategory::Chat,
+        },
+        CatalogModel {
+            name: "gemma2",
+            size_estimate: "~5.0 GB",
+            description: "Google Gemma 2, efficient and capable",
+            category: ModelCategory::Chat,
+        },
+        CatalogModel {
+            name: "phi3",
+            size_estimate: "~2.3 GB",
+            description: "Microsoft Phi-3, compact but powerful",
+            category: ModelCategory::Chat,
+        },
+        CatalogModel {
+            name: "qwen2.5",
+            size_estimate: "~4.7 GB",
+            description: "Alibaba Qwen 2.5, well-rounded 7B",
+            category: ModelCategory::Chat,
+        },
+        CatalogModel {
+            name: "neural-chat",
+            size_estimate: "~4.1 GB",
+            description: "Intel fine-tuned Mistral for conversation",
+            category: ModelCategory::Chat,
+        },
         // ── Creative / Narration ────────────────────────────────────────
-        CatalogModel { name: "nous-hermes2",     size_estimate: "~4.1 GB",  description: "Excellent storytelling and creative writing",   category: ModelCategory::Creative },
-        CatalogModel { name: "dolphin-mixtral",   size_estimate: "~26 GB",   description: "Uncensored MoE, rich narrative generation",     category: ModelCategory::Creative },
-        CatalogModel { name: "openhermes",        size_estimate: "~4.1 GB",  description: "Fine-tuned for creative and instructional text",category: ModelCategory::Creative },
-        CatalogModel { name: "samantha-mistral",  size_estimate: "~4.1 GB",  description: "Companion-style, empathetic conversation",      category: ModelCategory::Creative },
-        CatalogModel { name: "yarn-mistral:7b",   size_estimate: "~4.1 GB",  description: "Extended context (128k) for long narratives",   category: ModelCategory::Creative },
-        CatalogModel { name: "stablelm2",         size_estimate: "~1.0 GB",  description: "StabilityAI creative text model",               category: ModelCategory::Creative },
-
+        CatalogModel {
+            name: "nous-hermes2",
+            size_estimate: "~4.1 GB",
+            description: "Excellent storytelling and creative writing",
+            category: ModelCategory::Creative,
+        },
+        CatalogModel {
+            name: "dolphin-mixtral",
+            size_estimate: "~26 GB",
+            description: "Uncensored MoE, rich narrative generation",
+            category: ModelCategory::Creative,
+        },
+        CatalogModel {
+            name: "openhermes",
+            size_estimate: "~4.1 GB",
+            description: "Fine-tuned for creative and instructional text",
+            category: ModelCategory::Creative,
+        },
+        CatalogModel {
+            name: "samantha-mistral",
+            size_estimate: "~4.1 GB",
+            description: "Companion-style, empathetic conversation",
+            category: ModelCategory::Creative,
+        },
+        CatalogModel {
+            name: "yarn-mistral:7b",
+            size_estimate: "~4.1 GB",
+            description: "Extended context (128k) for long narratives",
+            category: ModelCategory::Creative,
+        },
+        CatalogModel {
+            name: "stablelm2",
+            size_estimate: "~1.0 GB",
+            description: "StabilityAI creative text model",
+            category: ModelCategory::Creative,
+        },
         // ── Code ────────────────────────────────────────────────────────
-        CatalogModel { name: "codellama",       size_estimate: "~3.8 GB",  description: "Meta's code-specialized Llama",              category: ModelCategory::Code },
-        CatalogModel { name: "deepseek-coder",  size_estimate: "~3.8 GB",  description: "DeepSeek code generation model",             category: ModelCategory::Code },
-        CatalogModel { name: "qwen2.5-coder",   size_estimate: "~4.7 GB",  description: "Alibaba Qwen code model, multilingual",      category: ModelCategory::Code },
-        CatalogModel { name: "starcoder2",       size_estimate: "~3.8 GB",  description: "BigCode StarCoder 2, multi-language code",   category: ModelCategory::Code },
-        CatalogModel { name: "codegemma",        size_estimate: "~5.0 GB",  description: "Google code model, fill-in-the-middle",     category: ModelCategory::Code },
-        CatalogModel { name: "codellama:34b",    size_estimate: "~19 GB",   description: "Large CodeLlama for complex code tasks",     category: ModelCategory::Code },
-
+        CatalogModel {
+            name: "codellama",
+            size_estimate: "~3.8 GB",
+            description: "Meta's code-specialized Llama",
+            category: ModelCategory::Code,
+        },
+        CatalogModel {
+            name: "deepseek-coder",
+            size_estimate: "~3.8 GB",
+            description: "DeepSeek code generation model",
+            category: ModelCategory::Code,
+        },
+        CatalogModel {
+            name: "qwen2.5-coder",
+            size_estimate: "~4.7 GB",
+            description: "Alibaba Qwen code model, multilingual",
+            category: ModelCategory::Code,
+        },
+        CatalogModel {
+            name: "starcoder2",
+            size_estimate: "~3.8 GB",
+            description: "BigCode StarCoder 2, multi-language code",
+            category: ModelCategory::Code,
+        },
+        CatalogModel {
+            name: "codegemma",
+            size_estimate: "~5.0 GB",
+            description: "Google code model, fill-in-the-middle",
+            category: ModelCategory::Code,
+        },
+        CatalogModel {
+            name: "codellama:34b",
+            size_estimate: "~19 GB",
+            description: "Large CodeLlama for complex code tasks",
+            category: ModelCategory::Code,
+        },
         // ── Math / Reasoning ────────────────────────────────────────────
-        CatalogModel { name: "mathstral",       size_estimate: "~4.1 GB",  description: "Mistral fine-tuned for math & science",     category: ModelCategory::Math },
-        CatalogModel { name: "wizard-math",     size_estimate: "~4.1 GB",  description: "WizardMath, step-by-step problem solving",  category: ModelCategory::Math },
-        CatalogModel { name: "deepseek-math",   size_estimate: "~4.1 GB",  description: "DeepSeek math specialist, competition-level", category: ModelCategory::Math },
-        CatalogModel { name: "nous-hermes2-mixtral", size_estimate: "~26 GB", description: "MoE with strong logical reasoning",     category: ModelCategory::Math },
-
+        CatalogModel {
+            name: "mathstral",
+            size_estimate: "~4.1 GB",
+            description: "Mistral fine-tuned for math & science",
+            category: ModelCategory::Math,
+        },
+        CatalogModel {
+            name: "wizard-math",
+            size_estimate: "~4.1 GB",
+            description: "WizardMath, step-by-step problem solving",
+            category: ModelCategory::Math,
+        },
+        CatalogModel {
+            name: "deepseek-math",
+            size_estimate: "~4.1 GB",
+            description: "DeepSeek math specialist, competition-level",
+            category: ModelCategory::Math,
+        },
+        CatalogModel {
+            name: "nous-hermes2-mixtral",
+            size_estimate: "~26 GB",
+            description: "MoE with strong logical reasoning",
+            category: ModelCategory::Math,
+        },
         // ── Vision ──────────────────────────────────────────────────────
-        CatalogModel { name: "llava",          size_estimate: "~4.7 GB",  description: "Vision + language, image understanding",     category: ModelCategory::Vision },
-        CatalogModel { name: "llava-llama3",   size_estimate: "~5.5 GB",  description: "LLaVA on Llama 3 backbone",                 category: ModelCategory::Vision },
-        CatalogModel { name: "bakllava",       size_estimate: "~4.7 GB",  description: "BakLLaVA, Mistral-based vision model",      category: ModelCategory::Vision },
-        CatalogModel { name: "llava:13b",      size_estimate: "~8.0 GB",  description: "Larger LLaVA for detailed image analysis",  category: ModelCategory::Vision },
-        CatalogModel { name: "moondream",      size_estimate: "~1.0 GB",  description: "Tiny vision model, fast image Q&A",         category: ModelCategory::Vision },
-
+        CatalogModel {
+            name: "llava",
+            size_estimate: "~4.7 GB",
+            description: "Vision + language, image understanding",
+            category: ModelCategory::Vision,
+        },
+        CatalogModel {
+            name: "llava-llama3",
+            size_estimate: "~5.5 GB",
+            description: "LLaVA on Llama 3 backbone",
+            category: ModelCategory::Vision,
+        },
+        CatalogModel {
+            name: "bakllava",
+            size_estimate: "~4.7 GB",
+            description: "BakLLaVA, Mistral-based vision model",
+            category: ModelCategory::Vision,
+        },
+        CatalogModel {
+            name: "llava:13b",
+            size_estimate: "~8.0 GB",
+            description: "Larger LLaVA for detailed image analysis",
+            category: ModelCategory::Vision,
+        },
+        CatalogModel {
+            name: "moondream",
+            size_estimate: "~1.0 GB",
+            description: "Tiny vision model, fast image Q&A",
+            category: ModelCategory::Vision,
+        },
         // ── Multilingual ────────────────────────────────────────────────
-        CatalogModel { name: "aya",            size_estimate: "~4.8 GB",  description: "Cohere Aya, 100+ languages",                category: ModelCategory::Multilingual },
-        CatalogModel { name: "qwen2.5:7b",    size_estimate: "~4.7 GB",  description: "Strong Chinese + English + more",            category: ModelCategory::Multilingual },
-        CatalogModel { name: "mistral-nemo",   size_estimate: "~7.1 GB",  description: "Mistral 12B, multilingual + long context",   category: ModelCategory::Multilingual },
-        CatalogModel { name: "gemma2:2b",      size_estimate: "~1.6 GB",  description: "Google, good multilingual at small size",    category: ModelCategory::Multilingual },
-
+        CatalogModel {
+            name: "aya",
+            size_estimate: "~4.8 GB",
+            description: "Cohere Aya, 100+ languages",
+            category: ModelCategory::Multilingual,
+        },
+        CatalogModel {
+            name: "qwen2.5:7b",
+            size_estimate: "~4.7 GB",
+            description: "Strong Chinese + English + more",
+            category: ModelCategory::Multilingual,
+        },
+        CatalogModel {
+            name: "mistral-nemo",
+            size_estimate: "~7.1 GB",
+            description: "Mistral 12B, multilingual + long context",
+            category: ModelCategory::Multilingual,
+        },
+        CatalogModel {
+            name: "gemma2:2b",
+            size_estimate: "~1.6 GB",
+            description: "Google, good multilingual at small size",
+            category: ModelCategory::Multilingual,
+        },
         // ── Embeddings (for RAG) ────────────────────────────────────────
-        CatalogModel { name: "nomic-embed-text",  size_estimate: "~0.3 GB",  description: "Best open-source embedding, 8192 tokens",  category: ModelCategory::Embedding },
-        CatalogModel { name: "mxbai-embed-large",  size_estimate: "~0.7 GB",  description: "MixedBread AI, high quality embeddings",   category: ModelCategory::Embedding },
-        CatalogModel { name: "all-minilm",         size_estimate: "~0.05 GB", description: "Ultra-light sentence embeddings",          category: ModelCategory::Embedding },
-        CatalogModel { name: "snowflake-arctic-embed", size_estimate: "~0.7 GB", description: "Snowflake Arctic, retrieval-optimized", category: ModelCategory::Embedding },
-
+        CatalogModel {
+            name: "nomic-embed-text",
+            size_estimate: "~0.3 GB",
+            description: "Best open-source embedding, 8192 tokens",
+            category: ModelCategory::Embedding,
+        },
+        CatalogModel {
+            name: "mxbai-embed-large",
+            size_estimate: "~0.7 GB",
+            description: "MixedBread AI, high quality embeddings",
+            category: ModelCategory::Embedding,
+        },
+        CatalogModel {
+            name: "all-minilm",
+            size_estimate: "~0.05 GB",
+            description: "Ultra-light sentence embeddings",
+            category: ModelCategory::Embedding,
+        },
+        CatalogModel {
+            name: "snowflake-arctic-embed",
+            size_estimate: "~0.7 GB",
+            description: "Snowflake Arctic, retrieval-optimized",
+            category: ModelCategory::Embedding,
+        },
         // ── Small & Fast (< 4 GB VRAM) ─────────────────────────────────
-        CatalogModel { name: "llama3.2:1b",   size_estimate: "~0.7 GB",  description: "Tiny Llama, very fast inference",            category: ModelCategory::SmallFast },
-        CatalogModel { name: "phi3:mini",      size_estimate: "~1.4 GB",  description: "Microsoft's smallest Phi-3",                category: ModelCategory::SmallFast },
-        CatalogModel { name: "tinyllama",      size_estimate: "~0.6 GB",  description: "Smallest practical chat LLM",               category: ModelCategory::SmallFast },
-        CatalogModel { name: "qwen2.5:0.5b",  size_estimate: "~0.4 GB",  description: "Ultra-small Qwen model",                    category: ModelCategory::SmallFast },
-        CatalogModel { name: "gemma2:2b",      size_estimate: "~1.6 GB",  description: "Google's 2B model, fast and capable",       category: ModelCategory::SmallFast },
-        CatalogModel { name: "stablelm2:1.6b", size_estimate: "~1.0 GB",  description: "StabilityAI 1.6B, CPU-friendly",           category: ModelCategory::SmallFast },
-
+        CatalogModel {
+            name: "llama3.2:1b",
+            size_estimate: "~0.7 GB",
+            description: "Tiny Llama, very fast inference",
+            category: ModelCategory::SmallFast,
+        },
+        CatalogModel {
+            name: "phi3:mini",
+            size_estimate: "~1.4 GB",
+            description: "Microsoft's smallest Phi-3",
+            category: ModelCategory::SmallFast,
+        },
+        CatalogModel {
+            name: "tinyllama",
+            size_estimate: "~0.6 GB",
+            description: "Smallest practical chat LLM",
+            category: ModelCategory::SmallFast,
+        },
+        CatalogModel {
+            name: "qwen2.5:0.5b",
+            size_estimate: "~0.4 GB",
+            description: "Ultra-small Qwen model",
+            category: ModelCategory::SmallFast,
+        },
+        CatalogModel {
+            name: "gemma2:2b",
+            size_estimate: "~1.6 GB",
+            description: "Google's 2B model, fast and capable",
+            category: ModelCategory::SmallFast,
+        },
+        CatalogModel {
+            name: "stablelm2:1.6b",
+            size_estimate: "~1.0 GB",
+            description: "StabilityAI 1.6B, CPU-friendly",
+            category: ModelCategory::SmallFast,
+        },
         // ── Large & Powerful (16+ GB VRAM) ──────────────────────────────
-        CatalogModel { name: "llama3.1:70b",   size_estimate: "~39 GB",   description: "Full-size Llama 3.1, near-GPT-4 quality",   category: ModelCategory::LargePowerful },
-        CatalogModel { name: "mixtral",         size_estimate: "~26 GB",   description: "Mixture of Experts, 8x7B routing",          category: ModelCategory::LargePowerful },
-        CatalogModel { name: "command-r",       size_estimate: "~20 GB",   description: "Cohere's RAG-optimized 35B model",          category: ModelCategory::LargePowerful },
-        CatalogModel { name: "qwen2.5:72b",    size_estimate: "~41 GB",   description: "Alibaba 72B, top-tier open model",          category: ModelCategory::LargePowerful },
-        CatalogModel { name: "deepseek-coder:33b", size_estimate: "~19 GB", description: "Large DeepSeek for complex code",         category: ModelCategory::LargePowerful },
-        CatalogModel { name: "llama3.1:8b",    size_estimate: "~4.7 GB",  description: "Llama 3.1 8B, 128k context window",         category: ModelCategory::LargePowerful },
+        CatalogModel {
+            name: "llama3.1:70b",
+            size_estimate: "~39 GB",
+            description: "Full-size Llama 3.1, near-GPT-4 quality",
+            category: ModelCategory::LargePowerful,
+        },
+        CatalogModel {
+            name: "mixtral",
+            size_estimate: "~26 GB",
+            description: "Mixture of Experts, 8x7B routing",
+            category: ModelCategory::LargePowerful,
+        },
+        CatalogModel {
+            name: "command-r",
+            size_estimate: "~20 GB",
+            description: "Cohere's RAG-optimized 35B model",
+            category: ModelCategory::LargePowerful,
+        },
+        CatalogModel {
+            name: "qwen2.5:72b",
+            size_estimate: "~41 GB",
+            description: "Alibaba 72B, top-tier open model",
+            category: ModelCategory::LargePowerful,
+        },
+        CatalogModel {
+            name: "deepseek-coder:33b",
+            size_estimate: "~19 GB",
+            description: "Large DeepSeek for complex code",
+            category: ModelCategory::LargePowerful,
+        },
+        CatalogModel {
+            name: "llama3.1:8b",
+            size_estimate: "~4.7 GB",
+            description: "Llama 3.1 8B, 128k context window",
+            category: ModelCategory::LargePowerful,
+        },
     ]
 }
 
@@ -314,12 +632,17 @@ fn strip_ansi_and_blocks(raw: &str) -> String {
                 if next == '[' {
                     // CSI sequence: ESC [ ... (params) final_byte
                     chars.next(); // consume '['
-                    // Consume parameter bytes (0x30-0x3F) and intermediate bytes (0x20-0x2F)
-                    // then the final byte (0x40-0x7E)
+                                  // Consume parameter bytes (0x30-0x3F) and intermediate bytes (0x20-0x2F)
+                                  // then the final byte (0x40-0x7E)
                     loop {
                         match chars.peek() {
-                            Some(&ch) if ('\x20'..='\x3f').contains(&ch) => { chars.next(); }
-                            Some(&ch) if ('\x40'..='\x7e').contains(&ch) => { chars.next(); break; }
+                            Some(&ch) if ('\x20'..='\x3f').contains(&ch) => {
+                                chars.next();
+                            }
+                            Some(&ch) if ('\x40'..='\x7e').contains(&ch) => {
+                                chars.next();
+                                break;
+                            }
                             _ => break, // malformed, stop consuming
                         }
                     }
@@ -329,7 +652,10 @@ fn strip_ansi_and_blocks(raw: &str) -> String {
                     loop {
                         match chars.next() {
                             Some('\x07') => break, // BEL terminates
-                            Some('\x1b') => { chars.next(); break; } // ESC \ terminates
+                            Some('\x1b') => {
+                                chars.next();
+                                break;
+                            } // ESC \ terminates
                             None => break,
                             _ => {}
                         }
@@ -555,7 +881,7 @@ struct PanelStates {
 
     // Evaluation
     eval_suite_name: String,
-    eval_samples: Vec<(String, String)>, // (input, expected)
+    eval_samples: Vec<(String, String)>,      // (input, expected)
     eval_results: Vec<(String, f64, String)>, // (sample, score, output)
 
     // Security
@@ -592,23 +918,57 @@ impl Default for PanelStates {
         expanded.insert(0); // Chat category expanded by default
         Self {
             expanded_categories: expanded,
-            agent_list: Vec::new(), new_agent_name: String::new(), new_agent_role: "Researcher".to_string(), agent_selected: None,
-            tool_search: String::new(), tool_selected: None,
-            auto_tab: AutomationTab::Scheduler, cron_expression: "0 * * * *".to_string(), cron_task_name: String::new(),
-            browser_url: String::new(), browser_output: String::new(),
-            sandbox_code: String::new(), sandbox_language: "python".to_string(), sandbox_output: String::new(),
-            memory_tab: MemoryTab::Episodic, memory_search: String::new(),
-            cloud_provider: "s3".to_string(), cloud_path: "/".to_string(), cloud_bucket: String::new(),
-            media_prompt: String::new(), media_model: "dall-e-3".to_string(), media_results: Vec::new(),
-            audio_input_path: String::new(), audio_output_text: String::new(), tts_input: String::new(), tts_voice: "alloy".to_string(),
-            sig_name: String::new(), sig_inputs: Vec::new(), sig_outputs: Vec::new(), optimization_running: false, optimization_results: Vec::new(),
-            eval_suite_name: String::new(), eval_samples: Vec::new(), eval_results: Vec::new(),
-            security_tab: SecurityTab::Overview, pii_enabled: true, guardrails_enabled: true, rate_limit_rpm: 60,
+            agent_list: Vec::new(),
+            new_agent_name: String::new(),
+            new_agent_role: "Researcher".to_string(),
+            agent_selected: None,
+            tool_search: String::new(),
+            tool_selected: None,
+            auto_tab: AutomationTab::Scheduler,
+            cron_expression: "0 * * * *".to_string(),
+            cron_task_name: String::new(),
+            browser_url: String::new(),
+            browser_output: String::new(),
+            sandbox_code: String::new(),
+            sandbox_language: "python".to_string(),
+            sandbox_output: String::new(),
+            memory_tab: MemoryTab::Episodic,
+            memory_search: String::new(),
+            cloud_provider: "s3".to_string(),
+            cloud_path: "/".to_string(),
+            cloud_bucket: String::new(),
+            media_prompt: String::new(),
+            media_model: "dall-e-3".to_string(),
+            media_results: Vec::new(),
+            audio_input_path: String::new(),
+            audio_output_text: String::new(),
+            tts_input: String::new(),
+            tts_voice: "alloy".to_string(),
+            sig_name: String::new(),
+            sig_inputs: Vec::new(),
+            sig_outputs: Vec::new(),
+            optimization_running: false,
+            optimization_results: Vec::new(),
+            eval_suite_name: String::new(),
+            eval_samples: Vec::new(),
+            eval_results: Vec::new(),
+            security_tab: SecurityTab::Overview,
+            pii_enabled: true,
+            guardrails_enabled: true,
+            rate_limit_rpm: 60,
             rbac_roles: Vec::new(),
             analytics_time_range: "1h".to_string(),
-            devtools_recording: false, devtools_events: Vec::new(), devtools_breakpoints: Vec::new(),
-            cluster_nodes: Vec::new(), cluster_bootstrap: String::new(),
-            settings_section: 0, system_prompt: String::new(), max_tokens: 4096, top_p: 0.9, frequency_penalty: 0.0, presence_penalty: 0.0,
+            devtools_recording: false,
+            devtools_events: Vec::new(),
+            devtools_breakpoints: Vec::new(),
+            cluster_nodes: Vec::new(),
+            cluster_bootstrap: String::new(),
+            settings_section: 0,
+            system_prompt: String::new(),
+            max_tokens: 4096,
+            top_p: 0.9,
+            frequency_penalty: 0.0,
+            presence_penalty: 0.0,
         }
     }
 }
@@ -647,7 +1007,7 @@ struct AiGuiApp {
     // Per-response metadata (indexed by assistant message position)
     response_details: Vec<ResponseDetail>,
     expanded_details: std::collections::HashSet<usize>, // which message indices are expanded
-    last_knowledge_ctx: Option<String>, // captured before sending
+    last_knowledge_ctx: Option<String>,                 // captured before sending
 
     // Startup
     phase: AppPhase,
@@ -787,7 +1147,9 @@ impl AiGuiApp {
             show_monitor: false,
             settings: GuiSettings::default(),
             toasts: Vec::new(),
-            update_rx: Some(ai_assistant::update_checker::check_for_update_bg(env!("CARGO_PKG_VERSION"))),
+            update_rx: Some(ai_assistant::update_checker::check_for_update_bg(env!(
+                "CARGO_PKG_VERSION"
+            ))),
             last_dir: None,
 
             show_model_wizard: false,
@@ -813,7 +1175,8 @@ impl AiGuiApp {
     }
 
     fn add_toast(&mut self, msg: &str, is_error: bool) {
-        self.toasts.push((msg.to_string(), is_error, Instant::now()));
+        self.toasts
+            .push((msg.to_string(), is_error, Instant::now()));
     }
 
     fn add_audit(&mut self, event_type: AuditEventType) {
@@ -837,9 +1200,7 @@ impl AiGuiApp {
         if self.assistant.is_fetching_models {
             self.assistant.poll_models();
             // Fetching just finished and still no models → inform and open wizard
-            if !self.assistant.is_fetching_models
-                && self.assistant.available_models.is_empty()
-            {
+            if !self.assistant.is_fetching_models && self.assistant.available_models.is_empty() {
                 self.show_model_wizard = true;
                 self.toasts.push((
                     "Providers detected but no models installed. Use the Model Library to download one.".to_string(),
@@ -955,7 +1316,10 @@ impl AiGuiApp {
                     DeleteStatus::Failed { model, error } => {
                         self.wizard_state.deleting_model = None;
                         let clean_error = strip_ansi_and_blocks(&error);
-                        self.add_toast(&format!("Failed to delete '{}': {}", model, clean_error), true);
+                        self.add_toast(
+                            &format!("Failed to delete '{}': {}", model, clean_error),
+                            true,
+                        );
                     }
                 }
                 self.wizard_state.delete_rx = None;
@@ -1020,7 +1384,9 @@ impl AiGuiApp {
             if p.provider_type == *provider {
                 match p.provider_type {
                     ai_assistant::AiProvider::Ollama => assistant.config.ollama_url = p.url.clone(),
-                    ai_assistant::AiProvider::LMStudio => assistant.config.lm_studio_url = p.url.clone(),
+                    ai_assistant::AiProvider::LMStudio => {
+                        assistant.config.lm_studio_url = p.url.clone()
+                    }
                     _ => assistant.config.custom_url = p.url.clone(),
                 }
                 break;
@@ -1112,11 +1478,7 @@ impl AiGuiApp {
         if let Some(ref usage) = self.assistant.last_knowledge_usage {
             knowledge_tokens = usage.total_tokens;
             for src in &usage.sources {
-                knowledge_sources.push((
-                    src.source.clone(),
-                    src.chunks_used,
-                    src.relevance_score,
-                ));
+                knowledge_sources.push((src.source.clone(), src.chunks_used, src.relevance_score));
             }
         }
 
@@ -1194,8 +1556,7 @@ impl AiGuiApp {
                             let source = format!("kpkg:{}:{}", name, doc.path);
                             self.assistant
                                 .register_knowledge_document(&source, &doc.content);
-                            self.pending_graph_docs
-                                .push((source, doc.content.clone()));
+                            self.pending_graph_docs.push((source, doc.content.clone()));
                         }
                         self.knowledge_sources.push(KnowledgeSourceInfo {
                             name: name.clone(),
@@ -1204,10 +1565,7 @@ impl AiGuiApp {
                             doc_count: count,
                             status: KnowledgeStatus::Pending,
                         });
-                        self.add_toast(
-                            &format!("Loaded {} ({} docs)", name, count),
-                            false,
-                        );
+                        self.add_toast(&format!("Loaded {} ({} docs)", name, count), false);
                     }
                     Err(e) => self.add_toast(&format!("Decrypt error: {}", e), true),
                 }
@@ -1224,10 +1582,8 @@ impl AiGuiApp {
                     .and_then(|s| s.to_str())
                     .unwrap_or("file")
                     .to_string();
-                self.assistant
-                    .register_knowledge_document(&name, &content);
-                self.pending_graph_docs
-                    .push((name.clone(), content));
+                self.assistant.register_knowledge_document(&name, &content);
+                self.pending_graph_docs.push((name.clone(), content));
                 self.knowledge_sources.push(KnowledgeSourceInfo {
                     name: name.clone(),
                     file_path: path.display().to_string(),
@@ -1330,10 +1686,8 @@ impl AiGuiApp {
                     .and_then(|t| t.as_str())
                     .unwrap_or("Concept")
                     .to_string();
-                let mentions = e
-                    .get("mention_count")
-                    .and_then(|m| m.as_u64())
-                    .unwrap_or(1) as usize;
+                let mentions =
+                    e.get("mention_count").and_then(|m| m.as_u64()).unwrap_or(1) as usize;
                 let idx = graph.add_node(GraphNode {
                     name: name.clone(),
                     entity_type: etype,
@@ -1346,23 +1700,14 @@ impl AiGuiApp {
         // Parse relations
         if let Some(relations) = json.get("relations").and_then(|r| r.as_array()) {
             for r in relations {
-                let from = r
-                    .get("from_entity")
-                    .and_then(|f| f.as_str())
-                    .unwrap_or("");
-                let to = r
-                    .get("to_entity")
-                    .and_then(|t| t.as_str())
-                    .unwrap_or("");
+                let from = r.get("from_entity").and_then(|f| f.as_str()).unwrap_or("");
+                let to = r.get("to_entity").and_then(|t| t.as_str()).unwrap_or("");
                 let rtype = r
                     .get("relation_type")
                     .and_then(|t| t.as_str())
                     .unwrap_or("related")
                     .to_string();
-                let weight = r
-                    .get("weight")
-                    .and_then(|w| w.as_f64())
-                    .unwrap_or(1.0) as f32;
+                let weight = r.get("weight").and_then(|w| w.as_f64()).unwrap_or(1.0) as f32;
                 if let (Some(&from_idx), Some(&to_idx)) = (node_map.get(from), node_map.get(to)) {
                     graph.add_edge(
                         from_idx,
@@ -1435,7 +1780,11 @@ impl AiGuiApp {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.add_space(30.0);
-                    ui.label(egui::RichText::new("No LLM Providers Found").size(28.0).strong());
+                    ui.label(
+                        egui::RichText::new("No LLM Providers Found")
+                            .size(28.0)
+                            .strong(),
+                    );
                     ui.add_space(4.0);
                     ui.label(
                         egui::RichText::new("Install a local LLM provider to get started")
@@ -1447,7 +1796,9 @@ impl AiGuiApp {
                     // Provider recommendation cards
                     let card_width = (ui.available_width() * 0.42).min(320.0);
                     ui.horizontal(|ui| {
-                        ui.add_space((ui.available_width() - card_width * 2.0 - 16.0).max(0.0) / 2.0);
+                        ui.add_space(
+                            (ui.available_width() - card_width * 2.0 - 16.0).max(0.0) / 2.0,
+                        );
 
                         // Ollama card
                         Self::render_provider_card(
@@ -1500,7 +1851,7 @@ impl AiGuiApp {
                                     ui.label(
                                         egui::RichText::new(
                                             "Cloud APIs: Set OPENAI_API_KEY or ANTHROPIC_API_KEY \
-                                             as environment variables, then retry the scan."
+                                             as environment variables, then retry the scan.",
                                         )
                                         .size(12.0)
                                         .color(Color32::from_rgb(200, 200, 160)),
@@ -1574,7 +1925,9 @@ impl AiGuiApp {
                     });
                     ui.add_space(6.0);
                     ui.label(
-                        egui::RichText::new(description).size(12.0).color(Color32::LIGHT_GRAY),
+                        egui::RichText::new(description)
+                            .size(12.0)
+                            .color(Color32::LIGHT_GRAY),
                     );
                     ui.add_space(8.0);
                     ui.hyperlink_to(
@@ -1763,28 +2116,45 @@ impl AiGuiApp {
                     ui.label(egui::RichText::new("Provider:").size(12.0));
                     let providers: Vec<(String, ai_assistant::AiProvider)> =
                         if let Some(ref scan) = self.scan_result_data {
-                            scan.report.llm_providers.iter()
+                            scan.report
+                                .llm_providers
+                                .iter()
                                 .map(|p| (p.name.clone(), p.provider_type.clone()))
                                 .collect()
                         } else {
                             Vec::new()
                         };
                     if providers.is_empty() {
-                        ui.label(egui::RichText::new("No providers detected").color(Color32::GRAY).size(12.0));
+                        ui.label(
+                            egui::RichText::new("No providers detected")
+                                .color(Color32::GRAY)
+                                .size(12.0),
+                        );
                     } else {
-                        let selected_name = providers.get(self.wizard_state.selected_provider_idx)
-                            .map(|(n, _)| n.as_str()).unwrap_or("Select...");
+                        let selected_name = providers
+                            .get(self.wizard_state.selected_provider_idx)
+                            .map(|(n, _)| n.as_str())
+                            .unwrap_or("Select...");
                         egui::ComboBox::from_id_source("wizard_provider")
-                            .selected_text(selected_name).width(160.0)
+                            .selected_text(selected_name)
+                            .width(160.0)
                             .show_ui(ui, |ui| {
                                 for (i, (name, _)) in providers.iter().enumerate() {
-                                    ui.selectable_value(&mut self.wizard_state.selected_provider_idx, i, name);
+                                    ui.selectable_value(
+                                        &mut self.wizard_state.selected_provider_idx,
+                                        i,
+                                        name,
+                                    );
                                 }
                             });
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Refresh").clicked() { self.assistant.fetch_models(); }
-                        if self.assistant.is_fetching_models { ui.spinner(); }
+                        if ui.button("Refresh").clicked() {
+                            self.assistant.fetch_models();
+                        }
+                        if self.assistant.is_fetching_models {
+                            ui.spinner();
+                        }
                     });
                 });
 
@@ -1792,31 +2162,64 @@ impl AiGuiApp {
 
                 // --- Tab bar ---
                 ui.horizontal(|ui| {
-                    ui.selectable_value(&mut self.wizard_state.tab, WizardTab::Recommended, "Recommended");
-                    ui.selectable_value(&mut self.wizard_state.tab, WizardTab::AllModels, "All Models");
+                    ui.selectable_value(
+                        &mut self.wizard_state.tab,
+                        WizardTab::Recommended,
+                        "Recommended",
+                    );
+                    ui.selectable_value(
+                        &mut self.wizard_state.tab,
+                        WizardTab::AllModels,
+                        "All Models",
+                    );
                     let installed_count = self.assistant.available_models.len();
                     let installed_label = format!("Installed ({})", installed_count);
-                    ui.selectable_value(&mut self.wizard_state.tab, WizardTab::Installed, installed_label);
+                    ui.selectable_value(
+                        &mut self.wizard_state.tab,
+                        WizardTab::Installed,
+                        installed_label,
+                    );
                 });
                 ui.separator();
 
                 // --- Shared state ---
                 let catalog = model_catalog();
-                let installed_names: Vec<String> = self.assistant.available_models.iter().map(|m| m.name.clone()).collect();
+                let installed_names: Vec<String> = self
+                    .assistant
+                    .available_models
+                    .iter()
+                    .map(|m| m.name.clone())
+                    .collect();
                 let providers: Vec<(String, ai_assistant::AiProvider)> =
                     if let Some(ref scan) = self.scan_result_data {
-                        scan.report.llm_providers.iter().map(|p| (p.name.clone(), p.provider_type.clone())).collect()
-                    } else { Vec::new() };
-                let selected_provider = providers.get(self.wizard_state.selected_provider_idx).map(|(_, p)| p.clone());
+                        scan.report
+                            .llm_providers
+                            .iter()
+                            .map(|p| (p.name.clone(), p.provider_type.clone()))
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+                let selected_provider = providers
+                    .get(self.wizard_state.selected_provider_idx)
+                    .map(|(_, p)| p.clone());
                 let is_ollama = matches!(selected_provider, Some(ai_assistant::AiProvider::Ollama));
-                let is_cloud = selected_provider.as_ref().map(|p| p.is_cloud()).unwrap_or(false);
-                let is_busy = self.wizard_state.pulling_model.is_some() || self.wizard_state.deleting_model.is_some();
+                let is_cloud = selected_provider
+                    .as_ref()
+                    .map(|p| p.is_cloud())
+                    .unwrap_or(false);
+                let is_busy = self.wizard_state.pulling_model.is_some()
+                    || self.wizard_state.deleting_model.is_some();
                 let pulling_name = self.wizard_state.pulling_model.clone();
                 let deleting_name = self.wizard_state.deleting_model.clone();
                 let pull_line = self.wizard_state.pull_progress_line.clone();
 
                 let is_model_installed = |name: &str| -> bool {
-                    installed_names.iter().any(|n| n == name || n.starts_with(&format!("{}:", name)) || name.starts_with(&format!("{}:", n)))
+                    installed_names.iter().any(|n| {
+                        n == name
+                            || n.starts_with(&format!("{}:", name))
+                            || name.starts_with(&format!("{}:", n))
+                    })
                 };
 
                 match self.wizard_state.tab {
@@ -1827,12 +2230,21 @@ impl AiGuiApp {
                         // Category filter
                         ui.horizontal(|ui| {
                             let all_sel = self.wizard_state.category_filter.is_none();
-                            if ui.selectable_label(all_sel, egui::RichText::new("All").size(12.0)).clicked() {
+                            if ui
+                                .selectable_label(all_sel, egui::RichText::new("All").size(12.0))
+                                .clicked()
+                            {
                                 self.wizard_state.category_filter = None;
                             }
                             for cat in ModelCategory::all() {
                                 let label = format!("{} {}", cat.icon(), cat.label());
-                                if ui.selectable_label(self.wizard_state.category_filter == Some(*cat), egui::RichText::new(label).size(12.0)).clicked() {
+                                if ui
+                                    .selectable_label(
+                                        self.wizard_state.category_filter == Some(*cat),
+                                        egui::RichText::new(label).size(12.0),
+                                    )
+                                    .clicked()
+                                {
                                     self.wizard_state.category_filter = Some(*cat);
                                 }
                             }
@@ -1842,56 +2254,100 @@ impl AiGuiApp {
                         // VRAM guide
                         ui.add_space(4.0);
                         egui::CollapsingHeader::new(
-                            egui::RichText::new("\u{1f4be} VRAM Guide").size(11.0).color(Color32::LIGHT_GRAY),
-                        ).default_open(false).show(ui, |ui| {
+                            egui::RichText::new("\u{1f4be} VRAM Guide")
+                                .size(11.0)
+                                .color(Color32::LIGHT_GRAY),
+                        )
+                        .default_open(false)
+                        .show(ui, |ui| {
                             let info = [
-                                ("4 GB",  "Small models, embeddings (tinyllama, phi3:mini)"),
-                                ("6 GB",  "Most 7B models (llama3.2, mistral, codellama)"),
-                                ("8 GB",  "7B comfortably + some 13B quantized"),
+                                ("4 GB", "Small models, embeddings (tinyllama, phi3:mini)"),
+                                ("6 GB", "Most 7B models (llama3.2, mistral, codellama)"),
+                                ("8 GB", "7B comfortably + some 13B quantized"),
                                 ("12 GB", "13B models, multiple small models"),
                                 ("16 GB", "13B comfortably, some 33B quantized"),
                                 ("24 GB", "33-35B models (command-r)"),
-                                ("48 GB+","70B+ models (llama3.1:70b, mixtral)"),
-                                ("CPU",   "Any model (slower). 16+ GB RAM recommended."),
+                                ("48 GB+", "70B+ models (llama3.1:70b, mixtral)"),
+                                ("CPU", "Any model (slower). 16+ GB RAM recommended."),
                             ];
-                            egui::Grid::new("vram_guide").num_columns(2).spacing([12.0, 3.0]).show(ui, |ui| {
-                                for (v, d) in &info {
-                                    ui.label(egui::RichText::new(*v).size(11.0).strong().color(Color32::from_rgb(130, 180, 255)));
-                                    ui.label(egui::RichText::new(*d).size(10.0).color(Color32::LIGHT_GRAY));
-                                    ui.end_row();
-                                }
-                            });
+                            egui::Grid::new("vram_guide")
+                                .num_columns(2)
+                                .spacing([12.0, 3.0])
+                                .show(ui, |ui| {
+                                    for (v, d) in &info {
+                                        ui.label(
+                                            egui::RichText::new(*v)
+                                                .size(11.0)
+                                                .strong()
+                                                .color(Color32::from_rgb(130, 180, 255)),
+                                        );
+                                        ui.label(
+                                            egui::RichText::new(*d)
+                                                .size(10.0)
+                                                .color(Color32::LIGHT_GRAY),
+                                        );
+                                        ui.end_row();
+                                    }
+                                });
                         });
                         ui.add_space(4.0);
 
                         // Model cards
-                        egui::ScrollArea::vertical().id_source("rec_scroll").show(ui, |ui| {
-                            let filter = self.wizard_state.category_filter;
-                            let mut cur_cat: Option<ModelCategory> = None;
-                            for model in &catalog {
-                                if let Some(f) = filter { if model.category != f { continue; } }
-                                // Category heading
-                                if cur_cat != Some(model.category) {
-                                    cur_cat = Some(model.category);
-                                    if filter.is_none() {
-                                        ui.add_space(10.0);
-                                        ui.label(egui::RichText::new(format!("{} {}", model.category.icon(), model.category.label())).size(14.0).strong());
-                                        ui.add_space(4.0);
+                        egui::ScrollArea::vertical()
+                            .id_source("rec_scroll")
+                            .show(ui, |ui| {
+                                let filter = self.wizard_state.category_filter;
+                                let mut cur_cat: Option<ModelCategory> = None;
+                                for model in &catalog {
+                                    if let Some(f) = filter {
+                                        if model.category != f {
+                                            continue;
+                                        }
                                     }
+                                    // Category heading
+                                    if cur_cat != Some(model.category) {
+                                        cur_cat = Some(model.category);
+                                        if filter.is_none() {
+                                            ui.add_space(10.0);
+                                            ui.label(
+                                                egui::RichText::new(format!(
+                                                    "{} {}",
+                                                    model.category.icon(),
+                                                    model.category.label()
+                                                ))
+                                                .size(14.0)
+                                                .strong(),
+                                            );
+                                            ui.add_space(4.0);
+                                        }
+                                    }
+                                    let installed = is_model_installed(model.name);
+                                    let this_pulling = pulling_name.as_deref() == Some(model.name);
+                                    let this_deleting =
+                                        deleting_name.as_deref() == Some(model.name);
+                                    let (pull, del) = Self::render_model_card(
+                                        ui,
+                                        model.name,
+                                        model.size_estimate,
+                                        model.description,
+                                        installed,
+                                        this_pulling,
+                                        this_deleting,
+                                        is_ollama,
+                                        is_cloud,
+                                        is_busy,
+                                        &pull_line,
+                                    );
+                                    if pull {
+                                        pull_request = Some(model.name.to_string());
+                                    }
+                                    if del {
+                                        delete_request = Some(model.name.to_string());
+                                    }
+                                    ui.add_space(3.0);
                                 }
-                                let installed = is_model_installed(model.name);
-                                let this_pulling = pulling_name.as_deref() == Some(model.name);
-                                let this_deleting = deleting_name.as_deref() == Some(model.name);
-                                let (pull, del) = Self::render_model_card(
-                                    ui, model.name, model.size_estimate, model.description,
-                                    installed, this_pulling, this_deleting, is_ollama, is_cloud, is_busy, &pull_line,
-                                );
-                                if pull { pull_request = Some(model.name.to_string()); }
-                                if del { delete_request = Some(model.name.to_string()); }
-                                ui.add_space(3.0);
-                            }
-                            ui.add_space(8.0);
-                        });
+                                ui.add_space(8.0);
+                            });
                     }
 
                     // =============================================================
@@ -1901,18 +2357,37 @@ impl AiGuiApp {
                         // Search + Sort + Filter
                         ui.horizontal(|ui| {
                             ui.label(egui::RichText::new("\u{1f50d}").size(12.0));
-                            ui.add_sized([160.0, 20.0], egui::TextEdit::singleline(&mut self.wizard_state.search_text).hint_text("Search..."));
+                            ui.add_sized(
+                                [160.0, 20.0],
+                                egui::TextEdit::singleline(&mut self.wizard_state.search_text)
+                                    .hint_text("Search..."),
+                            );
                             ui.separator();
                             ui.label(egui::RichText::new("Sort:").size(11.0));
                             egui::ComboBox::from_id_source("sort_combo")
                                 .selected_text(self.wizard_state.sort_by.label())
                                 .width(80.0)
                                 .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut self.wizard_state.sort_by, ModelSort::Name, "Name");
-                                    ui.selectable_value(&mut self.wizard_state.sort_by, ModelSort::Size, "Size");
-                                    ui.selectable_value(&mut self.wizard_state.sort_by, ModelSort::Category, "Category");
+                                    ui.selectable_value(
+                                        &mut self.wizard_state.sort_by,
+                                        ModelSort::Name,
+                                        "Name",
+                                    );
+                                    ui.selectable_value(
+                                        &mut self.wizard_state.sort_by,
+                                        ModelSort::Size,
+                                        "Size",
+                                    );
+                                    ui.selectable_value(
+                                        &mut self.wizard_state.sort_by,
+                                        ModelSort::Category,
+                                        "Category",
+                                    );
                                 });
-                            ui.checkbox(&mut self.wizard_state.show_installed_only, egui::RichText::new("Installed only").size(11.0));
+                            ui.checkbox(
+                                &mut self.wizard_state.show_installed_only,
+                                egui::RichText::new("Installed only").size(11.0),
+                            );
                         });
                         ui.separator();
 
@@ -1925,13 +2400,17 @@ impl AiGuiApp {
                             installed: bool,
                         }
                         let mut merged: Vec<MergedModel> = Vec::new();
-                        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+                        let mut seen: std::collections::HashSet<String> =
+                            std::collections::HashSet::new();
                         // Add catalog models
                         for m in &catalog {
                             let inst = is_model_installed(m.name);
                             merged.push(MergedModel {
-                                name: m.name.to_string(), size: m.size_estimate.to_string(),
-                                description: m.description.to_string(), category: Some(m.category), installed: inst,
+                                name: m.name.to_string(),
+                                size: m.size_estimate.to_string(),
+                                description: m.description.to_string(),
+                                category: Some(m.category),
+                                installed: inst,
                             });
                             seen.insert(m.name.to_string());
                         }
@@ -1940,8 +2419,11 @@ impl AiGuiApp {
                             if !seen.contains(&m.name) {
                                 let size_str = m.size.clone().unwrap_or_default();
                                 merged.push(MergedModel {
-                                    name: m.name.clone(), size: size_str,
-                                    description: String::new(), category: None, installed: true,
+                                    name: m.name.clone(),
+                                    size: size_str,
+                                    description: String::new(),
+                                    category: None,
+                                    installed: true,
                                 });
                                 seen.insert(m.name.clone());
                             }
@@ -1949,7 +2431,10 @@ impl AiGuiApp {
                         // Filter
                         let search = self.wizard_state.search_text.to_lowercase();
                         if !search.is_empty() {
-                            merged.retain(|m| m.name.to_lowercase().contains(&search) || m.description.to_lowercase().contains(&search));
+                            merged.retain(|m| {
+                                m.name.to_lowercase().contains(&search)
+                                    || m.description.to_lowercase().contains(&search)
+                            });
                         }
                         if self.wizard_state.show_installed_only {
                             merged.retain(|m| m.installed);
@@ -1965,44 +2450,92 @@ impl AiGuiApp {
                             }),
                         }
 
-                        ui.label(egui::RichText::new(format!("{} models", merged.len())).size(10.0).color(Color32::GRAY));
+                        ui.label(
+                            egui::RichText::new(format!("{} models", merged.len()))
+                                .size(10.0)
+                                .color(Color32::GRAY),
+                        );
 
-                        egui::ScrollArea::vertical().id_source("all_scroll").show(ui, |ui| {
-                            for m in &merged {
-                                let this_pulling = pulling_name.as_deref() == Some(m.name.as_str());
-                                let this_deleting = deleting_name.as_deref() == Some(m.name.as_str());
-                                let cat_label = m.category.map(|c| format!("{} ", c.label())).unwrap_or_default();
-                                let desc = if m.description.is_empty() { cat_label } else { format!("{}{}", cat_label, m.description) };
-                                let (pull, del) = Self::render_model_card(
-                                    ui, &m.name, &m.size, &desc,
-                                    m.installed, this_pulling, this_deleting, is_ollama, is_cloud, is_busy, &pull_line,
-                                );
-                                if pull { pull_request = Some(m.name.clone()); }
-                                if del { delete_request = Some(m.name.clone()); }
-                                ui.add_space(3.0);
-                            }
-
-                            // Custom pull section
-                            if is_ollama {
-                                ui.add_space(8.0);
-                                ui.separator();
-                                ui.add_space(4.0);
-                                ui.label(egui::RichText::new("Pull any model by name:").size(12.0).color(Color32::LIGHT_GRAY));
-                                ui.horizontal(|ui| {
-                                    ui.add_sized([200.0, 20.0],
-                                        egui::TextEdit::singleline(&mut self.wizard_state.custom_pull_name)
-                                            .hint_text("e.g. llama3.2:1b"),
+                        egui::ScrollArea::vertical()
+                            .id_source("all_scroll")
+                            .show(ui, |ui| {
+                                for m in &merged {
+                                    let this_pulling =
+                                        pulling_name.as_deref() == Some(m.name.as_str());
+                                    let this_deleting =
+                                        deleting_name.as_deref() == Some(m.name.as_str());
+                                    let cat_label = m
+                                        .category
+                                        .map(|c| format!("{} ", c.label()))
+                                        .unwrap_or_default();
+                                    let desc = if m.description.is_empty() {
+                                        cat_label
+                                    } else {
+                                        format!("{}{}", cat_label, m.description)
+                                    };
+                                    let (pull, del) = Self::render_model_card(
+                                        ui,
+                                        &m.name,
+                                        &m.size,
+                                        &desc,
+                                        m.installed,
+                                        this_pulling,
+                                        this_deleting,
+                                        is_ollama,
+                                        is_cloud,
+                                        is_busy,
+                                        &pull_line,
                                     );
-                                    ui.add_enabled_ui(!is_busy && !self.wizard_state.custom_pull_name.trim().is_empty(), |ui| {
-                                        if ui.button("Pull").clicked() {
-                                            pull_request = Some(self.wizard_state.custom_pull_name.trim().to_string());
-                                            self.wizard_state.custom_pull_name.clear();
-                                        }
+                                    if pull {
+                                        pull_request = Some(m.name.clone());
+                                    }
+                                    if del {
+                                        delete_request = Some(m.name.clone());
+                                    }
+                                    ui.add_space(3.0);
+                                }
+
+                                // Custom pull section
+                                if is_ollama {
+                                    ui.add_space(8.0);
+                                    ui.separator();
+                                    ui.add_space(4.0);
+                                    ui.label(
+                                        egui::RichText::new("Pull any model by name:")
+                                            .size(12.0)
+                                            .color(Color32::LIGHT_GRAY),
+                                    );
+                                    ui.horizontal(|ui| {
+                                        ui.add_sized(
+                                            [200.0, 20.0],
+                                            egui::TextEdit::singleline(
+                                                &mut self.wizard_state.custom_pull_name,
+                                            )
+                                            .hint_text("e.g. llama3.2:1b"),
+                                        );
+                                        ui.add_enabled_ui(
+                                            !is_busy
+                                                && !self
+                                                    .wizard_state
+                                                    .custom_pull_name
+                                                    .trim()
+                                                    .is_empty(),
+                                            |ui| {
+                                                if ui.button("Pull").clicked() {
+                                                    pull_request = Some(
+                                                        self.wizard_state
+                                                            .custom_pull_name
+                                                            .trim()
+                                                            .to_string(),
+                                                    );
+                                                    self.wizard_state.custom_pull_name.clear();
+                                                }
+                                            },
+                                        );
                                     });
-                                });
-                            }
-                            ui.add_space(8.0);
-                        });
+                                }
+                                ui.add_space(8.0);
+                            });
                     }
 
                     // =============================================================
@@ -2012,20 +2545,33 @@ impl AiGuiApp {
                         // Search + Sort
                         ui.horizontal(|ui| {
                             ui.label(egui::RichText::new("\u{1f50d}").size(12.0));
-                            ui.add_sized([200.0, 20.0], egui::TextEdit::singleline(&mut self.wizard_state.search_text).hint_text("Search installed..."));
+                            ui.add_sized(
+                                [200.0, 20.0],
+                                egui::TextEdit::singleline(&mut self.wizard_state.search_text)
+                                    .hint_text("Search installed..."),
+                            );
                             ui.separator();
                             ui.label(egui::RichText::new("Sort:").size(11.0));
                             egui::ComboBox::from_id_source("inst_sort_combo")
                                 .selected_text(self.wizard_state.sort_by.label())
                                 .width(80.0)
                                 .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut self.wizard_state.sort_by, ModelSort::Name, "Name");
-                                    ui.selectable_value(&mut self.wizard_state.sort_by, ModelSort::Size, "Size");
+                                    ui.selectable_value(
+                                        &mut self.wizard_state.sort_by,
+                                        ModelSort::Name,
+                                        "Name",
+                                    );
+                                    ui.selectable_value(
+                                        &mut self.wizard_state.sort_by,
+                                        ModelSort::Size,
+                                        "Size",
+                                    );
                                 });
                         });
                         ui.separator();
 
-                        let mut installed: Vec<&ModelInfo> = self.assistant.available_models.iter().collect();
+                        let mut installed: Vec<&ModelInfo> =
+                            self.assistant.available_models.iter().collect();
                         // Filter by search
                         let search = self.wizard_state.search_text.to_lowercase();
                         if !search.is_empty() {
@@ -2035,7 +2581,10 @@ impl AiGuiApp {
                         match self.wizard_state.sort_by {
                             ModelSort::Name => installed.sort_by(|a, b| a.name.cmp(&b.name)),
                             ModelSort::Size => installed.sort_by(|a, b| {
-                                a.size.as_deref().unwrap_or("").cmp(&b.size.as_deref().unwrap_or(""))
+                                a.size
+                                    .as_deref()
+                                    .unwrap_or("")
+                                    .cmp(&b.size.as_deref().unwrap_or(""))
                             }),
                             _ => installed.sort_by(|a, b| a.name.cmp(&b.name)),
                         }
@@ -2043,27 +2592,57 @@ impl AiGuiApp {
                         if installed.is_empty() {
                             ui.add_space(40.0);
                             ui.vertical_centered(|ui| {
-                                ui.label(egui::RichText::new("No models installed").size(14.0).color(Color32::GRAY));
+                                ui.label(
+                                    egui::RichText::new("No models installed")
+                                        .size(14.0)
+                                        .color(Color32::GRAY),
+                                );
                                 ui.add_space(8.0);
-                                ui.label(egui::RichText::new("Check the Recommended tab to get started").size(12.0).color(Color32::DARK_GRAY));
+                                ui.label(
+                                    egui::RichText::new("Check the Recommended tab to get started")
+                                        .size(12.0)
+                                        .color(Color32::DARK_GRAY),
+                                );
                             });
                         } else {
-                            ui.label(egui::RichText::new(format!("{} models installed", installed.len())).size(10.0).color(Color32::GRAY));
-                            egui::ScrollArea::vertical().id_source("inst_scroll").show(ui, |ui| {
-                                for m in &installed {
-                                    let size_str = m.size.clone().unwrap_or_default();
-                                    let desc = m.display_name();
-                                    let this_deleting = deleting_name.as_deref() == Some(m.name.as_str());
-                                    let this_pulling = pulling_name.as_deref() == Some(m.name.as_str());
-                                    let (_, del) = Self::render_model_card(
-                                        ui, &m.name, &size_str, &desc,
-                                        true, this_pulling, this_deleting, is_ollama, is_cloud, is_busy, &pull_line,
-                                    );
-                                    if del { delete_request = Some(m.name.clone()); }
-                                    ui.add_space(3.0);
-                                }
-                                ui.add_space(8.0);
-                            });
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "{} models installed",
+                                    installed.len()
+                                ))
+                                .size(10.0)
+                                .color(Color32::GRAY),
+                            );
+                            egui::ScrollArea::vertical()
+                                .id_source("inst_scroll")
+                                .show(ui, |ui| {
+                                    for m in &installed {
+                                        let size_str = m.size.clone().unwrap_or_default();
+                                        let desc = m.display_name();
+                                        let this_deleting =
+                                            deleting_name.as_deref() == Some(m.name.as_str());
+                                        let this_pulling =
+                                            pulling_name.as_deref() == Some(m.name.as_str());
+                                        let (_, del) = Self::render_model_card(
+                                            ui,
+                                            &m.name,
+                                            &size_str,
+                                            &desc,
+                                            true,
+                                            this_pulling,
+                                            this_deleting,
+                                            is_ollama,
+                                            is_cloud,
+                                            is_busy,
+                                            &pull_line,
+                                        );
+                                        if del {
+                                            delete_request = Some(m.name.clone());
+                                        }
+                                        ui.add_space(3.0);
+                                    }
+                                    ui.add_space(8.0);
+                                });
                         }
                     }
                 }
@@ -2079,10 +2658,15 @@ impl AiGuiApp {
         if let Some(model_name) = delete_request {
             // Resolve the actual installed name (catalog may use "llama3.2" but
             // ollama needs the full tag like "llama3.2:1b")
-            let real_name = self.assistant.available_models.iter()
-                .find(|m| m.name == model_name
-                    || m.name.starts_with(&format!("{}:", model_name))
-                    || model_name.starts_with(&format!("{}:", m.name)))
+            let real_name = self
+                .assistant
+                .available_models
+                .iter()
+                .find(|m| {
+                    m.name == model_name
+                        || m.name.starts_with(&format!("{}:", model_name))
+                        || model_name.starts_with(&format!("{}:", m.name))
+                })
                 .map(|m| m.name.clone())
                 .unwrap_or(model_name);
             self.start_ollama_delete(&real_name);
@@ -2107,7 +2691,11 @@ impl AiGuiApp {
         let mut delete_clicked = false;
 
         egui::Frame::none()
-            .fill(if installed { Color32::from_rgb(25, 40, 30) } else { Color32::from_rgb(30, 32, 38) })
+            .fill(if installed {
+                Color32::from_rgb(25, 40, 30)
+            } else {
+                Color32::from_rgb(30, 32, 38)
+            })
             .rounding(6.0)
             .inner_margin(10.0)
             .show(ui, |ui| {
@@ -2124,14 +2712,27 @@ impl AiGuiApp {
                                 ui.label(egui::RichText::new(size).size(11.0).color(Color32::GRAY));
                             }
                             if installed {
-                                ui.label(egui::RichText::new("(installed)").size(11.0).color(Color32::from_rgb(100, 200, 100)));
+                                ui.label(
+                                    egui::RichText::new("(installed)")
+                                        .size(11.0)
+                                        .color(Color32::from_rgb(100, 200, 100)),
+                                );
                             }
                         });
                         if !description.is_empty() && description != name {
-                            ui.label(egui::RichText::new(description).size(11.0).color(Color32::LIGHT_GRAY));
+                            ui.label(
+                                egui::RichText::new(description)
+                                    .size(11.0)
+                                    .color(Color32::LIGHT_GRAY),
+                            );
                         }
                         if is_pulling && !pull_line.is_empty() {
-                            ui.label(egui::RichText::new(pull_line).size(10.0).color(Color32::YELLOW).monospace());
+                            ui.label(
+                                egui::RichText::new(pull_line)
+                                    .size(10.0)
+                                    .color(Color32::YELLOW)
+                                    .monospace(),
+                            );
                         }
                     });
 
@@ -2139,20 +2740,36 @@ impl AiGuiApp {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if is_pulling {
                             ui.spinner();
-                            ui.label(egui::RichText::new("Pulling...").size(11.0).color(Color32::YELLOW));
+                            ui.label(
+                                egui::RichText::new("Pulling...")
+                                    .size(11.0)
+                                    .color(Color32::YELLOW),
+                            );
                         } else if is_deleting {
                             ui.spinner();
-                            ui.label(egui::RichText::new("Deleting...").size(11.0).color(Color32::from_rgb(255, 120, 100)));
+                            ui.label(
+                                egui::RichText::new("Deleting...")
+                                    .size(11.0)
+                                    .color(Color32::from_rgb(255, 120, 100)),
+                            );
                         } else if installed && is_ollama {
                             // Delete button for installed Ollama models
                             ui.add_enabled_ui(!is_busy, |ui| {
-                                let btn = ui.button(egui::RichText::new("Delete").size(11.0).color(Color32::from_rgb(255, 100, 80)));
+                                let btn = ui.button(
+                                    egui::RichText::new("Delete")
+                                        .size(11.0)
+                                        .color(Color32::from_rgb(255, 100, 80)),
+                                );
                                 if btn.clicked() {
                                     delete_clicked = true;
                                 }
                             });
                         } else if !installed && is_cloud {
-                            ui.label(egui::RichText::new("Available").size(11.0).color(Color32::LIGHT_GREEN));
+                            ui.label(
+                                egui::RichText::new("Available")
+                                    .size(11.0)
+                                    .color(Color32::LIGHT_GREEN),
+                            );
                         } else if !installed && is_ollama {
                             ui.add_enabled_ui(!is_busy, |ui| {
                                 if ui.button("Pull").clicked() {
@@ -2160,7 +2777,10 @@ impl AiGuiApp {
                                 }
                             });
                         } else if !installed {
-                            ui.hyperlink_to(egui::RichText::new("Open LM Studio").size(11.0), "https://lmstudio.ai");
+                            ui.hyperlink_to(
+                                egui::RichText::new("Open LM Studio").size(11.0),
+                                "https://lmstudio.ai",
+                            );
                         }
                     });
                 });
@@ -2251,10 +2871,14 @@ impl AiGuiApp {
 
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     for (cat_idx, cat) in SidebarCategory::all().iter().enumerate() {
-                        let is_expanded = self.panels.expanded_categories.contains(&(cat_idx as u8));
+                        let is_expanded =
+                            self.panels.expanded_categories.contains(&(cat_idx as u8));
                         ui.horizontal(|ui| {
                             let arrow = if is_expanded { "\u{25BC}" } else { "\u{25B6}" }; // down / right triangle
-                            if ui.selectable_label(false, format!("{} {}", arrow, cat.label())).clicked() {
+                            if ui
+                                .selectable_label(false, format!("{} {}", arrow, cat.label()))
+                                .clicked()
+                            {
                                 if is_expanded {
                                     self.panels.expanded_categories.remove(&(cat_idx as u8));
                                 } else {
@@ -2358,7 +2982,11 @@ impl AiGuiApp {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 ui.label("Context mode:");
-                ui.selectable_value(&mut self.context_mode, ContextMode::Conversation, "Conversation");
+                ui.selectable_value(
+                    &mut self.context_mode,
+                    ContextMode::Conversation,
+                    "Conversation",
+                );
                 ui.selectable_value(&mut self.context_mode, ContextMode::FreshContext, "Fresh");
             });
             if self.context_mode == ContextMode::FreshContext {
@@ -2394,23 +3022,34 @@ impl AiGuiApp {
                 if self.context_mode == ContextMode::FreshContext {
                     ui.colored_label(
                         Color32::from_gray(140),
-                        format!("Context: ~{} tokens available for knowledge (FreshContext)", available),
+                        format!(
+                            "Context: ~{} tokens available for knowledge (FreshContext)",
+                            available
+                        ),
                     );
                 } else {
-                    let conv_tokens: usize = self.assistant.conversation.iter()
+                    let conv_tokens: usize = self
+                        .assistant
+                        .conversation
+                        .iter()
                         .map(|m| m.content.len() / 4)
                         .sum();
                     ui.colored_label(
                         Color32::from_gray(140),
-                        format!("Context: ~{} tokens for knowledge (~{} by conversation)",
-                            available, conv_tokens),
+                        format!(
+                            "Context: ~{} tokens for knowledge (~{} by conversation)",
+                            available, conv_tokens
+                        ),
                     );
                 }
                 if let Some(ref usage) = self.assistant.last_knowledge_usage {
                     ui.colored_label(
                         Color32::from_gray(140),
-                        format!("Last query used {} tokens from {} sources",
-                            usage.total_tokens, usage.sources.len()),
+                        format!(
+                            "Last query used {} tokens from {} sources",
+                            usage.total_tokens,
+                            usage.sources.len()
+                        ),
                     );
                 }
             }
@@ -2501,11 +3140,7 @@ impl AiGuiApp {
                 ui.label("None detected");
             } else {
                 for p in &result.report.llm_providers {
-                    ui.label(format!(
-                        "{} ({} models)",
-                        p.name,
-                        p.available_models.len()
-                    ));
+                    ui.label(format!("{} ({} models)", p.name, p.available_models.len()));
                     ui.label(format!("  URL: {}", p.url));
                 }
             }
@@ -2574,8 +3209,20 @@ impl AiGuiApp {
                     egui::ComboBox::from_id_source("agent_role_combo")
                         .selected_text(&self.panels.new_agent_role)
                         .show_ui(ui, |ui| {
-                            for role in &["Coordinator", "Researcher", "Analyst", "Writer", "Reviewer", "Executor", "Validator"] {
-                                ui.selectable_value(&mut self.panels.new_agent_role, role.to_string(), *role);
+                            for role in &[
+                                "Coordinator",
+                                "Researcher",
+                                "Analyst",
+                                "Writer",
+                                "Reviewer",
+                                "Executor",
+                                "Validator",
+                            ] {
+                                ui.selectable_value(
+                                    &mut self.panels.new_agent_role,
+                                    role.to_string(),
+                                    *role,
+                                );
                             }
                         });
                 });
@@ -2593,7 +3240,10 @@ impl AiGuiApp {
 
         ui.add_space(8.0);
         ui.separator();
-        ui.label(format!("{} agents registered", self.panels.agent_list.len()));
+        ui.label(format!(
+            "{} agents registered",
+            self.panels.agent_list.len()
+        ));
         ui.add_space(4.0);
 
         // Agent list
@@ -2602,20 +3252,30 @@ impl AiGuiApp {
             for (i, (id, name, role)) in self.panels.agent_list.iter().enumerate() {
                 let selected = self.panels.agent_selected == Some(i);
                 egui::Frame::none()
-                    .fill(if selected { Color32::from_gray(45) } else { Color32::from_gray(30) })
+                    .fill(if selected {
+                        Color32::from_gray(45)
+                    } else {
+                        Color32::from_gray(30)
+                    })
                     .rounding(6.0)
                     .inner_margin(egui::Margin::same(8.0))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            if ui.selectable_label(selected, format!("{} ({})", name, role)).clicked() {
+                            if ui
+                                .selectable_label(selected, format!("{} ({})", name, role))
+                                .clicked()
+                            {
                                 self.panels.agent_selected = Some(i);
                             }
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui.small_button("Delete").clicked() {
-                                    delete_idx = Some(i);
-                                }
-                                ui.colored_label(Color32::from_gray(120), id);
-                            });
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if ui.small_button("Delete").clicked() {
+                                        delete_idx = Some(i);
+                                    }
+                                    ui.colored_label(Color32::from_gray(120), id);
+                                },
+                            );
                         });
                     });
                 ui.add_space(2.0);
@@ -2640,20 +3300,46 @@ impl AiGuiApp {
         egui::ScrollArea::vertical().show(ui, |ui| {
             // Built-in tool categories
             let tool_groups: &[(&str, &[&str])] = &[
-                ("Browser Automation", &["navigate", "click", "type_text", "screenshot", "get_text", "execute_script"]),
-                ("Code Sandbox", &["execute_python", "execute_javascript", "execute_bash"]),
-                ("File Operations", &["read_file", "write_file", "list_directory"]),
-                ("RAG / Knowledge", &["search_knowledge", "add_document", "list_sources"]),
+                (
+                    "Browser Automation",
+                    &[
+                        "navigate",
+                        "click",
+                        "type_text",
+                        "screenshot",
+                        "get_text",
+                        "execute_script",
+                    ],
+                ),
+                (
+                    "Code Sandbox",
+                    &["execute_python", "execute_javascript", "execute_bash"],
+                ),
+                (
+                    "File Operations",
+                    &["read_file", "write_file", "list_directory"],
+                ),
+                (
+                    "RAG / Knowledge",
+                    &["search_knowledge", "add_document", "list_sources"],
+                ),
                 ("Web / HTTP", &["http_get", "http_post", "fetch_url"]),
                 ("System", &["get_time", "get_env", "run_command"]),
             ];
 
             let search_lower = self.panels.tool_search.to_lowercase();
             for (group_name, tools) in tool_groups {
-                let matching: Vec<&&str> = tools.iter()
-                    .filter(|t| search_lower.is_empty() || t.to_lowercase().contains(&search_lower) || group_name.to_lowercase().contains(&search_lower))
+                let matching: Vec<&&str> = tools
+                    .iter()
+                    .filter(|t| {
+                        search_lower.is_empty()
+                            || t.to_lowercase().contains(&search_lower)
+                            || group_name.to_lowercase().contains(&search_lower)
+                    })
                     .collect();
-                if matching.is_empty() { continue; }
+                if matching.is_empty() {
+                    continue;
+                }
 
                 ui.collapsing(*group_name, |ui| {
                     for tool_name in matching {
@@ -2664,7 +3350,13 @@ impl AiGuiApp {
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
                                     ui.colored_label(Color32::from_rgb(120, 200, 255), *tool_name);
-                                    ui.colored_label(Color32::from_gray(100), format!("({} tool)", group_name.split_whitespace().next().unwrap_or("")));
+                                    ui.colored_label(
+                                        Color32::from_gray(100),
+                                        format!(
+                                            "({} tool)",
+                                            group_name.split_whitespace().next().unwrap_or("")
+                                        ),
+                                    );
                                 });
                             });
                         ui.add_space(1.0);
@@ -2676,7 +3368,10 @@ impl AiGuiApp {
             ui.separator();
             ui.label("MCP Servers");
             ui.add_space(4.0);
-            ui.colored_label(Color32::from_gray(140), "Configure MCP server connections in Settings > Provider.");
+            ui.colored_label(
+                Color32::from_gray(140),
+                "Configure MCP server connections in Settings > Provider.",
+            );
             ui.label("Supported transports: StdIO, SSE, WebSocket");
             ui.label("Supported auth: OAuth 2.0 with PKCE");
         });
@@ -2688,8 +3383,16 @@ impl AiGuiApp {
 
         // Sub-tabs
         ui.horizontal(|ui| {
-            for (tab, label) in &[(AutomationTab::Scheduler, "Scheduler"), (AutomationTab::Browser, "Browser"), (AutomationTab::Sandbox, "Code Sandbox"), (AutomationTab::Workflows, "Workflows")] {
-                if ui.selectable_label(self.panels.auto_tab == *tab, *label).clicked() {
+            for (tab, label) in &[
+                (AutomationTab::Scheduler, "Scheduler"),
+                (AutomationTab::Browser, "Browser"),
+                (AutomationTab::Sandbox, "Code Sandbox"),
+                (AutomationTab::Workflows, "Workflows"),
+            ] {
+                if ui
+                    .selectable_label(self.panels.auto_tab == *tab, *label)
+                    .clicked()
+                {
                     self.panels.auto_tab = *tab;
                 }
             }
@@ -2860,8 +3563,15 @@ impl AiGuiApp {
 
         // Sub-tabs
         ui.horizontal(|ui| {
-            for (tab, label) in &[(MemoryTab::Episodic, "Episodic"), (MemoryTab::Procedural, "Procedural"), (MemoryTab::Entity, "Entity")] {
-                if ui.selectable_label(self.panels.memory_tab == *tab, *label).clicked() {
+            for (tab, label) in &[
+                (MemoryTab::Episodic, "Episodic"),
+                (MemoryTab::Procedural, "Procedural"),
+                (MemoryTab::Entity, "Entity"),
+            ] {
+                if ui
+                    .selectable_label(self.panels.memory_tab == *tab, *label)
+                    .clicked()
+                {
                     self.panels.memory_tab = *tab;
                 }
             }
@@ -2956,53 +3666,82 @@ impl AiGuiApp {
             egui::ComboBox::from_id_source("cloud_provider")
                 .selected_text(&self.panels.cloud_provider)
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.panels.cloud_provider, "s3".to_string(), "Amazon S3");
-                    ui.selectable_value(&mut self.panels.cloud_provider, "gdrive".to_string(), "Google Drive");
-                    ui.selectable_value(&mut self.panels.cloud_provider, "azure".to_string(), "Azure Blob");
-                    ui.selectable_value(&mut self.panels.cloud_provider, "gcs".to_string(), "Google Cloud Storage");
+                    ui.selectable_value(
+                        &mut self.panels.cloud_provider,
+                        "s3".to_string(),
+                        "Amazon S3",
+                    );
+                    ui.selectable_value(
+                        &mut self.panels.cloud_provider,
+                        "gdrive".to_string(),
+                        "Google Drive",
+                    );
+                    ui.selectable_value(
+                        &mut self.panels.cloud_provider,
+                        "azure".to_string(),
+                        "Azure Blob",
+                    );
+                    ui.selectable_value(
+                        &mut self.panels.cloud_provider,
+                        "gcs".to_string(),
+                        "Google Cloud Storage",
+                    );
                 });
         });
 
         ui.separator();
 
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            match self.panels.cloud_provider.as_str() {
-                "s3" => {
-                    ui.label("Amazon S3 Configuration");
-                    ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        ui.label("Bucket:");
-                        ui.text_edit_singleline(&mut self.panels.cloud_bucket);
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Path:");
-                        ui.text_edit_singleline(&mut self.panels.cloud_path);
-                    });
-                    ui.add_space(4.0);
-                    ui.colored_label(Color32::from_gray(140), "Configure AWS credentials via environment variables:");
-                    ui.colored_label(Color32::from_gray(120), "  AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION");
-                    ui.add_space(8.0);
-                    if self.panels.cloud_bucket.is_empty() {
-                        ui.label("Enter a bucket name to browse files.");
-                    } else {
-                        if ui.button("List Objects").clicked() {
-                            self.add_toast("S3 listing requires configured credentials", false);
-                        }
+        egui::ScrollArea::vertical().show(ui, |ui| match self.panels.cloud_provider.as_str() {
+            "s3" => {
+                ui.label("Amazon S3 Configuration");
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.label("Bucket:");
+                    ui.text_edit_singleline(&mut self.panels.cloud_bucket);
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Path:");
+                    ui.text_edit_singleline(&mut self.panels.cloud_path);
+                });
+                ui.add_space(4.0);
+                ui.colored_label(
+                    Color32::from_gray(140),
+                    "Configure AWS credentials via environment variables:",
+                );
+                ui.colored_label(
+                    Color32::from_gray(120),
+                    "  AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION",
+                );
+                ui.add_space(8.0);
+                if self.panels.cloud_bucket.is_empty() {
+                    ui.label("Enter a bucket name to browse files.");
+                } else {
+                    if ui.button("List Objects").clicked() {
+                        self.add_toast("S3 listing requires configured credentials", false);
                     }
                 }
-                "gdrive" => {
-                    ui.label("Google Drive Configuration");
-                    ui.add_space(4.0);
-                    ui.colored_label(Color32::from_gray(140), "Configure OAuth token for Google Drive access.");
-                    ui.colored_label(Color32::from_gray(140), "Supports file listing, upload, and download.");
-                    ui.add_space(8.0);
-                    if ui.button("Authenticate").clicked() {
-                        self.add_toast("Google Drive OAuth flow not yet wired", false);
-                    }
+            }
+            "gdrive" => {
+                ui.label("Google Drive Configuration");
+                ui.add_space(4.0);
+                ui.colored_label(
+                    Color32::from_gray(140),
+                    "Configure OAuth token for Google Drive access.",
+                );
+                ui.colored_label(
+                    Color32::from_gray(140),
+                    "Supports file listing, upload, and download.",
+                );
+                ui.add_space(8.0);
+                if ui.button("Authenticate").clicked() {
+                    self.add_toast("Google Drive OAuth flow not yet wired", false);
                 }
-                _ => {
-                    ui.label(format!("{} storage — configure credentials in Settings > Provider", self.panels.cloud_provider.to_uppercase()));
-                }
+            }
+            _ => {
+                ui.label(format!(
+                    "{} storage — configure credentials in Settings > Provider",
+                    self.panels.cloud_provider.to_uppercase()
+                ));
             }
         });
     }
@@ -3016,7 +3755,14 @@ impl AiGuiApp {
             egui::ComboBox::from_id_source("media_model")
                 .selected_text(&self.panels.media_model)
                 .show_ui(ui, |ui| {
-                    for m in &["dall-e-3", "dall-e-2", "stable-diffusion", "flux", "runway", "sora"] {
+                    for m in &[
+                        "dall-e-3",
+                        "dall-e-2",
+                        "stable-diffusion",
+                        "flux",
+                        "runway",
+                        "sora",
+                    ] {
                         ui.selectable_value(&mut self.panels.media_model, m.to_string(), *m);
                     }
                 });
@@ -3024,13 +3770,21 @@ impl AiGuiApp {
 
         ui.add_space(4.0);
         ui.label("Prompt:");
-        ui.add(egui::TextEdit::multiline(&mut self.panels.media_prompt)
-            .desired_rows(3)
-            .desired_width(f32::INFINITY));
+        ui.add(
+            egui::TextEdit::multiline(&mut self.panels.media_prompt)
+                .desired_rows(3)
+                .desired_width(f32::INFINITY),
+        );
 
         ui.horizontal(|ui| {
             if ui.button("Generate Image").clicked() && !self.panels.media_prompt.is_empty() {
-                self.add_toast(&format!("Image generation via {} requires API key configuration", self.panels.media_model), false);
+                self.add_toast(
+                    &format!(
+                        "Image generation via {} requires API key configuration",
+                        self.panels.media_model
+                    ),
+                    false,
+                );
             }
             if ui.button("Clear Gallery").clicked() {
                 self.panels.media_results.clear();
@@ -3047,7 +3801,10 @@ impl AiGuiApp {
                 for (name, desc) in &[
                     ("DALL-E 3", "OpenAI — highest quality, prompt rewriting"),
                     ("DALL-E 2", "OpenAI — fast, lower cost"),
-                    ("Stable Diffusion", "Local or API — open source, customizable"),
+                    (
+                        "Stable Diffusion",
+                        "Local or API — open source, customizable",
+                    ),
                     ("Flux", "Replicate — fast, high quality"),
                     ("Runway", "Video generation from text or image"),
                     ("Sora", "OpenAI — text-to-video"),
@@ -3065,7 +3822,10 @@ impl AiGuiApp {
                     ui.add_space(1.0);
                 }
             } else {
-                ui.label(format!("{} generated images:", self.panels.media_results.len()));
+                ui.label(format!(
+                    "{} generated images:",
+                    self.panels.media_results.len()
+                ));
                 for path in &self.panels.media_results {
                     ui.label(path);
                 }
@@ -3186,12 +3946,18 @@ impl AiGuiApp {
                         ui.horizontal(|ui| {
                             ui.text_edit_singleline(name);
                             ui.text_edit_singleline(desc);
-                            if ui.small_button("X").clicked() { remove_input = Some(i); }
+                            if ui.small_button("X").clicked() {
+                                remove_input = Some(i);
+                            }
                         });
                     }
-                    if let Some(idx) = remove_input { self.panels.sig_inputs.remove(idx); }
+                    if let Some(idx) = remove_input {
+                        self.panels.sig_inputs.remove(idx);
+                    }
                     if ui.small_button("+ Add input").clicked() {
-                        self.panels.sig_inputs.push(("input".to_string(), "description".to_string()));
+                        self.panels
+                            .sig_inputs
+                            .push(("input".to_string(), "description".to_string()));
                     }
 
                     ui.add_space(4.0);
@@ -3201,12 +3967,18 @@ impl AiGuiApp {
                         ui.horizontal(|ui| {
                             ui.text_edit_singleline(name);
                             ui.text_edit_singleline(desc);
-                            if ui.small_button("X").clicked() { remove_output = Some(i); }
+                            if ui.small_button("X").clicked() {
+                                remove_output = Some(i);
+                            }
                         });
                     }
-                    if let Some(idx) = remove_output { self.panels.sig_outputs.remove(idx); }
+                    if let Some(idx) = remove_output {
+                        self.panels.sig_outputs.remove(idx);
+                    }
                     if ui.small_button("+ Add output").clicked() {
-                        self.panels.sig_outputs.push(("output".to_string(), "description".to_string()));
+                        self.panels
+                            .sig_outputs
+                            .push(("output".to_string(), "description".to_string()));
                     }
                 });
 
@@ -3220,16 +3992,24 @@ impl AiGuiApp {
                 .show(ui, |ui| {
                     ui.strong("Optimization");
                     ui.add_space(4.0);
-                    ui.label("Optimizers: BootstrapFewShot, Grid Search, Bayesian, GEPA, MIPROv2, SIMBA");
+                    ui.label(
+                        "Optimizers: BootstrapFewShot, Grid Search, Bayesian, GEPA, MIPROv2, SIMBA",
+                    );
                     ui.label("Metrics: ExactMatch, F1Score, ContainsAnswer, Custom");
                     ui.add_space(4.0);
                     if self.panels.optimization_running {
-                        ui.colored_label(Color32::from_rgb(255, 200, 50), "Optimization in progress...");
+                        ui.colored_label(
+                            Color32::from_rgb(255, 200, 50),
+                            "Optimization in progress...",
+                        );
                     } else if ui.button("Run Optimization").clicked() {
                         if self.panels.sig_name.is_empty() {
                             self.add_toast("Name the signature first", true);
                         } else {
-                            self.add_toast("Optimization requires training data and a configured LLM", false);
+                            self.add_toast(
+                                "Optimization requires training data and a configured LLM",
+                                false,
+                            );
                         }
                     }
 
@@ -3239,7 +4019,10 @@ impl AiGuiApp {
                         for (config, score) in &self.panels.optimization_results {
                             ui.horizontal(|ui| {
                                 ui.label(config);
-                                ui.colored_label(Color32::from_rgb(100, 200, 100), format!("{:.3}", score));
+                                ui.colored_label(
+                                    Color32::from_rgb(100, 200, 100),
+                                    format!("{:.3}", score),
+                                );
                             });
                         }
                     }
@@ -3272,12 +4055,18 @@ impl AiGuiApp {
                         ui.horizontal(|ui| {
                             ui.add(egui::TextEdit::singleline(input).hint_text("Input"));
                             ui.add(egui::TextEdit::singleline(expected).hint_text("Expected"));
-                            if ui.small_button("X").clicked() { remove_sample = Some(i); }
+                            if ui.small_button("X").clicked() {
+                                remove_sample = Some(i);
+                            }
                         });
                     }
-                    if let Some(idx) = remove_sample { self.panels.eval_samples.remove(idx); }
+                    if let Some(idx) = remove_sample {
+                        self.panels.eval_samples.remove(idx);
+                    }
                     if ui.small_button("+ Add sample").clicked() {
-                        self.panels.eval_samples.push((String::new(), String::new()));
+                        self.panels
+                            .eval_samples
+                            .push((String::new(), String::new()));
                     }
 
                     ui.add_space(4.0);
@@ -3302,9 +4091,13 @@ impl AiGuiApp {
                         ui.strong("Results");
                         for (sample, score, output) in &self.panels.eval_results {
                             ui.horizontal(|ui| {
-                                let color = if *score > 0.8 { Color32::from_rgb(100, 200, 100) }
-                                    else if *score > 0.5 { Color32::from_rgb(200, 200, 100) }
-                                    else { Color32::from_rgb(255, 100, 100) };
+                                let color = if *score > 0.8 {
+                                    Color32::from_rgb(100, 200, 100)
+                                } else if *score > 0.5 {
+                                    Color32::from_rgb(200, 200, 100)
+                                } else {
+                                    Color32::from_rgb(255, 100, 100)
+                                };
                                 ui.colored_label(color, format!("{:.1}%", score * 100.0));
                                 ui.label(sample);
                                 ui.colored_label(Color32::from_gray(120), output);
@@ -3345,7 +4138,10 @@ impl AiGuiApp {
                 (SecurityTab::AuditLog, "Audit Log"),
             ];
             for (tab, label) in &tabs {
-                if ui.selectable_label(self.panels.security_tab == *tab, *label).clicked() {
+                if ui
+                    .selectable_label(self.panels.security_tab == *tab, *label)
+                    .clicked()
+                {
                     self.panels.security_tab = *tab;
                 }
             }
@@ -3452,7 +4248,10 @@ impl AiGuiApp {
         ui.horizontal(|ui| {
             ui.label("Time range:");
             for range in &["1h", "24h", "7d", "30d"] {
-                if ui.selectable_label(self.panels.analytics_time_range == *range, *range).clicked() {
+                if ui
+                    .selectable_label(self.panels.analytics_time_range == *range, *range)
+                    .clicked()
+                {
                     self.panels.analytics_time_range = range.to_string();
                 }
             }
@@ -3469,8 +4268,18 @@ impl AiGuiApp {
                     ui.strong("Session Metrics");
                     ui.add_space(4.0);
                     let msg_count = self.assistant.conversation.len();
-                    let user_msgs = self.assistant.conversation.iter().filter(|m| m.role == "user").count();
-                    let ai_msgs = self.assistant.conversation.iter().filter(|m| m.role == "assistant").count();
+                    let user_msgs = self
+                        .assistant
+                        .conversation
+                        .iter()
+                        .filter(|m| m.role == "user")
+                        .count();
+                    let ai_msgs = self
+                        .assistant
+                        .conversation
+                        .iter()
+                        .filter(|m| m.role == "assistant")
+                        .count();
                     ui.horizontal(|ui| {
                         ui.label(format!("Messages: {}", msg_count));
                         ui.separator();
@@ -3481,7 +4290,11 @@ impl AiGuiApp {
 
                     // Response time stats from details
                     if !self.response_details.is_empty() {
-                        let times: Vec<u64> = self.response_details.iter().map(|d| d.response_time_ms).collect();
+                        let times: Vec<u64> = self
+                            .response_details
+                            .iter()
+                            .map(|d| d.response_time_ms)
+                            .collect();
                         let avg = times.iter().sum::<u64>() / times.len() as u64;
                         let min = times.iter().min().unwrap_or(&0);
                         let max = times.iter().max().unwrap_or(&0);
@@ -3495,10 +4308,15 @@ impl AiGuiApp {
                         });
 
                         // Token usage
-                        let total_in: usize = self.response_details.iter().map(|d| d.input_tokens).sum();
-                        let total_out: usize = self.response_details.iter().map(|d| d.output_tokens).sum();
+                        let total_in: usize =
+                            self.response_details.iter().map(|d| d.input_tokens).sum();
+                        let total_out: usize =
+                            self.response_details.iter().map(|d| d.output_tokens).sum();
                         ui.horizontal(|ui| {
-                            ui.label(format!("Total tokens — in: {}, out: {}", total_in, total_out));
+                            ui.label(format!(
+                                "Total tokens — in: {}, out: {}",
+                                total_in, total_out
+                            ));
                         });
                     }
                 });
@@ -3514,7 +4332,11 @@ impl AiGuiApp {
                     ui.strong("Knowledge Base");
                     ui.add_space(4.0);
                     ui.label(format!("Sources loaded: {}", self.knowledge_sources.len()));
-                    let indexed = self.knowledge_sources.iter().filter(|k| k.status == KnowledgeStatus::Indexed).count();
+                    let indexed = self
+                        .knowledge_sources
+                        .iter()
+                        .filter(|k| k.status == KnowledgeStatus::Indexed)
+                        .count();
                     ui.label(format!("Indexed: {}", indexed));
                     if let Some(ref viz) = self.graph_viz {
                         ui.label(format!("Graph entities: {}", viz.graph.node_count()));
@@ -3537,7 +4359,10 @@ impl AiGuiApp {
                         ui.label(format!("Sentiment: {:?}", sentiment.overall));
                     }
                     ui.label(format!("Topics detected: {}", self.topics_cache.len()));
-                    ui.label(format!("Models available: {}", self.assistant.available_models.len()));
+                    ui.label(format!(
+                        "Models available: {}",
+                        self.assistant.available_models.len()
+                    ));
                 });
         });
     }
@@ -3554,8 +4379,16 @@ impl AiGuiApp {
                 .inner_margin(egui::Margin::same(10.0))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        let recording_label = if self.panels.devtools_recording { "Stop Recording" } else { "Start Recording" };
-                        let recording_color = if self.panels.devtools_recording { Color32::from_rgb(255, 80, 80) } else { Color32::from_rgb(100, 200, 100) };
+                        let recording_label = if self.panels.devtools_recording {
+                            "Stop Recording"
+                        } else {
+                            "Start Recording"
+                        };
+                        let recording_color = if self.panels.devtools_recording {
+                            Color32::from_rgb(255, 80, 80)
+                        } else {
+                            Color32::from_rgb(100, 200, 100)
+                        };
                         if ui.colored_label(recording_color, recording_label).clicked() {
                             self.panels.devtools_recording = !self.panels.devtools_recording;
                             if self.panels.devtools_recording {
@@ -3590,12 +4423,18 @@ impl AiGuiApp {
                         ui.horizontal(|ui| {
                             ui.colored_label(Color32::from_rgb(255, 100, 100), "\u{25cf}"); // red dot
                             ui.label(bp);
-                            if ui.small_button("X").clicked() { remove_bp = Some(i); }
+                            if ui.small_button("X").clicked() {
+                                remove_bp = Some(i);
+                            }
                         });
                     }
-                    if let Some(idx) = remove_bp { self.panels.devtools_breakpoints.remove(idx); }
+                    if let Some(idx) = remove_bp {
+                        self.panels.devtools_breakpoints.remove(idx);
+                    }
                     ui.add_space(4.0);
-                    ui.label("Breakpoint types: tool_call, agent_state_change, error, confidence_low");
+                    ui.label(
+                        "Breakpoint types: tool_call, agent_state_change, error, confidence_low",
+                    );
                 });
 
             ui.add_space(8.0);
@@ -3616,10 +4455,22 @@ impl AiGuiApp {
 
             ui.add_space(8.0);
             ui.label("Capabilities:");
-            ui.colored_label(Color32::from_gray(140), "  ExecutionRecorder — record agent actions for replay");
-            ui.colored_label(Color32::from_gray(140), "  PerformanceProfiler — step-by-step timing");
-            ui.colored_label(Color32::from_gray(140), "  StateInspector — inspect agent state at any point");
-            ui.colored_label(Color32::from_gray(140), "  StateDiff — compare state between steps");
+            ui.colored_label(
+                Color32::from_gray(140),
+                "  ExecutionRecorder — record agent actions for replay",
+            );
+            ui.colored_label(
+                Color32::from_gray(140),
+                "  PerformanceProfiler — step-by-step timing",
+            );
+            ui.colored_label(
+                Color32::from_gray(140),
+                "  StateInspector — inspect agent state at any point",
+            );
+            ui.colored_label(
+                Color32::from_gray(140),
+                "  StateDiff — compare state between steps",
+            );
         });
     }
 
@@ -3645,7 +4496,13 @@ impl AiGuiApp {
                             if self.panels.cluster_bootstrap.is_empty() {
                                 self.add_toast("Enter a bootstrap address", true);
                             } else {
-                                self.add_toast(&format!("Joining cluster at {}", self.panels.cluster_bootstrap), false);
+                                self.add_toast(
+                                    &format!(
+                                        "Joining cluster at {}",
+                                        self.panels.cluster_bootstrap
+                                    ),
+                                    false,
+                                );
                             }
                         }
                         if ui.button("Start as Seed").clicked() {
@@ -3665,7 +4522,10 @@ impl AiGuiApp {
                     ui.strong(format!("Nodes ({} known)", self.panels.cluster_nodes.len()));
                     ui.add_space(4.0);
                     if self.panels.cluster_nodes.is_empty() {
-                        ui.colored_label(Color32::from_gray(140), "No nodes connected. Join or start a cluster.");
+                        ui.colored_label(
+                            Color32::from_gray(140),
+                            "No nodes connected. Join or start a cluster.",
+                        );
                     }
                     for (id, addr, status) in &self.panels.cluster_nodes {
                         ui.horizontal(|ui| {
@@ -3705,9 +4565,20 @@ impl AiGuiApp {
 
         // Section selector
         ui.horizontal(|ui| {
-            let sections = ["Provider", "Generation", "Security", "RAG", "Agents", "Memory", "UI"];
+            let sections = [
+                "Provider",
+                "Generation",
+                "Security",
+                "RAG",
+                "Agents",
+                "Memory",
+                "UI",
+            ];
             for (i, label) in sections.iter().enumerate() {
-                if ui.selectable_label(self.panels.settings_section == i as u8, *label).clicked() {
+                if ui
+                    .selectable_label(self.panels.settings_section == i as u8, *label)
+                    .clicked()
+                {
                     self.panels.settings_section = i as u8;
                 }
             }
@@ -3953,7 +4824,10 @@ impl AiGuiApp {
                     }
                     ui.separator();
                     ui.colored_label(Color32::from_rgb(120, 180, 255), "Tokens:");
-                    ui.label(format!("in:{} out:{}", detail.input_tokens, detail.output_tokens));
+                    ui.label(format!(
+                        "in:{} out:{}",
+                        detail.input_tokens, detail.output_tokens
+                    ));
                 });
 
                 // Context limit warning
@@ -4024,19 +4898,21 @@ impl AiGuiApp {
                     ui.selectable_value(&mut self.monitor_tab, MonitorTab::Analysis, "Analysis");
                     ui.selectable_value(&mut self.monitor_tab, MonitorTab::Graph, "Graph");
                     ui.selectable_value(&mut self.monitor_tab, MonitorTab::Audit, "Audit");
-                    ui.selectable_value(&mut self.monitor_tab, MonitorTab::Diagnostics, "Diagnostics");
+                    ui.selectable_value(
+                        &mut self.monitor_tab,
+                        MonitorTab::Diagnostics,
+                        "Diagnostics",
+                    );
                 });
                 ui.separator();
 
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    match self.monitor_tab {
-                        MonitorTab::Overview => self.render_monitor_overview(ui),
-                        MonitorTab::Metrics => self.render_monitor_metrics(ui),
-                        MonitorTab::Analysis => self.render_monitor_analysis(ui),
-                        MonitorTab::Graph => self.render_monitor_graph(ui),
-                        MonitorTab::Audit => self.render_monitor_audit(ui),
-                        MonitorTab::Diagnostics => self.render_monitor_diagnostics(ui),
-                    }
+                egui::ScrollArea::vertical().show(ui, |ui| match self.monitor_tab {
+                    MonitorTab::Overview => self.render_monitor_overview(ui),
+                    MonitorTab::Metrics => self.render_monitor_metrics(ui),
+                    MonitorTab::Analysis => self.render_monitor_analysis(ui),
+                    MonitorTab::Graph => self.render_monitor_graph(ui),
+                    MonitorTab::Audit => self.render_monitor_audit(ui),
+                    MonitorTab::Diagnostics => self.render_monitor_diagnostics(ui),
                 });
             });
     }
@@ -4148,10 +5024,8 @@ impl AiGuiApp {
                         [from_pos, to_pos],
                         Stroke::new(1.0, Color32::from_gray(100)),
                     );
-                    let mid = Pos2::new(
-                        (from_pos.x + to_pos.x) / 2.0,
-                        (from_pos.y + to_pos.y) / 2.0,
-                    );
+                    let mid =
+                        Pos2::new((from_pos.x + to_pos.x) / 2.0, (from_pos.y + to_pos.y) / 2.0);
                     let edge = &viz.graph[edge_idx];
                     painter.text(
                         mid,
@@ -4209,9 +5083,11 @@ impl AiGuiApp {
 
             ui.separator();
             ui.label("Component:");
-            ui.add(egui::TextEdit::singleline(&mut self.diag_component_filter)
-                .desired_width(120.0)
-                .hint_text("filter..."));
+            ui.add(
+                egui::TextEdit::singleline(&mut self.diag_component_filter)
+                    .desired_width(120.0)
+                    .hint_text("filter..."),
+            );
 
             ui.separator();
             ui.checkbox(&mut self.diag_auto_scroll, "Auto-scroll");
@@ -4228,11 +5104,14 @@ impl AiGuiApp {
 
         // Get filtered entries
         let entries = self.debug_logger.all_entries();
-        let filtered: Vec<_> = entries.iter().filter(|e| {
-            e.level <= self.diag_level_filter
-                && (self.diag_component_filter.is_empty()
-                    || e.component.contains(&self.diag_component_filter))
-        }).collect();
+        let filtered: Vec<_> = entries
+            .iter()
+            .filter(|e| {
+                e.level <= self.diag_level_filter
+                    && (self.diag_component_filter.is_empty()
+                        || e.component.contains(&self.diag_component_filter))
+            })
+            .collect();
 
         // Log entries table
         let text_style = egui::TextStyle::Monospace;
@@ -4246,26 +5125,32 @@ impl AiGuiApp {
                     if let Some(entry) = filtered.get(i) {
                         let color = match entry.level {
                             DebugLevel::Error => Color32::from_rgb(255, 80, 80),
-                            DebugLevel::Warn  => Color32::from_rgb(255, 200, 60),
-                            DebugLevel::Info  => Color32::from_rgb(120, 200, 255),
+                            DebugLevel::Warn => Color32::from_rgb(255, 200, 60),
+                            DebugLevel::Info => Color32::from_rgb(120, 200, 255),
                             DebugLevel::Debug => Color32::from_rgb(180, 180, 180),
                             DebugLevel::Trace => Color32::from_rgb(120, 120, 120),
-                            DebugLevel::Off   => Color32::DARK_GRAY,
+                            DebugLevel::Off => Color32::DARK_GRAY,
                             _ => Color32::DARK_GRAY,
                         };
 
                         ui.horizontal(|ui| {
                             ui.colored_label(color, format!("{:>5}", entry.level.as_str()));
-                            ui.colored_label(Color32::from_rgb(150, 180, 220),
-                                format!("[{}]", entry.component));
+                            ui.colored_label(
+                                Color32::from_rgb(150, 180, 220),
+                                format!("[{}]", entry.component),
+                            );
                             ui.label(&entry.message);
                             if let Some(ref ctx) = entry.context {
-                                ui.colored_label(Color32::from_rgb(100, 100, 100),
-                                    format!("| {}", ctx));
+                                ui.colored_label(
+                                    Color32::from_rgb(100, 100, 100),
+                                    format!("| {}", ctx),
+                                );
                             }
                             if let Some(dur) = entry.duration {
-                                ui.colored_label(Color32::from_rgb(200, 160, 80),
-                                    format!("({:.1}ms)", dur.as_secs_f64() * 1000.0));
+                                ui.colored_label(
+                                    Color32::from_rgb(200, 160, 80),
+                                    format!("({:.1}ms)", dur.as_secs_f64() * 1000.0),
+                                );
                             }
                         });
                     }
@@ -4301,8 +5186,7 @@ impl AiGuiApp {
                         .text("Temperature"),
                 );
                 ui.add(
-                    egui::Slider::new(&mut self.settings.max_history, 5..=50)
-                        .text("History depth"),
+                    egui::Slider::new(&mut self.settings.max_history, 5..=50).text("History depth"),
                 );
 
                 ui.add_space(12.0);
@@ -4381,7 +5265,10 @@ impl eframe::App for AiGuiApp {
         if let Some(ref rx) = self.update_rx {
             if let Ok(info) = rx.try_recv() {
                 self.toasts.push((
-                    format!("Update available: v{} \u{2192} v{} — {}", info.current, info.latest, info.url),
+                    format!(
+                        "Update available: v{} \u{2192} v{} — {}",
+                        info.current, info.latest, info.url
+                    ),
                     false,
                     Instant::now(),
                 ));
@@ -4420,26 +5307,60 @@ impl eframe::App for AiGuiApp {
                 self.render_settings(ctx);
                 self.render_model_wizard(ctx);
 
-                egui::CentralPanel::default().show(ctx, |ui| {
-                    match self.active_panel {
-                        SidebarPanel::Chat => { self.render_chat_area(ui); }
-                        SidebarPanel::Sessions => { self.render_sessions_panel(ui); }
-                        SidebarPanel::AgentPool => { self.render_agent_pool_panel(ui); }
-                        SidebarPanel::ToolsMcp => { self.render_tools_panel(ui); }
-                        SidebarPanel::Automation => { self.render_automation_panel(ui); }
-                        SidebarPanel::RagSources => { self.render_knowledge_panel(ui); }
-                        SidebarPanel::Memory => { self.render_memory_panel(ui); }
-                        SidebarPanel::CloudStorage => { self.render_cloud_panel(ui); }
-                        SidebarPanel::Media => { self.render_media_panel(ui); }
-                        SidebarPanel::Audio => { self.render_audio_panel(ui); }
-                        SidebarPanel::PromptLab => { self.render_prompt_lab_panel(ui); }
-                        SidebarPanel::Evaluation => { self.render_eval_panel(ui); }
-                        SidebarPanel::Security => { self.render_security_panel(ui); }
-                        SidebarPanel::Analytics => { self.render_analytics_panel(ui); }
-                        SidebarPanel::DevTools => { self.render_devtools_panel(ui); }
-                        SidebarPanel::Cluster => { self.render_cluster_panel(ui); }
-                        SidebarPanel::Butler => { self.render_butler_panel(ui); }
-                        SidebarPanel::Settings => { self.render_settings_panel(ui); }
+                egui::CentralPanel::default().show(ctx, |ui| match self.active_panel {
+                    SidebarPanel::Chat => {
+                        self.render_chat_area(ui);
+                    }
+                    SidebarPanel::Sessions => {
+                        self.render_sessions_panel(ui);
+                    }
+                    SidebarPanel::AgentPool => {
+                        self.render_agent_pool_panel(ui);
+                    }
+                    SidebarPanel::ToolsMcp => {
+                        self.render_tools_panel(ui);
+                    }
+                    SidebarPanel::Automation => {
+                        self.render_automation_panel(ui);
+                    }
+                    SidebarPanel::RagSources => {
+                        self.render_knowledge_panel(ui);
+                    }
+                    SidebarPanel::Memory => {
+                        self.render_memory_panel(ui);
+                    }
+                    SidebarPanel::CloudStorage => {
+                        self.render_cloud_panel(ui);
+                    }
+                    SidebarPanel::Media => {
+                        self.render_media_panel(ui);
+                    }
+                    SidebarPanel::Audio => {
+                        self.render_audio_panel(ui);
+                    }
+                    SidebarPanel::PromptLab => {
+                        self.render_prompt_lab_panel(ui);
+                    }
+                    SidebarPanel::Evaluation => {
+                        self.render_eval_panel(ui);
+                    }
+                    SidebarPanel::Security => {
+                        self.render_security_panel(ui);
+                    }
+                    SidebarPanel::Analytics => {
+                        self.render_analytics_panel(ui);
+                    }
+                    SidebarPanel::DevTools => {
+                        self.render_devtools_panel(ui);
+                    }
+                    SidebarPanel::Cluster => {
+                        self.render_cluster_panel(ui);
+                    }
+                    SidebarPanel::Butler => {
+                        self.render_butler_panel(ui);
+                    }
+                    SidebarPanel::Settings => {
+                        self.render_settings_panel(ui);
                     }
                 });
             }
@@ -4540,13 +5461,13 @@ fn layout_graph(viz: &mut GraphVisualizationData, rect: Rect) {
 
 fn entity_type_color(etype: &str) -> Color32 {
     match etype {
-        "Person" => Color32::from_rgb(100, 149, 237),    // Cornflower blue
+        "Person" => Color32::from_rgb(100, 149, 237), // Cornflower blue
         "Organization" => Color32::from_rgb(60, 179, 113), // Medium sea green
-        "Concept" => Color32::from_rgb(147, 112, 219),   // Medium purple
-        "Location" => Color32::from_rgb(255, 165, 0),    // Orange
-        "Product" => Color32::from_rgb(0, 206, 209),     // Dark turquoise
-        "Event" => Color32::from_rgb(255, 215, 0),       // Gold
-        _ => Color32::from_rgb(169, 169, 169),           // Dark gray
+        "Concept" => Color32::from_rgb(147, 112, 219), // Medium purple
+        "Location" => Color32::from_rgb(255, 165, 0), // Orange
+        "Product" => Color32::from_rgb(0, 206, 209),  // Dark turquoise
+        "Event" => Color32::from_rgb(255, 215, 0),    // Gold
+        _ => Color32::from_rgb(169, 169, 169),        // Dark gray
     }
 }
 

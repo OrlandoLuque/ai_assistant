@@ -95,12 +95,28 @@ impl ComparisonMatrix {
         let mut significance = vec![vec![1.0; models.len()]; models.len()];
         for i in 0..runs.len() {
             for j in (i + 1)..runs.len() {
-                let scores_i: Vec<f64> = runs[i].results.iter().map(|r| {
-                    if r.scores.is_empty() { 0.0 } else { r.scores.iter().sum::<f64>() / r.scores.len() as f64 }
-                }).collect();
-                let scores_j: Vec<f64> = runs[j].results.iter().map(|r| {
-                    if r.scores.is_empty() { 0.0 } else { r.scores.iter().sum::<f64>() / r.scores.len() as f64 }
-                }).collect();
+                let scores_i: Vec<f64> = runs[i]
+                    .results
+                    .iter()
+                    .map(|r| {
+                        if r.scores.is_empty() {
+                            0.0
+                        } else {
+                            r.scores.iter().sum::<f64>() / r.scores.len() as f64
+                        }
+                    })
+                    .collect();
+                let scores_j: Vec<f64> = runs[j]
+                    .results
+                    .iter()
+                    .map(|r| {
+                        if r.scores.is_empty() {
+                            0.0
+                        } else {
+                            r.scores.iter().sum::<f64>() / r.scores.len() as f64
+                        }
+                    })
+                    .collect();
 
                 let (_, p_value) = welch_t_test(&scores_i, &scores_j);
                 significance[i][j] = p_value;
@@ -177,7 +193,11 @@ impl ComparisonMatrix {
         .into_iter()
         .collect();
 
-        let w = if weights.is_empty() { &default_weights } else { weights };
+        let w = if weights.is_empty() {
+            &default_weights
+        } else {
+            weights
+        };
 
         let mut ranking: Vec<(ModelIdentifier, f64)> = self
             .models
@@ -279,8 +299,12 @@ fn students_t_cdf(t: f64, df: f64) -> f64 {
 
 /// Regularized incomplete beta function approximation (continued fraction).
 fn incomplete_beta(a: f64, b: f64, x: f64) -> f64 {
-    if x <= 0.0 { return 0.0; }
-    if x >= 1.0 { return 1.0; }
+    if x <= 0.0 {
+        return 0.0;
+    }
+    if x >= 1.0 {
+        return 1.0;
+    }
 
     let ln_beta = ln_gamma(a) + ln_gamma(b) - ln_gamma(a + b);
     let front = (x.ln() * a + (1.0 - x).ln() * b - ln_beta).exp() / a;
@@ -288,7 +312,9 @@ fn incomplete_beta(a: f64, b: f64, x: f64) -> f64 {
     // Lentz's continued fraction
     let mut c = 1.0;
     let mut d = 1.0 - (a + b) * x / (a + 1.0);
-    if d.abs() < 1e-30 { d = 1e-30; }
+    if d.abs() < 1e-30 {
+        d = 1e-30;
+    }
     d = 1.0 / d;
     let mut f = d;
 
@@ -298,18 +324,26 @@ fn incomplete_beta(a: f64, b: f64, x: f64) -> f64 {
         // Even step
         let num = m_f * (b - m_f) * x / ((a + 2.0 * m_f - 1.0) * (a + 2.0 * m_f));
         d = 1.0 + num * d;
-        if d.abs() < 1e-30 { d = 1e-30; }
+        if d.abs() < 1e-30 {
+            d = 1e-30;
+        }
         c = 1.0 + num / c;
-        if c.abs() < 1e-30 { c = 1e-30; }
+        if c.abs() < 1e-30 {
+            c = 1e-30;
+        }
         d = 1.0 / d;
         f *= c * d;
 
         // Odd step
         let num = -(a + m_f) * (a + b + m_f) * x / ((a + 2.0 * m_f) * (a + 2.0 * m_f + 1.0));
         d = 1.0 + num * d;
-        if d.abs() < 1e-30 { d = 1e-30; }
+        if d.abs() < 1e-30 {
+            d = 1e-30;
+        }
         c = 1.0 + num / c;
-        if c.abs() < 1e-30 { c = 1e-30; }
+        if c.abs() < 1e-30 {
+            c = 1e-30;
+        }
         d = 1.0 / d;
         let delta = c * d;
         f *= delta;
@@ -349,26 +383,35 @@ fn ln_gamma(x: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use super::super::runner::{ProblemResult, TokenUsage};
     use super::super::dataset::BenchmarkSuiteType;
+    use super::super::runner::{ProblemResult, TokenUsage};
+    use super::*;
 
     fn make_run(model_name: &str, accuracies: &[f64], cost: f64) -> BenchmarkRunResult {
-        let model = ModelIdentifier { name: model_name.into(), provider: "test".into(), variant: None };
-        let results: Vec<ProblemResult> = accuracies.iter().enumerate().map(|(i, &acc)| {
-            ProblemResult {
+        let model = ModelIdentifier {
+            name: model_name.into(),
+            provider: "test".into(),
+            variant: None,
+        };
+        let results: Vec<ProblemResult> = accuracies
+            .iter()
+            .enumerate()
+            .map(|(i, &acc)| ProblemResult {
                 problem_id: format!("p/{}", i),
                 model_id: model.clone(),
                 responses: vec!["resp".into()],
                 scores: vec![acc],
                 passed: vec![acc >= 0.99],
                 latencies_ms: vec![100],
-                token_counts: vec![TokenUsage { input_tokens: 50, output_tokens: 20 }],
+                token_counts: vec![TokenUsage {
+                    input_tokens: 50,
+                    output_tokens: 20,
+                }],
                 cost_estimates: vec![cost / accuracies.len() as f64],
                 error: None,
                 metadata: HashMap::new(),
-            }
-        }).collect();
+            })
+            .collect();
 
         BenchmarkRunResult {
             run_id: format!("run_{}", model_name),
@@ -379,7 +422,10 @@ mod tests {
             started_at: 1000,
             completed_at: 1010,
             total_cost: cost,
-            total_tokens: TokenUsage { input_tokens: 500, output_tokens: 200 },
+            total_tokens: TokenUsage {
+                input_tokens: 500,
+                output_tokens: 200,
+            },
         }
     }
 
@@ -400,8 +446,16 @@ mod tests {
     fn test_significance_computation() {
         // Groups need variance for t-test to work
         let runs = vec![
-            make_run("good", &[0.9, 1.0, 0.8, 1.0, 0.9, 1.0, 0.8, 1.0, 0.9, 1.0], 0.1),
-            make_run("bad", &[0.1, 0.0, 0.2, 0.0, 0.1, 0.0, 0.2, 0.0, 0.1, 0.0], 0.1),
+            make_run(
+                "good",
+                &[0.9, 1.0, 0.8, 1.0, 0.9, 1.0, 0.8, 1.0, 0.9, 1.0],
+                0.1,
+            ),
+            make_run(
+                "bad",
+                &[0.1, 0.0, 0.2, 0.0, 0.1, 0.0, 0.2, 0.0, 0.1, 0.0],
+                0.1,
+            ),
         ];
         let matrix = ComparisonMatrix::from_runs(&runs, &ComparisonConfig::default());
 

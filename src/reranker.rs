@@ -698,16 +698,18 @@ mod tests {
     fn test_cascade_two_stages() {
         // First pass: keep top 3 by default ordering
         // Second pass: custom scorer that boosts docs containing "important"
-        let scorer = Arc::new(|_query: &str, doc: &str| {
-            if doc.contains("important") {
-                1.0
-            } else {
-                0.1
-            }
-        });
+        let scorer = Arc::new(
+            |_query: &str, doc: &str| {
+                if doc.contains("important") {
+                    1.0
+                } else {
+                    0.1
+                }
+            },
+        );
 
-        let cascade = CascadeReranker::new(3)
-            .with_second_pass(Box::new(CrossEncoderReranker::new(scorer)));
+        let cascade =
+            CascadeReranker::new(3).with_second_pass(Box::new(CrossEncoderReranker::new(scorer)));
 
         let docs = vec![
             make_doc("first result", 0.9, 0),

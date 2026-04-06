@@ -784,10 +784,7 @@ mod tests {
 
         // Disconnect one
         manager.mark_disconnected("p2", "network error");
-        assert_eq!(
-            manager.get_state("p2"),
-            Some(ConnectionState::Disconnected)
-        );
+        assert_eq!(manager.get_state("p2"), Some(ConnectionState::Disconnected));
 
         let needs = manager.needs_attention();
         assert_eq!(needs.len(), 1);

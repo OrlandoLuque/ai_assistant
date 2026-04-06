@@ -646,7 +646,11 @@ mod tests {
         assert!((eta.as_secs_f64() - 10.0).abs() < 0.1);
 
         // When all completed, no ETA
-        let done = BatchStats { total: 5, completed: 5, ..Default::default() };
+        let done = BatchStats {
+            total: 5,
+            completed: 5,
+            ..Default::default()
+        };
         assert!(done.eta().is_none());
     }
 
@@ -665,7 +669,11 @@ mod tests {
             BatchRequest::new("ok2", "good"),
         ];
         let results = processor.process(requests, |req| {
-            if req.message == "bad" { Err("err".into()) } else { Ok("ok".into()) }
+            if req.message == "bad" {
+                Err("err".into())
+            } else {
+                Ok("ok".into())
+            }
         });
         assert_eq!(results.successful().len(), 2);
         assert_eq!(results.failed().len(), 1);

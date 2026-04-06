@@ -309,15 +309,16 @@ mod tests {
 
     #[test]
     fn test_template_builder() {
-        let template = ConversationTemplate::new("my_template", "My Template", TemplateCategory::Creative)
-            .with_description("A custom creative template")
-            .with_system_prompt("You are a creative assistant helping with {project}")
-            .with_starter("Let's get started on {project}")
-            .with_starter("Tell me about your creative vision")
-            .with_variable("project", "Project name", true)
-            .with_variable("style", "Preferred style", false)
-            .with_tag("creative")
-            .with_tag("custom");
+        let template =
+            ConversationTemplate::new("my_template", "My Template", TemplateCategory::Creative)
+                .with_description("A custom creative template")
+                .with_system_prompt("You are a creative assistant helping with {project}")
+                .with_starter("Let's get started on {project}")
+                .with_starter("Tell me about your creative vision")
+                .with_variable("project", "Project name", true)
+                .with_variable("style", "Preferred style", false)
+                .with_tag("creative")
+                .with_tag("custom");
 
         assert_eq!(template.id, "my_template");
         assert_eq!(template.name, "My Template");
@@ -391,13 +392,14 @@ mod tests {
 
     #[test]
     fn test_template_with_variables() {
-        let template = ConversationTemplate::new("multi_var", "Multi Variable", TemplateCategory::Learning)
-            .with_system_prompt("Teach {topic} at {level} level using {language}")
-            .with_starter("Explain {topic} for a {level} student")
-            .with_starter("Give a {language} example of {topic}")
-            .with_variable("topic", "Subject to learn", true)
-            .with_variable("level", "Difficulty level", true)
-            .with_variable("language", "Programming language", false);
+        let template =
+            ConversationTemplate::new("multi_var", "Multi Variable", TemplateCategory::Learning)
+                .with_system_prompt("Teach {topic} at {level} level using {language}")
+                .with_starter("Explain {topic} for a {level} student")
+                .with_starter("Give a {language} example of {topic}")
+                .with_variable("topic", "Subject to learn", true)
+                .with_variable("level", "Difficulty level", true)
+                .with_variable("language", "Programming language", false);
 
         let mut vars = HashMap::new();
         vars.insert("topic".to_string(), "algorithms".to_string());
@@ -407,14 +409,23 @@ mod tests {
         let applied = template.apply(&vars);
 
         // Verify system_prompt substitution
-        assert_eq!(applied.system_prompt, "Teach algorithms at intermediate level using Python");
+        assert_eq!(
+            applied.system_prompt,
+            "Teach algorithms at intermediate level using Python"
+        );
         assert!(!applied.system_prompt.contains("{topic}"));
         assert!(!applied.system_prompt.contains("{level}"));
         assert!(!applied.system_prompt.contains("{language}"));
 
         // Verify starter messages substitution
-        assert_eq!(applied.starter_messages[0], "Explain algorithms for a intermediate student");
-        assert_eq!(applied.starter_messages[1], "Give a Python example of algorithms");
+        assert_eq!(
+            applied.starter_messages[0],
+            "Explain algorithms for a intermediate student"
+        );
+        assert_eq!(
+            applied.starter_messages[1],
+            "Give a Python example of algorithms"
+        );
     }
 
     #[test]
@@ -448,10 +459,14 @@ mod tests {
     #[test]
     fn test_category_name_roundtrip() {
         let categories = vec![
-            TemplateCategory::Coding, TemplateCategory::Writing,
-            TemplateCategory::Analysis, TemplateCategory::Learning,
-            TemplateCategory::Creative, TemplateCategory::Business,
-            TemplateCategory::Research, TemplateCategory::Support,
+            TemplateCategory::Coding,
+            TemplateCategory::Writing,
+            TemplateCategory::Analysis,
+            TemplateCategory::Learning,
+            TemplateCategory::Creative,
+            TemplateCategory::Business,
+            TemplateCategory::Research,
+            TemplateCategory::Support,
         ];
         for cat in &categories {
             assert!(!cat.name().is_empty());

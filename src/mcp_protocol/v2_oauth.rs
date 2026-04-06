@@ -14,29 +14,23 @@ pub(crate) fn sha256_hash(data: &[u8]) -> [u8; 32] {
     // Initial hash values (first 32 bits of the fractional parts of the
     // square roots of the first 8 primes 2..19).
     let mut h: [u32; 8] = [
-        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
-        0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+        0x5be0cd19,
     ];
 
     // Round constants (first 32 bits of the fractional parts of the cube
     // roots of the first 64 primes 2..311).
     const K: [u32; 64] = [
-        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5,
-        0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
-        0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc,
-        0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
-        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
-        0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
-        0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5,
-        0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
-        0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
+        0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
+        0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
+        0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
+        0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
+        0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
+        0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
+        0xc67178f2,
     ];
 
     // Pre-processing: pad message to a multiple of 512 bits (64 bytes).
@@ -217,10 +211,14 @@ impl PkceChallenge {
         let mut raw = Vec::with_capacity(48);
         for i in 0..48 {
             if i % 2 == 0 {
-                state_a = state_a.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                state_a = state_a
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
                 raw.push((state_a >> 33) as u8);
             } else {
-                state_b = state_b.wrapping_mul(6364136223846793005).wrapping_add(7046029254386353131);
+                state_b = state_b
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(7046029254386353131);
                 raw.push((state_b >> 33) as u8);
             }
         }
@@ -291,7 +289,11 @@ impl OAuthTokenManager {
     /// Attempts a real HTTP POST to the token endpoint. If the server is
     /// unreachable or returns an error, falls back to a simulated exchange
     /// so that unit tests work without a live OAuth server.
-    pub fn exchange_code(&mut self, code: &str, pkce: &PkceChallenge) -> Result<OAuthToken, String> {
+    pub fn exchange_code(
+        &mut self,
+        code: &str,
+        pkce: &PkceChallenge,
+    ) -> Result<OAuthToken, String> {
         if code.is_empty() {
             return Err("Authorization code is empty".to_string());
         }
@@ -314,7 +316,8 @@ impl OAuthTokenManager {
             .send_json(&body)
         {
             Ok(resp) => {
-                let json_str = resp.into_string()
+                let json_str = resp
+                    .into_string()
                     .map_err(|e| format!("Failed to read token response: {}", e))?;
                 let json: serde_json::Value = serde_json::from_str(&json_str)
                     .map_err(|e| format!("Failed to parse token response: {}", e))?;
@@ -369,7 +372,8 @@ impl OAuthTokenManager {
             .send_json(&body)
         {
             Ok(resp) => {
-                let json_str = resp.into_string()
+                let json_str = resp
+                    .into_string()
                     .map_err(|e| format!("Failed to read refresh response: {}", e))?;
                 let json: serde_json::Value = serde_json::from_str(&json_str)
                     .map_err(|e| format!("Failed to parse refresh response: {}", e))?;
@@ -403,26 +407,26 @@ impl OAuthTokenManager {
     }
 
     /// Parse an OAuth token endpoint JSON response into an `OAuthToken`.
-    fn parse_token_response(json: &serde_json::Value, default_scope: &str) -> Result<OAuthToken, String> {
+    fn parse_token_response(
+        json: &serde_json::Value,
+        default_scope: &str,
+    ) -> Result<OAuthToken, String> {
         let access_token = json["access_token"]
             .as_str()
             .ok_or_else(|| "Missing access_token in response".to_string())?
             .to_string();
-        let token_type = json["token_type"]
-            .as_str()
-            .unwrap_or("Bearer")
-            .to_string();
+        let token_type = json["token_type"].as_str().unwrap_or("Bearer").to_string();
         let expires_in = json["expires_in"].as_u64();
-        let expires_at = expires_in.map(|secs| {
-            chrono::Utc::now() + chrono::Duration::seconds(secs as i64)
-        });
+        let expires_at =
+            expires_in.map(|secs| chrono::Utc::now() + chrono::Duration::seconds(secs as i64));
         let refresh_token = json["refresh_token"].as_str().map(|s| s.to_string());
-        let scope = json["scope"]
-            .as_str()
-            .map(|s| s.to_string())
-            .or_else(|| {
-                if default_scope.is_empty() { None } else { Some(default_scope.to_string()) }
-            });
+        let scope = json["scope"].as_str().map(|s| s.to_string()).or_else(|| {
+            if default_scope.is_empty() {
+                None
+            } else {
+                Some(default_scope.to_string())
+            }
+        });
 
         Ok(OAuthToken {
             access_token,
@@ -502,15 +506,13 @@ impl AuthorizationServerMetadata {
             .call()
         {
             Ok(resp) => {
-                let json_str = resp.into_string()
+                let json_str = resp
+                    .into_string()
                     .map_err(|e| format!("Failed to read discovery response: {}", e))?;
                 let json: serde_json::Value = serde_json::from_str(&json_str)
                     .map_err(|e| format!("Failed to parse discovery JSON: {}", e))?;
 
-                let issuer = json["issuer"]
-                    .as_str()
-                    .unwrap_or(base_url)
-                    .to_string();
+                let issuer = json["issuer"].as_str().unwrap_or(base_url).to_string();
                 let authorization_endpoint = json["authorization_endpoint"]
                     .as_str()
                     .map(|s| s.to_string())
@@ -621,20 +623,21 @@ mod tests {
         // SHA-256 of empty string
         let empty_hash = sha256_hash(b"");
         let expected_empty: [u8; 32] = [
-            0xe3, 0xb0, 0xc4, 0x42, 0x98, 0xfc, 0x1c, 0x14,
-            0x9a, 0xfb, 0xf4, 0xc8, 0x99, 0x6f, 0xb9, 0x24,
-            0x27, 0xae, 0x41, 0xe4, 0x64, 0x9b, 0x93, 0x4c,
-            0xa4, 0x95, 0x99, 0x1b, 0x78, 0x52, 0xb8, 0x55,
+            0xe3, 0xb0, 0xc4, 0x42, 0x98, 0xfc, 0x1c, 0x14, 0x9a, 0xfb, 0xf4, 0xc8, 0x99, 0x6f,
+            0xb9, 0x24, 0x27, 0xae, 0x41, 0xe4, 0x64, 0x9b, 0x93, 0x4c, 0xa4, 0x95, 0x99, 0x1b,
+            0x78, 0x52, 0xb8, 0x55,
         ];
-        assert_eq!(empty_hash, expected_empty, "SHA-256 of empty string mismatch");
+        assert_eq!(
+            empty_hash, expected_empty,
+            "SHA-256 of empty string mismatch"
+        );
 
         // SHA-256 of "abc"
         let abc_hash = sha256_hash(b"abc");
         let expected_abc: [u8; 32] = [
-            0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea,
-            0x41, 0x41, 0x40, 0xde, 0x5d, 0xae, 0x22, 0x23,
-            0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c,
-            0xb4, 0x10, 0xff, 0x61, 0xf2, 0x00, 0x15, 0xad,
+            0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, 0x41, 0x41, 0x40, 0xde, 0x5d, 0xae,
+            0x22, 0x23, 0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c, 0xb4, 0x10, 0xff, 0x61,
+            0xf2, 0x00, 0x15, 0xad,
         ];
         assert_eq!(abc_hash, expected_abc, "SHA-256 of 'abc' mismatch");
     }
@@ -685,7 +688,10 @@ mod tests {
             pkce.verifier.len()
         );
         assert_eq!(pkce.method, "S256", "PKCE method must be S256");
-        assert!(!pkce.challenge.is_empty(), "PKCE challenge must be non-empty");
+        assert!(
+            !pkce.challenge.is_empty(),
+            "PKCE challenge must be non-empty"
+        );
     }
 
     #[test]
@@ -744,7 +750,10 @@ mod tests {
             redirect_uri: "http://localhost:3000/cb".to_string(),
         };
 
-        assert_eq!(config.authorization_endpoint, "https://auth.example.com/authorize");
+        assert_eq!(
+            config.authorization_endpoint,
+            "https://auth.example.com/authorize"
+        );
         assert_eq!(config.token_endpoint, "https://auth.example.com/token");
         assert_eq!(config.client_id, Some("my-client".to_string()));
         assert_eq!(config.client_secret, Some("my-secret".to_string()));
@@ -763,7 +772,10 @@ mod tests {
         let deserialized: McpV2OAuthConfig =
             serde_json::from_str(&json).expect("Failed to deserialize McpV2OAuthConfig");
 
-        assert_eq!(config.authorization_endpoint, deserialized.authorization_endpoint);
+        assert_eq!(
+            config.authorization_endpoint,
+            deserialized.authorization_endpoint
+        );
         assert_eq!(config.token_endpoint, deserialized.token_endpoint);
         assert_eq!(config.client_id, deserialized.client_id);
         assert_eq!(config.client_secret, deserialized.client_secret);
@@ -792,11 +804,26 @@ mod tests {
         let (url, pkce) = manager.get_authorization_url();
 
         // URL must contain required OAuth parameters
-        assert!(url.contains("response_type=code"), "URL must contain response_type=code");
-        assert!(url.contains("code_challenge="), "URL must contain code_challenge");
-        assert!(url.contains("code_challenge_method=S256"), "URL must contain code_challenge_method=S256");
-        assert!(url.contains("redirect_uri="), "URL must contain redirect_uri");
-        assert!(url.contains("client_id=test-client-id"), "URL must contain client_id");
+        assert!(
+            url.contains("response_type=code"),
+            "URL must contain response_type=code"
+        );
+        assert!(
+            url.contains("code_challenge="),
+            "URL must contain code_challenge"
+        );
+        assert!(
+            url.contains("code_challenge_method=S256"),
+            "URL must contain code_challenge_method=S256"
+        );
+        assert!(
+            url.contains("redirect_uri="),
+            "URL must contain redirect_uri"
+        );
+        assert!(
+            url.contains("client_id=test-client-id"),
+            "URL must contain client_id"
+        );
 
         // The URL must start with the configured authorization endpoint
         assert!(
@@ -819,7 +846,10 @@ mod tests {
 
         // exchange_code will fail to reach the real server and fall back to simulated
         let result = manager.exchange_code("test-auth-code", &pkce);
-        assert!(result.is_ok(), "exchange_code should succeed (via simulation fallback)");
+        assert!(
+            result.is_ok(),
+            "exchange_code should succeed (via simulation fallback)"
+        );
 
         let token = result.unwrap();
         assert_eq!(token.access_token, "access-test-auth-code");
@@ -848,7 +878,10 @@ mod tests {
 
         // refresh_token will fail to reach the real server and fall back to simulated
         let result = manager.refresh_token();
-        assert!(result.is_ok(), "refresh_token should succeed (via simulation fallback)");
+        assert!(
+            result.is_ok(),
+            "refresh_token should succeed (via simulation fallback)"
+        );
 
         let refreshed = result.unwrap();
         assert_eq!(refreshed.access_token, "refreshed-my-refresh-token");
@@ -865,7 +898,10 @@ mod tests {
             scope: None,
         });
         let result2 = manager2.refresh_token();
-        assert!(result2.is_err(), "refresh_token without refresh token must fail");
+        assert!(
+            result2.is_err(),
+            "refresh_token without refresh token must fail"
+        );
     }
 
     #[test]
@@ -874,7 +910,10 @@ mod tests {
         let mut manager = OAuthTokenManager::new(config);
 
         // No token -> expired
-        assert!(manager.is_token_expired(), "No token should be treated as expired");
+        assert!(
+            manager.is_token_expired(),
+            "No token should be treated as expired"
+        );
 
         // Token with future expiry -> not expired
         let future_token = OAuthToken {
@@ -885,7 +924,10 @@ mod tests {
             scope: None,
         };
         manager.set_token(future_token);
-        assert!(!manager.is_token_expired(), "Future token should not be expired");
+        assert!(
+            !manager.is_token_expired(),
+            "Future token should not be expired"
+        );
 
         // Token with past expiry -> expired
         let past_token = OAuthToken {
@@ -934,7 +976,9 @@ mod tests {
         };
         manager.set_token(token);
 
-        let retrieved = manager.current_token().expect("Token should be present after set_token");
+        let retrieved = manager
+            .current_token()
+            .expect("Token should be present after set_token");
         assert_eq!(retrieved.access_token, "my-access-token");
         assert_eq!(retrieved.token_type, "Bearer");
         assert_eq!(retrieved.refresh_token, Some("my-refresh".to_string()));
@@ -958,7 +1002,10 @@ mod tests {
 
         // get_valid_token should detect expiry and auto-refresh (via simulation fallback)
         let result = manager.get_valid_token();
-        assert!(result.is_ok(), "get_valid_token should refresh an expired token");
+        assert!(
+            result.is_ok(),
+            "get_valid_token should refresh an expired token"
+        );
 
         let valid = result.unwrap();
         assert_eq!(
@@ -979,7 +1026,10 @@ mod tests {
     fn test_authorization_server_discover() {
         // discover will fail to reach example.com and fall back to simulated
         let result = AuthorizationServerMetadata::discover("https://example.com");
-        assert!(result.is_ok(), "discover should succeed (via simulation fallback)");
+        assert!(
+            result.is_ok(),
+            "discover should succeed (via simulation fallback)"
+        );
 
         let metadata = result.unwrap();
         assert!(!metadata.issuer.is_empty(), "issuer must be non-empty");
@@ -987,7 +1037,10 @@ mod tests {
             !metadata.authorization_endpoint.is_empty(),
             "authorization_endpoint must be non-empty"
         );
-        assert!(!metadata.token_endpoint.is_empty(), "token_endpoint must be non-empty");
+        assert!(
+            !metadata.token_endpoint.is_empty(),
+            "token_endpoint must be non-empty"
+        );
         assert!(
             metadata.authorization_endpoint.contains("example.com"),
             "authorization_endpoint should reference the base URL"
@@ -1019,22 +1072,16 @@ mod tests {
         assert!(client_secret.is_some(), "client_secret should be present");
 
         // Empty redirect_uris -> error
-        let result_empty = DynamicClientRegistration::register(
-            "https://auth.example.com/register",
-            "my-app",
-            &[],
-        );
+        let result_empty =
+            DynamicClientRegistration::register("https://auth.example.com/register", "my-app", &[]);
         assert!(
             result_empty.is_err(),
             "register with empty redirect_uris must fail"
         );
 
         // Empty endpoint -> error
-        let result_no_endpoint = DynamicClientRegistration::register(
-            "",
-            "my-app",
-            &["http://localhost/cb".to_string()],
-        );
+        let result_no_endpoint =
+            DynamicClientRegistration::register("", "my-app", &["http://localhost/cb".to_string()]);
         assert!(
             result_no_endpoint.is_err(),
             "register with empty endpoint must fail"

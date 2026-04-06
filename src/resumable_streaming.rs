@@ -138,14 +138,22 @@ impl ResumableStream {
 
             // Evict old checkpoints if over limit
             while state.checkpoints.len() > self.config.max_checkpoints {
-                let oldest = *state.checkpoints.keys().next().expect("non-empty: while loop guarantees len > max");
+                let oldest = *state
+                    .checkpoints
+                    .keys()
+                    .next()
+                    .expect("non-empty: while loop guarantees len > max");
                 state.checkpoints.remove(&oldest);
             }
         }
 
         // Evict old chunks if over replay buffer limit
         while state.chunks.len() > self.config.max_replay_buffer {
-            let oldest = *state.chunks.keys().next().expect("non-empty: while loop guarantees len > max");
+            let oldest = *state
+                .chunks
+                .keys()
+                .next()
+                .expect("non-empty: while loop guarantees len > max");
             state.chunks.remove(&oldest);
         }
 
@@ -172,7 +180,10 @@ impl ResumableStream {
 
     /// Whether the producer has finished.
     pub fn is_finished(&self) -> bool {
-        self.state.lock().expect("stream state lock in is_finished").finished
+        self.state
+            .lock()
+            .expect("stream state lock in is_finished")
+            .finished
     }
 
     /// Whether the stream is stale (no activity for `stale_timeout`).
@@ -204,7 +215,10 @@ impl ResumableStream {
 
     /// Get the latest checkpoint at or before the given sequence ID.
     pub fn checkpoint_at(&self, sequence_id: u64) -> Option<StreamCheckpoint> {
-        let state = self.state.lock().expect("stream state lock in checkpoint_at");
+        let state = self
+            .state
+            .lock()
+            .expect("stream state lock in checkpoint_at");
         state
             .checkpoints
             .range(..=sequence_id)
@@ -214,7 +228,10 @@ impl ResumableStream {
 
     /// Get the latest checkpoint.
     pub fn latest_checkpoint(&self) -> Option<StreamCheckpoint> {
-        let state = self.state.lock().expect("stream state lock in latest_checkpoint");
+        let state = self
+            .state
+            .lock()
+            .expect("stream state lock in latest_checkpoint");
         state.checkpoints.values().next_back().cloned()
     }
 
@@ -229,17 +246,29 @@ impl ResumableStream {
 
     /// Get the total accumulated text so far.
     pub fn accumulated_text(&self) -> String {
-        self.state.lock().expect("stream state lock in accumulated_text").accumulated_text.clone()
+        self.state
+            .lock()
+            .expect("stream state lock in accumulated_text")
+            .accumulated_text
+            .clone()
     }
 
     /// Get the number of chunks in the replay buffer.
     pub fn chunk_count(&self) -> usize {
-        self.state.lock().expect("stream state lock in chunk_count").chunks.len()
+        self.state
+            .lock()
+            .expect("stream state lock in chunk_count")
+            .chunks
+            .len()
     }
 
     /// Get the number of checkpoints.
     pub fn checkpoint_count(&self) -> usize {
-        self.state.lock().expect("stream state lock in checkpoint_count").checkpoints.len()
+        self.state
+            .lock()
+            .expect("stream state lock in checkpoint_count")
+            .checkpoints
+            .len()
     }
 
     /// Format a chunk as an SSE event.
@@ -468,9 +497,9 @@ impl ResilientSseStream {
             }
         } else {
             // Exponential backoff
-            self.current_retry_ms = ((self.current_retry_ms as f64
-                * self.config.backoff_multiplier) as u64)
-                .min(self.config.max_retry_ms);
+            self.current_retry_ms =
+                ((self.current_retry_ms as f64 * self.config.backoff_multiplier) as u64)
+                    .min(self.config.max_retry_ms);
         }
     }
 

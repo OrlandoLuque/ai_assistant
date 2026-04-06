@@ -707,7 +707,11 @@ impl EnhancedDuckDuckGoProvider {
     }
 
     /// Search with caching and rate limiting.
-    pub fn search(&mut self, query: &str, max_results: usize) -> Result<Vec<SearchResult>, SearchError> {
+    pub fn search(
+        &mut self,
+        query: &str,
+        max_results: usize,
+    ) -> Result<Vec<SearchResult>, SearchError> {
         let cache_key = query.to_lowercase();
 
         // Check cache
@@ -728,7 +732,10 @@ impl EnhancedDuckDuckGoProvider {
         }
 
         // Fetch and parse
-        let url = format!("https://html.duckduckgo.com/html/?q={}", search_urlencode(query));
+        let url = format!(
+            "https://html.duckduckgo.com/html/?q={}",
+            search_urlencode(query)
+        );
         let resp = ureq::get(&url)
             .set("User-Agent", "Mozilla/5.0 (compatible; AIAssistant/1.0)")
             .timeout(std::time::Duration::from_secs(10))
@@ -788,23 +795,24 @@ impl EnhancedDuckDuckGoProvider {
 
             // Find snippet after the link
             let snippet_search_start = title_end;
-            let snippet_text = if let Some(snip_pos) = html[snippet_search_start..].find(snippet_marker) {
-                let snip_abs = snippet_search_start + snip_pos;
-                // Find the closing > of this tag
-                let snip_tag_end = match html[snip_abs..].find('>') {
-                    Some(i) => snip_abs + i + 1,
-                    None => break,
+            let snippet_text =
+                if let Some(snip_pos) = html[snippet_search_start..].find(snippet_marker) {
+                    let snip_abs = snippet_search_start + snip_pos;
+                    // Find the closing > of this tag
+                    let snip_tag_end = match html[snip_abs..].find('>') {
+                        Some(i) => snip_abs + i + 1,
+                        None => break,
+                    };
+                    // Find closing </a> or </span>
+                    let snip_content_end = html[snip_tag_end..]
+                        .find("</a>")
+                        .or_else(|| html[snip_tag_end..].find("</span>"))
+                        .map(|i| snip_tag_end + i)
+                        .unwrap_or(snip_tag_end);
+                    strip_html_tags(&html[snip_tag_end..snip_content_end])
+                } else {
+                    String::new()
                 };
-                // Find closing </a> or </span>
-                let snip_content_end = html[snip_tag_end..]
-                    .find("</a>")
-                    .or_else(|| html[snip_tag_end..].find("</span>"))
-                    .map(|i| snip_tag_end + i)
-                    .unwrap_or(snip_tag_end);
-                strip_html_tags(&html[snip_tag_end..snip_content_end])
-            } else {
-                String::new()
-            };
 
             // Decode DuckDuckGo redirect URL
             let actual_url = if href.contains("uddg=") {
@@ -1137,7 +1145,10 @@ impl WebCrawler {
                 continue;
             }
 
-            if let Some(ua_val) = line.strip_prefix("User-agent:").or_else(|| line.strip_prefix("user-agent:")) {
+            if let Some(ua_val) = line
+                .strip_prefix("User-agent:")
+                .or_else(|| line.strip_prefix("user-agent:"))
+            {
                 let val = ua_val.trim().to_lowercase();
                 if val == "*" || val == ua_token || ua_token.starts_with(&val) {
                     in_matching_section = true;
@@ -1154,17 +1165,26 @@ impl WebCrawler {
                 continue;
             }
 
-            if let Some(path) = line.strip_prefix("Disallow:").or_else(|| line.strip_prefix("disallow:")) {
+            if let Some(path) = line
+                .strip_prefix("Disallow:")
+                .or_else(|| line.strip_prefix("disallow:"))
+            {
                 let path = path.trim();
                 if !path.is_empty() {
                     rules.disallowed.push(path.to_string());
                 }
-            } else if let Some(path) = line.strip_prefix("Allow:").or_else(|| line.strip_prefix("allow:")) {
+            } else if let Some(path) = line
+                .strip_prefix("Allow:")
+                .or_else(|| line.strip_prefix("allow:"))
+            {
                 let path = path.trim();
                 if !path.is_empty() {
                     rules.allowed.push(path.to_string());
                 }
-            } else if let Some(delay) = line.strip_prefix("Crawl-delay:").or_else(|| line.strip_prefix("crawl-delay:")) {
+            } else if let Some(delay) = line
+                .strip_prefix("Crawl-delay:")
+                .or_else(|| line.strip_prefix("crawl-delay:"))
+            {
                 if let Ok(d) = delay.trim().parse::<f64>() {
                     rules.crawl_delay = Some(d);
                 }
@@ -1476,9 +1496,11 @@ mod tests {
     fn test_search_cache_hit() {
         let mut provider = EnhancedDuckDuckGoProvider::new();
         // Manually insert cache entry
-        let cached_results = vec![
-            SearchResult::new("Cached", "https://cached.com", "cached snippet"),
-        ];
+        let cached_results = vec![SearchResult::new(
+            "Cached",
+            "https://cached.com",
+            "cached snippet",
+        )];
         provider.cache.insert(
             "test query".to_string(),
             (cached_results.clone(), std::time::Instant::now()),
@@ -1497,9 +1519,7 @@ mod tests {
         provider.cache_ttl_secs = 0; // Expire immediately
 
         // Insert cache entry that should be expired
-        let cached_results = vec![
-            SearchResult::new("Old", "https://old.com", "old"),
-        ];
+        let cached_results = vec![SearchResult::new("Old", "https://old.com", "old")];
         provider.cache.insert(
             "expired query".to_string(),
             (cached_results, std::time::Instant::now()),
@@ -1605,9 +1625,7 @@ Disallow: /nogoogle/
 
     #[test]
     fn test_crawler_max_depth() {
-        let mut crawler = WebCrawler::new()
-            .with_max_depth(0)
-            .with_delay_ms(0);
+        let mut crawler = WebCrawler::new().with_max_depth(0).with_delay_ms(0);
         // With max_depth=0, only the start URL should be crawled (depth 0)
         // Since we can't make real HTTP calls, verify the setting
         assert_eq!(crawler.max_depth, 0);
@@ -1621,9 +1639,7 @@ Disallow: /nogoogle/
 
     #[test]
     fn test_crawler_max_pages() {
-        let crawler = WebCrawler::new()
-            .with_max_pages(3)
-            .with_delay_ms(0);
+        let crawler = WebCrawler::new().with_max_pages(3).with_delay_ms(0);
         assert_eq!(crawler.max_pages, 3);
     }
 
@@ -1706,7 +1722,9 @@ Disallow: /nogoogle/
     fn test_crawler_respects_visited() {
         let mut crawler = WebCrawler::new().with_delay_ms(0);
         // Mark a URL as visited
-        crawler.visited.insert("https://example.com/visited".to_string());
+        crawler
+            .visited
+            .insert("https://example.com/visited".to_string());
 
         // The visited set should prevent re-crawling
         assert!(crawler.visited.contains("https://example.com/visited"));

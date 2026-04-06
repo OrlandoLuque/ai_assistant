@@ -6,8 +6,7 @@
 //! Run with: cargo run --example multimodal --features full
 
 use ai_assistant::{
-    MultiModalConfig, MultiModalDocument, MultiModalPipeline,
-    ImageCaptionExtractor,
+    ImageCaptionExtractor, MultiModalConfig, MultiModalDocument, MultiModalPipeline,
 };
 
 fn main() {
@@ -83,7 +82,8 @@ fn main() {
         println!("  Text: {:.70}", chunk.content);
     }
     for chunk in result2.top_images(2) {
-        println!("  Image: {} (caption: {})",
+        println!(
+            "  Image: {} (caption: {})",
             chunk.image_ref.as_deref().unwrap_or("?"),
             chunk.caption.as_deref().unwrap_or("none"),
         );
@@ -91,7 +91,11 @@ fn main() {
 
     // 7. ImageCaptionExtractor utility
     println!("\n--- Caption Extraction ---");
-    let filenames = ["sunset_over_ocean.jpg", "rust-logo-512x512.png", "IMG_2024.heic"];
+    let filenames = [
+        "sunset_over_ocean.jpg",
+        "rust-logo-512x512.png",
+        "IMG_2024.heic",
+    ];
     for name in &filenames {
         let caption = ImageCaptionExtractor::from_filename(name);
         println!("  {} -> {:?}", name, caption);

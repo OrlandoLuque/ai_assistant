@@ -17,6 +17,7 @@ use crate::conversation_compaction::{
     CompactableMessage, CompactionConfig, CompactionResult, ConversationCompactor,
 };
 use crate::conversation_control::CancellationToken;
+use crate::memory::{MemoryConfig, MemoryManager};
 use crate::messages::{AiResponse, ChatMessage};
 use crate::models::ModelInfo;
 use crate::providers::{
@@ -24,7 +25,6 @@ use crate::providers::{
     fetch_model_context_size, fetch_ollama_models, fetch_openai_compatible_models,
     generate_response, generate_response_streaming, generate_response_streaming_cancellable,
 };
-use crate::memory::{MemoryConfig, MemoryManager};
 use crate::session::{ChatSession, ChatSessionStore, ResponseStyle, UserPreferences};
 
 #[cfg(feature = "autonomous")]
@@ -207,7 +207,11 @@ impl std::fmt::Display for FreshContextWarning {
                 "Memory not enabled — session context between messages is lost"
             ),
             Self::SmallBudget(tokens) => {
-                write!(f, "Available knowledge budget very small: {} tokens", tokens)
+                write!(
+                    f,
+                    "Available knowledge budget very small: {} tokens",
+                    tokens
+                )
             }
         }
     }
@@ -945,7 +949,11 @@ impl AiAssistant {
         let old_model = self.config.selected_model.clone();
         self.config = config;
         if old_model != self.config.selected_model {
-            log::info!("Model changed: from={} to={}", old_model, self.config.selected_model);
+            log::info!(
+                "Model changed: from={} to={}",
+                old_model,
+                self.config.selected_model
+            );
         }
     }
 
@@ -1158,9 +1166,8 @@ impl AiAssistant {
 
         // Use model-aware token counting for all budget calculations
         let model = self.config.selected_model.clone();
-        let count = |text: &str| -> usize {
-            crate::context::estimate_tokens_for_model(text, &model)
-        };
+        let count =
+            |text: &str| -> usize { crate::context::estimate_tokens_for_model(text, &model) };
 
         // 1. RAG/knowledge context (passed in from caller or build_rag_context)
         if !knowledge_context.is_empty() {
@@ -1221,11 +1228,7 @@ impl AiAssistant {
             crate::context::get_model_context_size_cached(&self.config.selected_model, |_| None)
         });
         let system_tokens = count(&self.system_prompt_base);
-        let conversation_tokens: usize = self
-            .conversation
-            .iter()
-            .map(|m| count(&m.content))
-            .sum();
+        let conversation_tokens: usize = self.conversation.iter().map(|m| count(&m.content)).sum();
         let user_tokens = count(user_message);
         let precision = self.token_precision();
         let response_reserve = (model_ctx as f64 * precision.reserve_factor()).max(800.0) as usize;
@@ -1253,7 +1256,11 @@ impl AiAssistant {
 
     /// Build memory-based context for a query (empty string if memory disabled).
     pub fn build_memory_context(&mut self, query: &str, max_tokens: usize) -> String {
-        crate::diag_debug!("[memory-context] build_memory_context: max_tokens={}, memory_enabled={}", max_tokens, self.memory_manager.is_some());
+        crate::diag_debug!(
+            "[memory-context] build_memory_context: max_tokens={}, memory_enabled={}",
+            max_tokens,
+            self.memory_manager.is_some()
+        );
         match self.memory_manager.as_mut() {
             Some(mm) => {
                 let result = mm.build_context(query, max_tokens);
@@ -1360,8 +1367,7 @@ impl AiAssistant {
         path: &std::path::Path,
         max_procedures: usize,
     ) -> Result<(), String> {
-        let store =
-            crate::advanced_memory::ProceduralStore::load_from_file(path, max_procedures)?;
+        let store = crate::advanced_memory::ProceduralStore::load_from_file(path, max_procedures)?;
         self.procedural_store = Some(store);
         if self.procedure_evolver.is_none() {
             self.procedure_evolver = Some(crate::advanced_memory::ProcedureEvolver::new(
@@ -1768,7 +1774,11 @@ impl AiAssistant {
                 self.conversation.clone()
             }
             ContextMode::FreshContext => {
-                vec![self.conversation.last().expect("message was just pushed").clone()]
+                vec![self
+                    .conversation
+                    .last()
+                    .expect("message was just pushed")
+                    .clone()]
             }
         };
         self.is_generating = true;
@@ -1788,11 +1798,8 @@ impl AiAssistant {
         };
 
         let config = self.config.clone();
-        let system_prompt = build_system_prompt(
-            &self.system_prompt_base,
-            &self.preferences,
-            knowledge_ref,
-        );
+        let system_prompt =
+            build_system_prompt(&self.system_prompt_base, &self.preferences, knowledge_ref);
 
         let fallback_providers = if self.fallback_enabled {
             self.fallback_providers.clone()
@@ -1919,7 +1926,11 @@ impl AiAssistant {
                 self.conversation.clone()
             }
             ContextMode::FreshContext => {
-                vec![self.conversation.last().expect("message was just pushed").clone()]
+                vec![self
+                    .conversation
+                    .last()
+                    .expect("message was just pushed")
+                    .clone()]
             }
         };
         self.is_generating = true;
@@ -1978,7 +1989,9 @@ impl AiAssistant {
     ) -> Result<String> {
         crate::diag_debug!(
             "[assistant] generate_sync: mode={:?}, conversation_len={}, knowledge={} chars",
-            self.context_mode, self.conversation.len(), knowledge_context.len()
+            self.context_mode,
+            self.conversation.len(),
+            knowledge_context.len()
         );
         self.conversation.push(ChatMessage::user(&user_message));
 
@@ -1992,18 +2005,19 @@ impl AiAssistant {
             &effective_knowledge
         };
 
-        let system_prompt = build_system_prompt(
-            &self.system_prompt_base,
-            &self.preferences,
-            knowledge_ref,
-        );
+        let system_prompt =
+            build_system_prompt(&self.system_prompt_base, &self.preferences, knowledge_ref);
 
         // In FreshContext mode, only send the current message
         let fresh_conv: Vec<ChatMessage>;
         let conversation: &[ChatMessage] = match self.context_mode {
             ContextMode::Conversation => &self.conversation,
             ContextMode::FreshContext => {
-                fresh_conv = vec![self.conversation.last().expect("message was just pushed").clone()];
+                fresh_conv = vec![self
+                    .conversation
+                    .last()
+                    .expect("message was just pushed")
+                    .clone()];
                 &fresh_conv
             }
         };
@@ -2073,7 +2087,11 @@ impl AiAssistant {
                 self.conversation.clone()
             }
             ContextMode::FreshContext => {
-                vec![self.conversation.last().expect("message was just pushed").clone()]
+                vec![self
+                    .conversation
+                    .last()
+                    .expect("message was just pushed")
+                    .clone()]
             }
         };
         self.is_generating = true;
@@ -2096,11 +2114,8 @@ impl AiAssistant {
         };
 
         let config = self.config.clone();
-        let system_prompt = build_system_prompt(
-            &self.system_prompt_base,
-            &self.preferences,
-            knowledge_ref,
-        );
+        let system_prompt =
+            build_system_prompt(&self.system_prompt_base, &self.preferences, knowledge_ref);
 
         let fallback_providers = if self.fallback_enabled {
             self.fallback_providers.clone()
@@ -2187,7 +2202,11 @@ impl AiAssistant {
                 self.conversation.clone()
             }
             ContextMode::FreshContext => {
-                vec![self.conversation.last().expect("message was just pushed").clone()]
+                vec![self
+                    .conversation
+                    .last()
+                    .expect("message was just pushed")
+                    .clone()]
             }
         };
 
@@ -2318,7 +2337,8 @@ impl AiAssistant {
                             // Process messages into memory if enabled
                             if let Some(ref mut mm) = self.memory_manager {
                                 if self.conversation.len() >= 2 {
-                                    let user_msg = self.conversation[self.conversation.len() - 2].clone();
+                                    let user_msg =
+                                        self.conversation[self.conversation.len() - 2].clone();
                                     mm.process_message(&user_msg);
                                 }
                                 mm.process_message(&msg);
@@ -2335,34 +2355,46 @@ impl AiAssistant {
                                 }
                                 if let Some(ref mut evolver) = self.procedure_evolver {
                                     for pid in &self.active_procedure_ids {
-                                        let ctx = self.conversation.last()
-                                            .map(|m| m.content.chars().take(200).collect::<String>())
+                                        let ctx = self
+                                            .conversation
+                                            .last()
+                                            .map(|m| {
+                                                m.content.chars().take(200).collect::<String>()
+                                            })
                                             .unwrap_or_default();
-                                        evolver.record_feedback(crate::advanced_memory::ProcedureFeedback {
-                                            procedure_id: pid.clone(),
-                                            outcome: if success {
-                                                crate::advanced_memory::FeedbackOutcome::Success
-                                            } else {
-                                                crate::advanced_memory::FeedbackOutcome::Failure
+                                        evolver.record_feedback(
+                                            crate::advanced_memory::ProcedureFeedback {
+                                                procedure_id: pid.clone(),
+                                                outcome: if success {
+                                                    crate::advanced_memory::FeedbackOutcome::Success
+                                                } else {
+                                                    crate::advanced_memory::FeedbackOutcome::Failure
+                                                },
+                                                context: ctx,
+                                                timestamp: chrono::Utc::now(),
                                             },
-                                            context: ctx,
-                                            timestamp: chrono::Utc::now(),
-                                        });
+                                        );
                                     }
                                 }
                                 self.active_procedure_ids.clear();
                             }
 
                             // Auto-track lists in LLM response for reference resolution
-                            let topic = self.conversation.iter().rev()
+                            let topic = self
+                                .conversation
+                                .iter()
+                                .rev()
                                 .find(|m| m.role == "user")
                                 .map(|m| {
-                                    let words: Vec<&str> = m.content.split_whitespace().take(8).collect();
+                                    let words: Vec<&str> =
+                                        m.content.split_whitespace().take(8).collect();
                                     words.join(" ")
                                 })
                                 .unwrap_or_default();
                             self.reference_resolver.track_lists_in_message(
-                                &self.current_response, &topic, self.turn_counter
+                                &self.current_response,
+                                &topic,
+                                self.turn_counter,
                             );
 
                             self.event_bus
@@ -2376,9 +2408,10 @@ impl AiAssistant {
                             // Save partial response to conversation so the user
                             // can later send "continue" and the model sees context.
                             if !partial.is_empty() {
-                                let partial_msg = ChatMessage::assistant(
-                                    &format!("{}\n\n[... response interrupted]", partial),
-                                );
+                                let partial_msg = ChatMessage::assistant(&format!(
+                                    "{}\n\n[... response interrupted]",
+                                    partial
+                                ));
                                 self.conversation.push(partial_msg);
                             }
                             self.is_generating = false;
@@ -2510,7 +2543,11 @@ impl AiAssistant {
 
             self.session_store.save_session(session.clone());
             self.session_store.current_session_id = Some(session.id.clone());
-            log::info!("Session saved: session_id={}, messages={}", session.id, session.messages.len());
+            log::info!(
+                "Session saved: session_id={}, messages={}",
+                session.id,
+                session.messages.len()
+            );
         } else if !self.conversation.is_empty() {
             let mut session = ChatSession::new("New Chat");
             session.messages = self.conversation.clone();
@@ -2519,7 +2556,11 @@ impl AiAssistant {
 
             self.session_store.current_session_id = Some(session.id.clone());
             self.session_store.save_session(session.clone());
-            log::info!("Session saved (new): session_id={}, messages={}", session.id, session.messages.len());
+            log::info!(
+                "Session saved (new): session_id={}, messages={}",
+                session.id,
+                session.messages.len()
+            );
             self.current_session = Some(session);
         }
     }
@@ -3349,7 +3390,10 @@ impl AiAssistant {
     ///
     /// Returns (knowledge_context, conversation_context) if RAG is enabled
     pub fn build_rag_context(&mut self, query: &str) -> (String, String) {
-        crate::diag_debug!("[rag-context] build_rag_context: query_len={} chars", query.len());
+        crate::diag_debug!(
+            "[rag-context] build_rag_context: query_len={} chars",
+            query.len()
+        );
         crate::safe_diag_trace!("[rag-context] query={:.300}", query);
 
         // Ensure RAG is initialized (lazy initialization if path was set)
@@ -3384,7 +3428,8 @@ impl AiAssistant {
         };
         crate::diag_debug!(
             "[rag-context] effective_max_knowledge_tokens={}, dynamic={}",
-            effective_max_knowledge_tokens, self.rag_config.dynamic_context_enabled
+            effective_max_knowledge_tokens,
+            self.rag_config.dynamic_context_enabled
         );
 
         if let Some(ref db) = self.rag_db {
@@ -3416,13 +3461,17 @@ impl AiAssistant {
 
                 crate::diag_debug!(
                     "[rag-context] retrieved {} knowledge chunks, top_k={}",
-                    chunks.len(), self.rag_config.top_k_chunks
+                    chunks.len(),
+                    self.rag_config.top_k_chunks
                 );
                 #[cfg(feature = "diagnostic-logging")]
                 for (i, chunk) in chunks.iter().enumerate() {
                     crate::diag_trace!(
                         "[rag-context] chunk[{}]: source={}, section={}, tokens={}",
-                        i, chunk.source, chunk.section, chunk.token_count
+                        i,
+                        chunk.source,
+                        chunk.section,
+                        chunk.token_count
                     );
                 }
 
@@ -3447,16 +3496,16 @@ impl AiAssistant {
 
             // Knowledge Graph context enrichment
             if let Some(ref graph) = self.graph {
-                let session_id = self
-                    .current_session
-                    .as_ref()
-                    .map(|s| s.id.as_str());
+                let session_id = self.current_session.as_ref().map(|s| s.id.as_str());
 
                 // Extract entity names from the query for graph lookup
                 let query_words: Vec<String> = query
                     .split_whitespace()
                     .filter(|w| w.len() > 2)
-                    .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase())
+                    .map(|w| {
+                        w.trim_matches(|c: char| !c.is_alphanumeric())
+                            .to_lowercase()
+                    })
                     .filter(|w| !w.is_empty())
                     .collect();
 
@@ -3476,7 +3525,9 @@ impl AiAssistant {
                     for entity in matching.iter().take(10) {
                         knowledge_context.push_str(&format!(
                             "- {} ({}): confidence {:.0}%",
-                            entity.name, entity.entity_type, entity.confidence * 100.0
+                            entity.name,
+                            entity.entity_type,
+                            entity.confidence * 100.0
                         ));
                         for (key, val) in &entity.merged_attributes {
                             knowledge_context.push_str(&format!(", {}={}", key, val));
@@ -3485,7 +3536,8 @@ impl AiAssistant {
                     }
 
                     // Add relevant relations
-                    let matching_names: Vec<&str> = matching.iter().map(|e| e.name.as_str()).collect();
+                    let matching_names: Vec<&str> =
+                        matching.iter().map(|e| e.name.as_str()).collect();
                     for rel in &unified.relations {
                         if matching_names.contains(&rel.source.as_str())
                             || matching_names.contains(&rel.target.as_str())
@@ -3555,16 +3607,21 @@ impl AiAssistant {
                 knowledge_context.push_str("\n[... truncated to fit context window ...]\n");
                 crate::diag_debug!(
                     "[rag-context] overflow truncation: {} -> {} tokens",
-                    knowledge_tokens, crate::estimate_tokens(&knowledge_context)
+                    knowledge_tokens,
+                    crate::estimate_tokens(&knowledge_context)
                 );
             }
         }
 
         crate::diag_debug!(
             "[rag-context] result: knowledge={} chars, conversation={} chars",
-            knowledge_context.len(), conversation_context.len()
+            knowledge_context.len(),
+            conversation_context.len()
         );
-        crate::safe_diag_trace!("[rag-context] knowledge_context_preview={:.500}", knowledge_context);
+        crate::safe_diag_trace!(
+            "[rag-context] knowledge_context_preview={:.500}",
+            knowledge_context
+        );
 
         (knowledge_context, conversation_context)
     }
@@ -4544,7 +4601,9 @@ impl AiAssistant {
 
     /// Create a new container executor with default configuration.
     #[cfg(feature = "containers")]
-    pub fn create_container_executor(&self) -> Result<crate::container_executor::ContainerExecutor> {
+    pub fn create_container_executor(
+        &self,
+    ) -> Result<crate::container_executor::ContainerExecutor> {
         crate::container_executor::ContainerExecutor::new(
             crate::container_executor::ContainerConfig::default(),
         )
@@ -4557,8 +4616,7 @@ impl AiAssistant {
         &self,
         config: crate::container_executor::ContainerConfig,
     ) -> Result<crate::container_executor::ContainerExecutor> {
-        crate::container_executor::ContainerExecutor::new(config)
-            .map_err(|e| anyhow::anyhow!(e))
+        crate::container_executor::ContainerExecutor::new(config).map_err(|e| anyhow::anyhow!(e))
     }
 
     /// Execute code in an isolated Docker container.
@@ -4590,9 +4648,7 @@ impl AiAssistant {
     ///
     /// Internally creates a `ContainerExecutor` and a temporary `SharedFolder`.
     #[cfg(feature = "containers")]
-    pub fn create_document_pipeline(
-        &self,
-    ) -> Result<crate::document_pipeline::DocumentPipeline> {
+    pub fn create_document_pipeline(&self) -> Result<crate::document_pipeline::DocumentPipeline> {
         let executor = crate::container_executor::ContainerExecutor::new(
             crate::container_executor::ContainerConfig::default(),
         )
@@ -4703,7 +4759,11 @@ impl AiAssistant {
         use crate::speech::VoiceCloneProvider;
         let (quality, warnings) = crate::speech::assess_enrollment_quality(audio, 16000);
         if quality < 0.3 {
-            anyhow::bail!("Audio quality too low ({:.0}%): {}", quality * 100.0, warnings.join("; "));
+            anyhow::bail!(
+                "Audio quality too low ({:.0}%): {}",
+                quality * 100.0,
+                warnings.join("; ")
+            );
         }
         match provider_name {
             "elevenlabs" => {
@@ -4714,7 +4774,10 @@ impl AiAssistant {
                 let provider = crate::speech::XttsCloneProvider::local();
                 provider.enroll(audio, crate::speech::AudioFormat::Pcm, name, 16000)
             }
-            _ => anyhow::bail!("Unknown clone provider '{}'. Available: elevenlabs, xtts", provider_name),
+            _ => anyhow::bail!(
+                "Unknown clone provider '{}'. Available: elevenlabs, xtts",
+                provider_name
+            ),
         }
     }
 
@@ -4756,19 +4819,17 @@ impl AiAssistant {
 
         // Common words that should not be treated as entities even when capitalized
         let stop_words: std::collections::HashSet<&str> = [
-            "The", "This", "That", "These", "Those", "It", "Its", "They", "Their",
-            "He", "She", "His", "Her", "We", "Our", "You", "Your", "My", "I",
-            "A", "An", "And", "Or", "But", "Not", "No", "If", "When", "Where",
-            "How", "What", "Who", "Which", "Why", "Is", "Are", "Was", "Were",
-            "Be", "Been", "Being", "Have", "Has", "Had", "Do", "Does", "Did",
-            "Will", "Would", "Could", "Should", "May", "Might", "Can", "Shall",
-            "For", "From", "With", "About", "Into", "Through", "During", "Before",
-            "After", "Above", "Below", "To", "Of", "In", "On", "At", "By",
-            "As", "So", "Then", "Than", "Also", "Just", "Only", "Each", "Every",
-            "All", "Any", "Both", "Few", "More", "Most", "Other", "Some", "Such",
-            "Very", "Much", "Many", "Here", "There", "Now", "Still", "Already",
-            "El", "La", "Los", "Las", "Un", "Una", "De", "En", "Por", "Para",
-            "Con", "Sin", "Sobre", "Entre", "Es", "Son", "Fue", "Era",
+            "The", "This", "That", "These", "Those", "It", "Its", "They", "Their", "He", "She",
+            "His", "Her", "We", "Our", "You", "Your", "My", "I", "A", "An", "And", "Or", "But",
+            "Not", "No", "If", "When", "Where", "How", "What", "Who", "Which", "Why", "Is", "Are",
+            "Was", "Were", "Be", "Been", "Being", "Have", "Has", "Had", "Do", "Does", "Did",
+            "Will", "Would", "Could", "Should", "May", "Might", "Can", "Shall", "For", "From",
+            "With", "About", "Into", "Through", "During", "Before", "After", "Above", "Below",
+            "To", "Of", "In", "On", "At", "By", "As", "So", "Then", "Than", "Also", "Just", "Only",
+            "Each", "Every", "All", "Any", "Both", "Few", "More", "Most", "Other", "Some", "Such",
+            "Very", "Much", "Many", "Here", "There", "Now", "Still", "Already", "El", "La", "Los",
+            "Las", "Un", "Una", "De", "En", "Por", "Para", "Con", "Sin", "Sobre", "Entre", "Es",
+            "Son", "Fue", "Era",
         ]
         .iter()
         .copied()
@@ -4871,10 +4932,7 @@ impl AiAssistant {
         // 2. Decrypt and extract documents + manifest
         let reader = KpkgReader::<AppKeyProvider>::with_app_key();
         let (documents, manifest) = reader.read_with_manifest(&data).map_err(|e| {
-            crate::error::AiError::Other(format!(
-                "Failed to decrypt kpkg '{}': {}",
-                kpkg_path, e
-            ))
+            crate::error::AiError::Other(format!("Failed to decrypt kpkg '{}': {}", kpkg_path, e))
         })?;
 
         // 3. Extract entities from all document content
@@ -5003,11 +5061,7 @@ impl AiAssistant {
 
         // 3. Build conversation with the prompt
         let conversation = vec![crate::messages::ChatMessage::user(prompt)];
-        let system_prompt = build_system_prompt(
-            &self.system_prompt_base,
-            &self.preferences,
-            "",
-        );
+        let system_prompt = build_system_prompt(&self.system_prompt_base, &self.preferences, "");
 
         // 4. Call the LLM synchronously
         let response = generate_response(&self.config, &conversation, &system_prompt)
@@ -5015,18 +5069,25 @@ impl AiAssistant {
 
         // 5. Validate the response against the grammar rules
         // Check if the response matches any of the root rule's alternatives
-        let root_rule = parsed_grammar.rules.iter().find(|r| r.name == parsed_grammar.root_rule);
+        let root_rule = parsed_grammar
+            .rules
+            .iter()
+            .find(|r| r.name == parsed_grammar.root_rule);
         if let Some(rule) = root_rule {
             let trimmed = response.trim();
             let valid = rule.alternatives.iter().any(|alt| {
                 // Simple validation: check literal-only alternatives
-                let literal_match: String = alt.elements.iter().filter_map(|el| {
-                    if let crate::constrained_decoding::GrammarElement::Literal(s) = el {
-                        Some(s.as_str())
-                    } else {
-                        None
-                    }
-                }).collect();
+                let literal_match: String = alt
+                    .elements
+                    .iter()
+                    .filter_map(|el| {
+                        if let crate::constrained_decoding::GrammarElement::Literal(s) = el {
+                            Some(s.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
                 if !literal_match.is_empty() {
                     return trimmed == literal_match || trimmed.contains(&literal_match);
                 }
@@ -5082,7 +5143,8 @@ impl AiAssistant {
         use std::collections::HashMap as HitlHashMap;
 
         // 1. Send the message to the LLM synchronously with context budget allocation
-        let allocated_context = self.build_allocated_context(message, &self.knowledge_context.clone());
+        let allocated_context =
+            self.build_allocated_context(message, &self.knowledge_context.clone());
         let effective_knowledge = if allocated_context.is_empty() {
             self.knowledge_context.clone()
         } else {
@@ -5102,7 +5164,8 @@ impl AiAssistant {
             .map_err(|e| crate::error::AiError::Other(format!("LLM generation failed: {}", e)))?;
 
         // 2. Record in conversation
-        self.conversation.push(crate::messages::ChatMessage::user(message));
+        self.conversation
+            .push(crate::messages::ChatMessage::user(message));
         self.conversation
             .push(crate::messages::ChatMessage::assistant(&response));
 
@@ -5159,10 +5222,7 @@ impl AiAssistant {
     ///
     /// # Errors
     /// Returns `AiError` if the URL is empty or the connection fails.
-    pub fn connect_mcp_server(
-        &mut self,
-        server_url: &str,
-    ) -> Result<(), crate::error::AiError> {
+    pub fn connect_mcp_server(&mut self, server_url: &str) -> Result<(), crate::error::AiError> {
         use crate::mcp_client::{McpClientConfig, RemoteMcpClient};
 
         if server_url.is_empty() {
@@ -5185,15 +5245,13 @@ impl AiAssistant {
         };
 
         let mut client = RemoteMcpClient::new(config);
-        client.connect().map_err(|e| {
-            crate::error::AiError::Other(format!("MCP connection failed: {}", e))
-        })?;
+        client
+            .connect()
+            .map_err(|e| crate::error::AiError::Other(format!("MCP connection failed: {}", e)))?;
 
         // Store the connection URL as an indicator that connection was established
-        self.knowledge_context.push_str(&format!(
-            "\n[MCP Server connected: {}]\n",
-            server_url
-        ));
+        self.knowledge_context
+            .push_str(&format!("\n[MCP Server connected: {}]\n", server_url));
 
         Ok(())
     }
@@ -5581,7 +5639,12 @@ mod tests {
     #[test]
     fn test_transcribe_unknown_provider() {
         let ai = AiAssistant::new();
-        let result = ai.transcribe("nonexistent", &[0u8; 10], crate::speech::AudioFormat::Wav, None);
+        let result = ai.transcribe(
+            "nonexistent",
+            &[0u8; 10],
+            crate::speech::AudioFormat::Wav,
+            None,
+        );
         assert!(result.is_err());
     }
 
@@ -5610,11 +5673,7 @@ mod tests {
     #[test]
     fn test_synthesize_empty_text() {
         let ai = AiAssistant::new();
-        let result = ai.synthesize(
-            "piper",
-            "",
-            &crate::speech::SynthesisOptions::default(),
-        );
+        let result = ai.synthesize("piper", "", &crate::speech::SynthesisOptions::default());
         assert!(result.is_err());
     }
 
@@ -5634,8 +5693,7 @@ mod tests {
             entities
         );
         assert!(
-            entities.contains(&"Stellar".to_string())
-                || entities.contains(&"Dynamics".to_string()),
+            entities.contains(&"Stellar".to_string()) || entities.contains(&"Dynamics".to_string()),
             "Should extract part of 'Stellar Dynamics': {:?}",
             entities
         );
@@ -5833,10 +5891,7 @@ mod tests {
         let mut ai = AiAssistant::new();
         assert!(ai.graph.is_none(), "Graph should be None by default");
         let result = ai.load_kpkg_to_graph("nonexistent_file.kpkg");
-        assert!(
-            result.is_err(),
-            "Should fail when kpkg file does not exist"
-        );
+        assert!(result.is_err(), "Should fail when kpkg file does not exist");
         let err_msg = format!("{}", result.unwrap_err());
         assert!(
             err_msg.contains("read_kpkg") || err_msg.contains("kpkg file"),
@@ -5928,21 +5983,54 @@ mod tests {
     #[test]
     fn test_new_defaults() {
         let ai = AiAssistant::new();
-        assert!(ai.conversation.is_empty(), "Conversation should start empty");
+        assert!(
+            ai.conversation.is_empty(),
+            "Conversation should start empty"
+        );
         assert!(!ai.is_generating, "Should not be generating initially");
-        assert!(!ai.is_fetching_models, "Should not be fetching models initially");
-        assert!(ai.current_response.is_empty(), "Current response should be empty");
+        assert!(
+            !ai.is_fetching_models,
+            "Should not be fetching models initially"
+        );
+        assert!(
+            ai.current_response.is_empty(),
+            "Current response should be empty"
+        );
         assert!(ai.current_session.is_none(), "No session should be active");
         assert!(!ai.is_summarizing, "Should not be summarizing initially");
         assert!(ai.available_models.is_empty(), "No models should be loaded");
-        assert!(!ai.fallback_enabled, "Fallback should be disabled by default");
-        assert!(ai.fallback_providers.is_empty(), "No fallback providers by default");
-        assert!(!ai.auto_compaction, "Auto-compaction should be disabled by default");
-        assert!(ai.api_key_manager.is_none(), "No API key manager by default");
-        assert!(ai.adaptive_thinking.enabled == false, "Adaptive thinking disabled by default");
-        assert!(ai.last_thinking_result.is_none(), "No thinking result by default");
-        assert!(ai.last_thinking_strategy.is_none(), "No thinking strategy by default");
-        assert!(ai.detected_context_size.is_none(), "No detected context size by default");
+        assert!(
+            !ai.fallback_enabled,
+            "Fallback should be disabled by default"
+        );
+        assert!(
+            ai.fallback_providers.is_empty(),
+            "No fallback providers by default"
+        );
+        assert!(
+            !ai.auto_compaction,
+            "Auto-compaction should be disabled by default"
+        );
+        assert!(
+            ai.api_key_manager.is_none(),
+            "No API key manager by default"
+        );
+        assert!(
+            ai.adaptive_thinking.enabled == false,
+            "Adaptive thinking disabled by default"
+        );
+        assert!(
+            ai.last_thinking_result.is_none(),
+            "No thinking result by default"
+        );
+        assert!(
+            ai.last_thinking_strategy.is_none(),
+            "No thinking strategy by default"
+        );
+        assert!(
+            ai.detected_context_size.is_none(),
+            "No detected context size by default"
+        );
         assert!(ai.cost_dashboard.is_none(), "No cost dashboard by default");
         assert!(ai.chat_hooks.is_none(), "No chat hooks by default");
     }
@@ -6126,7 +6214,10 @@ mod tests {
         prefs.global_notes = "Some global notes".to_string();
 
         ai.load_preferences(prefs);
-        assert!(matches!(ai.preferences.response_style, ResponseStyle::Technical));
+        assert!(matches!(
+            ai.preferences.response_style,
+            ResponseStyle::Technical
+        ));
         assert_eq!(ai.preferences.global_notes, "Some global notes");
     }
 
@@ -6226,8 +6317,14 @@ mod tests {
         ai.add_api_key("openai", "oai1", "sk-openai-1");
         ai.add_api_key("anthropic", "ant1", "sk-ant-1");
 
-        assert_eq!(ai.get_current_api_key("openai"), Some("sk-openai-1".to_string()));
-        assert_eq!(ai.get_current_api_key("anthropic"), Some("sk-ant-1".to_string()));
+        assert_eq!(
+            ai.get_current_api_key("openai"),
+            Some("sk-openai-1".to_string())
+        );
+        assert_eq!(
+            ai.get_current_api_key("anthropic"),
+            Some("sk-ant-1".to_string())
+        );
         assert!(ai.get_current_api_key("google").is_none());
     }
 
@@ -6302,7 +6399,10 @@ mod tests {
         let mut ai = AiAssistant::new();
         ai.init_cost_tracking();
         let report = ai.cost_report();
-        assert!(report.is_some(), "Cost report should be available after init");
+        assert!(
+            report.is_some(),
+            "Cost report should be available after init"
+        );
     }
 
     #[test]
@@ -6324,7 +6424,8 @@ mod tests {
     #[test]
     fn test_extract_preferences_with_custom_extractor() {
         let mut ai = AiAssistant::new();
-        ai.conversation.push(ChatMessage::user("I prefer code examples"));
+        ai.conversation
+            .push(ChatMessage::user("I prefer code examples"));
         ai.conversation.push(ChatMessage::assistant("Sure!"));
 
         ai.extract_preferences_with(|msgs, prefs| {
@@ -6335,7 +6436,10 @@ mod tests {
             }
         });
 
-        assert!(matches!(ai.preferences.response_style, ResponseStyle::Technical));
+        assert!(matches!(
+            ai.preferences.response_style,
+            ResponseStyle::Technical
+        ));
     }
 
     // --- Summarization Trigger Tests ---
@@ -6377,7 +6481,8 @@ mod tests {
     #[test]
     fn test_new_session_saves_existing_conversation() {
         let mut ai = AiAssistant::new();
-        ai.conversation.push(ChatMessage::user("Before new session"));
+        ai.conversation
+            .push(ChatMessage::user("Before new session"));
         ai.conversation.push(ChatMessage::assistant("Reply"));
 
         ai.new_session();
@@ -6395,10 +6500,9 @@ mod tests {
         let ai = AiAssistant::new();
         // Event bus should be available and functional
         // Just verify we can emit without panic
-        ai.event_bus
-            .emit(crate::events::AiEvent::SessionCreated {
-                session_id: "test".to_string(),
-            });
+        ai.event_bus.emit(crate::events::AiEvent::SessionCreated {
+            session_id: "test".to_string(),
+        });
     }
 
     // --- Poll Response with No Active Generation ---
@@ -6441,7 +6545,11 @@ mod tests {
         ai.new_session();
         assert!(ai.current_session.is_some());
 
-        let sid = ai.current_session.as_ref().map(|s| s.id.clone()).unwrap_or_default();
+        let sid = ai
+            .current_session
+            .as_ref()
+            .map(|s| s.id.clone())
+            .unwrap_or_default();
         ai.conversation.push(ChatMessage::user("hello"));
         ai.save_current_session();
 
@@ -6491,7 +6599,8 @@ mod tests {
     fn test_load_sessions_nonexistent_returns_default() {
         let mut ai = AiAssistant::new();
         // load_from_file returns Ok(default) for nonexistent paths
-        let result = ai.load_sessions_from_file(std::path::Path::new("/nonexistent_dir_xyz/sessions.bin"));
+        let result =
+            ai.load_sessions_from_file(std::path::Path::new("/nonexistent_dir_xyz/sessions.bin"));
         // On most OSes this returns Ok with an empty default store
         // The exact behavior depends on the platform, so just verify it doesn't panic
         if result.is_ok() {
@@ -6553,7 +6662,8 @@ mod tests {
         ai.conversation.push(ChatMessage::user("restore me"));
         ai.save_current_session();
 
-        let dir = std::env::temp_dir().join(format!("test_sessions_restore_{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("test_sessions_restore_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("sessions.bin");
         ai.save_sessions_to_file(&path).unwrap();
@@ -6880,8 +6990,9 @@ ws ::= " "*"#;
     fn test_export_training_data_with_conversation() {
         let mut ai = AiAssistant::new();
         ai.conversation.push(ChatMessage::user("What is Rust?"));
-        ai.conversation
-            .push(ChatMessage::assistant("Rust is a systems programming language."));
+        ai.conversation.push(ChatMessage::assistant(
+            "Rust is a systems programming language.",
+        ));
 
         let json = ai.export_training_data().unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -6895,13 +7006,14 @@ ws ::= " "*"#;
     #[test]
     fn test_export_training_data_valid_json() {
         let mut ai = AiAssistant::new();
-        ai.conversation
-            .push(ChatMessage::user("Tell me about \"quotes\" and \\backslash"));
-        ai.conversation
-            .push(ChatMessage::assistant("Special chars: \"quotes\", \\backslash"));
+        ai.conversation.push(ChatMessage::user(
+            "Tell me about \"quotes\" and \\backslash",
+        ));
+        ai.conversation.push(ChatMessage::assistant(
+            "Special chars: \"quotes\", \\backslash",
+        ));
         ai.conversation.push(ChatMessage::user("Another"));
-        ai.conversation
-            .push(ChatMessage::assistant("Response two"));
+        ai.conversation.push(ChatMessage::assistant("Response two"));
 
         let json = ai.export_training_data().unwrap();
         // Should be valid JSON
@@ -7014,7 +7126,8 @@ ws ::= " "*"#;
     #[test]
     fn test_conversation_with_mixed_roles() {
         let mut ai = AiAssistant::new();
-        ai.conversation.push(ChatMessage::system("System instruction"));
+        ai.conversation
+            .push(ChatMessage::system("System instruction"));
         ai.conversation.push(ChatMessage::user("User question"));
         ai.conversation
             .push(ChatMessage::assistant("Assistant answer"));
@@ -7205,7 +7318,10 @@ ws ::= " "*"#;
         // Notes should be restored via the session's context_notes field
         // (load_session restores the full ChatSession object)
         if let Some(ref session) = ai.current_session {
-            assert_eq!(session.context_notes, "Remember: user prefers concise answers");
+            assert_eq!(
+                session.context_notes,
+                "Remember: user prefers concise answers"
+            );
         }
     }
 
@@ -7335,7 +7451,10 @@ ws ::= " "*"#;
 
         let json = ai.export_metrics_json();
         let parsed: Result<serde_json::Value, _> = serde_json::from_str(&json);
-        assert!(parsed.is_ok(), "Metrics JSON with data should be valid JSON");
+        assert!(
+            parsed.is_ok(),
+            "Metrics JSON with data should be valid JSON"
+        );
     }
 
     #[test]
@@ -7569,8 +7688,7 @@ ws ::= " "*"#;
     fn test_fresh_context_status_limited_with_rag_only() {
         let mut ai = AiAssistant::new();
         ai.set_context_mode(ContextMode::FreshContext);
-        let temp =
-            std::env::temp_dir().join(format!("fc_test_{}.db", uuid::Uuid::new_v4()));
+        let temp = std::env::temp_dir().join(format!("fc_test_{}.db", uuid::Uuid::new_v4()));
         ai.init_rag(&temp).expect("RAG init");
         ai.register_knowledge_document("test", "some content");
         let status = ai.fresh_context_status(false);
@@ -7585,8 +7703,7 @@ ws ::= " "*"#;
     fn test_fresh_context_status_good_with_rag_and_memory() {
         let mut ai = AiAssistant::new();
         ai.set_context_mode(ContextMode::FreshContext);
-        let temp =
-            std::env::temp_dir().join(format!("fc_test_{}.db", uuid::Uuid::new_v4()));
+        let temp = std::env::temp_dir().join(format!("fc_test_{}.db", uuid::Uuid::new_v4()));
         ai.init_rag(&temp).expect("RAG init");
         ai.register_knowledge_document("test", "content");
         ai.enable_memory(crate::memory::MemoryConfig::default());
@@ -7601,8 +7718,7 @@ ws ::= " "*"#;
     fn test_fresh_context_status_optimal() {
         let mut ai = AiAssistant::new();
         ai.set_context_mode(ContextMode::FreshContext);
-        let temp =
-            std::env::temp_dir().join(format!("fc_test_{}.db", uuid::Uuid::new_v4()));
+        let temp = std::env::temp_dir().join(format!("fc_test_{}.db", uuid::Uuid::new_v4()));
         ai.init_rag(&temp).expect("RAG init");
         ai.register_knowledge_document("test", "content");
         ai.enable_memory(crate::memory::MemoryConfig::default());
@@ -7617,7 +7733,11 @@ ws ::= " "*"#;
     fn test_fresh_context_warning_display() {
         let w = FreshContextWarning::NoRag;
         let s = format!("{}", w);
-        assert!(s.contains("RAG"), "Warning display should mention RAG: {}", s);
+        assert!(
+            s.contains("RAG"),
+            "Warning display should mention RAG: {}",
+            s
+        );
 
         let w2 = FreshContextWarning::SmallBudget(200);
         let s2 = format!("{}", w2);
@@ -7629,7 +7749,13 @@ ws ::= " "*"#;
     // ================================================================
 
     #[cfg(feature = "advanced-memory")]
-    fn make_test_procedure(id: &str, name: &str, condition: &str, steps: Vec<&str>, confidence: f64) -> crate::advanced_memory::Procedure {
+    fn make_test_procedure(
+        id: &str,
+        name: &str,
+        condition: &str,
+        steps: Vec<&str>,
+        confidence: f64,
+    ) -> crate::advanced_memory::Procedure {
         crate::advanced_memory::Procedure {
             id: id.to_string(),
             name: name.to_string(),
@@ -7657,8 +7783,20 @@ ws ::= " "*"#;
         assert!(ai.has_procedural_memory());
 
         // Add
-        ai.add_procedure(make_test_procedure("p1", "Deploy", "deploy rust app", vec!["test", "build", "deploy"], 0.9));
-        ai.add_procedure(make_test_procedure("p2", "Review", "code review checklist", vec!["compile", "test", "docs"], 0.85));
+        ai.add_procedure(make_test_procedure(
+            "p1",
+            "Deploy",
+            "deploy rust app",
+            vec!["test", "build", "deploy"],
+            0.9,
+        ));
+        ai.add_procedure(make_test_procedure(
+            "p2",
+            "Review",
+            "code review checklist",
+            vec!["compile", "test", "docs"],
+            0.85,
+        ));
         assert_eq!(ai.list_procedures().len(), 2);
 
         // Find
@@ -7686,8 +7824,20 @@ ws ::= " "*"#;
     fn test_assistant_procedural_persistence() {
         let mut ai = AiAssistant::new();
         ai.enable_procedural_memory(50);
-        ai.add_procedure(make_test_procedure("p1", "Deploy", "deploy rust app", vec!["test", "build"], 0.9));
-        ai.add_procedure(make_test_procedure("p2", "Review", "code review", vec!["compile", "lint"], 0.85));
+        ai.add_procedure(make_test_procedure(
+            "p1",
+            "Deploy",
+            "deploy rust app",
+            vec!["test", "build"],
+            0.9,
+        ));
+        ai.add_procedure(make_test_procedure(
+            "p2",
+            "Review",
+            "code review",
+            vec!["compile", "lint"],
+            0.85,
+        ));
 
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("procedures.json");
@@ -7709,8 +7859,11 @@ ws ::= " "*"#;
         let mut ai = AiAssistant::new();
         ai.enable_procedural_memory(50);
         ai.add_procedure(make_test_procedure(
-            "p1", "Deploy Pipeline", "deploy rust application",
-            vec!["Run cargo test", "Build release binary", "Deploy to server"], 0.92,
+            "p1",
+            "Deploy Pipeline",
+            "deploy rust application",
+            vec!["Run cargo test", "Build release binary", "Deploy to server"],
+            0.92,
         ));
 
         let ctx = ai.build_procedural_context("deploy rust application now", 5, 500);
@@ -7731,7 +7884,13 @@ ws ::= " "*"#;
     fn test_assistant_procedural_context_no_match() {
         let mut ai = AiAssistant::new();
         ai.enable_procedural_memory(50);
-        ai.add_procedure(make_test_procedure("p1", "Deploy", "deploy rust app", vec!["step"], 0.9));
+        ai.add_procedure(make_test_procedure(
+            "p1",
+            "Deploy",
+            "deploy rust app",
+            vec!["step"],
+            0.9,
+        ));
 
         // Query that doesn't match
         let ctx = ai.build_procedural_context("tell me about quantum physics", 5, 500);

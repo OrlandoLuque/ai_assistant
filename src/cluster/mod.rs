@@ -77,12 +77,24 @@ pub struct ClusterConfig {
     pub replication_factor: usize,
 }
 
-fn default_heartbeat_interval_ms() -> u64 { 1000 }
-fn default_phi_threshold() -> f64 { 12.0 }
-fn default_sync_interval_secs() -> u64 { 30 }
-fn default_snapshot_interval_secs() -> u64 { 300 }
-fn default_max_connections() -> usize { 64 }
-fn default_replication_factor() -> usize { 3 }
+fn default_heartbeat_interval_ms() -> u64 {
+    1000
+}
+fn default_phi_threshold() -> f64 {
+    12.0
+}
+fn default_sync_interval_secs() -> u64 {
+    30
+}
+fn default_snapshot_interval_secs() -> u64 {
+    300
+}
+fn default_max_connections() -> usize {
+    64
+}
+fn default_replication_factor() -> usize {
+    3
+}
 
 impl Default for ClusterConfig {
     fn default() -> Self {
@@ -214,16 +226,19 @@ impl ClusterManager {
             .map_err(|e| format!("Failed to create NetworkNode: {}", e))?;
         let network_node = Arc::new(network_node);
 
-        let ring = Arc::new(RwLock::new(ConsistentHashRing::new(64, config.replication_factor)));
+        let ring = Arc::new(RwLock::new(ConsistentHashRing::new(
+            64,
+            config.replication_factor,
+        )));
         let heartbeat_mgr = Arc::new(RwLock::new(HeartbeatManager::new(HeartbeatConfig {
             interval: Duration::from_millis(config.heartbeat_interval_ms),
             phi_threshold: config.phi_threshold,
             max_samples: 200,
             suspicious_threshold: config.phi_threshold / 2.0,
         })));
-        let anti_entropy = Arc::new(RwLock::new(AntiEntropySync::new(
-            Duration::from_secs(config.sync_interval_secs),
-        )));
+        let anti_entropy = Arc::new(RwLock::new(AntiEntropySync::new(Duration::from_secs(
+            config.sync_interval_secs,
+        ))));
 
         let state = Arc::new(ClusterState::new());
         let persistence = Arc::new(CrdtPersistence::new(config.data_dir.clone()));
@@ -549,7 +564,11 @@ impl ClusterManager {
             ring_node_count: ring.node_count(),
             ring_vnode_count: ring.vnode_count(),
             replication_factor: ring.replication_factor(),
-            active_nodes: active_nodes.elements().iter().map(|s| s.to_string()).collect(),
+            active_nodes: active_nodes
+                .elements()
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
             monitored_nodes: hb.monitored_count(),
             dead_nodes: hb.get_dead_nodes().iter().map(|n| n.to_hex()).collect(),
             is_draining: self.health.is_draining(),
@@ -765,8 +784,16 @@ mod tests {
             assert_eq!(state.rate_limits.read().await.value(), 3);
 
             // Active nodes
-            state.active_nodes.write().await.add("node1".to_string(), "system");
-            state.active_nodes.write().await.add("node2".to_string(), "system");
+            state
+                .active_nodes
+                .write()
+                .await
+                .add("node1".to_string(), "system");
+            state
+                .active_nodes
+                .write()
+                .await
+                .add("node2".to_string(), "system");
             assert_eq!(state.active_nodes.read().await.len(), 2);
 
             // Request counts
@@ -788,7 +815,10 @@ mod tests {
                 "node1",
             );
             let sessions = state.sessions.read().await;
-            assert_eq!(sessions.get(&"session1".to_string()), Some(&b"node1".to_vec()));
+            assert_eq!(
+                sessions.get(&"session1".to_string()),
+                Some(&b"node1".to_vec())
+            );
         });
     }
 
@@ -884,7 +914,11 @@ mod tests {
             let value = serde_json::to_string(&ad).unwrap();
 
             // Insert into catalog
-            state.model_catalog.write().await.set(key.clone(), value, 1000, "node1");
+            state
+                .model_catalog
+                .write()
+                .await
+                .set(key.clone(), value, 1000, "node1");
 
             // Read back
             let catalog = state.model_catalog.read().await;
@@ -1032,7 +1066,10 @@ mod tests {
             let catalog = state1.model_catalog.read().await;
             let stored = catalog.get(&key).unwrap();
             let parsed: ModelAdvertisement = serde_json::from_str(stored).unwrap();
-            assert!(parsed.published, "LWW should keep the later (published) version");
+            assert!(
+                parsed.published,
+                "LWW should keep the later (published) version"
+            );
         });
     }
 

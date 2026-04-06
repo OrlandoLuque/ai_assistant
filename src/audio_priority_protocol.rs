@@ -46,9 +46,15 @@ pub struct SlotId(pub u8);
 impl SlotId {
     pub const MAX: u8 = 14;
     pub fn new(id: u8) -> Option<Self> {
-        if id <= Self::MAX { Some(Self(id)) } else { None }
+        if id <= Self::MAX {
+            Some(Self(id))
+        } else {
+            None
+        }
     }
-    pub fn as_u8(&self) -> u8 { self.0 }
+    pub fn as_u8(&self) -> u8 {
+        self.0
+    }
 }
 
 /// Priority level 0..=10. Higher wins.
@@ -58,8 +64,12 @@ pub struct Priority(pub u8);
 impl Priority {
     pub const MIN: Priority = Priority(0);
     pub const MAX: Priority = Priority(10);
-    pub fn new(p: u8) -> Self { Self(p.min(10)) }
-    pub fn as_u8(&self) -> u8 { self.0 }
+    pub fn new(p: u8) -> Self {
+        Self(p.min(10))
+    }
+    pub fn as_u8(&self) -> u8 {
+        self.0
+    }
 }
 
 /// Protocol-wide configuration. Clients must share identical values to interop.
@@ -156,8 +166,12 @@ impl ProtocolConfig {
 
     /// Sanity: do all reserved freqs stay below Nyquist and within codec-safe range?
     pub fn is_valid(&self) -> bool {
-        if self.slot_count == 0 || self.slot_count > 15 { return false; }
-        if self.window_size == 0 { return false; }
+        if self.slot_count == 0 || self.slot_count > 15 {
+            return false;
+        }
+        if self.window_size == 0 {
+            return false;
+        }
         let max_slot_freq = self.slot_frequency(SlotId(self.slot_count - 1));
         max_slot_freq < self.max_safe_freq()
             && self.override_freq_hz < self.max_safe_freq()
@@ -179,7 +193,10 @@ pub struct ToneEncoder {
 
 impl ToneEncoder {
     pub fn new(sample_rate: u32) -> Self {
-        Self { sample_rate, phases: HashMap::new() }
+        Self {
+            sample_rate,
+            phases: HashMap::new(),
+        }
     }
 
     /// Mix a sinusoid at `frequency_hz` with `amplitude` into `buffer`. All samples
@@ -209,7 +226,9 @@ impl ToneEncoder {
                 i as f32 / ramp as f32
             } else if i >= len.saturating_sub(ramp) {
                 (len - i) as f32 / ramp as f32
-            } else { 1.0 };
+            } else {
+                1.0
+            };
             *sample += amplitude * env * phase.sin();
             *phase += step;
             if *phase > 2.0 * std::f32::consts::PI {
@@ -243,7 +262,12 @@ impl GoertzelDetector {
         let k = window_size as f32 * target_freq_hz / sample_rate as f32;
         let omega = 2.0 * std::f32::consts::PI * k / window_size as f32;
         let coefficient = 2.0 * omega.cos();
-        Self { target_freq_hz, sample_rate, window_size, coefficient }
+        Self {
+            target_freq_hz,
+            sample_rate,
+            window_size,
+            coefficient,
+        }
     }
 
     /// Returns the squared magnitude at the target frequency. Normalised roughly
@@ -317,16 +341,20 @@ impl ToneDecoder {
             ));
         }
         let override_detector = GoertzelDetector::new(
-            config.override_freq_hz, config.sample_rate, config.window_size,
+            config.override_freq_hz,
+            config.sample_rate,
+            config.window_size,
         );
         let snr_threshold_linear = 10.0f32.powf(config.detection_snr_db / 20.0);
         let history_cap = config.detection_confirm_windows.max(1) as usize;
         let n = config.window_size;
         // Hann window: 0.5 * (1 - cos(2πi/(N-1))). Reduces sidelobe leakage ~31 dB
         // so a strong tone in one bin doesn't falsely trigger adjacent bins.
-        let hann_window: Vec<f32> = (0..n).map(|i| {
-            0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / (n - 1).max(1) as f32).cos())
-        }).collect();
+        let hann_window: Vec<f32> = (0..n)
+            .map(|i| {
+                0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / (n - 1).max(1) as f32).cos())
+            })
+            .collect();
         Self {
             slot_detectors,
             override_detector,
@@ -348,7 +376,9 @@ impl ToneDecoder {
         for i in 0..n {
             self.windowed_buf[i] = samples[i] * self.hann_window[i];
         }
-        for i in n..self.windowed_buf.len() { self.windowed_buf[i] = 0.0; }
+        for i in n..self.windowed_buf.len() {
+            self.windowed_buf[i] = 0.0;
+        }
         let windowed: &[f32] = &self.windowed_buf[..n];
 
         // Raw per-slot magnitudes
@@ -377,13 +407,20 @@ impl ToneDecoder {
         // Neighbor-rel check: a slot is only "active" if its magnitude dominates
         // its adjacent slots (within 1 bin). Prevents a single strong tone from
         // triggering multiple adjacent slots via spectral leakage.
-        let slot_mags: Vec<(SlotId, f32)> = self.slot_detectors.iter()
-            .map(|(s, _)| (*s, magnitudes[s])).collect();
+        let slot_mags: Vec<(SlotId, f32)> = self
+            .slot_detectors
+            .iter()
+            .map(|(s, _)| (*s, magnitudes[s]))
+            .collect();
         for (slot, m) in &slot_mags {
             let above_floor = *m > threshold;
             // Find adjacent slot magnitudes
             let idx = slot.as_u8() as usize;
-            let left = if idx > 0 { slot_mags.get(idx - 1).map(|(_, m)| *m).unwrap_or(0.0) } else { 0.0 };
+            let left = if idx > 0 {
+                slot_mags.get(idx - 1).map(|(_, m)| *m).unwrap_or(0.0)
+            } else {
+                0.0
+            };
             let right = slot_mags.get(idx + 1).map(|(_, m)| *m).unwrap_or(0.0);
             let max_neighbor = left.max(right);
             // Require this slot to dominate neighbors by at least 1.5× (3.5 dB).
@@ -394,18 +431,34 @@ impl ToneDecoder {
         let raw_override = override_magnitude > threshold;
 
         // Push to history
-        if self.history.len() >= self.history_cap { self.history.pop_front(); }
+        if self.history.len() >= self.history_cap {
+            self.history.pop_front();
+        }
         self.history.push_back(raw_active);
-        if self.override_history.len() >= self.history_cap { self.override_history.pop_front(); }
+        if self.override_history.len() >= self.history_cap {
+            self.override_history.pop_front();
+        }
         self.override_history.push_back(raw_override);
 
         // Confirm: all `confirm_windows` most-recent frames must agree
         let need = self.confirm_windows as usize;
-        let active_slots: Vec<SlotId> = self.slot_detectors.iter().filter_map(|(slot, _)| {
-            let all_active = self.history.iter().rev().take(need)
-                .all(|h| *h.get(slot).unwrap_or(&false));
-            if self.history.len() >= need && all_active { Some(*slot) } else { None }
-        }).collect();
+        let active_slots: Vec<SlotId> = self
+            .slot_detectors
+            .iter()
+            .filter_map(|(slot, _)| {
+                let all_active = self
+                    .history
+                    .iter()
+                    .rev()
+                    .take(need)
+                    .all(|h| *h.get(slot).unwrap_or(&false));
+                if self.history.len() >= need && all_active {
+                    Some(*slot)
+                } else {
+                    None
+                }
+            })
+            .collect();
         let override_active = self.override_history.len() >= need
             && self.override_history.iter().rev().take(need).all(|&b| b);
 
@@ -444,8 +497,12 @@ pub struct SlotState {
 impl SlotState {
     fn new(slot: SlotId) -> Self {
         Self {
-            slot, last_active_at: None, last_idle_at: None, first_seen_at: None,
-            currently_active: false, currently_connected: false,
+            slot,
+            last_active_at: None,
+            last_idle_at: None,
+            first_seen_at: None,
+            currently_active: false,
+            currently_connected: false,
         }
     }
 }
@@ -466,7 +523,12 @@ impl FloorMonitor {
             let s = SlotId(i);
             states.insert(s, SlotState::new(s));
         }
-        Self { config, states, override_active_since: None, last_frame_active: HashMap::new() }
+        Self {
+            config,
+            states,
+            override_active_since: None,
+            last_frame_active: HashMap::new(),
+        }
     }
 
     /// Apply a decoder detection frame.
@@ -475,7 +537,8 @@ impl FloorMonitor {
         // A slot showing magnitude in `active_slots` is treated as ACTIVE if it's
         // persistently present (confirmation done by decoder). On transition from
         // not-active to active, mark it; heartbeat extends last_active_at.
-        let active_set: std::collections::HashSet<SlotId> = frame.active_slots.iter().copied().collect();
+        let active_set: std::collections::HashSet<SlotId> =
+            frame.active_slots.iter().copied().collect();
         for i in 0..self.config.slot_count {
             let slot = SlotId(i);
             let was_active = *self.last_frame_active.get(&slot).unwrap_or(&false);
@@ -484,7 +547,9 @@ impl FloorMonitor {
             if is_active {
                 state.last_active_at = Some(now);
                 state.last_idle_at = Some(now); // active implies connected
-                if state.first_seen_at.is_none() { state.first_seen_at = Some(now); }
+                if state.first_seen_at.is_none() {
+                    state.first_seen_at = Some(now);
+                }
             }
             // Short-pulse IDLE vs long-pulse ACTIVE distinction is approximated:
             // we can't directly tell from one frame; we rely on persistence + rate.
@@ -505,7 +570,8 @@ impl FloorMonitor {
                 state.currently_active = false;
             }
             if let Some(t) = state.last_idle_at {
-                state.currently_connected = now.duration_since(t) <= Duration::from_millis(self.config.idle_timeout_ms);
+                state.currently_connected =
+                    now.duration_since(t) <= Duration::from_millis(self.config.idle_timeout_ms);
             } else {
                 state.currently_connected = false;
             }
@@ -529,7 +595,9 @@ impl FloorMonitor {
         if let Some(s) = self.states.get_mut(&slot) {
             s.last_idle_at = Some(now);
             s.currently_connected = true;
-            if s.first_seen_at.is_none() { s.first_seen_at = Some(now); }
+            if s.first_seen_at.is_none() {
+                s.first_seen_at = Some(now);
+            }
         }
     }
 
@@ -539,32 +607,41 @@ impl FloorMonitor {
 
     /// All slots currently emitting ACTIVE beacons.
     pub fn active_slots(&self) -> Vec<SlotId> {
-        let mut v: Vec<SlotId> = self.states.iter()
+        let mut v: Vec<SlotId> = self
+            .states
+            .iter()
             .filter(|(_, s)| s.currently_active)
-            .map(|(k, _)| *k).collect();
+            .map(|(k, _)| *k)
+            .collect();
         v.sort();
         v
     }
 
     /// All slots that have emitted any beacon within `idle_timeout_ms`.
     pub fn connected_slots(&self) -> Vec<SlotId> {
-        let mut v: Vec<SlotId> = self.states.iter()
+        let mut v: Vec<SlotId> = self
+            .states
+            .iter()
             .filter(|(_, s)| s.currently_connected)
-            .map(|(k, _)| *k).collect();
+            .map(|(k, _)| *k)
+            .collect();
         v.sort();
         v
     }
 
     /// The highest-priority slot that is currently active, along with its priority.
     pub fn highest_active(&self, table: &PriorityTable) -> Option<(SlotId, Priority)> {
-        self.active_slots().into_iter()
+        self.active_slots()
+            .into_iter()
             .map(|s| (s, table.priority_of(s)))
             .max_by_key(|(_, p)| *p)
     }
 
     /// Returns true if `my_priority` is strictly greater than every active speaker.
     pub fn can_speak(&self, my_priority: Priority, table: &PriorityTable) -> bool {
-        if self.override_active_since.is_some() { return false; }
+        if self.override_active_since.is_some() {
+            return false;
+        }
         match self.highest_active(table) {
             None => true,
             Some((_, p)) => my_priority > p,
@@ -594,14 +671,18 @@ pub struct PriorityTable {
 }
 
 impl PriorityTable {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     /// Assign a slot. Replaces previous assignment if any.
     pub fn assign(&mut self, a: SlotAssignment) {
         self.assignments.insert(a.slot, a);
     }
 
-    pub fn remove(&mut self, slot: SlotId) { self.assignments.remove(&slot); }
+    pub fn remove(&mut self, slot: SlotId) {
+        self.assignments.remove(&slot);
+    }
 
     pub fn get(&self, slot: SlotId) -> Option<&SlotAssignment> {
         self.assignments.get(&slot)
@@ -609,11 +690,17 @@ impl PriorityTable {
 
     /// Priority for a slot, or `Priority::MIN` if unassigned.
     pub fn priority_of(&self, slot: SlotId) -> Priority {
-        self.assignments.get(&slot).map(|a| a.priority).unwrap_or(Priority::MIN)
+        self.assignments
+            .get(&slot)
+            .map(|a| a.priority)
+            .unwrap_or(Priority::MIN)
     }
 
     pub fn can_override(&self, slot: SlotId) -> bool {
-        self.assignments.get(&slot).map(|a| a.can_override).unwrap_or(false)
+        self.assignments
+            .get(&slot)
+            .map(|a| a.can_override)
+            .unwrap_or(false)
     }
 
     pub fn assigned_slots(&self) -> Vec<SlotId> {
@@ -627,8 +714,10 @@ impl PriorityTable {
         let mut t = Self::new();
         for i in 0..slot_count {
             t.assign(SlotAssignment {
-                slot: SlotId(i), priority: Priority(5),
-                can_override: false, display_name: format!("Slot {}", i),
+                slot: SlotId(i),
+                priority: Priority(5),
+                can_override: false,
+                display_name: format!("Slot {}", i),
             });
         }
         t
@@ -647,7 +736,9 @@ impl PriorityTable {
                 (Priority(3), false)
             };
             t.assign(SlotAssignment {
-                slot: SlotId(i), priority, can_override,
+                slot: SlotId(i),
+                priority,
+                can_override,
                 display_name: format!("Slot {}", i),
             });
         }
@@ -658,9 +749,15 @@ impl PriorityTable {
     pub fn meeting(slot_count: u8) -> Self {
         let mut t = Self::new();
         for i in 0..slot_count {
-            let (priority, can_override) = if i == 0 { (Priority(10), true) } else { (Priority(3), false) };
+            let (priority, can_override) = if i == 0 {
+                (Priority(10), true)
+            } else {
+                (Priority(3), false)
+            };
             t.assign(SlotAssignment {
-                slot: SlotId(i), priority, can_override,
+                slot: SlotId(i),
+                priority,
+                can_override,
                 display_name: format!("Slot {}", i),
             });
         }
@@ -682,13 +779,17 @@ pub struct VoiceMessage {
 
 impl VoiceMessage {
     pub fn duration_ms(&self) -> u64 {
-        if self.sample_rate == 0 { return 0; }
+        if self.sample_rate == 0 {
+            return 0;
+        }
         (self.samples.len() as u64 * 1000) / self.sample_rate as u64
     }
 }
 
 #[derive(Debug)]
-pub enum QueueError { Full }
+pub enum QueueError {
+    Full,
+}
 
 /// FIFO outbox for recorded messages awaiting transmission.
 pub struct MessageQueue {
@@ -701,11 +802,21 @@ pub struct MessageQueue {
 
 impl MessageQueue {
     pub fn new(max_size: usize) -> Self {
-        Self { messages: VecDeque::new(), max_size: max_size.max(1), next_id: 1, evict_oldest: true }
+        Self {
+            messages: VecDeque::new(),
+            max_size: max_size.max(1),
+            next_id: 1,
+            evict_oldest: true,
+        }
     }
 
     pub fn with_eviction(max_size: usize, evict_oldest: bool) -> Self {
-        Self { messages: VecDeque::new(), max_size: max_size.max(1), next_id: 1, evict_oldest }
+        Self {
+            messages: VecDeque::new(),
+            max_size: max_size.max(1),
+            next_id: 1,
+            evict_oldest,
+        }
     }
 
     /// Returns the assigned message id.
@@ -724,13 +835,21 @@ impl MessageQueue {
         Ok(id)
     }
 
-    pub fn pop_next(&mut self) -> Option<VoiceMessage> { self.messages.pop_front() }
+    pub fn pop_next(&mut self) -> Option<VoiceMessage> {
+        self.messages.pop_front()
+    }
 
-    pub fn len(&self) -> usize { self.messages.len() }
+    pub fn len(&self) -> usize {
+        self.messages.len()
+    }
 
-    pub fn is_empty(&self) -> bool { self.messages.is_empty() }
+    pub fn is_empty(&self) -> bool {
+        self.messages.is_empty()
+    }
 
-    pub fn clear(&mut self) { self.messages.clear(); }
+    pub fn clear(&mut self) {
+        self.messages.clear();
+    }
 
     pub fn cancel(&mut self, id: u64) -> bool {
         let before = self.messages.len();
@@ -738,9 +857,13 @@ impl MessageQueue {
         self.messages.len() < before
     }
 
-    pub fn peek(&self) -> Option<&VoiceMessage> { self.messages.front() }
+    pub fn peek(&self) -> Option<&VoiceMessage> {
+        self.messages.front()
+    }
 
-    pub fn iter(&self) -> impl Iterator<Item = &VoiceMessage> { self.messages.iter() }
+    pub fn iter(&self) -> impl Iterator<Item = &VoiceMessage> {
+        self.messages.iter()
+    }
 }
 
 // ============================================================================
@@ -775,7 +898,12 @@ impl MessageRecorder {
 
     /// Feed a chunk of samples + VAD verdict. Returns Some(message) when a
     /// full message (silence-delimited or max-length-capped) is available.
-    pub fn process(&mut self, samples: &[f32], is_voice: bool, now: Instant) -> Option<VoiceMessage> {
+    pub fn process(
+        &mut self,
+        samples: &[f32],
+        is_voice: bool,
+        now: Instant,
+    ) -> Option<VoiceMessage> {
         if is_voice {
             if !self.recording {
                 self.recording = true;
@@ -808,7 +936,9 @@ impl MessageRecorder {
 
     /// PTT-style finalize: stop now and return the message (if long enough).
     pub fn finalize(&mut self, _now: Instant) -> Option<VoiceMessage> {
-        if !self.recording { return None; }
+        if !self.recording {
+            return None;
+        }
         let started = self.started_at.take();
         let duration = started
             .and_then(|t| self.last_voice_at.map(|lv| lv.saturating_duration_since(t)))
@@ -816,10 +946,14 @@ impl MessageRecorder {
         let samples = std::mem::take(&mut self.buffer);
         self.recording = false;
         self.last_voice_at = None;
-        if duration < self.min_duration { return None; }
+        if duration < self.min_duration {
+            return None;
+        }
         Some(VoiceMessage {
-            id: 0, recorded_at: started.unwrap_or_else(Instant::now),
-            samples, sample_rate: self.sample_rate,
+            id: 0,
+            recorded_at: started.unwrap_or_else(Instant::now),
+            samples,
+            sample_rate: self.sample_rate,
         })
     }
 
@@ -831,14 +965,20 @@ impl MessageRecorder {
         self.started_at = None;
     }
 
-    pub fn is_recording(&self) -> bool { self.recording }
-
-    pub fn current_duration_ms(&self) -> u64 {
-        self.started_at.and_then(|t| self.last_voice_at.map(|lv| lv.saturating_duration_since(t)))
-            .unwrap_or_default().as_millis() as u64
+    pub fn is_recording(&self) -> bool {
+        self.recording
     }
 
-    pub fn buffered_samples(&self) -> usize { self.buffer.len() }
+    pub fn current_duration_ms(&self) -> u64 {
+        self.started_at
+            .and_then(|t| self.last_voice_at.map(|lv| lv.saturating_duration_since(t)))
+            .unwrap_or_default()
+            .as_millis() as u64
+    }
+
+    pub fn buffered_samples(&self) -> usize {
+        self.buffer.len()
+    }
 }
 
 // ============================================================================
@@ -890,15 +1030,15 @@ struct PlaybackState {
 }
 
 impl MessagePlayer {
-    pub fn new(
-        policy: InterruptPolicy, resume: ResumeStrategy, config: &ProtocolConfig,
-    ) -> Self {
+    pub fn new(policy: InterruptPolicy, resume: ResumeStrategy, config: &ProtocolConfig) -> Self {
         Self {
             current: None,
             interrupted: None,
-            policy, resume,
+            policy,
+            resume,
             fade_samples: config.fade_samples,
-            resume_offset_samples: (config.resume_offset_ms as usize) * config.sample_rate as usize / 1000,
+            resume_offset_samples: (config.resume_offset_ms as usize) * config.sample_rate as usize
+                / 1000,
             sample_rate: config.sample_rate,
             soft_silence_threshold: 0.005,
             pending_interrupt: false,
@@ -908,14 +1048,21 @@ impl MessagePlayer {
     /// Begin playing a message. Replaces any currently playing message.
     pub fn start(&mut self, msg: VoiceMessage) {
         self.current = Some(PlaybackState {
-            message: msg, position: 0, fade_remaining: self.fade_samples, fading_out: false,
+            message: msg,
+            position: 0,
+            fade_remaining: self.fade_samples,
+            fading_out: false,
         });
         self.pending_interrupt = false;
     }
 
-    pub fn is_playing(&self) -> bool { self.current.is_some() }
+    pub fn is_playing(&self) -> bool {
+        self.current.is_some()
+    }
 
-    pub fn has_interrupted(&self) -> bool { self.interrupted.is_some() }
+    pub fn has_interrupted(&self) -> bool {
+        self.interrupted.is_some()
+    }
 
     /// Request an interrupt. Returns true if the interrupt will be honoured.
     /// Hard → takes effect immediately; Soft → at next silence; Finish → ignored.
@@ -960,11 +1107,15 @@ impl MessagePlayer {
 
     /// Pull `n` samples into `out`. Returns number of samples actually written.
     pub fn pull(&mut self, out: &mut [f32]) -> usize {
-        if out.is_empty() { return 0; }
+        if out.is_empty() {
+            return 0;
+        }
         let written: usize;
 
         let done = {
-            let Some(state) = self.current.as_mut() else { return 0; };
+            let Some(state) = self.current.as_mut() else {
+                return 0;
+            };
             let remaining = state.message.samples.len().saturating_sub(state.position);
             let n = remaining.min(out.len());
             for i in 0..n {
@@ -985,11 +1136,11 @@ impl MessagePlayer {
             written = n;
             // If Soft policy with pending interrupt, check if we're in a silence
             if self.pending_interrupt && self.policy == InterruptPolicy::Soft {
-                let tail = &state.message.samples[
-                    state.position.saturating_sub(256)..state.position.min(state.message.samples.len())
-                ];
+                let tail = &state.message.samples[state.position.saturating_sub(256)
+                    ..state.position.min(state.message.samples.len())];
                 if !tail.is_empty() {
-                    let rms: f32 = (tail.iter().map(|x| x*x).sum::<f32>() / tail.len() as f32).sqrt();
+                    let rms: f32 =
+                        (tail.iter().map(|x| x * x).sum::<f32>() / tail.len() as f32).sqrt();
                     if rms < self.soft_silence_threshold {
                         // Trigger interrupt now
                         self.pending_interrupt = false;
@@ -1000,7 +1151,9 @@ impl MessagePlayer {
             }
             state.position >= state.message.samples.len()
         };
-        if done { self.current = None; }
+        if done {
+            self.current = None;
+        }
         written
     }
 }
@@ -1010,7 +1163,12 @@ impl MessagePlayer {
 // ============================================================================
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BeaconKind { Idle, Active, End, Override }
+pub enum BeaconKind {
+    Idle,
+    Active,
+    End,
+    Override,
+}
 
 #[derive(Clone, Debug)]
 pub struct BeaconEmission {
@@ -1045,19 +1203,29 @@ impl BeaconScheduler {
     pub fn new(config: ProtocolConfig, my_slot: SlotId) -> Self {
         let my_frequency = config.slot_frequency(my_slot);
         // Distribute IDLE emissions across the 2s window by slot
-        let idle_slot_offset_ms = (my_slot.as_u8() as u64 * config.idle_interval_ms)
-            / config.slot_count as u64;
+        let idle_slot_offset_ms =
+            (my_slot.as_u8() as u64 * config.idle_interval_ms) / config.slot_count as u64;
         Self {
-            config, my_slot, my_frequency,
+            config,
+            my_slot,
+            my_frequency,
             state: NodeState::Idle,
-            last_idle_at: None, last_active_at: None,
-            idle_slot_offset_ms, override_active: false,
+            last_idle_at: None,
+            last_active_at: None,
+            idle_slot_offset_ms,
+            override_active: false,
         }
     }
 
-    pub fn set_state(&mut self, state: NodeState) { self.state = state; }
-    pub fn state(&self) -> NodeState { self.state }
-    pub fn set_override(&mut self, active: bool) { self.override_active = active; }
+    pub fn set_state(&mut self, state: NodeState) {
+        self.state = state;
+    }
+    pub fn state(&self) -> NodeState {
+        self.state
+    }
+    pub fn set_override(&mut self, active: bool) {
+        self.override_active = active;
+    }
 
     /// Called periodically. Returns all beacons that should be mixed into the output
     /// right now. Updates internal timing state.
@@ -1066,8 +1234,10 @@ impl BeaconScheduler {
         // OVERRIDE beacon — always active while the flag is set
         if self.override_active {
             out.push(BeaconEmission {
-                kind: BeaconKind::Override, frequency_hz: self.config.override_freq_hz,
-                amplitude: self.config.override_amplitude, duration_ms: 80,
+                kind: BeaconKind::Override,
+                frequency_hz: self.config.override_freq_hz,
+                amplitude: self.config.override_amplitude,
+                duration_ms: 80,
             });
             self.last_active_at = Some(now);
         }
@@ -1076,12 +1246,16 @@ impl BeaconScheduler {
             NodeState::Idle => {
                 let need_idle = match self.last_idle_at {
                     None => true,
-                    Some(t) => now.duration_since(t) >= Duration::from_millis(self.config.idle_interval_ms),
+                    Some(t) => {
+                        now.duration_since(t) >= Duration::from_millis(self.config.idle_interval_ms)
+                    }
                 };
                 if need_idle {
                     out.push(BeaconEmission {
-                        kind: BeaconKind::Idle, frequency_hz: self.my_frequency,
-                        amplitude: self.config.idle_amplitude, duration_ms: 30,
+                        kind: BeaconKind::Idle,
+                        frequency_hz: self.my_frequency,
+                        amplitude: self.config.idle_amplitude,
+                        duration_ms: 30,
                     });
                     self.last_idle_at = Some(now);
                 }
@@ -1089,12 +1263,16 @@ impl BeaconScheduler {
             NodeState::Transmitting => {
                 let need_active = match self.last_active_at {
                     None => true,
-                    Some(t) => now.duration_since(t) >= Duration::from_millis(self.config.heartbeat_ms),
+                    Some(t) => {
+                        now.duration_since(t) >= Duration::from_millis(self.config.heartbeat_ms)
+                    }
                 };
                 if need_active {
                     out.push(BeaconEmission {
-                        kind: BeaconKind::Active, frequency_hz: self.my_frequency,
-                        amplitude: self.config.active_amplitude, duration_ms: 50,
+                        kind: BeaconKind::Active,
+                        frequency_hz: self.my_frequency,
+                        amplitude: self.config.active_amplitude,
+                        duration_ms: 50,
                     });
                     self.last_active_at = Some(now);
                     self.last_idle_at = Some(now);
@@ -1102,12 +1280,16 @@ impl BeaconScheduler {
             }
             NodeState::EndingMessage => {
                 out.push(BeaconEmission {
-                    kind: BeaconKind::End, frequency_hz: self.my_frequency,
-                    amplitude: self.config.active_amplitude, duration_ms: 80,
+                    kind: BeaconKind::End,
+                    frequency_hz: self.my_frequency,
+                    amplitude: self.config.active_amplitude,
+                    duration_ms: 80,
                 });
                 out.push(BeaconEmission {
-                    kind: BeaconKind::End, frequency_hz: self.my_frequency,
-                    amplitude: self.config.active_amplitude, duration_ms: 80,
+                    kind: BeaconKind::End,
+                    frequency_hz: self.my_frequency,
+                    amplitude: self.config.active_amplitude,
+                    duration_ms: 80,
                 });
                 self.state = NodeState::Idle;
                 self.last_idle_at = Some(now);
@@ -1121,12 +1303,14 @@ impl BeaconScheduler {
         match self.state {
             NodeState::Transmitting => {
                 let hb = Duration::from_millis(self.config.heartbeat_ms);
-                self.last_active_at.map(|t| hb.saturating_sub(now.saturating_duration_since(t)))
+                self.last_active_at
+                    .map(|t| hb.saturating_sub(now.saturating_duration_since(t)))
                     .unwrap_or(Duration::from_millis(0))
             }
             _ => {
                 let iv = Duration::from_millis(self.config.idle_interval_ms);
-                self.last_idle_at.map(|t| iv.saturating_sub(now.saturating_duration_since(t)))
+                self.last_idle_at
+                    .map(|t| iv.saturating_sub(now.saturating_duration_since(t)))
                     .unwrap_or(Duration::from_millis(0))
             }
         }
@@ -1254,7 +1438,10 @@ mod tests {
         // Last sample should be near zero (ramp down)
         assert!(buf.last().unwrap().abs() < 0.1);
         // Middle should be full amplitude (some sample crosses 0.8+)
-        let mid_max = buf[buf.len()/4..3*buf.len()/4].iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let mid_max = buf[buf.len() / 4..3 * buf.len() / 4]
+            .iter()
+            .cloned()
+            .fold(f32::NEG_INFINITY, f32::max);
         assert!(mid_max > 0.8);
     }
 
@@ -1315,7 +1502,11 @@ mod tests {
         let mut enc = ToneEncoder::new(cfg.sample_rate);
         let mut dec = ToneDecoder::new(&cfg);
         let mut buf = vec![0.0f32; cfg.window_size];
-        enc.mix_tone(&mut buf, cfg.override_freq_hz, cfg.override_amplitude * 40.0);
+        enc.mix_tone(
+            &mut buf,
+            cfg.override_freq_hz,
+            cfg.override_amplitude * 40.0,
+        );
         let frame = dec.process(&buf);
         assert!(frame.override_active);
     }
@@ -1382,8 +1573,18 @@ mod tests {
     fn floor_monitor_can_speak_respects_priority() {
         let cfg = test_config();
         let mut table = PriorityTable::new();
-        table.assign(SlotAssignment { slot: SlotId(0), priority: Priority(3), can_override: false, display_name: "a".into() });
-        table.assign(SlotAssignment { slot: SlotId(1), priority: Priority(7), can_override: false, display_name: "b".into() });
+        table.assign(SlotAssignment {
+            slot: SlotId(0),
+            priority: Priority(3),
+            can_override: false,
+            display_name: "a".into(),
+        });
+        table.assign(SlotAssignment {
+            slot: SlotId(1),
+            priority: Priority(7),
+            can_override: false,
+            display_name: "b".into(),
+        });
         let mut mon = FloorMonitor::new(cfg);
         // Slot 1 (P7) active → someone at P3 cannot speak, someone at P10 can
         let t0 = Instant::now();
@@ -1448,7 +1649,12 @@ mod tests {
     #[test]
     fn queue_fifo_order() {
         let mut q = MessageQueue::new(5);
-        let mk = |n: f32| VoiceMessage { id: 0, recorded_at: Instant::now(), samples: vec![n], sample_rate: 48_000 };
+        let mk = |n: f32| VoiceMessage {
+            id: 0,
+            recorded_at: Instant::now(),
+            samples: vec![n],
+            sample_rate: 48_000,
+        };
         let id1 = q.push(mk(1.0)).unwrap();
         let id2 = q.push(mk(2.0)).unwrap();
         assert_eq!(q.pop_next().unwrap().id, id1);
@@ -1458,7 +1664,12 @@ mod tests {
     #[test]
     fn queue_evicts_oldest_when_full() {
         let mut q = MessageQueue::new(2);
-        let mk = |n: f32| VoiceMessage { id: 0, recorded_at: Instant::now(), samples: vec![n], sample_rate: 48_000 };
+        let mk = |n: f32| VoiceMessage {
+            id: 0,
+            recorded_at: Instant::now(),
+            samples: vec![n],
+            sample_rate: 48_000,
+        };
         q.push(mk(1.0)).unwrap();
         q.push(mk(2.0)).unwrap();
         q.push(mk(3.0)).unwrap();
@@ -1469,7 +1680,12 @@ mod tests {
     #[test]
     fn queue_rejects_when_full_without_eviction() {
         let mut q = MessageQueue::with_eviction(2, false);
-        let mk = || VoiceMessage { id: 0, recorded_at: Instant::now(), samples: vec![1.0], sample_rate: 48_000 };
+        let mk = || VoiceMessage {
+            id: 0,
+            recorded_at: Instant::now(),
+            samples: vec![1.0],
+            sample_rate: 48_000,
+        };
         q.push(mk()).unwrap();
         q.push(mk()).unwrap();
         assert!(q.push(mk()).is_err());
@@ -1478,7 +1694,12 @@ mod tests {
     #[test]
     fn queue_cancel_removes_by_id() {
         let mut q = MessageQueue::new(5);
-        let mk = || VoiceMessage { id: 0, recorded_at: Instant::now(), samples: vec![1.0], sample_rate: 48_000 };
+        let mk = || VoiceMessage {
+            id: 0,
+            recorded_at: Instant::now(),
+            samples: vec![1.0],
+            sample_rate: 48_000,
+        };
         let id = q.push(mk()).unwrap();
         q.push(mk()).unwrap();
         assert_eq!(q.len(), 2);
@@ -1495,7 +1716,7 @@ mod tests {
         let mut rec = MessageRecorder::new(&cfg);
         let t0 = Instant::now();
         let samples = vec![0.3f32; 480]; // 10ms @ 48k
-        // Speak for 500ms
+                                         // Speak for 500ms
         for i in 0..50 {
             let t = t0 + Duration::from_millis(i * 10);
             assert!(rec.process(&samples, true, t).is_none());
@@ -1507,7 +1728,9 @@ mod tests {
         for i in 0..200 {
             let t = t0 + Duration::from_millis(500 + i * 10);
             msg = rec.process(&silent, false, t);
-            if msg.is_some() { break; }
+            if msg.is_some() {
+                break;
+            }
         }
         assert!(msg.is_some(), "expected message finalized by silence");
         assert!(!rec.is_recording());
@@ -1527,10 +1750,14 @@ mod tests {
         let mut got = None;
         for i in 0..200 {
             if let Some(m) = rec.process(&silent, false, t0 + Duration::from_millis(100 + i * 10)) {
-                got = Some(m); break;
+                got = Some(m);
+                break;
             }
         }
-        assert!(got.is_none(), "message under min_duration should be discarded");
+        assert!(
+            got.is_none(),
+            "message under min_duration should be discarded"
+        );
     }
 
     #[test]
@@ -1551,7 +1778,12 @@ mod tests {
     fn player_plays_through_full_message() {
         let cfg = test_config();
         let mut p = MessagePlayer::new(InterruptPolicy::Hard, ResumeStrategy::Continue, &cfg);
-        let msg = VoiceMessage { id: 1, recorded_at: Instant::now(), samples: vec![0.5f32; 2048], sample_rate: 48_000 };
+        let msg = VoiceMessage {
+            id: 1,
+            recorded_at: Instant::now(),
+            samples: vec![0.5f32; 2048],
+            sample_rate: 48_000,
+        };
         p.start(msg);
         let mut buf = vec![0.0f32; 1024];
         assert_eq!(p.pull(&mut buf), 1024);
@@ -1565,7 +1797,12 @@ mod tests {
     fn player_hard_interrupt_stops_immediately() {
         let cfg = test_config();
         let mut p = MessagePlayer::new(InterruptPolicy::Hard, ResumeStrategy::Continue, &cfg);
-        let msg = VoiceMessage { id: 1, recorded_at: Instant::now(), samples: vec![0.5f32; 4096], sample_rate: 48_000 };
+        let msg = VoiceMessage {
+            id: 1,
+            recorded_at: Instant::now(),
+            samples: vec![0.5f32; 4096],
+            sample_rate: 48_000,
+        };
         p.start(msg);
         let mut buf = vec![0.0f32; 512];
         p.pull(&mut buf);
@@ -1578,7 +1815,12 @@ mod tests {
     fn player_finish_policy_ignores_interrupt() {
         let cfg = test_config();
         let mut p = MessagePlayer::new(InterruptPolicy::Finish, ResumeStrategy::Continue, &cfg);
-        let msg = VoiceMessage { id: 1, recorded_at: Instant::now(), samples: vec![0.5f32; 4096], sample_rate: 48_000 };
+        let msg = VoiceMessage {
+            id: 1,
+            recorded_at: Instant::now(),
+            samples: vec![0.5f32; 4096],
+            sample_rate: 48_000,
+        };
         p.start(msg);
         assert!(!p.request_interrupt());
         assert!(p.is_playing());
@@ -1589,7 +1831,12 @@ mod tests {
         let mut cfg = test_config();
         cfg.resume_offset_ms = 100; // 4800 samples @ 48k
         let mut p = MessagePlayer::new(InterruptPolicy::Hard, ResumeStrategy::Continue5s, &cfg);
-        let msg = VoiceMessage { id: 1, recorded_at: Instant::now(), samples: vec![0.5f32; 48_000], sample_rate: 48_000 };
+        let msg = VoiceMessage {
+            id: 1,
+            recorded_at: Instant::now(),
+            samples: vec![0.5f32; 48_000],
+            sample_rate: 48_000,
+        };
         p.start(msg);
         let mut buf = vec![0.0f32; 10_000];
         p.pull(&mut buf); // advance to pos=10000
@@ -1679,7 +1926,7 @@ mod tests {
         mon.update(&f1, t0);
         assert!(!mon.can_speak(Priority(3), &table)); // can't pre-empt equal
         assert!(mon.can_speak(Priority(10), &table)); // leader can
-        // Slot 0 (leader P10) starts
+                                                      // Slot 0 (leader P10) starts
         let mut f2 = DetectionFrame::default();
         f2.active_slots = vec![SlotId(0), SlotId(3)];
         mon.update(&f2, t0 + Duration::from_millis(100));

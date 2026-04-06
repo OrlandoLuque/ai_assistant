@@ -2,8 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::{AdvancedMemoryError, AiError};
 use super::helpers::cosine_similarity;
+use crate::error::{AdvancedMemoryError, AiError};
 
 /// A single episodic memory entry — a recorded experience with context and embedding.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -195,7 +195,11 @@ impl EpisodicStore {
     }
 
     /// Load an episodic store from a JSON file.
-    pub fn load_from_file(path: &std::path::Path, max_episodes: usize, decay_factor: f64) -> Result<Self, String> {
+    pub fn load_from_file(
+        path: &std::path::Path,
+        max_episodes: usize,
+        decay_factor: f64,
+    ) -> Result<Self, String> {
         let data = std::fs::read_to_string(path).map_err(|e| format!("Read error: {}", e))?;
         let episodes: Vec<Episode> =
             serde_json::from_str(&data).map_err(|e| format!("Deserialize error: {}", e))?;

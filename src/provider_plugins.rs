@@ -1582,14 +1582,22 @@ impl OpenAICompatibleProvider {
     ///
     /// Uses PERPLEXITY_API_KEY from environment.
     pub fn perplexity() -> Self {
-        Self::from_env("Perplexity", "https://api.perplexity.ai", "PERPLEXITY_API_KEY")
+        Self::from_env(
+            "Perplexity",
+            "https://api.perplexity.ai",
+            "PERPLEXITY_API_KEY",
+        )
     }
 
     /// Create an OpenRouter API provider.
     ///
     /// Uses OPENROUTER_API_KEY from environment.
     pub fn openrouter() -> Self {
-        Self::from_env("OpenRouter", "https://openrouter.ai/api", "OPENROUTER_API_KEY")
+        Self::from_env(
+            "OpenRouter",
+            "https://openrouter.ai/api",
+            "OPENROUTER_API_KEY",
+        )
     }
 
     /// Create a provider from environment variable name and base URL.
@@ -1926,8 +1934,7 @@ mod tests {
 
     #[test]
     fn test_prompt_tool_fallback_build_prompt_no_tools() {
-        let result =
-            PromptToolFallback::build_tool_prompt("You are a helpful assistant.", &[]);
+        let result = PromptToolFallback::build_tool_prompt("You are a helpful assistant.", &[]);
         assert_eq!(result, "You are a helpful assistant.");
     }
 
@@ -2154,8 +2161,8 @@ And also:
 
     #[test]
     fn test_text_gen_webui_with_timeout() {
-        let provider =
-            TextGenWebUIProvider::new("http://localhost:5000").with_timeout(Duration::from_secs(45));
+        let provider = TextGenWebUIProvider::new("http://localhost:5000")
+            .with_timeout(Duration::from_secs(45));
         assert_eq!(provider.timeout, Duration::from_secs(45));
     }
 
@@ -2297,8 +2304,8 @@ And also:
 
     #[test]
     fn test_huggingface_base_url_with_model_change() {
-        let provider = HuggingFaceInferenceProvider::new("gpt2")
-            .with_model("meta-llama/Llama-2-7b");
+        let provider =
+            HuggingFaceInferenceProvider::new("gpt2").with_model("meta-llama/Llama-2-7b");
         assert_eq!(
             provider.base_url(),
             "https://api-inference.huggingface.co/models/meta-llama/Llama-2-7b"
@@ -2493,7 +2500,10 @@ And also:
             r#"{"tool_call": {"name": "set_temp", "arguments": {"value": 42, "unit": "C"}}}"#;
         let calls = PromptToolFallback::parse_tool_calls_from_text(response);
         assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].arguments.get("value").and_then(|v| v.as_i64()), Some(42));
+        assert_eq!(
+            calls[0].arguments.get("value").and_then(|v| v.as_i64()),
+            Some(42)
+        );
         assert_eq!(
             calls[0].arguments.get("unit").and_then(|v| v.as_str()),
             Some("C")
@@ -2572,8 +2582,7 @@ And also:
 
     #[test]
     fn test_extract_json_object_with_trailing_text() {
-        let result =
-            PromptToolFallback::extract_json_object(r#"{"a": 1} and some more text"#);
+        let result = PromptToolFallback::extract_json_object(r#"{"a": 1} and some more text"#);
         assert_eq!(result.unwrap(), r#"{"a": 1}"#);
     }
 
@@ -2803,22 +2812,18 @@ And also:
         let tc = &tc_array[0];
         let function = tc.get("function").unwrap();
         let name = function.get("name").unwrap().as_str().unwrap().to_string();
-        let arguments: HashMap<String, Value> =
-            if let Some(args_obj) = function.get("arguments") {
-                if let Some(s) = args_obj.as_str() {
-                    serde_json::from_str(s).unwrap_or_default()
-                } else {
-                    serde_json::from_value(args_obj.clone()).unwrap_or_default()
-                }
+        let arguments: HashMap<String, Value> = if let Some(args_obj) = function.get("arguments") {
+            if let Some(s) = args_obj.as_str() {
+                serde_json::from_str(s).unwrap_or_default()
             } else {
-                HashMap::new()
-            };
+                serde_json::from_value(args_obj.clone()).unwrap_or_default()
+            }
+        } else {
+            HashMap::new()
+        };
 
         assert_eq!(name, "calc");
-        assert_eq!(
-            arguments.get("expr").and_then(|v| v.as_str()),
-            Some("2+2")
-        );
+        assert_eq!(arguments.get("expr").and_then(|v| v.as_str()), Some("2+2"));
     }
 
     // ====================================================================
@@ -2848,7 +2853,9 @@ And also:
         assert!(!LmStudioProvider::new("http://x").name().is_empty());
         assert!(!TextGenWebUIProvider::new("http://x").name().is_empty());
         assert!(!KoboldCppProvider::new("http://x").name().is_empty());
-        assert!(!OpenAICompatibleProvider::new("test", "http://x").name().is_empty());
+        assert!(!OpenAICompatibleProvider::new("test", "http://x")
+            .name()
+            .is_empty());
         assert!(!HuggingFaceInferenceProvider::new("gpt2").name().is_empty());
     }
 
@@ -2862,7 +2869,11 @@ And also:
             HuggingFaceInferenceProvider::new("gpt2").name().to_string(),
         ];
         let unique: std::collections::HashSet<_> = names.iter().collect();
-        assert_eq!(names.len(), unique.len(), "All provider names must be unique");
+        assert_eq!(
+            names.len(),
+            unique.len(),
+            "All provider names must be unique"
+        );
     }
 
     // ====================================================================

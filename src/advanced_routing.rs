@@ -180,7 +180,9 @@ impl RewardPolicy {
     pub fn compute_reward(&self, feedback: &ArmFeedback) -> f64 {
         let (qw, lw, cw) = self.normalize_weights();
 
-        let quality_score = feedback.quality.unwrap_or(if feedback.success { 1.0 } else { 0.0 });
+        let quality_score = feedback
+            .quality
+            .unwrap_or(if feedback.success { 1.0 } else { 0.0 });
 
         let latency_available = feedback.latency_ms.is_some() && self.latency_ref_ms > 0.0;
         let cost_available = feedback.cost.is_some() && self.cost_ref > 0.0;
@@ -200,8 +202,8 @@ impl RewardPolicy {
         };
 
         // Redistribute weights of missing components
-        let active_extra_weight = if !latency_available { lw } else { 0.0 }
-            + if !cost_available { cw } else { 0.0 };
+        let active_extra_weight =
+            if !latency_available { lw } else { 0.0 } + if !cost_available { cw } else { 0.0 };
 
         let effective_qw;
         let effective_lw;
@@ -243,15 +245,16 @@ impl RewardPolicy {
             effective_cw = cw;
         }
 
-        let reward = effective_qw * quality_score
-            + effective_lw * latency_score
-            + effective_cw * cost_score;
+        let reward =
+            effective_qw * quality_score + effective_lw * latency_score + effective_cw * cost_score;
 
         reward.clamp(0.0, 1.0)
     }
 }
 
-fn default_prefer_boost() -> f64 { 2.0 }
+fn default_prefer_boost() -> f64 {
+    2.0
+}
 
 /// Per-query routing preferences that override default RewardPolicy weights.
 ///
@@ -307,7 +310,10 @@ impl RoutingPreferences {
 
     /// Convenience: create preferences that ignore cost.
     pub fn ignore_cost() -> Self {
-        Self { cost_weight: Some(0.0), ..Default::default() }
+        Self {
+            cost_weight: Some(0.0),
+            ..Default::default()
+        }
     }
 
     /// Convenience: create preferences that minimize latency.
@@ -439,7 +445,9 @@ pub enum ArmVisibility {
 }
 
 impl Default for ArmVisibility {
-    fn default() -> Self { Self::Public }
+    fn default() -> Self {
+        Self::Public
+    }
 }
 
 /// Multi-Armed Bandit router with per-task-type bandits.
@@ -523,7 +531,10 @@ impl BanditRouter {
     }
 
     /// Select an arm using the configured strategy.
-    pub fn select(&mut self, task_type: Option<&str>) -> Result<RoutingOutcome, AdvancedRoutingError> {
+    pub fn select(
+        &mut self,
+        task_type: Option<&str>,
+    ) -> Result<RoutingOutcome, AdvancedRoutingError> {
         // Clone arms snapshot to avoid borrow conflicts with &mut self in sampling
         let arms_snapshot: Vec<BanditArm> = if let Some(tt) = task_type {
             self.bandits.get(tt).unwrap_or(&self.global_bandit).clone()
@@ -543,18 +554,26 @@ impl BanditRouter {
         let (selected_idx, scores) = match self.config.strategy {
             BanditStrategy::ThompsonSampling => self.thompson_select(&arms_snapshot),
             BanditStrategy::Ucb1 => self.ucb1_select(&arms_snapshot),
-            BanditStrategy::EpsilonGreedy { epsilon } => self.epsilon_greedy_select(&arms_snapshot, epsilon),
+            BanditStrategy::EpsilonGreedy { epsilon } => {
+                self.epsilon_greedy_select(&arms_snapshot, epsilon)
+            }
         };
 
         let selected_id = arms_snapshot[selected_idx].id.clone();
-        let confidence = if scores.is_empty() { 0.5 } else {
+        let confidence = if scores.is_empty() {
+            0.5
+        } else {
             let max_score = scores.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
             let min_score = scores.iter().cloned().fold(f64::INFINITY, f64::min);
-            if (max_score - min_score).abs() < 1e-10 { 0.5 }
-            else { (scores[selected_idx] - min_score) / (max_score - min_score) }
+            if (max_score - min_score).abs() < 1e-10 {
+                0.5
+            } else {
+                (scores[selected_idx] - min_score) / (max_score - min_score)
+            }
         };
 
-        let mut alternatives: Vec<(ArmId, f64)> = arms_snapshot.iter()
+        let mut alternatives: Vec<(ArmId, f64)> = arms_snapshot
+            .iter()
             .zip(scores.iter())
             .enumerate()
             .filter(|(i, _)| *i != selected_idx)
@@ -593,8 +612,11 @@ impl BanditRouter {
     pub fn record_outcome(&mut self, feedback: &ArmFeedback) {
         let task_type = feedback.task_type.as_deref();
         let arms = if let Some(tt) = task_type {
-            if let Some(a) = self.bandits.get_mut(tt) { a }
-            else { &mut self.global_bandit }
+            if let Some(a) = self.bandits.get_mut(tt) {
+                a
+            } else {
+                &mut self.global_bandit
+            }
         } else {
             &mut self.global_bandit
         };
@@ -605,10 +627,10 @@ impl BanditRouter {
             // Apply decay if configured
             if self.config.decay_factor < 1.0 {
                 let d = self.config.decay_factor;
-                arm.params.alpha = self.config.prior_alpha
-                    + (arm.params.alpha - self.config.prior_alpha) * d;
-                arm.params.beta = self.config.prior_beta
-                    + (arm.params.beta - self.config.prior_beta) * d;
+                arm.params.alpha =
+                    self.config.prior_alpha + (arm.params.alpha - self.config.prior_alpha) * d;
+                arm.params.beta =
+                    self.config.prior_beta + (arm.params.beta - self.config.prior_beta) * d;
             }
 
             arm.params.alpha += reward;
@@ -659,7 +681,10 @@ impl BanditRouter {
     /// Get all arms for a task type (or global).
     pub fn all_arms(&self, task_type: Option<&str>) -> &[BanditArm] {
         if let Some(tt) = task_type {
-            self.bandits.get(tt).map(|v| v.as_slice()).unwrap_or(&self.global_bandit)
+            self.bandits
+                .get(tt)
+                .map(|v| v.as_slice())
+                .unwrap_or(&self.global_bandit)
         } else {
             &self.global_bandit
         }
@@ -678,7 +703,11 @@ impl BanditRouter {
     /// Returns all arms for a given task type (or global if None) as a Vec.
     pub fn all_arms_vec(&self, task_type: Option<&str>) -> Vec<&BanditArm> {
         match task_type {
-            Some(t) => self.bandits.get(t).map(|v| v.iter().collect()).unwrap_or_default(),
+            Some(t) => self
+                .bandits
+                .get(t)
+                .map(|v| v.iter().collect())
+                .unwrap_or_default(),
             None => self.global_bandit.iter().collect(),
         }
     }
@@ -707,10 +736,13 @@ impl BanditRouter {
     // --- Internal: strategy implementations ---
 
     fn thompson_select(&mut self, arms: &[BanditArm]) -> (usize, Vec<f64>) {
-        let scores: Vec<f64> = arms.iter()
+        let scores: Vec<f64> = arms
+            .iter()
             .map(|a| self.sample_beta(a.params.alpha, a.params.beta))
             .collect();
-        let best = scores.iter().enumerate()
+        let best = scores
+            .iter()
+            .enumerate()
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(i, _)| i)
             .unwrap_or(0);
@@ -719,10 +751,10 @@ impl BanditRouter {
 
     fn ucb1_select(&self, arms: &[BanditArm]) -> (usize, Vec<f64>) {
         let total = self.total_pulls.max(1);
-        let scores: Vec<f64> = arms.iter()
-            .map(|a| self.ucb1_score(a, total))
-            .collect();
-        let best = scores.iter().enumerate()
+        let scores: Vec<f64> = arms.iter().map(|a| self.ucb1_score(a, total)).collect();
+        let best = scores
+            .iter()
+            .enumerate()
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(i, _)| i)
             .unwrap_or(0);
@@ -730,8 +762,15 @@ impl BanditRouter {
     }
 
     fn epsilon_greedy_select(&mut self, arms: &[BanditArm], epsilon: f64) -> (usize, Vec<f64>) {
-        let scores: Vec<f64> = arms.iter()
-            .map(|a| if a.pull_count == 0 { 0.5 } else { a.total_reward / a.pull_count as f64 })
+        let scores: Vec<f64> = arms
+            .iter()
+            .map(|a| {
+                if a.pull_count == 0 {
+                    0.5
+                } else {
+                    a.total_reward / a.pull_count as f64
+                }
+            })
             .collect();
 
         let r = self.next_random();
@@ -740,7 +779,9 @@ impl BanditRouter {
             (self.next_random() * arms.len() as f64) as usize % arms.len()
         } else {
             // Exploit: best mean arm
-            scores.iter().enumerate()
+            scores
+                .iter()
+                .enumerate()
                 .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
                 .map(|(i, _)| i)
                 .unwrap_or(0)
@@ -761,7 +802,11 @@ impl BanditRouter {
     fn sample_beta(&mut self, alpha: f64, beta: f64) -> f64 {
         let x = self.sample_gamma(alpha);
         let y = self.sample_gamma(beta);
-        if x + y == 0.0 { 0.5 } else { x / (x + y) }
+        if x + y == 0.0 {
+            0.5
+        } else {
+            x / (x + y)
+        }
     }
 
     /// Sample from Gamma(alpha) using Marsaglia-Tsang method.
@@ -803,7 +848,10 @@ impl BanditRouter {
 
     /// LCG PRNG — deterministic, fast, no external deps.
     fn next_random(&mut self) -> f64 {
-        self.seed = self.seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.seed = self
+            .seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         ((self.seed >> 33) as f64) / ((1u64 << 31) as f64)
     }
 
@@ -850,7 +898,8 @@ impl BanditRouter {
         };
 
         // Filter out excluded arms
-        let candidates: Vec<BanditArm> = arms_snapshot.into_iter()
+        let candidates: Vec<BanditArm> = arms_snapshot
+            .into_iter()
             .filter(|a| !prefs.excluded_arms.contains(&a.id))
             .collect();
 
@@ -880,7 +929,8 @@ impl BanditRouter {
                         });
                     }
                     let mean = arm.total_reward / arm.pull_count as f64;
-                    let exploration = (2.0 * (self.total_pulls as f64).ln() / arm.pull_count as f64).sqrt();
+                    let exploration =
+                        (2.0 * (self.total_pulls as f64).ln() / arm.pull_count as f64).sqrt();
                     mean + exploration
                 }
                 BanditStrategy::EpsilonGreedy { epsilon } => {
@@ -917,7 +967,8 @@ impl BanditRouter {
             1.0
         };
 
-        let alternatives: Vec<(ArmId, f64)> = scores.iter()
+        let alternatives: Vec<(ArmId, f64)> = scores
+            .iter()
             .skip(1)
             .take(5)
             .map(|(idx, score)| (candidates[*idx].id.clone(), *score))
@@ -962,8 +1013,11 @@ impl BanditRouter {
 
         let task_type = feedback.task_type.as_deref();
         let arms = if let Some(tt) = task_type {
-            if let Some(a) = self.bandits.get_mut(tt) { a }
-            else { &mut self.global_bandit }
+            if let Some(a) = self.bandits.get_mut(tt) {
+                a
+            } else {
+                &mut self.global_bandit
+            }
         } else {
             &mut self.global_bandit
         };
@@ -971,10 +1025,10 @@ impl BanditRouter {
         if let Some(arm) = arms.iter_mut().find(|a| a.id == feedback.arm_id) {
             if self.config.decay_factor < 1.0 {
                 let d = self.config.decay_factor;
-                arm.params.alpha = self.config.prior_alpha
-                    + (arm.params.alpha - self.config.prior_alpha) * d;
-                arm.params.beta = self.config.prior_beta
-                    + (arm.params.beta - self.config.prior_beta) * d;
+                arm.params.alpha =
+                    self.config.prior_alpha + (arm.params.alpha - self.config.prior_alpha) * d;
+                arm.params.beta =
+                    self.config.prior_beta + (arm.params.beta - self.config.prior_beta) * d;
             }
 
             arm.params.alpha += reward;
@@ -1050,7 +1104,12 @@ impl NfaRouter {
     }
 
     /// Add a state. Returns its ID.
-    pub fn add_state(&mut self, label: &str, accepting_arm: Option<&str>, priority: u32) -> NfaStateId {
+    pub fn add_state(
+        &mut self,
+        label: &str,
+        accepting_arm: Option<&str>,
+        priority: u32,
+    ) -> NfaStateId {
         let id = self.states.len();
         self.states.push(NfaState {
             id,
@@ -1118,7 +1177,8 @@ impl NfaRouter {
         for &sid in &current {
             if let Some(state) = self.states.get(sid) {
                 if state.accepting_arm.is_some() {
-                    if best_accepting.is_none() || state.priority > best_accepting.unwrap().priority {
+                    if best_accepting.is_none() || state.priority > best_accepting.unwrap().priority
+                    {
                         best_accepting = Some(state);
                     }
                 }
@@ -1173,7 +1233,10 @@ impl NfaRouter {
 
         while let Some(state) = queue.pop_front() {
             for trans in &self.transitions {
-                if trans.from == state && trans.symbol == NfaSymbol::Epsilon && !closure.contains(&trans.to) {
+                if trans.from == state
+                    && trans.symbol == NfaSymbol::Epsilon
+                    && !closure.contains(&trans.to)
+                {
                     closure.insert(trans.to);
                     queue.push_back(trans.to);
                 }
@@ -1193,13 +1256,11 @@ impl NfaRouter {
             NfaSymbol::TokenRange { min, max } => {
                 features.token_count >= *min && features.token_count <= *max
             }
-            NfaSymbol::BoolFeature { name, value } => {
-                match name.as_str() {
-                    "has_code" => features.has_code == *value,
-                    "is_question" => features.is_question == *value,
-                    _ => false,
-                }
-            }
+            NfaSymbol::BoolFeature { name, value } => match name.as_str() {
+                "has_code" => features.has_code == *value,
+                "is_question" => features.is_question == *value,
+                _ => false,
+            },
             NfaSymbol::Epsilon => false, // Epsilon never matches as a regular symbol
             NfaSymbol::Any => true,
         }
@@ -1305,7 +1366,8 @@ impl DfaRouter {
         // Partition by (accepting_arm, priority) — states with different outputs stay separate
         let mut partition_map: HashMap<(Option<ArmId>, u32), Vec<DfaStateId>> = HashMap::new();
         for state in &self.states {
-            partition_map.entry((state.accepting_arm.clone(), state.priority))
+            partition_map
+                .entry((state.accepting_arm.clone(), state.priority))
                 .or_default()
                 .push(state.id);
         }
@@ -1344,15 +1406,19 @@ impl DfaRouter {
             }
         }
 
-        let new_states: Vec<DfaState> = partitions.iter().enumerate().map(|(i, partition)| {
-            let rep = &self.states[partition[0]];
-            DfaState {
-                id: i,
-                label: rep.label.clone(),
-                accepting_arm: rep.accepting_arm.clone(),
-                priority: rep.priority,
-            }
-        }).collect();
+        let new_states: Vec<DfaState> = partitions
+            .iter()
+            .enumerate()
+            .map(|(i, partition)| {
+                let rep = &self.states[partition[0]];
+                DfaState {
+                    id: i,
+                    label: rep.label.clone(),
+                    accepting_arm: rep.accepting_arm.clone(),
+                    priority: rep.priority,
+                }
+            })
+            .collect();
 
         let new_start = state_to_partition[&self.start_state];
 
@@ -1360,7 +1426,8 @@ impl DfaRouter {
         for (pi, partition) in partitions.iter().enumerate() {
             let rep = partition[0];
             if let Some(transitions) = self.transition_table.get(&rep) {
-                let new_transitions: Vec<(NfaSymbol, DfaStateId)> = transitions.iter()
+                let new_transitions: Vec<(NfaSymbol, DfaStateId)> = transitions
+                    .iter()
                     .map(|(sym, target)| (sym.clone(), state_to_partition[target]))
                     .collect();
                 new_table.insert(pi, new_transitions);
@@ -1373,14 +1440,21 @@ impl DfaRouter {
     }
 
     fn compute_signature(&self, state: DfaStateId, partitions: &[Vec<DfaStateId>]) -> Vec<usize> {
-        let state_to_partition: HashMap<DfaStateId, usize> = partitions.iter().enumerate()
+        let state_to_partition: HashMap<DfaStateId, usize> = partitions
+            .iter()
+            .enumerate()
             .flat_map(|(pi, p)| p.iter().map(move |&s| (s, pi)))
             .collect();
 
         let mut sig = Vec::new();
         if let Some(transitions) = self.transition_table.get(&state) {
             for (_, target) in transitions {
-                sig.push(state_to_partition.get(target).copied().unwrap_or(usize::MAX));
+                sig.push(
+                    state_to_partition
+                        .get(target)
+                        .copied()
+                        .unwrap_or(usize::MAX),
+                );
             }
         }
         sig
@@ -1396,13 +1470,11 @@ impl DfaRouter {
             NfaSymbol::TokenRange { min, max } => {
                 features.token_count >= *min && features.token_count <= *max
             }
-            NfaSymbol::BoolFeature { name, value } => {
-                match name.as_str() {
-                    "has_code" => features.has_code == *value,
-                    "is_question" => features.is_question == *value,
-                    _ => false,
-                }
-            }
+            NfaSymbol::BoolFeature { name, value } => match name.as_str() {
+                "has_code" => features.has_code == *value,
+                "is_question" => features.is_question == *value,
+                _ => false,
+            },
             NfaSymbol::Epsilon => false,
             NfaSymbol::Any => true,
         }
@@ -1478,7 +1550,10 @@ impl NfaDfaCompiler {
                     new_id
                 };
 
-                dfa_table.entry(current_id).or_default().push((symbol.clone(), target_id));
+                dfa_table
+                    .entry(current_id)
+                    .or_default()
+                    .push((symbol.clone(), target_id));
             }
         }
 
@@ -1502,7 +1577,11 @@ impl NfaDfaCompiler {
         alphabet
     }
 
-    fn create_dfa_state(id: DfaStateId, nfa_states: &HashSet<NfaStateId>, nfa: &NfaRouter) -> DfaState {
+    fn create_dfa_state(
+        id: DfaStateId,
+        nfa_states: &HashSet<NfaStateId>,
+        nfa: &NfaRouter,
+    ) -> DfaState {
         let mut best_arm: Option<&str> = None;
         let mut best_priority = 0u32;
         let mut labels = Vec::new();
@@ -1586,9 +1665,15 @@ impl RoutingDag {
         Ok(())
     }
 
-    pub fn set_bandit(&mut self, node_id: &str, bandit: BanditRouter) -> Result<(), AdvancedRoutingError> {
+    pub fn set_bandit(
+        &mut self,
+        node_id: &str,
+        bandit: BanditRouter,
+    ) -> Result<(), AdvancedRoutingError> {
         if !self.nodes.contains_key(node_id) {
-            return Err(AdvancedRoutingError::NodeNotFound { node_id: node_id.to_string() });
+            return Err(AdvancedRoutingError::NodeNotFound {
+                node_id: node_id.to_string(),
+            });
         }
         self.bandit_instances.insert(node_id.to_string(), bandit);
         Ok(())
@@ -1596,14 +1681,19 @@ impl RoutingDag {
 
     pub fn set_dfa(&mut self, node_id: &str, dfa: DfaRouter) -> Result<(), AdvancedRoutingError> {
         if !self.nodes.contains_key(node_id) {
-            return Err(AdvancedRoutingError::NodeNotFound { node_id: node_id.to_string() });
+            return Err(AdvancedRoutingError::NodeNotFound {
+                node_id: node_id.to_string(),
+            });
         }
         self.dfa_instances.insert(node_id.to_string(), dfa);
         Ok(())
     }
 
     /// Route through the DAG from root to a leaf.
-    pub fn route(&mut self, features: &QueryFeatures) -> Result<RoutingOutcome, AdvancedRoutingError> {
+    pub fn route(
+        &mut self,
+        features: &QueryFeatures,
+    ) -> Result<RoutingOutcome, AdvancedRoutingError> {
         self.validate()?;
 
         let start = std::time::Instant::now();
@@ -1616,8 +1706,12 @@ impl RoutingDag {
             }
             path.push(current_id.clone());
 
-            let node = self.nodes.get(&current_id)
-                .ok_or_else(|| AdvancedRoutingError::NodeNotFound { node_id: current_id.clone() })?
+            let node = self
+                .nodes
+                .get(&current_id)
+                .ok_or_else(|| AdvancedRoutingError::NodeNotFound {
+                    node_id: current_id.clone(),
+                })?
                 .clone();
 
             match &node.node_type {
@@ -1653,7 +1747,12 @@ impl RoutingDag {
                         });
                     }
                 }
-                RoutingDagNodeType::RuleBased { feature, threshold, high_branch, low_branch } => {
+                RoutingDagNodeType::RuleBased {
+                    feature,
+                    threshold,
+                    high_branch,
+                    low_branch,
+                } => {
                     let value = extract_feature_value(features, feature);
                     current_id = if value >= *threshold {
                         high_branch.clone()
@@ -1716,7 +1815,8 @@ impl RoutingDag {
             }
         }
 
-        let mut queue: VecDeque<&str> = in_degree.iter()
+        let mut queue: VecDeque<&str> = in_degree
+            .iter()
             .filter(|(_, &deg)| deg == 0)
             .map(|(&k, _)| k)
             .collect();
@@ -1745,7 +1845,11 @@ impl RoutingDag {
         }
     }
 
-    fn find_successor(&self, node: &RoutingDagNode, arm: &str) -> Result<String, AdvancedRoutingError> {
+    fn find_successor(
+        &self,
+        node: &RoutingDagNode,
+        arm: &str,
+    ) -> Result<String, AdvancedRoutingError> {
         // Try to find a successor matching the arm name
         for succ in &node.successors {
             if succ == arm {
@@ -1753,10 +1857,13 @@ impl RoutingDag {
             }
         }
         // If no exact match, use first successor
-        node.successors.first().cloned().ok_or_else(|| AdvancedRoutingError::NoRoutingPath {
-            query: arm.to_string(),
-            reason: format!("No successor found at node '{}'", node.id),
-        })
+        node.successors
+            .first()
+            .cloned()
+            .ok_or_else(|| AdvancedRoutingError::NoRoutingPath {
+                query: arm.to_string(),
+                reason: format!("No successor found at node '{}'", node.id),
+            })
     }
 }
 
@@ -1767,8 +1874,20 @@ pub fn extract_feature_value(features: &QueryFeatures, name: &str) -> f64 {
         "token_count" => features.token_count as f64,
         "entity_count" => features.entity_count as f64,
         "sentence_count" => features.sentence_count as f64,
-        "has_code" => if features.has_code { 1.0 } else { 0.0 },
-        "is_question" => if features.is_question { 1.0 } else { 0.0 },
+        "has_code" => {
+            if features.has_code {
+                1.0
+            } else {
+                0.0
+            }
+        }
+        "is_question" => {
+            if features.is_question {
+                1.0
+            } else {
+                0.0
+            }
+        }
         "avg_word_length" => features.avg_word_length,
         _ => 0.0,
     }
@@ -1809,9 +1928,13 @@ impl EvalFeedbackMapper {
             let alpha = quality * scale;
             let beta = (1.0 - quality) * scale;
 
-            priors.entry(subtask_name.clone())
-                .or_default()
-                .insert(arm_id, BetaParams { alpha: alpha.max(0.01), beta: beta.max(0.01) });
+            priors.entry(subtask_name.clone()).or_default().insert(
+                arm_id,
+                BetaParams {
+                    alpha: alpha.max(0.01),
+                    beta: beta.max(0.01),
+                },
+            );
         }
 
         priors
@@ -1869,7 +1992,9 @@ impl BanditBootstrapper {
         let mut priors: HashMap<String, HashMap<ArmId, BetaParams>> = HashMap::new();
         let global = priors.entry("global".to_string()).or_default();
 
-        let max_ce = matrix.cost_effectiveness.iter()
+        let max_ce = matrix
+            .cost_effectiveness
+            .iter()
             .cloned()
             .fold(f64::NEG_INFINITY, f64::max)
             .max(0.001);
@@ -1880,7 +2005,9 @@ impl BanditBootstrapper {
         let total_w = adjusted_qw + cw;
 
         for (i, model) in matrix.models.iter().enumerate() {
-            let mean_score = matrix.scores.get(i)
+            let mean_score = matrix
+                .scores
+                .get(i)
                 .and_then(|s| s.get(1))
                 .copied()
                 .unwrap_or(0.5);
@@ -1925,7 +2052,8 @@ impl BanditBootstrapper {
             let alpha = (perf.score * scale).max(0.01);
             let beta = ((1.0 - perf.score) * scale).max(0.01);
 
-            priors.entry(subtask_name)
+            priors
+                .entry(subtask_name)
                 .or_default()
                 .insert(arm_id, BetaParams { alpha, beta });
         }
@@ -1947,9 +2075,16 @@ impl BanditBootstrapper {
         for (task_type, arm_priors) in priors {
             for (arm_id, params) in arm_priors {
                 if task_type == "global" {
-                    pipeline.bandit_mut().warm_start(arm_id, params.alpha, params.beta);
+                    pipeline
+                        .bandit_mut()
+                        .warm_start(arm_id, params.alpha, params.beta);
                 } else {
-                    pipeline.bandit_mut().warm_start_for_task(task_type, arm_id, params.alpha, params.beta);
+                    pipeline.bandit_mut().warm_start_for_task(
+                        task_type,
+                        arm_id,
+                        params.alpha,
+                        params.beta,
+                    );
                 }
             }
         }
@@ -1969,7 +2104,11 @@ impl QueryFeatureExtractor {
     pub fn extract(query: &str) -> QueryFeatures {
         let words: Vec<&str> = query.split_whitespace().collect();
         let token_count = words.len();
-        let sentence_count = query.chars().filter(|&c| c == '.' || c == '!' || c == '?').count().max(1);
+        let sentence_count = query
+            .chars()
+            .filter(|&c| c == '.' || c == '!' || c == '?')
+            .count()
+            .max(1);
         let has_code = Self::has_code_markers(query);
         let is_question = query.contains('?')
             || query.to_lowercase().starts_with("what")
@@ -1980,9 +2119,13 @@ impl QueryFeatureExtractor {
             || query.to_lowercase().starts_with("who");
         let domain = Self::detect_domain(query);
         let entity_count = Self::count_entities(query);
-        let avg_word_length = if words.is_empty() { 0.0 }
-            else { words.iter().map(|w| w.len() as f64).sum::<f64>() / words.len() as f64 };
-        let complexity = Self::estimate_complexity(query, token_count, sentence_count, entity_count);
+        let avg_word_length = if words.is_empty() {
+            0.0
+        } else {
+            words.iter().map(|w| w.len() as f64).sum::<f64>() / words.len() as f64
+        };
+        let complexity =
+            Self::estimate_complexity(query, token_count, sentence_count, entity_count);
 
         let feature_vector = vec![
             token_count as f64,
@@ -2008,24 +2151,41 @@ impl QueryFeatureExtractor {
     }
 
     fn has_code_markers(query: &str) -> bool {
-        query.contains("```") || query.contains("fn ") || query.contains("def ")
-            || query.contains("class ") || query.contains("function ")
-            || query.contains("import ") || query.contains("pub fn")
+        query.contains("```")
+            || query.contains("fn ")
+            || query.contains("def ")
+            || query.contains("class ")
+            || query.contains("function ")
+            || query.contains("import ")
+            || query.contains("pub fn")
     }
 
     fn detect_domain(query: &str) -> String {
         let lower = query.to_lowercase();
-        if lower.contains("code") || lower.contains("function") || lower.contains("implement")
-            || lower.contains("programming") || lower.contains("debug") || lower.contains("compile") {
+        if lower.contains("code")
+            || lower.contains("function")
+            || lower.contains("implement")
+            || lower.contains("programming")
+            || lower.contains("debug")
+            || lower.contains("compile")
+        {
             "coding".to_string()
-        } else if lower.contains("math") || lower.contains("calculate") || lower.contains("equation")
-            || lower.contains("solve") || lower.contains("integral") {
+        } else if lower.contains("math")
+            || lower.contains("calculate")
+            || lower.contains("equation")
+            || lower.contains("solve")
+            || lower.contains("integral")
+        {
             "math".to_string()
-        } else if lower.contains("write a story") || lower.contains("poem") || lower.contains("creative") {
+        } else if lower.contains("write a story")
+            || lower.contains("poem")
+            || lower.contains("creative")
+        {
             "creative".to_string()
         } else if lower.contains("translate") || lower.contains("translation") {
             "translation".to_string()
-        } else if lower.contains("summarize") || lower.contains("summary") || lower.contains("tldr") {
+        } else if lower.contains("summarize") || lower.contains("summary") || lower.contains("tldr")
+        {
             "summarization".to_string()
         } else {
             "general".to_string()
@@ -2036,22 +2196,39 @@ impl QueryFeatureExtractor {
         let mut count = 0;
         for word in query.split_whitespace() {
             // Count capitalized words (potential proper nouns)
-            if word.len() > 1 && word.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+            if word.len() > 1
+                && word
+                    .chars()
+                    .next()
+                    .map(|c| c.is_uppercase())
+                    .unwrap_or(false)
+            {
                 count += 1;
             }
         }
         // Count numbers
-        count += query.split_whitespace().filter(|w| w.parse::<f64>().is_ok()).count();
+        count += query
+            .split_whitespace()
+            .filter(|w| w.parse::<f64>().is_ok())
+            .count();
         count
     }
 
-    fn estimate_complexity(query: &str, token_count: usize, sentence_count: usize, entity_count: usize) -> f64 {
+    fn estimate_complexity(
+        query: &str,
+        token_count: usize,
+        sentence_count: usize,
+        entity_count: usize,
+    ) -> f64 {
         let length_factor = (token_count as f64 / 100.0).min(1.0);
         let sentence_factor = (sentence_count as f64 / 5.0).min(1.0);
         let entity_factor = (entity_count as f64 / 10.0).min(1.0);
         let clause_factor = (query.matches(',').count() as f64 / 5.0).min(1.0);
 
-        let raw = length_factor * 0.3 + sentence_factor * 0.2 + entity_factor * 0.25 + clause_factor * 0.25;
+        let raw = length_factor * 0.3
+            + sentence_factor * 0.2
+            + entity_factor * 0.25
+            + clause_factor * 0.25;
         raw.min(1.0).max(0.0)
     }
 }
@@ -2090,8 +2267,10 @@ impl AdaptivePerQueryRouter {
     }
 
     pub fn add_complexity_tier(mut self, max_complexity: f64, model: &str) -> Self {
-        self.complexity_thresholds.push((max_complexity, model.to_string()));
-        self.complexity_thresholds.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        self.complexity_thresholds
+            .push((max_complexity, model.to_string()));
+        self.complexity_thresholds
+            .sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
         self
     }
 
@@ -2102,7 +2281,10 @@ impl AdaptivePerQueryRouter {
     }
 
     /// Route using pre-extracted features.
-    pub fn route_with_features(&mut self, features: &QueryFeatures) -> Result<RoutingOutcome, AdvancedRoutingError> {
+    pub fn route_with_features(
+        &mut self,
+        features: &QueryFeatures,
+    ) -> Result<RoutingOutcome, AdvancedRoutingError> {
         let start = std::time::Instant::now();
 
         // Priority 1: code model shortcut
@@ -2142,7 +2324,10 @@ impl AdaptivePerQueryRouter {
                 return Ok(RoutingOutcome {
                     selected_arm: model.clone(),
                     confidence: 0.7,
-                    reason: format!("Complexity {:.2} <= tier {:.2}", features.complexity, threshold),
+                    reason: format!(
+                        "Complexity {:.2} <= tier {:.2}",
+                        features.complexity, threshold
+                    ),
                     alternatives: Vec::new(),
                     router_id: "adaptive".to_string(),
                     decision_time_us: elapsed,
@@ -2151,7 +2336,9 @@ impl AdaptivePerQueryRouter {
         }
 
         // Priority 4: domain-specific bandit
-        let bandit = self.domain_bandits.entry(features.domain.clone())
+        let bandit = self
+            .domain_bandits
+            .entry(features.domain.clone())
             .or_insert_with(|| {
                 let mut b = BanditRouter::new(self.bandit_config.clone());
                 b.add_arm(&self.default_model);
@@ -2219,7 +2406,9 @@ impl RoutingVoter for BanditRouter {
     fn vote(&mut self, features: &QueryFeatures) -> Result<RoutingOutcome, AdvancedRoutingError> {
         self.select(Some(&features.domain))
     }
-    fn router_id(&self) -> &str { "bandit" }
+    fn router_id(&self) -> &str {
+        "bandit"
+    }
     fn record_outcome(&mut self, feedback: &ArmFeedback) {
         BanditRouter::record_outcome(self, feedback);
     }
@@ -2229,7 +2418,9 @@ impl RoutingVoter for AdaptivePerQueryRouter {
     fn vote(&mut self, features: &QueryFeatures) -> Result<RoutingOutcome, AdvancedRoutingError> {
         self.route_with_features(features)
     }
-    fn router_id(&self) -> &str { "adaptive" }
+    fn router_id(&self) -> &str {
+        "adaptive"
+    }
     fn record_outcome(&mut self, feedback: &ArmFeedback) {
         // No raw query available, record for the task_type domain if present
         if let Some(ref domain) = feedback.task_type {
@@ -2275,7 +2466,10 @@ impl EnsembleRouter {
     }
 
     /// Route by collecting votes and tallying.
-    pub fn route(&mut self, features: &QueryFeatures) -> Result<RoutingOutcome, AdvancedRoutingError> {
+    pub fn route(
+        &mut self,
+        features: &QueryFeatures,
+    ) -> Result<RoutingOutcome, AdvancedRoutingError> {
         if self.sub_routers.is_empty() {
             return Err(AdvancedRoutingError::EmptyEnsemble);
         }
@@ -2322,7 +2516,10 @@ impl EnsembleRouter {
         }
     }
 
-    fn majority_vote(&self, votes: &[SubRouterVote]) -> Result<RoutingOutcome, AdvancedRoutingError> {
+    fn majority_vote(
+        &self,
+        votes: &[SubRouterVote],
+    ) -> Result<RoutingOutcome, AdvancedRoutingError> {
         let mut counts: HashMap<&str, (usize, f64)> = HashMap::new(); // (count, max_confidence)
         for vote in votes {
             let entry = counts.entry(&vote.outcome.selected_arm).or_insert((0, 0.0));
@@ -2332,12 +2529,20 @@ impl EnsembleRouter {
             }
         }
 
-        let winner = counts.iter()
-            .max_by(|a, b| a.1.0.cmp(&b.1.0).then(a.1.1.partial_cmp(&b.1.1).unwrap_or(std::cmp::Ordering::Equal)))
+        let winner = counts
+            .iter()
+            .max_by(|a, b| {
+                a.1 .0.cmp(&b.1 .0).then(
+                    a.1 .1
+                        .partial_cmp(&b.1 .1)
+                        .unwrap_or(std::cmp::Ordering::Equal),
+                )
+            })
             .map(|(arm, (count, conf))| (arm.to_string(), *count, *conf))
             .unwrap();
 
-        let alternatives: Vec<(ArmId, f64)> = counts.iter()
+        let alternatives: Vec<(ArmId, f64)> = counts
+            .iter()
             .filter(|(arm, _)| **arm != winner.0)
             .map(|(arm, (_, conf))| (arm.to_string(), *conf))
             .collect();
@@ -2352,21 +2557,31 @@ impl EnsembleRouter {
         })
     }
 
-    fn weighted_average(&self, votes: &[SubRouterVote]) -> Result<RoutingOutcome, AdvancedRoutingError> {
+    fn weighted_average(
+        &self,
+        votes: &[SubRouterVote],
+    ) -> Result<RoutingOutcome, AdvancedRoutingError> {
         let mut scores: HashMap<&str, f64> = HashMap::new();
         for vote in votes {
-            *scores.entry(&vote.outcome.selected_arm).or_insert(0.0) += vote.weight * vote.outcome.confidence;
+            *scores.entry(&vote.outcome.selected_arm).or_insert(0.0) +=
+                vote.weight * vote.outcome.confidence;
         }
 
-        let winner = scores.iter()
+        let winner = scores
+            .iter()
             .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(arm, score)| (arm.to_string(), *score))
             .unwrap();
 
         let total_weight: f64 = scores.values().sum();
-        let confidence = if total_weight > 0.0 { winner.1 / total_weight } else { 0.5 };
+        let confidence = if total_weight > 0.0 {
+            winner.1 / total_weight
+        } else {
+            0.5
+        };
 
-        let alternatives: Vec<(ArmId, f64)> = scores.iter()
+        let alternatives: Vec<(ArmId, f64)> = scores
+            .iter()
             .filter(|(arm, _)| **arm != winner.0)
             .map(|(arm, score)| (arm.to_string(), *score))
             .collect();
@@ -2384,7 +2599,10 @@ impl EnsembleRouter {
     fn unanimous(&self, votes: &[SubRouterVote]) -> Result<RoutingOutcome, AdvancedRoutingError> {
         let first_arm = &votes[0].outcome.selected_arm;
         if votes.iter().all(|v| v.outcome.selected_arm == *first_arm) {
-            let max_conf = votes.iter().map(|v| v.outcome.confidence).fold(0.0f64, f64::max);
+            let max_conf = votes
+                .iter()
+                .map(|v| v.outcome.confidence)
+                .fold(0.0f64, f64::max);
             Ok(RoutingOutcome {
                 selected_arm: first_arm.clone(),
                 confidence: max_conf,
@@ -2401,12 +2619,22 @@ impl EnsembleRouter {
         }
     }
 
-    fn max_confidence(&self, votes: &[SubRouterVote]) -> Result<RoutingOutcome, AdvancedRoutingError> {
-        let best = votes.iter()
-            .max_by(|a, b| a.outcome.confidence.partial_cmp(&b.outcome.confidence).unwrap_or(std::cmp::Ordering::Equal))
+    fn max_confidence(
+        &self,
+        votes: &[SubRouterVote],
+    ) -> Result<RoutingOutcome, AdvancedRoutingError> {
+        let best = votes
+            .iter()
+            .max_by(|a, b| {
+                a.outcome
+                    .confidence
+                    .partial_cmp(&b.outcome.confidence)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
             .unwrap();
 
-        let alternatives: Vec<(ArmId, f64)> = votes.iter()
+        let alternatives: Vec<(ArmId, f64)> = votes
+            .iter()
             .filter(|v| v.router_id != best.router_id)
             .map(|v| (v.outcome.selected_arm.clone(), v.outcome.confidence))
             .collect();
@@ -2455,13 +2683,18 @@ impl BanditStateMerger {
         DistributedBanditState {
             node_id: node_id.to_string(),
             timestamp: now,
-            global_arms: router.global_bandit.iter()
+            global_arms: router
+                .global_bandit
+                .iter()
                 .filter(|a| !router.private_arms.contains(&a.id))
                 .cloned()
                 .collect(),
-            task_bandits: router.bandits.iter()
+            task_bandits: router
+                .bandits
+                .iter()
                 .map(|(k, arms)| {
-                    let filtered: Vec<_> = arms.iter()
+                    let filtered: Vec<_> = arms
+                        .iter()
                         .filter(|a| !router.private_arms.contains(&a.id))
                         .cloned()
                         .collect();
@@ -2498,9 +2731,10 @@ impl BanditStateMerger {
             }
         }
 
-        let global_arms: Vec<BanditArm> = global_map.into_iter().map(|(id, arms)| {
-            Self::merge_arms(&id, &arms, n, prior_alpha, prior_beta)
-        }).collect();
+        let global_arms: Vec<BanditArm> = global_map
+            .into_iter()
+            .map(|(id, arms)| Self::merge_arms(&id, &arms, n, prior_alpha, prior_beta))
+            .collect();
 
         // Merge per-task bandits
         let mut task_keys: HashSet<&str> = HashSet::new();
@@ -2522,9 +2756,12 @@ impl BanditStateMerger {
                     }
                 }
             }
-            let merged: Vec<BanditArm> = arm_map.into_iter().map(|(id, arms)| {
-                Self::merge_arms(&id, &arms, contributing_nodes, prior_alpha, prior_beta)
-            }).collect();
+            let merged: Vec<BanditArm> = arm_map
+                .into_iter()
+                .map(|(id, arms)| {
+                    Self::merge_arms(&id, &arms, contributing_nodes, prior_alpha, prior_beta)
+                })
+                .collect();
             task_bandits.insert(key.to_string(), merged);
         }
 
@@ -2549,7 +2786,11 @@ impl BanditStateMerger {
     ) -> Result<(), AdvancedRoutingError> {
         // Merge global arms
         for remote_arm in &remote.global_arms {
-            if let Some(local_arm) = router.global_bandit.iter_mut().find(|a| a.id == remote_arm.id) {
+            if let Some(local_arm) = router
+                .global_bandit
+                .iter_mut()
+                .find(|a| a.id == remote_arm.id)
+            {
                 let merged = Self::merge_arm_pair(local_arm, remote_arm, prior_alpha, prior_beta);
                 *local_arm = merged;
             } else {
@@ -2562,7 +2803,8 @@ impl BanditStateMerger {
             let local_arms = router.bandits.entry(task.clone()).or_default();
             for remote_arm in remote_arms {
                 if let Some(local_arm) = local_arms.iter_mut().find(|a| a.id == remote_arm.id) {
-                    let merged = Self::merge_arm_pair(local_arm, remote_arm, prior_alpha, prior_beta);
+                    let merged =
+                        Self::merge_arm_pair(local_arm, remote_arm, prior_alpha, prior_beta);
                     *local_arm = merged;
                 } else {
                     local_arms.push(remote_arm.clone());
@@ -2574,7 +2816,13 @@ impl BanditStateMerger {
         Ok(())
     }
 
-    fn merge_arms(id: &str, arms: &[&BanditArm], n: usize, prior_alpha: f64, prior_beta: f64) -> BanditArm {
+    fn merge_arms(
+        id: &str,
+        arms: &[&BanditArm],
+        n: usize,
+        prior_alpha: f64,
+        prior_beta: f64,
+    ) -> BanditArm {
         let sum_alpha: f64 = arms.iter().map(|a| a.params.alpha).sum();
         let sum_beta: f64 = arms.iter().map(|a| a.params.beta).sum();
         let total_pulls: u64 = arms.iter().map(|a| a.pull_count).sum();
@@ -2594,7 +2842,12 @@ impl BanditStateMerger {
         }
     }
 
-    fn merge_arm_pair(local: &BanditArm, remote: &BanditArm, prior_alpha: f64, prior_beta: f64) -> BanditArm {
+    fn merge_arm_pair(
+        local: &BanditArm,
+        remote: &BanditArm,
+        prior_alpha: f64,
+        prior_beta: f64,
+    ) -> BanditArm {
         BanditArm {
             id: local.id.clone(),
             params: BetaParams {
@@ -2661,20 +2914,21 @@ impl BanditRouter {
     /// Export to JSON string.
     pub fn to_json(&self) -> Result<String, AdvancedRoutingError> {
         let snapshot = self.export_snapshot();
-        serde_json::to_string_pretty(&snapshot).map_err(|e| AdvancedRoutingError::SerializationFailed {
-            format: "JSON".to_string(),
-            reason: e.to_string(),
+        serde_json::to_string_pretty(&snapshot).map_err(|e| {
+            AdvancedRoutingError::SerializationFailed {
+                format: "JSON".to_string(),
+                reason: e.to_string(),
+            }
         })
     }
 
     /// Import from JSON string.
     pub fn from_json(json: &str) -> Result<Self, AdvancedRoutingError> {
-        let snapshot: BanditSnapshot = serde_json::from_str(json).map_err(|e| {
-            AdvancedRoutingError::SerializationFailed {
+        let snapshot: BanditSnapshot =
+            serde_json::from_str(json).map_err(|e| AdvancedRoutingError::SerializationFailed {
                 format: "JSON".to_string(),
                 reason: e.to_string(),
-            }
-        })?;
+            })?;
 
         if snapshot.version != SNAPSHOT_VERSION {
             return Err(AdvancedRoutingError::IncompatibleVersion {
@@ -2699,9 +2953,11 @@ impl BanditRouter {
 
         #[cfg(feature = "binary-storage")]
         {
-            return bincode::serialize(&snapshot).map_err(|e| AdvancedRoutingError::SerializationFailed {
-                format: "bincode".to_string(),
-                reason: e.to_string(),
+            return bincode::serialize(&snapshot).map_err(|e| {
+                AdvancedRoutingError::SerializationFailed {
+                    format: "bincode".to_string(),
+                    reason: e.to_string(),
+                }
             });
         }
 
@@ -2733,10 +2989,11 @@ impl BanditRouter {
         }
 
         // Fallback: try JSON
-        let json = std::str::from_utf8(bytes).map_err(|e| AdvancedRoutingError::SerializationFailed {
-            format: "UTF-8".to_string(),
-            reason: e.to_string(),
-        })?;
+        let json =
+            std::str::from_utf8(bytes).map_err(|e| AdvancedRoutingError::SerializationFailed {
+                format: "UTF-8".to_string(),
+                reason: e.to_string(),
+            })?;
         Self::from_json(json)
     }
 }
@@ -2832,11 +3089,7 @@ impl NfaRuleBuilder {
                         let accept = nfa.add_state(&rule.label, Some(&rule.arm_id), rule.priority);
                         nfa.add_transition(prev, cond.clone(), accept);
                     } else {
-                        let intermediate = nfa.add_state(
-                            &format!("{}_{}", rule.label, i),
-                            None,
-                            0,
-                        );
+                        let intermediate = nfa.add_state(&format!("{}_{}", rule.label, i), None, 0);
                         nfa.add_transition(prev, cond.clone(), intermediate);
                         prev = intermediate;
                     }
@@ -2916,11 +3169,20 @@ impl BanditNfaSynthesizer {
 
         // Collect global best arm for fallback
         let global_arms = bandit.all_arms_vec(None);
-        let global_best = global_arms.iter()
+        let global_best = global_arms
+            .iter()
             .filter(|a| a.pull_count >= min_pulls)
             .max_by(|a, b| {
-                let ma = if a.pull_count > 0 { a.total_reward / a.pull_count as f64 } else { 0.0 };
-                let mb = if b.pull_count > 0 { b.total_reward / b.pull_count as f64 } else { 0.0 };
+                let ma = if a.pull_count > 0 {
+                    a.total_reward / a.pull_count as f64
+                } else {
+                    0.0
+                };
+                let mb = if b.pull_count > 0 {
+                    b.total_reward / b.pull_count as f64
+                } else {
+                    0.0
+                };
                 ma.partial_cmp(&mb).unwrap_or(std::cmp::Ordering::Equal)
             });
 
@@ -2937,10 +3199,15 @@ impl BanditNfaSynthesizer {
         // For each task type, create rules from top-performing arms
         for task_type in &task_types {
             let arms = bandit.all_arms_vec(Some(task_type));
-            let mut qualified: Vec<(&BanditArm, f64)> = arms.iter()
+            let mut qualified: Vec<(&BanditArm, f64)> = arms
+                .iter()
                 .filter(|a| a.pull_count >= min_pulls)
                 .map(|a| {
-                    let mean = if a.pull_count > 0 { a.total_reward / a.pull_count as f64 } else { 0.0 };
+                    let mean = if a.pull_count > 0 {
+                        a.total_reward / a.pull_count as f64
+                    } else {
+                        0.0
+                    };
                     (*a, mean)
                 })
                 .collect();
@@ -3061,8 +3328,20 @@ impl FeatureDimension {
         match self {
             FeatureDimension::Complexity => ctx.complexity,
             FeatureDimension::TokenCount => ctx.token_count as f64,
-            FeatureDimension::HasCode => if ctx.has_code { 1.0 } else { 0.0 },
-            FeatureDimension::IsQuestion => if ctx.is_question { 1.0 } else { 0.0 },
+            FeatureDimension::HasCode => {
+                if ctx.has_code {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            FeatureDimension::IsQuestion => {
+                if ctx.is_question {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
             FeatureDimension::AvgWordLength => ctx.avg_word_length,
             FeatureDimension::EntityCount => ctx.entity_count as f64,
             FeatureDimension::SentenceCount => ctx.sentence_count as f64,
@@ -3084,7 +3363,10 @@ impl FeatureDimension {
 
     /// Whether this dimension is boolean (only two possible values).
     fn is_boolean(&self) -> bool {
-        matches!(self, FeatureDimension::HasCode | FeatureDimension::IsQuestion)
+        matches!(
+            self,
+            FeatureDimension::HasCode | FeatureDimension::IsQuestion
+        )
     }
 
     /// Whether this dimension has a direct NfaSymbol mapping.
@@ -3229,7 +3511,9 @@ impl ContextualDiscovery {
         let mut all_splits: Vec<DomainSplit> = Vec::new();
 
         for domain in domains {
-            let domain_obs: Vec<&ContextualObservation> = self.observations.iter()
+            let domain_obs: Vec<&ContextualObservation> = self
+                .observations
+                .iter()
                 .filter(|o| o.context.domain == domain)
                 .collect();
 
@@ -3243,11 +3527,13 @@ impl ContextualDiscovery {
             for dim in FeatureDimension::all() {
                 if dim.is_boolean() {
                     // Boolean split: partition into true/false
-                    let true_obs: Vec<&ContextualObservation> = domain_obs.iter()
+                    let true_obs: Vec<&ContextualObservation> = domain_obs
+                        .iter()
                         .filter(|o| dim.extract(&o.context) >= 0.5)
                         .copied()
                         .collect();
-                    let false_obs: Vec<&ContextualObservation> = domain_obs.iter()
+                    let false_obs: Vec<&ContextualObservation> = domain_obs
+                        .iter()
                         .filter(|o| dim.extract(&o.context) < 0.5)
                         .copied()
                         .collect();
@@ -3284,20 +3570,19 @@ impl ContextualDiscovery {
                     }
                 } else {
                     // Numeric split: try quantile split points
-                    let values: Vec<f64> = domain_obs.iter()
-                        .map(|o| dim.extract(&o.context))
-                        .collect();
-                    let split_points = Self::compute_quantile_split_points(
-                        &values,
-                        self.config.num_split_points,
-                    );
+                    let values: Vec<f64> =
+                        domain_obs.iter().map(|o| dim.extract(&o.context)).collect();
+                    let split_points =
+                        Self::compute_quantile_split_points(&values, self.config.num_split_points);
 
                     for threshold in split_points {
-                        let above: Vec<&ContextualObservation> = domain_obs.iter()
+                        let above: Vec<&ContextualObservation> = domain_obs
+                            .iter()
                             .filter(|o| dim.extract(&o.context) >= threshold)
                             .copied()
                             .collect();
-                        let below: Vec<&ContextualObservation> = domain_obs.iter()
+                        let below: Vec<&ContextualObservation> = domain_obs
+                            .iter()
                             .filter(|o| dim.extract(&o.context) < threshold)
                             .copied()
                             .collect();
@@ -3339,7 +3624,10 @@ impl ContextualDiscovery {
 
         // Sort by gain descending
         all_splits.sort_by(|a, b| {
-            b.split.gain.partial_cmp(&a.split.gain).unwrap_or(std::cmp::Ordering::Equal)
+            b.split
+                .gain
+                .partial_cmp(&a.split.gain)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
 
         all_splits
@@ -3373,7 +3661,10 @@ impl ContextualDiscovery {
                         format!("ctx_{}_complexity_high", ds.split.arm_above),
                         vec![
                             domain_sym.clone(),
-                            NfaSymbol::ComplexityRange { low_pct, high_pct: 100 },
+                            NfaSymbol::ComplexityRange {
+                                low_pct,
+                                high_pct: 100,
+                            },
                         ],
                         ds.split.arm_above.clone(),
                         priority,
@@ -3384,7 +3675,10 @@ impl ContextualDiscovery {
                         format!("ctx_{}_complexity_low", ds.split.arm_below),
                         vec![
                             NfaSymbol::Domain(ds.domain.clone()),
-                            NfaSymbol::ComplexityRange { low_pct: 0, high_pct: low_pct },
+                            NfaSymbol::ComplexityRange {
+                                low_pct: 0,
+                                high_pct: low_pct,
+                            },
                         ],
                         ds.split.arm_below.clone(),
                         priority,
@@ -3397,7 +3691,10 @@ impl ContextualDiscovery {
                         format!("ctx_{}_tokens_high", ds.split.arm_above),
                         vec![
                             domain_sym.clone(),
-                            NfaSymbol::TokenRange { min: threshold_usize, max: usize::MAX },
+                            NfaSymbol::TokenRange {
+                                min: threshold_usize,
+                                max: usize::MAX,
+                            },
                         ],
                         ds.split.arm_above.clone(),
                         priority,
@@ -3407,7 +3704,10 @@ impl ContextualDiscovery {
                         format!("ctx_{}_tokens_low", ds.split.arm_below),
                         vec![
                             NfaSymbol::Domain(ds.domain.clone()),
-                            NfaSymbol::TokenRange { min: 0, max: threshold_usize.saturating_sub(1) },
+                            NfaSymbol::TokenRange {
+                                min: 0,
+                                max: threshold_usize.saturating_sub(1),
+                            },
                         ],
                         ds.split.arm_below.clone(),
                         priority,
@@ -3420,7 +3720,10 @@ impl ContextualDiscovery {
                         format!("ctx_{}_{}_true", ds.split.arm_above, feature_name),
                         vec![
                             domain_sym.clone(),
-                            NfaSymbol::BoolFeature { name: feature_name.clone(), value: true },
+                            NfaSymbol::BoolFeature {
+                                name: feature_name.clone(),
+                                value: true,
+                            },
                         ],
                         ds.split.arm_above.clone(),
                         priority,
@@ -3430,7 +3733,10 @@ impl ContextualDiscovery {
                         format!("ctx_{}_{}_false", ds.split.arm_below, feature_name),
                         vec![
                             NfaSymbol::Domain(ds.domain.clone()),
-                            NfaSymbol::BoolFeature { name: feature_name, value: false },
+                            NfaSymbol::BoolFeature {
+                                name: feature_name,
+                                value: false,
+                            },
                         ],
                         ds.split.arm_below.clone(),
                         priority,
@@ -3476,7 +3782,8 @@ impl ContextualDiscovery {
         let mut base_priority: u32 = 50;
         for task_type in &task_types {
             let arms = bandit.all_arms_vec(Some(task_type));
-            let mut qualified: Vec<(&BanditArm, f64)> = arms.iter()
+            let mut qualified: Vec<(&BanditArm, f64)> = arms
+                .iter()
                 .filter(|a| a.pull_count >= min_pulls)
                 .map(|a| {
                     let mean = if a.pull_count > 0 {
@@ -3487,9 +3794,7 @@ impl ContextualDiscovery {
                     (*a, mean)
                 })
                 .collect();
-            qualified.sort_by(|a, b| {
-                b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-            });
+            qualified.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
             if let Some((best, _)) = qualified.first() {
                 builder = builder
@@ -3517,11 +3822,20 @@ impl ContextualDiscovery {
 
         // Global fallback
         let global_arms = bandit.all_arms_vec(None);
-        let global_best = global_arms.iter()
+        let global_best = global_arms
+            .iter()
             .filter(|a| a.pull_count >= min_pulls)
             .max_by(|a, b| {
-                let ma = if a.pull_count > 0 { a.total_reward / a.pull_count as f64 } else { 0.0 };
-                let mb = if b.pull_count > 0 { b.total_reward / b.pull_count as f64 } else { 0.0 };
+                let ma = if a.pull_count > 0 {
+                    a.total_reward / a.pull_count as f64
+                } else {
+                    0.0
+                };
+                let mb = if b.pull_count > 0 {
+                    b.total_reward / b.pull_count as f64
+                } else {
+                    0.0
+                };
                 ma.partial_cmp(&mb).unwrap_or(std::cmp::Ordering::Equal)
             });
         if let Some(best) = global_best {
@@ -3541,7 +3855,8 @@ impl ContextualDiscovery {
             entry.0 += obs.reward;
             entry.1 += 1;
         }
-        arm_stats.iter()
+        arm_stats
+            .iter()
             .map(|(arm, (sum, count))| (arm.to_string(), *sum / *count as f64))
             .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
             .unwrap_or_default()
@@ -3564,7 +3879,10 @@ impl ContextualDiscovery {
             let idx = (sorted.len() * i) / (num_points + 1);
             let idx = idx.min(sorted.len() - 1);
             let val = sorted[idx];
-            if points.last().map_or(true, |last: &f64| (val - *last).abs() > 1e-10) {
+            if points
+                .last()
+                .map_or(true, |last: &f64| (val - *last).abs() > 1e-10)
+            {
                 points.push(val);
             }
         }
@@ -3593,7 +3911,8 @@ impl ContextualDiscovery {
             entry.2.insert(ds.domain.clone());
         }
 
-        let mut result: Vec<FeatureImportance> = by_dim.into_iter()
+        let mut result: Vec<FeatureImportance> = by_dim
+            .into_iter()
             .map(|(name, (total_gain, split_count, domains))| {
                 let dimension = match name.as_str() {
                     "complexity" => FeatureDimension::Complexity,
@@ -3614,7 +3933,11 @@ impl ContextualDiscovery {
             })
             .collect();
 
-        result.sort_by(|a, b| b.total_gain.partial_cmp(&a.total_gain).unwrap_or(std::cmp::Ordering::Equal));
+        result.sort_by(|a, b| {
+            b.total_gain
+                .partial_cmp(&a.total_gain)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         result
     }
 }
@@ -3669,20 +3992,21 @@ impl NfaRouter {
     /// Serialize the NFA to a JSON string.
     pub fn to_json(&self) -> Result<String, AdvancedRoutingError> {
         let snapshot = self.export_snapshot();
-        serde_json::to_string_pretty(&snapshot).map_err(|e| AdvancedRoutingError::SerializationFailed {
-            format: "JSON".to_string(),
-            reason: e.to_string(),
+        serde_json::to_string_pretty(&snapshot).map_err(|e| {
+            AdvancedRoutingError::SerializationFailed {
+                format: "JSON".to_string(),
+                reason: e.to_string(),
+            }
         })
     }
 
     /// Deserialize an NFA from a JSON string.
     pub fn from_json(json: &str) -> Result<Self, AdvancedRoutingError> {
-        let snapshot: NfaSnapshot = serde_json::from_str(json).map_err(|e| {
-            AdvancedRoutingError::SerializationFailed {
+        let snapshot: NfaSnapshot =
+            serde_json::from_str(json).map_err(|e| AdvancedRoutingError::SerializationFailed {
                 format: "JSON".to_string(),
                 reason: e.to_string(),
-            }
-        })?;
+            })?;
         if snapshot.version != NFA_SNAPSHOT_VERSION {
             return Err(AdvancedRoutingError::IncompatibleVersion {
                 expected: NFA_SNAPSHOT_VERSION,
@@ -3702,9 +4026,11 @@ impl NfaRouter {
 
         #[cfg(feature = "binary-storage")]
         {
-            return bincode::serialize(&snapshot).map_err(|e| AdvancedRoutingError::SerializationFailed {
-                format: "bincode".to_string(),
-                reason: e.to_string(),
+            return bincode::serialize(&snapshot).map_err(|e| {
+                AdvancedRoutingError::SerializationFailed {
+                    format: "bincode".to_string(),
+                    reason: e.to_string(),
+                }
             });
         }
 
@@ -3732,10 +4058,11 @@ impl NfaRouter {
             }
         }
 
-        let json = std::str::from_utf8(bytes).map_err(|e| AdvancedRoutingError::SerializationFailed {
-            format: "UTF-8".to_string(),
-            reason: e.to_string(),
-        })?;
+        let json =
+            std::str::from_utf8(bytes).map_err(|e| AdvancedRoutingError::SerializationFailed {
+                format: "UTF-8".to_string(),
+                reason: e.to_string(),
+            })?;
         Self::from_json(json)
     }
 
@@ -3754,20 +4081,14 @@ impl NfaRouter {
 
         // Copy self states (renumbered with offset)
         for state in &self.states {
-            let _id = result.add_state(
-                &state.label,
-                state.accepting_arm.as_deref(),
-                state.priority,
-            );
+            let _id =
+                result.add_state(&state.label, state.accepting_arm.as_deref(), state.priority);
         }
 
         // Copy other states (renumbered with other_offset)
         for state in &other.states {
-            let _id = result.add_state(
-                &state.label,
-                state.accepting_arm.as_deref(),
-                state.priority,
-            );
+            let _id =
+                result.add_state(&state.label, state.accepting_arm.as_deref(), state.priority);
         }
 
         // Copy self transitions (apply self_offset)
@@ -3840,20 +4161,21 @@ impl DfaRouter {
     /// Serialize the DFA to a JSON string.
     pub fn to_json(&self) -> Result<String, AdvancedRoutingError> {
         let snapshot = self.export_snapshot();
-        serde_json::to_string_pretty(&snapshot).map_err(|e| AdvancedRoutingError::SerializationFailed {
-            format: "JSON".to_string(),
-            reason: e.to_string(),
+        serde_json::to_string_pretty(&snapshot).map_err(|e| {
+            AdvancedRoutingError::SerializationFailed {
+                format: "JSON".to_string(),
+                reason: e.to_string(),
+            }
         })
     }
 
     /// Deserialize a DFA from a JSON string.
     pub fn from_json(json: &str) -> Result<Self, AdvancedRoutingError> {
-        let snapshot: DfaSnapshot = serde_json::from_str(json).map_err(|e| {
-            AdvancedRoutingError::SerializationFailed {
+        let snapshot: DfaSnapshot =
+            serde_json::from_str(json).map_err(|e| AdvancedRoutingError::SerializationFailed {
                 format: "JSON".to_string(),
                 reason: e.to_string(),
-            }
-        })?;
+            })?;
         if snapshot.version != DFA_SNAPSHOT_VERSION {
             return Err(AdvancedRoutingError::IncompatibleVersion {
                 expected: DFA_SNAPSHOT_VERSION,
@@ -3873,9 +4195,11 @@ impl DfaRouter {
 
         #[cfg(feature = "binary-storage")]
         {
-            return bincode::serialize(&snapshot).map_err(|e| AdvancedRoutingError::SerializationFailed {
-                format: "bincode".to_string(),
-                reason: e.to_string(),
+            return bincode::serialize(&snapshot).map_err(|e| {
+                AdvancedRoutingError::SerializationFailed {
+                    format: "bincode".to_string(),
+                    reason: e.to_string(),
+                }
             });
         }
 
@@ -3903,10 +4227,11 @@ impl DfaRouter {
             }
         }
 
-        let json = std::str::from_utf8(bytes).map_err(|e| AdvancedRoutingError::SerializationFailed {
-            format: "UTF-8".to_string(),
-            reason: e.to_string(),
-        })?;
+        let json =
+            std::str::from_utf8(bytes).map_err(|e| AdvancedRoutingError::SerializationFailed {
+                format: "UTF-8".to_string(),
+                reason: e.to_string(),
+            })?;
         Self::from_json(json)
     }
 }
@@ -3956,20 +4281,34 @@ impl NfaStateMerger {
     }
 
     /// Extract NFA state for distribution, filtering out private arms.
-    pub fn extract_state_filtered(nfa: &NfaRouter, node_id: &str, private_arms: &HashSet<ArmId>) -> DistributedNfaState {
+    pub fn extract_state_filtered(
+        nfa: &NfaRouter,
+        node_id: &str,
+        private_arms: &HashSet<ArmId>,
+    ) -> DistributedNfaState {
         let mut snapshot = nfa.export_snapshot();
 
         // Find state IDs whose accepting_arm is in private_arms
-        let private_state_ids: HashSet<usize> = snapshot.states.iter()
-            .filter(|s| s.accepting_arm.as_ref().map_or(false, |arm| private_arms.contains(arm)))
+        let private_state_ids: HashSet<usize> = snapshot
+            .states
+            .iter()
+            .filter(|s| {
+                s.accepting_arm
+                    .as_ref()
+                    .map_or(false, |arm| private_arms.contains(arm))
+            })
             .map(|s| s.id)
             .collect();
 
         // Remove transitions that lead to private accepting states
-        snapshot.transitions.retain(|t| !private_state_ids.contains(&t.to));
+        snapshot
+            .transitions
+            .retain(|t| !private_state_ids.contains(&t.to));
 
         // Remove private accepting states themselves
-        snapshot.states.retain(|s| !private_state_ids.contains(&s.id));
+        snapshot
+            .states
+            .retain(|s| !private_state_ids.contains(&s.id));
 
         DistributedNfaState {
             node_id: node_id.to_string(),
@@ -3995,7 +4334,8 @@ impl NfaStateMerger {
         }
 
         // Reconstruct NFAs from snapshots
-        let nfas: Result<Vec<NfaRouter>, _> = states.iter()
+        let nfas: Result<Vec<NfaRouter>, _> = states
+            .iter()
             .map(|s| {
                 Ok(NfaRouter {
                     states: s.nfa.states.clone(),
@@ -4107,7 +4447,9 @@ pub struct RoutingPipeline {
 impl RoutingPipeline {
     /// Create a new pipeline with the given bandit and pipeline configs.
     pub fn new(bandit_config: BanditConfig, pipeline_config: PipelineConfig) -> Self {
-        let contextual = pipeline_config.discovery.as_ref()
+        let contextual = pipeline_config
+            .discovery
+            .as_ref()
             .map(|dc| ContextualDiscovery::new(dc.clone()));
         Self {
             bandit: BanditRouter::new(bandit_config),
@@ -4163,7 +4505,10 @@ impl RoutingPipeline {
             if let NfaSymbol::Domain(ref domain) = trans.symbol {
                 // Walk forward from trans.to to find reachable accepting states
                 let reachable = self.reachable_arms_from(nfa, trans.to);
-                domain_arms.entry(domain.clone()).or_default().extend(reachable);
+                domain_arms
+                    .entry(domain.clone())
+                    .or_default()
+                    .extend(reachable);
             }
         }
 
@@ -4270,21 +4615,30 @@ impl RoutingPipeline {
         let mut fallback_model: Option<&str> = None;
 
         // Group models by tier
-        let premium: Vec<&str> = models.iter()
+        let premium: Vec<&str> = models
+            .iter()
             .filter(|(_, t)| matches!(t, ModelTier::Premium))
-            .map(|(m, _)| *m).collect();
-        let standard: Vec<&str> = models.iter()
+            .map(|(m, _)| *m)
+            .collect();
+        let standard: Vec<&str> = models
+            .iter()
             .filter(|(_, t)| matches!(t, ModelTier::Standard))
-            .map(|(m, _)| *m).collect();
-        let economy: Vec<&str> = models.iter()
+            .map(|(m, _)| *m)
+            .collect();
+        let economy: Vec<&str> = models
+            .iter()
             .filter(|(_, t)| matches!(t, ModelTier::Economy))
-            .map(|(m, _)| *m).collect();
+            .map(|(m, _)| *m)
+            .collect();
 
         // Premium → code + high complexity
         for model in &premium {
             builder = builder
                 .rule(&format!("{}_code", model))
-                .when(NfaSymbol::BoolFeature { name: "has_code".into(), value: true })
+                .when(NfaSymbol::BoolFeature {
+                    name: "has_code".into(),
+                    value: true,
+                })
                 .route_to(model)
                 .priority(priority)
                 .done();
@@ -4292,7 +4646,10 @@ impl RoutingPipeline {
 
             builder = builder
                 .rule(&format!("{}_complex", model))
-                .when(NfaSymbol::ComplexityRange { low_pct: 70, high_pct: 100 })
+                .when(NfaSymbol::ComplexityRange {
+                    low_pct: 70,
+                    high_pct: 100,
+                })
                 .route_to(model)
                 .priority(priority)
                 .done();
@@ -4303,7 +4660,10 @@ impl RoutingPipeline {
         for model in &standard {
             builder = builder
                 .rule(&format!("{}_mid", model))
-                .when(NfaSymbol::ComplexityRange { low_pct: 30, high_pct: 70 })
+                .when(NfaSymbol::ComplexityRange {
+                    low_pct: 30,
+                    high_pct: 70,
+                })
                 .route_to(model)
                 .priority(priority)
                 .done();
@@ -4314,7 +4674,10 @@ impl RoutingPipeline {
         for model in &economy {
             builder = builder
                 .rule(&format!("{}_simple", model))
-                .when(NfaSymbol::ComplexityRange { low_pct: 0, high_pct: 30 })
+                .when(NfaSymbol::ComplexityRange {
+                    low_pct: 0,
+                    high_pct: 30,
+                })
                 .route_to(model)
                 .priority(priority)
                 .done();
@@ -4346,7 +4709,10 @@ impl RoutingPipeline {
     /// Route a query through the pipeline.
     ///
     /// Uses the compiled DFA if available, otherwise falls back to the bandit.
-    pub fn route(&mut self, features: &QueryFeatures) -> Result<RoutingOutcome, AdvancedRoutingError> {
+    pub fn route(
+        &mut self,
+        features: &QueryFeatures,
+    ) -> Result<RoutingOutcome, AdvancedRoutingError> {
         // Try DFA first
         if let Some(ref dfa) = self.active_dfa {
             match dfa.route(features) {
@@ -4356,7 +4722,11 @@ impl RoutingPipeline {
         }
 
         // Fallback: bandit
-        let task_type = if features.domain.is_empty() { None } else { Some(features.domain.as_str()) };
+        let task_type = if features.domain.is_empty() {
+            None
+        } else {
+            Some(features.domain.as_str())
+        };
         self.bandit.select(task_type)
     }
 
@@ -4447,7 +4817,8 @@ impl RoutingPipeline {
             }
         }
         // Fall through to bandit with preferences
-        self.bandit.select_with_preferences(Some(&features.domain), prefs)
+        self.bandit
+            .select_with_preferences(Some(&features.domain), prefs)
     }
 
     /// Record outcome with preferences + contextual discovery.
@@ -4527,32 +4898,34 @@ impl RoutingPipeline {
     /// Serialize the pipeline state to JSON.
     pub fn to_json(&self) -> Result<String, AdvancedRoutingError> {
         let snapshot = self.export_snapshot();
-        serde_json::to_string_pretty(&snapshot).map_err(|e| AdvancedRoutingError::SerializationFailed {
-            format: "JSON".to_string(),
-            reason: e.to_string(),
+        serde_json::to_string_pretty(&snapshot).map_err(|e| {
+            AdvancedRoutingError::SerializationFailed {
+                format: "JSON".to_string(),
+                reason: e.to_string(),
+            }
         })
     }
 
     /// Restore a pipeline from JSON.
     pub fn from_json(json: &str) -> Result<Self, AdvancedRoutingError> {
-        let snapshot: PipelineSnapshot = serde_json::from_str(json).map_err(|e| {
-            AdvancedRoutingError::SerializationFailed {
+        let snapshot: PipelineSnapshot =
+            serde_json::from_str(json).map_err(|e| AdvancedRoutingError::SerializationFailed {
                 format: "JSON".to_string(),
                 reason: e.to_string(),
-            }
-        })?;
+            })?;
         if snapshot.version != PIPELINE_SNAPSHOT_VERSION {
             return Err(AdvancedRoutingError::IncompatibleVersion {
                 expected: PIPELINE_SNAPSHOT_VERSION,
                 found: snapshot.version,
             });
         }
-        let bandit = BanditRouter::from_json(&serde_json::to_string(&snapshot.bandit).map_err(|e| {
-            AdvancedRoutingError::SerializationFailed {
-                format: "JSON".to_string(),
-                reason: e.to_string(),
-            }
-        })?)?;
+        let bandit =
+            BanditRouter::from_json(&serde_json::to_string(&snapshot.bandit).map_err(|e| {
+                AdvancedRoutingError::SerializationFailed {
+                    format: "JSON".to_string(),
+                    reason: e.to_string(),
+                }
+            })?)?;
         let source_nfa = if let Some(nfa_snap) = snapshot.nfa {
             let nfa = NfaRouter {
                 states: nfa_snap.states,
@@ -4563,7 +4936,8 @@ impl RoutingPipeline {
         } else {
             None
         };
-        let active_dfa = source_nfa.as_ref()
+        let active_dfa = source_nfa
+            .as_ref()
             .and_then(|nfa| NfaDfaCompiler::compile(nfa).ok())
             .map(|mut dfa| {
                 if snapshot.config.auto_minimize {
@@ -4572,7 +4946,10 @@ impl RoutingPipeline {
                 dfa
             });
 
-        let contextual = snapshot.config.discovery.as_ref()
+        let contextual = snapshot
+            .config
+            .discovery
+            .as_ref()
             .map(|dc| ContextualDiscovery::new(dc.clone()));
 
         Ok(Self {
@@ -4626,25 +5003,41 @@ pub fn register_routing_tools(
     // --- routing.get_stats ---
     let p = pipeline.clone();
     server.register_tool(
-        McpTool::new("routing.get_stats", "Get bandit routing statistics: arms, pulls, rewards per task type")
-            .with_property("task_type", "string", "Optional task type to filter (omit for global)", false),
+        McpTool::new(
+            "routing.get_stats",
+            "Get bandit routing statistics: arms, pulls, rewards per task type",
+        )
+        .with_property(
+            "task_type",
+            "string",
+            "Optional task type to filter (omit for global)",
+            false,
+        ),
         move |args| {
             let pipeline = p.lock().map_err(|e| e.to_string())?;
             let bandit = pipeline.bandit();
 
             let task_type = args.get("task_type").and_then(|v| v.as_str());
 
-            let arms: Vec<serde_json::Value> = bandit.all_arms_vec(task_type).iter().map(|arm| {
-                let mean = if arm.pull_count > 0 { arm.total_reward / arm.pull_count as f64 } else { 0.0 };
-                serde_json::json!({
-                    "id": arm.id,
-                    "pull_count": arm.pull_count,
-                    "total_reward": arm.total_reward,
-                    "mean_reward": mean,
-                    "alpha": arm.params.alpha,
-                    "beta": arm.params.beta,
+            let arms: Vec<serde_json::Value> = bandit
+                .all_arms_vec(task_type)
+                .iter()
+                .map(|arm| {
+                    let mean = if arm.pull_count > 0 {
+                        arm.total_reward / arm.pull_count as f64
+                    } else {
+                        0.0
+                    };
+                    serde_json::json!({
+                        "id": arm.id,
+                        "pull_count": arm.pull_count,
+                        "total_reward": arm.total_reward,
+                        "mean_reward": mean,
+                        "alpha": arm.params.alpha,
+                        "beta": arm.params.beta,
+                    })
                 })
-            }).collect();
+                .collect();
 
             let task_types = bandit.task_types();
 
@@ -4663,12 +5056,19 @@ pub fn register_routing_tools(
     server.register_tool(
         McpTool::new("routing.add_arm", "Add a model arm to the bandit router")
             .with_property("arm_id", "string", "Model identifier to add", true)
-            .with_property("task_type", "string", "Task type (omit for global arm)", false)
+            .with_property(
+                "task_type",
+                "string",
+                "Task type (omit for global arm)",
+                false,
+            )
             .with_property("alpha", "number", "Initial alpha prior (optional)", false)
             .with_property("beta", "number", "Initial beta prior (optional)", false),
         move |args| {
             let mut pipeline = p.lock().map_err(|e| e.to_string())?;
-            let arm_id = args.get("arm_id").and_then(|v| v.as_str())
+            let arm_id = args
+                .get("arm_id")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing required parameter: arm_id")?;
 
             let task_type = args.get("task_type").and_then(|v| v.as_str());
@@ -4699,12 +5099,22 @@ pub fn register_routing_tools(
     // --- routing.remove_arm ---
     let p = pipeline.clone();
     server.register_tool(
-        McpTool::new("routing.remove_arm", "Remove a model arm from the bandit router")
-            .with_property("arm_id", "string", "Model identifier to remove", true)
-            .with_property("task_type", "string", "Task type (omit to remove from global)", false),
+        McpTool::new(
+            "routing.remove_arm",
+            "Remove a model arm from the bandit router",
+        )
+        .with_property("arm_id", "string", "Model identifier to remove", true)
+        .with_property(
+            "task_type",
+            "string",
+            "Task type (omit to remove from global)",
+            false,
+        ),
         move |args| {
             let mut pipeline = p.lock().map_err(|e| e.to_string())?;
-            let arm_id = args.get("arm_id").and_then(|v| v.as_str())
+            let arm_id = args
+                .get("arm_id")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing required parameter: arm_id")?;
 
             let task_type = args.get("task_type").and_then(|v| v.as_str());
@@ -4721,22 +5131,43 @@ pub fn register_routing_tools(
     // --- routing.warm_start ---
     let p = pipeline.clone();
     server.register_tool(
-        McpTool::new("routing.warm_start", "Set priors for a bandit arm to influence routing")
-            .with_property("arm_id", "string", "Model identifier", true)
-            .with_property("alpha", "number", "Alpha (success) prior — higher means more preferred", true)
-            .with_property("beta", "number", "Beta (failure) prior — higher means less preferred", true)
-            .with_property("task_type", "string", "Task type (omit for global)", false),
+        McpTool::new(
+            "routing.warm_start",
+            "Set priors for a bandit arm to influence routing",
+        )
+        .with_property("arm_id", "string", "Model identifier", true)
+        .with_property(
+            "alpha",
+            "number",
+            "Alpha (success) prior — higher means more preferred",
+            true,
+        )
+        .with_property(
+            "beta",
+            "number",
+            "Beta (failure) prior — higher means less preferred",
+            true,
+        )
+        .with_property("task_type", "string", "Task type (omit for global)", false),
         move |args| {
             let mut pipeline = p.lock().map_err(|e| e.to_string())?;
-            let arm_id = args.get("arm_id").and_then(|v| v.as_str())
+            let arm_id = args
+                .get("arm_id")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing required parameter: arm_id")?;
-            let alpha = args.get("alpha").and_then(|v| v.as_f64())
+            let alpha = args
+                .get("alpha")
+                .and_then(|v| v.as_f64())
                 .ok_or("Missing required parameter: alpha")?;
-            let beta = args.get("beta").and_then(|v| v.as_f64())
+            let beta = args
+                .get("beta")
+                .and_then(|v| v.as_f64())
                 .ok_or("Missing required parameter: beta")?;
 
             match args.get("task_type").and_then(|v| v.as_str()) {
-                Some(tt) => pipeline.bandit_mut().warm_start_for_task(tt, arm_id, alpha, beta),
+                Some(tt) => pipeline
+                    .bandit_mut()
+                    .warm_start_for_task(tt, arm_id, alpha, beta),
                 None => pipeline.bandit_mut().warm_start(arm_id, alpha, beta),
             }
 
@@ -4752,18 +5183,40 @@ pub fn register_routing_tools(
     // --- routing.record_outcome ---
     let p = pipeline.clone();
     server.register_tool(
-        McpTool::new("routing.record_outcome", "Record a feedback outcome for a model arm")
-            .with_property("arm_id", "string", "Model that was used", true)
-            .with_property("success", "boolean", "Whether the response was successful", true)
-            .with_property("quality", "number", "Quality score 0.0-1.0 (optional, more precise than success)", false)
-            .with_property("task_type", "string", "Task type (optional)", false)
-            .with_property("latency_ms", "number", "Response latency in ms (optional)", false)
-            .with_property("cost", "number", "Cost of the call (optional)", false),
+        McpTool::new(
+            "routing.record_outcome",
+            "Record a feedback outcome for a model arm",
+        )
+        .with_property("arm_id", "string", "Model that was used", true)
+        .with_property(
+            "success",
+            "boolean",
+            "Whether the response was successful",
+            true,
+        )
+        .with_property(
+            "quality",
+            "number",
+            "Quality score 0.0-1.0 (optional, more precise than success)",
+            false,
+        )
+        .with_property("task_type", "string", "Task type (optional)", false)
+        .with_property(
+            "latency_ms",
+            "number",
+            "Response latency in ms (optional)",
+            false,
+        )
+        .with_property("cost", "number", "Cost of the call (optional)", false),
         move |args| {
             let mut pipeline = p.lock().map_err(|e| e.to_string())?;
-            let arm_id = args.get("arm_id").and_then(|v| v.as_str())
+            let arm_id = args
+                .get("arm_id")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing required parameter: arm_id")?;
-            let success = args.get("success").and_then(|v| v.as_bool())
+            let success = args
+                .get("success")
+                .and_then(|v| v.as_bool())
                 .ok_or("Missing required parameter: success")?;
 
             let feedback = ArmFeedback {
@@ -4772,7 +5225,10 @@ pub fn register_routing_tools(
                 quality: args.get("quality").and_then(|v| v.as_f64()),
                 latency_ms: args.get("latency_ms").and_then(|v| v.as_u64()),
                 cost: args.get("cost").and_then(|v| v.as_f64()),
-                task_type: args.get("task_type").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                task_type: args
+                    .get("task_type")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
             };
 
             pipeline.record_outcome(&feedback);
@@ -4789,17 +5245,41 @@ pub fn register_routing_tools(
     let p = pipeline.clone();
     server.register_tool(
         McpTool::new("routing.add_rule", "Add a routing rule and recompile DFA")
-            .with_property("domain", "string", "Domain to match (e.g. 'code', 'math')", false)
-            .with_property("min_complexity", "number", "Minimum complexity % 0-100 (optional)", false)
-            .with_property("max_complexity", "number", "Maximum complexity % 0-100 (optional)", false)
-            .with_property("has_code", "boolean", "Match queries with code (optional)", false)
+            .with_property(
+                "domain",
+                "string",
+                "Domain to match (e.g. 'code', 'math')",
+                false,
+            )
+            .with_property(
+                "min_complexity",
+                "number",
+                "Minimum complexity % 0-100 (optional)",
+                false,
+            )
+            .with_property(
+                "max_complexity",
+                "number",
+                "Maximum complexity % 0-100 (optional)",
+                false,
+            )
+            .with_property(
+                "has_code",
+                "boolean",
+                "Match queries with code (optional)",
+                false,
+            )
             .with_property("arm_id", "string", "Model to route to", true)
             .with_property("priority", "number", "Rule priority (higher wins)", true),
         move |args| {
             let mut pipeline = p.lock().map_err(|e| e.to_string())?;
-            let arm_id = args.get("arm_id").and_then(|v| v.as_str())
+            let arm_id = args
+                .get("arm_id")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing required parameter: arm_id")?;
-            let priority = args.get("priority").and_then(|v| v.as_u64())
+            let priority = args
+                .get("priority")
+                .and_then(|v| v.as_u64())
                 .ok_or("Missing required parameter: priority")? as u32;
 
             // Build conditions from provided parameters
@@ -4809,8 +5289,14 @@ pub fn register_routing_tools(
                 conditions.push(NfaSymbol::Domain(domain.to_string()));
             }
 
-            let min_c = args.get("min_complexity").and_then(|v| v.as_u64()).map(|v| v as u32);
-            let max_c = args.get("max_complexity").and_then(|v| v.as_u64()).map(|v| v as u32);
+            let min_c = args
+                .get("min_complexity")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32);
+            let max_c = args
+                .get("max_complexity")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32);
             if min_c.is_some() || max_c.is_some() {
                 conditions.push(NfaSymbol::ComplexityRange {
                     low_pct: min_c.unwrap_or(0),
@@ -4826,7 +5312,10 @@ pub fn register_routing_tools(
             }
 
             // Get or create source NFA, add the new rule, recompile
-            let mut nfa = pipeline.source_nfa().cloned().unwrap_or_else(NfaRouter::new);
+            let mut nfa = pipeline
+                .source_nfa()
+                .cloned()
+                .unwrap_or_else(NfaRouter::new);
 
             // If NFA is empty, create a start state
             if nfa.state_count() == 0 {
@@ -4843,11 +5332,8 @@ pub fn register_routing_tools(
                 for (i, cond) in conditions.iter().enumerate() {
                     let is_last = i == conditions.len() - 1;
                     if is_last {
-                        let accept = nfa.add_state(
-                            &format!("rule_{}", arm_id),
-                            Some(arm_id),
-                            priority,
-                        );
+                        let accept =
+                            nfa.add_state(&format!("rule_{}", arm_id), Some(arm_id), priority);
                         nfa.add_transition(prev, cond.clone(), accept);
                     } else {
                         let inter = nfa.add_state(&format!("rule_{}_{}", arm_id, i), None, 0);
@@ -4877,7 +5363,10 @@ pub fn register_routing_tools(
     // --- routing.force_resynthesize ---
     let p = pipeline.clone();
     server.register_tool(
-        McpTool::new("routing.force_resynthesize", "Force re-synthesis of NFA/DFA from bandit data"),
+        McpTool::new(
+            "routing.force_resynthesize",
+            "Force re-synthesis of NFA/DFA from bandit data",
+        ),
         move |_args| {
             let mut pipeline = p.lock().map_err(|e| e.to_string())?;
             pipeline.force_resynthesize().map_err(|e| e.to_string())?;
@@ -4907,11 +5396,17 @@ pub fn register_routing_tools(
     // --- routing.import ---
     let p = pipeline.clone();
     server.register_tool(
-        McpTool::new("routing.import", "Import pipeline state from JSON")
-            .with_property("pipeline_json", "string", "Pipeline JSON (from routing.export)", true),
+        McpTool::new("routing.import", "Import pipeline state from JSON").with_property(
+            "pipeline_json",
+            "string",
+            "Pipeline JSON (from routing.export)",
+            true,
+        ),
         move |args| {
             let mut pipeline = p.lock().map_err(|e| e.to_string())?;
-            let json = args.get("pipeline_json").and_then(|v| v.as_str())
+            let json = args
+                .get("pipeline_json")
+                .and_then(|v| v.as_str())
                 .ok_or("Missing required parameter: pipeline_json")?;
 
             let restored = RoutingPipeline::from_json(json).map_err(|e| e.to_string())?;
@@ -4991,7 +5486,9 @@ mod tests {
 
     #[test]
     fn test_error_display() {
-        let e = AdvancedRoutingError::ArmNotFound { arm_id: "test".to_string() };
+        let e = AdvancedRoutingError::ArmNotFound {
+            arm_id: "test".to_string(),
+        };
         assert!(format!("{}", e).contains("test"));
 
         let e = AdvancedRoutingError::CycleDetected;
@@ -5003,7 +5500,9 @@ mod tests {
 
     #[test]
     fn test_error_suggestion() {
-        let e = AdvancedRoutingError::ArmNotFound { arm_id: "x".to_string() };
+        let e = AdvancedRoutingError::ArmNotFound {
+            arm_id: "x".to_string(),
+        };
         assert!(e.suggestion().is_some());
 
         let e = AdvancedRoutingError::CycleDetected;
@@ -5012,8 +5511,15 @@ mod tests {
 
     #[test]
     fn test_error_is_recoverable() {
-        assert!(AdvancedRoutingError::NoRoutingPath { query: "q".to_string(), reason: "r".to_string() }.is_recoverable());
-        assert!(AdvancedRoutingError::ArmNotFound { arm_id: "a".to_string() }.is_recoverable());
+        assert!(AdvancedRoutingError::NoRoutingPath {
+            query: "q".to_string(),
+            reason: "r".to_string()
+        }
+        .is_recoverable());
+        assert!(AdvancedRoutingError::ArmNotFound {
+            arm_id: "a".to_string()
+        }
+        .is_recoverable());
         assert!(!AdvancedRoutingError::CycleDetected.is_recoverable());
         assert!(!AdvancedRoutingError::EmptyEnsemble.is_recoverable());
     }
@@ -5075,7 +5581,10 @@ mod tests {
 
     #[test]
     fn test_ucb1_selects_unpulled_first() {
-        let config = BanditConfig { strategy: BanditStrategy::Ucb1, ..Default::default() };
+        let config = BanditConfig {
+            strategy: BanditStrategy::Ucb1,
+            ..Default::default()
+        };
         let mut bandit = BanditRouter::new(config);
         bandit.add_arm("pulled");
         bandit.add_arm("unpulled");
@@ -5085,7 +5594,9 @@ mod tests {
             arm_id: "pulled".to_string(),
             success: true,
             quality: Some(0.8),
-            latency_ms: None, cost: None, task_type: None,
+            latency_ms: None,
+            cost: None,
+            task_type: None,
         });
 
         // UCB1 should select "unpulled" first (infinity score)
@@ -5117,7 +5628,9 @@ mod tests {
             arm_id: "model-a".to_string(),
             success: true,
             quality: None,
-            latency_ms: None, cost: None, task_type: None,
+            latency_ms: None,
+            cost: None,
+            task_type: None,
         });
 
         let after = bandit.arm_stats("model-a").unwrap();
@@ -5145,7 +5658,8 @@ mod tests {
             arm_id: "gpt-4".to_string(),
             success: true,
             quality: Some(0.9),
-            latency_ms: None, cost: None,
+            latency_ms: None,
+            cost: None,
             task_type: Some("coding".to_string()),
         });
 
@@ -5159,7 +5673,11 @@ mod tests {
         let mut bandit = BanditRouter::with_seed(BanditConfig::default(), 99);
         for _ in 0..100 {
             let sample = bandit.sample_beta(2.0, 5.0);
-            assert!(sample >= 0.0 && sample <= 1.0, "Sample {} out of [0,1]", sample);
+            assert!(
+                sample >= 0.0 && sample <= 1.0,
+                "Sample {} out of [0,1]",
+                sample
+            );
         }
     }
 
@@ -5181,15 +5699,23 @@ mod tests {
 
         // First outcome
         bandit.record_outcome(&ArmFeedback {
-            arm_id: "a".to_string(), success: true, quality: Some(1.0),
-            latency_ms: None, cost: None, task_type: None,
+            arm_id: "a".to_string(),
+            success: true,
+            quality: Some(1.0),
+            latency_ms: None,
+            cost: None,
+            task_type: None,
         });
         let alpha1 = bandit.arm_stats("a").unwrap().params.alpha;
 
         // Second outcome with decay
         bandit.record_outcome(&ArmFeedback {
-            arm_id: "a".to_string(), success: true, quality: Some(1.0),
-            latency_ms: None, cost: None, task_type: None,
+            arm_id: "a".to_string(),
+            success: true,
+            quality: Some(1.0),
+            latency_ms: None,
+            cost: None,
+            task_type: None,
         });
         let alpha2 = bandit.arm_stats("a").unwrap().params.alpha;
 
@@ -5304,8 +5830,22 @@ mod tests {
         let s0 = nfa.add_state("start", None, 0);
         let s1 = nfa.add_state("simple", Some("fast-model"), 1);
         let s2 = nfa.add_state("complex", Some("powerful-model"), 2);
-        nfa.add_transition(s0, NfaSymbol::ComplexityRange { low_pct: 0, high_pct: 50 }, s1);
-        nfa.add_transition(s0, NfaSymbol::ComplexityRange { low_pct: 50, high_pct: 100 }, s2);
+        nfa.add_transition(
+            s0,
+            NfaSymbol::ComplexityRange {
+                low_pct: 0,
+                high_pct: 50,
+            },
+            s1,
+        );
+        nfa.add_transition(
+            s0,
+            NfaSymbol::ComplexityRange {
+                low_pct: 50,
+                high_pct: 100,
+            },
+            s2,
+        );
 
         let simple = test_features("general", 0.3); // 30% -> fast
         assert_eq!(nfa.route(&simple).unwrap().selected_arm, "fast-model");
@@ -5330,7 +5870,14 @@ mod tests {
         let mut nfa = NfaRouter::new();
         let s0 = nfa.add_state("start", None, 0);
         let s1 = nfa.add_state("code_accept", Some("code-model"), 1);
-        nfa.add_transition(s0, NfaSymbol::BoolFeature { name: "has_code".to_string(), value: true }, s1);
+        nfa.add_transition(
+            s0,
+            NfaSymbol::BoolFeature {
+                name: "has_code".to_string(),
+                value: true,
+            },
+            s1,
+        );
 
         let features = test_features_code();
         assert_eq!(nfa.route(&features).unwrap().selected_arm, "code-model");
@@ -5372,7 +5919,12 @@ mod tests {
     #[test]
     fn test_dfa_route_single_state() {
         let dfa = DfaRouter {
-            states: vec![DfaState { id: 0, label: "start".to_string(), accepting_arm: Some("model".to_string()), priority: 1 }],
+            states: vec![DfaState {
+                id: 0,
+                label: "start".to_string(),
+                accepting_arm: Some("model".to_string()),
+                priority: 1,
+            }],
             start_state: 0,
             transition_table: HashMap::new(),
         };
@@ -5387,8 +5939,18 @@ mod tests {
 
         let dfa = DfaRouter {
             states: vec![
-                DfaState { id: 0, label: "start".to_string(), accepting_arm: None, priority: 0 },
-                DfaState { id: 1, label: "code".to_string(), accepting_arm: Some("code-model".to_string()), priority: 1 },
+                DfaState {
+                    id: 0,
+                    label: "start".to_string(),
+                    accepting_arm: None,
+                    priority: 0,
+                },
+                DfaState {
+                    id: 1,
+                    label: "code".to_string(),
+                    accepting_arm: Some("code-model".to_string()),
+                    priority: 1,
+                },
             ],
             start_state: 0,
             transition_table: table,
@@ -5401,7 +5963,12 @@ mod tests {
     #[test]
     fn test_dfa_no_accepting_state() {
         let dfa = DfaRouter {
-            states: vec![DfaState { id: 0, label: "start".to_string(), accepting_arm: None, priority: 0 }],
+            states: vec![DfaState {
+                id: 0,
+                label: "start".to_string(),
+                accepting_arm: None,
+                priority: 0,
+            }],
             start_state: 0,
             transition_table: HashMap::new(),
         };
@@ -5415,8 +5982,18 @@ mod tests {
 
         let dfa = DfaRouter {
             states: vec![
-                DfaState { id: 0, label: "s0".to_string(), accepting_arm: None, priority: 0 },
-                DfaState { id: 1, label: "s1".to_string(), accepting_arm: Some("x".to_string()), priority: 1 },
+                DfaState {
+                    id: 0,
+                    label: "s0".to_string(),
+                    accepting_arm: None,
+                    priority: 0,
+                },
+                DfaState {
+                    id: 1,
+                    label: "s1".to_string(),
+                    accepting_arm: Some("x".to_string()),
+                    priority: 1,
+                },
             ],
             start_state: 0,
             transition_table: table,
@@ -5435,8 +6012,18 @@ mod tests {
 
         let mut dfa = DfaRouter {
             states: vec![
-                DfaState { id: 0, label: "s0".to_string(), accepting_arm: None, priority: 0 },
-                DfaState { id: 1, label: "s1".to_string(), accepting_arm: Some("x".to_string()), priority: 1 },
+                DfaState {
+                    id: 0,
+                    label: "s0".to_string(),
+                    accepting_arm: None,
+                    priority: 0,
+                },
+                DfaState {
+                    id: 1,
+                    label: "s1".to_string(),
+                    accepting_arm: Some("x".to_string()),
+                    priority: 1,
+                },
             ],
             start_state: 0,
             transition_table: table,
@@ -5451,13 +6038,34 @@ mod tests {
     fn test_dfa_minimize_equivalent_states() {
         // Two accepting states with same arm/priority and same transitions -> can merge
         let mut table = HashMap::new();
-        table.insert(0, vec![(NfaSymbol::Domain("a".to_string()), 1), (NfaSymbol::Domain("b".to_string()), 2)]);
+        table.insert(
+            0,
+            vec![
+                (NfaSymbol::Domain("a".to_string()), 1),
+                (NfaSymbol::Domain("b".to_string()), 2),
+            ],
+        );
 
         let mut dfa = DfaRouter {
             states: vec![
-                DfaState { id: 0, label: "s0".to_string(), accepting_arm: None, priority: 0 },
-                DfaState { id: 1, label: "s1".to_string(), accepting_arm: Some("x".to_string()), priority: 1 },
-                DfaState { id: 2, label: "s2".to_string(), accepting_arm: Some("x".to_string()), priority: 1 },
+                DfaState {
+                    id: 0,
+                    label: "s0".to_string(),
+                    accepting_arm: None,
+                    priority: 0,
+                },
+                DfaState {
+                    id: 1,
+                    label: "s1".to_string(),
+                    accepting_arm: Some("x".to_string()),
+                    priority: 1,
+                },
+                DfaState {
+                    id: 2,
+                    label: "s2".to_string(),
+                    accepting_arm: Some("x".to_string()),
+                    priority: 1,
+                },
             ],
             start_state: 0,
             transition_table: table,
@@ -5471,8 +6079,18 @@ mod tests {
     fn test_dfa_state_count() {
         let dfa = DfaRouter {
             states: vec![
-                DfaState { id: 0, label: "a".to_string(), accepting_arm: None, priority: 0 },
-                DfaState { id: 1, label: "b".to_string(), accepting_arm: Some("x".to_string()), priority: 1 },
+                DfaState {
+                    id: 0,
+                    label: "a".to_string(),
+                    accepting_arm: None,
+                    priority: 0,
+                },
+                DfaState {
+                    id: 1,
+                    label: "b".to_string(),
+                    accepting_arm: Some("x".to_string()),
+                    priority: 1,
+                },
             ],
             start_state: 0,
             transition_table: HashMap::new(),
@@ -5483,11 +6101,24 @@ mod tests {
     #[test]
     fn test_dfa_transition_count() {
         let mut table = HashMap::new();
-        table.insert(0, vec![(NfaSymbol::Any, 1), (NfaSymbol::Domain("x".to_string()), 1)]);
+        table.insert(
+            0,
+            vec![(NfaSymbol::Any, 1), (NfaSymbol::Domain("x".to_string()), 1)],
+        );
         let dfa = DfaRouter {
             states: vec![
-                DfaState { id: 0, label: "a".to_string(), accepting_arm: None, priority: 0 },
-                DfaState { id: 1, label: "b".to_string(), accepting_arm: Some("m".to_string()), priority: 1 },
+                DfaState {
+                    id: 0,
+                    label: "a".to_string(),
+                    accepting_arm: None,
+                    priority: 0,
+                },
+                DfaState {
+                    id: 1,
+                    label: "b".to_string(),
+                    accepting_arm: Some("m".to_string()),
+                    priority: 1,
+                },
             ],
             start_state: 0,
             transition_table: table,
@@ -5508,7 +6139,12 @@ mod tests {
     #[test]
     fn test_dfa_route_outcome_fields() {
         let dfa = DfaRouter {
-            states: vec![DfaState { id: 0, label: "s0".to_string(), accepting_arm: Some("m".to_string()), priority: 1 }],
+            states: vec![DfaState {
+                id: 0,
+                label: "s0".to_string(),
+                accepting_arm: Some("m".to_string()),
+                priority: 1,
+            }],
             start_state: 0,
             transition_table: HashMap::new(),
         };
@@ -5564,7 +6200,9 @@ mod tests {
         nfa.add_transition(s0, NfaSymbol::Any, s1);
 
         let dfa = NfaDfaCompiler::compile(&nfa).unwrap();
-        let accepting: Vec<_> = dfa.states.iter()
+        let accepting: Vec<_> = dfa
+            .states
+            .iter()
             .filter(|s| s.accepting_arm.is_some())
             .collect();
         assert!(!accepting.is_empty());
@@ -5637,8 +6275,22 @@ mod tests {
 
         nfa.add_transition(s0, NfaSymbol::Domain("coding".to_string()), s1);
         nfa.add_transition(s0, NfaSymbol::Domain("math".to_string()), s2);
-        nfa.add_transition(s1, NfaSymbol::ComplexityRange { low_pct: 50, high_pct: 100 }, s3);
-        nfa.add_transition(s1, NfaSymbol::ComplexityRange { low_pct: 0, high_pct: 50 }, s4);
+        nfa.add_transition(
+            s1,
+            NfaSymbol::ComplexityRange {
+                low_pct: 50,
+                high_pct: 100,
+            },
+            s3,
+        );
+        nfa.add_transition(
+            s1,
+            NfaSymbol::ComplexityRange {
+                low_pct: 0,
+                high_pct: 50,
+            },
+            s4,
+        );
         nfa.add_transition(s2, NfaSymbol::Epsilon, s3);
         nfa.add_transition(s0, NfaSymbol::Epsilon, s1);
 
@@ -5657,9 +6309,12 @@ mod tests {
         dag.add_node(RoutingDagNode {
             id: "root".to_string(),
             label: "Root".to_string(),
-            node_type: RoutingDagNodeType::Leaf { arm_id: "model-a".to_string() },
+            node_type: RoutingDagNodeType::Leaf {
+                arm_id: "model-a".to_string(),
+            },
             successors: Vec::new(),
-        }).unwrap();
+        })
+        .unwrap();
 
         let features = test_features("general", 0.5);
         let result = dag.route(&features).unwrap();
@@ -5680,17 +6335,26 @@ mod tests {
                 low_branch: "cheap".to_string(),
             },
             successors: vec!["powerful".to_string(), "cheap".to_string()],
-        }).unwrap();
+        })
+        .unwrap();
         dag.add_node(RoutingDagNode {
-            id: "powerful".to_string(), label: "Powerful".to_string(),
-            node_type: RoutingDagNodeType::Leaf { arm_id: "gpt-4".to_string() },
+            id: "powerful".to_string(),
+            label: "Powerful".to_string(),
+            node_type: RoutingDagNodeType::Leaf {
+                arm_id: "gpt-4".to_string(),
+            },
             successors: Vec::new(),
-        }).unwrap();
+        })
+        .unwrap();
         dag.add_node(RoutingDagNode {
-            id: "cheap".to_string(), label: "Cheap".to_string(),
-            node_type: RoutingDagNodeType::Leaf { arm_id: "gpt-3.5".to_string() },
+            id: "cheap".to_string(),
+            label: "Cheap".to_string(),
+            node_type: RoutingDagNodeType::Leaf {
+                arm_id: "gpt-3.5".to_string(),
+            },
             successors: Vec::new(),
-        }).unwrap();
+        })
+        .unwrap();
 
         let simple = test_features("general", 0.3);
         assert_eq!(dag.route(&simple).unwrap().selected_arm, "gpt-3.5");
@@ -5703,15 +6367,21 @@ mod tests {
     fn test_dag_bandit_node() {
         let mut dag = RoutingDag::new("bandit_root");
         dag.add_node(RoutingDagNode {
-            id: "bandit_root".to_string(), label: "Bandit".to_string(),
+            id: "bandit_root".to_string(),
+            label: "Bandit".to_string(),
             node_type: RoutingDagNodeType::Bandit(BanditConfig::default()),
             successors: vec!["leaf".to_string()],
-        }).unwrap();
+        })
+        .unwrap();
         dag.add_node(RoutingDagNode {
-            id: "leaf".to_string(), label: "Leaf".to_string(),
-            node_type: RoutingDagNodeType::Leaf { arm_id: "final-model".to_string() },
+            id: "leaf".to_string(),
+            label: "Leaf".to_string(),
+            node_type: RoutingDagNodeType::Leaf {
+                arm_id: "final-model".to_string(),
+            },
             successors: Vec::new(),
-        }).unwrap();
+        })
+        .unwrap();
 
         let mut bandit = BanditRouter::with_seed(BanditConfig::default(), 42);
         bandit.add_arm("leaf");
@@ -5726,15 +6396,23 @@ mod tests {
     fn test_dag_cycle_detection() {
         let mut dag = RoutingDag::new("a");
         dag.add_node(RoutingDagNode {
-            id: "a".to_string(), label: "A".to_string(),
-            node_type: RoutingDagNodeType::Leaf { arm_id: "x".to_string() },
+            id: "a".to_string(),
+            label: "A".to_string(),
+            node_type: RoutingDagNodeType::Leaf {
+                arm_id: "x".to_string(),
+            },
             successors: vec!["b".to_string()],
-        }).unwrap();
+        })
+        .unwrap();
         dag.add_node(RoutingDagNode {
-            id: "b".to_string(), label: "B".to_string(),
-            node_type: RoutingDagNodeType::Leaf { arm_id: "y".to_string() },
+            id: "b".to_string(),
+            label: "B".to_string(),
+            node_type: RoutingDagNodeType::Leaf {
+                arm_id: "y".to_string(),
+            },
             successors: vec!["a".to_string()],
-        }).unwrap();
+        })
+        .unwrap();
 
         assert!(dag.validate().is_err());
     }
@@ -5742,41 +6420,62 @@ mod tests {
     #[test]
     fn test_dag_node_not_found() {
         let mut dag = RoutingDag::new("nonexistent");
-        assert!(dag.set_bandit("missing", BanditRouter::new(BanditConfig::default())).is_err());
+        assert!(dag
+            .set_bandit("missing", BanditRouter::new(BanditConfig::default()))
+            .is_err());
     }
 
     #[test]
     fn test_dag_topological_order() {
         let mut dag = RoutingDag::new("root");
         dag.add_node(RoutingDagNode {
-            id: "root".to_string(), label: "R".to_string(),
-            node_type: RoutingDagNodeType::Leaf { arm_id: "x".to_string() },
+            id: "root".to_string(),
+            label: "R".to_string(),
+            node_type: RoutingDagNodeType::Leaf {
+                arm_id: "x".to_string(),
+            },
             successors: vec!["child".to_string()],
-        }).unwrap();
+        })
+        .unwrap();
         dag.add_node(RoutingDagNode {
-            id: "child".to_string(), label: "C".to_string(),
-            node_type: RoutingDagNodeType::Leaf { arm_id: "y".to_string() },
+            id: "child".to_string(),
+            label: "C".to_string(),
+            node_type: RoutingDagNodeType::Leaf {
+                arm_id: "y".to_string(),
+            },
             successors: Vec::new(),
-        }).unwrap();
+        })
+        .unwrap();
 
         let order = dag.topological_order().unwrap();
         assert_eq!(order.len(), 2);
-        assert!(order.iter().position(|x| x == "root").unwrap() < order.iter().position(|x| x == "child").unwrap());
+        assert!(
+            order.iter().position(|x| x == "root").unwrap()
+                < order.iter().position(|x| x == "child").unwrap()
+        );
     }
 
     #[test]
     fn test_dag_validate_acyclic() {
         let mut dag = RoutingDag::new("a");
         dag.add_node(RoutingDagNode {
-            id: "a".to_string(), label: "A".to_string(),
-            node_type: RoutingDagNodeType::Leaf { arm_id: "x".to_string() },
+            id: "a".to_string(),
+            label: "A".to_string(),
+            node_type: RoutingDagNodeType::Leaf {
+                arm_id: "x".to_string(),
+            },
             successors: vec!["b".to_string()],
-        }).unwrap();
+        })
+        .unwrap();
         dag.add_node(RoutingDagNode {
-            id: "b".to_string(), label: "B".to_string(),
-            node_type: RoutingDagNodeType::Leaf { arm_id: "y".to_string() },
+            id: "b".to_string(),
+            label: "B".to_string(),
+            node_type: RoutingDagNodeType::Leaf {
+                arm_id: "y".to_string(),
+            },
             successors: Vec::new(),
-        }).unwrap();
+        })
+        .unwrap();
 
         assert!(dag.validate().is_ok());
     }
@@ -5785,18 +6484,27 @@ mod tests {
     fn test_dag_record_outcome() {
         let mut dag = RoutingDag::new("b");
         dag.add_node(RoutingDagNode {
-            id: "b".to_string(), label: "B".to_string(),
+            id: "b".to_string(),
+            label: "B".to_string(),
             node_type: RoutingDagNodeType::Bandit(BanditConfig::default()),
             successors: Vec::new(),
-        }).unwrap();
+        })
+        .unwrap();
         let mut bandit = BanditRouter::new(BanditConfig::default());
         bandit.add_arm("test");
         dag.set_bandit("b", bandit).unwrap();
 
-        dag.record_outcome("b", &ArmFeedback {
-            arm_id: "test".to_string(), success: true, quality: Some(0.9),
-            latency_ms: None, cost: None, task_type: None,
-        });
+        dag.record_outcome(
+            "b",
+            &ArmFeedback {
+                arm_id: "test".to_string(),
+                success: true,
+                quality: Some(0.9),
+                latency_ms: None,
+                cost: None,
+                task_type: None,
+            },
+        );
         // Bandit should have updated
         assert_eq!(dag.bandit_instances["b"].all_arms(None)[0].pull_count, 1);
     }
@@ -5805,23 +6513,35 @@ mod tests {
     fn test_dag_multi_level() {
         let mut dag = RoutingDag::new("gate");
         dag.add_node(RoutingDagNode {
-            id: "gate".to_string(), label: "Gate".to_string(),
+            id: "gate".to_string(),
+            label: "Gate".to_string(),
             node_type: RoutingDagNodeType::RuleBased {
-                feature: "has_code".to_string(), threshold: 0.5,
-                high_branch: "code_leaf".to_string(), low_branch: "gen_leaf".to_string(),
+                feature: "has_code".to_string(),
+                threshold: 0.5,
+                high_branch: "code_leaf".to_string(),
+                low_branch: "gen_leaf".to_string(),
             },
             successors: vec!["code_leaf".to_string(), "gen_leaf".to_string()],
-        }).unwrap();
+        })
+        .unwrap();
         dag.add_node(RoutingDagNode {
-            id: "code_leaf".to_string(), label: "Code".to_string(),
-            node_type: RoutingDagNodeType::Leaf { arm_id: "coder".to_string() },
+            id: "code_leaf".to_string(),
+            label: "Code".to_string(),
+            node_type: RoutingDagNodeType::Leaf {
+                arm_id: "coder".to_string(),
+            },
             successors: Vec::new(),
-        }).unwrap();
+        })
+        .unwrap();
         dag.add_node(RoutingDagNode {
-            id: "gen_leaf".to_string(), label: "General".to_string(),
-            node_type: RoutingDagNodeType::Leaf { arm_id: "general".to_string() },
+            id: "gen_leaf".to_string(),
+            label: "General".to_string(),
+            node_type: RoutingDagNodeType::Leaf {
+                arm_id: "general".to_string(),
+            },
             successors: Vec::new(),
-        }).unwrap();
+        })
+        .unwrap();
 
         let code_f = test_features_code();
         assert_eq!(dag.route(&code_f).unwrap().selected_arm, "coder");
@@ -5837,8 +6557,8 @@ mod tests {
     #[cfg(feature = "eval-suite")]
     mod eval_feedback_tests {
         use super::*;
-        use crate::eval_suite::{ConfigSearchResult, ConfigMeasurement, EvalAgentConfig};
         use crate::eval_suite::ModelIdentifier;
+        use crate::eval_suite::{ConfigMeasurement, ConfigSearchResult, EvalAgentConfig};
 
         fn mock_search_result(quality: f64) -> ConfigSearchResult {
             let mut subtask_quality = HashMap::new();
@@ -5846,11 +6566,14 @@ mod tests {
             subtask_quality.insert("Reasoning".to_string(), quality * 0.9);
 
             let mut subtask_models = HashMap::new();
-            subtask_models.insert("CodeGeneration".to_string(), ModelIdentifier {
-                name: "gpt-4".to_string(),
-                provider: "openai".to_string(),
-                variant: None,
-            });
+            subtask_models.insert(
+                "CodeGeneration".to_string(),
+                ModelIdentifier {
+                    name: "gpt-4".to_string(),
+                    provider: "openai".to_string(),
+                    variant: None,
+                },
+            );
 
             let config = EvalAgentConfig {
                 subtask_models,
@@ -5918,7 +6641,9 @@ mod tests {
         fn test_create_warm_started_bandit() {
             let result = mock_search_result(0.9);
             let bandit = EvalFeedbackMapper::create_warm_started_bandit(
-                &result, BanditConfig::default(), 10.0,
+                &result,
+                BanditConfig::default(),
+                10.0,
             );
             assert!(!bandit.all_arms(Some("CodeGeneration")).is_empty());
         }
@@ -5949,7 +6674,9 @@ mod tests {
         fn test_round_trip_eval_to_bandit() {
             let result = mock_search_result(0.75);
             let mut bandit = EvalFeedbackMapper::create_warm_started_bandit(
-                &result, BanditConfig::default(), 10.0,
+                &result,
+                BanditConfig::default(),
+                10.0,
             );
             // Should be able to select from the warm-started bandit
             let outcome = bandit.select(Some("CodeGeneration"));
@@ -5960,30 +6687,38 @@ mod tests {
         // BANDIT BOOTSTRAPPER TESTS
         // =====================================================================
 
-        use crate::eval_suite::{ComparisonMatrix, SubtaskAnalysis, SubtaskPerformance, Subtask};
+        use crate::eval_suite::{ComparisonMatrix, Subtask, SubtaskAnalysis, SubtaskPerformance};
 
         fn mock_comparison_matrix(n_models: usize) -> ComparisonMatrix {
-            let models: Vec<ModelIdentifier> = (0..n_models).map(|i| {
-                ModelIdentifier {
+            let models: Vec<ModelIdentifier> = (0..n_models)
+                .map(|i| ModelIdentifier {
                     name: format!("model-{}", i),
                     provider: "test".to_string(),
                     variant: None,
-                }
-            }).collect();
+                })
+                .collect();
             let metrics = vec![
-                "accuracy".to_string(), "mean_score".to_string(),
-                "mean_latency_ms".to_string(), "total_cost".to_string(),
+                "accuracy".to_string(),
+                "mean_score".to_string(),
+                "mean_latency_ms".to_string(),
+                "total_cost".to_string(),
             ];
-            let scores: Vec<Vec<f64>> = (0..n_models).map(|i| {
-                let q = 0.5 + 0.1 * i as f64;
-                vec![q, q, 200.0, 0.01 * (i + 1) as f64]
-            }).collect();
+            let scores: Vec<Vec<f64>> = (0..n_models)
+                .map(|i| {
+                    let q = 0.5 + 0.1 * i as f64;
+                    vec![q, q, 200.0, 0.01 * (i + 1) as f64]
+                })
+                .collect();
             let costs: Vec<f64> = (0..n_models).map(|i| 0.01 * (i + 1) as f64).collect();
-            let cost_effectiveness: Vec<f64> = scores.iter().zip(costs.iter())
+            let cost_effectiveness: Vec<f64> = scores
+                .iter()
+                .zip(costs.iter())
                 .map(|(s, c)| if *c > 0.0 { s[1] / c } else { 0.0 })
                 .collect();
             ComparisonMatrix {
-                models, metrics, scores,
+                models,
+                metrics,
+                scores,
                 significance: vec![vec![1.0; n_models]; n_models],
                 elo_ratings: HashMap::new(),
                 costs,
@@ -5994,18 +6729,24 @@ mod tests {
         #[test]
         fn test_bootstrapper_from_empty_matrix() {
             let matrix = ComparisonMatrix {
-                models: vec![], metrics: vec![], scores: vec![],
-                significance: vec![], elo_ratings: HashMap::new(),
-                costs: vec![], cost_effectiveness: vec![],
+                models: vec![],
+                metrics: vec![],
+                scores: vec![],
+                significance: vec![],
+                elo_ratings: HashMap::new(),
+                costs: vec![],
+                cost_effectiveness: vec![],
             };
-            let priors = BanditBootstrapper::from_comparison_matrix(&matrix, &RewardPolicy::default());
+            let priors =
+                BanditBootstrapper::from_comparison_matrix(&matrix, &RewardPolicy::default());
             assert!(priors.is_empty());
         }
 
         #[test]
         fn test_bootstrapper_from_single_model() {
             let matrix = mock_comparison_matrix(1);
-            let priors = BanditBootstrapper::from_comparison_matrix(&matrix, &RewardPolicy::default());
+            let priors =
+                BanditBootstrapper::from_comparison_matrix(&matrix, &RewardPolicy::default());
             assert!(priors.contains_key("global"));
             assert_eq!(priors["global"].len(), 1);
             let arm_id = matrix.models[0].to_string();
@@ -6015,7 +6756,8 @@ mod tests {
         #[test]
         fn test_bootstrapper_from_multiple_models() {
             let matrix = mock_comparison_matrix(3);
-            let priors = BanditBootstrapper::from_comparison_matrix(&matrix, &RewardPolicy::default());
+            let priors =
+                BanditBootstrapper::from_comparison_matrix(&matrix, &RewardPolicy::default());
             assert_eq!(priors["global"].len(), 3);
         }
 
@@ -6023,13 +6765,19 @@ mod tests {
         fn test_bootstrapper_uses_reward_policy_weights() {
             let matrix = mock_comparison_matrix(2);
             let cost_policy = RewardPolicy {
-                quality_weight: 0.1, latency_weight: 0.0, cost_weight: 0.9,
-                latency_ref_ms: 5000.0, cost_ref: 0.1,
+                quality_weight: 0.1,
+                latency_weight: 0.0,
+                cost_weight: 0.9,
+                latency_ref_ms: 5000.0,
+                cost_ref: 0.1,
             };
             let priors_cost = BanditBootstrapper::from_comparison_matrix(&matrix, &cost_policy);
             let qual_policy = RewardPolicy {
-                quality_weight: 0.9, latency_weight: 0.0, cost_weight: 0.1,
-                latency_ref_ms: 5000.0, cost_ref: 0.1,
+                quality_weight: 0.9,
+                latency_weight: 0.0,
+                cost_weight: 0.1,
+                latency_ref_ms: 5000.0,
+                cost_ref: 0.1,
             };
             let priors_qual = BanditBootstrapper::from_comparison_matrix(&matrix, &qual_policy);
             let arm_id = matrix.models[0].to_string();
@@ -6112,18 +6860,26 @@ mod tests {
             let analysis = mock_subtask_analysis();
             let priors = BanditBootstrapper::from_subtask_analysis(&analysis, 10.0);
             let pipeline = BanditBootstrapper::bootstrap_pipeline(
-                &priors, BanditConfig::default(), PipelineConfig::default(),
+                &priors,
+                BanditConfig::default(),
+                PipelineConfig::default(),
             );
-            assert!(!pipeline.bandit().all_arms(Some("CodeGeneration")).is_empty());
+            assert!(!pipeline
+                .bandit()
+                .all_arms(Some("CodeGeneration"))
+                .is_empty());
         }
 
         #[test]
         fn test_bootstrapper_round_trip_select() {
             // Use from_comparison_matrix which creates "global" priors (accessible to all domains)
             let matrix = mock_comparison_matrix(2);
-            let priors = BanditBootstrapper::from_comparison_matrix(&matrix, &RewardPolicy::default());
+            let priors =
+                BanditBootstrapper::from_comparison_matrix(&matrix, &RewardPolicy::default());
             let mut pipeline = BanditBootstrapper::bootstrap_pipeline(
-                &priors, BanditConfig::default(), PipelineConfig::default(),
+                &priors,
+                BanditConfig::default(),
+                PipelineConfig::default(),
             );
             let features = QueryFeatureExtractor::extract("implement a function");
             let outcome = pipeline.route(&features);
@@ -6165,22 +6921,32 @@ mod tests {
         let complex = QueryFeatureExtractor::extract(
             "Analyze the socioeconomic implications of climate change on developing nations, \
              considering factors such as agricultural productivity, migration patterns, \
-             infrastructure resilience, and international trade dynamics."
+             infrastructure resilience, and international trade dynamics.",
         );
         assert!(complex.complexity > simple.complexity);
     }
 
     #[test]
     fn test_feature_extraction_domain() {
-        assert_eq!(QueryFeatureExtractor::extract("solve this equation").domain, "math");
-        assert_eq!(QueryFeatureExtractor::extract("write a poem about love").domain, "creative");
-        assert_eq!(QueryFeatureExtractor::extract("translate this to French").domain, "translation");
+        assert_eq!(
+            QueryFeatureExtractor::extract("solve this equation").domain,
+            "math"
+        );
+        assert_eq!(
+            QueryFeatureExtractor::extract("write a poem about love").domain,
+            "creative"
+        );
+        assert_eq!(
+            QueryFeatureExtractor::extract("translate this to French").domain,
+            "translation"
+        );
     }
 
     #[test]
     fn test_adaptive_routes_code_to_code_model() {
         let config = BanditConfig::default();
-        let mut router = AdaptivePerQueryRouter::new("default", config).with_code_model("code-model");
+        let mut router =
+            AdaptivePerQueryRouter::new("default", config).with_code_model("code-model");
         let result = router.route("fn main() { println!(\"hello\"); }").unwrap();
         assert_eq!(result.selected_arm, "code-model");
     }
@@ -6201,10 +6967,17 @@ mod tests {
         let config = BanditConfig::default();
         let mut router = AdaptivePerQueryRouter::new("default", config);
         router.route("What is coding?").unwrap();
-        router.record_outcome("What is coding?", &ArmFeedback {
-            arm_id: "default".to_string(), success: true, quality: Some(0.9),
-            latency_ms: None, cost: None, task_type: None,
-        });
+        router.record_outcome(
+            "What is coding?",
+            &ArmFeedback {
+                arm_id: "default".to_string(),
+                success: true,
+                quality: Some(0.9),
+                latency_ms: None,
+                cost: None,
+                task_type: None,
+            },
+        );
         // Should not panic
     }
 
@@ -6331,8 +7104,12 @@ mod tests {
         ensemble.add_voter(Box::new(b), 1.0);
 
         ensemble.record_outcome(&ArmFeedback {
-            arm_id: "test".to_string(), success: true, quality: Some(0.9),
-            latency_ms: None, cost: None, task_type: None,
+            arm_id: "test".to_string(),
+            success: true,
+            quality: Some(0.9),
+            latency_ms: None,
+            cost: None,
+            task_type: None,
         });
         // Should not panic
         assert_eq!(ensemble.voter_count(), 1);
@@ -6390,15 +7167,23 @@ mod tests {
             let mut r1 = BanditRouter::new(BanditConfig::default());
             r1.add_arm("a");
             r1.record_outcome(&ArmFeedback {
-                arm_id: "a".to_string(), success: true, quality: Some(0.8),
-                latency_ms: None, cost: None, task_type: None,
+                arm_id: "a".to_string(),
+                success: true,
+                quality: Some(0.8),
+                latency_ms: None,
+                cost: None,
+                task_type: None,
             });
 
             let mut r2 = BanditRouter::new(BanditConfig::default());
             r2.add_arm("a");
             r2.record_outcome(&ArmFeedback {
-                arm_id: "a".to_string(), success: true, quality: Some(0.6),
-                latency_ms: None, cost: None, task_type: None,
+                arm_id: "a".to_string(),
+                success: true,
+                quality: Some(0.6),
+                latency_ms: None,
+                cost: None,
+                task_type: None,
             });
 
             let s1 = BanditStateMerger::extract_state(&r1, "n1");
@@ -6411,15 +7196,21 @@ mod tests {
 
         #[test]
         fn test_merge_three_nodes() {
-            let states: Vec<DistributedBanditState> = (0..3).map(|i| {
-                let mut r = BanditRouter::new(BanditConfig::default());
-                r.add_arm("shared");
-                r.record_outcome(&ArmFeedback {
-                    arm_id: "shared".to_string(), success: true, quality: Some(0.7),
-                    latency_ms: None, cost: None, task_type: None,
-                });
-                BanditStateMerger::extract_state(&r, &format!("node-{}", i))
-            }).collect();
+            let states: Vec<DistributedBanditState> = (0..3)
+                .map(|i| {
+                    let mut r = BanditRouter::new(BanditConfig::default());
+                    r.add_arm("shared");
+                    r.record_outcome(&ArmFeedback {
+                        arm_id: "shared".to_string(),
+                        success: true,
+                        quality: Some(0.7),
+                        latency_ms: None,
+                        cost: None,
+                        task_type: None,
+                    });
+                    BanditStateMerger::extract_state(&r, &format!("node-{}", i))
+                })
+                .collect();
 
             let merged = BanditStateMerger::merge(&states, 1.0, 1.0).unwrap();
             assert_eq!(merged.global_arms[0].pull_count, 3);
@@ -6444,15 +7235,23 @@ mod tests {
             let mut local = BanditRouter::new(BanditConfig::default());
             local.add_arm("a");
             local.record_outcome(&ArmFeedback {
-                arm_id: "a".to_string(), success: true, quality: Some(0.9),
-                latency_ms: None, cost: None, task_type: None,
+                arm_id: "a".to_string(),
+                success: true,
+                quality: Some(0.9),
+                latency_ms: None,
+                cost: None,
+                task_type: None,
             });
 
             let mut remote = BanditRouter::new(BanditConfig::default());
             remote.add_arm("a");
             remote.record_outcome(&ArmFeedback {
-                arm_id: "a".to_string(), success: true, quality: Some(0.7),
-                latency_ms: None, cost: None, task_type: None,
+                arm_id: "a".to_string(),
+                success: true,
+                quality: Some(0.7),
+                latency_ms: None,
+                cost: None,
+                task_type: None,
             });
             let remote_state = BanditStateMerger::extract_state(&remote, "remote");
 
@@ -6468,17 +7267,23 @@ mod tests {
 
         #[test]
         fn test_merge_preserves_pull_count() {
-            let states: Vec<DistributedBanditState> = (0..5).map(|i| {
-                let mut r = BanditRouter::new(BanditConfig::default());
-                r.add_arm("x");
-                for _ in 0..3 {
-                    r.record_outcome(&ArmFeedback {
-                        arm_id: "x".to_string(), success: true, quality: Some(0.8),
-                        latency_ms: None, cost: None, task_type: None,
-                    });
-                }
-                BanditStateMerger::extract_state(&r, &format!("n{}", i))
-            }).collect();
+            let states: Vec<DistributedBanditState> = (0..5)
+                .map(|i| {
+                    let mut r = BanditRouter::new(BanditConfig::default());
+                    r.add_arm("x");
+                    for _ in 0..3 {
+                        r.record_outcome(&ArmFeedback {
+                            arm_id: "x".to_string(),
+                            success: true,
+                            quality: Some(0.8),
+                            latency_ms: None,
+                            cost: None,
+                            task_type: None,
+                        });
+                    }
+                    BanditStateMerger::extract_state(&r, &format!("n{}", i))
+                })
+                .collect();
 
             let merged = BanditStateMerger::merge(&states, 1.0, 1.0).unwrap();
             assert_eq!(merged.global_arms[0].pull_count, 15); // 5 nodes * 3 pulls
@@ -6489,14 +7294,21 @@ mod tests {
             let mut r = BanditRouter::new(BanditConfig::default());
             r.add_arm("x");
             r.record_outcome(&ArmFeedback {
-                arm_id: "x".to_string(), success: true, quality: Some(0.8),
-                latency_ms: None, cost: None, task_type: None,
+                arm_id: "x".to_string(),
+                success: true,
+                quality: Some(0.8),
+                latency_ms: None,
+                cost: None,
+                task_type: None,
             });
 
             let state = BanditStateMerger::extract_state(&r, "n1");
             // Merging single state = itself (with prior correction = no change)
             let merged = BanditStateMerger::merge(&[state.clone()], 1.0, 1.0).unwrap();
-            assert_eq!(merged.global_arms[0].pull_count, state.global_arms[0].pull_count);
+            assert_eq!(
+                merged.global_arms[0].pull_count,
+                state.global_arms[0].pull_count
+            );
         }
 
         #[test]
@@ -6580,8 +7392,12 @@ mod tests {
         let mut bandit = BanditRouter::new(BanditConfig::default());
         bandit.add_arm("test-model");
         bandit.record_outcome(&ArmFeedback {
-            arm_id: "test-model".to_string(), success: true, quality: Some(0.9),
-            latency_ms: None, cost: None, task_type: None,
+            arm_id: "test-model".to_string(),
+            success: true,
+            quality: Some(0.9),
+            latency_ms: None,
+            cost: None,
+            task_type: None,
         });
 
         let json = bandit.to_json().unwrap();
@@ -6705,13 +7521,19 @@ mod tests {
         let nfa = NfaRuleBuilder::new()
             .rule("code_hard")
             .when(NfaSymbol::Domain("code".into()))
-            .and(NfaSymbol::ComplexityRange { low_pct: 70, high_pct: 100 })
+            .and(NfaSymbol::ComplexityRange {
+                low_pct: 70,
+                high_pct: 100,
+            })
             .route_to("claude-opus")
             .priority(10)
             .done()
             .rule("code_easy")
             .when(NfaSymbol::Domain("code".into()))
-            .and(NfaSymbol::ComplexityRange { low_pct: 0, high_pct: 70 })
+            .and(NfaSymbol::ComplexityRange {
+                low_pct: 0,
+                high_pct: 70,
+            })
             .route_to("gpt-4")
             .priority(5)
             .done()
@@ -6747,8 +7569,14 @@ mod tests {
         let nfa = NfaRuleBuilder::new()
             .rule("specific")
             .when(NfaSymbol::Domain("math".into()))
-            .and(NfaSymbol::ComplexityRange { low_pct: 80, high_pct: 100 })
-            .and(NfaSymbol::BoolFeature { name: "is_question".into(), value: true })
+            .and(NfaSymbol::ComplexityRange {
+                low_pct: 80,
+                high_pct: 100,
+            })
+            .and(NfaSymbol::BoolFeature {
+                name: "is_question".into(),
+                value: true,
+            })
             .route_to("specialist")
             .priority(10)
             .done()
@@ -6901,16 +7729,28 @@ mod tests {
 
         for _ in 0..15 {
             bandit.record_outcome(&ArmFeedback {
-                arm_id: "code-model".into(), success: true, quality: Some(0.9),
-                latency_ms: None, cost: None, task_type: Some("code".into()),
+                arm_id: "code-model".into(),
+                success: true,
+                quality: Some(0.9),
+                latency_ms: None,
+                cost: None,
+                task_type: Some("code".into()),
             });
             bandit.record_outcome(&ArmFeedback {
-                arm_id: "math-model".into(), success: true, quality: Some(0.85),
-                latency_ms: None, cost: None, task_type: Some("math".into()),
+                arm_id: "math-model".into(),
+                success: true,
+                quality: Some(0.85),
+                latency_ms: None,
+                cost: None,
+                task_type: Some("math".into()),
             });
             bandit.record_outcome(&ArmFeedback {
-                arm_id: "fallback".into(), success: true, quality: Some(0.5),
-                latency_ms: None, cost: None, task_type: None,
+                arm_id: "fallback".into(),
+                success: true,
+                quality: Some(0.5),
+                latency_ms: None,
+                cost: None,
+                task_type: None,
             });
         }
 
@@ -6934,16 +7774,28 @@ mod tests {
 
         for _ in 0..20 {
             bandit.record_outcome(&ArmFeedback {
-                arm_id: "good-model".into(), success: true, quality: Some(0.9),
-                latency_ms: None, cost: None, task_type: Some("code".into()),
+                arm_id: "good-model".into(),
+                success: true,
+                quality: Some(0.9),
+                latency_ms: None,
+                cost: None,
+                task_type: Some("code".into()),
             });
             bandit.record_outcome(&ArmFeedback {
-                arm_id: "bad-model".into(), success: false, quality: Some(0.2),
-                latency_ms: None, cost: None, task_type: Some("code".into()),
+                arm_id: "bad-model".into(),
+                success: false,
+                quality: Some(0.2),
+                latency_ms: None,
+                cost: None,
+                task_type: Some("code".into()),
             });
             bandit.record_outcome(&ArmFeedback {
-                arm_id: "fallback".into(), success: true, quality: Some(0.5),
-                latency_ms: None, cost: None, task_type: None,
+                arm_id: "fallback".into(),
+                success: true,
+                quality: Some(0.5),
+                latency_ms: None,
+                cost: None,
+                task_type: None,
             });
         }
 
@@ -6962,12 +7814,20 @@ mod tests {
 
         for _ in 0..20 {
             bandit.record_outcome(&ArmFeedback {
-                arm_id: "specialist".into(), success: true, quality: Some(0.95),
-                latency_ms: None, cost: None, task_type: Some("code".into()),
+                arm_id: "specialist".into(),
+                success: true,
+                quality: Some(0.95),
+                latency_ms: None,
+                cost: None,
+                task_type: Some("code".into()),
             });
             bandit.record_outcome(&ArmFeedback {
-                arm_id: "generalist".into(), success: true, quality: Some(0.6),
-                latency_ms: None, cost: None, task_type: None,
+                arm_id: "generalist".into(),
+                success: true,
+                quality: Some(0.6),
+                latency_ms: None,
+                cost: None,
+                task_type: None,
             });
         }
 
@@ -6986,9 +7846,14 @@ mod tests {
     #[test]
     fn test_nfa_to_json() {
         let nfa = NfaRuleBuilder::new()
-            .rule("r1").when(NfaSymbol::Domain("x".into())).route_to("m").priority(1).done()
+            .rule("r1")
+            .when(NfaSymbol::Domain("x".into()))
+            .route_to("m")
+            .priority(1)
+            .done()
             .fallback("fb", 0)
-            .build().unwrap();
+            .build()
+            .unwrap();
         let json = nfa.to_json().unwrap();
         assert!(json.contains("\"version\": 1"));
         assert!(json.contains("merged") == false); // not a merged NFA
@@ -6997,8 +7862,13 @@ mod tests {
     #[test]
     fn test_nfa_from_json() {
         let nfa = NfaRuleBuilder::new()
-            .rule("r1").when(NfaSymbol::Domain("x".into())).route_to("m").priority(1).done()
-            .build().unwrap();
+            .rule("r1")
+            .when(NfaSymbol::Domain("x".into()))
+            .route_to("m")
+            .priority(1)
+            .done()
+            .build()
+            .unwrap();
         let json = nfa.to_json().unwrap();
         let restored = NfaRouter::from_json(&json).unwrap();
         assert_eq!(restored.state_count(), nfa.state_count());
@@ -7008,10 +7878,19 @@ mod tests {
     #[test]
     fn test_nfa_round_trip_json() {
         let nfa = NfaRuleBuilder::new()
-            .rule("a").when(NfaSymbol::Domain("code".into())).route_to("m1").priority(10).done()
-            .rule("b").when(NfaSymbol::Domain("math".into())).route_to("m2").priority(5).done()
+            .rule("a")
+            .when(NfaSymbol::Domain("code".into()))
+            .route_to("m1")
+            .priority(10)
+            .done()
+            .rule("b")
+            .when(NfaSymbol::Domain("math".into()))
+            .route_to("m2")
+            .priority(5)
+            .done()
             .fallback("fb", 1)
-            .build().unwrap();
+            .build()
+            .unwrap();
 
         let json = nfa.to_json().unwrap();
         let restored = NfaRouter::from_json(&json).unwrap();
@@ -7025,9 +7904,7 @@ mod tests {
 
     #[test]
     fn test_nfa_version_check() {
-        let nfa = NfaRuleBuilder::new()
-            .fallback("fb", 0)
-            .build().unwrap();
+        let nfa = NfaRuleBuilder::new().fallback("fb", 0).build().unwrap();
         let mut json = nfa.to_json().unwrap();
         json = json.replace("\"version\": 1", "\"version\": 99");
         let result = NfaRouter::from_json(&json);
@@ -7036,9 +7913,7 @@ mod tests {
 
     #[test]
     fn test_nfa_to_bytes() {
-        let nfa = NfaRuleBuilder::new()
-            .fallback("fb", 0)
-            .build().unwrap();
+        let nfa = NfaRuleBuilder::new().fallback("fb", 0).build().unwrap();
         let bytes = nfa.to_bytes().unwrap();
         assert!(!bytes.is_empty());
     }
@@ -7046,8 +7921,13 @@ mod tests {
     #[test]
     fn test_nfa_from_bytes() {
         let nfa = NfaRuleBuilder::new()
-            .rule("r").when(NfaSymbol::Domain("x".into())).route_to("m").priority(1).done()
-            .build().unwrap();
+            .rule("r")
+            .when(NfaSymbol::Domain("x".into()))
+            .route_to("m")
+            .priority(1)
+            .done()
+            .build()
+            .unwrap();
         let bytes = nfa.to_bytes().unwrap();
         let restored = NfaRouter::from_bytes(&bytes).unwrap();
         assert_eq!(restored.state_count(), nfa.state_count());
@@ -7060,9 +7940,14 @@ mod tests {
     #[test]
     fn test_dfa_to_json_export() {
         let nfa = NfaRuleBuilder::new()
-            .rule("r").when(NfaSymbol::Domain("x".into())).route_to("m").priority(1).done()
+            .rule("r")
+            .when(NfaSymbol::Domain("x".into()))
+            .route_to("m")
+            .priority(1)
+            .done()
             .fallback("fb", 0)
-            .build().unwrap();
+            .build()
+            .unwrap();
         let dfa = NfaDfaCompiler::compile(&nfa).unwrap();
         let json = dfa.to_json().unwrap();
         assert!(json.contains("\"version\": 1"));
@@ -7071,8 +7956,13 @@ mod tests {
     #[test]
     fn test_dfa_from_json_import() {
         let nfa = NfaRuleBuilder::new()
-            .rule("r").when(NfaSymbol::Domain("x".into())).route_to("m").priority(1).done()
-            .build().unwrap();
+            .rule("r")
+            .when(NfaSymbol::Domain("x".into()))
+            .route_to("m")
+            .priority(1)
+            .done()
+            .build()
+            .unwrap();
         let dfa = NfaDfaCompiler::compile(&nfa).unwrap();
         let json = dfa.to_json().unwrap();
         let restored = DfaRouter::from_json(&json).unwrap();
@@ -7082,9 +7972,14 @@ mod tests {
     #[test]
     fn test_dfa_round_trip_json() {
         let nfa = NfaRuleBuilder::new()
-            .rule("a").when(NfaSymbol::Domain("code".into())).route_to("m1").priority(10).done()
+            .rule("a")
+            .when(NfaSymbol::Domain("code".into()))
+            .route_to("m1")
+            .priority(10)
+            .done()
             .fallback("fb", 1)
-            .build().unwrap();
+            .build()
+            .unwrap();
         let dfa = NfaDfaCompiler::compile(&nfa).unwrap();
 
         let json = dfa.to_json().unwrap();
@@ -7129,11 +8024,21 @@ mod tests {
     #[test]
     fn test_nfa_merge_two_simple() {
         let nfa_a = NfaRuleBuilder::new()
-            .rule("a").when(NfaSymbol::Domain("code".into())).route_to("m-code").priority(10).done()
-            .build().unwrap();
+            .rule("a")
+            .when(NfaSymbol::Domain("code".into()))
+            .route_to("m-code")
+            .priority(10)
+            .done()
+            .build()
+            .unwrap();
         let nfa_b = NfaRuleBuilder::new()
-            .rule("b").when(NfaSymbol::Domain("math".into())).route_to("m-math").priority(5).done()
-            .build().unwrap();
+            .rule("b")
+            .when(NfaSymbol::Domain("math".into()))
+            .route_to("m-math")
+            .priority(5)
+            .done()
+            .build()
+            .unwrap();
 
         let merged = nfa_a.merge(&nfa_b);
         // Merged should have states from both + new start
@@ -7144,25 +8049,48 @@ mod tests {
     #[test]
     fn test_nfa_merge_state_renumbering() {
         let nfa_a = NfaRuleBuilder::new()
-            .rule("a").when(NfaSymbol::Domain("x".into())).route_to("m1").priority(1).done()
-            .build().unwrap();
+            .rule("a")
+            .when(NfaSymbol::Domain("x".into()))
+            .route_to("m1")
+            .priority(1)
+            .done()
+            .build()
+            .unwrap();
         let nfa_b = NfaRuleBuilder::new()
-            .rule("b").when(NfaSymbol::Domain("y".into())).route_to("m2").priority(1).done()
-            .build().unwrap();
+            .rule("b")
+            .when(NfaSymbol::Domain("y".into()))
+            .route_to("m2")
+            .priority(1)
+            .done()
+            .build()
+            .unwrap();
 
         let merged = nfa_a.merge(&nfa_b);
         // Total states = nfa_a.states + nfa_b.states + 1 (merged start)
-        assert_eq!(merged.state_count(), nfa_a.state_count() + nfa_b.state_count() + 1);
+        assert_eq!(
+            merged.state_count(),
+            nfa_a.state_count() + nfa_b.state_count() + 1
+        );
     }
 
     #[test]
     fn test_nfa_merge_accepting_preserved() {
         let nfa_a = NfaRuleBuilder::new()
-            .rule("a").when(NfaSymbol::Domain("code".into())).route_to("model-a").priority(10).done()
-            .build().unwrap();
+            .rule("a")
+            .when(NfaSymbol::Domain("code".into()))
+            .route_to("model-a")
+            .priority(10)
+            .done()
+            .build()
+            .unwrap();
         let nfa_b = NfaRuleBuilder::new()
-            .rule("b").when(NfaSymbol::Domain("math".into())).route_to("model-b").priority(5).done()
-            .build().unwrap();
+            .rule("b")
+            .when(NfaSymbol::Domain("math".into()))
+            .route_to("model-b")
+            .priority(5)
+            .done()
+            .build()
+            .unwrap();
 
         let merged = nfa_a.merge(&nfa_b);
 
@@ -7180,13 +8108,23 @@ mod tests {
     #[test]
     fn test_nfa_merge_route_both() {
         let nfa_a = NfaRuleBuilder::new()
-            .rule("a").when(NfaSymbol::Domain("code".into())).route_to("code-model").priority(10).done()
+            .rule("a")
+            .when(NfaSymbol::Domain("code".into()))
+            .route_to("code-model")
+            .priority(10)
+            .done()
             .fallback("fallback-a", 1)
-            .build().unwrap();
+            .build()
+            .unwrap();
         let nfa_b = NfaRuleBuilder::new()
-            .rule("b").when(NfaSymbol::Domain("math".into())).route_to("math-model").priority(8).done()
+            .rule("b")
+            .when(NfaSymbol::Domain("math".into()))
+            .route_to("math-model")
+            .priority(8)
+            .done()
             .fallback("fallback-b", 2)
-            .build().unwrap();
+            .build()
+            .unwrap();
 
         let merged = nfa_a.merge(&nfa_b);
 
@@ -7200,14 +8138,29 @@ mod tests {
     #[test]
     fn test_nfa_merge_three_chain() {
         let a = NfaRuleBuilder::new()
-            .rule("x").when(NfaSymbol::Domain("a".into())).route_to("ma").priority(1).done()
-            .build().unwrap();
+            .rule("x")
+            .when(NfaSymbol::Domain("a".into()))
+            .route_to("ma")
+            .priority(1)
+            .done()
+            .build()
+            .unwrap();
         let b = NfaRuleBuilder::new()
-            .rule("y").when(NfaSymbol::Domain("b".into())).route_to("mb").priority(2).done()
-            .build().unwrap();
+            .rule("y")
+            .when(NfaSymbol::Domain("b".into()))
+            .route_to("mb")
+            .priority(2)
+            .done()
+            .build()
+            .unwrap();
         let c = NfaRuleBuilder::new()
-            .rule("z").when(NfaSymbol::Domain("c".into())).route_to("mc").priority(3).done()
-            .build().unwrap();
+            .rule("z")
+            .when(NfaSymbol::Domain("c".into()))
+            .route_to("mc")
+            .priority(3)
+            .done()
+            .build()
+            .unwrap();
 
         let merged = a.merge(&b).merge(&c);
 
@@ -7219,11 +8172,21 @@ mod tests {
     #[test]
     fn test_nfa_merge_transitions_preserved() {
         let nfa_a = NfaRuleBuilder::new()
-            .rule("a").when(NfaSymbol::Domain("x".into())).route_to("m1").priority(1).done()
-            .build().unwrap();
+            .rule("a")
+            .when(NfaSymbol::Domain("x".into()))
+            .route_to("m1")
+            .priority(1)
+            .done()
+            .build()
+            .unwrap();
         let nfa_b = NfaRuleBuilder::new()
-            .rule("b").when(NfaSymbol::Domain("y".into())).route_to("m2").priority(1).done()
-            .build().unwrap();
+            .rule("b")
+            .when(NfaSymbol::Domain("y".into()))
+            .route_to("m2")
+            .priority(1)
+            .done()
+            .build()
+            .unwrap();
 
         let a_trans = nfa_a.transition_count();
         let b_trans = nfa_b.transition_count();
@@ -7240,11 +8203,21 @@ mod tests {
     #[test]
     fn test_merge_and_compile_basic() {
         let nfa_a = NfaRuleBuilder::new()
-            .rule("a").when(NfaSymbol::Domain("code".into())).route_to("m1").priority(10).done()
-            .build().unwrap();
+            .rule("a")
+            .when(NfaSymbol::Domain("code".into()))
+            .route_to("m1")
+            .priority(10)
+            .done()
+            .build()
+            .unwrap();
         let nfa_b = NfaRuleBuilder::new()
-            .rule("b").when(NfaSymbol::Domain("math".into())).route_to("m2").priority(5).done()
-            .build().unwrap();
+            .rule("b")
+            .when(NfaSymbol::Domain("math".into()))
+            .route_to("m2")
+            .priority(5)
+            .done()
+            .build()
+            .unwrap();
 
         let dfa = merge_and_compile_nfas(&nfa_a, &nfa_b).unwrap();
         assert!(dfa.state_count() >= 2);
@@ -7253,12 +8226,22 @@ mod tests {
     #[test]
     fn test_merge_and_compile_routes_correctly() {
         let nfa_a = NfaRuleBuilder::new()
-            .rule("a").when(NfaSymbol::Domain("code".into())).route_to("code-model").priority(10).done()
+            .rule("a")
+            .when(NfaSymbol::Domain("code".into()))
+            .route_to("code-model")
+            .priority(10)
+            .done()
             .fallback("fallback", 1)
-            .build().unwrap();
+            .build()
+            .unwrap();
         let nfa_b = NfaRuleBuilder::new()
-            .rule("b").when(NfaSymbol::Domain("math".into())).route_to("math-model").priority(8).done()
-            .build().unwrap();
+            .rule("b")
+            .when(NfaSymbol::Domain("math".into()))
+            .route_to("math-model")
+            .priority(8)
+            .done()
+            .build()
+            .unwrap();
 
         let dfa = merge_and_compile_nfas(&nfa_a, &nfa_b).unwrap();
 
@@ -7269,9 +8252,7 @@ mod tests {
     #[test]
     fn test_merge_and_compile_empty_nfa() {
         let nfa_a = NfaRouter::new();
-        let nfa_b = NfaRuleBuilder::new()
-            .fallback("fb", 1)
-            .build().unwrap();
+        let nfa_b = NfaRuleBuilder::new().fallback("fb", 1).build().unwrap();
 
         // Should compile — one NFA is empty but the other has states
         let result = merge_and_compile_nfas(&nfa_a, &nfa_b);
@@ -7290,8 +8271,13 @@ mod tests {
         #[test]
         fn test_distributed_nfa_extract_state() {
             let nfa = NfaRuleBuilder::new()
-                .rule("r").when(NfaSymbol::Domain("x".into())).route_to("m").priority(1).done()
-                .build().unwrap();
+                .rule("r")
+                .when(NfaSymbol::Domain("x".into()))
+                .route_to("m")
+                .priority(1)
+                .done()
+                .build()
+                .unwrap();
             let state = NfaStateMerger::extract_state(&nfa, "node-1");
             assert_eq!(state.node_id, "node-1");
             assert_eq!(state.nfa.states.len(), nfa.state_count());
@@ -7300,11 +8286,21 @@ mod tests {
         #[test]
         fn test_distributed_nfa_merge_two() {
             let nfa_a = NfaRuleBuilder::new()
-                .rule("a").when(NfaSymbol::Domain("code".into())).route_to("m1").priority(10).done()
-                .build().unwrap();
+                .rule("a")
+                .when(NfaSymbol::Domain("code".into()))
+                .route_to("m1")
+                .priority(10)
+                .done()
+                .build()
+                .unwrap();
             let nfa_b = NfaRuleBuilder::new()
-                .rule("b").when(NfaSymbol::Domain("math".into())).route_to("m2").priority(5).done()
-                .build().unwrap();
+                .rule("b")
+                .when(NfaSymbol::Domain("math".into()))
+                .route_to("m2")
+                .priority(5)
+                .done()
+                .build()
+                .unwrap();
 
             let state_a = NfaStateMerger::extract_state(&nfa_a, "node-a");
             let state_b = NfaStateMerger::extract_state(&nfa_b, "node-b");
@@ -7334,11 +8330,21 @@ mod tests {
         #[test]
         fn test_distributed_nfa_merge_into_router() {
             let mut local = NfaRuleBuilder::new()
-                .rule("local").when(NfaSymbol::Domain("code".into())).route_to("m1").priority(10).done()
-                .build().unwrap();
+                .rule("local")
+                .when(NfaSymbol::Domain("code".into()))
+                .route_to("m1")
+                .priority(10)
+                .done()
+                .build()
+                .unwrap();
             let remote_nfa = NfaRuleBuilder::new()
-                .rule("remote").when(NfaSymbol::Domain("math".into())).route_to("m2").priority(5).done()
-                .build().unwrap();
+                .rule("remote")
+                .when(NfaSymbol::Domain("math".into()))
+                .route_to("m2")
+                .priority(5)
+                .done()
+                .build()
+                .unwrap();
 
             let remote_state = NfaStateMerger::extract_state(&remote_nfa, "remote-node");
             let original_count = local.state_count();
@@ -7366,7 +8372,9 @@ mod tests {
 
             // Private arm's state and transition should be filtered out
             assert!(state.nfa.states.iter().all(|s| {
-                s.accepting_arm.as_ref().map_or(true, |a| a != "private-arm")
+                s.accepting_arm
+                    .as_ref()
+                    .map_or(true, |a| a != "private-arm")
             }));
         }
 
@@ -7398,12 +8406,18 @@ mod tests {
     #[test]
     fn test_pipeline_with_initial_nfa() {
         let nfa = NfaRuleBuilder::new()
-            .rule("r").when(NfaSymbol::Domain("code".into())).route_to("m1").priority(10).done()
+            .rule("r")
+            .when(NfaSymbol::Domain("code".into()))
+            .route_to("m1")
+            .priority(10)
+            .done()
             .fallback("fb", 1)
-            .build().unwrap();
+            .build()
+            .unwrap();
 
         let pipeline = RoutingPipeline::new(BanditConfig::default(), PipelineConfig::default())
-            .with_initial_nfa(nfa).unwrap();
+            .with_initial_nfa(nfa)
+            .unwrap();
 
         assert!(pipeline.active_dfa().is_some());
         assert!(pipeline.source_nfa().is_some());
@@ -7427,7 +8441,8 @@ mod tests {
             .unwrap();
 
         let pipeline = RoutingPipeline::new(BanditConfig::default(), PipelineConfig::default())
-            .with_initial_nfa(nfa).unwrap();
+            .with_initial_nfa(nfa)
+            .unwrap();
 
         // Bandit should have all 3 arms globally
         let global_arms = pipeline.bandit().all_arms(None);
@@ -7455,12 +8470,18 @@ mod tests {
     #[test]
     fn test_pipeline_route_via_dfa() {
         let nfa = NfaRuleBuilder::new()
-            .rule("r").when(NfaSymbol::Domain("code".into())).route_to("dfa-model").priority(10).done()
+            .rule("r")
+            .when(NfaSymbol::Domain("code".into()))
+            .route_to("dfa-model")
+            .priority(10)
+            .done()
             .fallback("fb", 1)
-            .build().unwrap();
+            .build()
+            .unwrap();
 
         let mut pipeline = RoutingPipeline::new(BanditConfig::default(), PipelineConfig::default())
-            .with_initial_nfa(nfa).unwrap();
+            .with_initial_nfa(nfa)
+            .unwrap();
 
         let features = test_features("code", 0.5);
         let outcome = pipeline.route(&features).unwrap();
@@ -7517,8 +8538,12 @@ mod tests {
         // Record 5 outcomes to trigger synthesis
         for _ in 0..5 {
             pipeline.record_outcome(&ArmFeedback {
-                arm_id: "m1".into(), success: true, quality: Some(0.8),
-                latency_ms: None, cost: None, task_type: Some("code".into()),
+                arm_id: "m1".into(),
+                success: true,
+                quality: Some(0.8),
+                latency_ms: None,
+                cost: None,
+                task_type: Some("code".into()),
             });
         }
 
@@ -7543,8 +8568,12 @@ mod tests {
 
         for _ in 0..5 {
             pipeline.record_outcome(&ArmFeedback {
-                arm_id: "m1".into(), success: true, quality: Some(0.8),
-                latency_ms: None, cost: None, task_type: Some("code".into()),
+                arm_id: "m1".into(),
+                success: true,
+                quality: Some(0.8),
+                latency_ms: None,
+                cost: None,
+                task_type: Some("code".into()),
             });
         }
 
@@ -7554,12 +8583,11 @@ mod tests {
 
     #[test]
     fn test_pipeline_export_snapshot() {
-        let nfa = NfaRuleBuilder::new()
-            .fallback("fb", 1)
-            .build().unwrap();
+        let nfa = NfaRuleBuilder::new().fallback("fb", 1).build().unwrap();
 
         let pipeline = RoutingPipeline::new(BanditConfig::default(), PipelineConfig::default())
-            .with_initial_nfa(nfa).unwrap();
+            .with_initial_nfa(nfa)
+            .unwrap();
 
         let snapshot = pipeline.export_snapshot();
         assert_eq!(snapshot.version, 1);
@@ -7569,11 +8597,16 @@ mod tests {
     #[test]
     fn test_pipeline_with_initial_rules() {
         let builder = NfaRuleBuilder::new()
-            .rule("r").when(NfaSymbol::Domain("code".into())).route_to("m1").priority(10).done()
+            .rule("r")
+            .when(NfaSymbol::Domain("code".into()))
+            .route_to("m1")
+            .priority(10)
+            .done()
             .fallback("fb", 1);
 
         let pipeline = RoutingPipeline::new(BanditConfig::default(), PipelineConfig::default())
-            .with_initial_rules(builder).unwrap();
+            .with_initial_rules(builder)
+            .unwrap();
 
         assert!(pipeline.active_dfa().is_some());
     }
@@ -7581,12 +8614,18 @@ mod tests {
     #[test]
     fn test_pipeline_json_round_trip() {
         let nfa = NfaRuleBuilder::new()
-            .rule("r").when(NfaSymbol::Domain("code".into())).route_to("m1").priority(10).done()
+            .rule("r")
+            .when(NfaSymbol::Domain("code".into()))
+            .route_to("m1")
+            .priority(10)
+            .done()
             .fallback("fb", 1)
-            .build().unwrap();
+            .build()
+            .unwrap();
 
         let mut pipeline = RoutingPipeline::new(BanditConfig::default(), PipelineConfig::default())
-            .with_initial_nfa(nfa).unwrap();
+            .with_initial_nfa(nfa)
+            .unwrap();
         pipeline.add_arm("m1");
 
         let json = pipeline.to_json().unwrap();
@@ -7601,10 +8640,8 @@ mod tests {
 
     #[test]
     fn test_for_models_zero_config() {
-        let mut pipeline = RoutingPipeline::for_models(
-            &["gpt-4", "claude", "gemini"],
-            PipelineConfig::default(),
-        );
+        let mut pipeline =
+            RoutingPipeline::for_models(&["gpt-4", "claude", "gemini"], PipelineConfig::default());
 
         // No DFA initially — pure bandit exploration
         assert!(pipeline.active_dfa().is_none());
@@ -7634,8 +8671,12 @@ mod tests {
         // Train bandit
         for _ in 0..6 {
             pipeline.record_outcome(&ArmFeedback {
-                arm_id: "m1".into(), success: true, quality: Some(0.9),
-                latency_ms: None, cost: None, task_type: Some("code".into()),
+                arm_id: "m1".into(),
+                success: true,
+                quality: Some(0.9),
+                latency_ms: None,
+                cost: None,
+                task_type: Some("code".into()),
             });
         }
 
@@ -7654,7 +8695,8 @@ mod tests {
                 ("gpt-4-mini", ModelTier::Economy),
             ],
             PipelineConfig::default(),
-        ).unwrap();
+        )
+        .unwrap();
 
         // Has DFA from auto-generated rules
         assert!(pipeline.active_dfa().is_some());
@@ -7673,7 +8715,8 @@ mod tests {
                 ("haiku", ModelTier::Economy),
             ],
             PipelineConfig::default(),
-        ).unwrap();
+        )
+        .unwrap();
 
         // Code query → should route to premium (has_code=true)
         let mut features = test_features("code", 0.5);
@@ -7691,7 +8734,8 @@ mod tests {
                 ("haiku", ModelTier::Economy),
             ],
             PipelineConfig::default(),
-        ).unwrap();
+        )
+        .unwrap();
 
         // Simple low-complexity query → economy
         let features = test_features("chat", 0.1);
@@ -7708,7 +8752,8 @@ mod tests {
                 ("haiku", ModelTier::Economy),
             ],
             PipelineConfig::default(),
-        ).unwrap();
+        )
+        .unwrap();
 
         // Medium complexity → standard
         let features = test_features("general", 0.5);
@@ -7728,7 +8773,8 @@ mod tests {
         let mut pipeline = RoutingPipeline::with_tiered_models(
             &[("opus", ModelTier::Premium), ("sonnet", ModelTier::Premium)],
             PipelineConfig::default(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let features = test_features("anything", 0.1);
         let outcome = pipeline.route(&features).unwrap();
@@ -7749,12 +8795,20 @@ mod tests {
 
         for _ in 0..30 {
             bandit.record_outcome(&ArmFeedback {
-                arm_id: "code-specialist".into(), success: true, quality: Some(0.9),
-                latency_ms: None, cost: None, task_type: Some("code".into()),
+                arm_id: "code-specialist".into(),
+                success: true,
+                quality: Some(0.9),
+                latency_ms: None,
+                cost: None,
+                task_type: Some("code".into()),
             });
             bandit.record_outcome(&ArmFeedback {
-                arm_id: "generalist".into(), success: true, quality: Some(0.5),
-                latency_ms: None, cost: None, task_type: None,
+                arm_id: "generalist".into(),
+                success: true,
+                quality: Some(0.5),
+                latency_ms: None,
+                cost: None,
+                task_type: None,
             });
         }
 
@@ -7770,17 +8824,33 @@ mod tests {
     fn test_integration_merge_two_pipeline_nfas() {
         // Two pipelines share their NFAs and merge
         let nfa_a = NfaRuleBuilder::new()
-            .rule("a").when(NfaSymbol::Domain("code".into())).route_to("code-m").priority(10).done()
-            .build().unwrap();
+            .rule("a")
+            .when(NfaSymbol::Domain("code".into()))
+            .route_to("code-m")
+            .priority(10)
+            .done()
+            .build()
+            .unwrap();
         let nfa_b = NfaRuleBuilder::new()
-            .rule("b").when(NfaSymbol::Domain("math".into())).route_to("math-m").priority(8).done()
-            .build().unwrap();
+            .rule("b")
+            .when(NfaSymbol::Domain("math".into()))
+            .route_to("math-m")
+            .priority(8)
+            .done()
+            .build()
+            .unwrap();
 
         let dfa = merge_and_compile_nfas(&nfa_a, &nfa_b).unwrap();
 
         // Verify routes from both pipelines work
-        assert_eq!(dfa.route(&test_features("code", 0.5)).unwrap().selected_arm, "code-m");
-        assert_eq!(dfa.route(&test_features("math", 0.5)).unwrap().selected_arm, "math-m");
+        assert_eq!(
+            dfa.route(&test_features("code", 0.5)).unwrap().selected_arm,
+            "code-m"
+        );
+        assert_eq!(
+            dfa.route(&test_features("math", 0.5)).unwrap().selected_arm,
+            "math-m"
+        );
     }
 
     #[test]
@@ -7794,11 +8864,16 @@ mod tests {
             discovery: None,
         };
         let builder = NfaRuleBuilder::new()
-            .rule("init").when(NfaSymbol::Domain("code".into())).route_to("initial-model").priority(5).done()
+            .rule("init")
+            .when(NfaSymbol::Domain("code".into()))
+            .route_to("initial-model")
+            .priority(5)
+            .done()
             .fallback("fallback", 1);
 
         let mut pipeline = RoutingPipeline::new(BanditConfig::default(), config)
-            .with_initial_rules(builder).unwrap();
+            .with_initial_rules(builder)
+            .unwrap();
 
         // Add arms for bandit learning
         pipeline.add_arm_for_task("code", "better-model");
@@ -7807,8 +8882,12 @@ mod tests {
         // Simulate learning: better-model outperforms
         for _ in 0..12 {
             pipeline.record_outcome(&ArmFeedback {
-                arm_id: "better-model".into(), success: true, quality: Some(0.95),
-                latency_ms: None, cost: None, task_type: Some("code".into()),
+                arm_id: "better-model".into(),
+                success: true,
+                quality: Some(0.95),
+                latency_ms: None,
+                cost: None,
+                task_type: Some("code".into()),
             });
         }
 
@@ -7827,9 +8906,14 @@ mod tests {
     fn test_integration_export_import_nfa() {
         // Export NFA, import on another "node", verify routing
         let nfa = NfaRuleBuilder::new()
-            .rule("r").when(NfaSymbol::Domain("code".into())).route_to("m1").priority(10).done()
+            .rule("r")
+            .when(NfaSymbol::Domain("code".into()))
+            .route_to("m1")
+            .priority(10)
+            .done()
             .fallback("fb", 1)
-            .build().unwrap();
+            .build()
+            .unwrap();
 
         let json = nfa.to_json().unwrap();
         let restored = NfaRouter::from_json(&json).unwrap();
@@ -7907,8 +8991,14 @@ mod tests {
         let response = server.handle_request(request);
         assert!(response.error.is_none(), "MCP error: {:?}", response.error);
         let result = response.result.expect("no result");
-        let content = result.get("content").and_then(|c| c.as_array()).expect("no content");
-        let text = content[0].get("text").and_then(|t| t.as_str()).expect("no text");
+        let content = result
+            .get("content")
+            .and_then(|c| c.as_array())
+            .expect("no content");
+        let text = content[0]
+            .get("text")
+            .and_then(|t| t.as_str())
+            .expect("no text");
         serde_json::from_str(text).expect("invalid JSON in response")
     }
 
@@ -7932,11 +9022,15 @@ mod tests {
         let mut server = crate::mcp_protocol::McpServer::new("test", "1.0");
         register_routing_tools(&mut server, shared.clone());
 
-        let result = mcp_call(&server, "routing.add_arm", serde_json::json!({
-            "arm_id": "m_new",
-            "alpha": 5.0,
-            "beta": 1.0,
-        }));
+        let result = mcp_call(
+            &server,
+            "routing.add_arm",
+            serde_json::json!({
+                "arm_id": "m_new",
+                "alpha": 5.0,
+                "beta": 1.0,
+            }),
+        );
         assert_eq!(result.get("status").and_then(|v| v.as_str()), Some("ok"));
 
         // Verify arm was added
@@ -7954,10 +9048,17 @@ mod tests {
         let mut server = crate::mcp_protocol::McpServer::new("test", "1.0");
         register_routing_tools(&mut server, shared.clone());
 
-        let result = mcp_call(&server, "routing.remove_arm", serde_json::json!({
-            "arm_id": "m2",
-        }));
-        assert_eq!(result.get("status").and_then(|v| v.as_str()), Some("removed"));
+        let result = mcp_call(
+            &server,
+            "routing.remove_arm",
+            serde_json::json!({
+                "arm_id": "m2",
+            }),
+        );
+        assert_eq!(
+            result.get("status").and_then(|v| v.as_str()),
+            Some("removed")
+        );
 
         let pipeline = shared.lock().unwrap();
         assert_eq!(pipeline.bandit().all_arms(None).len(), 2);
@@ -7970,15 +9071,25 @@ mod tests {
         let mut server = crate::mcp_protocol::McpServer::new("test", "1.0");
         register_routing_tools(&mut server, shared.clone());
 
-        let result = mcp_call(&server, "routing.warm_start", serde_json::json!({
-            "arm_id": "m1",
-            "alpha": 20.0,
-            "beta": 2.0,
-        }));
+        let result = mcp_call(
+            &server,
+            "routing.warm_start",
+            serde_json::json!({
+                "arm_id": "m1",
+                "alpha": 20.0,
+                "beta": 2.0,
+            }),
+        );
         assert_eq!(result.get("status").and_then(|v| v.as_str()), Some("ok"));
 
         let pipeline = shared.lock().unwrap();
-        let arm = pipeline.bandit().all_arms(None).iter().find(|a| a.id == "m1").unwrap().clone();
+        let arm = pipeline
+            .bandit()
+            .all_arms(None)
+            .iter()
+            .find(|a| a.id == "m1")
+            .unwrap()
+            .clone();
         assert!((arm.params.alpha - 20.0).abs() < 0.01);
     }
 
@@ -7989,11 +9100,15 @@ mod tests {
         let mut server = crate::mcp_protocol::McpServer::new("test", "1.0");
         register_routing_tools(&mut server, shared);
 
-        let result = mcp_call(&server, "routing.record_outcome", serde_json::json!({
-            "arm_id": "m1",
-            "success": true,
-            "quality": 0.9,
-        }));
+        let result = mcp_call(
+            &server,
+            "routing.record_outcome",
+            serde_json::json!({
+                "arm_id": "m1",
+                "success": true,
+                "quality": 0.9,
+            }),
+        );
         assert_eq!(result.get("status").and_then(|v| v.as_str()), Some("ok"));
     }
 
@@ -8004,11 +9119,15 @@ mod tests {
         let mut server = crate::mcp_protocol::McpServer::new("test", "1.0");
         register_routing_tools(&mut server, shared.clone());
 
-        let result = mcp_call(&server, "routing.add_rule", serde_json::json!({
-            "domain": "code",
-            "arm_id": "m1",
-            "priority": 10,
-        }));
+        let result = mcp_call(
+            &server,
+            "routing.add_rule",
+            serde_json::json!({
+                "domain": "code",
+                "arm_id": "m1",
+                "priority": 10,
+            }),
+        );
         assert_eq!(result.get("status").and_then(|v| v.as_str()), Some("ok"));
 
         // Should now have a DFA
@@ -8024,15 +9143,22 @@ mod tests {
         let mut server = crate::mcp_protocol::McpServer::new("test", "1.0");
         register_routing_tools(&mut server, shared);
 
-        let result = mcp_call(&server, "routing.add_rule", serde_json::json!({
-            "domain": "code",
-            "min_complexity": 70,
-            "max_complexity": 100,
-            "arm_id": "smart",
-            "priority": 10,
-        }));
+        let result = mcp_call(
+            &server,
+            "routing.add_rule",
+            serde_json::json!({
+                "domain": "code",
+                "min_complexity": 70,
+                "max_complexity": 100,
+                "arm_id": "smart",
+                "priority": 10,
+            }),
+        );
         assert_eq!(result.get("status").and_then(|v| v.as_str()), Some("ok"));
-        assert_eq!(result.get("conditions_count").and_then(|v| v.as_u64()), Some(2));
+        assert_eq!(
+            result.get("conditions_count").and_then(|v| v.as_u64()),
+            Some(2)
+        );
     }
 
     #[test]
@@ -8069,13 +9195,20 @@ mod tests {
 
         // Export
         let exported = mcp_call(&server, "routing.export", serde_json::json!({}));
-        let json = exported.get("pipeline_json").and_then(|v| v.as_str()).unwrap();
+        let json = exported
+            .get("pipeline_json")
+            .and_then(|v| v.as_str())
+            .unwrap();
         assert!(!json.is_empty());
 
         // Import into same pipeline
-        let result = mcp_call(&server, "routing.import", serde_json::json!({
-            "pipeline_json": json,
-        }));
+        let result = mcp_call(
+            &server,
+            "routing.import",
+            serde_json::json!({
+                "pipeline_json": json,
+            }),
+        );
         assert_eq!(result.get("status").and_then(|v| v.as_str()), Some("ok"));
     }
 
@@ -8091,8 +9224,14 @@ mod tests {
         register_routing_tools(&mut server, shared);
 
         let result = mcp_call(&server, "routing.get_config", serde_json::json!({}));
-        assert_eq!(result.get("synthesis_interval").and_then(|v| v.as_u64()), Some(42));
-        assert_eq!(result.get("bandit_arms_count").and_then(|v| v.as_u64()), Some(1));
+        assert_eq!(
+            result.get("synthesis_interval").and_then(|v| v.as_u64()),
+            Some(42)
+        );
+        assert_eq!(
+            result.get("bandit_arms_count").and_then(|v| v.as_u64()),
+            Some(1)
+        );
     }
 
     #[test]
@@ -8102,14 +9241,21 @@ mod tests {
         let mut server = crate::mcp_protocol::McpServer::new("test", "1.0");
         register_routing_tools(&mut server, shared.clone());
 
-        let result = mcp_call(&server, "routing.add_arm", serde_json::json!({
-            "arm_id": "code_specialist",
-            "task_type": "code",
-            "alpha": 10.0,
-            "beta": 1.0,
-        }));
+        let result = mcp_call(
+            &server,
+            "routing.add_arm",
+            serde_json::json!({
+                "arm_id": "code_specialist",
+                "task_type": "code",
+                "alpha": 10.0,
+                "beta": 1.0,
+            }),
+        );
         assert_eq!(result.get("status").and_then(|v| v.as_str()), Some("ok"));
-        assert_eq!(result.get("task_type").and_then(|v| v.as_str()), Some("code"));
+        assert_eq!(
+            result.get("task_type").and_then(|v| v.as_str()),
+            Some("code")
+        );
 
         let pipeline = shared.lock().unwrap();
         assert!(pipeline.bandit().task_types().contains(&"code"));
@@ -8124,26 +9270,38 @@ mod tests {
         register_routing_tools(&mut server, shared);
 
         // 1. Add a specialist arm
-        mcp_call(&server, "routing.add_arm", serde_json::json!({
-            "arm_id": "code_expert",
-            "alpha": 8.0,
-            "beta": 1.0,
-        }));
+        mcp_call(
+            &server,
+            "routing.add_arm",
+            serde_json::json!({
+                "arm_id": "code_expert",
+                "alpha": 8.0,
+                "beta": 1.0,
+            }),
+        );
 
         // 2. Add a routing rule for it
-        mcp_call(&server, "routing.add_rule", serde_json::json!({
-            "domain": "code",
-            "min_complexity": 50,
-            "arm_id": "code_expert",
-            "priority": 20,
-        }));
+        mcp_call(
+            &server,
+            "routing.add_rule",
+            serde_json::json!({
+                "domain": "code",
+                "min_complexity": 50,
+                "arm_id": "code_expert",
+                "priority": 20,
+            }),
+        );
 
         // 3. Record some outcomes
-        mcp_call(&server, "routing.record_outcome", serde_json::json!({
-            "arm_id": "code_expert",
-            "success": true,
-            "quality": 0.95,
-        }));
+        mcp_call(
+            &server,
+            "routing.record_outcome",
+            serde_json::json!({
+                "arm_id": "code_expert",
+                "success": true,
+                "quality": 0.95,
+            }),
+        );
 
         // 4. Check stats
         let stats = mcp_call(&server, "routing.get_stats", serde_json::json!({}));
@@ -8153,14 +9311,26 @@ mod tests {
 
         // 5. Export and verify non-empty
         let exported = mcp_call(&server, "routing.export", serde_json::json!({}));
-        assert!(exported.get("pipeline_json").and_then(|v| v.as_str()).unwrap().len() > 10);
+        assert!(
+            exported
+                .get("pipeline_json")
+                .and_then(|v| v.as_str())
+                .unwrap()
+                .len()
+                > 10
+        );
     }
 
     // =========================================================================
     // CONTEXTUAL DISCOVERY TESTS
     // =========================================================================
 
-    fn make_ctx_features(domain: &str, complexity: f64, token_count: usize, has_code: bool) -> QueryFeatures {
+    fn make_ctx_features(
+        domain: &str,
+        complexity: f64,
+        token_count: usize,
+        has_code: bool,
+    ) -> QueryFeatures {
         QueryFeatures {
             domain: domain.to_string(),
             complexity,
@@ -8308,9 +9478,21 @@ mod tests {
     fn test_compute_best_arm_mean_single_arm() {
         let f = make_ctx_features("code", 0.5, 100, true);
         let obs = vec![
-            ContextualObservation { context: ContextSnapshot::from(&f), arm_id: "opus".into(), reward: 0.6 },
-            ContextualObservation { context: ContextSnapshot::from(&f), arm_id: "opus".into(), reward: 0.8 },
-            ContextualObservation { context: ContextSnapshot::from(&f), arm_id: "opus".into(), reward: 1.0 },
+            ContextualObservation {
+                context: ContextSnapshot::from(&f),
+                arm_id: "opus".into(),
+                reward: 0.6,
+            },
+            ContextualObservation {
+                context: ContextSnapshot::from(&f),
+                arm_id: "opus".into(),
+                reward: 0.8,
+            },
+            ContextualObservation {
+                context: ContextSnapshot::from(&f),
+                arm_id: "opus".into(),
+                reward: 1.0,
+            },
         ];
         let refs: Vec<&ContextualObservation> = obs.iter().collect();
         let (arm, mean) = ContextualDiscovery::compute_best_arm_mean(&refs);
@@ -8322,10 +9504,26 @@ mod tests {
     fn test_compute_best_arm_mean_two_arms() {
         let f = make_ctx_features("code", 0.5, 100, true);
         let obs = vec![
-            ContextualObservation { context: ContextSnapshot::from(&f), arm_id: "haiku".into(), reward: 0.5 },
-            ContextualObservation { context: ContextSnapshot::from(&f), arm_id: "haiku".into(), reward: 0.5 },
-            ContextualObservation { context: ContextSnapshot::from(&f), arm_id: "opus".into(), reward: 0.9 },
-            ContextualObservation { context: ContextSnapshot::from(&f), arm_id: "opus".into(), reward: 0.9 },
+            ContextualObservation {
+                context: ContextSnapshot::from(&f),
+                arm_id: "haiku".into(),
+                reward: 0.5,
+            },
+            ContextualObservation {
+                context: ContextSnapshot::from(&f),
+                arm_id: "haiku".into(),
+                reward: 0.5,
+            },
+            ContextualObservation {
+                context: ContextSnapshot::from(&f),
+                arm_id: "opus".into(),
+                reward: 0.9,
+            },
+            ContextualObservation {
+                context: ContextSnapshot::from(&f),
+                arm_id: "opus".into(),
+                reward: 0.9,
+            },
         ];
         let refs: Vec<&ContextualObservation> = obs.iter().collect();
         let (arm, mean) = ContextualDiscovery::compute_best_arm_mean(&refs);
@@ -8342,7 +9540,11 @@ mod tests {
         let mut disc = ContextualDiscovery::new(config);
         // Only 5 observations — less than 2*10=20 minimum
         for i in 0..5 {
-            disc.record(&make_ctx_features("code", i as f64 / 10.0, 100, true), "opus", 0.9);
+            disc.record(
+                &make_ctx_features("code", i as f64 / 10.0, 100, true),
+                "opus",
+                0.9,
+            );
         }
         let splits = disc.discover_splits();
         assert!(splits.is_empty());
@@ -8373,10 +9575,13 @@ mod tests {
         assert!(!splits.is_empty(), "Should discover at least one split");
 
         // Should discover a complexity-based split in the "code" domain
-        let complexity_split = splits.iter().find(|s| {
-            s.domain == "code" && s.split.dimension == FeatureDimension::Complexity
-        });
-        assert!(complexity_split.is_some(), "Should find a complexity split for 'code'");
+        let complexity_split = splits
+            .iter()
+            .find(|s| s.domain == "code" && s.split.dimension == FeatureDimension::Complexity);
+        assert!(
+            complexity_split.is_some(),
+            "Should find a complexity split for 'code'"
+        );
 
         let cs = complexity_split.unwrap();
         // opus should be best above threshold, haiku below (or vice versa)
@@ -8404,9 +9609,9 @@ mod tests {
         }
 
         let splits = disc.discover_splits();
-        let bool_split = splits.iter().find(|s| {
-            s.domain == "general" && s.split.dimension == FeatureDimension::HasCode
-        });
+        let bool_split = splits
+            .iter()
+            .find(|s| s.domain == "general" && s.split.dimension == FeatureDimension::HasCode);
         assert!(bool_split.is_some(), "Should discover HasCode bool split");
     }
 
@@ -8429,7 +9634,10 @@ mod tests {
 
         let splits = disc.discover_splits();
         // Both arms have identical performance — no discriminating split
-        assert!(splits.is_empty(), "Should find no splits when arms perform equally");
+        assert!(
+            splits.is_empty(),
+            "Should find no splits when arms perform equally"
+        );
     }
 
     #[test]
@@ -8485,9 +9693,9 @@ mod tests {
         }
 
         let splits = disc.discover_splits();
-        let token_split = splits.iter().find(|s| {
-            s.domain == "code" && s.split.dimension == FeatureDimension::TokenCount
-        });
+        let token_split = splits
+            .iter()
+            .find(|s| s.domain == "code" && s.split.dimension == FeatureDimension::TokenCount);
         assert!(token_split.is_some(), "Should discover TokenCount split");
     }
 
@@ -8538,8 +9746,14 @@ mod tests {
         let rules = disc.splits_to_nfa_rules(&splits, 100);
         assert_eq!(rules.len(), 2);
         // Check one rule has BoolFeature true, other has false
-        let has_true = rules.iter().any(|r| r.1.iter().any(|s| matches!(s, NfaSymbol::BoolFeature { value: true, .. })));
-        let has_false = rules.iter().any(|r| r.1.iter().any(|s| matches!(s, NfaSymbol::BoolFeature { value: false, .. })));
+        let has_true = rules.iter().any(|r| {
+            r.1.iter()
+                .any(|s| matches!(s, NfaSymbol::BoolFeature { value: true, .. }))
+        });
+        let has_false = rules.iter().any(|r| {
+            r.1.iter()
+                .any(|s| matches!(s, NfaSymbol::BoolFeature { value: false, .. }))
+        });
         assert!(has_true);
         assert!(has_false);
     }
@@ -8598,12 +9812,20 @@ mod tests {
         bandit.add_arm_for_task("code", "haiku");
         for _ in 0..20 {
             bandit.record_outcome(&ArmFeedback {
-                arm_id: "opus".into(), success: true, quality: Some(0.9),
-                latency_ms: None, cost: None, task_type: Some("code".into()),
+                arm_id: "opus".into(),
+                success: true,
+                quality: Some(0.9),
+                latency_ms: None,
+                cost: None,
+                task_type: Some("code".into()),
             });
             bandit.record_outcome(&ArmFeedback {
-                arm_id: "haiku".into(), success: true, quality: Some(0.6),
-                latency_ms: None, cost: None, task_type: Some("code".into()),
+                arm_id: "haiku".into(),
+                success: true,
+                quality: Some(0.6),
+                latency_ms: None,
+                cost: None,
+                task_type: Some("code".into()),
             });
         }
 
@@ -8637,8 +9859,12 @@ mod tests {
         bandit.add_arm("opus");
         for _ in 0..10 {
             bandit.record_outcome(&ArmFeedback {
-                arm_id: "opus".into(), success: true, quality: Some(0.8),
-                latency_ms: None, cost: None, task_type: None,
+                arm_id: "opus".into(),
+                success: true,
+                quality: Some(0.8),
+                latency_ms: None,
+                cost: None,
+                task_type: None,
             });
         }
 
@@ -8657,20 +9883,36 @@ mod tests {
         bandit.add_arm("haiku");
         for _ in 0..20 {
             bandit.record_outcome(&ArmFeedback {
-                arm_id: "opus".into(), success: true, quality: Some(0.9),
-                latency_ms: None, cost: None, task_type: Some("code".into()),
+                arm_id: "opus".into(),
+                success: true,
+                quality: Some(0.9),
+                latency_ms: None,
+                cost: None,
+                task_type: Some("code".into()),
             });
             bandit.record_outcome(&ArmFeedback {
-                arm_id: "haiku".into(), success: true, quality: Some(0.5),
-                latency_ms: None, cost: None, task_type: Some("code".into()),
+                arm_id: "haiku".into(),
+                success: true,
+                quality: Some(0.5),
+                latency_ms: None,
+                cost: None,
+                task_type: Some("code".into()),
             });
             bandit.record_outcome(&ArmFeedback {
-                arm_id: "opus".into(), success: true, quality: Some(0.7),
-                latency_ms: None, cost: None, task_type: None,
+                arm_id: "opus".into(),
+                success: true,
+                quality: Some(0.7),
+                latency_ms: None,
+                cost: None,
+                task_type: None,
             });
             bandit.record_outcome(&ArmFeedback {
-                arm_id: "haiku".into(), success: true, quality: Some(0.6),
-                latency_ms: None, cost: None, task_type: None,
+                arm_id: "haiku".into(),
+                success: true,
+                quality: Some(0.6),
+                latency_ms: None,
+                cost: None,
+                task_type: None,
             });
         }
 
@@ -8734,7 +9976,10 @@ mod tests {
         assert_eq!(arm.pull_count, 1);
 
         // Contextual discovery should have recorded the observation
-        assert_eq!(pipeline.contextual_discovery().unwrap().observation_count(), 1);
+        assert_eq!(
+            pipeline.contextual_discovery().unwrap().observation_count(),
+            1
+        );
     }
 
     #[test]
@@ -8763,41 +10008,65 @@ mod tests {
             // High complexity
             pipeline.record_outcome_with_context(
                 &ArmFeedback {
-                    arm_id: "opus".into(), success: true, quality: Some(0.95),
-                    latency_ms: None, cost: None, task_type: Some("code".into()),
+                    arm_id: "opus".into(),
+                    success: true,
+                    quality: Some(0.95),
+                    latency_ms: None,
+                    cost: None,
+                    task_type: Some("code".into()),
                 },
                 &make_ctx_features("code", 0.9, 100, true),
             );
             pipeline.record_outcome_with_context(
                 &ArmFeedback {
-                    arm_id: "haiku".into(), success: true, quality: Some(0.3),
-                    latency_ms: None, cost: None, task_type: Some("code".into()),
+                    arm_id: "haiku".into(),
+                    success: true,
+                    quality: Some(0.3),
+                    latency_ms: None,
+                    cost: None,
+                    task_type: Some("code".into()),
                 },
                 &make_ctx_features("code", 0.85, 100, true),
             );
             // Low complexity
             pipeline.record_outcome_with_context(
                 &ArmFeedback {
-                    arm_id: "haiku".into(), success: true, quality: Some(0.9),
-                    latency_ms: None, cost: None, task_type: Some("code".into()),
+                    arm_id: "haiku".into(),
+                    success: true,
+                    quality: Some(0.9),
+                    latency_ms: None,
+                    cost: None,
+                    task_type: Some("code".into()),
                 },
                 &make_ctx_features("code", 0.1, 100, true),
             );
             pipeline.record_outcome_with_context(
                 &ArmFeedback {
-                    arm_id: "opus".into(), success: true, quality: Some(0.3),
-                    latency_ms: None, cost: None, task_type: Some("code".into()),
+                    arm_id: "opus".into(),
+                    success: true,
+                    quality: Some(0.3),
+                    latency_ms: None,
+                    cost: None,
+                    task_type: Some("code".into()),
                 },
                 &make_ctx_features("code", 0.15, 100, true),
             );
             // Global observations
             pipeline.record_outcome(&ArmFeedback {
-                arm_id: "opus".into(), success: true, quality: Some(0.7),
-                latency_ms: None, cost: None, task_type: None,
+                arm_id: "opus".into(),
+                success: true,
+                quality: Some(0.7),
+                latency_ms: None,
+                cost: None,
+                task_type: None,
             });
             pipeline.record_outcome(&ArmFeedback {
-                arm_id: "haiku".into(), success: true, quality: Some(0.6),
-                latency_ms: None, cost: None, task_type: None,
+                arm_id: "haiku".into(),
+                success: true,
+                quality: Some(0.6),
+                latency_ms: None,
+                cost: None,
+                task_type: None,
             });
         }
 
@@ -8841,8 +10110,12 @@ mod tests {
     fn test_reward_policy_quality_only() {
         let rp = RewardPolicy::default();
         let feedback = ArmFeedback {
-            arm_id: "a".to_string(), success: true, quality: Some(0.8),
-            latency_ms: None, cost: None, task_type: None,
+            arm_id: "a".to_string(),
+            success: true,
+            quality: Some(0.8),
+            latency_ms: None,
+            cost: None,
+            task_type: None,
         };
         let reward = rp.compute_reward(&feedback);
         // With latency=None and cost=None, all weight goes to quality
@@ -8852,12 +10125,19 @@ mod tests {
     #[test]
     fn test_reward_policy_all_components() {
         let rp = RewardPolicy {
-            quality_weight: 0.5, latency_weight: 0.3, cost_weight: 0.2,
-            latency_ref_ms: 1000.0, cost_ref: 0.1,
+            quality_weight: 0.5,
+            latency_weight: 0.3,
+            cost_weight: 0.2,
+            latency_ref_ms: 1000.0,
+            cost_ref: 0.1,
         };
         let feedback = ArmFeedback {
-            arm_id: "a".to_string(), success: true, quality: Some(0.9),
-            latency_ms: Some(500), cost: Some(0.05), task_type: None,
+            arm_id: "a".to_string(),
+            success: true,
+            quality: Some(0.9),
+            latency_ms: Some(500),
+            cost: Some(0.05),
+            task_type: None,
         };
         let reward = rp.compute_reward(&feedback);
         // quality_score = 0.9, latency_score = 1 - 500/1000 = 0.5, cost_score = 1 - 0.05/0.1 = 0.5
@@ -8868,12 +10148,19 @@ mod tests {
     #[test]
     fn test_reward_policy_all_weights_zero() {
         let rp = RewardPolicy {
-            quality_weight: 0.0, latency_weight: 0.0, cost_weight: 0.0,
-            latency_ref_ms: 1000.0, cost_ref: 0.1,
+            quality_weight: 0.0,
+            latency_weight: 0.0,
+            cost_weight: 0.0,
+            latency_ref_ms: 1000.0,
+            cost_ref: 0.1,
         };
         let feedback = ArmFeedback {
-            arm_id: "a".to_string(), success: true, quality: Some(0.6),
-            latency_ms: Some(200), cost: Some(0.02), task_type: None,
+            arm_id: "a".to_string(),
+            success: true,
+            quality: Some(0.6),
+            latency_ms: Some(200),
+            cost: Some(0.02),
+            task_type: None,
         };
         let reward = rp.compute_reward(&feedback);
         // Normalizes to 1/3 each
@@ -8887,12 +10174,19 @@ mod tests {
     #[test]
     fn test_reward_policy_latency_none_redistributes() {
         let rp = RewardPolicy {
-            quality_weight: 0.6, latency_weight: 0.3, cost_weight: 0.1,
-            latency_ref_ms: 1000.0, cost_ref: 0.1,
+            quality_weight: 0.6,
+            latency_weight: 0.3,
+            cost_weight: 0.1,
+            latency_ref_ms: 1000.0,
+            cost_ref: 0.1,
         };
         let feedback = ArmFeedback {
-            arm_id: "a".to_string(), success: true, quality: Some(0.8),
-            latency_ms: None, cost: Some(0.05), task_type: None,
+            arm_id: "a".to_string(),
+            success: true,
+            quality: Some(0.8),
+            latency_ms: None,
+            cost: Some(0.05),
+            task_type: None,
         };
         let reward = rp.compute_reward(&feedback);
         // Latency weight 0.3 redistributed to quality (0.6) and cost (0.1) proportionally
@@ -8908,12 +10202,19 @@ mod tests {
     #[test]
     fn test_reward_policy_cost_none_redistributes() {
         let rp = RewardPolicy {
-            quality_weight: 0.6, latency_weight: 0.3, cost_weight: 0.1,
-            latency_ref_ms: 1000.0, cost_ref: 0.1,
+            quality_weight: 0.6,
+            latency_weight: 0.3,
+            cost_weight: 0.1,
+            latency_ref_ms: 1000.0,
+            cost_ref: 0.1,
         };
         let feedback = ArmFeedback {
-            arm_id: "a".to_string(), success: true, quality: Some(0.7),
-            latency_ms: Some(300), cost: None, task_type: None,
+            arm_id: "a".to_string(),
+            success: true,
+            quality: Some(0.7),
+            latency_ms: Some(300),
+            cost: None,
+            task_type: None,
         };
         let reward = rp.compute_reward(&feedback);
         let lat_score = 1.0 - 300.0 / 1000.0;
@@ -8926,12 +10227,19 @@ mod tests {
     #[test]
     fn test_reward_policy_both_none_quality_only() {
         let rp = RewardPolicy {
-            quality_weight: 0.5, latency_weight: 0.3, cost_weight: 0.2,
-            latency_ref_ms: 1000.0, cost_ref: 0.1,
+            quality_weight: 0.5,
+            latency_weight: 0.3,
+            cost_weight: 0.2,
+            latency_ref_ms: 1000.0,
+            cost_ref: 0.1,
         };
         let feedback = ArmFeedback {
-            arm_id: "a".to_string(), success: false, quality: None,
-            latency_ms: None, cost: None, task_type: None,
+            arm_id: "a".to_string(),
+            success: false,
+            quality: None,
+            latency_ms: None,
+            cost: None,
+            task_type: None,
         };
         let reward = rp.compute_reward(&feedback);
         assert!((reward - 0.0).abs() < 1e-10); // success=false, quality=None -> 0.0
@@ -8940,16 +10248,27 @@ mod tests {
     #[test]
     fn test_reward_policy_high_latency_penalized() {
         let rp = RewardPolicy {
-            quality_weight: 0.5, latency_weight: 0.5, cost_weight: 0.0,
-            latency_ref_ms: 1000.0, cost_ref: 0.1,
+            quality_weight: 0.5,
+            latency_weight: 0.5,
+            cost_weight: 0.0,
+            latency_ref_ms: 1000.0,
+            cost_ref: 0.1,
         };
         let fast = ArmFeedback {
-            arm_id: "a".to_string(), success: true, quality: Some(0.8),
-            latency_ms: Some(100), cost: None, task_type: None,
+            arm_id: "a".to_string(),
+            success: true,
+            quality: Some(0.8),
+            latency_ms: Some(100),
+            cost: None,
+            task_type: None,
         };
         let slow = ArmFeedback {
-            arm_id: "a".to_string(), success: true, quality: Some(0.8),
-            latency_ms: Some(900), cost: None, task_type: None,
+            arm_id: "a".to_string(),
+            success: true,
+            quality: Some(0.8),
+            latency_ms: Some(900),
+            cost: None,
+            task_type: None,
         };
         assert!(rp.compute_reward(&fast) > rp.compute_reward(&slow));
     }
@@ -8957,16 +10276,27 @@ mod tests {
     #[test]
     fn test_reward_policy_high_cost_penalized() {
         let rp = RewardPolicy {
-            quality_weight: 0.5, latency_weight: 0.0, cost_weight: 0.5,
-            latency_ref_ms: 1000.0, cost_ref: 0.1,
+            quality_weight: 0.5,
+            latency_weight: 0.0,
+            cost_weight: 0.5,
+            latency_ref_ms: 1000.0,
+            cost_ref: 0.1,
         };
         let cheap = ArmFeedback {
-            arm_id: "a".to_string(), success: true, quality: Some(0.8),
-            latency_ms: None, cost: Some(0.01), task_type: None,
+            arm_id: "a".to_string(),
+            success: true,
+            quality: Some(0.8),
+            latency_ms: None,
+            cost: Some(0.01),
+            task_type: None,
         };
         let expensive = ArmFeedback {
-            arm_id: "a".to_string(), success: true, quality: Some(0.8),
-            latency_ms: None, cost: Some(0.09), task_type: None,
+            arm_id: "a".to_string(),
+            success: true,
+            quality: Some(0.8),
+            latency_ms: None,
+            cost: Some(0.09),
+            task_type: None,
         };
         assert!(rp.compute_reward(&cheap) > rp.compute_reward(&expensive));
     }
@@ -8974,12 +10304,19 @@ mod tests {
     #[test]
     fn test_reward_policy_zero_ref_values() {
         let rp = RewardPolicy {
-            quality_weight: 0.5, latency_weight: 0.3, cost_weight: 0.2,
-            latency_ref_ms: 0.0, cost_ref: 0.0,
+            quality_weight: 0.5,
+            latency_weight: 0.3,
+            cost_weight: 0.2,
+            latency_ref_ms: 0.0,
+            cost_ref: 0.0,
         };
         let feedback = ArmFeedback {
-            arm_id: "a".to_string(), success: true, quality: Some(0.7),
-            latency_ms: Some(100), cost: Some(0.01), task_type: None,
+            arm_id: "a".to_string(),
+            success: true,
+            quality: Some(0.7),
+            latency_ms: Some(100),
+            cost: Some(0.01),
+            task_type: None,
         };
         // Zero refs -> those components treated as unavailable -> quality only
         let reward = rp.compute_reward(&feedback);
@@ -8990,16 +10327,23 @@ mod tests {
     fn test_record_outcome_uses_reward_policy() {
         let config = BanditConfig {
             reward_policy: RewardPolicy {
-                quality_weight: 0.5, latency_weight: 0.5, cost_weight: 0.0,
-                latency_ref_ms: 1000.0, cost_ref: 0.1,
+                quality_weight: 0.5,
+                latency_weight: 0.5,
+                cost_weight: 0.0,
+                latency_ref_ms: 1000.0,
+                cost_ref: 0.1,
             },
             ..BanditConfig::default()
         };
         let mut router = BanditRouter::new(config);
         router.add_arm("model-a");
         let feedback = ArmFeedback {
-            arm_id: "model-a".to_string(), success: true, quality: Some(1.0),
-            latency_ms: Some(500), cost: None, task_type: None,
+            arm_id: "model-a".to_string(),
+            success: true,
+            quality: Some(1.0),
+            latency_ms: Some(500),
+            cost: None,
+            task_type: None,
         };
         router.record_outcome(&feedback);
         // Reward = 0.5*1.0 + 0.5*0.5 = 0.75 (latency score = 1 - 500/1000 = 0.5)
@@ -9015,8 +10359,12 @@ mod tests {
         let mut router = BanditRouter::new(BanditConfig::default());
         router.add_arm("model-a");
         let feedback = ArmFeedback {
-            arm_id: "model-a".to_string(), success: true, quality: Some(0.6),
-            latency_ms: None, cost: None, task_type: None,
+            arm_id: "model-a".to_string(),
+            success: true,
+            quality: Some(0.6),
+            latency_ms: None,
+            cost: None,
+            task_type: None,
         };
         router.record_outcome(&feedback);
         let arm = router.all_arms(None).first().unwrap();
@@ -9057,7 +10405,10 @@ mod tests {
     #[test]
     fn test_routing_preferences_apply_to_policy() {
         let base = RewardPolicy::default();
-        let prefs = RoutingPreferences { cost_weight: Some(0.0), ..Default::default() };
+        let prefs = RoutingPreferences {
+            cost_weight: Some(0.0),
+            ..Default::default()
+        };
         let policy = prefs.apply_to_policy(&base);
         assert!((policy.cost_weight - 0.0).abs() < 1e-10);
         assert!((policy.quality_weight - 0.7).abs() < 1e-10);
@@ -9113,8 +10464,12 @@ mod tests {
         router.add_arm("model-a");
         let prefs = RoutingPreferences::ignore_cost();
         let feedback = ArmFeedback {
-            arm_id: "model-a".to_string(), success: true, quality: Some(0.8),
-            latency_ms: None, cost: Some(0.1), task_type: None,
+            arm_id: "model-a".to_string(),
+            success: true,
+            quality: Some(0.8),
+            latency_ms: None,
+            cost: Some(0.1),
+            task_type: None,
         };
         // With ignore_cost, cost is 0 weight -> reward should be quality-only = 0.8
         router.record_outcome_with_preferences(&feedback, &prefs);
@@ -9228,9 +10583,12 @@ mod tests {
     fn test_derive_preferences_low_budget() {
         let features = QueryFeatureExtractor::extract("test");
         let ctx = RoutingContext {
-            features, rag_active: false,
+            features,
+            rag_active: false,
             budget_remaining: Some(0.001), // Very low budget
-            agent_tier: None, session_cost_so_far: None, preferred_provider: None,
+            agent_tier: None,
+            session_cost_so_far: None,
+            preferred_provider: None,
         };
         let policy = RewardPolicy::default(); // cost_ref = 0.01
         let prefs = ctx.derive_preferences(&policy);
@@ -9252,9 +10610,12 @@ mod tests {
     fn test_derive_preferences_normal_budget() {
         let features = QueryFeatureExtractor::extract("test");
         let ctx = RoutingContext {
-            features, rag_active: false,
+            features,
+            rag_active: false,
             budget_remaining: Some(100.0), // High budget
-            agent_tier: None, session_cost_so_far: None, preferred_provider: None,
+            agent_tier: None,
+            session_cost_so_far: None,
+            preferred_provider: None,
         };
         let policy = RewardPolicy::default();
         let prefs = ctx.derive_preferences(&policy);
@@ -9274,7 +10635,8 @@ mod tests {
     fn test_routing_context_serialize_deserialize() {
         let features = QueryFeatureExtractor::extract("test");
         let ctx = RoutingContext {
-            features, rag_active: true,
+            features,
+            rag_active: true,
             budget_remaining: Some(5.0),
             agent_tier: Some("pro".to_string()),
             session_cost_so_far: Some(1.23),
@@ -9291,9 +10653,12 @@ mod tests {
     fn test_routing_context_with_rag() {
         let features = QueryFeatureExtractor::extract("search for something");
         let ctx = RoutingContext {
-            features, rag_active: true,
-            budget_remaining: None, agent_tier: None,
-            session_cost_so_far: None, preferred_provider: None,
+            features,
+            rag_active: true,
+            budget_remaining: None,
+            agent_tier: None,
+            session_cost_so_far: None,
+            preferred_provider: None,
         };
         assert!(ctx.rag_active);
     }
@@ -9312,7 +10677,8 @@ mod tests {
     #[test]
     fn test_feature_importance_single_dimension() {
         let mut cd = ContextualDiscovery::new(DiscoveryConfig {
-            min_samples_per_split: 2, min_gain: 0.001,
+            min_samples_per_split: 2,
+            min_gain: 0.001,
             ..DiscoveryConfig::default()
         });
         // Create observations where each arm performs well in its complexity zone.
@@ -9327,22 +10693,33 @@ mod tests {
             features.complexity = if is_low { 0.1 } else { 0.95 };
             let use_haiku = (i % 2) == 0;
             let (arm, reward) = if is_low {
-                if use_haiku { ("haiku", 0.9) } else { ("opus", 0.4) }
+                if use_haiku {
+                    ("haiku", 0.9)
+                } else {
+                    ("opus", 0.4)
+                }
             } else {
-                if use_haiku { ("haiku", 0.4) } else { ("opus", 0.9) }
+                if use_haiku {
+                    ("haiku", 0.4)
+                } else {
+                    ("opus", 0.9)
+                }
             };
             cd.record(&features, arm, reward);
         }
         let importance = cd.feature_importance();
         assert!(!importance.is_empty());
         // At least complexity should appear
-        assert!(importance.iter().any(|fi| fi.dimension.name() == "complexity"));
+        assert!(importance
+            .iter()
+            .any(|fi| fi.dimension.name() == "complexity"));
     }
 
     #[test]
     fn test_feature_importance_multiple_sorted() {
         let mut cd = ContextualDiscovery::new(DiscoveryConfig {
-            min_samples_per_split: 2, min_gain: 0.001,
+            min_samples_per_split: 2,
+            min_gain: 0.001,
             ..DiscoveryConfig::default()
         });
         // Create observations with both complexity and has_code splits
@@ -9364,7 +10741,8 @@ mod tests {
     #[test]
     fn test_feature_importance_domains_count() {
         let mut cd = ContextualDiscovery::new(DiscoveryConfig {
-            min_samples_per_split: 2, min_gain: 0.01,
+            min_samples_per_split: 2,
+            min_gain: 0.01,
             ..DiscoveryConfig::default()
         });
         // Create observations in two domains
@@ -9378,7 +10756,10 @@ mod tests {
             }
         }
         let importance = cd.feature_importance();
-        if let Some(fi) = importance.iter().find(|fi| fi.dimension.name() == "complexity") {
+        if let Some(fi) = importance
+            .iter()
+            .find(|fi| fi.dimension.name() == "complexity")
+        {
             // Complexity splits should affect both domains
             assert!(fi.domains_affected >= 1);
         }

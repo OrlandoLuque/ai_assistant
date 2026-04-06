@@ -240,12 +240,7 @@ impl LlmJudge {
     ///
     /// The prompt asks the LLM to compare two responses and indicate which is
     /// better, with reasoning and confidence.
-    pub fn build_pairwise_prompt(
-        &self,
-        query: &str,
-        response_a: &str,
-        response_b: &str,
-    ) -> String {
+    pub fn build_pairwise_prompt(&self, query: &str, response_a: &str, response_b: &str) -> String {
         format!(
             "You are an expert evaluator. Compare the following two responses to the given query.\n\n\
              Query: {}\n\n\
@@ -647,8 +642,7 @@ Hope this helps!"#;
     #[test]
     fn test_parse_pairwise_response() {
         let judge = LlmJudge::new(vec![]);
-        let response =
-            r#"{"preferred": "B", "reasoning": "Response B is more scientifically accurate.", "confidence": 0.9}"#;
+        let response = r#"{"preferred": "B", "reasoning": "Response B is more scientifically accurate.", "confidence": 0.9}"#;
 
         let result = judge.parse_pairwise_response(response).unwrap();
         assert_eq!(result.preferred, "B");

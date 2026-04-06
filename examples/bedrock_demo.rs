@@ -6,8 +6,7 @@
 //! Run with: cargo run --example bedrock_demo --features "aws-bedrock"
 
 use ai_assistant::{
-    AwsCredentials, BedrockMessage, BedrockRequest, SigV4Params,
-    fetch_bedrock_models,
+    fetch_bedrock_models, AwsCredentials, BedrockMessage, BedrockRequest, SigV4Params,
 };
 
 fn main() {
@@ -25,8 +24,13 @@ fn main() {
     println!("Session token: {:?}", creds.session_token);
 
     // Add an optional session token (for temporary credentials / STS)
-    let creds_with_token = creds.clone().with_session_token("FwoGZX...example_token".to_string());
-    println!("With session token: {:?}\n", creds_with_token.session_token.as_deref());
+    let creds_with_token = creds
+        .clone()
+        .with_session_token("FwoGZX...example_token".to_string());
+    println!(
+        "With session token: {:?}\n",
+        creds_with_token.session_token.as_deref()
+    );
 
     // -----------------------------------------------------------------------
     // 2. Build a BedrockRequest
@@ -35,12 +39,10 @@ fn main() {
     let request = BedrockRequest {
         model_id: "anthropic.claude-3-5-sonnet-20241022-v2:0".to_string(),
         region: "us-east-1".to_string(),
-        messages: vec![
-            BedrockMessage {
-                role: "user".to_string(),
-                content: "What is the capital of France?".to_string(),
-            },
-        ],
+        messages: vec![BedrockMessage {
+            role: "user".to_string(),
+            content: "What is the capital of France?".to_string(),
+        }],
         system_prompt: Some("You are a helpful geography assistant.".to_string()),
         max_tokens: 1024,
         temperature: 0.7,
@@ -112,7 +114,9 @@ fn main() {
             },
             BedrockMessage {
                 role: "assistant".to_string(),
-                content: "Rust is a systems programming language focused on safety and performance.".to_string(),
+                content:
+                    "Rust is a systems programming language focused on safety and performance."
+                        .to_string(),
             },
             BedrockMessage {
                 role: "user".to_string(),
@@ -125,7 +129,11 @@ fn main() {
     };
     println!("Conversation turns: {}", conversation.messages.len());
     for msg in &conversation.messages {
-        println!("  [{}] {}", msg.role, &msg.content[..msg.content.len().min(60)]);
+        println!(
+            "  [{}] {}",
+            msg.role,
+            &msg.content[..msg.content.len().min(60)]
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -135,11 +143,17 @@ fn main() {
     match AwsCredentials::from_env() {
         Ok(env_creds) => {
             println!("Found AWS credentials in environment:");
-            println!("  Access key: {}...", &env_creds.access_key_id[..8.min(env_creds.access_key_id.len())]);
+            println!(
+                "  Access key: {}...",
+                &env_creds.access_key_id[..8.min(env_creds.access_key_id.len())]
+            );
             println!("  Session token: {}", env_creds.session_token.is_some());
         }
         Err(e) => {
-            println!("No AWS credentials in environment (expected in demo): {}", e);
+            println!(
+                "No AWS credentials in environment (expected in demo): {}",
+                e
+            );
         }
     }
 

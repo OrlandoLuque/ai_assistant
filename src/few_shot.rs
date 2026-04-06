@@ -750,9 +750,8 @@ mod tests {
     #[test]
     fn test_update_quality_and_effective_score() {
         let mut manager = FewShotManager::new();
-        let id = manager.add_example(
-            Example::new("q", "a", ExampleCategory::Math).with_quality(0.8),
-        );
+        let id =
+            manager.add_example(Example::new("q", "a", ExampleCategory::Math).with_quality(0.8));
 
         // effective_score = quality * success_rate; no uses => success_rate = 1.0
         let example = manager.get_example(&id).unwrap();
@@ -780,15 +779,10 @@ mod tests {
         assert!(manager.is_empty());
         assert_eq!(manager.len(), 0);
 
-        let id1 = manager.add_example(
-            Example::new("q1", "a1", ExampleCategory::Math).with_quality(0.9),
-        );
-        manager.add_example(
-            Example::new("q2", "a2", ExampleCategory::Coding).with_quality(0.5),
-        );
-        manager.add_example(
-            Example::new("q3", "a3", ExampleCategory::Math).with_quality(0.85),
-        );
+        let id1 =
+            manager.add_example(Example::new("q1", "a1", ExampleCategory::Math).with_quality(0.9));
+        manager.add_example(Example::new("q2", "a2", ExampleCategory::Coding).with_quality(0.5));
+        manager.add_example(Example::new("q3", "a3", ExampleCategory::Math).with_quality(0.85));
 
         assert!(!manager.is_empty());
         assert_eq!(manager.len(), 3);

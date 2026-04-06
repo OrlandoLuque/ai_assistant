@@ -602,10 +602,8 @@ mod tests {
     use std::fs;
 
     fn test_dir() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "ai_assistant_test_safety_{}",
-            uuid::Uuid::new_v4()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("ai_assistant_test_safety_{}", uuid::Uuid::new_v4()));
         let _ = fs::create_dir_all(&dir);
         dir
     }

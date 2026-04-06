@@ -128,7 +128,10 @@ fn cmd_show(trace_id: &str, source: &PathBuf, min_level: LogLevel, no_color: boo
         .collect();
 
     if filtered.is_empty() {
-        eprintln!("No entries found for trace '{}' (level >= {})", trace_id, min_level);
+        eprintln!(
+            "No entries found for trace '{}' (level >= {})",
+            trace_id, min_level
+        );
         std::process::exit(1);
     }
 

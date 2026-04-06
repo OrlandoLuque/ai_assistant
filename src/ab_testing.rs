@@ -216,8 +216,7 @@ impl SignificanceCalculator {
 
         // Welch-Satterthwaite degrees of freedom
         let num = se_sq * se_sq;
-        let denom =
-            (var_a / n_a).powi(2) / (n_a - 1.0) + (var_b / n_b).powi(2) / (n_b - 1.0);
+        let denom = (var_a / n_a).powi(2) / (n_a - 1.0) + (var_b / n_b).powi(2) / (n_b - 1.0);
         if denom == 0.0 {
             return (t, 1.0);
         }
@@ -544,7 +543,11 @@ impl ExperimentManager {
             .get(experiment_id)
             .ok_or(AbTestError::ExperimentNotFound)?;
 
-        let weights: Vec<f64> = experiment.variants.iter().map(|v| v.traffic_weight).collect();
+        let weights: Vec<f64> = experiment
+            .variants
+            .iter()
+            .map(|v| v.traffic_weight)
+            .collect();
         let variant_index = VariantAssigner::assign(user_id, experiment_id, &weights);
         let variant_name = experiment.variants[variant_index].name.clone();
 
@@ -641,14 +644,8 @@ impl ExperimentManager {
                 (0.0, 0.0, 0.0, 0.0)
             };
 
-            let conversion_count = conversions
-                .and_then(|c| c.get(&i))
-                .copied()
-                .unwrap_or(0);
-            let observation_count = observations
-                .and_then(|o| o.get(&i))
-                .copied()
-                .unwrap_or(0);
+            let conversion_count = conversions.and_then(|c| c.get(&i)).copied().unwrap_or(0);
+            let observation_count = observations.and_then(|o| o.get(&i)).copied().unwrap_or(0);
             let conversion_rate = if observation_count > 0 {
                 conversion_count as f64 / observation_count as f64
             } else {
@@ -668,23 +665,26 @@ impl ExperimentManager {
         }
 
         // Statistical significance: compare first two variants (control vs treatment)
-        let (is_significant, p_value) = if variant_values[0].len() >= 2
-            && variant_values[1].len() >= 2
-        {
-            let (_, p) =
-                SignificanceCalculator::welch_t_test(&variant_values[0], &variant_values[1]);
-            let alpha = 1.0 - confidence;
-            (p < alpha, p)
-        } else {
-            (false, 1.0)
-        };
+        let (is_significant, p_value) =
+            if variant_values[0].len() >= 2 && variant_values[1].len() >= 2 {
+                let (_, p) =
+                    SignificanceCalculator::welch_t_test(&variant_values[0], &variant_values[1]);
+                let alpha = 1.0 - confidence;
+                (p < alpha, p)
+            } else {
+                (false, 1.0)
+            };
 
         // Determine recommended variant (the one with the highest mean, if significant)
         let recommended_variant = if is_significant {
             variant_stats
                 .iter()
                 .filter(|s| s.sample_size > 0)
-                .max_by(|a, b| a.mean.partial_cmp(&b.mean).unwrap_or(std::cmp::Ordering::Equal))
+                .max_by(|a, b| {
+                    a.mean
+                        .partial_cmp(&b.mean)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
                 .map(|s| s.variant_name.clone())
         } else {
             None
@@ -754,8 +754,7 @@ impl ExperimentManager {
             return Ok(None);
         }
 
-        let (_, p) =
-            SignificanceCalculator::welch_t_test(&variant_values[0], &variant_values[1]);
+        let (_, p) = SignificanceCalculator::welch_t_test(&variant_values[0], &variant_values[1]);
 
         if p < p_threshold {
             // Identify the winner by highest mean
@@ -965,7 +964,11 @@ mod tests {
 
         let result = mgr.get_results(&id, 0.95).unwrap();
         assert!(result.is_significant, "should be significant");
-        assert!(result.p_value < 0.05, "p_value {} should be < 0.05", result.p_value);
+        assert!(
+            result.p_value < 0.05,
+            "p_value {} should be < 0.05",
+            result.p_value
+        );
     }
 
     #[test]

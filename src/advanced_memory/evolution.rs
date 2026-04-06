@@ -257,8 +257,7 @@ impl ProcedureEvolver {
             .feedback_log
             .iter()
             .filter(|fb| {
-                fb.procedure_id == procedure_id
-                    && matches!(fb.outcome, FeedbackOutcome::Failure)
+                fb.procedure_id == procedure_id && matches!(fb.outcome, FeedbackOutcome::Failure)
             })
             .collect();
 
@@ -294,7 +293,10 @@ impl ProcedureEvolver {
     pub fn parse_failure_analysis_response(response: &str) -> Option<FailureAnalysis> {
         if let Some(json_str) = crate::llm_enhance::extract_json(response) {
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
-                let cause = val.get("cause").and_then(|s| s.as_str()).unwrap_or("unknown");
+                let cause = val
+                    .get("cause")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("unknown");
                 let suggestion = val
                     .get("suggestion")
                     .and_then(|s| s.as_str())
@@ -328,8 +330,7 @@ impl ProcedureEvolver {
             .feedback_log
             .iter()
             .filter(|fb| {
-                fb.procedure_id == procedure_id
-                    && matches!(fb.outcome, FeedbackOutcome::Failure)
+                fb.procedure_id == procedure_id && matches!(fb.outcome, FeedbackOutcome::Failure)
             })
             .count();
 
@@ -401,7 +402,11 @@ mod tests {
             "{\"cause\":\"timeout in step 3\",\"suggestion\":\"increase timeout\",\"confidence_adjustment\":-0.15}",
         );
         let analysis = evolver.analyze_failure_with_llm("proc-1", "step 3 timed out", Some(&mock));
-        assert!(analysis.cause.contains("timeout"), "Expected LLM cause, got: {}", analysis.cause);
+        assert!(
+            analysis.cause.contains("timeout"),
+            "Expected LLM cause, got: {}",
+            analysis.cause
+        );
         assert!(analysis.suggestion.contains("increase timeout"));
         assert!((analysis.confidence_adjustment - (-0.15)).abs() < 0.01);
     }

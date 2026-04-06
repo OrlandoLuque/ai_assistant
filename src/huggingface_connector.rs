@@ -500,7 +500,10 @@ mod tests {
         assert_eq!(HfTask::FillMask.as_str(), "fill-mask");
         assert_eq!(HfTask::TokenClassification.as_str(), "token-classification");
         assert_eq!(HfTask::TextClassification.as_str(), "text-classification");
-        assert_eq!(HfTask::ZeroShotClassification.as_str(), "zero-shot-classification");
+        assert_eq!(
+            HfTask::ZeroShotClassification.as_str(),
+            "zero-shot-classification"
+        );
         assert_eq!(HfTask::SentenceSimilarity.as_str(), "sentence-similarity");
         assert_eq!(HfTask::ImageClassification.as_str(), "image-classification");
         assert_eq!(HfTask::ObjectDetection.as_str(), "object-detection");
@@ -508,13 +511,19 @@ mod tests {
         assert_eq!(HfTask::ImageToText.as_str(), "image-to-text");
         assert_eq!(HfTask::TextToImage.as_str(), "text-to-image");
         assert_eq!(HfTask::AudioClassification.as_str(), "audio-classification");
-        assert_eq!(HfTask::AutomaticSpeechRecognition.as_str(), "automatic-speech-recognition");
+        assert_eq!(
+            HfTask::AutomaticSpeechRecognition.as_str(),
+            "automatic-speech-recognition"
+        );
     }
 
     #[test]
     fn test_text_generation_request() {
         let req = HfRequest::text_generation("Tell me a story");
-        assert_eq!(req.inputs, serde_json::Value::String("Tell me a story".to_string()));
+        assert_eq!(
+            req.inputs,
+            serde_json::Value::String("Tell me a story".to_string())
+        );
 
         let params = req.parameters.expect("should have parameters");
         assert_eq!(params.max_new_tokens, Some(256));
@@ -585,7 +594,10 @@ mod tests {
 
     #[test]
     fn test_qa_request_structure() {
-        let req = HfRequest::question_answering("What color is the sky?", "The sky is blue on a clear day.");
+        let req = HfRequest::question_answering(
+            "What color is the sky?",
+            "The sky is blue on a clear day.",
+        );
 
         let inputs = req.inputs.as_object().expect("inputs should be an object");
         assert_eq!(inputs["question"], "What color is the sky?");

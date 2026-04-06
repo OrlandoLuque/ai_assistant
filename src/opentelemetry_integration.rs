@@ -677,7 +677,11 @@ impl TracingMiddleware {
     ) {
         // Retrieve the span from active spans
         let span_opt = {
-            let mut active = self.tracer.active_spans.lock().expect("active_spans lock in after_llm_call");
+            let mut active = self
+                .tracer
+                .active_spans
+                .lock()
+                .expect("active_spans lock in after_llm_call");
             active.remove(span_id)
         };
         if let Some(mut span) = span_opt {
@@ -708,7 +712,11 @@ impl TracingMiddleware {
     /// Complete a tool call span.
     pub fn after_tool_call(&mut self, span_id: &str, success: bool) {
         let span_opt = {
-            let mut active = self.tracer.active_spans.lock().expect("active_spans lock in after_tool_call");
+            let mut active = self
+                .tracer
+                .active_spans
+                .lock()
+                .expect("active_spans lock in after_tool_call");
             active.remove(span_id)
         };
         if let Some(span) = span_opt {
@@ -861,10 +869,7 @@ impl GenAiAttributes {
             ));
         }
         if let Some(top_p) = self.request_top_p {
-            attrs.push((
-                "gen_ai.request.top_p".to_string(),
-                top_p.to_string(),
-            ));
+            attrs.push(("gen_ai.request.top_p".to_string(), top_p.to_string()));
         }
         if let Some(ref resp_model) = self.response_model {
             attrs.push((
@@ -1066,7 +1071,8 @@ impl AgentTracer {
         if let Some(spans) = self.traces.get_mut(trace_id) {
             spans.push(span);
         }
-        self.active_spans.insert(span_id.clone(), trace_id.to_string());
+        self.active_spans
+            .insert(span_id.clone(), trace_id.to_string());
         span_id
     }
 
@@ -1097,7 +1103,8 @@ impl AgentTracer {
         if let Some(spans) = self.traces.get_mut(trace_id) {
             spans.push(span);
         }
-        self.active_spans.insert(span_id.clone(), trace_id.to_string());
+        self.active_spans
+            .insert(span_id.clone(), trace_id.to_string());
         span_id
     }
 
@@ -1128,7 +1135,8 @@ impl AgentTracer {
         if let Some(spans) = self.traces.get_mut(trace_id) {
             spans.push(span);
         }
-        self.active_spans.insert(span_id.clone(), trace_id.to_string());
+        self.active_spans
+            .insert(span_id.clone(), trace_id.to_string());
         span_id
     }
 
@@ -1172,10 +1180,7 @@ impl AgentTracer {
             return None;
         }
         let min_start = spans.iter().map(|s| s.start_time).min()?;
-        let max_end = spans
-            .iter()
-            .filter_map(|s| s.end_time)
-            .max();
+        let max_end = spans.iter().filter_map(|s| s.end_time).max();
         let end = max_end?;
         let duration = end.signed_duration_since(min_start);
         Some(duration.num_milliseconds().max(0) as u64)
@@ -1201,7 +1206,12 @@ impl AgentTracer {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
-        format!("{}_{:016x}_{}", prefix, now & 0xFFFFFFFFFFFFFFFF, self.id_counter)
+        format!(
+            "{}_{:016x}_{}",
+            prefix,
+            now & 0xFFFFFFFFFFFFFFFF,
+            self.id_counter
+        )
     }
 
     fn add_child_to_parent(&mut self, trace_id: &str, parent_span_id: &str, child_span_id: &str) {
@@ -1309,10 +1319,7 @@ pub enum BudgetCheckResult {
     /// Cost is allowed within the budget
     Allowed,
     /// Cost is allowed but remaining budget is low (< 20% remaining after this cost)
-    Warning {
-        remaining: f64,
-        estimated: f64,
-    },
+    Warning { remaining: f64, estimated: f64 },
     /// Cost is denied because it would exceed the budget
     Denied {
         budget: f64,
@@ -1470,7 +1477,8 @@ impl CostAttributor {
 
     /// Set a budget for a scope.
     pub fn set_budget(&mut self, scope: &str, max_cost: f64) {
-        self.budgets.insert(scope.to_string(), CostBudget::new(max_cost));
+        self.budgets
+            .insert(scope.to_string(), CostBudget::new(max_cost));
     }
 
     /// Attribute a cost to a scope. Returns the calculated cost.
@@ -1489,8 +1497,11 @@ impl CostAttributor {
 
         // Check budget if one exists
         if let Some(budget) = self.budgets.get(scope) {
-            if let BudgetCheckResult::Denied { budget: b, current, requested } =
-                budget.check_budget(cost)
+            if let BudgetCheckResult::Denied {
+                budget: b,
+                current,
+                requested,
+            } = budget.check_budget(cost)
             {
                 return Err(format!(
                     "Budget exceeded for scope '{}': budget={:.4}, current={:.4}, requested={:.4}",
@@ -1505,19 +1516,17 @@ impl CostAttributor {
         }
 
         // Track breakdown
-        let scope_breakdown = self
-            .breakdowns
-            .entry(scope.to_string())
-            .or_default();
-        let entry = scope_breakdown
-            .entry(model.to_string())
-            .or_insert_with(|| CostBreakdownEntry {
-                model: model.to_string(),
-                calls: 0,
-                input_tokens: 0,
-                output_tokens: 0,
-                cost: 0.0,
-            });
+        let scope_breakdown = self.breakdowns.entry(scope.to_string()).or_default();
+        let entry =
+            scope_breakdown
+                .entry(model.to_string())
+                .or_insert_with(|| CostBreakdownEntry {
+                    model: model.to_string(),
+                    calls: 0,
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cost: 0.0,
+                });
         entry.calls += 1;
         entry.input_tokens += input_tokens;
         entry.output_tokens += output_tokens;
@@ -1554,7 +1563,11 @@ impl CostAttributor {
         let total_cost: f64 = breakdown_map.values().map(|e| e.cost).sum();
         let num_calls = self.call_counts.get(scope).copied().unwrap_or(0);
         let mut breakdown: Vec<CostBreakdownEntry> = breakdown_map.values().cloned().collect();
-        breakdown.sort_by(|a, b| b.cost.partial_cmp(&a.cost).unwrap_or(std::cmp::Ordering::Equal));
+        breakdown.sort_by(|a, b| {
+            b.cost
+                .partial_cmp(&a.cost)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         Some(CostReport {
             scope: scope.to_string(),
             total_cost,
@@ -1769,39 +1782,56 @@ impl GenAiSpanBuilder {
     }
 
     pub fn system(mut self, s: &str) -> Self {
-        self.attributes.insert(GenAiConventions::SYSTEM.to_string(), s.to_string());
+        self.attributes
+            .insert(GenAiConventions::SYSTEM.to_string(), s.to_string());
         self
     }
 
     pub fn model(mut self, m: &str) -> Self {
-        self.attributes.insert(GenAiConventions::REQUEST_MODEL.to_string(), m.to_string());
+        self.attributes
+            .insert(GenAiConventions::REQUEST_MODEL.to_string(), m.to_string());
         self
     }
 
     pub fn input_tokens(mut self, n: u64) -> Self {
         self.input_tokens = Some(n);
-        self.attributes.insert(GenAiConventions::USAGE_INPUT_TOKENS.to_string(), n.to_string());
+        self.attributes.insert(
+            GenAiConventions::USAGE_INPUT_TOKENS.to_string(),
+            n.to_string(),
+        );
         self
     }
 
     pub fn output_tokens(mut self, n: u64) -> Self {
         self.output_tokens = Some(n);
-        self.attributes.insert(GenAiConventions::USAGE_OUTPUT_TOKENS.to_string(), n.to_string());
+        self.attributes.insert(
+            GenAiConventions::USAGE_OUTPUT_TOKENS.to_string(),
+            n.to_string(),
+        );
         self
     }
 
     pub fn temperature(mut self, t: f64) -> Self {
-        self.attributes.insert(GenAiConventions::REQUEST_TEMPERATURE.to_string(), t.to_string());
+        self.attributes.insert(
+            GenAiConventions::REQUEST_TEMPERATURE.to_string(),
+            t.to_string(),
+        );
         self
     }
 
     pub fn finish_reason(mut self, r: &str) -> Self {
-        self.attributes.insert(GenAiConventions::RESPONSE_FINISH_REASON.to_string(), r.to_string());
+        self.attributes.insert(
+            GenAiConventions::RESPONSE_FINISH_REASON.to_string(),
+            r.to_string(),
+        );
         self
     }
 
     pub fn max_tokens(mut self, n: u64) -> Self {
-        self.attributes.insert(GenAiConventions::REQUEST_MAX_TOKENS.to_string(), n.to_string());
+        self.attributes.insert(
+            GenAiConventions::REQUEST_MAX_TOKENS.to_string(),
+            n.to_string(),
+        );
         self
     }
 
@@ -1857,23 +1887,31 @@ impl PrometheusMetrics {
         input_tokens: u64,
         output_tokens: u64,
     ) {
-        *self.request_counts
+        *self
+            .request_counts
             .entry((provider.to_string(), model.to_string(), status.to_string()))
             .or_insert(0) += 1;
 
-        *self.token_counts
+        *self
+            .token_counts
             .entry((provider.to_string(), model.to_string(), "input".to_string()))
             .or_insert(0) += input_tokens;
 
-        *self.token_counts
-            .entry((provider.to_string(), model.to_string(), "output".to_string()))
+        *self
+            .token_counts
+            .entry((
+                provider.to_string(),
+                model.to_string(),
+                "output".to_string(),
+            ))
             .or_insert(0) += output_tokens;
 
         self.durations.push(duration_secs);
     }
 
     pub fn record_error(&mut self, provider: &str, error_type: &str) {
-        *self.error_counts
+        *self
+            .error_counts
             .entry((provider.to_string(), error_type.to_string()))
             .or_insert(0) += 1;
     }
@@ -2434,10 +2472,7 @@ mod tests {
         assert_eq!(attrs.request_temperature, Some(0.7));
         assert_eq!(attrs.request_max_tokens, Some(4096));
         assert_eq!(attrs.request_top_p, Some(0.9));
-        assert_eq!(
-            attrs.response_model.as_deref(),
-            Some("gpt-4o-2024-08-06")
-        );
+        assert_eq!(attrs.response_model.as_deref(), Some("gpt-4o-2024-08-06"));
         assert_eq!(attrs.input_tokens, Some(500));
         assert_eq!(attrs.output_tokens, Some(200));
         assert_eq!(attrs.finish_reasons, vec!["stop".to_string()]);
@@ -2456,7 +2491,10 @@ mod tests {
         // Check that required attributes are present
         let map: HashMap<String, String> = kv_pairs.into_iter().collect();
         assert_eq!(map.get("gen_ai.system").unwrap(), "anthropic");
-        assert_eq!(map.get("gen_ai.request.model").unwrap(), "claude-3.5-sonnet");
+        assert_eq!(
+            map.get("gen_ai.request.model").unwrap(),
+            "claude-3.5-sonnet"
+        );
         assert_eq!(map.get("gen_ai.request.temperature").unwrap(), "0.5");
         assert_eq!(map.get("gen_ai.request.max_tokens").unwrap(), "1024");
         assert_eq!(map.get("gen_ai.usage.input_tokens").unwrap(), "100");
@@ -2512,15 +2550,18 @@ mod tests {
 
     #[test]
     fn test_genai_event_creation() {
-        let event = GenAiEvent::new(GenAiEventType::Prompt, "Hello, world!")
-            .with_metadata("role", "user");
+        let event =
+            GenAiEvent::new(GenAiEventType::Prompt, "Hello, world!").with_metadata("role", "user");
 
         assert_eq!(event.event_type, GenAiEventType::Prompt);
         assert_eq!(event.content, "Hello, world!");
         assert_eq!(event.metadata.get("role").unwrap(), "user");
         // Timestamp should be recent
         let now = Utc::now();
-        let diff = now.signed_duration_since(event.timestamp).num_seconds().abs();
+        let diff = now
+            .signed_duration_since(event.timestamp)
+            .num_seconds()
+            .abs();
         assert!(diff < 5);
     }
 
@@ -2580,20 +2621,13 @@ mod tests {
         let mut tracer = AgentTracer::new();
         let (trace_id, root_id) = tracer.start_session("agent-001");
         let turn_id = tracer.start_turn(&trace_id, &root_id, 1);
-        let attrs = GenAiAttributes::new(GenAiSystem::OpenAI, "gpt-4o")
-            .with_tokens(100, 50);
+        let attrs = GenAiAttributes::new(GenAiSystem::OpenAI, "gpt-4o").with_tokens(100, 50);
         let llm_id = tracer.start_llm_call(&trace_id, &turn_id, &attrs);
 
         let llm_span = tracer.get_span(&trace_id, &llm_id).unwrap();
         assert_eq!(llm_span.operation, "gen_ai.chat");
-        assert_eq!(
-            llm_span.parent_span_id.as_deref(),
-            Some(turn_id.as_str())
-        );
-        assert_eq!(
-            llm_span.attributes.get("gen_ai.system").unwrap(),
-            "openai"
-        );
+        assert_eq!(llm_span.parent_span_id.as_deref(), Some(turn_id.as_str()));
+        assert_eq!(llm_span.attributes.get("gen_ai.system").unwrap(), "openai");
         assert_eq!(
             llm_span.attributes.get("gen_ai.request.model").unwrap(),
             "gpt-4o"
@@ -2609,14 +2643,8 @@ mod tests {
 
         let tool_span = tracer.get_span(&trace_id, &tool_id).unwrap();
         assert!(tool_span.operation.contains("tool.invoke.web_search"));
-        assert_eq!(
-            tool_span.parent_span_id.as_deref(),
-            Some(turn_id.as_str())
-        );
-        assert_eq!(
-            tool_span.attributes.get("tool.name").unwrap(),
-            "web_search"
-        );
+        assert_eq!(tool_span.parent_span_id.as_deref(), Some(turn_id.as_str()));
+        assert_eq!(tool_span.attributes.get("tool.name").unwrap(), "web_search");
     }
 
     #[test]
@@ -2859,7 +2887,10 @@ mod tests {
         // Remaining: 1.5; adding 0.5 would leave 1.0 (10% < 20% threshold)
         let result = budget.check_budget(0.5);
         match result {
-            BudgetCheckResult::Warning { remaining, estimated } => {
+            BudgetCheckResult::Warning {
+                remaining,
+                estimated,
+            } => {
                 assert!((remaining - 1.0).abs() < f64::EPSILON);
                 assert!((estimated - 0.5).abs() < f64::EPSILON);
             }
@@ -3068,7 +3099,10 @@ mod tests {
         agent_tracer.add_event(
             &trace_id,
             &tool_id,
-            GenAiEvent::new(GenAiEventType::ToolCall, "web_search(query='rust programming')"),
+            GenAiEvent::new(
+                GenAiEventType::ToolCall,
+                "web_search(query='rust programming')",
+            ),
         );
 
         // End spans
@@ -3120,8 +3154,7 @@ mod tests {
 
     #[test]
     fn test_otlp_exporter_with_flush_interval() {
-        let exporter = OtlpHttpExporter::new("http://otel:4318")
-            .with_flush_interval(10_000);
+        let exporter = OtlpHttpExporter::new("http://otel:4318").with_flush_interval(10_000);
         assert_eq!(exporter.flush_interval_ms, 10_000);
     }
 
@@ -3157,7 +3190,8 @@ mod tests {
     fn test_otlp_exporter_to_otlp_json() {
         let mut exporter = OtlpHttpExporter::new("http://localhost:4318");
         let mut span = AiSpan::new("llm.generate");
-        span.attributes.insert("gen_ai.system".to_string(), "openai".to_string());
+        span.attributes
+            .insert("gen_ai.system".to_string(), "openai".to_string());
         exporter.add_span(&span);
         let json = exporter.to_otlp_json();
         assert!(json.contains("resourceSpans"));
@@ -3219,8 +3253,14 @@ mod tests {
             .model("gpt-4o")
             .build();
         assert!(span.operation.contains("chat"));
-        assert_eq!(span.attributes.get(GenAiConventions::SYSTEM), Some(&"openai".to_string()));
-        assert_eq!(span.attributes.get(GenAiConventions::REQUEST_MODEL), Some(&"gpt-4o".to_string()));
+        assert_eq!(
+            span.attributes.get(GenAiConventions::SYSTEM),
+            Some(&"openai".to_string())
+        );
+        assert_eq!(
+            span.attributes.get(GenAiConventions::REQUEST_MODEL),
+            Some(&"gpt-4o".to_string())
+        );
     }
 
     #[test]
@@ -3234,12 +3274,31 @@ mod tests {
             .finish_reason("end_turn")
             .max_tokens(4096)
             .build();
-        assert_eq!(span.attributes.get(GenAiConventions::SYSTEM), Some(&"anthropic".to_string()));
-        assert_eq!(span.attributes.get(GenAiConventions::USAGE_INPUT_TOKENS), Some(&"500".to_string()));
-        assert_eq!(span.attributes.get(GenAiConventions::USAGE_OUTPUT_TOKENS), Some(&"200".to_string()));
-        assert_eq!(span.attributes.get(GenAiConventions::REQUEST_TEMPERATURE), Some(&"0.7".to_string()));
-        assert_eq!(span.attributes.get(GenAiConventions::RESPONSE_FINISH_REASON), Some(&"end_turn".to_string()));
-        assert_eq!(span.attributes.get(GenAiConventions::REQUEST_MAX_TOKENS), Some(&"4096".to_string()));
+        assert_eq!(
+            span.attributes.get(GenAiConventions::SYSTEM),
+            Some(&"anthropic".to_string())
+        );
+        assert_eq!(
+            span.attributes.get(GenAiConventions::USAGE_INPUT_TOKENS),
+            Some(&"500".to_string())
+        );
+        assert_eq!(
+            span.attributes.get(GenAiConventions::USAGE_OUTPUT_TOKENS),
+            Some(&"200".to_string())
+        );
+        assert_eq!(
+            span.attributes.get(GenAiConventions::REQUEST_TEMPERATURE),
+            Some(&"0.7".to_string())
+        );
+        assert_eq!(
+            span.attributes
+                .get(GenAiConventions::RESPONSE_FINISH_REASON),
+            Some(&"end_turn".to_string())
+        );
+        assert_eq!(
+            span.attributes.get(GenAiConventions::REQUEST_MAX_TOKENS),
+            Some(&"4096".to_string())
+        );
         assert_eq!(span.input_tokens, Some(500));
         assert_eq!(span.output_tokens, Some(200));
     }
@@ -3249,8 +3308,14 @@ mod tests {
         assert_eq!(GenAiConventions::SYSTEM, "gen_ai.system");
         assert_eq!(GenAiConventions::REQUEST_MODEL, "gen_ai.request.model");
         assert_eq!(GenAiConventions::RESPONSE_MODEL, "gen_ai.response.model");
-        assert_eq!(GenAiConventions::USAGE_INPUT_TOKENS, "gen_ai.usage.input_tokens");
-        assert_eq!(GenAiConventions::USAGE_OUTPUT_TOKENS, "gen_ai.usage.output_tokens");
+        assert_eq!(
+            GenAiConventions::USAGE_INPUT_TOKENS,
+            "gen_ai.usage.input_tokens"
+        );
+        assert_eq!(
+            GenAiConventions::USAGE_OUTPUT_TOKENS,
+            "gen_ai.usage.output_tokens"
+        );
     }
 
     // ========================================================================

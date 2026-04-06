@@ -86,7 +86,10 @@ impl EmotionState {
     /// Create with full probability distribution.
     pub fn from_probabilities(mut probs: Vec<(EmotionCategory, f32)>) -> Self {
         probs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        let (category, confidence) = probs.first().copied().unwrap_or((EmotionCategory::Neutral, 0.0));
+        let (category, confidence) = probs
+            .first()
+            .copied()
+            .unwrap_or((EmotionCategory::Neutral, 0.0));
         let secondary = probs.get(1).map(|(cat, _)| *cat);
         Self {
             category,
@@ -132,12 +135,8 @@ impl EmotionState {
             EmotionCategory::Excited | EmotionCategory::Happy => {
                 "Speak with energy and enthusiasm. Match the user's positive tone."
             }
-            EmotionCategory::Confused => {
-                "Speak clearly and slowly. Be helpful and structured."
-            }
-            EmotionCategory::Bored => {
-                "Speak concisely and engagingly. Keep it interesting."
-            }
+            EmotionCategory::Confused => "Speak clearly and slowly. Be helpful and structured.",
+            EmotionCategory::Bored => "Speak concisely and engagingly. Keep it interesting.",
             _ => "Speak naturally.",
         }
     }
@@ -180,11 +179,7 @@ pub trait EmotionDetector: Send + Sync {
     /// # Arguments
     /// * `audio` - Raw audio bytes
     /// * `sample_rate` - Audio sample rate in Hz (e.g., 16000)
-    fn detect_from_audio(
-        &self,
-        audio: &[u8],
-        sample_rate: u32,
-    ) -> Result<EmotionState, String>;
+    fn detect_from_audio(&self, audio: &[u8], sample_rate: u32) -> Result<EmotionState, String>;
 
     /// Detect emotion from text (sentiment analysis).
     fn detect_from_text(&self, text: &str) -> Result<EmotionState, String>;
@@ -224,11 +219,7 @@ impl Default for KeywordEmotionDetector {
 }
 
 impl EmotionDetector for KeywordEmotionDetector {
-    fn detect_from_audio(
-        &self,
-        _audio: &[u8],
-        _sample_rate: u32,
-    ) -> Result<EmotionState, String> {
+    fn detect_from_audio(&self, _audio: &[u8], _sample_rate: u32) -> Result<EmotionState, String> {
         // Keyword detector cannot analyze audio — return neutral
         Ok(EmotionState::default())
     }
@@ -264,43 +255,128 @@ impl EmotionDetector for KeywordEmotionDetector {
 
         // ── Keyword patterns (English + Spanish) ────────────────────
         let patterns: Vec<(EmotionCategory, &[&str], f32)> = vec![
-            (EmotionCategory::Angry, &[
-                "angry", "furious", "outraged", "hate", "terrible", "worst", "damn", "hell",
-                // Spanish
-                "enfadado", "furioso", "cabreado",
-            ], 0.7),
-            (EmotionCategory::Frustrated, &[
-                "frustrated", "annoying", "stuck", "doesn't work", "broken", "ugh", "can't", "impossible",
-                // Spanish
-                "frustrado", "harto", "cansado de",
-            ], 0.65),
-            (EmotionCategory::Sad, &[
-                "sad", "depressed", "unhappy", "disappointed", "sorry", "unfortunately", "miss", "lonely",
-                // Spanish
-                "triste", "apenado", "desanimado",
-            ], 0.65),
-            (EmotionCategory::Happy, &[
-                "happy", "great", "awesome", "wonderful", "love", "excellent", "amazing", "perfect", "thanks",
-                // Spanish
-                "feliz", "contento", "genial", "estupendo",
-            ], 0.6),
-            (EmotionCategory::Excited, &[
-                "excited", "incredible", "fantastic", "wow", "can't wait", "!!", "omg",
-                // Spanish
-                "emocionado", "entusiasmado", "incre\u{00ed}ble",
-            ], 0.6),
-            (EmotionCategory::Confused, &[
-                "confused", "don't understand", "what do you mean", "unclear", "lost", "huh", "?",
-                // Spanish
-                "confundido", "perdido", "no entiendo",
-            ], 0.55),
-            (EmotionCategory::Fearful, &[
-                "scared", "afraid", "worried", "anxious", "nervous", "concerned", "fear",
-            ], 0.6),
-            (EmotionCategory::Calm, &[
-                // Spanish
-                "tranquilo", "relajado", "en paz",
-            ], 0.55),
+            (
+                EmotionCategory::Angry,
+                &[
+                    "angry", "furious", "outraged", "hate", "terrible", "worst", "damn", "hell",
+                    // Spanish
+                    "enfadado", "furioso", "cabreado",
+                ],
+                0.7,
+            ),
+            (
+                EmotionCategory::Frustrated,
+                &[
+                    "frustrated",
+                    "annoying",
+                    "stuck",
+                    "doesn't work",
+                    "broken",
+                    "ugh",
+                    "can't",
+                    "impossible",
+                    // Spanish
+                    "frustrado",
+                    "harto",
+                    "cansado de",
+                ],
+                0.65,
+            ),
+            (
+                EmotionCategory::Sad,
+                &[
+                    "sad",
+                    "depressed",
+                    "unhappy",
+                    "disappointed",
+                    "sorry",
+                    "unfortunately",
+                    "miss",
+                    "lonely",
+                    // Spanish
+                    "triste",
+                    "apenado",
+                    "desanimado",
+                ],
+                0.65,
+            ),
+            (
+                EmotionCategory::Happy,
+                &[
+                    "happy",
+                    "great",
+                    "awesome",
+                    "wonderful",
+                    "love",
+                    "excellent",
+                    "amazing",
+                    "perfect",
+                    "thanks",
+                    // Spanish
+                    "feliz",
+                    "contento",
+                    "genial",
+                    "estupendo",
+                ],
+                0.6,
+            ),
+            (
+                EmotionCategory::Excited,
+                &[
+                    "excited",
+                    "incredible",
+                    "fantastic",
+                    "wow",
+                    "can't wait",
+                    "!!",
+                    "omg",
+                    // Spanish
+                    "emocionado",
+                    "entusiasmado",
+                    "incre\u{00ed}ble",
+                ],
+                0.6,
+            ),
+            (
+                EmotionCategory::Confused,
+                &[
+                    "confused",
+                    "don't understand",
+                    "what do you mean",
+                    "unclear",
+                    "lost",
+                    "huh",
+                    "?",
+                    // Spanish
+                    "confundido",
+                    "perdido",
+                    "no entiendo",
+                ],
+                0.55,
+            ),
+            (
+                EmotionCategory::Fearful,
+                &[
+                    "scared",
+                    "afraid",
+                    "worried",
+                    "anxious",
+                    "nervous",
+                    "concerned",
+                    "fear",
+                ],
+                0.6,
+            ),
+            (
+                EmotionCategory::Calm,
+                &[
+                    // Spanish
+                    "tranquilo",
+                    "relajado",
+                    "en paz",
+                ],
+                0.55,
+            ),
         ];
 
         let mut best = EmotionCategory::Neutral;
@@ -353,18 +429,18 @@ impl EmotionDetector for KeywordEmotionDetector {
 
         // ── Emoji emotion detection ─────────────────────────────────
         let emoji_emotions: &[(&str, EmotionCategory, f32)] = &[
-            ("\u{1f60a}", EmotionCategory::Happy, 0.6),     // 😊
-            ("\u{1f604}", EmotionCategory::Happy, 0.7),     // 😄
-            ("\u{1f602}", EmotionCategory::Happy, 0.5),     // 😂
-            ("\u{1f622}", EmotionCategory::Sad, 0.7),       // 😢
-            ("\u{1f62d}", EmotionCategory::Sad, 0.8),       // 😭
-            ("\u{1f621}", EmotionCategory::Angry, 0.8),     // 😡
-            ("\u{1f620}", EmotionCategory::Angry, 0.7),     // 😠
-            ("\u{1f914}", EmotionCategory::Confused, 0.6),  // 🤔
-            ("\u{1f60c}", EmotionCategory::Calm, 0.6),      // 😌
-            ("\u{1f631}", EmotionCategory::Fearful, 0.7),   // 😱
-            ("\u{1f389}", EmotionCategory::Excited, 0.7),   // 🎉
-            ("\u{1f634}", EmotionCategory::Bored, 0.6),     // 😴
+            ("\u{1f60a}", EmotionCategory::Happy, 0.6),    // 😊
+            ("\u{1f604}", EmotionCategory::Happy, 0.7),    // 😄
+            ("\u{1f602}", EmotionCategory::Happy, 0.5),    // 😂
+            ("\u{1f622}", EmotionCategory::Sad, 0.7),      // 😢
+            ("\u{1f62d}", EmotionCategory::Sad, 0.8),      // 😭
+            ("\u{1f621}", EmotionCategory::Angry, 0.8),    // 😡
+            ("\u{1f620}", EmotionCategory::Angry, 0.7),    // 😠
+            ("\u{1f914}", EmotionCategory::Confused, 0.6), // 🤔
+            ("\u{1f60c}", EmotionCategory::Calm, 0.6),     // 😌
+            ("\u{1f631}", EmotionCategory::Fearful, 0.7),  // 😱
+            ("\u{1f389}", EmotionCategory::Excited, 0.7),  // 🎉
+            ("\u{1f634}", EmotionCategory::Bored, 0.6),    // 😴
         ];
         for &(emoji, category, conf) in emoji_emotions {
             if text.contains(emoji) {
@@ -488,10 +564,7 @@ impl IntentClassifier {
                     .get("intent")
                     .and_then(|s| s.as_str())
                     .unwrap_or("information");
-                let urgency = val
-                    .get("urgency")
-                    .and_then(|s| s.as_str())
-                    .unwrap_or("low");
+                let urgency = val.get("urgency").and_then(|s| s.as_str()).unwrap_or("low");
                 return Some(SpeakerIntent {
                     intent: intent.to_string(),
                     urgency: urgency.to_string(),
@@ -512,27 +585,38 @@ impl IntentClassifier {
     ) -> SpeakerIntent {
         // Heuristic baseline
         let lower = text.to_lowercase();
-        let heuristic_intent = if lower.contains('?') || lower.starts_with("what")
-            || lower.starts_with("how") || lower.starts_with("why")
-            || lower.starts_with("when") || lower.starts_with("where")
-            || lower.starts_with("who") || lower.starts_with("is ")
+        let heuristic_intent = if lower.contains('?')
+            || lower.starts_with("what")
+            || lower.starts_with("how")
+            || lower.starts_with("why")
+            || lower.starts_with("when")
+            || lower.starts_with("where")
+            || lower.starts_with("who")
+            || lower.starts_with("is ")
         {
             "question"
-        } else if lower.starts_with("please") || lower.contains("could you")
-            || lower.contains("can you") || lower.contains("would you")
+        } else if lower.starts_with("please")
+            || lower.contains("could you")
+            || lower.contains("can you")
+            || lower.contains("would you")
         {
             "request"
-        } else if lower.starts_with("do ") || lower.starts_with("run ")
-            || lower.starts_with("stop") || lower.starts_with("start")
-            || lower.starts_with("set ") || lower.starts_with("turn")
+        } else if lower.starts_with("do ")
+            || lower.starts_with("run ")
+            || lower.starts_with("stop")
+            || lower.starts_with("start")
+            || lower.starts_with("set ")
+            || lower.starts_with("turn")
         {
             "command"
         } else {
             "information"
         };
 
-        let heuristic_urgency = if lower.contains("urgent") || lower.contains("asap")
-            || lower.contains("immediately") || lower.contains("now")
+        let heuristic_urgency = if lower.contains("urgent")
+            || lower.contains("asap")
+            || lower.contains("immediately")
+            || lower.contains("now")
             || lower.contains('!')
         {
             "high"
@@ -609,7 +693,9 @@ mod tests {
         assert!(happy.suggest_tts_instruction().contains("energy"));
 
         let low_confidence = EmotionState::new(EmotionCategory::Angry, 0.2);
-        assert!(low_confidence.suggest_tts_instruction().contains("naturally"));
+        assert!(low_confidence
+            .suggest_tts_instruction()
+            .contains("naturally"));
     }
 
     #[test]
@@ -631,7 +717,9 @@ mod tests {
     #[test]
     fn test_keyword_detector_happy() {
         let detector = KeywordEmotionDetector::new();
-        let result = detector.detect_from_text("This is awesome! I love it!").unwrap();
+        let result = detector
+            .detect_from_text("This is awesome! I love it!")
+            .unwrap();
         assert_eq!(result.category, EmotionCategory::Happy);
         assert!(result.confidence > 0.5);
     }
@@ -639,14 +727,18 @@ mod tests {
     #[test]
     fn test_keyword_detector_frustrated() {
         let detector = KeywordEmotionDetector::new();
-        let result = detector.detect_from_text("This doesn't work, I'm stuck and it's annoying").unwrap();
+        let result = detector
+            .detect_from_text("This doesn't work, I'm stuck and it's annoying")
+            .unwrap();
         assert_eq!(result.category, EmotionCategory::Frustrated);
     }
 
     #[test]
     fn test_keyword_detector_neutral() {
         let detector = KeywordEmotionDetector::new();
-        let result = detector.detect_from_text("Please list the files in the directory").unwrap();
+        let result = detector
+            .detect_from_text("Please list the files in the directory")
+            .unwrap();
         assert_eq!(result.category, EmotionCategory::Neutral);
         assert!(result.confidence < 0.1);
     }
@@ -685,23 +777,22 @@ mod tests {
 
     #[test]
     fn test_classify_intent_with_mock_llm() {
-        let config = IntentClassifierConfig {
-            llm_enhanced: true,
-        };
+        let config = IntentClassifierConfig { llm_enhanced: true };
         let classifier = IntentClassifier::new(config);
-        let mock = crate::llm_enhance::MockLlm::new(
-            "{\"intent\":\"command\",\"urgency\":\"high\"}",
-        );
+        let mock =
+            crate::llm_enhance::MockLlm::new("{\"intent\":\"command\",\"urgency\":\"high\"}");
         let intent = classifier.classify_intent_with_llm("Turn off the lights now!", Some(&mock));
-        assert_eq!(intent.intent, "command", "Expected LLM intent, got: {}", intent.intent);
+        assert_eq!(
+            intent.intent, "command",
+            "Expected LLM intent, got: {}",
+            intent.intent
+        );
         assert_eq!(intent.urgency, "high");
     }
 
     #[test]
     fn test_classify_intent_llm_fallback_on_failure() {
-        let config = IntentClassifierConfig {
-            llm_enhanced: true,
-        };
+        let config = IntentClassifierConfig { llm_enhanced: true };
         let classifier = IntentClassifier::new(config);
         let failing = crate::llm_enhance::FailingMockLlm;
         let intent = classifier.classify_intent_with_llm("How does this work?", Some(&failing));
@@ -720,17 +811,21 @@ mod tests {
         assert!(
             result_exclaim.confidence >= result_normal.confidence,
             "Triple exclamation should boost confidence: normal={}, exclaim={}",
-            result_normal.confidence, result_exclaim.confidence
+            result_normal.confidence,
+            result_exclaim.confidence
         );
     }
 
     #[test]
     fn test_caps_angry_boost() {
         let detector = KeywordEmotionDetector::new();
-        let result = detector.detect_from_text("THIS IS TERRIBLE AND BROKEN").unwrap();
+        let result = detector
+            .detect_from_text("THIS IS TERRIBLE AND BROKEN")
+            .unwrap();
         // Should detect anger/frustration with CAPS boost
         assert!(
-            result.category == EmotionCategory::Angry || result.category == EmotionCategory::Frustrated,
+            result.category == EmotionCategory::Angry
+                || result.category == EmotionCategory::Frustrated,
             "CAPS text with angry keywords should detect anger/frustration, got: {:?}",
             result.category
         );
@@ -747,7 +842,8 @@ mod tests {
         // Sad emoji should override neutral text
         let result = detector.detect_from_text("okay \u{1f622}").unwrap(); // 😢
         assert_eq!(
-            result.category, EmotionCategory::Sad,
+            result.category,
+            EmotionCategory::Sad,
             "Sad emoji should be detected, got: {:?}",
             result.category
         );
@@ -773,16 +869,20 @@ mod tests {
     fn test_spanish_emotion_words() {
         let detector = KeywordEmotionDetector::new();
 
-        let result = detector.detect_from_text("estoy muy triste y desanimado").unwrap();
+        let result = detector
+            .detect_from_text("estoy muy triste y desanimado")
+            .unwrap();
         assert_eq!(
-            result.category, EmotionCategory::Sad,
+            result.category,
+            EmotionCategory::Sad,
             "Spanish sad words should be detected, got: {:?}",
             result.category
         );
 
         let result2 = detector.detect_from_text("estoy feliz y contento").unwrap();
         assert_eq!(
-            result2.category, EmotionCategory::Happy,
+            result2.category,
+            EmotionCategory::Happy,
             "Spanish happy words should be detected, got: {:?}",
             result2.category
         );
