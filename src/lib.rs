@@ -420,8 +420,9 @@ pub use audio_filter::{
     AcousticEchoCanceller, ActiveSpeakerInfo, AudioEffect, AudioEffectChain, AudioSeparator,
     AutoGainControl, AutoTune, Compressor, DiarizationResult, DiarizedSpeaker, Distortion,
     EchoEffect, EffectCategory, IntelligentNoiseReducer, MegaphoneEffect, MfccSpeakerVerifier,
-    NoiseGate, NoiseSuppressor, PitchShifter, Reverb, RobotVoice, SeparatedTrack, SpeakerDiarizer,
-    SpeakerGate, SpeakerIdentification, SpeakerProfile, SpeakerVerifier, VoiceEmbedding,
+    NoiseGate, NoiseSuppressor, PitchShifter, Reverb, RobotVoice, SeparatedTrack, SnoreDetector,
+    SpeakerDiarizer, SpeakerGate, SpeakerIdentification, SpeakerProfile, SpeakerVerifier,
+    VoiceAnonymizer, VoiceDistorter, VoiceEmbedding,
 };
 
 pub use audio_model_registry::{

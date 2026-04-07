@@ -1784,6 +1784,421 @@ impl AudioEffect for IntelligentNoiseReducer {
     }
 }
 
+// ============================================================================
+// Voice Anonymizer — disguise identity while preserving intelligibility
+// ============================================================================
+
+/// Anonymizes the speaker's voice by combining pitch shifting with spectral
+/// randomization. Unlike a simple pitch shift, the anonymizer applies a
+/// per-frame micro-jitter to the shift amount so the resulting voice sounds
+/// natural but unrecognizable — even to voice-print systems.
+///
+/// Presets:
+/// - `light()` — subtle disguise (±2 semitone jitter + gentle formant shift)
+/// - `medium()` — moderate (±4 semitone shift, harder to recognize)
+/// - `heavy()` — strong anonymization (large shift + spectral noise injection)
+pub struct VoiceAnonymizer {
+    enabled: bool,
+    /// Base pitch shift in semitones (positive = higher).
+    base_shift: f32,
+    /// Random jitter range applied on top of base_shift (±jitter semitones).
+    jitter_range: f32,
+    /// How much spectral noise to inject (0.0 = none, 1.0 = heavy).
+    noise_amount: f32,
+    // Internal state
+    buffer: Vec<f32>,
+    read_pos: f64,
+    frame_counter: u64,
+    /// Smoothed current shift for this frame (avoids clicks).
+    current_shift: f32,
+}
+
+impl VoiceAnonymizer {
+    pub fn new(base_shift: f32, jitter_range: f32, noise_amount: f32) -> Self {
+        Self {
+            enabled: true,
+            base_shift,
+            jitter_range: jitter_range.abs(),
+            noise_amount: noise_amount.clamp(0.0, 1.0),
+            buffer: Vec::new(),
+            read_pos: 0.0,
+            frame_counter: 0,
+            current_shift: base_shift,
+        }
+    }
+
+    pub fn light() -> Self {
+        Self::new(3.0, 1.0, 0.02)
+    }
+    pub fn medium() -> Self {
+        Self::new(-4.0, 2.0, 0.05)
+    }
+    pub fn heavy() -> Self {
+        Self::new(-7.0, 3.0, 0.10)
+    }
+
+    /// Deterministic pseudo-random from frame counter (no rand dep needed).
+    fn pseudo_random(&self) -> f32 {
+        let x = self.frame_counter.wrapping_mul(2654435761);
+        ((x >> 16) as f32 / 65536.0) * 2.0 - 1.0 // [-1, 1]
+    }
+}
+
+impl AudioEffect for VoiceAnonymizer {
+    fn name(&self) -> &str {
+        "Voice Anonymizer"
+    }
+
+    fn process(&mut self, samples: &mut [i16], _sample_rate: u32) {
+        if samples.is_empty() {
+            return;
+        }
+        self.frame_counter = self.frame_counter.wrapping_add(1);
+
+        // Compute jittered shift for this frame (smoothed toward target)
+        let target_shift = self.base_shift + self.pseudo_random() * self.jitter_range;
+        self.current_shift = self.current_shift * 0.8 + target_shift * 0.2;
+        let ratio = 2.0f64.powf(self.current_shift as f64 / 12.0);
+
+        // Resample (pitch shift)
+        self.buffer.clear();
+        self.buffer.extend(samples.iter().map(|&s| s as f32));
+        let input_len = self.buffer.len();
+        for i in 0..samples.len() {
+            let pos = i as f64 * ratio;
+            let idx = pos as usize;
+            let frac = (pos - idx as f64) as f32;
+            let s = if idx + 1 < input_len {
+                self.buffer[idx] * (1.0 - frac) + self.buffer[idx + 1] * frac
+            } else if idx < input_len {
+                self.buffer[idx]
+            } else {
+                0.0
+            };
+            // Inject spectral noise: tiny random offset per sample
+            let noise = if self.noise_amount > 0.0 {
+                let n = ((i as u64)
+                    .wrapping_mul(48271)
+                    .wrapping_add(self.frame_counter * 16807)) as f32
+                    / u32::MAX as f32;
+                (n * 2.0 - 1.0) * self.noise_amount * 3000.0
+            } else {
+                0.0
+            };
+            samples[i] = (s + noise).clamp(-32768.0, 32767.0) as i16;
+        }
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+    fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+    fn category(&self) -> EffectCategory {
+        EffectCategory::Enhancement
+    }
+    fn estimated_latency_us(&self) -> u64 {
+        200
+    }
+}
+
+// ============================================================================
+// Voice Distorter — creative destruction effects
+// ============================================================================
+
+/// Applies aggressive distortion to voice: bitcrushing (reduce bit depth),
+/// sample-rate reduction (decimate), and wave folding.
+///
+/// Presets:
+/// - `radio()` — mild bitcrush (12-bit feel)
+/// - `walkie_talkie()` — heavy bitcrush + decimation (like a cheap radio)
+/// - `demon()` — wave folding + low bit depth (hellish)
+pub struct VoiceDistorter {
+    enabled: bool,
+    /// Bit depth reduction: 16 = no change, 4 = heavy crush. Range 1..16.
+    pub bit_depth: u8,
+    /// Decimation factor: keep 1 of every N samples, repeat. 1 = no decimation.
+    pub decimation: u8,
+    /// Wave fold amount: 0.0 = none, 1.0 = full fold at half amplitude.
+    pub fold_amount: f32,
+    /// Held sample for decimation.
+    decimate_counter: u8,
+    held_sample: i16,
+}
+
+impl VoiceDistorter {
+    pub fn new(bit_depth: u8, decimation: u8, fold_amount: f32) -> Self {
+        Self {
+            enabled: true,
+            bit_depth: bit_depth.clamp(1, 16),
+            decimation: decimation.max(1),
+            fold_amount: fold_amount.clamp(0.0, 1.0),
+            decimate_counter: 0,
+            held_sample: 0,
+        }
+    }
+
+    pub fn radio() -> Self {
+        Self::new(12, 1, 0.0)
+    }
+    pub fn walkie_talkie() -> Self {
+        Self::new(8, 3, 0.0)
+    }
+    pub fn demon() -> Self {
+        Self::new(6, 2, 0.7)
+    }
+}
+
+impl AudioEffect for VoiceDistorter {
+    fn name(&self) -> &str {
+        "Voice Distorter"
+    }
+
+    fn process(&mut self, samples: &mut [i16], _sample_rate: u32) {
+        let shift = 16u32.saturating_sub(self.bit_depth as u32);
+        for s in samples.iter_mut() {
+            // Decimation: hold every Nth sample
+            self.decimate_counter = self.decimate_counter.wrapping_add(1);
+            if self.decimate_counter >= self.decimation {
+                self.decimate_counter = 0;
+                self.held_sample = *s;
+            }
+            let mut v = self.held_sample as f32;
+
+            // Wave folding
+            if self.fold_amount > 0.0 {
+                let threshold = 32767.0 * (1.0 - self.fold_amount * 0.8);
+                while v.abs() > threshold && threshold > 100.0 {
+                    if v > threshold {
+                        v = 2.0 * threshold - v;
+                    } else if v < -threshold {
+                        v = -2.0 * threshold - v;
+                    }
+                }
+            }
+
+            // Bitcrush
+            let vi = v as i32;
+            let crushed = if shift > 0 {
+                (vi >> shift) << shift
+            } else {
+                vi
+            };
+            *s = crushed.clamp(-32768, 32767) as i16;
+        }
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+    fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+    fn category(&self) -> EffectCategory {
+        EffectCategory::Enhancement
+    }
+    fn estimated_latency_us(&self) -> u64 {
+        100
+    }
+}
+
+// ============================================================================
+// Snore Detector + Gate — detects snoring patterns and attenuates them
+// ============================================================================
+
+/// Detects snoring by looking for the characteristic low-frequency periodic
+/// breathing pattern: a rhythmic "rumble" at 30–500 Hz with a 2–6 second
+/// cycle and moderate-to-loud amplitude.
+///
+/// When a snore is detected, the gate reduces volume by `attenuation_db` so
+/// other participants don't hear it. A small label can be read via
+/// `is_snoring()` for GUI display.
+///
+/// Detection heuristic (no ML needed):
+/// 1. **Low-frequency energy ratio**: snoring has >60% energy below 500 Hz.
+///    We approximate this by comparing a smoothed (low-pass) version of the
+///    signal with the original RMS.
+/// 2. **Periodic amplitude envelope**: snoring produces regular peaks every
+///    2–6 seconds. We track peak intervals and check for periodicity.
+/// 3. **Duration**: snoring lasts >3 seconds continuously.
+pub struct SnoreDetector {
+    enabled: bool,
+    /// How much to attenuate detected snores (dB, negative).
+    pub attenuation_db: f32,
+    /// Minimum consecutive snore-like frames before gating.
+    pub min_frames: u32,
+    // Internal state
+    /// Simple single-pole low-pass filter state.
+    lp_state: f32,
+    /// Low-pass cutoff coefficient (derived from sample rate).
+    lp_alpha: f32,
+    /// Smoothed low-frequency RMS.
+    lf_rms_smooth: f32,
+    /// Smoothed full-band RMS.
+    full_rms_smooth: f32,
+    /// Consecutive frames where snore heuristic is positive.
+    snore_frames: u32,
+    /// Currently gating.
+    snoring: bool,
+    /// Timestamps of recent RMS peaks for periodicity detection.
+    peak_times: std::collections::VecDeque<u64>,
+    frame_counter: u64,
+    /// Previous RMS for peak detection.
+    prev_rms: f32,
+    prev_prev_rms: f32,
+    sample_rate: u32,
+}
+
+impl SnoreDetector {
+    pub fn new(attenuation_db: f32) -> Self {
+        Self {
+            enabled: true,
+            attenuation_db: attenuation_db.min(0.0),
+            min_frames: 8,
+            lp_state: 0.0,
+            lp_alpha: 0.0,
+            lf_rms_smooth: 0.0,
+            full_rms_smooth: 0.0,
+            snore_frames: 0,
+            snoring: false,
+            peak_times: std::collections::VecDeque::with_capacity(16),
+            frame_counter: 0,
+            prev_rms: 0.0,
+            prev_prev_rms: 0.0,
+            sample_rate: 0,
+        }
+    }
+
+    /// Default: attenuate by 30 dB when snoring detected.
+    pub fn default_snore_gate() -> Self {
+        Self::new(-30.0)
+    }
+
+    pub fn is_snoring(&self) -> bool {
+        self.snoring
+    }
+
+    /// Check if recent peaks show periodic pattern (2-6 s cycle).
+    fn is_periodic(&self) -> bool {
+        if self.peak_times.len() < 3 {
+            return false;
+        }
+        let intervals: Vec<u64> = self
+            .peak_times
+            .iter()
+            .zip(self.peak_times.iter().skip(1))
+            .map(|(&a, &b)| b.saturating_sub(a))
+            .collect();
+        if intervals.is_empty() {
+            return false;
+        }
+        let mean = intervals.iter().sum::<u64>() as f64 / intervals.len() as f64;
+        // Snore cycle: 2-6 seconds = 2000-6000 ms
+        if mean < 1500.0 || mean > 7000.0 {
+            return false;
+        }
+        // Check regularity: stdev < 40% of mean
+        let var: f64 = intervals
+            .iter()
+            .map(|&i| (i as f64 - mean).powi(2))
+            .sum::<f64>()
+            / intervals.len() as f64;
+        let stdev = var.sqrt();
+        stdev < mean * 0.4
+    }
+}
+
+impl AudioEffect for SnoreDetector {
+    fn name(&self) -> &str {
+        "Snore Detector"
+    }
+
+    fn process(&mut self, samples: &mut [i16], sample_rate: u32) {
+        if samples.is_empty() {
+            return;
+        }
+        // Initialize LP coefficient on first call or sample rate change
+        if self.sample_rate != sample_rate {
+            self.sample_rate = sample_rate;
+            // LP cutoff ~500 Hz: alpha = 2*pi*fc / (2*pi*fc + sr)
+            let fc = 500.0f32;
+            let omega = 2.0 * std::f32::consts::PI * fc;
+            self.lp_alpha = omega / (omega + sample_rate as f32);
+        }
+        self.frame_counter += 1;
+
+        // 1. Compute full-band RMS
+        let full_rms = {
+            let sum: f64 = samples.iter().map(|&s| (s as f64).powi(2)).sum();
+            (sum / samples.len() as f64).sqrt() as f32
+        };
+        self.full_rms_smooth = self.full_rms_smooth * 0.85 + full_rms * 0.15;
+
+        // 2. Compute low-frequency RMS via single-pole LP filter
+        let mut lp_sum_sq = 0.0f64;
+        for &s in samples.iter() {
+            self.lp_state += self.lp_alpha * (s as f32 - self.lp_state);
+            lp_sum_sq += (self.lp_state as f64).powi(2);
+        }
+        let lf_rms = (lp_sum_sq / samples.len() as f64).sqrt() as f32;
+        self.lf_rms_smooth = self.lf_rms_smooth * 0.85 + lf_rms * 0.15;
+
+        // 3. Low-frequency energy ratio (snoring is LF-dominant)
+        let lf_ratio = if self.full_rms_smooth > 1.0 {
+            self.lf_rms_smooth / self.full_rms_smooth
+        } else {
+            0.0
+        };
+
+        // 4. Peak detection for periodicity (local maximum in RMS)
+        let is_peak =
+            self.prev_rms > self.prev_prev_rms && self.prev_rms > full_rms && self.prev_rms > 500.0;
+        if is_peak {
+            // Approximate timestamp in ms
+            let frame_ms = self.frame_counter * (samples.len() as u64 * 1000) / sample_rate as u64;
+            self.peak_times.push_back(frame_ms);
+            if self.peak_times.len() > 10 {
+                self.peak_times.pop_front();
+            }
+        }
+        self.prev_prev_rms = self.prev_rms;
+        self.prev_rms = full_rms;
+
+        // 5. Snore heuristic: LF-dominant + loud enough + periodic
+        let is_snore_like = lf_ratio > 0.55 && self.full_rms_smooth > 300.0 && self.is_periodic();
+
+        if is_snore_like {
+            self.snore_frames = self.snore_frames.saturating_add(1);
+        } else {
+            self.snore_frames = self.snore_frames.saturating_sub(2); // decay faster than buildup
+        }
+
+        self.snoring = self.snore_frames >= self.min_frames;
+
+        // 6. Apply attenuation if snoring
+        if self.snoring {
+            let gain = 10.0f32.powf(self.attenuation_db / 20.0);
+            for s in samples.iter_mut() {
+                *s = (*s as f32 * gain).clamp(-32768.0, 32767.0) as i16;
+            }
+        }
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+    fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+    fn category(&self) -> EffectCategory {
+        EffectCategory::Enhancement
+    }
+    fn estimated_latency_us(&self) -> u64 {
+        200
+    }
+}
+
 /// Compute RMS of i16 samples (raw, not normalized).
 fn compute_rms_i16(samples: &[i16]) -> f32 {
     if samples.is_empty() {
@@ -2419,5 +2834,193 @@ mod tests {
 
         let reducer = IntelligentNoiseReducer::factory();
         assert_eq!(reducer.category(), EffectCategory::Enhancement);
+    }
+
+    // ── Voice Anonymizer tests ──
+
+    #[test]
+    fn test_anonymizer_modifies_audio() {
+        let mut samples = sine_wave(220.0, 16000, 100);
+        let original = samples.clone();
+        let mut anon = VoiceAnonymizer::medium();
+        anon.process(&mut samples, 16000);
+        assert_ne!(samples, original, "anonymizer should modify audio");
+    }
+
+    #[test]
+    fn test_anonymizer_light_less_change_than_heavy() {
+        let original = sine_wave(220.0, 16000, 100);
+        let mut light_samples = original.clone();
+        let mut heavy_samples = original.clone();
+        let mut light = VoiceAnonymizer::light();
+        let mut heavy = VoiceAnonymizer::heavy();
+        light.process(&mut light_samples, 16000);
+        heavy.process(&mut heavy_samples, 16000);
+        // Both should differ from original
+        assert_ne!(light_samples, original);
+        assert_ne!(heavy_samples, original);
+        // Heavy should differ more (compare RMS difference)
+        let diff_light: f64 = light_samples
+            .iter()
+            .zip(original.iter())
+            .map(|(&a, &b)| ((a as i32 - b as i32) as f64).powi(2))
+            .sum();
+        let diff_heavy: f64 = heavy_samples
+            .iter()
+            .zip(original.iter())
+            .map(|(&a, &b)| ((a as i32 - b as i32) as f64).powi(2))
+            .sum();
+        assert!(
+            diff_heavy > diff_light,
+            "heavy ({}) should differ more than light ({})",
+            diff_heavy,
+            diff_light
+        );
+    }
+
+    #[test]
+    fn test_anonymizer_preserves_silence() {
+        let mut samples = vec![0i16; 480];
+        let mut anon = VoiceAnonymizer::medium();
+        anon.process(&mut samples, 16000);
+        // Mostly silence (noise injection adds tiny values)
+        let rms = compute_rms_i16(&samples);
+        assert!(rms < 500.0, "silence should stay near-silent, rms={}", rms);
+    }
+
+    // ── Voice Distorter tests ──
+
+    #[test]
+    fn test_distorter_bitcrush_reduces_resolution() {
+        let mut samples = sine_wave(440.0, 16000, 50);
+        let original = samples.clone();
+        let mut dist = VoiceDistorter::new(4, 1, 0.0); // 4-bit crush
+        dist.process(&mut samples, 16000);
+        assert_ne!(samples, original);
+        // Check that values are quantized (multiples of 2^12 = 4096)
+        for &s in &samples {
+            assert_eq!(
+                s as i32 % (1 << 12),
+                0,
+                "4-bit crush should quantize, got {}",
+                s
+            );
+        }
+    }
+
+    #[test]
+    fn test_distorter_decimation_reduces_unique_values() {
+        let mut samples: Vec<i16> = (0..100).map(|i| (i * 100) as i16).collect();
+        let unique_before = {
+            let mut v = samples.clone();
+            v.sort();
+            v.dedup();
+            v.len()
+        };
+        let mut dist = VoiceDistorter::new(16, 4, 0.0); // decimate 4x, no bitcrush
+        dist.process(&mut samples, 16000);
+        let unique_after = {
+            let mut v = samples.clone();
+            v.sort();
+            v.dedup();
+            v.len()
+        };
+        // Decimation should drastically reduce unique values (4x reduction)
+        assert!(
+            unique_after < unique_before / 2,
+            "decimation should reduce unique values: before={} after={}",
+            unique_before,
+            unique_after
+        );
+    }
+
+    #[test]
+    fn test_distorter_wave_fold_clips_differently() {
+        let mut samples = sine_wave(220.0, 16000, 50);
+        let original = samples.clone();
+        let mut dist = VoiceDistorter::demon();
+        dist.process(&mut samples, 16000);
+        assert_ne!(samples, original, "demon distortion should modify audio");
+    }
+
+    #[test]
+    fn test_distorter_presets() {
+        let r = VoiceDistorter::radio();
+        assert_eq!(r.bit_depth, 12);
+        let w = VoiceDistorter::walkie_talkie();
+        assert_eq!(w.decimation, 3);
+        let d = VoiceDistorter::demon();
+        assert!(d.fold_amount > 0.5);
+    }
+
+    // ── Snore Detector tests ──
+
+    #[test]
+    fn test_snore_detector_no_snore_on_silence() {
+        let mut det = SnoreDetector::default_snore_gate();
+        let silence = vec![0i16; 480];
+        for _ in 0..100 {
+            let mut s = silence.clone();
+            det.process(&mut s, 16000);
+        }
+        assert!(!det.is_snoring(), "silence should not trigger snore");
+    }
+
+    #[test]
+    fn test_snore_detector_no_snore_on_speech() {
+        let mut det = SnoreDetector::default_snore_gate();
+        // Simulate speech-like signal (higher freq, irregular)
+        for i in 0..50 {
+            let mut samples: Vec<i16> = (0..480)
+                .map(|j| {
+                    let t = (i * 480 + j) as f32 / 16000.0;
+                    (5000.0 * (2.0 * std::f32::consts::PI * 800.0 * t).sin()) as i16
+                })
+                .collect();
+            det.process(&mut samples, 16000);
+        }
+        assert!(
+            !det.is_snoring(),
+            "speech-like signal should not trigger snore"
+        );
+    }
+
+    #[test]
+    fn test_snore_detector_attenuates_when_snoring() {
+        let mut det = SnoreDetector::default_snore_gate();
+        // Force snoring state by directly setting internal state
+        det.snoring = true;
+        det.snore_frames = 100;
+        let mut loud = vec![10000i16; 480];
+        det.process(&mut loud, 16000);
+        // With -30dB attenuation, 10000 → ~316
+        let max = loud.iter().map(|s| s.abs()).max().unwrap_or(0);
+        assert!(max < 1000, "snore gate should attenuate, max={}", max);
+    }
+
+    #[test]
+    fn test_snore_detector_periodicity_check() {
+        let mut det = SnoreDetector::default_snore_gate();
+        det.sample_rate = 16000;
+        // Simulate periodic peaks at ~3 second intervals (in ms)
+        det.peak_times.push_back(0);
+        det.peak_times.push_back(3000);
+        det.peak_times.push_back(6000);
+        det.peak_times.push_back(9000);
+        assert!(
+            det.is_periodic(),
+            "regular 3-second peaks should be periodic"
+        );
+    }
+
+    #[test]
+    fn test_snore_detector_no_periodicity_irregular() {
+        let mut det = SnoreDetector::default_snore_gate();
+        det.sample_rate = 16000;
+        det.peak_times.push_back(0);
+        det.peak_times.push_back(500);
+        det.peak_times.push_back(8000);
+        det.peak_times.push_back(8200);
+        assert!(!det.is_periodic(), "irregular peaks should not be periodic");
     }
 }

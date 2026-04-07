@@ -38,12 +38,15 @@ use ai_assistant::{
     NoiseGate,
     PitchShifter,
     RobotVoice,
+    SnoreDetector,
     SpeakerDiarizer,
     SpeakerGate,
     SpeakerIdentification,
     SpeakerVerifier,
     SpeechProvider,
     SynthesisOptions,
+    VoiceAnonymizer,
+    VoiceDistorter,
 };
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -711,6 +714,14 @@ struct VirtualMicApp {
     // Industrial noise suppression
     noise_reducer_enabled: bool,
     noise_reducer_ratio: f32,
+    // Voice anonymizer
+    anonymizer_enabled: bool,
+    anonymizer_preset: String, // "light", "medium", "heavy"
+    // Voice distorter
+    distorter_enabled: bool,
+    distorter_preset: String, // "radio", "walkie_talkie", "demon"
+    // Snore detector
+    snore_detector_enabled: bool,
 
     // Models
     model_registry: AudioModelRegistry,
@@ -779,6 +790,11 @@ impl VirtualMicApp {
             megaphone_enabled: false,
             noise_reducer_enabled: false,
             noise_reducer_ratio: 0.7,
+            anonymizer_enabled: false,
+            anonymizer_preset: "medium".into(),
+            distorter_enabled: false,
+            distorter_preset: "radio".into(),
+            snore_detector_enabled: false,
             model_registry: AudioModelRegistry::new(),
             active_stt_model: None,
             active_tts_model: None,
@@ -998,6 +1014,23 @@ impl VirtualMicApp {
         }
         if self.megaphone_enabled {
             effect_chain.add_effect(Box::new(MegaphoneEffect::default_megaphone()));
+        }
+        if self.anonymizer_enabled {
+            effect_chain.add_effect(Box::new(match self.anonymizer_preset.as_str() {
+                "light" => VoiceAnonymizer::light(),
+                "heavy" => VoiceAnonymizer::heavy(),
+                _ => VoiceAnonymizer::medium(),
+            }));
+        }
+        if self.distorter_enabled {
+            effect_chain.add_effect(Box::new(match self.distorter_preset.as_str() {
+                "walkie_talkie" => VoiceDistorter::walkie_talkie(),
+                "demon" => VoiceDistorter::demon(),
+                _ => VoiceDistorter::radio(),
+            }));
+        }
+        if self.snore_detector_enabled {
+            effect_chain.add_effect(Box::new(SnoreDetector::default_snore_gate()));
         }
         let effect_chain = Arc::new(Mutex::new(effect_chain));
         let mode = self.mode;
@@ -2972,6 +3005,11 @@ impl VirtualMicApp {
             "megaphone_enabled": self.megaphone_enabled,
             "noise_reducer_enabled": self.noise_reducer_enabled,
             "noise_reducer_ratio": self.noise_reducer_ratio,
+            "anonymizer_enabled": self.anonymizer_enabled,
+            "anonymizer_preset": self.anonymizer_preset,
+            "distorter_enabled": self.distorter_enabled,
+            "distorter_preset": self.distorter_preset,
+            "snore_detector_enabled": self.snore_detector_enabled,
             "use_diarization": self.use_diarization,
             "agent": self.agent.config,
         });
@@ -3035,6 +3073,21 @@ impl VirtualMicApp {
                 }
                 if let Some(v) = cfg.get("noise_reducer_ratio").and_then(|v| v.as_f64()) {
                     self.noise_reducer_ratio = v as f32;
+                }
+                if let Some(v) = cfg.get("anonymizer_enabled").and_then(|v| v.as_bool()) {
+                    self.anonymizer_enabled = v;
+                }
+                if let Some(v) = cfg.get("anonymizer_preset").and_then(|v| v.as_str()) {
+                    self.anonymizer_preset = v.to_string();
+                }
+                if let Some(v) = cfg.get("distorter_enabled").and_then(|v| v.as_bool()) {
+                    self.distorter_enabled = v;
+                }
+                if let Some(v) = cfg.get("distorter_preset").and_then(|v| v.as_str()) {
+                    self.distorter_preset = v.to_string();
+                }
+                if let Some(v) = cfg.get("snore_detector_enabled").and_then(|v| v.as_bool()) {
+                    self.snore_detector_enabled = v;
                 }
                 if let Some(v) = cfg.get("use_diarization").and_then(|v| v.as_bool()) {
                     self.use_diarization = v;
@@ -3428,6 +3481,30 @@ impl eframe::App for VirtualMicApp {
                 ui.checkbox(&mut self.autotune_enabled, "AutoTune");
                 ui.checkbox(&mut self.echo_enabled, "Echo");
                 ui.checkbox(&mut self.megaphone_enabled, "Megaphone");
+                ui.separator();
+                ui.small("Voice Disguise:");
+                ui.checkbox(&mut self.anonymizer_enabled, "Voice Anonymizer");
+                if self.anonymizer_enabled {
+                    ui.horizontal(|ui| {
+                        if ui.small_button("Light").clicked() { self.anonymizer_preset = "light".into(); }
+                        if ui.small_button("Medium").clicked() { self.anonymizer_preset = "medium".into(); }
+                        if ui.small_button("Heavy").clicked() { self.anonymizer_preset = "heavy".into(); }
+                    });
+                    ui.small(format!("  Preset: {}", self.anonymizer_preset));
+                }
+                ui.checkbox(&mut self.distorter_enabled, "Voice Distorter");
+                if self.distorter_enabled {
+                    ui.horizontal(|ui| {
+                        if ui.small_button("Radio").clicked() { self.distorter_preset = "radio".into(); }
+                        if ui.small_button("Walkie-Talkie").clicked() { self.distorter_preset = "walkie_talkie".into(); }
+                        if ui.small_button("Demon").clicked() { self.distorter_preset = "demon".into(); }
+                    });
+                    ui.small(format!("  Preset: {}", self.distorter_preset));
+                }
+                ui.separator();
+                ui.small("Sleep:");
+                ui.checkbox(&mut self.snore_detector_enabled, "Snore Detector (-30dB)")
+                    .on_hover_text("Detects periodic low-frequency breathing patterns (snoring)\nand silences them. Perfect for sleeping near an open mic.");
             });
 
         // Central panel — VU meter + visualization (or Agent chat)
