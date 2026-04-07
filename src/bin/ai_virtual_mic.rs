@@ -476,6 +476,8 @@ struct AudioState {
     latency_min_us: u64,
     latency_max_us: u64,
     latency_avg_us: u64,
+    /// True when the SnoreDetector is currently gating snoring.
+    is_snoring: bool,
 }
 
 impl Default for AudioState {
@@ -493,6 +495,7 @@ impl Default for AudioState {
             latency_min_us: u64::MAX,
             latency_max_us: 0,
             latency_avg_us: 0,
+            is_snoring: false,
         }
     }
 }
@@ -1188,10 +1191,12 @@ impl VirtualMicApp {
                 }
 
                 // Apply effects if not Monitor
+                let mut detected_snoring = false;
                 if mode != Mode::Monitor {
                     let mut processed = samples_i16.clone();
                     if let Ok(mut chain) = process_chain.lock() {
                         chain.process_frame(&mut processed, sample_rate);
+                        detected_snoring = chain.any_snoring();
                     }
                 }
 
@@ -1512,6 +1517,7 @@ impl VirtualMicApp {
                     st.latency_min_us = lat_min;
                     st.latency_max_us = lat_max;
                     st.latency_avg_us = lat_avg;
+                    st.is_snoring = detected_snoring;
                     if !speaker_name.is_empty() {
                         st.speaker_name = speaker_name;
                         st.speaker_confidence = speaker_confidence;
@@ -3536,6 +3542,15 @@ impl eframe::App for VirtualMicApp {
                             .monospace()
                             .small(),
                     );
+
+                    if state.is_snoring {
+                        ui.separator();
+                        ui.label(
+                            egui::RichText::new("💤 Snoring detected")
+                                .color(egui::Color32::from_rgb(150, 120, 255))
+                                .small(),
+                        );
+                    }
 
                     if !state.speaker_name.is_empty() && !state.speaker_name.starts_with('(') {
                         ui.separator();

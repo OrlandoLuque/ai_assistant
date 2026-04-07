@@ -35,6 +35,11 @@ pub trait AudioEffect: Send + Sync {
     fn category(&self) -> EffectCategory;
     /// Estimated latency in microseconds.
     fn estimated_latency_us(&self) -> u64;
+    /// Optional: returns true if this effect is currently detecting snoring.
+    /// Only implemented by `SnoreDetector`; all others return false.
+    fn is_snoring(&self) -> bool {
+        false
+    }
 }
 
 /// Noise suppression trait.
@@ -1055,6 +1060,11 @@ impl AudioEffectChain {
             .filter(|e| e.is_enabled())
             .map(|e| e.estimated_latency_us())
             .sum()
+    }
+
+    /// Returns true if any effect in the chain is currently detecting snoring.
+    pub fn any_snoring(&self) -> bool {
+        self.effects.iter().any(|e| e.is_snoring())
     }
 
     /// Per-effect latency breakdown.
@@ -2196,6 +2206,9 @@ impl AudioEffect for SnoreDetector {
     }
     fn estimated_latency_us(&self) -> u64 {
         200
+    }
+    fn is_snoring(&self) -> bool {
+        self.snoring
     }
 }
 
