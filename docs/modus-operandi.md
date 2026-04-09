@@ -50,8 +50,9 @@ Continúa con el desarrollo del proyecto. Lee docs/modus-operandi.md y el últim
 - **V71**: COMPLETE — ai_optimize: ML Configuration Optimizer (ablation + Bayesian + bandit)
 - **V73**: COMPLETE — GPU Sharing Network (PiiTokenizer, credit system, dynamic pricing, collusion detection, compute proof, gpu_sharing protocol, ai_gpu_share binary)
 - **V73 Wiring Audit**: COMPLETE — Full wiring audit (MCP home tools registered, Docker feature gate fixed, GPU sharing integrated with credit/pricing/collusion subsystems, LLM enhancer hook in AiAssistant, setup re-exports, PiiTokenizer auto-enabled for cloud)
-- **Latest**: V73 — GPU Sharing Network + Wiring Audit (COMPLETE)
-- **Test count**: 7,387 lib tests (0 failures) + 39 harness precision + 18 fallback resilience + 8 conversation quality scored tests
+- **V74**: COMPLETE — CI Improvements + ContextBudgetAllocator Full Integration (CI: env vars, feature-matrix 19→36, cargo audit, integration tests, binary compilation, coverage fix; Allocator: ContextBudgetConfig, ScoringMode 4 modes, intent-based scoring, graph as ContextItem, StrategyBandit in production, LlmEnhancerCompressor bridge, RagFeatures scoring mode)
+- **Latest**: V74 — CI + ContextBudgetAllocator Integration (COMPLETE)
+- **Test count**: 7,469 lib tests (0 failures) + 39 harness precision + 18 fallback resilience + 8 conversation quality scored tests
 - **Source files**: 360 .rs files, ~410K LOC
 - **Feature flags**: 60 (+1: gpu-sharing)
 - **Feature flags**: 59 (+4: home-automation, coap, precise-tokens, audio-io)

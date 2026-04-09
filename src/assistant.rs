@@ -485,6 +485,15 @@ pub struct AiAssistant {
     /// When set, modules like intent classification, entity extraction,
     /// and response quality scoring can use LLM calls for better results.
     llm_enhancer: Option<Box<dyn crate::llm_enhance::LlmEnhancer>>,
+
+    /// Context budget allocation configuration.
+    /// Controls per-source scoring, overflow strategy, dynamic scoring mode,
+    /// and compression thresholds.
+    pub context_budget_config: crate::context_budget::ContextBudgetConfig,
+
+    /// UCB1 multi-armed bandit for learning the best overflow strategy.
+    /// Only active when `context_budget_config.enable_strategy_learning` is true.
+    pub strategy_bandit: Option<crate::context_budget::StrategyBandit>,
 }
 
 impl Default for AiAssistant {
@@ -683,7 +692,23 @@ impl AiAssistant {
             active_procedure_ids: Vec::new(),
 
             llm_enhancer: None,
+
+            context_budget_config: crate::context_budget::ContextBudgetConfig::default(),
+            strategy_bandit: None,
         }
+    }
+
+    /// Set the context budget allocation configuration.
+    pub fn with_context_budget_config(
+        mut self,
+        config: crate::context_budget::ContextBudgetConfig,
+    ) -> Self {
+        if config.enable_strategy_learning {
+            self.strategy_bandit =
+                Some(crate::context_budget::StrategyBandit::default_strategies());
+        }
+        self.context_budget_config = config;
+        self
     }
 
     /// Set the base system prompt
@@ -1157,11 +1182,12 @@ impl AiAssistant {
         &mut self,
         user_message: &str,
         knowledge_context: &str,
+        intent: Option<&crate::intent::IntentResult>,
     ) -> String {
-        use crate::context_budget::{
-            ContextBudgetAllocator, ContextItem, ContextSourceType, OverflowStrategy,
-        };
+        use crate::context_budget::{ContextBudgetAllocator, ContextItem, ContextSourceType};
 
+        // Clone config to avoid borrow conflicts with &mut self methods below
+        let cfg = self.context_budget_config.clone();
         let mut items: Vec<ContextItem> = Vec::new();
 
         // Use model-aware token counting for all budget calculations
@@ -1172,8 +1198,9 @@ impl AiAssistant {
         // 1. RAG/knowledge context (passed in from caller or build_rag_context)
         if !knowledge_context.is_empty() {
             let tokens = count(knowledge_context);
+            let score = cfg.effective_score(cfg.rag_base_score, ContextSourceType::Rag, intent);
             items.push(
-                ContextItem::new(knowledge_context, tokens, 0.8, ContextSourceType::Rag)
+                ContextItem::new(knowledge_context, tokens, score, ContextSourceType::Rag)
                     .with_label("knowledge_context"),
             );
         }
@@ -1185,11 +1212,13 @@ impl AiAssistant {
                 .last()
                 .map(|m| m.content.clone())
                 .unwrap_or_default();
-            let memory_ctx = self.build_memory_context(&query, 2048);
+            let memory_ctx = self.build_memory_context(&query, cfg.memory_max_tokens);
             if !memory_ctx.is_empty() {
                 let tokens = count(&memory_ctx);
+                let score =
+                    cfg.effective_score(cfg.memory_base_score, ContextSourceType::Memory, intent);
                 items.push(
-                    ContextItem::new(memory_ctx, tokens, 0.7, ContextSourceType::Memory)
+                    ContextItem::new(memory_ctx, tokens, score, ContextSourceType::Memory)
                         .with_label("memory"),
                 );
             }
@@ -1198,11 +1227,20 @@ impl AiAssistant {
         // 3. Procedural context
         #[cfg(feature = "advanced-memory")]
         {
-            let proc_ctx = self.build_procedural_context(user_message, 10, 2048);
+            let proc_ctx = self.build_procedural_context(
+                user_message,
+                cfg.procedural_max_items,
+                cfg.procedural_max_tokens,
+            );
             if !proc_ctx.is_empty() {
                 let tokens = count(&proc_ctx);
+                let score = cfg.effective_score(
+                    cfg.procedural_base_score,
+                    ContextSourceType::Procedural,
+                    intent,
+                );
                 items.push(
-                    ContextItem::new(proc_ctx, tokens, 0.75, ContextSourceType::Procedural)
+                    ContextItem::new(proc_ctx, tokens, score, ContextSourceType::Procedural)
                         .with_label("procedural"),
                 );
             }
@@ -1212,10 +1250,30 @@ impl AiAssistant {
         let resolved_refs = self.reference_resolver.resolve_reference(user_message);
         if let Some(ref refs) = resolved_refs {
             let tokens = count(refs);
+            let score = cfg.effective_score(
+                cfg.reference_base_score,
+                ContextSourceType::Reference,
+                intent,
+            );
             items.push(
-                ContextItem::new(refs.clone(), tokens, 1.0, ContextSourceType::Reference)
+                ContextItem::new(refs.clone(), tokens, score, ContextSourceType::Reference)
                     .with_label("references"),
             );
+        }
+
+        // 5. Knowledge graph context (separate from RAG to allow independent scoring)
+        #[cfg(feature = "multi-agent")]
+        {
+            let graph_ctx = self.build_graph_context_string(user_message);
+            if !graph_ctx.is_empty() {
+                let tokens = count(&graph_ctx);
+                let score =
+                    cfg.effective_score(cfg.graph_base_score, ContextSourceType::Graph, intent);
+                items.push(
+                    ContextItem::new(graph_ctx, tokens, score, ContextSourceType::Graph)
+                        .with_label("knowledge_graph"),
+                );
+            }
         }
 
         // If nothing to allocate, return empty
@@ -1231,7 +1289,8 @@ impl AiAssistant {
         let conversation_tokens: usize = self.conversation.iter().map(|m| count(&m.content)).sum();
         let user_tokens = count(user_message);
         let precision = self.token_precision();
-        let response_reserve = (model_ctx as f64 * precision.reserve_factor()).max(800.0) as usize;
+        let response_reserve = (model_ctx as f64 * precision.reserve_factor())
+            .max(cfg.min_response_reserve as f64) as usize;
 
         let budget = ContextBudgetAllocator::available_budget(
             model_ctx,
@@ -1241,17 +1300,55 @@ impl AiAssistant {
             response_reserve,
         );
 
-        // Allocate
-        let allocator = ContextBudgetAllocator::new(OverflowStrategy::ExtractiveCompression);
+        // Select overflow strategy: bandit (if learning) or configured
+        let (strategy, bandit_arm) = if let Some(ref bandit) = self.strategy_bandit {
+            let arm = bandit.select().to_string();
+            let compressor_model = match &cfg.overflow_strategy {
+                crate::context_budget::OverflowStrategy::LlmCompression {
+                    compressor_model,
+                    ..
+                } => Some(compressor_model.as_str()),
+                crate::context_budget::OverflowStrategy::Hybrid {
+                    compressor_model, ..
+                } => Some(compressor_model.as_str()),
+                _ => None,
+            };
+            let strat =
+                crate::context_budget::StrategyBandit::arm_to_strategy(&arm, compressor_model);
+            (strat, Some(arm))
+        } else {
+            (cfg.overflow_strategy.clone(), None)
+        };
+
+        let allocator = ContextBudgetAllocator::new(strategy);
         let result = allocator.build_from_items(items, budget);
 
+        // Update bandit reward based on utilization
+        if let Some(arm) = bandit_arm {
+            if let Some(ref mut bandit) = self.strategy_bandit {
+                bandit.update(&arm, result.utilization() as f64);
+            }
+        }
+
         crate::diag_debug!(
-            "[context-budget] allocated: {} tokens used / {} budget ({:.0}% utilization), {} included, {} dropped",
+            "[context-budget] allocated: {} tokens used / {} budget ({:.0}% utilization), {} included, {} dropped, scoring={:?}",
             result.tokens_used, result.budget, result.utilization() * 100.0,
-            result.included.len(), result.dropped.len()
+            result.included.len(), result.dropped.len(), cfg.scoring_mode
         );
 
         result.context
+    }
+
+    /// Classify intent for context budget scoring (returns None if Static mode).
+    fn classify_intent_for_budget(
+        &self,
+        user_message: &str,
+    ) -> Option<crate::intent::IntentResult> {
+        use crate::context_budget::ScoringMode;
+        match &self.context_budget_config.scoring_mode {
+            ScoringMode::Static => None,
+            _ => Some(crate::intent::IntentClassifier::new().classify(user_message)),
+        }
     }
 
     /// Build memory-based context for a query (empty string if memory disabled).
@@ -1270,6 +1367,83 @@ impl AiAssistant {
             }
             None => String::new(),
         }
+    }
+
+    /// Build graph context string from the knowledge graph for a query.
+    ///
+    /// Extracts matching entities and their relations from the multi-layer
+    /// knowledge graph. Returns an empty string if no graph is available or
+    /// no entities match.
+    #[cfg(feature = "multi-agent")]
+    pub fn build_graph_context_string(&self, query: &str) -> String {
+        let graph = match self.graph.as_ref() {
+            Some(g) => g,
+            None => return String::new(),
+        };
+
+        let session_id = self.current_session.as_ref().map(|s| s.id.as_str());
+
+        // Extract entity names from the query for graph lookup
+        let query_words: Vec<String> = query
+            .split_whitespace()
+            .filter(|w| w.len() > 2)
+            .map(|w| {
+                w.trim_matches(|c: char| !c.is_alphanumeric())
+                    .to_lowercase()
+            })
+            .filter(|w| !w.is_empty())
+            .collect();
+
+        // Query unified view for matching entities
+        let unified = graph.query_unified(session_id);
+        let matching: Vec<&crate::multi_layer_graph::UnifiedEntity> = unified
+            .entities
+            .iter()
+            .filter(|e| {
+                let name_lower = e.name.to_lowercase();
+                query_words.iter().any(|w| name_lower.contains(w))
+            })
+            .collect();
+
+        if matching.is_empty() {
+            return String::new();
+        }
+
+        let mut result = String::from("--- GRAPH CONTEXT ---\n");
+        for entity in matching.iter().take(10) {
+            result.push_str(&format!(
+                "- {} ({}): confidence {:.0}%",
+                entity.name,
+                entity.entity_type,
+                entity.confidence * 100.0
+            ));
+            for (key, val) in &entity.merged_attributes {
+                result.push_str(&format!(", {}={}", key, val));
+            }
+            result.push('\n');
+        }
+
+        // Add relevant relations
+        let matching_names: Vec<&str> = matching.iter().map(|e| e.name.as_str()).collect();
+        for rel in &unified.relations {
+            if matching_names.contains(&rel.source.as_str())
+                || matching_names.contains(&rel.target.as_str())
+            {
+                result.push_str(&format!(
+                    "- {} --[{}]--> {}\n",
+                    rel.source, rel.relation_type, rel.target
+                ));
+            }
+        }
+        result.push_str("--- END GRAPH ---\n");
+
+        crate::diag_debug!(
+            "[graph-context] enrichment: {} entities, {} relations",
+            matching.len(),
+            unified.relations.len()
+        );
+
+        result
     }
 
     // === Procedural Memory Integration ===
@@ -1788,7 +1962,9 @@ impl AiAssistant {
         self.rx_response = Some(rx);
 
         // Build context using the adaptive budget allocator
-        let allocated_context = self.build_allocated_context(&user_message, knowledge_context);
+        let intent = self.classify_intent_for_budget(&user_message);
+        let allocated_context =
+            self.build_allocated_context(&user_message, knowledge_context, intent.as_ref());
         let effective_knowledge: String;
         let knowledge_ref = if allocated_context.is_empty() {
             knowledge_context
@@ -1940,7 +2116,9 @@ impl AiAssistant {
         self.rx_response = Some(rx);
 
         // Build context using the adaptive budget allocator
-        let allocated_context = self.build_allocated_context(&user_message, knowledge_context);
+        let intent = self.classify_intent_for_budget(&user_message);
+        let allocated_context =
+            self.build_allocated_context(&user_message, knowledge_context, intent.as_ref());
         let effective_knowledge: String;
         let knowledge_ref = if allocated_context.is_empty() {
             knowledge_context
@@ -1996,7 +2174,9 @@ impl AiAssistant {
         self.conversation.push(ChatMessage::user(&user_message));
 
         // Build context using the adaptive budget allocator
-        let allocated_context = self.build_allocated_context(&user_message, knowledge_context);
+        let intent = self.classify_intent_for_budget(&user_message);
+        let allocated_context =
+            self.build_allocated_context(&user_message, knowledge_context, intent.as_ref());
         let effective_knowledge: String;
         let knowledge_ref = if allocated_context.is_empty() {
             knowledge_context
@@ -2104,7 +2284,9 @@ impl AiAssistant {
         self.cancel_token = Some(cancel_token.clone());
 
         // Build context using the adaptive budget allocator
-        let allocated_context = self.build_allocated_context(&user_message, knowledge_context);
+        let intent = self.classify_intent_for_budget(&user_message);
+        let allocated_context =
+            self.build_allocated_context(&user_message, knowledge_context, intent.as_ref());
         let effective_knowledge: String;
         let knowledge_ref = if allocated_context.is_empty() {
             knowledge_context
@@ -2220,7 +2402,9 @@ impl AiAssistant {
         self.cancel_token = Some(cancel_token.clone());
 
         // Build context using the adaptive budget allocator
-        let allocated_context = self.build_allocated_context(&user_message, knowledge_context);
+        let intent = self.classify_intent_for_budget(&user_message);
+        let allocated_context =
+            self.build_allocated_context(&user_message, knowledge_context, intent.as_ref());
         let effective_knowledge: String;
         let knowledge_ref = if allocated_context.is_empty() {
             knowledge_context
@@ -3494,68 +3678,9 @@ impl AiAssistant {
                 knowledge_context = build_knowledge_context(&chunks);
             }
 
-            // Knowledge Graph context enrichment
-            if let Some(ref graph) = self.graph {
-                let session_id = self.current_session.as_ref().map(|s| s.id.as_str());
-
-                // Extract entity names from the query for graph lookup
-                let query_words: Vec<String> = query
-                    .split_whitespace()
-                    .filter(|w| w.len() > 2)
-                    .map(|w| {
-                        w.trim_matches(|c: char| !c.is_alphanumeric())
-                            .to_lowercase()
-                    })
-                    .filter(|w| !w.is_empty())
-                    .collect();
-
-                // Query unified view for matching entities
-                let unified = graph.query_unified(session_id);
-                let matching: Vec<&crate::multi_layer_graph::UnifiedEntity> = unified
-                    .entities
-                    .iter()
-                    .filter(|e| {
-                        let name_lower = e.name.to_lowercase();
-                        query_words.iter().any(|w| name_lower.contains(w))
-                    })
-                    .collect();
-
-                if !matching.is_empty() {
-                    knowledge_context.push_str("\n\n--- GRAPH CONTEXT ---\n");
-                    for entity in matching.iter().take(10) {
-                        knowledge_context.push_str(&format!(
-                            "- {} ({}): confidence {:.0}%",
-                            entity.name,
-                            entity.entity_type,
-                            entity.confidence * 100.0
-                        ));
-                        for (key, val) in &entity.merged_attributes {
-                            knowledge_context.push_str(&format!(", {}={}", key, val));
-                        }
-                        knowledge_context.push('\n');
-                    }
-
-                    // Add relevant relations
-                    let matching_names: Vec<&str> =
-                        matching.iter().map(|e| e.name.as_str()).collect();
-                    for rel in &unified.relations {
-                        if matching_names.contains(&rel.source.as_str())
-                            || matching_names.contains(&rel.target.as_str())
-                        {
-                            knowledge_context.push_str(&format!(
-                                "- {} --[{}]--> {}\n",
-                                rel.source, rel.relation_type, rel.target
-                            ));
-                        }
-                    }
-                    knowledge_context.push_str("--- END GRAPH ---\n");
-                    crate::diag_debug!(
-                        "[rag-context] graph enrichment: {} entities, {} relations",
-                        matching.len(),
-                        unified.relations.len()
-                    );
-                }
-            }
+            // Knowledge Graph context — extracted to build_graph_context_string()
+            // Graph is now added as a separate ContextItem via build_allocated_context()
+            // to prevent double-counting and allow independent scoring.
 
             // Conversation RAG
             if self.rag_config.conversation_rag_enabled {
@@ -5143,8 +5268,12 @@ impl AiAssistant {
         use std::collections::HashMap as HitlHashMap;
 
         // 1. Send the message to the LLM synchronously with context budget allocation
-        let allocated_context =
-            self.build_allocated_context(message, &self.knowledge_context.clone());
+        let hitl_intent = self.classify_intent_for_budget(message);
+        let allocated_context = self.build_allocated_context(
+            message,
+            &self.knowledge_context.clone(),
+            hitl_intent.as_ref(),
+        );
         let effective_knowledge = if allocated_context.is_empty() {
             self.knowledge_context.clone()
         } else {

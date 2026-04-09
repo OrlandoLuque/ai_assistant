@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v30 (2026-04-09)
+
+### Added
+- `ContextBudgetConfig` struct: centralizes all hardcoded allocator values (15 configurable fields)
+- `ScoringMode` enum: 4 dynamic scoring modes (Static, Heuristic, LlmEnhanced, Hybrid)
+- Intent-based context scoring: maps 16 intent types to per-source score boosts
+- Knowledge graph as separate `ContextItem` (extracted from `build_rag_context()`, prevents double-counting)
+- `StrategyBandit` wired into production: UCB1 arm selection with utilization reward
+- `LlmEnhancerCompressor` bridge: adapts `LlmEnhancer` → `LlmCompressor` with fallback
+- `context_scoring_mode` in `RagFeatures`: per-tier scoring mode override
+- `arm_to_strategy()` for bandit arm → `OverflowStrategy` conversion
+- CI: `FEATURES_STD` / `FEATURES_NETWORK` env vars for standardized feature sets
+- CI: Feature-matrix expanded from 19 to 36 combinations
+- CI: `cargo audit` security scan job
+- CI: Integration tests (`cargo test --test '*'`)
+- CI: Binary compilation verification (5 binaries)
+- 82 new tests (context_budget: 16 new, total 34)
+
+### Changed
+- `build_allocated_context()` uses `ContextBudgetConfig` instead of hardcoded values
+- Graph context extracted from `build_rag_context()` to standalone `build_graph_context_string()`
+- RAG tier defaults: Enhanced=Heuristic, Thorough/Agentic/Graph=Hybrid(0.6)
+- CI coverage aligned with `FEATURES_STD`
+- Release pipeline updated: `needs: [check, test, clippy, fmt, binaries]`
+
+### Stats
+- 360+ source modules
+- 7,469 passing tests (from 7,387 in v73)
+- 60 Cargo feature flags
+- 0 clippy warnings
+
 ## [Unreleased] - v29 (2026-03-06)
 
 ### Added

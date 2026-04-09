@@ -6,7 +6,7 @@ The project has two testing layers:
 
 | Layer | Tests | Run Command |
 |-------|-------|-------------|
-| Unit tests (`#[test]`) | 7,387 | `cargo test --lib --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing"` |
+| Unit tests (`#[test]`) | 7,469 | `cargo test --lib --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing"` |
 | Integration tests | 38 | `cargo test --test integration_tests --features full` |
 | Test harness (CLI) | ~436 | `cargo run --bin ai_test_harness -- --all` (sin P2P) |
 | Distributed networking tests | 115 | `cargo test --features "full,distributed-network"` |
@@ -15,7 +15,7 @@ The project has two testing layers:
 | Test harness P2P categories | 16 | `cargo run --bin ai_test_harness --features "full,p2p" -- --category=p2p_nat` |
 | Benchmarks | 42 | `cargo bench --bench core_benchmarks --features full` |
 
-**Total: 7,387 tests** (lib tests, verified with `cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing" --lib`)
+**Total: 7,469 tests** (lib tests, verified with `cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing" --lib`)
 
 ## Quick Start
 
@@ -517,6 +517,7 @@ The harness exits with code 1 if any test fails, making it suitable for CI pipel
 | v70 (ai_setup CLI + GUI — Config & Node Management) | 7,387 | +13 | 2026-04-01 |
 | v71 (ai_optimize — ML Configuration Optimizer) | 7,387 | +23 | 2026-04-01 |
 | v73 (GPU Sharing Network — PiiTokenizer, credits, pricing, collusion, protocol) | 7,387 | +52 | 2026-04-03 |
+| v74 (CI Improvements + ContextBudgetAllocator Integration) | 7,469 | +82 | 2026-04-09 |
 
 > **Note on v37 count**: Test count reflects current `--lib` run. Some tests from v28-v36 were
 > in integration tests or feature combinations not included in the standard lib test run.

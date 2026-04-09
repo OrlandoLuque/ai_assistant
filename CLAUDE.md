@@ -9,7 +9,7 @@ Esto te da el contexto completo: dónde estamos, qué se ha hecho, cómo trabaja
 
 ## Sobre el Proyecto
 - **Librería Rust** para integración con LLMs locales y cloud
-- **~410K líneas de código**, 360 archivos fuente (.rs), 7.387+ tests
+- **~410K líneas de código**, 360 archivos fuente (.rs), 7.469+ tests
 - **Autor único**: Orlando José Luque Moraira (Lander) — orlando.luque@gmail.com
 - **Estado**: NO publicado en ningún sitio (ni crates.io, ni GitHub público, ni distribuido a terceros)
 - **Feature flags**: 60 (core, multi-agent, security, analytics, rag, distributed, autonomous, gui-pro, audio-io, gpu-sharing, etc.)
@@ -26,6 +26,7 @@ Esto te da el contexto completo: dónde estamos, qué se ha hecho, cómo trabaja
 - MCP protocol (40+ tools + 4 knowledge tools), WASM, egui widgets, HTTP server embebido
 - Memory integration: MemoryManager con auto-inyección en FreshContext
 - FreshContext Advisor API: diagnóstico programático (effectiveness, warnings)
+- ContextBudgetAllocator: scoring dinámico (4 modos), intent-based, integrado con RAG tiers
 
 ## Decisiones Estratégicas Tomadas (Febrero 2026)
 
@@ -63,7 +64,7 @@ Esto te da el contexto completo: dónde estamos, qué se ha hecho, cómo trabaja
 3. Respetar la estructura modular existente basada en feature flags de Cargo
 4. Zero `.unwrap()` en producción — usar proper error handling siempre
 5. Zero warnings del compilador — compilación limpia en todas las combinaciones de features
-6. Tests para todo — el proyecto tiene 7.387+ tests y debe mantenerse así
+6. Tests para todo — el proyecto tiene 7.469+ tests y debe mantenerse así
 
 ## Documentos Generados
 - `Informe_Viabilidad_ai_assistant.docx` — Informe completo de viabilidad v2 (monetización, PI, licenciamiento)

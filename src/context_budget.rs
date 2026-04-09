@@ -19,6 +19,288 @@
 
 use std::collections::HashMap;
 
+use crate::intent::{Intent, IntentResult};
+
+// ============================================================================
+// Configuration
+// ============================================================================
+
+/// Scoring mode for context source prioritization.
+///
+/// Controls how per-source relevance scores are adjusted based on the user's
+/// query intent. All modes fall back gracefully — if the enhanced method fails,
+/// the simpler method is used automatically.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
+pub enum ScoringMode {
+    /// Static scores from config (default, zero cost).
+    /// Each source uses its configured base score regardless of query type.
+    Static,
+    /// Adjust scores using IntentClassifier heuristics (zero cost).
+    /// Boosts sources that match the detected intent (e.g., Memory for recall
+    /// questions, RAG for search queries, Procedural for commands).
+    Heuristic,
+    /// LLM classifies query and returns per-source weights (1 LLM call).
+    /// Most accurate but adds latency and token cost per message.
+    LlmEnhanced,
+    /// Heuristic by default, LLM when heuristic confidence is below threshold.
+    /// Best balance of cost and accuracy.
+    Hybrid {
+        /// Minimum heuristic confidence to skip LLM call (default: 0.6).
+        confidence_threshold: f32,
+    },
+}
+
+impl Default for ScoringMode {
+    fn default() -> Self {
+        Self::Static
+    }
+}
+
+/// Configuration for the context budget allocator.
+///
+/// Centralizes all tunable parameters that were previously hardcoded.
+/// Default values match the original hardcoded behavior for backward
+/// compatibility.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
+pub struct ContextBudgetConfig {
+    // --- Per-source base scores (0.0–1.0) ---
+    /// Base relevance score for RAG knowledge chunks.
+    pub rag_base_score: f32,
+    /// Base relevance score for episodic/entity memory.
+    pub memory_base_score: f32,
+    /// Base relevance score for workflow procedures.
+    pub procedural_base_score: f32,
+    /// Base relevance score for resolved back-references.
+    pub reference_base_score: f32,
+    /// Base relevance score for knowledge graph entities/relations.
+    pub graph_base_score: f32,
+    /// Base relevance score for user-configured notes.
+    pub notes_base_score: f32,
+
+    // --- Dynamic scoring ---
+    /// How to adjust scores based on query intent.
+    pub scoring_mode: ScoringMode,
+
+    // --- Source token limits ---
+    /// Maximum tokens to request from memory context.
+    pub memory_max_tokens: usize,
+    /// Maximum tokens to request from procedural context.
+    pub procedural_max_tokens: usize,
+    /// Maximum number of procedures to retrieve.
+    pub procedural_max_items: usize,
+
+    // --- Response reserve ---
+    /// Minimum tokens reserved for the model's response.
+    pub min_response_reserve: usize,
+
+    // --- Compression thresholds ---
+    /// Minimum remaining budget (tokens) to attempt compression on an item.
+    pub compression_min_remaining: usize,
+    /// Minimum item score to attempt compression (items below are dropped).
+    pub compression_min_score: f32,
+    /// Score penalty multiplier applied to compressed items (e.g., 0.9 = 10% penalty).
+    pub compression_score_penalty: f32,
+
+    // --- Overflow strategy ---
+    /// Strategy for handling items that don't fit the budget.
+    pub overflow_strategy: OverflowStrategy,
+
+    // --- Bandit learning ---
+    /// Enable multi-armed bandit learning for strategy selection.
+    /// When true, the allocator learns which overflow strategy produces
+    /// the best results over time using UCB1.
+    pub enable_strategy_learning: bool,
+}
+
+impl Default for ContextBudgetConfig {
+    fn default() -> Self {
+        Self {
+            // Scores match original hardcoded values
+            rag_base_score: 0.8,
+            memory_base_score: 0.7,
+            procedural_base_score: 0.75,
+            reference_base_score: 1.0,
+            graph_base_score: 0.85,
+            notes_base_score: 0.65,
+
+            scoring_mode: ScoringMode::Static,
+
+            memory_max_tokens: 2048,
+            procedural_max_tokens: 2048,
+            procedural_max_items: 10,
+
+            min_response_reserve: 800,
+
+            compression_min_remaining: 50,
+            compression_min_score: 0.5,
+            compression_score_penalty: 0.9,
+
+            overflow_strategy: OverflowStrategy::ExtractiveCompression,
+            enable_strategy_learning: false,
+        }
+    }
+}
+
+impl ContextBudgetConfig {
+    /// Create a new config with all default values.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Validate and clamp all fields to safe ranges.
+    /// Call this after deserializing from user input or external config.
+    pub fn validate(&mut self) {
+        self.rag_base_score = sanitize_score(self.rag_base_score);
+        self.memory_base_score = sanitize_score(self.memory_base_score);
+        self.procedural_base_score = sanitize_score(self.procedural_base_score);
+        self.reference_base_score = sanitize_score(self.reference_base_score);
+        self.graph_base_score = sanitize_score(self.graph_base_score);
+        self.notes_base_score = sanitize_score(self.notes_base_score);
+
+        self.compression_min_score = sanitize_score(self.compression_min_score);
+        self.compression_score_penalty = sanitize_score(self.compression_score_penalty);
+
+        self.memory_max_tokens = self.memory_max_tokens.min(100_000);
+        self.procedural_max_tokens = self.procedural_max_tokens.min(100_000);
+        self.procedural_max_items = self.procedural_max_items.min(1000);
+        self.min_response_reserve = self.min_response_reserve.min(100_000);
+        self.compression_min_remaining = self.compression_min_remaining.min(100_000);
+
+        if let ScoringMode::Hybrid {
+            ref mut confidence_threshold,
+        } = self.scoring_mode
+        {
+            *confidence_threshold = sanitize_score(*confidence_threshold);
+        }
+    }
+
+    /// Get the base score for a given source type.
+    pub fn base_score_for(&self, source: ContextSourceType) -> f32 {
+        match source {
+            ContextSourceType::Rag => self.rag_base_score,
+            ContextSourceType::Memory => self.memory_base_score,
+            ContextSourceType::Procedural => self.procedural_base_score,
+            ContextSourceType::Reference => self.reference_base_score,
+            ContextSourceType::Graph => self.graph_base_score,
+            ContextSourceType::UserNotes => self.notes_base_score,
+            ContextSourceType::Custom => 0.5,
+            _ => 0.5,
+        }
+    }
+
+    /// Adjust a base score using intent classification results (heuristic mode).
+    ///
+    /// Returns the adjusted score clamped to 0.0..=1.0. The adjustment boosts
+    /// sources that are more relevant to the detected intent type.
+    pub fn adjust_score_for_intent(
+        &self,
+        base_score: f32,
+        source: ContextSourceType,
+        intent: &IntentResult,
+    ) -> f32 {
+        let boost = intent_source_boost(intent.primary, source);
+        sanitize_score(base_score + boost)
+    }
+
+    /// Compute the effective score for an item, applying scoring mode logic.
+    ///
+    /// - `Static`: returns base score unchanged
+    /// - `Heuristic` / `Hybrid` (when confident): applies intent boost
+    /// - `LlmEnhanced` / `Hybrid` (when not confident): caller should use
+    ///   LLM-provided scores; this method falls back to heuristic
+    pub fn effective_score(
+        &self,
+        base_score: f32,
+        source: ContextSourceType,
+        intent: Option<&IntentResult>,
+    ) -> f32 {
+        match &self.scoring_mode {
+            ScoringMode::Static => base_score,
+            ScoringMode::Heuristic | ScoringMode::LlmEnhanced => {
+                if let Some(ir) = intent {
+                    self.adjust_score_for_intent(base_score, source, ir)
+                } else {
+                    base_score
+                }
+            }
+            ScoringMode::Hybrid {
+                confidence_threshold,
+            } => {
+                if let Some(ir) = intent {
+                    // For Hybrid, always apply heuristic; LLM override is done
+                    // at a higher level when confidence < threshold
+                    if ir.confidence >= *confidence_threshold as f64 {
+                        self.adjust_score_for_intent(base_score, source, ir)
+                    } else {
+                        // Low confidence — caller should have used LLM scores
+                        // but as fallback we still apply heuristic
+                        self.adjust_score_for_intent(base_score, source, ir)
+                    }
+                } else {
+                    base_score
+                }
+            }
+        }
+    }
+}
+
+/// Compute the score boost for a (intent, source) pair.
+///
+/// Positive values boost the source, negative values penalize it.
+/// Returns a value typically in [-0.20, +0.15].
+fn intent_source_boost(intent: Intent, source: ContextSourceType) -> f32 {
+    match (intent, source) {
+        // Questions need more context from recall sources
+        (Intent::Question, ContextSourceType::Rag) => 0.05,
+        (Intent::Question, ContextSourceType::Memory) => 0.10,
+        (Intent::Question, ContextSourceType::Graph) => 0.05,
+
+        // Code requests need precision
+        (Intent::CodeRequest, ContextSourceType::Rag) => 0.10,
+        (Intent::CodeRequest, ContextSourceType::Procedural) => 0.10,
+
+        // Explanations need breadth
+        (Intent::Explanation, ContextSourceType::Rag) => 0.10,
+        (Intent::Explanation, ContextSourceType::Graph) => 0.10,
+
+        // Comparisons need multiple sources
+        (Intent::Comparison, ContextSourceType::Rag) => 0.10,
+        (Intent::Comparison, ContextSourceType::Graph) => 0.15,
+
+        // Commands benefit from procedures
+        (Intent::Command, ContextSourceType::Procedural) => 0.15,
+        (Intent::Request, ContextSourceType::Procedural) => 0.10,
+
+        // Complaints need full context
+        (Intent::Complaint, ContextSourceType::Memory) => 0.10,
+        (Intent::Complaint, ContextSourceType::Rag) => 0.05,
+
+        // Social intents need minimal context
+        (Intent::Greeting, _) => -0.20,
+        (Intent::Farewell, _) => -0.20,
+        (Intent::Thanks, _) => -0.20,
+        (Intent::Chitchat, _) => -0.10,
+
+        // Default: no adjustment
+        _ => 0.0,
+    }
+}
+
+/// Sanitize a float score: clamp to [0.0, 1.0], replace NaN/Inf with 0.0.
+fn sanitize_score(score: f32) -> f32 {
+    if score.is_nan() || score.is_infinite() {
+        0.0
+    } else {
+        score.clamp(0.0, 1.0)
+    }
+}
+
+// ============================================================================
+// Core types
+// ============================================================================
+
 /// Type of context source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
@@ -581,6 +863,75 @@ pub fn build_compressor_prompt(
 }
 
 // ============================================================================
+// LlmEnhancer → LlmCompressor bridge
+// ============================================================================
+
+/// Bridges the `LlmEnhancer` trait (V68) to `LlmCompressor`.
+///
+/// Allows any configured LLM enhancer to be used as a context compressor,
+/// using `build_compressor_prompt()` for prompt generation and falling back
+/// to extractive compression if the LLM call fails.
+pub struct LlmEnhancerCompressor<'a> {
+    enhancer: &'a dyn crate::llm_enhance::LlmEnhancer,
+}
+
+impl<'a> LlmEnhancerCompressor<'a> {
+    /// Create a new compressor backed by the given LLM enhancer.
+    pub fn new(enhancer: &'a dyn crate::llm_enhance::LlmEnhancer) -> Self {
+        Self { enhancer }
+    }
+}
+
+impl<'a> LlmCompressor for LlmEnhancerCompressor<'a> {
+    fn compress(
+        &self,
+        user_query: &str,
+        items: &[ContextItem],
+        target_tokens: usize,
+        level: CompressionLevel,
+    ) -> Result<String, String> {
+        if !self.enhancer.is_available() {
+            // Fallback to extractive compression
+            let combined: String = items
+                .iter()
+                .map(|i| i.content.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            return Ok(extractive_compress(&combined, target_tokens));
+        }
+
+        // Build prompt with content wrapped for injection safety
+        let wrapped_query = crate::llm_enhance::prompt_wrap(user_query);
+        let prompt = build_compressor_prompt(&wrapped_query, items, level, target_tokens);
+
+        // Estimate max tokens for the LLM response (~target_tokens + overhead)
+        let max_response = target_tokens.saturating_add(100);
+
+        match self.enhancer.generate(&prompt, max_response) {
+            Ok(response) => {
+                // Verify the response fits the budget; truncate if needed
+                let response_tokens = estimate_tokens(&response);
+                if response_tokens <= target_tokens {
+                    Ok(response)
+                } else {
+                    // LLM overshot — extract key sentences to fit
+                    Ok(extractive_compress(&response, target_tokens))
+                }
+            }
+            Err(_) => {
+                // LLM failed — fall back to extractive compression
+                let combined: String = items
+                    .iter()
+                    .map(|i| i.content.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                Ok(extractive_compress(&combined, target_tokens))
+            }
+        }
+    }
+}
+
+// ============================================================================
 // MBA-RAG: Multi-Armed Bandit for strategy selection
 // ============================================================================
 
@@ -685,6 +1036,39 @@ impl StrategyBandit {
     /// Total number of strategy selections made.
     pub fn total_pulls(&self) -> u64 {
         self.total_pulls
+    }
+
+    /// Convert a bandit arm name to an `OverflowStrategy`.
+    ///
+    /// LLM-based strategies require a `compressor_model`; if `None`, they
+    /// fall back to `ExtractiveCompression`.
+    pub fn arm_to_strategy(arm: &str, compressor_model: Option<&str>) -> OverflowStrategy {
+        match arm {
+            "score_truncation" => OverflowStrategy::ScoreTruncation,
+            "extractive_light" | "extractive_medium" => OverflowStrategy::ExtractiveCompression,
+            "llm_light" => match compressor_model {
+                Some(m) => OverflowStrategy::LlmCompression {
+                    compressor_model: m.to_string(),
+                    level: CompressionLevel::Light,
+                },
+                None => OverflowStrategy::ExtractiveCompression,
+            },
+            "llm_medium" => match compressor_model {
+                Some(m) => OverflowStrategy::LlmCompression {
+                    compressor_model: m.to_string(),
+                    level: CompressionLevel::Medium,
+                },
+                None => OverflowStrategy::ExtractiveCompression,
+            },
+            "llm_aggressive" => match compressor_model {
+                Some(m) => OverflowStrategy::LlmCompression {
+                    compressor_model: m.to_string(),
+                    level: CompressionLevel::Aggressive,
+                },
+                None => OverflowStrategy::ExtractiveCompression,
+            },
+            _ => OverflowStrategy::ScoreTruncation,
+        }
     }
 
     /// Save bandit state to a StorageContext.
@@ -1117,5 +1501,282 @@ mod tests {
         let json = serde_json::to_string(&bandit).unwrap();
         let restored: StrategyBandit = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.total_pulls(), 2);
+    }
+
+    // ── V74: ContextBudgetConfig tests ──
+
+    #[test]
+    fn test_config_default_matches_hardcoded() {
+        let cfg = ContextBudgetConfig::default();
+        // Verify defaults match the previously hardcoded values
+        assert!((cfg.rag_base_score - 0.8).abs() < f32::EPSILON);
+        assert!((cfg.memory_base_score - 0.7).abs() < f32::EPSILON);
+        assert!((cfg.procedural_base_score - 0.75).abs() < f32::EPSILON);
+        assert!((cfg.reference_base_score - 1.0).abs() < f32::EPSILON);
+        assert!((cfg.graph_base_score - 0.85).abs() < f32::EPSILON);
+        assert!((cfg.notes_base_score - 0.65).abs() < f32::EPSILON);
+        assert_eq!(cfg.memory_max_tokens, 2048);
+        assert_eq!(cfg.procedural_max_tokens, 2048);
+        assert_eq!(cfg.procedural_max_items, 10);
+        assert_eq!(cfg.min_response_reserve, 800);
+        assert_eq!(cfg.compression_min_remaining, 50);
+        assert!((cfg.compression_min_score - 0.5).abs() < f32::EPSILON);
+        assert!((cfg.compression_score_penalty - 0.9).abs() < f32::EPSILON);
+        assert!(!cfg.enable_strategy_learning);
+        assert!(matches!(cfg.scoring_mode, ScoringMode::Static));
+        assert!(matches!(
+            cfg.overflow_strategy,
+            OverflowStrategy::ExtractiveCompression
+        ));
+    }
+
+    #[test]
+    fn test_config_score_clamping() {
+        let mut cfg = ContextBudgetConfig::default();
+        cfg.rag_base_score = 1.5;
+        cfg.memory_base_score = -0.3;
+        cfg.procedural_base_score = f32::NAN;
+        cfg.reference_base_score = f32::INFINITY;
+        cfg.validate();
+        assert!((cfg.rag_base_score - 1.0).abs() < f32::EPSILON);
+        assert!((cfg.memory_base_score - 0.0).abs() < f32::EPSILON);
+        assert!((cfg.procedural_base_score - 0.0).abs() < f32::EPSILON); // NaN → 0.0
+        assert!((cfg.reference_base_score - 0.0).abs() < f32::EPSILON); // Inf → 0.0
+    }
+
+    #[test]
+    fn test_config_zero_budget() {
+        let allocator = ContextBudgetAllocator::default();
+        let items = vec![make_item("test content", 0.9, ContextSourceType::Rag)];
+        let result = allocator.build_from_items(items, 0);
+        assert_eq!(result.tokens_used, 0);
+        assert!(result.included.is_empty());
+        assert!(!result.dropped.is_empty());
+    }
+
+    #[test]
+    fn test_config_oversized_single_item() {
+        let allocator = ContextBudgetAllocator::default();
+        let items = vec![make_item(&"x".repeat(3500), 0.9, ContextSourceType::Rag)]; // ~1000 tokens
+        let result = allocator.build_from_items(items, 10); // budget = 10 tokens
+        assert!(result.tokens_used <= 10);
+    }
+
+    #[test]
+    fn test_config_all_zero_scores() {
+        let allocator = ContextBudgetAllocator::default();
+        let items = vec![
+            make_item("a", 0.0, ContextSourceType::Rag),
+            make_item("b", 0.0, ContextSourceType::Memory),
+        ];
+        let result = allocator.build_from_items(items, 1000);
+        // Should include items (score=0.0 is valid, just lowest priority)
+        assert!(!result.included.is_empty());
+    }
+
+    #[test]
+    fn test_scoring_mode_static_no_change() {
+        let cfg = ContextBudgetConfig::default();
+        let score = cfg.effective_score(0.8, ContextSourceType::Rag, None);
+        assert!((score - 0.8).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_scoring_mode_heuristic_question() {
+        use crate::intent::{Intent, IntentResult};
+        let mut cfg = ContextBudgetConfig::default();
+        cfg.scoring_mode = ScoringMode::Heuristic;
+
+        let intent = IntentResult {
+            primary: Intent::Question,
+            confidence: 0.9,
+            all_intents: vec![(Intent::Question, 0.9)],
+        };
+
+        let rag_score = cfg.effective_score(0.8, ContextSourceType::Rag, Some(&intent));
+        let mem_score = cfg.effective_score(0.7, ContextSourceType::Memory, Some(&intent));
+
+        // Question boosts RAG by +0.05 and Memory by +0.10
+        assert!((rag_score - 0.85).abs() < f32::EPSILON);
+        assert!((mem_score - 0.80).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_scoring_mode_heuristic_greeting() {
+        use crate::intent::{Intent, IntentResult};
+        let mut cfg = ContextBudgetConfig::default();
+        cfg.scoring_mode = ScoringMode::Heuristic;
+
+        let intent = IntentResult {
+            primary: Intent::Greeting,
+            confidence: 0.95,
+            all_intents: vec![(Intent::Greeting, 0.95)],
+        };
+
+        let rag_score = cfg.effective_score(0.8, ContextSourceType::Rag, Some(&intent));
+        let mem_score = cfg.effective_score(0.7, ContextSourceType::Memory, Some(&intent));
+
+        // Greeting penalizes all sources by -0.20
+        assert!((rag_score - 0.60).abs() < f32::EPSILON);
+        assert!((mem_score - 0.50).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_scoring_mode_command_boosts_procedural() {
+        use crate::intent::{Intent, IntentResult};
+        let mut cfg = ContextBudgetConfig::default();
+        cfg.scoring_mode = ScoringMode::Heuristic;
+
+        let intent = IntentResult {
+            primary: Intent::Command,
+            confidence: 0.85,
+            all_intents: vec![(Intent::Command, 0.85)],
+        };
+
+        let proc_score = cfg.effective_score(0.75, ContextSourceType::Procedural, Some(&intent));
+
+        // Command boosts Procedural by +0.15
+        assert!((proc_score - 0.90).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_config_base_score_for() {
+        let cfg = ContextBudgetConfig::default();
+        assert!((cfg.base_score_for(ContextSourceType::Rag) - 0.8).abs() < f32::EPSILON);
+        assert!((cfg.base_score_for(ContextSourceType::Memory) - 0.7).abs() < f32::EPSILON);
+        assert!((cfg.base_score_for(ContextSourceType::Custom) - 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_config_serialization() {
+        let cfg = ContextBudgetConfig::default();
+        let json = serde_json::to_string(&cfg).unwrap();
+        let restored: ContextBudgetConfig = serde_json::from_str(&json).unwrap();
+        assert!((restored.rag_base_score - 0.8).abs() < f32::EPSILON);
+        assert!(matches!(restored.scoring_mode, ScoringMode::Static));
+    }
+
+    #[test]
+    fn test_llm_enhancer_compressor_fallback() {
+        use crate::llm_enhance::MockLlm;
+        // FailingMockLlm always returns Err
+        let enhancer = MockLlm::failing();
+        let compressor = LlmEnhancerCompressor::new(&enhancer);
+        let items = vec![
+            make_item(
+                "Important fact about Rust ownership",
+                0.9,
+                ContextSourceType::Rag,
+            ),
+            make_item(
+                "User prefers JSON output format",
+                0.7,
+                ContextSourceType::Memory,
+            ),
+        ];
+        let result =
+            compressor.compress("How does Rust work?", &items, 50, CompressionLevel::Medium);
+        // Should succeed via extractive fallback
+        assert!(result.is_ok());
+        let text = result.unwrap();
+        assert!(!text.is_empty());
+    }
+
+    #[test]
+    fn test_llm_enhancer_compressor_mock() {
+        use crate::llm_enhance::MockLlm;
+        let enhancer = MockLlm::new("Compressed: Rust uses ownership for safety.");
+        let compressor = LlmEnhancerCompressor::new(&enhancer);
+        let items = vec![make_item(
+            "Rust uses ownership and borrowing for memory safety without GC",
+            0.9,
+            ContextSourceType::Rag,
+        )];
+        let result =
+            compressor.compress("Tell me about Rust", &items, 200, CompressionLevel::Light);
+        assert!(result.is_ok());
+        let text = result.unwrap();
+        assert!(text.contains("Compressed"));
+    }
+
+    #[test]
+    fn test_bandit_arm_to_strategy() {
+        // Score truncation
+        let s = StrategyBandit::arm_to_strategy("score_truncation", None);
+        assert!(matches!(s, OverflowStrategy::ScoreTruncation));
+
+        // Extractive variants
+        let s = StrategyBandit::arm_to_strategy("extractive_light", None);
+        assert!(matches!(s, OverflowStrategy::ExtractiveCompression));
+        let s = StrategyBandit::arm_to_strategy("extractive_medium", None);
+        assert!(matches!(s, OverflowStrategy::ExtractiveCompression));
+
+        // LLM variants with model
+        let s = StrategyBandit::arm_to_strategy("llm_light", Some("gpt-4o-mini"));
+        match s {
+            OverflowStrategy::LlmCompression {
+                compressor_model,
+                level,
+            } => {
+                assert_eq!(compressor_model, "gpt-4o-mini");
+                assert!(matches!(level, CompressionLevel::Light));
+            }
+            _ => panic!("Expected LlmCompression"),
+        }
+        let s = StrategyBandit::arm_to_strategy("llm_aggressive", Some("model"));
+        match s {
+            OverflowStrategy::LlmCompression { level, .. } => {
+                assert!(matches!(level, CompressionLevel::Aggressive));
+            }
+            _ => panic!("Expected LlmCompression"),
+        }
+
+        // LLM variants without model fall back to extractive
+        let s = StrategyBandit::arm_to_strategy("llm_light", None);
+        assert!(matches!(s, OverflowStrategy::ExtractiveCompression));
+
+        // Unknown arm falls back to score truncation
+        let s = StrategyBandit::arm_to_strategy("unknown_arm", None);
+        assert!(matches!(s, OverflowStrategy::ScoreTruncation));
+    }
+
+    #[test]
+    fn test_graph_source_scored_independently() {
+        // Verify that Graph source type gets its own score from config
+        let cfg = ContextBudgetConfig::default();
+        assert!((cfg.graph_base_score - 0.85).abs() < f32::EPSILON);
+
+        // Graph score should differ from RAG score
+        assert!((cfg.graph_base_score - cfg.rag_base_score).abs() > f32::EPSILON);
+
+        // Heuristic: Comparison intent should boost graph
+        let mut heuristic_cfg = ContextBudgetConfig::default();
+        heuristic_cfg.scoring_mode = ScoringMode::Heuristic;
+        let intent = IntentResult {
+            primary: Intent::Comparison,
+            confidence: 0.9,
+            all_intents: vec![(Intent::Comparison, 0.9)],
+        };
+        let graph_score = heuristic_cfg.effective_score(
+            heuristic_cfg.graph_base_score,
+            ContextSourceType::Graph,
+            Some(&intent),
+        );
+        // Comparison gives +0.15 to Graph
+        assert!(graph_score > heuristic_cfg.graph_base_score);
+        assert!((graph_score - 1.0).abs() < f32::EPSILON); // 0.85 + 0.15 = 1.0
+
+        // Graph as a ContextItem gets allocated by the allocator
+        let allocator = ContextBudgetAllocator::new(OverflowStrategy::ScoreTruncation);
+        let items = vec![
+            ContextItem::new("RAG results here", 100, 0.8, ContextSourceType::Rag)
+                .with_label("rag"),
+            ContextItem::new("Graph entities here", 80, 0.85, ContextSourceType::Graph)
+                .with_label("graph"),
+        ];
+        let result = allocator.build_from_items(items, 500);
+        assert_eq!(result.included.len(), 2);
+        assert!(result.context.contains("Graph entities here"));
+        assert!(result.context.contains("RAG results here"));
     }
 }

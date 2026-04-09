@@ -5171,6 +5171,55 @@ let prompt = composer
 
 ---
 
+## 97b. Adaptive Context Budget Configuration (V74)
+
+**What**: `ContextBudgetConfig` centralizes all allocator settings — per-source base scores, scoring mode, token limits, compression thresholds, and overflow strategy. `ScoringMode` controls how context source priorities adapt to user intent: `Static` (fixed scores), `Heuristic` (intent-based boosts, zero cost), `LlmEnhanced` (1 LLM call), `Hybrid` (heuristic first, LLM when uncertain).
+
+**Why**: Previously, all allocator parameters were hardcoded. Now they're configurable per-assistant and per-RAG-tier, enabling fine-tuned context composition for different use cases.
+
+```rust
+use ai_assistant::{AiAssistant, ContextBudgetConfig, ScoringMode};
+
+// Default config (backward compatible with V73 behavior)
+let assistant = AiAssistant::with_system_prompt("You are helpful.");
+
+// Custom config with heuristic scoring
+let config = ContextBudgetConfig {
+    rag_base_score: 0.85,
+    memory_base_score: 0.75,
+    graph_base_score: 0.90,
+    scoring_mode: ScoringMode::Heuristic,
+    memory_max_tokens: 4096,
+    ..Default::default()
+};
+let assistant = AiAssistant::with_system_prompt("You are helpful.")
+    .with_context_budget_config(config);
+
+// Hybrid mode: heuristic by default, LLM when confidence < 0.6
+let config = ContextBudgetConfig {
+    scoring_mode: ScoringMode::Hybrid {
+        confidence_threshold: 0.6,
+    },
+    ..Default::default()
+};
+
+// Enable strategy learning (UCB1 bandit selects best overflow strategy)
+let config = ContextBudgetConfig {
+    enable_strategy_learning: true,
+    ..Default::default()
+};
+```
+
+**Scoring modes**:
+- `Static`: Uses base scores from config directly (default, zero cost)
+- `Heuristic`: Adjusts scores based on intent (e.g., coding question boosts procedural +0.10, greeting reduces all -0.20)
+- `LlmEnhanced`: LLM classifies query and returns per-source weights (1 LLM call)
+- `Hybrid`: Heuristic first; falls back to LLM when heuristic confidence < threshold
+
+**Feature flag**: none (always available)
+
+---
+
 ## 98. Provider Registry
 
 **What**: A centralized registry that resolves model identifiers like `"openai/gpt-4o"` or `"anthropic/claude-sonnet"` into fully configured `AiConfig` objects. `with_defaults()` pre-populates common models with their known context windows, endpoints, and capabilities. Aliases let you map friendly names (e.g., `"fast"` or `"smart"`) to specific models.

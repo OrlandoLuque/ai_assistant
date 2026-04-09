@@ -11,6 +11,10 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # Standard test set — covers core + all lightweight opt-in features
+  FEATURES_STD: "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing"
+  # Heavy networking features (separate due to quinn/rustls deps)
+  FEATURES_NETWORK: "full,distributed-network,p2p,gpu-sharing,server-axum,server-cluster"
 
 jobs:
   check:
@@ -22,8 +26,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Check (lightweight features)
         run: cargo check --features full
-      - name: Check (all features)
-        run: cargo check --features "full,autonomous,scheduler,butler,browser,distributed-agents,distributed-network,containers,audio"
+      - name: Check (standard features)
+        run: cargo check --features "$FEATURES_STD"
+      - name: Check (network features)
+        run: cargo check --features "$FEATURES_NETWORK"
 
   test:
     name: Tests
@@ -32,8 +38,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.90.0
       - uses: Swatinem/rust-cache@v2
-      - name: Run tests
-        run: cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio" --lib
+      - name: Run unit tests
+        run: cargo test --features "$FEATURES_STD" --lib
+      - name: Run integration tests
+        run: cargo test --features "$FEATURES_STD" --test '*'
 
   clippy:
     name: Clippy
@@ -45,7 +53,7 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: Run clippy
-        run: cargo clippy --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio" -- -W clippy::all
+        run: cargo clippy --features "$FEATURES_STD" -- -W clippy::all
 
   fmt:
     name: Format
@@ -58,6 +66,15 @@ jobs:
       - name: Check formatting
         run: cargo fmt -- --check
 
+  audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
   feature-matrix:
     name: Feature Matrix (${{ matrix.features }})
     runs-on: ubuntu-latest
@@ -65,6 +82,7 @@ jobs:
       fail-fast: false
       matrix:
         features:
+          # Core features (in "full")
           - "core"
           - "multi-agent"
           - "security"
@@ -78,12 +96,32 @@ jobs:
           - "eval"
           - "rag"
           - "distributed"
+          - "containers"
+          - "audio"
+          # Autonomous combinations
           - "autonomous"
           - "autonomous,scheduler"
           - "autonomous,butler"
           - "autonomous,browser"
-          - "containers"
-          - "audio"
+          # Networking (Tier 2)
+          - "distributed-network"
+          - "distributed-network,p2p"
+          - "distributed-network,gpu-sharing"
+          - "server-axum"
+          - "server-axum,server-axum-tls"
+          - "server-axum,server-openapi"
+          - "server-axum,distributed-network,server-cluster"
+          # Advanced features (Tier 2)
+          - "voice-agent"
+          - "workflows"
+          - "prompt-signatures"
+          - "constrained-decoding"
+          - "a2a"
+          - "hitl"
+          - "home-automation,coap"
+          - "precise-tokens"
+          - "diagnostic-logging"
+          - "integrity-check"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.90.0
@@ -94,6 +132,24 @@ jobs:
         run: cargo check --features "${{ matrix.features }}"
       - name: Test ${{ matrix.features }}
         run: cargo test --features "${{ matrix.features }}" --lib
+
+  binaries:
+    name: Binary Compilation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.90.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Build ai_cli
+        run: cargo build --bin ai_cli --features "full,diagnostic-logging"
+      - name: Build ai_assistant_cli
+        run: cargo build --bin ai_assistant_cli --features "full,butler"
+      - name: Build ai_assistant_server
+        run: cargo build --bin ai_assistant_server --features "full"
+      - name: Build kpkg_tool
+        run: cargo build --bin kpkg_tool --features "rag"
+      - name: Build ai_test_harness
+        run: cargo build --bin ai_test_harness --features "full"
 
   coverage:
     name: Coverage
@@ -106,7 +162,7 @@ jobs:
       - uses: taiki-e/install-action@cargo-llvm-cov
       - uses: Swatinem/rust-cache@v2
       - name: Generate coverage
-        run: cargo llvm-cov --features "full,autonomous,scheduler,butler,browser,distributed-agents" --lib --lcov --output-path lcov.info
+        run: cargo llvm-cov --features "$FEATURES_STD" --lib --lcov --output-path lcov.info
       - name: Upload coverage
         uses: codecov/codecov-action@v4
         with:
@@ -138,15 +194,15 @@ jobs:
     name: Release
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [check, test, clippy, fmt]
+    needs: [check, test, clippy, fmt, binaries]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.90.0
       - uses: Swatinem/rust-cache@v2
       - name: Run full test suite
-        run: cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio" --lib
+        run: cargo test --features "$FEATURES_STD" --lib
       - name: Build release
-        run: cargo build --release --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio"
+        run: cargo build --release --features "$FEATURES_STD"
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:

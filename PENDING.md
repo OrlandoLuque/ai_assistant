@@ -1,6 +1,6 @@
 # AI Assistant — Documentacion de modulos y funcionalidad pendiente
 
-**Ultima actualizacion**: 2026-03-06
+**Ultima actualizacion**: 2026-04-09
 
 ---
 
@@ -756,3 +756,46 @@ arrow-array = { version = "57", optional = true }    # vector-lancedb
 arrow-schema = { version = "57", optional = true }   # vector-lancedb
 futures = { version = "0.3", optional = true }       # vector-lancedb
 ```
+
+---
+
+## Modulos anadidos V65-V74
+
+### Context Budget Allocator (V55, mejorado V74)
+
+| Modulo | Funcionalidad | Feature | Tests |
+|--------|---------------|---------|-------|
+| `context_budget` | ContextBudgetAllocator, ContextItem, ContextSourceType, OverflowStrategy, StrategyBandit (UCB1), extractive compression, LlmCompressor trait, ContextBudgetConfig (15 campos), ScoringMode (4 modos), intent-based scoring, LlmEnhancerCompressor bridge, arm_to_strategy | - | 34 |
+
+### LLM Enhancement Pipeline (V68)
+
+| Modulo | Funcionalidad | Feature | Tests |
+|--------|---------------|---------|-------|
+| `llm_enhance` | LlmEnhancer trait, LlmEnhancementConfig, MockLlm, FailingMockLlm, prompt_wrap(), extract_json() | - | 6 |
+
+### Audio & Voice (V67, V73)
+
+| Modulo | Funcionalidad | Feature | Tests |
+|--------|---------------|---------|-------|
+| `audio_filter` | 15+ efectos audio (gain, compressor, noise gate, delay, reverb, chorus, EQ, pitch shift, distortion, tremolo), chainable pipeline | `audio` | 23 |
+| `voice_agent` | VoiceAnonymizer, VoiceDistorter, SnoreDetector, VoiceCloneProvider, ElevenLabs/XTTS backends | `voice-agent` | 12 |
+| `mock_speech` | MockSpeechProvider para testing determinista STT/TTS | - | 3 |
+
+### GPU Sharing (V73)
+
+| Modulo | Funcionalidad | Feature | Tests |
+|--------|---------------|---------|-------|
+| `gpu_sharing` | PiiTokenizer, credit system, dynamic pricing, collusion detection (Shapley), compute proof, P2P protocol | `gpu-sharing` | 52 |
+
+### Setup & Optimization (V70-V71)
+
+| Modulo | Funcionalidad | Feature | Tests |
+|--------|---------------|---------|-------|
+| `setup` | Configuration wizard, Docker management, hot-reload, backup/restore, prerequisite detection | - | 13 |
+| `ai_optimize` | ML config optimizer: ablation, Bayesian, bandit | - | 23 |
+
+### RAG Tiers (V66, mejorado V74)
+
+| Modulo | Funcionalidad | Feature | Tests |
+|--------|---------------|---------|-------|
+| `rag_tiers` | 9 tiers (Disabled→Custom), 33 features, context_scoring_mode per tier, RagTierDefinition serializable | `rag` | 25 |

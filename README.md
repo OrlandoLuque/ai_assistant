@@ -8,12 +8,12 @@ A comprehensive Rust library for LLM integration — local and cloud. 13+ provid
 
 ![Rust](https://img.shields.io/badge/Rust-Edition%202021-orange)
 ![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)
-![Tests](https://img.shields.io/badge/tests-7172-brightgreen)
-![LOC](https://img.shields.io/badge/LOC-386K-blue)
+![Tests](https://img.shields.io/badge/tests-7469-brightgreen)
+![LOC](https://img.shields.io/badge/LOC-~410K-blue)
 
 > **Status: Experimental**
 >
-> This project compiles and passes 7,198+ tests, but it has not been validated in production
+> This project compiles and passes 7,469+ tests, but it has not been validated in production
 > or real-world usage. Developed iteratively with AI assistance, some modules may be
 > incomplete, loosely wired, or tested only at a surface level. A comprehensive review is
 > pending. **Use at your own risk.**
@@ -138,10 +138,10 @@ cargo build --release --bin ai_assistant_cli --features "full,butler"
 
 ### Code Quality
 - **Zero `.unwrap()` in production**: Proper error handling across all files
-- **7,198+ tests**: Comprehensive unit tests with 0 clippy warnings
-- **338 source files**: Fully implemented — zero stubs or TODOs
-- **55 feature flags**: Granular dependency control
-- **~386,000 lines of Rust**: Single crate, modular architecture
+- **7,469+ tests**: Comprehensive unit tests with 0 clippy warnings
+- **360 source files**: Fully implemented — zero stubs or TODOs
+- **60 feature flags**: Granular dependency control
+- **~410,000 lines of Rust**: Single crate, modular architecture
 - **Security audited**: 300+ attack vectors catalogued and mitigated (exhaustive multi-pass audit)
 
 ## Building from Source

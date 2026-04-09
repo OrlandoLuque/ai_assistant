@@ -468,9 +468,9 @@ pub use tool_safety::{
 
 pub use context_budget::{
     build_compressor_prompt, AllocationResult, ClosureSource,
-    CompressionLevel as ContextCompressionLevel, ContextBudgetAllocator, ContextItem,
-    ContextSource, ContextSourceType, LegacyStringSource, LlmCompressor, OverflowStrategy,
-    StrategyBandit,
+    CompressionLevel as ContextCompressionLevel, ContextBudgetAllocator, ContextBudgetConfig,
+    ContextItem, ContextSource, ContextSourceType, LegacyStringSource, LlmCompressor,
+    LlmEnhancerCompressor, OverflowStrategy, ScoringMode, StrategyBandit,
 };
 
 pub use internal_storage::{

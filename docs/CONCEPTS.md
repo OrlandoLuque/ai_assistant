@@ -4387,3 +4387,23 @@ Key components: `ToneEncoder` (phase-continuous sine generator), `GoertzelDetect
 `GroupQueueRuntime` wraps the protocol components into a tickable driver: feed mic samples + VAD → builds outbound messages; feed loopback samples → detects remote beacons; pull back output with player audio + beacon pulses mixed in. Capture modes: VAD (auto-record, silence-delimited), Push-To-Talk (F9, EAC-safe via `RegisterHotKey`), Override PTT (Shift+F9, live bypass, host-controlled authorization), Continuous.
 
 The host binary `ai_virtual_mic_host` runs a TCP/JSON slot-assignment server: clients send `Join{name}`, receive `Joined{slot, table, preset}`. Host assigns first-free slot from pool, broadcasts `TableUpdate` on join/leave, reaps inactive clients via 15 s heartbeat timeout. Presets: `--preset flat|squad|meeting --callouts N`. The `ai_virtual_mic` client connects from the Group Queue UI tab, and the processing thread syncs the authoritative priority table every 500 ms via `runtime.reconfigure()`.
+
+## 258. ContextBudgetConfig — Centralized Allocator Configuration
+
+`ContextBudgetConfig` struct (15 fields) replaces all previously-hardcoded values in the context budget allocator: 6 per-source base scores (rag 0.8, memory 0.7, procedural 0.75, reference 1.0, graph 0.85, notes 0.65), scoring mode, token limits (memory_max_tokens 2048, procedural_max_tokens 2048, procedural_max_items 10), response reserve (min_response_reserve 800), compression thresholds (compression_min_remaining 50, compression_min_score 0.5, compression_score_penalty 0.9), overflow strategy, and strategy learning flag. `Default` impl produces identical behavior to V73 hardcodes (backward compatible). Validation: scores clamped 0.0..=1.0, NaN/Inf rejected, tokens capped 0..100_000. Builder method `with_context_budget_config()` on `AiAssistant`.
+
+## 259. ScoringMode — Intent-Adaptive Context Prioritization
+
+`ScoringMode` enum with 4 variants: `Static` (use base scores, zero cost), `Heuristic` (adjust scores using IntentClassifier boosts, zero cost), `LlmEnhanced` (LLM classifies query and returns per-source weights, 1 LLM call), `Hybrid { confidence_threshold }` (heuristic first, LLM when confidence < threshold). `effective_score()` method computes the final score given a base score, source type, and optional IntentResult. Intent-to-source boost mapping: Question boosts Memory +0.10 and Graph +0.05; CodeRequest boosts RAG +0.10 and Procedural +0.10; Explanation boosts Graph +0.10; Comparison boosts Graph +0.15; Command boosts Procedural +0.15; Greeting/Farewell/Thanks penalizes all sources -0.20; Chitchat penalizes -0.10. Configurable per RAG tier via `RagFeatures.context_scoring_mode: Option<ScoringMode>`. Enhanced tier defaults to Heuristic, Thorough/Agentic/Graph to Hybrid(0.6).
+
+## 260. StrategyBandit Production Wiring
+
+UCB1 multi-armed bandit (`StrategyBandit`) now wired into `AiAssistant.build_allocated_context()` when `ContextBudgetConfig.enable_strategy_learning = true`. Field `strategy_bandit: Option<StrategyBandit>` initialized via `with_context_budget_config()`. On each allocation: bandit selects arm (score_truncation, extractive_light/medium, llm_light/medium/aggressive), `arm_to_strategy()` maps arm name to `OverflowStrategy` (LLM arms require compressor_model from config, fallback to extractive if absent), allocation runs with selected strategy, utilization ratio (0.0-1.0) feeds back as reward. Default `enable_strategy_learning = false` preserves V73 behavior.
+
+## 261. Graph Context as Independent ContextItem
+
+Knowledge graph entities extracted from `build_rag_context()` (where they were appended inline to knowledge_context) into standalone method `build_graph_context_string()`. Now added as a separate `ContextItem` with `ContextSourceType::Graph` and score `graph_base_score` (default 0.85) in `build_allocated_context()`. This prevents double-counting with RAG results and allows independent scoring — e.g., Comparison intent boosts graph to 1.0 while RAG stays at 0.9. Feature-gated behind `multi-agent`.
+
+## 262. LlmEnhancerCompressor — Trait Bridge
+
+Adapter struct bridging `LlmEnhancer` trait (V68) to `LlmCompressor` trait for context compression. Uses `build_compressor_prompt()` to construct compression prompt, calls `enhancer.generate()` with `prompt_wrap()` security wrapper, returns compressed text. Falls back to `extractive_compress()` on LLM failure. Enables any module with an `LlmEnhancer` to automatically provide LLM-based context compression.

@@ -220,6 +220,13 @@ pub struct RagFeatures {
     /// at sentence level within each chunk, extracts only relevant sentences.
     /// Cost: 1 LLM call per batch of ~5 chunks | Requires: LLM provider
     pub chunk_granular_scoring: bool,
+
+    // === Context Scoring (V74+) ===
+    /// Context scoring mode override — when set, overrides the global
+    /// ContextBudgetConfig.scoring_mode for this tier.
+    /// `None` inherits from ContextBudgetConfig, `Some(mode)` overrides.
+    /// Cost: depends on mode (Static=0, Heuristic=0, LlmEnhanced=1 call)
+    pub context_scoring_mode: Option<crate::context_budget::ScoringMode>,
 }
 
 impl RagFeatures {
@@ -269,6 +276,7 @@ impl RagFeatures {
             topic_matching_llm: true,
             self_query_filter: true,
             chunk_granular_scoring: true,
+            context_scoring_mode: Some(crate::context_budget::ScoringMode::Heuristic),
         }
     }
 
@@ -638,6 +646,7 @@ impl RagTier {
                 fresh_context: true,
                 topic_matching: true,
                 autocut: true,
+                context_scoring_mode: Some(crate::context_budget::ScoringMode::Heuristic),
                 ..Default::default()
             },
 
@@ -667,6 +676,9 @@ impl RagTier {
                 autocut: true,
                 topic_matching_llm: true,
                 self_query_filter: true,
+                context_scoring_mode: Some(crate::context_budget::ScoringMode::Hybrid {
+                    confidence_threshold: 0.6,
+                }),
                 ..Default::default()
             },
 
@@ -699,6 +711,9 @@ impl RagTier {
                 topic_matching_llm: true,
                 self_query_filter: true,
                 chunk_granular_scoring: true,
+                context_scoring_mode: Some(crate::context_budget::ScoringMode::Hybrid {
+                    confidence_threshold: 0.6,
+                }),
                 ..Default::default()
             },
 
@@ -736,6 +751,9 @@ impl RagTier {
                 topic_matching_llm: true,
                 self_query_filter: true,
                 chunk_granular_scoring: true,
+                context_scoring_mode: Some(crate::context_budget::ScoringMode::Hybrid {
+                    confidence_threshold: 0.6,
+                }),
                 ..Default::default()
             },
 
