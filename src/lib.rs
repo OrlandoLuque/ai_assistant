@@ -169,10 +169,14 @@ pub mod async_support;
 
 pub mod adaptive_timeout;
 pub mod agent_methodology;
+#[cfg(feature = "audio")]
 pub mod audio_filter;
+#[cfg(feature = "audio")]
 pub mod audio_model_registry;
+#[cfg(feature = "audio")]
 pub mod audio_priority_protocol;
 pub mod batch;
+#[cfg(feature = "browser")]
 pub mod browser_policy;
 pub mod bulkhead;
 pub mod cache_compression;
@@ -185,10 +189,12 @@ pub mod config_optimizer;
 pub mod config_security;
 pub mod connection_pool;
 pub mod context_budget;
+#[cfg(feature = "browser")]
 pub mod crawl_policy;
 pub mod data_source_client;
 pub mod debug;
 pub mod diff;
+#[cfg(feature = "distributed")]
 pub mod distributed_rag;
 pub mod error;
 pub mod event_source;
@@ -197,7 +203,9 @@ pub mod fallback;
 #[cfg(any(test, feature = "chaos-testing"))]
 pub mod fault_injection;
 pub mod formatting;
+#[cfg(feature = "audio")]
 pub mod group_queue_host;
+#[cfg(feature = "audio")]
 pub mod group_queue_runtime;
 pub mod http_client;
 pub mod internal_storage;
@@ -207,7 +215,7 @@ pub mod llm_enhance;
 pub mod llm_judge;
 pub mod load_shedding;
 pub mod log_redaction;
-#[cfg(feature = "tools")]
+#[cfg(all(feature = "tools", feature = "audio"))]
 pub mod mcp_voice_tools;
 pub mod memory_management;
 #[cfg(feature = "audio")]
@@ -236,9 +244,12 @@ pub mod structured;
 pub mod templates;
 pub mod tool_safety;
 pub mod topic_matcher;
+#[cfg(feature = "video-io")]
 pub mod video_filter;
 pub mod virtual_model;
+#[cfg(feature = "wasm")]
 pub mod wasm;
+#[cfg(feature = "wasm")]
 pub mod wasm_hooks;
 
 // Core re-exports
@@ -310,8 +321,10 @@ pub use memory_management::{
     EvictionPolicy, MemoryEstimate, MemoryPressure, MemoryReport, MemoryTracker,
 };
 
+#[cfg(feature = "wasm")]
 pub use wasm::{is_wasm, Capability, PlatformCapabilities};
 
+#[cfg(feature = "wasm")]
 pub use wasm_hooks::{
     AgentConfig as WasmAgentConfig, AgentState as WasmAgentState, ChatConfig as WasmChatConfig,
     ChatMessage as WasmChatMessage, ToolCallInfo as WasmToolCallInfo, UseAgentHook, UseChatHook,
@@ -396,10 +409,12 @@ pub use agent_methodology::{
     TaskApproach, WorkflowPhase as MethodologyPhase, WorkflowProtocol,
 };
 
+#[cfg(feature = "browser")]
 pub use browser_policy::{
     BrowserPolicy, JsPermission, JsValidation, ToolPermission, UrlValidation,
 };
 
+#[cfg(feature = "distributed")]
 pub use distributed_rag::{
     DistributedRagConfig, DistributedRagResult, DocumentScope, IceCandidate as P2pIceCandidate,
     IceCandidateType as P2pIceCandidateType, IceConfig as P2pIceConfig, IceState as P2pIceState,
@@ -416,6 +431,7 @@ pub use topic_matcher::{
     TopicMatchLevel, TopicMatchResult, TopicMatcher,
 };
 
+#[cfg(feature = "audio")]
 pub use audio_filter::{
     AcousticEchoCanceller, ActiveSpeakerInfo, AudioEffect, AudioEffectChain, AudioSeparator,
     AutoGainControl, AutoTune, Compressor, DiarizationResult, DiarizedSpeaker, Distortion,
@@ -425,6 +441,7 @@ pub use audio_filter::{
     VoiceAnonymizer, VoiceDistorter, VoiceEmbedding,
 };
 
+#[cfg(feature = "audio")]
 pub use audio_model_registry::{
     AudioModelCategory, AudioModelInfo, AudioModelRegistry, ModelStatus,
 };
@@ -539,6 +556,7 @@ pub use persistence::{
     MigrationResult, PersistentCacheConfig, SessionMigrator,
 };
 
+#[cfg(feature = "browser")]
 pub use crawl_policy::{
     ChangeFrequency, CrawlPolicy, CrawlPolicyConfig, ParsedRobotsTxt, ParsedSitemap,
     RobotsDirectives, RobotsRule, SitemapEntry,
@@ -686,8 +704,10 @@ pub use node_security::{CertificateManager, ChallengeResponse, JoinToken, NodeId
 // GPU SHARING NETWORK (distributed LLM inference mesh)
 // =============================================================================
 
+#[cfg(feature = "gpu-sharing")]
 pub mod gpu_sharing;
 
+#[cfg(feature = "gpu-sharing")]
 pub use gpu_sharing::{
     route_request, AuditResult as GpuAuditResult, CommitRevealState, GpuBenchmarkChallenge,
     GpuCapability, GpuChallengeResult, GpuNetworkConfig, GpuSharingConfig, GpuSharingNode,
@@ -1649,8 +1669,10 @@ pub mod agent_graph;
 pub mod answer_extraction;
 pub mod api_key_rotation;
 pub mod code_editing;
+#[cfg(feature = "gpu-sharing")]
 pub mod collusion_detection;
 pub mod compute_proof;
+#[cfg(feature = "gpu-sharing")]
 pub mod credit_system;
 
 // REPL/CLI engine
@@ -1666,6 +1688,7 @@ pub mod cost_integration;
 pub mod dag_executor;
 pub mod decision_tree;
 pub mod distributed_rate_limit;
+#[cfg(feature = "gpu-sharing")]
 pub mod dynamic_pricing;
 pub mod edit_operations;
 pub mod entities;
@@ -1957,12 +1980,15 @@ pub use code_editing::{
     CodeEditor, CodeSearch, EditCategory, EditSuggestion, LanguageConfig, SearchScope,
 };
 
+#[cfg(feature = "gpu-sharing")]
 pub use collusion_detection::{CollusionDetector, CollusionReport};
 
 pub use compute_proof::ComputeProof;
 
+#[cfg(feature = "gpu-sharing")]
 pub use credit_system::{CreditManager, EpochCheckpoint, EpochManager, NetworkPool, PendingCredit};
 
+#[cfg(feature = "gpu-sharing")]
 pub use dynamic_pricing::DynamicPricer;
 
 pub use pii_tokenizer::{
@@ -2394,7 +2420,7 @@ pub use mcp_home_tools::HomeAssistantBackend;
 // MCP VOICE TOOLS (speaker enrollment, identification, voice cloning)
 // =============================================================================
 
-#[cfg(feature = "tools")]
+#[cfg(all(feature = "tools", feature = "audio"))]
 pub use mcp_voice_tools::register_voice_tools;
 
 #[cfg(all(feature = "tools", feature = "audio"))]

@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v32 (2026-04-10)
+
+### Changed
+- **Feature hygiene**: 15 modules moved behind their rightful Cargo features
+  so minimal builds stop compiling hardware- or protocol-specific code:
+  - `audio_filter`, `audio_model_registry`, `audio_priority_protocol`,
+    `group_queue_host`, `group_queue_runtime` → `audio`
+  - `browser_policy`, `crawl_policy` → `browser`
+  - `distributed_rag` → `distributed`
+  - `video_filter` → `video-io`
+  - `wasm`, `wasm_hooks` → `wasm`
+  - `gpu_sharing`, `collusion_detection`, `credit_system`, `dynamic_pricing` → `gpu-sharing`
+- `mcp_voice_tools` gate tightened from `tools` to `all(tools, audio)` —
+  the previous gate was a latent bug that would fail to compile if `tools`
+  was enabled without `audio`.
+- `voice-agent` feature now implies `audio` in Cargo.toml (was `dep:tokio` only).
+- `pub use mcp_voice_tools::register_voice_tools` cfg aligned with the new
+  module gate.
+
+### Removed
+- `core = []` marker feature — empty, had zero `#[cfg]` references, only
+  inflated the feature list. Dropped from `full = [...]`.
+
+### Docs
+- `docs/IMPROVEMENTS_V76.md` — full rationale, workstream breakdown, and
+  the list of 64 modules deferred to V80.
+- `adapters = []` marker now explicitly documented as an intentional label
+  for the `adapters_demo` example.
+
+### Stats
+- Version bump: 0.2.7 → 0.2.8
+- 360+ source modules
+- 7,492+ passing tests (no change from v31 — V76 is a compilation-only pass)
+- 59 Cargo feature flags (was 60; `core` removed)
+
 ## [Unreleased] - v31 (2026-04-09)
 
 ### Added

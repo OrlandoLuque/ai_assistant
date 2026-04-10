@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.7"
+version = "0.2.8"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -43,12 +43,9 @@ exclude = [
 # Use specific features for minimal builds after refactoring dependencies
 default = ["full"]
 
-# === Core Features (minimal) ===
-# Marker feature for basic assistant functionality with providers.
-# No cfg gates — core modules are always compiled. Used for dependency grouping.
-core = []
-
 # === Optional Feature Groups ===
+# NOTE (V76 feature hygiene): the former `core = []` marker was removed. Core
+# modules are always compiled when the library is included — no flag needed.
 
 # Multi-agent system: orchestration, shared memory, task decomposition
 multi-agent = []
@@ -68,7 +65,9 @@ embeddings = []
 # Advanced streaming: SSE, WebSocket, compression
 advanced-streaming = []
 
-# External API adapters: OpenAI, Anthropic, HuggingFace
+# External API adapters: OpenAI, Anthropic, HuggingFace.
+# NOTE (V76): marker feature retained — it is used as a label by the
+# `adapters_demo` example (see [[example]] section). No cfg gates in src/.
 adapters = []
 
 # Tool calling: MCP protocol, agentic loops, function calling
@@ -108,7 +107,6 @@ egui-widgets = ["egui"]
 
 # Full feature set (includes everything except egui)
 full = [
-    "core",
     "multi-agent",
     "security",
     "analytics",
@@ -207,7 +205,7 @@ advanced-memory = []
 
 # Real-time voice agents: bidirectional audio streaming, VAD, interruption handling
 # Not in 'full' by default — requires tokio for async streams. Opt-in: --features voice-agent
-voice-agent = ["dep:tokio"]
+voice-agent = ["dep:tokio", "audio"]
 
 # Real audio I/O: microphone capture, speaker output, sample rate conversion, ring buffer
 # Not in 'full' by default — heavy platform deps (WASAPI/ALSA/CoreAudio). Opt-in: --features audio-io
