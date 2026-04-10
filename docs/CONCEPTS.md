@@ -4407,3 +4407,27 @@ Knowledge graph entities extracted from `build_rag_context()` (where they were a
 ## 262. LlmEnhancerCompressor — Trait Bridge
 
 Adapter struct bridging `LlmEnhancer` trait (V68) to `LlmCompressor` trait for context compression. Uses `build_compressor_prompt()` to construct compression prompt, calls `enhancer.generate()` with `prompt_wrap()` security wrapper, returns compressed text. Falls back to `extractive_compress()` on LLM failure. Enables any module with an `LlmEnhancer` to automatically provide LLM-based context compression.
+
+## 263. CostDashboard Auto-Wiring in LLM Pipeline
+
+`CostDashboard` is auto-wired into `AiAssistant.poll_response()` after `AiResponse::Complete`, recording every LLM call's `input_tokens`, `output_tokens`, model name, and RequestType. Input tokens are estimated from the last user message + system prompt base via `crate::context::estimate_tokens`; output tokens from the current response. Builder `with_cost_config(CostAwareConfig)` initializes the dashboard with budget limits (daily, monthly, per-request) and alert threshold. When disabled (`enabled: false`), no dashboard is created and the hot path has zero overhead. Recording is no-op if `cost_dashboard` is None.
+
+## 264. AllocationResult Savings Metrics
+
+`AllocationResult` now exposes savings metrics computed during packing: `total_candidate_tokens` (sum of all items before allocation), `tokens_saved` (`total_candidate - tokens_used` via `saturating_sub`), `compression_ratio` (`tokens_used / total_candidate`, 1.0 when no compression, 1.0 default if candidate is 0). Method `estimated_cost_saved(input_cost_per_million: f64) -> f64` computes USD savings, clamping negative pricing to 0.0 (S8 defense). Both `build()` and `build_from_items()` populate these metrics. Enables UI to display "ContextBudgetAllocator saved you 4,200 tokens ($0.012)" without separate tracking.
+
+## 265. CostDashboardSnapshot — Schema-Versioned Persistence
+
+Serializable `CostDashboardSnapshot { schema_version: u32, entries: Vec<RequestCostEntry>, session_start: String, budget_config: Option<CostAwareConfig> }` for session persistence. Methods `snapshot()` and `restore()` on `CostDashboard` support save/load via `StorageContext.save_json()`. On restore: `validate_cost()` is applied to every entry's `cost_usd` (rejects NaN, Infinity, negative → 0.0, clamps to MAX_COST), defending against persistence tampering (S6). Current schema version is `1`. Future versions can migrate old snapshots via version-based branching.
+
+## 266. Cost Projection API
+
+Three projection methods on `CostDashboard`: `projected_daily_cost()` computes `avg_cost_per_request * requests_per_hour() * 24`, `projected_monthly_cost()` returns `projected_daily * 30`, and `projected_cost_for_requests(n)` returns `average_cost_per_request() * n`. Helper `requests_per_hour()` computes rate from `session_start` timestamp (parsed via `parse_epoch_secs()`). Returns `Option<f64>` when no requests yet. All projections appear in `format_report()` under "Projections" section alongside daily/monthly totals and requests/hour. Enables pre-emptive warnings when projected spend exceeds budget.
+
+## 267. validate_cost — NaN/Infinity Budget Bypass Defense
+
+Private function `validate_cost(f64) -> f64` in `cost_integration.rs`: returns `0.0` if input is NaN, Infinity, or negative; otherwise clamps to `MAX_COST = 1_000_000.0`. Defends against S4 (float NaN comparisons where `NaN > limit` is always false, bypassing budget enforcement). Applied at every ingress point: `CostDashboard::record()` validates before storing, `CostDashboardSnapshot::restore()` validates every entry on load. Also cascades to `BudgetManager::add_cost()` and `check()` which receive only validated values. Companion `sanitize_csv_field()` prevents CSV formula injection in `export_csv()` (S1) by prefixing dangerous chars (`=+-@\t\r`) with `'` and wrapping in quotes.
+
+## 268. MCP Cost Tools (Read-Only, Aggregated)
+
+Three MCP tools registered via `register_cost_tools(server, dashboard)`: `cost_report` (returns full `format_report()` output), `cost_budget_status` (returns remaining daily/monthly budget, projected monthly cost, budget status), `cost_savings_summary` (returns allocator tokens_saved, estimated_usd_saved, compression_ratio from last N requests). All tools are marked `read_only_hint: true` with no mutation capability (S7 defense). Responses expose only aggregated data — no per-request timestamps or content that could leak spending patterns. Backed by `Arc<Mutex<CostDashboard>>` for safe concurrent access from multiple MCP clients.

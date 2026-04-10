@@ -1789,8 +1789,8 @@ pub use cost::{
 };
 
 pub use cost_integration::{
-    CostAwareConfig, CostDashboard, CostDecision, CostMiddleware, DefaultCostMiddleware,
-    RequestCostEntry, RequestType,
+    CostAwareConfig, CostDashboard, CostDashboardSnapshot, CostDecision, CostMiddleware,
+    DefaultCostMiddleware, RequestCostEntry, RequestType,
 };
 
 pub use entities::{

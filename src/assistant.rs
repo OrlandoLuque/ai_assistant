@@ -711,6 +711,28 @@ impl AiAssistant {
         self
     }
 
+    /// Configure cost tracking with budget enforcement.
+    ///
+    /// Initializes the `CostDashboard` with budget limits from the given config.
+    /// Costs are automatically recorded after each LLM response in `poll_response()`.
+    pub fn with_cost_config(mut self, config: crate::cost_integration::CostAwareConfig) -> Self {
+        if config.enabled {
+            let mut bm = crate::cost::BudgetManager::new();
+            if let Some(d) = config.daily_budget {
+                bm = bm.with_daily_limit(d);
+            }
+            if let Some(m) = config.monthly_budget {
+                bm = bm.with_monthly_limit(m);
+            }
+            if let Some(r) = config.per_request_limit {
+                bm = bm.with_request_limit(r);
+            }
+            bm.warning_threshold = config.alert_threshold_pct as f32;
+            self.cost_dashboard = Some(crate::cost_integration::CostDashboard::with_budget(bm));
+        }
+        self
+    }
+
     /// Set the base system prompt
     pub fn set_system_prompt(&mut self, prompt: &str) {
         self.system_prompt_base = prompt.to_string();
@@ -2580,6 +2602,28 @@ impl AiAssistant {
                                 &topic,
                                 self.turn_counter,
                             );
+
+                            // Auto-record cost to dashboard if enabled
+                            if let Some(ref mut dashboard) = self.cost_dashboard {
+                                let model = self.config.selected_model.clone();
+                                // Estimate input tokens from last user message + system prompt
+                                let input_tokens = self
+                                    .conversation
+                                    .iter()
+                                    .rev()
+                                    .find(|m| m.role == "user")
+                                    .map(|m| crate::context::estimate_tokens(&m.content))
+                                    .unwrap_or(0)
+                                    + crate::context::estimate_tokens(&self.system_prompt_base);
+                                let output_tokens =
+                                    crate::context::estimate_tokens(&self.current_response);
+                                dashboard.record(
+                                    &model,
+                                    input_tokens,
+                                    output_tokens,
+                                    crate::cost_integration::RequestType::Chat,
+                                );
+                            }
 
                             self.event_bus
                                 .emit(crate::events::AiEvent::ResponseComplete {
@@ -8025,5 +8069,53 @@ ws ::= " "*"#;
         let ctx = ai.build_procedural_context("tell me about quantum physics", 5, 500);
         assert!(ctx.is_empty());
         assert!(ai.active_procedure_ids.is_empty());
+    }
+
+    // === V75: Cost tracking tests ===
+
+    #[test]
+    fn test_with_cost_config_builder() {
+        let config = crate::cost_integration::CostAwareConfig {
+            enabled: true,
+            daily_budget: Some(10.0),
+            monthly_budget: Some(100.0),
+            per_request_limit: Some(1.0),
+            alert_threshold_pct: 0.8,
+            track_by_model: true,
+        };
+        let ai = AiAssistant::new().with_cost_config(config);
+        assert!(
+            ai.cost_dashboard.is_some(),
+            "dashboard should be initialized by with_cost_config"
+        );
+    }
+
+    #[test]
+    fn test_with_cost_config_disabled() {
+        let config = crate::cost_integration::CostAwareConfig {
+            enabled: false,
+            ..Default::default()
+        };
+        let ai = AiAssistant::new().with_cost_config(config);
+        assert!(
+            ai.cost_dashboard.is_none(),
+            "dashboard should not be initialized when disabled"
+        );
+    }
+
+    #[test]
+    fn test_cost_dashboard_report_after_init() {
+        let mut ai = AiAssistant::new();
+        assert!(
+            ai.cost_report().is_none(),
+            "report should be None before init"
+        );
+        ai.init_cost_tracking();
+        assert!(
+            ai.cost_report().is_some(),
+            "report should be Some after init"
+        );
+        let report = ai.cost_report().unwrap();
+        assert!(report.contains("Cost Dashboard Report"));
     }
 }

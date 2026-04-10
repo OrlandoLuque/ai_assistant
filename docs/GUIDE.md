@@ -10644,3 +10644,109 @@ ai_virtual_mic_host --preset meeting  # Slot 0 P10+override (presenter), rest P3
 
 In the Group Queue tab, pick slot and preset manually (honour-system).
 Table stays local — no network required. Beacons still coordinate via audio.
+
+---
+
+## 191. Cost Intelligence — Integrated Budget & Savings Tracking (V75)
+
+`ai_assistant` ships with a fully integrated cost dashboard: every LLM call is auto-recorded, daily/monthly budgets are enforced, future spend is projected from session rates, and the allocator tells you how many tokens it saved. All of this runs inside the same process — no external SaaS, no LangSmith.
+
+### Enable Cost Tracking
+
+Wire a `CostDashboard` into `AiAssistant` via the builder. Once enabled, every successful response from `poll_response()` records an entry automatically.
+
+```rust
+use ai_assistant::{AiAssistant, AiConfig, CostAwareConfig};
+
+let cost = CostAwareConfig {
+    enabled: true,
+    daily_budget: Some(5.00),       // USD
+    monthly_budget: Some(100.00),
+    per_request_limit: Some(0.50),
+    alert_threshold_pct: 80,
+};
+
+let assistant = AiAssistant::new(AiConfig::default())
+    .with_cost_config(cost);
+```
+
+### Read Cost Reports
+
+`CostDashboard::format_report()` returns a human-readable summary including totals, per-model and per-type breakdowns, and projections:
+
+```
+=== Cost Report ===
+Session started: 2026-04-09T10:15:23Z
+Total cost: $0.3421 (124 requests)
+Average: $0.0028 per request
+
+By model:
+  claude-sonnet-4-5: $0.2100 (82 requests)
+  gpt-4o-mini:       $0.1321 (42 requests)
+
+--- Projections ---
+  Requests/hour: 12.4
+  Projected daily: $0.82
+  Projected monthly: $24.65
+```
+
+### Savings from the Context Budget Allocator
+
+`AllocationResult` now reports how much the allocator compressed away:
+
+```rust
+let result = allocator.build_from_items(items, intent);
+println!("candidate: {} tokens", result.total_candidate_tokens);
+println!("used:      {} tokens", result.tokens_used);
+println!("saved:     {} tokens ({:.1}%)",
+    result.tokens_saved,
+    (1.0 - result.compression_ratio) * 100.0);
+
+// Convert token savings to USD using the model's input price
+let usd_saved = result.estimated_cost_saved(3.0);  // $3/M input tokens
+```
+
+### Session Persistence
+
+Serialize the dashboard across restarts with `CostDashboardSnapshot` (schema-versioned, validated on restore):
+
+```rust
+use ai_assistant::CostDashboardSnapshot;
+
+// Save
+let snapshot = dashboard.snapshot();
+std::fs::write("cost.json", serde_json::to_string(&snapshot)?)?;
+
+// Restore (validates costs: NaN/Infinity/negative → 0.0)
+let loaded: CostDashboardSnapshot = serde_json::from_slice(&std::fs::read("cost.json")?)?;
+dashboard.restore(loaded)?;
+```
+
+### Cost Tools via MCP
+
+Expose read-only cost visibility to MCP clients with `register_cost_tools()`:
+
+```rust
+use ai_assistant::cost_integration::register_cost_tools;
+
+register_cost_tools(&mut mcp_server, dashboard.clone());
+// Adds 3 tools, all with read_only_hint: true:
+//   - cost_report           → full format_report() output
+//   - cost_budget_status    → remaining budget + projections
+//   - cost_savings_summary  → allocator tokens_saved + USD saved
+```
+
+Tools expose only aggregated data — never per-request details — to avoid leaking spending patterns to untrusted clients.
+
+### Security Notes
+
+The cost module is hardened against 10 attack vectors catalogued in `docs/IMPROVEMENTS_V75.md`:
+
+- **CSV injection** in `export_csv()` → `sanitize_csv_field()` escapes formula-prefix chars (`= + - @`)
+- **Unbounded growth** → `MAX_ENTRIES = 100_000` with FIFO eviction
+- **Float NaN/Infinity budget bypass** → `validate_cost()` rejects non-finite and negative values
+- **Persistence tampering** → schema version + cost re-validation on restore
+- **MCP info disclosure** → all tools `read_only_hint: true`, aggregated data only
+- **Negative pricing** → `estimated_cost_saved()` clamps `input_cost_per_million` to `>= 0.0`
+
+For concurrent use, wrap `CostDashboard` in `Arc<Mutex<_>>` — the struct itself is single-threaded by design.

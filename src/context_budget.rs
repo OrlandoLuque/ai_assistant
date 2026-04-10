@@ -449,6 +449,12 @@ pub struct AllocationResult {
     pub dropped: Vec<ContextItem>,
     /// Per-source token breakdown.
     pub source_breakdown: HashMap<ContextSourceType, usize>,
+    /// Total tokens across ALL candidate items before allocation.
+    pub total_candidate_tokens: usize,
+    /// Tokens saved by the allocator (candidate - used).
+    pub tokens_saved: usize,
+    /// Compression ratio (tokens_used / total_candidate_tokens). 1.0 = no compression.
+    pub compression_ratio: f32,
 }
 
 impl AllocationResult {
@@ -463,6 +469,19 @@ impl AllocationResult {
     /// Whether any items were dropped.
     pub fn had_overflow(&self) -> bool {
         !self.dropped.is_empty()
+    }
+
+    /// Estimate USD saved by the allocator using the model's input pricing.
+    ///
+    /// `input_cost_per_million`: the model's input cost per 1M tokens (USD).
+    /// Negative pricing is clamped to 0.0 for safety.
+    pub fn estimated_cost_saved(&self, input_cost_per_million: f64) -> f64 {
+        let safe_price = if input_cost_per_million < 0.0 {
+            0.0
+        } else {
+            input_cost_per_million
+        };
+        (self.tokens_saved as f64 / 1_000_000.0) * safe_price
     }
 }
 
@@ -523,6 +542,9 @@ impl ContextBudgetAllocator {
             let items = source.query_items(user_message);
             all_items.extend(items);
         }
+
+        // Compute total candidate tokens before packing
+        let total_candidate_tokens: usize = all_items.iter().map(|i| i.tokens).sum();
 
         // 2. Sort by score descending
         all_items.sort_by(|a, b| {
@@ -606,6 +628,13 @@ impl ContextBudgetAllocator {
             *source_breakdown.entry(item.source).or_insert(0) += item.tokens;
         }
 
+        let tokens_saved = total_candidate_tokens.saturating_sub(tokens_used);
+        let compression_ratio = if total_candidate_tokens > 0 {
+            tokens_used as f32 / total_candidate_tokens as f32
+        } else {
+            1.0
+        };
+
         AllocationResult {
             context,
             tokens_used,
@@ -613,6 +642,9 @@ impl ContextBudgetAllocator {
             included,
             dropped,
             source_breakdown,
+            total_candidate_tokens,
+            tokens_saved,
+            compression_ratio,
         }
     }
 
@@ -620,6 +652,9 @@ impl ContextBudgetAllocator {
     ///
     /// Useful when items have already been gathered by the caller.
     pub fn build_from_items(&self, items: Vec<ContextItem>, budget: usize) -> AllocationResult {
+        // Compute total candidate tokens before packing
+        let total_candidate_tokens: usize = items.iter().map(|i| i.tokens).sum();
+
         // Sort by score descending
         let mut sorted_items = items;
         sorted_items.sort_by(|a, b| {
@@ -699,6 +734,13 @@ impl ContextBudgetAllocator {
             *source_breakdown.entry(item.source).or_insert(0) += item.tokens;
         }
 
+        let tokens_saved = total_candidate_tokens.saturating_sub(tokens_used);
+        let compression_ratio = if total_candidate_tokens > 0 {
+            tokens_used as f32 / total_candidate_tokens as f32
+        } else {
+            1.0
+        };
+
         AllocationResult {
             context,
             tokens_used,
@@ -706,6 +748,9 @@ impl ContextBudgetAllocator {
             included,
             dropped,
             source_breakdown,
+            total_candidate_tokens,
+            tokens_saved,
+            compression_ratio,
         }
     }
 }
@@ -1738,6 +1783,99 @@ mod tests {
         // Unknown arm falls back to score truncation
         let s = StrategyBandit::arm_to_strategy("unknown_arm", None);
         assert!(matches!(s, OverflowStrategy::ScoreTruncation));
+    }
+
+    // ── V75: Savings estimation tests ──
+
+    #[test]
+    fn test_allocation_result_savings() {
+        let allocator = ContextBudgetAllocator::default();
+        let items = vec![
+            make_item(&"a".repeat(350), 0.9, ContextSourceType::Rag), // ~100 tokens
+            make_item(&"b".repeat(350), 0.8, ContextSourceType::Rag), // ~100 tokens
+            make_item(&"c".repeat(350), 0.7, ContextSourceType::Rag), // ~100 tokens
+        ];
+        let total_candidate: usize = items.iter().map(|i| i.tokens).sum();
+        let result = allocator.build_from_items(items, 150);
+
+        assert_eq!(result.total_candidate_tokens, total_candidate);
+        assert_eq!(result.tokens_saved, total_candidate - result.tokens_used);
+        assert!(result.tokens_saved > 0, "should have saved some tokens");
+    }
+
+    #[test]
+    fn test_allocation_result_compression_ratio() {
+        let allocator = ContextBudgetAllocator::default();
+
+        // Case 1: Everything fits — ratio close to 1.0
+        let items = vec![make_item("small", 0.9, ContextSourceType::Rag)];
+        let result = allocator.build_from_items(items, 10000);
+        assert!(
+            (result.compression_ratio - 1.0).abs() < 0.01,
+            "ratio should be ~1.0 when everything fits"
+        );
+
+        // Case 2: Nothing fits — ratio should be 0.0
+        let items = vec![make_item(&"x".repeat(3500), 0.9, ContextSourceType::Rag)];
+        let result = allocator.build_from_items(items, 1);
+        assert!(
+            result.compression_ratio < 0.1,
+            "ratio should be near 0 when nothing fits"
+        );
+
+        // Case 3: Empty items — ratio defaults to 1.0
+        let result = allocator.build_from_items(vec![], 1000);
+        assert!(
+            (result.compression_ratio - 1.0).abs() < f32::EPSILON,
+            "ratio should be 1.0 for empty input"
+        );
+    }
+
+    #[test]
+    fn test_estimated_cost_saved() {
+        let mut result = AllocationResult {
+            context: String::new(),
+            tokens_used: 500,
+            budget: 1000,
+            included: vec![],
+            dropped: vec![],
+            source_breakdown: HashMap::new(),
+            total_candidate_tokens: 2000,
+            tokens_saved: 1500,
+            compression_ratio: 0.25,
+        };
+
+        // GPT-4 input pricing: $30 per 1M tokens
+        let saved = result.estimated_cost_saved(30.0);
+        // 1500 / 1_000_000 * 30.0 = 0.045
+        assert!((saved - 0.045).abs() < 0.001);
+
+        // Zero savings
+        result.tokens_saved = 0;
+        assert!((result.estimated_cost_saved(30.0)).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_estimated_cost_saved_negative_pricing() {
+        let result = AllocationResult {
+            context: String::new(),
+            tokens_used: 500,
+            budget: 1000,
+            included: vec![],
+            dropped: vec![],
+            source_breakdown: HashMap::new(),
+            total_candidate_tokens: 2000,
+            tokens_saved: 1500,
+            compression_ratio: 0.25,
+        };
+
+        // Negative pricing should be clamped to 0 (S8 mitigation)
+        let saved = result.estimated_cost_saved(-5.0);
+        assert!(
+            saved >= 0.0,
+            "negative pricing must not produce negative savings"
+        );
+        assert!(saved.abs() < f64::EPSILON);
     }
 
     #[test]

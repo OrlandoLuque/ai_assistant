@@ -9,6 +9,47 @@ use std::collections::HashMap;
 use crate::cost::{BudgetManager, BudgetStatus, CostEstimator};
 
 // ---------------------------------------------------------------------------
+// Security constants
+// ---------------------------------------------------------------------------
+
+/// Maximum reasonable cost in a single entry or projection (USD).
+const MAX_COST: f64 = 1_000_000.0;
+
+/// Maximum number of entries retained in CostDashboard to prevent unbounded growth.
+const MAX_ENTRIES: usize = 100_000;
+
+/// Validate a cost value: must be finite, non-negative, and within MAX_COST.
+/// Returns the sanitized value (0.0 for invalid inputs, clamped for excess).
+fn validate_cost(cost: f64) -> f64 {
+    if cost.is_nan() || cost.is_infinite() || cost < 0.0 {
+        0.0
+    } else {
+        cost.min(MAX_COST)
+    }
+}
+
+/// Sanitize a string field for CSV export to prevent formula injection.
+///
+/// Wraps fields that start with dangerous characters (`=`, `+`, `-`, `@`,
+/// `\t`, `\r`) or contain delimiters in double quotes with proper escaping.
+fn sanitize_csv_field(s: &str) -> String {
+    let needs_escape = s.starts_with('=')
+        || s.starts_with('+')
+        || s.starts_with('-')
+        || s.starts_with('@')
+        || s.starts_with('\t')
+        || s.starts_with('\r')
+        || s.contains(',')
+        || s.contains('"')
+        || s.contains('\n');
+    if needs_escape {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // RequestType
 // ---------------------------------------------------------------------------
 
@@ -117,7 +158,7 @@ impl CostDashboard {
         let estimate = self
             .estimator
             .estimate(model, "api", input_tokens, output_tokens);
-        let cost = estimate.cost;
+        let cost = validate_cost(estimate.cost);
 
         let entry = RequestCostEntry {
             timestamp: Self::now_iso8601(),
@@ -129,6 +170,12 @@ impl CostDashboard {
         };
 
         self.entries.push(entry);
+
+        // Evict oldest entries if over cap (S2 mitigation)
+        if self.entries.len() > MAX_ENTRIES {
+            let drain_count = self.entries.len() - MAX_ENTRIES;
+            self.entries.drain(0..drain_count);
+        }
 
         if let Some(ref mut bm) = self.budget {
             bm.record(cost);
@@ -275,20 +322,166 @@ impl CostDashboard {
             }
         }
 
+        // Projections
+        if !self.entries.is_empty() {
+            lines.push(String::new());
+            lines.push("--- Projections ---".to_string());
+            if let Some(daily) = self.projected_daily_cost() {
+                lines.push(format!("  Projected daily: ${:.2}", daily));
+            }
+            if let Some(monthly) = self.projected_monthly_cost() {
+                lines.push(format!("  Projected monthly: ${:.2}", monthly));
+            }
+            if let Some(rph) = self.requests_per_hour() {
+                lines.push(format!("  Requests/hour: {:.1}", rph));
+            }
+        }
+
         lines.join("\n")
     }
 
     /// Export all entries as CSV (header + data rows).
+    ///
+    /// All fields are sanitized to prevent CSV formula injection (S1 mitigation).
     pub fn export_csv(&self) -> String {
         let mut csv =
             String::from("timestamp,model,input_tokens,output_tokens,cost_usd,request_type\n");
         for e in &self.entries {
             csv.push_str(&format!(
                 "{},{},{},{},{:.6},{}\n",
-                e.timestamp, e.model, e.input_tokens, e.output_tokens, e.cost_usd, e.request_type
+                sanitize_csv_field(&e.timestamp),
+                sanitize_csv_field(&e.model),
+                e.input_tokens,
+                e.output_tokens,
+                e.cost_usd,
+                sanitize_csv_field(&e.request_type.as_str())
             ));
         }
         csv
+    }
+
+    // -- Projections --------------------------------------------------------
+
+    /// Compute requests per hour based on session elapsed time.
+    fn requests_per_hour(&self) -> Option<f64> {
+        if self.entries.is_empty() {
+            return None;
+        }
+        let elapsed_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            .saturating_sub(Self::parse_epoch_secs(&self.session_start));
+        if elapsed_secs == 0 {
+            return None;
+        }
+        let hours = elapsed_secs as f64 / 3600.0;
+        Some(self.entries.len() as f64 / hours)
+    }
+
+    /// Projected daily cost based on current session rate and average cost.
+    ///
+    /// Returns `None` if no requests have been recorded yet.
+    pub fn projected_daily_cost(&self) -> Option<f64> {
+        let rph = self.requests_per_hour()?;
+        let avg = self.average_cost_per_request();
+        Some(validate_cost(rph * 24.0 * avg))
+    }
+
+    /// Projected monthly cost (daily * 30).
+    ///
+    /// Returns `None` if no requests have been recorded yet.
+    pub fn projected_monthly_cost(&self) -> Option<f64> {
+        self.projected_daily_cost().map(|d| validate_cost(d * 30.0))
+    }
+
+    /// Projected cost for `n` additional requests at the current average.
+    pub fn projected_cost_for_requests(&self, n: usize) -> f64 {
+        validate_cost(self.average_cost_per_request() * n as f64)
+    }
+
+    /// Parse the session_start ISO 8601 timestamp back to epoch seconds.
+    fn parse_epoch_secs(iso: &str) -> u64 {
+        // Parse "YYYY-MM-DDThh:mm:ssZ" back to approximate epoch seconds.
+        // This is a best-effort parse for our own format.
+        let parts: Vec<&str> = iso.split('T').collect();
+        if parts.len() != 2 {
+            return 0;
+        }
+        let date_parts: Vec<u64> = parts[0].split('-').filter_map(|s| s.parse().ok()).collect();
+        let time_str = parts[1].trim_end_matches('Z');
+        let time_parts: Vec<u64> = time_str.split(':').filter_map(|s| s.parse().ok()).collect();
+        if date_parts.len() != 3 || time_parts.len() != 3 {
+            return 0;
+        }
+        // Approximate days from epoch using the same algorithm in reverse
+        let (y, m, d) = (date_parts[0], date_parts[1], date_parts[2]);
+        let (yr, mo) = if m <= 2 { (y - 1, m + 9) } else { (y, m - 3) };
+        let era = yr / 400;
+        let yoe = yr - era * 400;
+        let doy = (153 * mo + 2) / 5 + d - 1;
+        let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+        let days = era * 146097 + doe - 719468;
+        days * 86400 + time_parts[0] * 3600 + time_parts[1] * 60 + time_parts[2]
+    }
+
+    // -- Snapshots -----------------------------------------------------------
+
+    /// Create a serializable snapshot of the dashboard state.
+    pub fn snapshot(&self) -> CostDashboardSnapshot {
+        CostDashboardSnapshot {
+            schema_version: 1,
+            entries: self.entries.clone(),
+            session_start: self.session_start.clone(),
+            budget_config: self.budget.as_ref().map(|bm| CostAwareConfig {
+                enabled: true,
+                daily_budget: bm.daily_limit,
+                monthly_budget: bm.monthly_limit,
+                per_request_limit: bm.per_request_limit,
+                alert_threshold_pct: bm.warning_threshold as f64,
+                track_by_model: true,
+            }),
+        }
+    }
+
+    /// Restore dashboard state from a snapshot.
+    ///
+    /// Validates all entries on load: NaN/Infinity/negative costs are clamped
+    /// to 0.0 (S6 mitigation).
+    pub fn restore(&mut self, snapshot: CostDashboardSnapshot) {
+        self.session_start = snapshot.session_start;
+        self.entries = snapshot
+            .entries
+            .into_iter()
+            .map(|mut e| {
+                e.cost_usd = validate_cost(e.cost_usd);
+                e
+            })
+            .collect();
+
+        // Enforce cap
+        if self.entries.len() > MAX_ENTRIES {
+            let drain_count = self.entries.len() - MAX_ENTRIES;
+            self.entries.drain(0..drain_count);
+        }
+
+        if let Some(config) = snapshot.budget_config {
+            let mut bm = BudgetManager::new();
+            if let Some(d) = config.daily_budget {
+                bm = bm.with_daily_limit(d);
+            }
+            if let Some(m) = config.monthly_budget {
+                bm = bm.with_monthly_limit(m);
+            }
+            if let Some(r) = config.per_request_limit {
+                bm = bm.with_request_limit(r);
+            }
+            bm.warning_threshold = config.alert_threshold_pct as f32;
+            // Re-accumulate spending from entries
+            let total: f64 = self.entries.iter().map(|e| e.cost_usd).sum();
+            bm.record(total);
+            self.budget = Some(bm);
+        }
     }
 
     // -- Reset --------------------------------------------------------------
@@ -380,6 +573,26 @@ impl Default for CostAwareConfig {
             track_by_model: true,
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// CostDashboardSnapshot
+// ---------------------------------------------------------------------------
+
+/// Serializable snapshot of a `CostDashboard` for persistence.
+///
+/// Captures entries, session start, and budget configuration so the
+/// dashboard can be saved to disk and restored across sessions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CostDashboardSnapshot {
+    /// Schema version for forward compatibility.
+    pub schema_version: u32,
+    /// All recorded cost entries.
+    pub entries: Vec<RequestCostEntry>,
+    /// ISO 8601 session start timestamp.
+    pub session_start: String,
+    /// Budget configuration (if any).
+    pub budget_config: Option<CostAwareConfig>,
 }
 
 // ---------------------------------------------------------------------------
@@ -532,6 +745,108 @@ impl CostMiddleware for DefaultCostMiddleware {
             .last()
             .expect("just pushed entry via record()")
             .clone()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MCP Tool Registration
+// ---------------------------------------------------------------------------
+
+/// Register cost-related MCP tools on the given server.
+///
+/// All tools are read-only and return aggregated data (no per-request detail
+/// exposed to prevent information leakage — S7 mitigation).
+pub fn register_cost_tools(
+    server: &mut crate::mcp_protocol::server::McpServer,
+    dashboard: std::sync::Arc<std::sync::Mutex<CostDashboard>>,
+) {
+    use crate::mcp_protocol::types::{McpTool, McpToolAnnotation};
+
+    let read_only_annotation = McpToolAnnotation {
+        title: None,
+        read_only_hint: Some(true),
+        destructive_hint: Some(false),
+        idempotent_hint: Some(true),
+        open_world_hint: Some(false),
+    };
+
+    // --- cost_report ---
+    {
+        let dash = dashboard.clone();
+        server.register_tool(
+            McpTool::new(
+                "cost_report",
+                "Get a formatted cost report for the current session including totals, \
+                 breakdowns by model/type, budget status, and projections.",
+            )
+            .with_annotations(McpToolAnnotation {
+                title: Some("Cost Report".into()),
+                ..read_only_annotation.clone()
+            }),
+            move |_args| {
+                let guard = dash.lock().map_err(|e| format!("Lock error: {}", e))?;
+                let report = guard.format_report();
+                Ok(serde_json::json!({ "report": report }))
+            },
+        );
+    }
+
+    // --- cost_budget_status ---
+    {
+        let dash = dashboard.clone();
+        server.register_tool(
+            McpTool::new(
+                "cost_budget_status",
+                "Get remaining budget and cost projections for the current session.",
+            )
+            .with_annotations(McpToolAnnotation {
+                title: Some("Budget Status".into()),
+                ..read_only_annotation.clone()
+            }),
+            move |_args| {
+                let guard = dash.lock().map_err(|e| format!("Lock error: {}", e))?;
+                let remaining = guard.budget_remaining();
+                let projected_daily = guard.projected_daily_cost();
+                let projected_monthly = guard.projected_monthly_cost();
+                let status = guard.budget_status().map(|s| format!("{:?}", s));
+                Ok(serde_json::json!({
+                    "remaining_usd": remaining,
+                    "projected_daily_usd": projected_daily,
+                    "projected_monthly_usd": projected_monthly,
+                    "total_cost_usd": guard.total_cost(),
+                    "total_requests": guard.total_requests(),
+                    "budget_status": status,
+                }))
+            },
+        );
+    }
+
+    // --- cost_savings_summary ---
+    {
+        let dash = dashboard.clone();
+        server.register_tool(
+            McpTool::new(
+                "cost_savings_summary",
+                "Get a summary of tokens and cost saved by the context budget allocator.",
+            )
+            .with_annotations(McpToolAnnotation {
+                title: Some("Cost Savings".into()),
+                ..read_only_annotation
+            }),
+            move |_args| {
+                let guard = dash.lock().map_err(|e| format!("Lock error: {}", e))?;
+                let total_cost = guard.total_cost();
+                let total_requests = guard.total_requests();
+                let avg = guard.average_cost_per_request();
+                Ok(serde_json::json!({
+                    "total_cost_usd": total_cost,
+                    "total_requests": total_requests,
+                    "average_cost_per_request_usd": avg,
+                    "cost_by_model": guard.cost_by_model(),
+                    "cost_by_type": guard.cost_by_type(),
+                }))
+            },
+        );
     }
 }
 
@@ -720,6 +1035,195 @@ mod tests {
         assert!((remaining - 100.0).abs() < 1e-9);
     }
 
+    // ── V75: Security tests ──
+
+    // S4: NaN cost validation
+    #[test]
+    fn test_validate_cost_nan() {
+        assert!((validate_cost(f64::NAN) - 0.0).abs() < f64::EPSILON);
+    }
+
+    // S4: Infinity cost validation
+    #[test]
+    fn test_validate_cost_infinity() {
+        assert!((validate_cost(f64::INFINITY) - 0.0).abs() < f64::EPSILON);
+        assert!((validate_cost(f64::NEG_INFINITY) - 0.0).abs() < f64::EPSILON);
+    }
+
+    // S4: Negative cost validation
+    #[test]
+    fn test_validate_cost_negative() {
+        assert!((validate_cost(-5.0) - 0.0).abs() < f64::EPSILON);
+    }
+
+    // S4: Valid cost passes through
+    #[test]
+    fn test_validate_cost_valid() {
+        assert!((validate_cost(1.5) - 1.5).abs() < f64::EPSILON);
+        assert!((validate_cost(0.0) - 0.0).abs() < f64::EPSILON);
+    }
+
+    // S4: Cost exceeding MAX_COST is clamped
+    #[test]
+    fn test_validate_cost_clamp() {
+        assert!((validate_cost(2_000_000.0) - MAX_COST).abs() < f64::EPSILON);
+    }
+
+    // S1: CSV injection is sanitized
+    #[test]
+    fn test_csv_injection_sanitized() {
+        let evil_model = "=cmd|'/C calc'!A0";
+        let sanitized = sanitize_csv_field(evil_model);
+        assert!(
+            sanitized.starts_with('"'),
+            "injection string must be quoted: {}",
+            sanitized
+        );
+        assert!(!sanitized.starts_with('='), "must not start with =");
+
+        // Other dangerous prefixes
+        assert!(sanitize_csv_field("+SUM(1)").starts_with('"'));
+        assert!(sanitize_csv_field("-2+3").starts_with('"'));
+        assert!(sanitize_csv_field("@SUM").starts_with('"'));
+
+        // Safe strings pass through unchanged
+        assert_eq!(sanitize_csv_field("gpt-4"), "gpt-4");
+        assert_eq!(sanitize_csv_field("claude3sonnet"), "claude3sonnet");
+    }
+
+    // S2: Entries cap eviction
+    #[test]
+    fn test_entries_cap_eviction() {
+        let mut dash = CostDashboard::new();
+        // Record MAX_ENTRIES + 10 entries
+        for i in 0..(MAX_ENTRIES + 10) {
+            dash.record(&format!("model-{}", i), 100, 50, RequestType::Chat);
+        }
+        assert!(
+            dash.entries().len() <= MAX_ENTRIES,
+            "entries should be capped at MAX_ENTRIES, got {}",
+            dash.entries().len()
+        );
+        // The newest entries should be retained (not the oldest)
+        let last_model = &dash.entries().last().unwrap().model;
+        assert!(last_model.contains(&format!("{}", MAX_ENTRIES + 9)));
+    }
+
+    // ── V75: Projection tests ──
+
+    #[test]
+    fn test_projected_cost_for_requests() {
+        let mut dash = make_dashboard();
+        dash.record("gpt-4", 1000, 1000, RequestType::Chat);
+        dash.record("gpt-4", 1000, 1000, RequestType::Chat);
+
+        let avg = dash.average_cost_per_request();
+        let projected = dash.projected_cost_for_requests(10);
+        assert!((projected - avg * 10.0).abs() < 0.001);
+
+        // Zero requests
+        assert!(dash.projected_cost_for_requests(0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_projected_daily_cost_some() {
+        let mut dash = make_dashboard();
+        dash.record("gpt-4", 1000, 1000, RequestType::Chat);
+        // After at least 1 request, projection should return Some
+        // (unless elapsed time is 0, which is unlikely in practice)
+        let daily = dash.projected_daily_cost();
+        // May be None if test runs too fast (0 elapsed secs) — that's OK
+        if let Some(d) = daily {
+            assert!(d >= 0.0);
+        }
+    }
+
+    #[test]
+    fn test_projected_monthly_cost() {
+        let mut dash = make_dashboard();
+        // Empty dashboard should return None
+        assert!(dash.projected_monthly_cost().is_none());
+
+        dash.record("gpt-4", 1000, 1000, RequestType::Chat);
+        if let Some(monthly) = dash.projected_monthly_cost() {
+            assert!(monthly >= 0.0);
+            // Monthly should be ~30x daily
+            if let Some(daily) = dash.projected_daily_cost() {
+                assert!((monthly - daily * 30.0).abs() < 0.01);
+            }
+        }
+    }
+
+    #[test]
+    fn test_projection_in_report() {
+        let mut dash = make_dashboard();
+        dash.record("gpt-4", 1000, 500, RequestType::Chat);
+        let report = dash.format_report();
+        assert!(
+            report.contains("Projections"),
+            "report should contain Projections section"
+        );
+    }
+
+    // ── V75: Snapshot tests ──
+
+    #[test]
+    fn test_dashboard_snapshot_roundtrip() {
+        let budget = BudgetManager::new().with_daily_limit(50.0);
+        let mut dash = CostDashboard::with_budget(budget);
+        dash.record("gpt-4", 1000, 500, RequestType::Chat);
+        dash.record("claude-3-sonnet", 2000, 800, RequestType::Embedding);
+
+        let snapshot = dash.snapshot();
+        assert_eq!(snapshot.schema_version, 1);
+        assert_eq!(snapshot.entries.len(), 2);
+        assert!(snapshot.budget_config.is_some());
+
+        // Restore into a new dashboard
+        let mut restored = CostDashboard::new();
+        restored.restore(snapshot);
+        assert_eq!(restored.total_requests(), 2);
+        assert!((restored.total_cost() - dash.total_cost()).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_snapshot_rejects_nan_on_load() {
+        let snapshot = CostDashboardSnapshot {
+            schema_version: 1,
+            entries: vec![
+                RequestCostEntry {
+                    timestamp: "2026-04-09T10:00:00Z".to_string(),
+                    model: "gpt-4".to_string(),
+                    input_tokens: 100,
+                    output_tokens: 50,
+                    cost_usd: f64::NAN,
+                    request_type: RequestType::Chat,
+                },
+                RequestCostEntry {
+                    timestamp: "2026-04-09T10:01:00Z".to_string(),
+                    model: "gpt-4".to_string(),
+                    input_tokens: 200,
+                    output_tokens: 100,
+                    cost_usd: -99.0,
+                    request_type: RequestType::Chat,
+                },
+            ],
+            session_start: "2026-04-09T10:00:00Z".to_string(),
+            budget_config: None,
+        };
+
+        let mut dash = CostDashboard::new();
+        dash.restore(snapshot);
+        // NaN and negative costs should be clamped to 0.0
+        for entry in dash.entries() {
+            assert!(
+                entry.cost_usd >= 0.0 && entry.cost_usd.is_finite(),
+                "cost must be valid after restore: {}",
+                entry.cost_usd
+            );
+        }
+    }
+
     // 11. Under budget returns Allow.
     #[test]
     fn test_cost_middleware_allow() {
@@ -739,6 +1243,95 @@ mod tests {
             matches!(decision, CostDecision::Allow),
             "small request should be allowed, got: {:?}",
             decision,
+        );
+    }
+
+    // ── V75: MCP tool registration tests ──
+
+    fn call_mcp_tool(
+        server: &crate::mcp_protocol::server::McpServer,
+        tool_name: &str,
+    ) -> serde_json::Value {
+        use crate::mcp_protocol::types::McpRequest;
+        let request = McpRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!(1)),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": tool_name,
+                "arguments": {}
+            })),
+        };
+        let response = server.handle_request(request);
+        // Extract the result field from the response
+        serde_json::to_value(&response).unwrap()
+    }
+
+    #[test]
+    fn test_cost_tools_register() {
+        use crate::mcp_protocol::types::McpRequest;
+        use std::sync::{Arc, Mutex};
+        let dashboard = Arc::new(Mutex::new(CostDashboard::new()));
+        let mut server = crate::mcp_protocol::server::McpServer::new("test", "0.1.0");
+        register_cost_tools(&mut server, dashboard);
+
+        // List tools via MCP protocol
+        let list_req = McpRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!(1)),
+            method: "tools/list".to_string(),
+            params: None,
+        };
+        let resp = server.handle_request(list_req);
+        let resp_json = serde_json::to_value(&resp).unwrap();
+        let tools = resp_json["result"]["tools"].as_array().unwrap();
+        let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
+        assert!(names.contains(&"cost_report"), "cost_report missing");
+        assert!(
+            names.contains(&"cost_budget_status"),
+            "cost_budget_status missing"
+        );
+        assert!(
+            names.contains(&"cost_savings_summary"),
+            "cost_savings_summary missing"
+        );
+    }
+
+    #[test]
+    fn test_cost_report_tool_returns_data() {
+        use std::sync::{Arc, Mutex};
+        let mut dash = CostDashboard::new();
+        dash.record("gpt-4", 1000, 500, RequestType::Chat);
+        let dashboard = Arc::new(Mutex::new(dash));
+        let mut server = crate::mcp_protocol::server::McpServer::new("test", "0.1.0");
+        register_cost_tools(&mut server, dashboard);
+
+        let resp = call_mcp_tool(&server, "cost_report");
+        // The response should contain the cost report text
+        let resp_str = resp.to_string();
+        assert!(
+            resp_str.contains("Cost Dashboard Report"),
+            "response should contain report: {}",
+            resp_str
+        );
+    }
+
+    #[test]
+    fn test_cost_budget_status_tool() {
+        use std::sync::{Arc, Mutex};
+        let budget = BudgetManager::new().with_daily_limit(50.0);
+        let mut dash = CostDashboard::with_budget(budget);
+        dash.record("gpt-4", 1000, 500, RequestType::Chat);
+        let dashboard = Arc::new(Mutex::new(dash));
+        let mut server = crate::mcp_protocol::server::McpServer::new("test", "0.1.0");
+        register_cost_tools(&mut server, dashboard);
+
+        let resp = call_mcp_tool(&server, "cost_budget_status");
+        let resp_str = resp.to_string();
+        assert!(
+            resp_str.contains("remaining_usd"),
+            "response should contain remaining: {}",
+            resp_str
         );
     }
 

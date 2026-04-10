@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v31 (2026-04-09)
+
+### Added
+- **Cost Intelligence**: CostDashboard auto-wired in `poll_response()` — automatic cost recording per LLM call
+- `with_cost_config()` builder on `AiAssistant` — budget enforcement via `CostAwareConfig`
+- Savings estimation in `AllocationResult`: `total_candidate_tokens`, `tokens_saved`, `compression_ratio`, `estimated_cost_saved()`
+- Cost projections: `projected_daily_cost()`, `projected_monthly_cost()`, `projected_cost_for_requests()`
+- `CostDashboardSnapshot` with `snapshot()` / `restore()` for session persistence (schema versioned)
+- 3 MCP tools: `cost_report`, `cost_budget_status`, `cost_savings_summary` (read-only, annotated)
+- **Security hardening**: `validate_cost()` (NaN/Infinity/negative → 0.0), `sanitize_csv_field()` (formula injection prevention), `MAX_ENTRIES` cap (100K, evicts oldest)
+- Projections section in `format_report()` (daily, monthly, requests/hour)
+- 23 new tests (context_budget: 4, cost_integration: 16, assistant: 3)
+
+### Changed
+- `CostDashboard::record()` validates cost with `validate_cost()` before storing
+- `CostDashboard::export_csv()` sanitizes all fields against CSV formula injection
+- `AllocationResult` includes savings metrics in both `build()` and `build_from_items()`
+
+### Security
+- S1: CSV injection prevention in `export_csv()` (CRITICAL → mitigated)
+- S2: Unbounded entries Vec capped at `MAX_ENTRIES` (HIGH → mitigated)
+- S4: Float NaN/Infinity budget bypass via `validate_cost()` (MEDIUM → mitigated)
+- S6: Persistence tampering defended by schema version + cost validation on restore
+- S7: MCP tools read-only with `read_only_hint: true`, aggregated data only
+- S8: Negative pricing clamped in `estimated_cost_saved()`
+
+### Stats
+- 360+ source modules
+- 7,492+ passing tests (from 7,469 in v74)
+- 60 Cargo feature flags
+- 0 clippy warnings
+
 ## [Unreleased] - v30 (2026-04-09)
 
 ### Added
