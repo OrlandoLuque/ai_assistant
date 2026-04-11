@@ -280,9 +280,91 @@ cargo run --bin ai_assistant_server --features full -- \
 
 ---
 
+---
+
+## 9. NPCs in games via FFI (new in V79)
+
+**Problem.** You're building a game in Unity, Unreal, or Bevy and want
+non-player characters to drive their dialogue and behavior through an
+LLM — with no out-of-process HTTP requests, no tokio runtime in the
+engine, and a native C ABI the game engine can consume directly.
+
+**Binaries / libraries.** `libai_assistant.{so,dylib,dll}` +
+`include/ai_assistant.h` — built with `--features ffi`.
+
+**Commands.**
+
+```bash
+# 1. Build the shared library + auto-generated C header.
+cargo build --features ffi --profile release-fast
+
+# 2. Drop the artifacts into your engine's native plugin folder:
+#    - include/ai_assistant.h
+#    - target/release-fast/libai_assistant.{so,dylib,dll}
+#    - target/release-fast/libai_assistant.a (optional, for Unreal
+#      which prefers static linking)
+
+# 3. Call from C (minimal NPC driver):
+cat > npc_demo.c <<'C'
+#include "ai_assistant.h"
+#include <stdio.h>
+
+int main(void) {
+    AiAssistantHandle *h = ai_assistant_new_with_prompt(
+        "You are a gruff blacksmith. Reply in <= 30 words, in-character.");
+    ai_assistant_set_provider(h, AI_PROVIDER_KIND_OLLAMA);
+    ai_assistant_set_model(h, "llama3.2:3b");
+
+    char *reply = NULL;
+    int rc = ai_assistant_send_message(
+        h, "A stranger asks about your wares.", &reply);
+    if (rc == 0) {
+        printf("Blacksmith: %s\n", reply);
+        ai_assistant_free_string(reply);
+    }
+    ai_assistant_free(h);
+    return rc;
+}
+C
+
+gcc -I include npc_demo.c -L target/release-fast -lai_assistant \
+    -o /tmp/npc_demo
+LD_LIBRARY_PATH=target/release-fast /tmp/npc_demo
+```
+
+**Required features.** `ffi` (minimum, zero-dep). Add `rag` to
+automatically build RAG context from an indexed world lore corpus.
+Add `full` to unlock every provider and tool the library supports.
+
+**Security notes.**
+
+- Each `AiAssistantHandle *` is **single-threaded** (SQLite-style).
+  Pin each NPC's handle to a dedicated worker thread, or use a
+  message queue to serialize access.
+- Every entry point has a `catch_unwind` panic boundary — panics
+  never escape into the game engine.
+- Strings from `ai_assistant_send_message` must be freed via
+  `ai_assistant_free_string`, **not** `free(3)`.
+- Build with `--profile release-fast`, not `release` — the default
+  `release` profile uses `panic = "abort"` and makes `catch_unwind`
+  a no-op. `build.rs` warns when it detects the dangerous combo.
+
+**See also.**
+
+- [`docs/FFI.md`](FFI.md) — full API reference
+- [`examples/ffi_c/`](../examples/ffi_c/) — complete C example with
+  per-platform build instructions
+- [`docs/BINARIES.md`](BINARIES.md#library-artifacts-v79-new) —
+  library artifact naming per platform
+
+---
+
 ## Cross-references
 
 - [`docs/BINARIES.md`](BINARIES.md) — the 20-binary authoritative inventory.
+- [`docs/FFI.md`](FFI.md) — V79 C FFI API reference.
+- [`docs/IMPROVEMENTS_V79.md`](IMPROVEMENTS_V79.md) — V79 workstreams
+  and design decisions.
 - [`docs/IMPROVEMENTS_V77.md`](IMPROVEMENTS_V77.md) — why V77 added `ai_jobs`
   and the `ai_cli cost` subcommand.
 - [`CHANGELOG.md`](../CHANGELOG.md) — release history.

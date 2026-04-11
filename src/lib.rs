@@ -202,6 +202,11 @@ pub mod events;
 pub mod fallback;
 #[cfg(any(test, feature = "chaos-testing"))]
 pub mod fault_injection;
+// V79: C FFI bindings — 20 extern "C" entry points behind the `ffi`
+// feature. Consumed by C/C++/C#/Unity/Unreal/Bevy via the generated
+// header at `include/ai_assistant.h`.
+#[cfg(feature = "ffi")]
+pub mod ffi;
 pub mod formatting;
 #[cfg(feature = "audio")]
 pub mod group_queue_host;

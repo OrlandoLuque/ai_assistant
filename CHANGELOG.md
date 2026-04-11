@@ -5,6 +5,102 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v35 (2026-04-11) — V79: C FFI bindings
+
+### Added
+- **C FFI bindings (V79)** — 20 `extern "C"` entry points wrapping
+  `AiAssistant` behind a new zero-dep `ffi` Cargo feature. Enables
+  native consumption from C, C++, C#, Unity, Unreal, Bevy, Python
+  (via `ctypes`), and any language with a C FFI bridge. Primary
+  driver: NPCs in video games (Proposal 5).
+  - **Lifecycle**: `ai_assistant_new`, `ai_assistant_new_with_prompt`,
+    `ai_assistant_free` (null-safe).
+  - **Configuration** (9 setters): system prompt, provider, model,
+    API key, Ollama URL, `OpenAICompatible` base URL, Bedrock region,
+    temperature (strict-reject NaN/±Inf/out-of-range), max history.
+  - **Messaging**: `ai_assistant_send_message` (blocking, wraps
+    `generate_sync`; dispatches to `generate_sync_with_rag` when
+    `ffi,rag` feature combo is active via `#[cfg]` branch) and
+    `ai_assistant_send_message_stream` (callback-based streaming).
+  - **Session**: `ai_assistant_clear_conversation`,
+    `ai_assistant_new_session`.
+  - **Diagnostics**: `ai_assistant_last_error` (thread-local borrowed
+    pointer), `ai_assistant_version`, `ai_assistant_abi_version` (ABI=1).
+  - **Memory**: `ai_assistant_free_string` (null-safe).
+- **Opaque handle with single-thread contract** — SQLite-style
+  `UnsafeCell<AiAssistant>` + `unsafe impl Send + Sync`. A debug-only
+  `AtomicU64` thread-pin panics on cross-thread use; release builds
+  compile the pin out for zero overhead.
+- **Panic boundary** — every entry wraps its body in
+  `std::panic::catch_unwind` + `AssertUnwindSafe`, stashes the message
+  in a thread-local `LAST_ERROR`, and returns `AI_ERR_PANIC` (or NULL
+  for pointer-returning functions).
+- **Return code enum** — 9 int constants
+  (`AI_OK`, `AI_ERR_NULL_PTR`, `AI_ERR_INVALID_UTF8`, `AI_ERR_PANIC`,
+  `AI_ERR_POISONED`, `AI_ERR_INTERNAL`, `AI_ERR_UNKNOWN_PROVIDER`,
+  `AI_ERR_SEND_FAILED`, `AI_ERR_NO_RESPONSE`).
+- **Flat `AiProviderKind` C enum** — 17 unit variants mirroring the
+  Rust `AiProvider` positionally. Data-bearing variants
+  (`OpenAICompatible`, `Bedrock`) are configured via companion
+  setters. The Rust→FFI converter uses an **exhaustive match** so
+  adding a Rust variant forces a compile error in `src/ffi.rs`.
+- **`build.rs`** — extended from Windows-icon-embedding-only to also
+  invoke `cbindgen` and regenerate `include/ai_assistant.h` when
+  building with `--features ffi`. Emits a `cargo:warning` on the
+  dangerous `release` + `panic=abort` + `ffi` combo. All failures
+  degrade to warnings, never panics.
+- **`cbindgen.toml`** — new config file at repo root. Restricts
+  emitted item types to functions/globals/enums/structs to keep
+  cross-crate `pub const` definitions out of the FFI header.
+- **C example** — `examples/ffi_c/main.c` (~90 LOC NPC-style driver)
+  + `examples/ffi_c/README.md` with per-platform build instructions
+  (Linux, macOS, Windows MSVC, Windows GNU) and a library-naming
+  reference table.
+- **Documentation**:
+  - `docs/FFI.md` — 350+ line API reference with threading,
+    memory, error, security, and build sections.
+  - `docs/IMPROVEMENTS_V79.md` — workstream writeup + 21-row
+    security mitigation table.
+  - `docs/BINARIES.md` — new "Library artifacts" section listing
+    cdylib + staticlib outputs.
+  - `docs/USE_CASES.md` — new use case #9 "NPCs in games via FFI".
+- **Tests** — 24 automated unit tests in `src/ffi.rs::tests` + 5
+  cross-crate integration tests in `tests/ffi_integration.rs` + 3
+  ignored live-smoke / documentation tests.
+
+### Changed
+- **`[lib] crate-type`** — now `["rlib", "cdylib", "staticlib"]`
+  (was implicit `rlib` only). `rlib` keeps the 20 existing binaries
+  building; `cdylib` produces the `.so` / `.dylib` / `.dll` shared
+  library; `staticlib` produces the `.a` / `.lib` for static linking
+  (Unreal prefers this).
+- **Version** — `0.2.10` → `0.2.11` (patch bump per
+  `feedback_versioning.md`).
+- **Added build-dependency** — `cbindgen = "0.27"`. Non-optional so
+  `build.rs` doesn't need conditional compilation voodoo; the actual
+  invocation is gated inside `build.rs` on `CARGO_FEATURE_FFI`.
+
+### Fixed
+- nothing
+
+### Deprecated
+- nothing
+
+### Security
+- 21 explicit mitigations documented in `docs/FFI.md` and
+  `docs/IMPROVEMENTS_V79.md`. Notable additions: debug-only
+  thread-pin (S-17), UnsafeCell aliasing contract (S-18), committed
+  header (S-19), `non_exhaustive` match caveat (S-20), `rag` feature
+  dispatch safety (S-21).
+
+### Stats
+- ~1,650 LOC delta across 16 files (`src/ffi.rs` is the bulk at
+  ~1,100 LOC including tests)
+- +32 tests (24 unit + 5 integration + 3 ignored)
+- +1 build-dep (`cbindgen`), 0 new runtime deps
+- FFI feature matrix: `ffi` / `ffi,rag` / `full,ffi` — all compile
+  and test green
+
 ## [Unreleased] - v34 (2026-04-11)
 
 ### Added

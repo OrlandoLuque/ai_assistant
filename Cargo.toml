@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.10"
+version = "0.2.11"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -37,6 +37,13 @@ exclude = [
     "CLAUDE.md",
     "PENDING.md",
 ]
+
+# V79: expose rlib (for the 20 binaries), cdylib (.so/.dylib/.dll for FFI
+# consumers like Unity/Unreal/Bevy/C# P/Invoke), and staticlib (.a/.lib
+# for engines that prefer static linking, e.g. Unreal). The cdylib and
+# staticlib outputs are essentially empty unless --features ffi is on.
+[lib]
+crate-type = ["rlib", "cdylib", "staticlib"]
 
 [features]
 # Default: full functionality (code has interdependencies)
@@ -227,6 +234,14 @@ distillation = []
 # Constrained decoding: grammar-guided generation for local models (GBNF, JSON Schema)
 # Not in 'full' by default — only useful with local providers. Opt-in: --features constrained-decoding
 constrained-decoding = []
+
+# V79: C FFI bindings (extern "C" + cbindgen-generated header). Enables
+# src/ffi.rs which exposes 20 extern "C" functions for use from
+# C/C++/C#/Unity/Unreal/Bevy. Zero-dep: all FFI types come from libc (already
+# a direct dep). The blocking primitive is generate_sync; when `rag` is also
+# enabled, the FFI dispatches to generate_sync_with_rag instead.
+# Not in 'full' by default — opt-in via --features ffi.
+ffi = []
 
 # Human-in-the-Loop: tool approval gates, confidence escalation, corrections, policies
 # Not in 'full' by default — adds workflow overhead. Opt-in: --features hitl
@@ -712,7 +727,14 @@ name = "distributed_network_demo"
 required-features = ["distributed-network"]
 
 [build-dependencies]
+# NOTE: embed-resource is not currently wired up by build.rs (ships
+# without embedded Windows resources). Kept here for when we do.
 embed-resource = "3"
+# V79: cbindgen generates include/ai_assistant.h from src/ffi.rs when
+# building with --features ffi. Non-optional so build.rs doesn't need
+# conditional compilation voodoo; the actual cbindgen invocation is gated
+# inside build.rs on `env::var("CARGO_FEATURE_FFI").is_ok()`.
+cbindgen = "0.27"
 
 [dev-dependencies]
 tempfile = "3"
