@@ -3308,4 +3308,339 @@ mod tests {
         // Should not panic; full HTTP-level testing is left for a follow-up
         // integration-test file with a mock upstream backend.
     }
+
+    // ------------------------------------------------------------------
+    // V78.1: end-to-end tests with an in-process mock upstream backend
+    // ------------------------------------------------------------------
+    //
+    // We spin up a tiny axum app on 127.0.0.1:0 as a fake upstream
+    // `ai_assistant_server`, build a real `GatewayContext` pointing at it,
+    // and drive `build_gateway_router` via `tower::ServiceExt::oneshot` so
+    // the tests exercise the full request path without needing to bind the
+    // gateway itself. The mock backend IS a real HTTP server (because the
+    // gateway forwards via `reqwest`), so each test uses a
+    // `tokio::runtime::Runtime` and a oneshot shutdown channel.
+    #[cfg(feature = "security")]
+    mod gateway_e2e {
+        use super::*;
+        use axum::body::to_bytes;
+        use axum::response::Response as AxumResponse;
+        use std::sync::atomic::{AtomicUsize as StdAtomicUsize, Ordering as StdOrdering};
+        use tokio::net::TcpListener;
+        use tokio::sync::oneshot;
+        use tower::ServiceExt;
+
+        fn rt() -> tokio::runtime::Runtime {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+        }
+
+        /// Spawn a minimal axum app as a fake upstream backend. The closure
+        /// builds a response for every request. Returns the `host:port`
+        /// address string (fed directly to `Backend::new`) plus a shutdown
+        /// sender that must be kept alive for the duration of the test.
+        async fn spawn_mock_backend<F>(responder: F) -> (String, oneshot::Sender<()>)
+        where
+            F: Fn() -> AxumResponse + Clone + Send + Sync + 'static,
+        {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let (tx, rx) = oneshot::channel::<()>();
+            let app = axum::Router::new().fallback(axum::routing::any(
+                move |_req: axum::extract::Request| {
+                    let r = responder.clone();
+                    async move { r() }
+                },
+            ));
+            tokio::spawn(async move {
+                let _ = axum::serve(listener, app)
+                    .with_graceful_shutdown(async move {
+                        let _ = rx.await;
+                    })
+                    .await;
+            });
+            // Give the listener a moment to be fully ready.
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            (format!("127.0.0.1:{port}"), tx)
+        }
+
+        /// Counting variant — increments a shared counter on every request
+        /// so tests can assert that the cache prevented a second backend hit.
+        async fn spawn_mock_backend_counting<F>(
+            responder: F,
+        ) -> (String, Arc<StdAtomicUsize>, oneshot::Sender<()>)
+        where
+            F: Fn() -> AxumResponse + Clone + Send + Sync + 'static,
+        {
+            let counter = Arc::new(StdAtomicUsize::new(0));
+            let counter_cl = counter.clone();
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let (tx, rx) = oneshot::channel::<()>();
+            let app = axum::Router::new().fallback(axum::routing::any(
+                move |_req: axum::extract::Request| {
+                    let r = responder.clone();
+                    let c = counter_cl.clone();
+                    async move {
+                        c.fetch_add(1, StdOrdering::SeqCst);
+                        r()
+                    }
+                },
+            ));
+            tokio::spawn(async move {
+                let _ = axum::serve(listener, app)
+                    .with_graceful_shutdown(async move {
+                        let _ = rx.await;
+                    })
+                    .await;
+            });
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            (format!("127.0.0.1:{port}"), counter, tx)
+        }
+
+        fn make_state(backend_addr: &str, api_key: Option<&str>) -> ProxyState {
+            ProxyState {
+                backends: Arc::new(vec![Backend::new(backend_addr.to_string())]),
+                next_index: Arc::new(AtomicUsize::new(0)),
+                session_affinity: Arc::new(DashMap::new()),
+                api_key: api_key.map(|s| s.to_string()),
+            }
+        }
+
+        fn chat_ok_response() -> AxumResponse {
+            AxumResponse::builder()
+                .status(200)
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"id":"x","choices":[{"message":{"role":"assistant","content":"pong"}}],"usage":{"prompt_tokens":4,"completion_tokens":1}}"#,
+                ))
+                .unwrap()
+        }
+
+        fn embeddings_ok_response() -> AxumResponse {
+            AxumResponse::builder()
+                .status(200)
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"data":[{"embedding":[0.1,0.2,0.3]}]}"#))
+                .unwrap()
+        }
+
+        fn chat_body(prompt: &str) -> String {
+            format!(
+                r#"{{"model":"test-model","messages":[{{"role":"user","content":"{prompt}"}}]}}"#
+            )
+        }
+
+        fn chat_req(body: String) -> axum::http::Request<Body> {
+            axum::http::Request::builder()
+                .method("POST")
+                .uri("/v1/chat/completions")
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap()
+        }
+
+        async fn read_body_bytes(resp: AxumResponse) -> Vec<u8> {
+            let (_p, body) = resp.into_parts();
+            let b = to_bytes(body, 1024 * 1024).await.unwrap();
+            b.to_vec()
+        }
+
+        #[test]
+        fn test_gateway_e2e_forward_ok_and_headers() {
+            rt().block_on(async {
+                let (addr, _shutdown) = spawn_mock_backend(chat_ok_response).await;
+                let mut mw = MiddlewareSection::default();
+                mw.enable_cache = true;
+                mw.cache_max_entries = Some(16);
+                mw.cache_ttl_secs = Some(60);
+                let state = make_state(&addr, None);
+                let ctx = build_gateway_context(state, &mw, &AuditSection::default()).unwrap();
+                let router = build_gateway_router(ctx);
+
+                let resp = router.oneshot(chat_req(chat_body("hello"))).await.unwrap();
+                assert_eq!(resp.status(), 200);
+                assert!(
+                    resp.headers().contains_key("x-request-id"),
+                    "X-Request-Id must be set"
+                );
+                assert_eq!(
+                    resp.headers().get("x-cache").and_then(|v| v.to_str().ok()),
+                    Some("MISS")
+                );
+                let body = read_body_bytes(resp).await;
+                let text = String::from_utf8_lossy(&body);
+                assert!(text.contains("pong"), "body: {text}");
+            });
+        }
+
+        #[test]
+        fn test_gateway_e2e_cache_hit_on_second_request() {
+            rt().block_on(async {
+                let (addr, counter, _shutdown) =
+                    spawn_mock_backend_counting(chat_ok_response).await;
+                let mut mw = MiddlewareSection::default();
+                mw.enable_cache = true;
+                mw.cache_max_entries = Some(16);
+                mw.cache_ttl_secs = Some(60);
+                let state = make_state(&addr, None);
+                let ctx = build_gateway_context(state, &mw, &AuditSection::default()).unwrap();
+                let router = build_gateway_router(ctx);
+
+                let body = chat_body("same-prompt");
+                let r1 = router
+                    .clone()
+                    .oneshot(chat_req(body.clone()))
+                    .await
+                    .unwrap();
+                assert_eq!(r1.status(), 200);
+                assert_eq!(
+                    r1.headers().get("x-cache").and_then(|v| v.to_str().ok()),
+                    Some("MISS")
+                );
+
+                let r2 = router.oneshot(chat_req(body)).await.unwrap();
+                assert_eq!(r2.status(), 200);
+                assert_eq!(
+                    r2.headers().get("x-cache").and_then(|v| v.to_str().ok()),
+                    Some("HIT")
+                );
+                // Backend saw exactly one request; the cache served the second.
+                assert_eq!(counter.load(StdOrdering::SeqCst), 1);
+            });
+        }
+
+        #[test]
+        fn test_gateway_e2e_rate_limit_returns_429() {
+            rt().block_on(async {
+                let (addr, _shutdown) = spawn_mock_backend(chat_ok_response).await;
+                let mut mw = MiddlewareSection::default();
+                mw.enable_rate_limit = true;
+                mw.rate_limit_rpm = Some(2); // 2 req per 60s window
+                let state = make_state(&addr, None);
+                let ctx = build_gateway_context(state, &mw, &AuditSection::default()).unwrap();
+                let router = build_gateway_router(ctx);
+
+                // Same session id → same bucket. First 2 OK, 3rd rejected.
+                let mk = || {
+                    axum::http::Request::builder()
+                        .method("POST")
+                        .uri("/v1/chat/completions")
+                        .header("content-type", "application/json")
+                        .header("x-session-id", "sess-abc")
+                        .body(Body::from(chat_body("ping")))
+                        .unwrap()
+                };
+                let r1 = router.clone().oneshot(mk()).await.unwrap();
+                assert_eq!(r1.status(), 200);
+                let r2 = router.clone().oneshot(mk()).await.unwrap();
+                assert_eq!(r2.status(), 200);
+                let r3 = router.oneshot(mk()).await.unwrap();
+                assert_eq!(r3.status(), 429);
+                assert_eq!(
+                    r3.headers().get("x-reason").and_then(|v| v.to_str().ok()),
+                    Some("rate_limit")
+                );
+            });
+        }
+
+        #[test]
+        fn test_gateway_e2e_embeddings_passthrough_bypasses_pipeline() {
+            rt().block_on(async {
+                let (addr, counter, _shutdown) =
+                    spawn_mock_backend_counting(embeddings_ok_response).await;
+                // Even with PII+toxicity+attack guards enabled, /v1/embeddings
+                // should go through the fallback passthrough handler.
+                let mut mw = MiddlewareSection::default();
+                mw.enable_pii_input = true;
+                mw.enable_toxicity_input = true;
+                mw.enable_attack_filter = true;
+                let state = make_state(&addr, None);
+                let ctx = build_gateway_context(state, &mw, &AuditSection::default()).unwrap();
+                let router = build_gateway_router(ctx);
+
+                let req = axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/v1/embeddings")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"model":"emb","input":"anything"}"#))
+                    .unwrap();
+                let resp = router.oneshot(req).await.unwrap();
+                assert_eq!(resp.status(), 200);
+                assert_eq!(counter.load(StdOrdering::SeqCst), 1);
+                let body = read_body_bytes(resp).await;
+                assert!(String::from_utf8_lossy(&body).contains("embedding"));
+            });
+        }
+
+        #[test]
+        fn test_gateway_e2e_unauthorized_when_api_key_mismatch() {
+            rt().block_on(async {
+                let (addr, _shutdown) = spawn_mock_backend(chat_ok_response).await;
+                let mw = MiddlewareSection::default();
+                let state = make_state(&addr, Some("expected-key"));
+                let ctx = build_gateway_context(state, &mw, &AuditSection::default()).unwrap();
+                let router = build_gateway_router(ctx);
+
+                // Missing Authorization header → 401.
+                let resp = router
+                    .clone()
+                    .oneshot(chat_req(chat_body("hi")))
+                    .await
+                    .unwrap();
+                assert_eq!(resp.status(), 401);
+
+                // Wrong Bearer token → 401.
+                let bad = axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/v1/chat/completions")
+                    .header("content-type", "application/json")
+                    .header("authorization", "Bearer wrong-key")
+                    .body(Body::from(chat_body("hi")))
+                    .unwrap();
+                let resp2 = router.oneshot(bad).await.unwrap();
+                assert_eq!(resp2.status(), 401);
+            });
+        }
+
+        #[test]
+        fn test_gateway_e2e_audit_entry_written() {
+            rt().block_on(async {
+                let (addr, _shutdown) = spawn_mock_backend(chat_ok_response).await;
+                let tmpdir = tempfile::tempdir().unwrap();
+                let audit_path = tmpdir.path().join("audit.jsonl");
+
+                let mw = MiddlewareSection::default();
+                let mut audit_cfg = AuditSection::default();
+                audit_cfg.enabled = true;
+                audit_cfg.path = Some(audit_path.to_string_lossy().into_owned());
+                audit_cfg.max_files = Some(3);
+                audit_cfg.max_bytes_per_file = Some(10 * 1024);
+
+                let state = make_state(&addr, None);
+                let ctx = build_gateway_context(state, &mw, &audit_cfg).unwrap();
+                let router = build_gateway_router(ctx.clone());
+
+                let resp = router.oneshot(chat_req(chat_body("hello"))).await.unwrap();
+                assert_eq!(resp.status(), 200);
+                // Drop the context to force the AuditWriter to flush on the
+                // file handle going out of scope (writer is buffered).
+                drop(ctx);
+
+                // Allow a few ms for the tokio task to actually write.
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                let contents = std::fs::read_to_string(&audit_path).unwrap_or_default();
+                assert!(
+                    !contents.is_empty(),
+                    "audit log should contain at least one entry"
+                );
+                assert!(
+                    contents.contains("\"request_id\""),
+                    "entry must include request_id; got: {contents}"
+                );
+            });
+        }
+    }
 }

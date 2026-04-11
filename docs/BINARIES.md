@@ -128,7 +128,7 @@ Response headers:
 
 - `X-Request-Id` — UUID v4 echoed on every response
 - `X-Cache: HIT|MISS` — cache status (chat/completions path only)
-- `X-Reason` — set on 429 (`budget-exceeded`, `rate-limited`) and 503
+- `X-Reason` — set on 429 (`budget-exceeded`, `rate_limit`) and 503
   (`output-blocked`, `middleware-error`)
 
 Streaming (`stream: true`) and `/v1/embeddings` are passed through
