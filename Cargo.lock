@@ -93,7 +93,7 @@ dependencies = [
 
 [[package]]
 name = "ai_assistant"
-version = "0.2.9"
+version = "0.2.10"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -122,8 +122,10 @@ dependencies = [
  "hound",
  "js-sys",
  "lancedb",
+ "libc",
  "log",
  "nokhwa",
+ "parking_lot",
  "pdf-extract",
  "petgraph 0.6.5",
  "quinn",
@@ -143,6 +145,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "tokio",
+ "toml",
  "tower",
  "tower-http",
  "ureq",

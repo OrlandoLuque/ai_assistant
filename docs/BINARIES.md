@@ -71,9 +71,70 @@ A trimmed-down, single-binary service focused on HTTP. Good default for
 Spawns a distributed node that joins a QUIC mesh for cluster-wide RAG and
 agent federation. Requires `full`, `server-cluster`.
 
-#### `ai_proxy`
-Lightweight reverse proxy that sits in front of upstream providers (Ollama,
-OpenAI, Anthropic, …) for auditing, rate limiting, and budget enforcement.
+#### `ai_proxy` **(gateway hardened in V78)**
+Production API gateway that sits in front of upstream providers (Ollama,
+OpenAI, Anthropic, …). Two feature profiles:
+
+- `--features server-axum` — router + round-robin LB + session affinity +
+  health checks + optional Bearer auth. V77 parity.
+- `--features "server-axum,security"` — full gateway with guardrails.
+
+Gateway middlewares (feature-gated by `security`):
+
+- Per-key **rate limiter** (sliding window, `key:sha256(bearer) → sess → ip`)
+- **PII input/output** filter via `guardrail_pipeline::PiiGuard`
+- **Toxicity** filter (input + output) via `ToxicityGuard`
+- **Prompt-injection / attack** guard via `AttackGuard`
+- **Budget enforcement** via `DefaultCostMiddleware` (returns 429
+  `X-Reason: budget-exceeded`)
+- **LRU response cache** (PII-safe: tainted responses are never stored)
+- **Append-only JSONL audit log** with size + count rotation, symlink-safe
+  open (`O_NOFOLLOW` on Unix, pre-check on Windows), API keys only logged
+  as SHA-256 hash
+
+Configuration:
+
+```bash
+# TOML config file (recommended)
+ai_proxy --config examples/ai_proxy.toml
+
+# Dry-run: validate and print the merged config
+ai_proxy --config examples/ai_proxy.toml --dry-run
+
+# CLI overrides still work and win over the file
+ai_proxy --config ai_proxy.toml --port 9000 --disable-cache
+```
+
+CLI flags (all optional, all override the config file):
+
+- `--config <PATH>` — TOML config file
+- `--port <PORT>` — override listen port
+- `--backends <a:p,b:p,...>` — override upstream list
+- `--health-interval <SECS>` — override health check cadence
+- `--audit-log <PATH>` — enable audit log at path
+- `--audit-max-files <N>` — rotation count
+- `--enable-pii-redaction` — force PII redaction on
+- `--disable-cache` — force cache off
+- `--cost-snapshot <PATH>` — cost dashboard snapshot path
+- `--dry-run` — validate config and exit
+- `--api-key <KEY>` — **[deprecated]** prefer `AI_PROXY_API_KEY` env var
+
+Environment:
+
+- `AI_PROXY_API_KEY` — Bearer auth key; **wins** over both the config
+  file and the `--api-key` CLI flag
+
+Response headers:
+
+- `X-Request-Id` — UUID v4 echoed on every response
+- `X-Cache: HIT|MISS` — cache status (chat/completions path only)
+- `X-Reason` — set on 429 (`budget-exceeded`, `rate-limited`) and 503
+  (`output-blocked`, `middleware-error`)
+
+Streaming (`stream: true`) and `/v1/embeddings` are passed through
+unmodified in V78 — full guardrail wiring over SSE/WebSocket is deferred
+to V80. See `docs/IMPROVEMENTS_V78.md` for the full design and the list
+of 13 security mitigations.
 
 ### GUIs
 

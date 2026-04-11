@@ -5,6 +5,82 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v34 (2026-04-11)
+
+### Added
+- **`ai_proxy` gateway hardening (V78)** — turned the 683-LOC round-robin
+  router into a production gateway while keeping the core library untouched.
+  All new code lives in `src/bin/ai_proxy.rs` and is gated by
+  `#[cfg(feature = "security")]` so `--features server-axum` alone keeps V77
+  parity (router + health + session affinity only).
+  - **TOML config file** via new `--config <PATH>` flag, 1 MiB size cap,
+    `#[serde(deny_unknown_fields)]` on every section so typos fail loud.
+    Precedence: `defaults → file → AI_PROXY_API_KEY env → CLI flags`.
+  - **New example**: `examples/ai_proxy.toml` documenting every section.
+  - **Guardrail wiring**: `POST /v1/chat/completions` goes through the full
+    pipeline — rate limit → content-length guard → PII input → toxicity input
+    → attack guard → budget pre-check → cache lookup → backend → PII output
+    → toxicity output → budget post-update → cache store → audit log.
+    Streaming (`stream: true`) and `/v1/embeddings` are passed through
+    unmodified and flagged in audit.
+  - **Per-key sliding-window rate limiter** (`DashMap<String, Mutex<VecDeque<Instant>>>`),
+    hand-rolled; key priority `key:sha256(bearer) → sess:id → ip:addr`;
+    hard cap of 100,000 buckets with a stale-bucket cleanup pass.
+  - **LRU response cache** — hand-rolled over `DashMap` +
+    `parking_lot::Mutex<VecDeque>`, no new crate. `CacheKey` quantizes
+    `temperature` to `u32` milli-units. `put()` rejects any response that
+    came from a PII-tainted request and any body > 1 MiB.
+  - **Append-only JSONL audit log** with rotation by size and count. Unix
+    opens with `libc::O_NOFOLLOW`, Windows pre-checks `symlink_metadata`.
+    API keys are only ever written as SHA-256 hex hash.
+  - **Budget enforcement** via `DefaultCostMiddleware` wrapped in a
+    `BudgetGate`; `pre_request` returns 429 `X-Reason: budget-exceeded` on
+    block, `post_response` updates the cost dashboard with backend-reported
+    `usage.prompt_tokens`/`usage.completion_tokens`.
+  - **New CLI flags**: `--config`, `--audit-log`, `--audit-max-files`,
+    `--enable-pii-redaction`, `--disable-cache`, `--cost-snapshot`.
+    `--dry-run` now validates the config and prints the merged middleware
+    flag table.
+  - **Response headers**: every response now carries `X-Request-Id`; cached
+    responses add `X-Cache: HIT|MISS`.
+  - **Security**: 13 mitigations documented in `docs/IMPROVEMENTS_V78.md`
+    (symlink, log rotation, key-hash-only logs, env-prefers-CLI, float-temp
+    quantization, PII cache guard, built-in guard-panic catch, config DoS
+    cap, 16 MiB request cap, post-decode toxicity, budget concurrency,
+    JSON-escape-safe audit, TOML deny-unknown).
+  - **Tests**: 55 unit tests in `ai_proxy` (up from 7), zero new crates
+    added. Full end-to-end integration tests with a mock upstream backend
+    are deferred to V78.1.
+- `docs/IMPROVEMENTS_V78.md` — workstream breakdown, security summary,
+  deferred items.
+
+### Changed
+- `security` feature now pulls `sha2` explicitly
+  (`security = ["dep:sha2"]`) so the audit log and rate-limit key hashing
+  are always available with the feature on.
+- `server-axum` feature now pulls `toml` and `parking_lot` (both were
+  already transitive, promoted to direct deps).
+- `libc` added as a Unix-only target dep (`[target.'cfg(unix)'.dependencies]`)
+  for `O_NOFOLLOW` on the audit log — no effect on Windows builds.
+
+### Deprecated
+- `--api-key` CLI flag — still works, now emits a deprecation warning
+  pointing to `AI_PROXY_API_KEY`. The env variable wins over both the
+  config file and the CLI flag.
+
+### Fixed
+- **Pre-existing V67 regression in `src/server_axum.rs`** surfaced by V78
+  feature-gate validation: the `audio_model_registry` call site was only
+  guarded by `rag`, but the module itself is `audio`-gated. Tightened to
+  `#[cfg(all(feature = "rag", feature = "audio"))]`.
+
+### Stats
+- Version bump: 0.2.9 → 0.2.10
+- `ai_proxy`: 683 → ~2,350 LOC (+~1,670 LOC)
+- 48 new tests (`ai_proxy` 7 → 55)
+- 0 new crates
+- 13 documented security mitigations
+
 ## [Unreleased] - v33 (2026-04-11)
 
 ### Added

@@ -1,0 +1,91 @@
+# ai_proxy — Gateway configuration example (V78).
+#
+# Load via:
+#   ai_proxy --config examples/ai_proxy.toml
+#
+# CLI flags override any field in this file. The file itself is capped at
+# 1 MiB to prevent memory exhaustion. Middleware sections are parsed but
+# only activated when ai_proxy is built with `--features "server-axum,security"`.
+
+# ---------------------------------------------------------------------------
+# [server] — listener + basic options
+# ---------------------------------------------------------------------------
+[server]
+# Bind address, host:port. Default: 0.0.0.0:8080
+bind = "0.0.0.0:8080"
+
+# Seconds between upstream health checks. Default: 30
+health_check_interval_secs = 10
+
+# Prefer the environment variable AI_PROXY_API_KEY over embedding the key
+# here. If neither this field nor the env var is set, the proxy runs
+# without auth (development only).
+# api_key_env = "AI_PROXY_API_KEY"
+
+# ---------------------------------------------------------------------------
+# [[backends]] — upstream ai_assistant_server nodes
+# ---------------------------------------------------------------------------
+# At least one backend is required. `weight` is accepted but IGNORED in V78;
+# load balancing is plain round-robin. Weighted RR is tracked for V80.
+[[backends]]
+addr = "10.0.0.1:8090"
+weight = 1
+
+[[backends]]
+addr = "10.0.0.2:8090"
+weight = 1
+
+# ---------------------------------------------------------------------------
+# [middleware] — guardrails, budgeting, caching, rate limiting
+# ---------------------------------------------------------------------------
+# All fields are optional. Unknown fields cause a parse error (fail loud).
+# Requires ai_proxy built with the `security` feature — otherwise these
+# sections are parsed successfully but ignored with a warning at startup.
+[middleware]
+
+# --- Rate limiting (per api-key / per session / per client IP) ---
+enable_rate_limit = true
+rate_limit_rpm = 60          # requests per minute per bucket
+rate_limit_burst = 10        # allowed initial burst within the window
+
+# --- PII pre-filter (input side) ---
+enable_pii_input = true
+pii_input_strategy = "redact"  # "redact" | "block" | "tag"
+pii_sensitivity = "medium"     # "low" | "medium" | "high"
+
+# --- PII post-filter (output side) ---
+enable_pii_output = true
+pii_output_strategy = "redact"
+
+# --- Toxicity filter (semantic) ---
+enable_toxicity_input = true
+enable_toxicity_output = true
+toxicity_threshold = 0.7
+
+# --- Prompt-injection / attack pattern guard ---
+enable_attack_filter = true
+
+# --- Budget enforcement (uses V75 CostDashboard) ---
+enable_budget = false
+# cost_snapshot_path = "/var/lib/ai_proxy/cost_snapshot.json"
+monthly_budget_usd = 1000.0
+per_request_limit_usd = 0.50
+
+# --- Response cache (LRU, skipped for requests containing PII) ---
+enable_cache = true
+cache_max_entries = 10_000
+cache_ttl_secs = 3600
+
+# ---------------------------------------------------------------------------
+# [audit] — append-only JSONL log with rotation
+# ---------------------------------------------------------------------------
+[audit]
+enabled = true
+path = "/var/log/ai_proxy/audit.jsonl"
+max_files = 10
+max_bytes_per_file = 10_485_760   # 10 MiB
+
+# What to do when a middleware returns a non-panic error (e.g. malformed
+# body, pipeline lock poisoned). "block" returns 503; "pass" forwards the
+# request unchecked (NOT recommended). Default: "block".
+on_middleware_error = "block"

@@ -2332,7 +2332,10 @@ fn build_unified_mcp_server() -> Arc<std::sync::RwLock<crate::mcp_protocol::McpS
     // registered when an AiAssistant is available (e.g., in the standalone binary).
 
     // ── Task management tools ───────────────────────────────────────
-    #[cfg(feature = "rag")]
+    // NOTE: `audio_model_registry::model_directory()` is only compiled
+    // behind the `audio` feature, so this block also requires `audio`.
+    // Pre-existing V67 bug surfaced by V78 feature-gate validation.
+    #[cfg(all(feature = "rag", feature = "audio"))]
     {
         let db_path = crate::audio_model_registry::model_directory();
         let task_db = std::path::Path::new(&db_path).join("tasks.db");

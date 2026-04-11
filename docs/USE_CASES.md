@@ -128,30 +128,55 @@ referenced by **name** (never logged).
 
 ---
 
-## 4. Private team assistant behind TLS + RBAC
+## 4. Private team assistant behind TLS + RBAC (with gateway guardrails)
 
 **Problem.** You want a self-hosted HTTPS chat endpoint that multiple
-colleagues can use, with role-based access control.
+colleagues can use, with role-based access control **and** server-side
+PII redaction, budget enforcement, and audit logging — without bolting
+middlewares on top of every deployment.
 
-**Binaries.** `ai_assistant_server` (or `ai_assistant_standalone`).
+**Binaries.** `ai_assistant_server` (or `ai_assistant_standalone`) as
+the upstream, **`ai_proxy` (V78)** as the hardened gateway.
 
 **Commands.**
 
 ```bash
-# 1. Launch the server with TLS + RBAC
+# 1. Launch the upstream server(s) — normal RBAC + TLS as before
 cargo run --bin ai_assistant_server --features full -- \
-    --bind 0.0.0.0:8443 \
+    --bind 127.0.0.1:8090 \
     --tls-cert /etc/ssl/ai_assistant.crt \
     --tls-key  /etc/ssl/ai_assistant.key \
     --rbac-config /etc/ai_assistant/rbac.toml
 
-# 2. Test from a client
-curl -H "Authorization: Bearer $TOKEN" \
-     --data '{"prompt":"Summarize yesterday's PRs"}' \
-     https://ai.internal.corp/api/chat
+# 2. Put ai_proxy in front with the full middleware stack.
+#    See examples/ai_proxy.toml for every knob.
+export AI_PROXY_API_KEY="$(cat /etc/ai_proxy/key)"
+cargo run --bin ai_proxy --features "server-axum,security" -- \
+    --config /etc/ai_proxy/ai_proxy.toml
+
+# 3. Test from a client — every request is rate-limited, PII-redacted,
+#    budget-checked, and audited.
+curl -H "Authorization: Bearer $AI_PROXY_API_KEY" \
+     -H "Content-Type: application/json" \
+     -d '{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}' \
+     https://ai.internal.corp/v1/chat/completions
 ```
 
-**Required features.** `full`, `server-axum`.
+**What the gateway adds over a plain `ai_assistant_server`:**
+
+- **PII redaction** on `messages[].content` for roles {user, system}
+  before the request ever reaches the upstream
+- **Budget enforcement** — requests over the monthly / per-request cap
+  get 429 with `X-Reason: budget-exceeded`
+- **LRU response cache**, PII-safe (tainted responses never get stored)
+- **Append-only JSONL audit log** with rotation and symlink-safe open;
+  API keys only ever logged as SHA-256 hash
+- **Per-key rate limiting** with `key:/sess:/ip:` bucket priority
+- `X-Request-Id` and `X-Cache` headers on every response
+
+**Required features.** Upstream: `full` + `server-axum` (+ `server-axum-tls`).
+Gateway: `server-axum` + `security`. See `docs/IMPROVEMENTS_V78.md` for
+the full design and the list of 13 security mitigations.
 
 ---
 
