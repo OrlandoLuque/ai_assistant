@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.8"
+version = "0.2.9"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -413,6 +413,7 @@ required-features = ["full"]
 [[bin]]
 name = "ai_test_harness"
 path = "src/bin/ai_test_harness.rs"
+required-features = ["full", "browser"]
 
 [[bin]]
 name = "kpkg_tool"
@@ -470,6 +471,7 @@ required-features = ["audio-io"]
 [[bin]]
 name = "ai_virtual_mic_host"
 path = "src/bin/ai_virtual_mic_host.rs"
+required-features = ["audio"]
 
 [[bin]]
 name = "ai_virtual_cam"
@@ -489,12 +491,17 @@ required-features = ["full"]
 [[bin]]
 name = "ai_gpu_share"
 path = "src/bin/ai_gpu_share.rs"
-required-features = ["full"]
+required-features = ["full", "gpu-sharing"]
 
 [[bin]]
 name = "ai_setup_gui"
 path = "src/bin/ai_setup_gui.rs"
 required-features = ["gui"]
+
+[[bin]]
+name = "ai_jobs"
+path = "src/bin/ai_jobs.rs"
+required-features = ["scheduler"]
 
 [[example]]
 name = "autonomous_agent"

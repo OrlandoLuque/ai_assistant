@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v33 (2026-04-11)
+
+### Added
+- **`ai_jobs` binary** (new, ~970 LOC) — cron-like job daemon with two runtime modes:
+  - `delegated` *(default)*: shells out to `ai_cli` or any shell command. Always available.
+  - `embedded`: runs an in-process `AiAssistant` with access to RAG, tools, memory, and session state. Gated behind `--features full`.
+  - Manifest format is **JSON** (parallel schema defined inside the binary so no Serde derives leak into the core `scheduler::*` types).
+  - Subcommands: `validate`, `list`, `dry-run`, `run`, `help`.
+  - Security: `MAX_JOBS = 1000` cap, per-job `timeout_secs` (default 60s), `std::panic::catch_unwind` guards the daemon, API key env vars referenced by name only.
+  - 14 unit tests + 6 integration tests (`tests/ai_jobs_integration.rs`).
+- **`ai_cli cost` subcommand** — CLI access to V75 cost intelligence:
+  - `cost report [--snapshot <path>]` — formatted dashboard report
+  - `cost budget --snapshot <path>` — JSON budget status
+  - `cost savings --snapshot <path>` — informational stub (AllocationResult persistence deferred to V78)
+  - `cost projection --snapshot <path>` — daily / monthly / per-1k projections
+  - `cost export --snapshot <path> --output <file.csv> [--force]` — CSV export (refuses to overwrite without `--force`)
+  - 6 new unit tests for the subcommand helpers.
+- `examples/jobs.json` — 4-job demo manifest used by the integration tests.
+- `docs/BINARIES.md` — authoritative 20-binary catalogue, grouped by role, with feature-flag matrix and per-binary security notes for `ai_jobs`.
+- `docs/USE_CASES.md` — 8 end-to-end scenarios wiring multiple binaries (local RAG, CI cost gate, scheduled briefs, TLS team server, distributed cluster, voice assistant, butler bootstrap, MCP backend).
+- `docs/IMPROVEMENTS_V77.md` — context, workstream breakdown, deferred items.
+- Website pages `ai_assistant-website/binaries.html` and `ai_assistant-website/use_cases.html` — HTML counterparts of the new docs, linked from `index.html`.
+
+### Fixed
+- **V76 regressions surfaced by V77 integration tests** — three binaries were missing `required-features` in `Cargo.toml`, so they failed to compile once V76 moved their dependencies behind feature gates:
+  - `ai_test_harness`: added `required-features = ["full", "browser"]` (uses `CrawlPolicy`)
+  - `ai_virtual_mic_host`: added `required-features = ["audio"]` (uses `group_queue_host`)
+  - `ai_gpu_share`: tightened from `["full"]` to `["full", "gpu-sharing"]`
+
+### Stats
+- Version bump: 0.2.8 → 0.2.9
+- New binary: `ai_jobs` (total: 20)
+- ~26 new tests
+- 3 latent V76 compile-error regressions fixed
+
 ## [Unreleased] - v32 (2026-04-10)
 
 ### Changed

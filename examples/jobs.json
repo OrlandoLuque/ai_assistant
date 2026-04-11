@@ -1,0 +1,43 @@
+{
+  "_comment": "Example manifest for ai_jobs. The `assistant` section is only needed if any job uses runtime=\"embedded\". See docs/BINARIES.md#ai_jobs.",
+  "assistant": {
+    "provider": "ollama",
+    "model": "llama3",
+    "system_prompt": "You are a concise reporting assistant.",
+    "base_url": "http://localhost:11434"
+  },
+  "jobs": [
+    {
+      "id": "backup_nightly",
+      "name": "Nightly backup",
+      "cron": "0 3 * * *",
+      "type": "shell",
+      "command": "echo 'would tar /data here'"
+    },
+    {
+      "id": "health_check",
+      "name": "Quick health ping",
+      "cron": "*/5 * * * *",
+      "type": "shell",
+      "command": "echo ok",
+      "timeout_secs": 10
+    },
+    {
+      "id": "issue_summary",
+      "name": "GitHub issues summary",
+      "cron": "0 9 * * 1-5",
+      "runtime": "delegated",
+      "type": "agent",
+      "task": "Summarise yesterday's open GitHub issues"
+    },
+    {
+      "id": "rag_daily_brief",
+      "name": "RAG-enhanced daily brief",
+      "cron": "0 8 * * 1-5",
+      "runtime": "embedded",
+      "session_id": "daily_brief",
+      "type": "agent",
+      "task": "Generate today's daily brief using the team knowledge base"
+    }
+  ]
+}

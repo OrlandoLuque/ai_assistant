@@ -124,6 +124,7 @@ fn main() -> ExitCode {
         "query" => cmd_query(&command_args[1..]),
         "bench" => cmd_bench(&command_args[1..]),
         "test" => cmd_test(&command_args[1..]),
+        "cost" => cmd_cost(&command_args[1..]),
         other => {
             eprintln!("Error: unknown command '{}'\n", other);
             print_usage();
@@ -176,6 +177,14 @@ fn print_usage() {
     println!("    --filter <pattern>             Filter benchmarks by name");
     println!("    --list                         List available benchmarks");
     println!("    --output <dir>                 Output directory (default: results/)");
+    println!("  cost <subcommand>              Inspect Cost Intelligence snapshots (V75)");
+    println!("    report --snapshot <path>         Human-readable dashboard report");
+    println!("    budget --snapshot <path>         Budget status as JSON");
+    println!("    savings --snapshot <path>        Token savings summary");
+    println!("    projection --snapshot <path>     Daily/monthly cost projections");
+    println!("    export --snapshot <path> --output <csv> [--force]");
+    println!("                                     Export entries as CSV (formula-safe)");
+    println!("    help                             Show cost-subcommand help");
     println!("  test [options]                 Run tests (lib or harness), save results");
     println!("    --all                          Run test harness (all categories)");
     println!("    --category <name>              Run specific harness category");
@@ -1415,6 +1424,231 @@ fn provider_from_name(name: &str) -> ai_assistant::AiProvider {
     }
 }
 
+// =============================================================================
+// cost — inspect Cost Intelligence snapshots (V77)
+// =============================================================================
+
+fn cmd_cost(args: &[String]) -> ExitCode {
+    if args.is_empty() {
+        print_cost_usage();
+        return ExitCode::from(1);
+    }
+    match args[0].as_str() {
+        "help" | "-h" | "--help" => {
+            print_cost_usage();
+            ExitCode::SUCCESS
+        }
+        "report" => cost_subcommand_report(&args[1..]),
+        "budget" => cost_subcommand_budget(&args[1..]),
+        "savings" => cost_subcommand_savings(&args[1..]),
+        "projection" => cost_subcommand_projection(&args[1..]),
+        "export" => cost_subcommand_export(&args[1..]),
+        other => {
+            eprintln!("Error: unknown cost subcommand '{}'\n", other);
+            print_cost_usage();
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn print_cost_usage() {
+    println!("ai_cli cost — inspect Cost Intelligence snapshots\n");
+    println!("Usage: ai_cli cost <subcommand> [options]\n");
+    println!("Subcommands:");
+    println!("  report --snapshot <path>                    Human-readable dashboard report");
+    println!("  budget --snapshot <path>                    Budget status as JSON");
+    println!("  savings --snapshot <path>                   Token savings summary (informational)");
+    println!("  projection --snapshot <path>                Daily/monthly/per-request projections");
+    println!(
+        "  export --snapshot <path> --output <csv> [--force]"
+    );
+    println!("                                              Export entries as CSV");
+    println!();
+    println!("Examples:");
+    println!("  ai_cli cost report --snapshot ~/.ai_assistant/cost.json");
+    println!("  ai_cli cost budget --snapshot cost.json");
+    println!("  ai_cli cost export --snapshot cost.json --output out.csv --force");
+}
+
+fn find_flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == flag && i + 1 < args.len() {
+            return Some(args[i + 1].as_str());
+        }
+        i += 1;
+    }
+    None
+}
+
+fn load_cost_snapshot(
+    path: &str,
+) -> Result<ai_assistant::cost_integration::CostDashboard, String> {
+    use ai_assistant::cost_integration::{CostDashboard, CostDashboardSnapshot};
+    let canon = std::path::Path::new(path)
+        .canonicalize()
+        .map_err(|e| format!("cannot resolve snapshot path '{}': {}", path, e))?;
+    eprintln!("[ai_cli cost] loading snapshot: {}", canon.display());
+    let content = std::fs::read_to_string(&canon)
+        .map_err(|e| format!("cannot read snapshot: {}", e))?;
+    let snapshot: CostDashboardSnapshot = serde_json::from_str(&content)
+        .map_err(|e| format!("invalid snapshot JSON: {}", e))?;
+    let mut dashboard = CostDashboard::new();
+    dashboard.restore(snapshot);
+    Ok(dashboard)
+}
+
+fn cost_subcommand_report(args: &[String]) -> ExitCode {
+    let snapshot_path = match find_flag_value(args, "--snapshot") {
+        Some(p) => p,
+        None => {
+            eprintln!(
+                "ai_cli cost report: no --snapshot provided.\n\
+                 Persist a CostDashboardSnapshot to disk (via API) and pass \
+                 its path here."
+            );
+            return ExitCode::from(1);
+        }
+    };
+    match load_cost_snapshot(snapshot_path) {
+        Ok(dashboard) => {
+            println!("{}", dashboard.format_report());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn cost_subcommand_budget(args: &[String]) -> ExitCode {
+    let snapshot_path = match find_flag_value(args, "--snapshot") {
+        Some(p) => p,
+        None => {
+            eprintln!("ai_cli cost budget: missing --snapshot <path>");
+            return ExitCode::from(1);
+        }
+    };
+    match load_cost_snapshot(snapshot_path) {
+        Ok(dashboard) => {
+            let projected_daily = dashboard.projected_daily_cost();
+            let projected_monthly = dashboard.projected_monthly_cost();
+            let total: f64 = dashboard
+                .format_report()
+                .lines()
+                .find_map(|l| l.strip_prefix("Total cost: $"))
+                .and_then(|s| s.trim().parse::<f64>().ok())
+                .unwrap_or(0.0);
+            let json = serde_json::json!({
+                "total_usd": total,
+                "projected_daily_usd": projected_daily,
+                "projected_monthly_usd": projected_monthly,
+                "snapshot": snapshot_path,
+            });
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json).unwrap_or_default()
+            );
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn cost_subcommand_savings(args: &[String]) -> ExitCode {
+    let _snapshot_path = match find_flag_value(args, "--snapshot") {
+        Some(p) => p,
+        None => {
+            eprintln!("ai_cli cost savings: missing --snapshot <path>");
+            return ExitCode::from(1);
+        }
+    };
+    // CostDashboardSnapshot (V75) does not yet include AllocationResult
+    // savings metrics (total_tokens_saved, compression_ratio). Wire-up is
+    // deferred to V78 — see docs/IMPROVEMENTS_V77.md and the MCP tool
+    // `cost_savings_summary` for runtime access.
+    println!("cost savings: snapshot persistence for savings metrics is not yet wired.");
+    println!("Use the runtime API or MCP tool `cost_savings_summary` instead.");
+    println!("(Deferred to V78.)");
+    ExitCode::SUCCESS
+}
+
+fn cost_subcommand_projection(args: &[String]) -> ExitCode {
+    let snapshot_path = match find_flag_value(args, "--snapshot") {
+        Some(p) => p,
+        None => {
+            eprintln!("ai_cli cost projection: missing --snapshot <path>");
+            return ExitCode::from(1);
+        }
+    };
+    match load_cost_snapshot(snapshot_path) {
+        Ok(dashboard) => {
+            let daily = dashboard
+                .projected_daily_cost()
+                .map(|v| format!("${:.4}", v))
+                .unwrap_or_else(|| "n/a".into());
+            let monthly = dashboard
+                .projected_monthly_cost()
+                .map(|v| format!("${:.2}", v))
+                .unwrap_or_else(|| "n/a".into());
+            let per_1k = dashboard.projected_cost_for_requests(1000);
+            println!("Projections:");
+            println!("  Daily   : {}", daily);
+            println!("  Monthly : {}", monthly);
+            println!("  Per 1k  : ${:.4}", per_1k);
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn cost_subcommand_export(args: &[String]) -> ExitCode {
+    let snapshot_path = match find_flag_value(args, "--snapshot") {
+        Some(p) => p,
+        None => {
+            eprintln!("ai_cli cost export: missing --snapshot <path>");
+            return ExitCode::from(1);
+        }
+    };
+    let output = match find_flag_value(args, "--output") {
+        Some(p) => p,
+        None => {
+            eprintln!("ai_cli cost export: missing --output <file.csv>");
+            return ExitCode::from(1);
+        }
+    };
+    let force = args.iter().any(|a| a == "--force");
+    if std::path::Path::new(output).exists() && !force {
+        eprintln!(
+            "ai_cli cost export: output file '{}' already exists. Use --force to overwrite.",
+            output
+        );
+        return ExitCode::from(1);
+    }
+    match load_cost_snapshot(snapshot_path) {
+        Ok(dashboard) => {
+            let csv = dashboard.export_csv();
+            if let Err(e) = std::fs::write(output, csv) {
+                eprintln!("Error writing CSV: {}", e);
+                return ExitCode::from(1);
+            }
+            println!("Wrote CSV to {}", output);
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            ExitCode::from(1)
+        }
+    }
+}
+
 fn load_config(path: &str) -> Result<AiConfig, String> {
     let content = std::fs::read_to_string(path).map_err(|e| format!("cannot read file: {}", e))?;
     serde_json::from_str(&content).map_err(|e| format!("invalid JSON: {}", e))
@@ -1545,4 +1779,73 @@ fn print_environment(report: &EnvironmentReport) {
         }
     }
     println!("-------------------\n");
+}
+
+// =============================================================================
+// Tests (V77 — cost subcommand helpers)
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_find_flag_value_present() {
+        let args: Vec<String> = vec![
+            "report".into(),
+            "--snapshot".into(),
+            "/tmp/x.json".into(),
+        ];
+        assert_eq!(find_flag_value(&args, "--snapshot"), Some("/tmp/x.json"));
+    }
+
+    #[test]
+    fn test_find_flag_value_absent() {
+        let args: Vec<String> = vec!["report".into()];
+        assert_eq!(find_flag_value(&args, "--snapshot"), None);
+    }
+
+    #[test]
+    fn test_find_flag_value_dangling_flag() {
+        // Flag with no value should return None, not panic.
+        let args: Vec<String> = vec!["export".into(), "--snapshot".into()];
+        assert_eq!(find_flag_value(&args, "--snapshot"), None);
+    }
+
+    #[test]
+    fn test_find_flag_value_multiple_flags() {
+        let args: Vec<String> = vec![
+            "export".into(),
+            "--snapshot".into(),
+            "a.json".into(),
+            "--output".into(),
+            "b.csv".into(),
+            "--force".into(),
+        ];
+        assert_eq!(find_flag_value(&args, "--snapshot"), Some("a.json"));
+        assert_eq!(find_flag_value(&args, "--output"), Some("b.csv"));
+        assert_eq!(find_flag_value(&args, "--force"), None);
+    }
+
+    #[test]
+    fn test_load_cost_snapshot_invalid_path() {
+        let res = load_cost_snapshot("/__definitely_nowhere__/snap.json");
+        assert!(res.is_err());
+        let msg = res.err().unwrap();
+        assert!(msg.contains("cannot resolve"));
+    }
+
+    #[test]
+    fn test_provider_from_name_roundtrip() {
+        use ai_assistant::AiProvider;
+        assert!(matches!(provider_from_name("openai"), AiProvider::OpenAI));
+        assert!(matches!(
+            provider_from_name("anthropic"),
+            AiProvider::Anthropic
+        ));
+        assert!(matches!(
+            provider_from_name("unknown_xyz"),
+            AiProvider::Ollama
+        ));
+    }
 }
