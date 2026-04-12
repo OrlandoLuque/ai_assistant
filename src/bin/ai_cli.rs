@@ -1459,9 +1459,7 @@ fn print_cost_usage() {
     println!("  budget --snapshot <path>                    Budget status as JSON");
     println!("  savings --snapshot <path>                   Token savings summary (informational)");
     println!("  projection --snapshot <path>                Daily/monthly/per-request projections");
-    println!(
-        "  export --snapshot <path> --output <csv> [--force]"
-    );
+    println!("  export --snapshot <path> --output <csv> [--force]");
     println!("                                              Export entries as CSV");
     println!();
     println!("Examples:");
@@ -1481,18 +1479,16 @@ fn find_flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
     None
 }
 
-fn load_cost_snapshot(
-    path: &str,
-) -> Result<ai_assistant::cost_integration::CostDashboard, String> {
+fn load_cost_snapshot(path: &str) -> Result<ai_assistant::cost_integration::CostDashboard, String> {
     use ai_assistant::cost_integration::{CostDashboard, CostDashboardSnapshot};
     let canon = std::path::Path::new(path)
         .canonicalize()
         .map_err(|e| format!("cannot resolve snapshot path '{}': {}", path, e))?;
     eprintln!("[ai_cli cost] loading snapshot: {}", canon.display());
-    let content = std::fs::read_to_string(&canon)
-        .map_err(|e| format!("cannot read snapshot: {}", e))?;
-    let snapshot: CostDashboardSnapshot = serde_json::from_str(&content)
-        .map_err(|e| format!("invalid snapshot JSON: {}", e))?;
+    let content =
+        std::fs::read_to_string(&canon).map_err(|e| format!("cannot read snapshot: {}", e))?;
+    let snapshot: CostDashboardSnapshot =
+        serde_json::from_str(&content).map_err(|e| format!("invalid snapshot JSON: {}", e))?;
     let mut dashboard = CostDashboard::new();
     dashboard.restore(snapshot);
     Ok(dashboard)
@@ -1791,11 +1787,7 @@ mod tests {
 
     #[test]
     fn test_find_flag_value_present() {
-        let args: Vec<String> = vec![
-            "report".into(),
-            "--snapshot".into(),
-            "/tmp/x.json".into(),
-        ];
+        let args: Vec<String> = vec!["report".into(), "--snapshot".into(), "/tmp/x.json".into()];
         assert_eq!(find_flag_value(&args, "--snapshot"), Some("/tmp/x.json"));
     }
 
