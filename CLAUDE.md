@@ -77,6 +77,6 @@ Esto te da el contexto completo: dónde estamos, qué se ha hecho, cómo trabaja
 - [x] Sustituir LICENSE-MIT y LICENSE-APACHE por LICENSE PolyForm (hecho 22/02/2026)
 - [x] Actualizar campo `license` en Cargo.toml (hecho 22/02/2026)
 - [ ] Registrar PI en España, WIPO PROOF y Safe Creative
-- [ ] Implementar CLA en el repositorio
+- [x] Implementar CLA en el repositorio (CLA.md + CONTRIBUTING.md + GitHub Action, hecho 11/04/2026)
 - [ ] Decidir si publicar módulo básico bajo MIT como módulo open-source bajo MIT/Apache-2.0
 - [ ] Crear página web/landing con info de licencia comercial
