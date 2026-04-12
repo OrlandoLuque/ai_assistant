@@ -138,6 +138,7 @@ pub enum AiProviderKind {
     Mistral,
     Perplexity,
     OpenRouter,
+    AzureOpenAI,
 }
 
 // ---------------------------------------------------------------------------
@@ -167,6 +168,8 @@ struct Inner {
     provider_kind: Cell<AiProviderKind>,
     openai_compatible_url: RefCell<Option<String>>,
     bedrock_region: RefCell<Option<String>>,
+    azure_endpoint: RefCell<Option<String>>,
+    azure_deployment: RefCell<Option<String>>,
     /// Debug-only thread pin. 0 = unpinned; any other value is the
     /// per-thread ID stamped by [`check_thread`] on first use.
     #[cfg(debug_assertions)]
@@ -353,6 +356,24 @@ fn build_provider(inner: &Inner) -> Result<AiProvider, c_int> {
         Mistral => Ok(AiProvider::Mistral),
         Perplexity => Ok(AiProvider::Perplexity),
         OpenRouter => Ok(AiProvider::OpenRouter),
+        AzureOpenAI => {
+            let endpoint = inner.azure_endpoint.borrow().clone();
+            let deployment = inner.azure_deployment.borrow().clone();
+            match (endpoint, deployment) {
+                (Some(e), Some(d)) => Ok(AiProvider::AzureOpenAI {
+                    endpoint: e,
+                    deployment: d,
+                }),
+                (None, _) => {
+                    set_last_error("AzureOpenAI requires prior ai_assistant_set_azure_endpoint");
+                    Err(E_UNKNOWN_PROVIDER)
+                }
+                (_, None) => {
+                    set_last_error("AzureOpenAI requires prior ai_assistant_set_azure_deployment");
+                    Err(E_UNKNOWN_PROVIDER)
+                }
+            }
+        }
     }
 }
 
@@ -363,6 +384,8 @@ fn make_handle(assistant: AiAssistant) -> *mut AiAssistantHandle {
         provider_kind: Cell::new(AiProviderKind::Ollama),
         openai_compatible_url: RefCell::new(None),
         bedrock_region: RefCell::new(None),
+        azure_endpoint: RefCell::new(None),
+        azure_deployment: RefCell::new(None),
         #[cfg(debug_assertions)]
         owner_thread: AtomicU64::new(0),
     };
@@ -559,6 +582,70 @@ pub unsafe extern "C" fn ai_assistant_set_bedrock_region(
             }
         };
         *inner.bedrock_region.borrow_mut() = Some(s.to_string());
+        clear_last_error();
+        OK
+    })
+}
+
+/// Sets the Azure OpenAI endpoint URL (e.g. `https://my-resource.openai.azure.com`).
+///
+/// Must be called before `ai_assistant_send_message` when the provider is
+/// `AiProviderKind::AzureOpenAI`.
+#[no_mangle]
+pub unsafe extern "C" fn ai_assistant_set_azure_endpoint(
+    handle: *mut AiAssistantHandle,
+    endpoint: *const c_char,
+) -> c_int {
+    guard("ai_assistant_set_azure_endpoint", || {
+        let Some(inner) = handle_to_inner(handle) else {
+            set_last_error("handle is null");
+            return E_NULL_PTR;
+        };
+        check_thread(inner);
+        let s = match cstr_to_str(endpoint) {
+            Ok(s) => s,
+            Err(rc) => {
+                set_last_error(if rc == E_NULL_PTR {
+                    "endpoint is null"
+                } else {
+                    "endpoint is not valid UTF-8"
+                });
+                return rc;
+            }
+        };
+        *inner.azure_endpoint.borrow_mut() = Some(s.to_string());
+        clear_last_error();
+        OK
+    })
+}
+
+/// Sets the Azure OpenAI deployment name (e.g. `gpt-4o`).
+///
+/// Must be called before `ai_assistant_send_message` when the provider is
+/// `AiProviderKind::AzureOpenAI`.
+#[no_mangle]
+pub unsafe extern "C" fn ai_assistant_set_azure_deployment(
+    handle: *mut AiAssistantHandle,
+    deployment: *const c_char,
+) -> c_int {
+    guard("ai_assistant_set_azure_deployment", || {
+        let Some(inner) = handle_to_inner(handle) else {
+            set_last_error("handle is null");
+            return E_NULL_PTR;
+        };
+        check_thread(inner);
+        let s = match cstr_to_str(deployment) {
+            Ok(s) => s,
+            Err(rc) => {
+                set_last_error(if rc == E_NULL_PTR {
+                    "deployment is null"
+                } else {
+                    "deployment is not valid UTF-8"
+                });
+                return rc;
+            }
+        };
+        *inner.azure_deployment.borrow_mut() = Some(s.to_string());
         clear_last_error();
         OK
     })
@@ -1369,5 +1456,52 @@ mod tests {
     #[ignore]
     fn test_double_free_is_documented_not_safe() {
         // Intentionally never runs: would be UB.
+    }
+
+    #[test]
+    fn test_set_azure_endpoint_happy_path() {
+        unsafe {
+            let h = ai_assistant_new();
+            assert!(!h.is_null());
+            let ep = c"https://my-resource.openai.azure.com";
+            let rc = ai_assistant_set_azure_endpoint(h, ep.as_ptr());
+            assert_eq!(rc, OK);
+            ai_assistant_free(h);
+        }
+    }
+
+    #[test]
+    fn test_set_azure_deployment_happy_path() {
+        unsafe {
+            let h = ai_assistant_new();
+            assert!(!h.is_null());
+            let dep = c"gpt-4o";
+            let rc = ai_assistant_set_azure_deployment(h, dep.as_ptr());
+            assert_eq!(rc, OK);
+            ai_assistant_free(h);
+        }
+    }
+
+    #[test]
+    fn test_azure_provider_requires_both_setters() {
+        unsafe {
+            let h = ai_assistant_new();
+            assert!(!h.is_null());
+            // Set provider to AzureOpenAI but only set endpoint — missing deployment
+            ai_assistant_set_provider(h, AiProviderKind::AzureOpenAI);
+            let ep = c"https://my-resource.openai.azure.com";
+            ai_assistant_set_azure_endpoint(h, ep.as_ptr());
+            // Trigger build_provider indirectly — can't call send_message without
+            // a real server, but we can test build_provider directly.
+            let inner = &*(h as *const Inner);
+            let result = build_provider(inner);
+            assert!(result.is_err());
+            // Now set deployment too
+            let dep = c"gpt-4o";
+            ai_assistant_set_azure_deployment(h, dep.as_ptr());
+            let result2 = build_provider(inner);
+            assert!(result2.is_ok());
+            ai_assistant_free(h);
+        }
     }
 }

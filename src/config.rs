@@ -42,6 +42,11 @@ pub enum AiProvider {
     Perplexity,
     /// OpenRouter cloud API (OpenAI-compatible, requires API key)
     OpenRouter,
+    /// Azure OpenAI Service (requires endpoint, deployment name, and API key)
+    AzureOpenAI {
+        endpoint: String,
+        deployment: String,
+    },
 }
 
 impl Default for AiProvider {
@@ -71,6 +76,7 @@ impl AiProvider {
             AiProvider::Mistral => "Mistral AI",
             AiProvider::Perplexity => "Perplexity",
             AiProvider::OpenRouter => "OpenRouter",
+            AiProvider::AzureOpenAI { .. } => "Azure OpenAI",
         }
     }
 
@@ -94,6 +100,7 @@ impl AiProvider {
             AiProvider::Mistral => "🌬️",
             AiProvider::Perplexity => "🔮",
             AiProvider::OpenRouter => "🔀",
+            AiProvider::AzureOpenAI { .. } => "☁️",
         }
     }
 
@@ -113,6 +120,7 @@ impl AiProvider {
                 | AiProvider::Mistral
                 | AiProvider::Perplexity
                 | AiProvider::OpenRouter
+                | AiProvider::AzureOpenAI { .. }
         )
     }
 
@@ -131,6 +139,7 @@ impl AiProvider {
                 | AiProvider::Mistral
                 | AiProvider::Perplexity
                 | AiProvider::OpenRouter
+                | AiProvider::AzureOpenAI { .. }
         )
     }
 }
@@ -241,6 +250,7 @@ impl AiConfig {
             AiProvider::Mistral => "https://api.mistral.ai".to_string(),
             AiProvider::Perplexity => "https://api.perplexity.ai".to_string(),
             AiProvider::OpenRouter => "https://openrouter.ai/api".to_string(),
+            AiProvider::AzureOpenAI { ref endpoint, .. } => endpoint.clone(),
         }
     }
 
@@ -274,6 +284,7 @@ impl AiConfig {
             AiProvider::Mistral => std::env::var("MISTRAL_API_KEY").ok(),
             AiProvider::Perplexity => std::env::var("PERPLEXITY_API_KEY").ok(),
             AiProvider::OpenRouter => std::env::var("OPENROUTER_API_KEY").ok(),
+            AiProvider::AzureOpenAI { .. } => std::env::var("AZURE_OPENAI_API_KEY").ok(),
             _ => None,
         }
     }
@@ -384,5 +395,45 @@ mod tests {
     fn test_config_temperature_default() {
         let config = AiConfig::default();
         assert!(config.temperature >= 0.0 && config.temperature <= 2.0);
+    }
+
+    #[test]
+    fn test_azure_openai_display_name() {
+        let p = AiProvider::AzureOpenAI {
+            endpoint: "https://x.openai.azure.com".into(),
+            deployment: "gpt-4o".into(),
+        };
+        assert_eq!(p.display_name(), "Azure OpenAI");
+    }
+
+    #[test]
+    fn test_azure_openai_is_cloud() {
+        let p = AiProvider::AzureOpenAI {
+            endpoint: "https://x.openai.azure.com".into(),
+            deployment: "gpt-4o".into(),
+        };
+        assert!(p.is_cloud());
+    }
+
+    #[test]
+    fn test_azure_openai_is_openai_compatible() {
+        let p = AiProvider::AzureOpenAI {
+            endpoint: "https://x.openai.azure.com".into(),
+            deployment: "gpt-4o".into(),
+        };
+        assert!(p.is_openai_compatible());
+    }
+
+    #[test]
+    fn test_azure_openai_get_api_key_env_fallback() {
+        let config = AiConfig {
+            provider: AiProvider::AzureOpenAI {
+                endpoint: "https://x.openai.azure.com".into(),
+                deployment: "gpt-4o".into(),
+            },
+            api_key: "my-azure-key".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(config.get_api_key(), Some("my-azure-key".to_string()));
     }
 }

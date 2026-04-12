@@ -623,6 +623,23 @@ impl ConfigFile {
             "mistral" => AiProvider::Mistral,
             "perplexity" => AiProvider::Perplexity,
             "openrouter" => AiProvider::OpenRouter,
+            "azure" | "azure_openai" => {
+                let endpoint = self
+                    .provider
+                    .custom_url
+                    .clone()
+                    .or_else(|| std::env::var("AZURE_OPENAI_ENDPOINT").ok())
+                    .unwrap_or_default();
+                let deployment = if self.provider.model.is_empty() {
+                    std::env::var("AZURE_OPENAI_DEPLOYMENT").unwrap_or_default()
+                } else {
+                    self.provider.model.clone()
+                };
+                AiProvider::AzureOpenAI {
+                    endpoint,
+                    deployment,
+                }
+            }
             _ => AiProvider::Ollama,
         };
 
@@ -664,6 +681,10 @@ impl ConfigFile {
             AiProvider::Mistral => ("mistral".to_string(), None),
             AiProvider::Perplexity => ("perplexity".to_string(), None),
             AiProvider::OpenRouter => ("openrouter".to_string(), None),
+            AiProvider::AzureOpenAI {
+                ref endpoint,
+                deployment: _,
+            } => ("azure_openai".to_string(), Some(endpoint.clone())),
         };
 
         Self {

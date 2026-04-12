@@ -15,7 +15,7 @@ Esto te da el contexto completo: dónde estamos, qué se ha hecho, cómo trabaja
 - **Feature flags**: 60 (core, multi-agent, security, analytics, rag, distributed, autonomous, gui-pro, audio-io, gpu-sharing, etc.)
 
 ## Módulos Principales
-- Multi-proveedor LLM: Ollama, LM Studio, OpenAI, Anthropic, Gemini, Bedrock, HuggingFace, y más
+- Multi-proveedor LLM (18): Ollama, LM Studio, OpenAI, Anthropic, Gemini, Azure OpenAI, Bedrock, Groq, Together AI, Fireworks, DeepSeek, Mistral, Perplexity, OpenRouter, HuggingFace, LocalAI, Kobold.cpp, text-gen-webui
 - RAG 5 niveles: Self-RAG, CRAG, Graph RAG, RAPTOR — 7 backends vector DB
 - Multi-agente: 5 roles, orquestación, memoria compartida
 - Agente autónomo: 5 niveles autonomía, scheduler cron, browser automation (CDP)

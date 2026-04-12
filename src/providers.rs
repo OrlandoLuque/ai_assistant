@@ -667,6 +667,12 @@ pub fn generate_response_streaming(
         | AiProvider::OpenRouter => {
             generate_openai_streaming(config, conversation, system_prompt, tx)
         }
+        AiProvider::AzureOpenAI { .. } => crate::cloud_providers::generate_azure_openai_streaming(
+            config,
+            conversation,
+            system_prompt,
+            tx,
+        ),
         AiProvider::Gemini => {
             // Gemini uses its own API format, not OpenAI-compatible
             log::info!(
@@ -773,6 +779,9 @@ pub fn generate_response(
         | AiProvider::Mistral
         | AiProvider::Perplexity
         | AiProvider::OpenRouter => generate_openai_response(config, conversation, system_prompt),
+        AiProvider::AzureOpenAI { .. } => {
+            crate::cloud_providers::generate_azure_openai_cloud(config, conversation, system_prompt)
+        }
         AiProvider::Gemini => {
             crate::cloud_providers::generate_gemini_cloud(config, conversation, system_prompt)
         }
@@ -1080,6 +1089,22 @@ pub fn generate_response_streaming_cancellable(
             tx,
             cancel_token,
         ),
+        AiProvider::AzureOpenAI { .. } => {
+            if cancel_token.is_cancelled() {
+                log::info!(
+                    "[llm] provider=AzureOpenAI model={} status=cancelled reason=pre_azure_call",
+                    config.selected_model
+                );
+                let _ = tx.send(AiResponse::Cancelled(String::new()));
+                return Ok(());
+            }
+            crate::cloud_providers::generate_azure_openai_streaming(
+                config,
+                conversation,
+                system_prompt,
+                tx,
+            )
+        }
         AiProvider::Gemini => {
             if cancel_token.is_cancelled() {
                 log::info!(
@@ -1194,6 +1219,17 @@ pub fn fetch_model_context_size(config: &AiConfig, model_name: &str) -> Option<u
         },
         AiProvider::Perplexity => Some(128_000),
         AiProvider::OpenRouter => Some(128_000),
+        AiProvider::AzureOpenAI { .. } => {
+            // Azure OpenAI uses same models as OpenAI — same context sizes
+            match model_name {
+                m if m.starts_with("gpt-4o") => Some(128_000),
+                m if m.starts_with("gpt-4-turbo") => Some(128_000),
+                m if m.starts_with("gpt-4") => Some(8_192),
+                m if m.starts_with("gpt-35") || m.starts_with("gpt-3.5") => Some(16_385),
+                m if m.starts_with("o1") || m.starts_with("o3") => Some(200_000),
+                _ => Some(128_000),
+            }
+        }
     }
 }
 

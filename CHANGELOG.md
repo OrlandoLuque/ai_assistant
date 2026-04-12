@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v36 (2026-04-11) — V80: Azure OpenAI as first-class provider
+
+### Added
+- **Azure OpenAI Service (V80)** — first-class provider with dedicated
+  `AiProvider::AzureOpenAI { endpoint, deployment }` variant. Uses the
+  correct `api-key` header (NOT `Authorization: Bearer`) and Azure-specific
+  URL pattern (`{endpoint}/openai/deployments/{deployment}/chat/completions?api-version=2024-10-21`).
+  - Blocking + streaming + cancellable dispatch paths.
+  - Config file support: `provider = "azure"` or `"azure_openai"`.
+  - Env var fallback: `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`,
+    `AZURE_OPENAI_DEPLOYMENT`.
+  - FFI bindings: `AiProviderKind::AzureOpenAI` + companion setters
+    `ai_assistant_set_azure_endpoint` / `ai_assistant_set_azure_deployment`.
+  - Static model list: gpt-4o, gpt-4o-mini, gpt-4, gpt-4-turbo,
+    gpt-35-turbo, o1, o1-mini, o3-mini.
+  - 12 new tests (config, cloud_providers, FFI, cross-crate integration).
+
 ## [Unreleased] - v35 (2026-04-11) — V79: C FFI bindings
 
 ### Added
@@ -39,11 +56,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`AI_OK`, `AI_ERR_NULL_PTR`, `AI_ERR_INVALID_UTF8`, `AI_ERR_PANIC`,
   `AI_ERR_POISONED`, `AI_ERR_INTERNAL`, `AI_ERR_UNKNOWN_PROVIDER`,
   `AI_ERR_SEND_FAILED`, `AI_ERR_NO_RESPONSE`).
-- **Flat `AiProviderKind` C enum** — 17 unit variants mirroring the
+- **Flat `AiProviderKind` C enum** — 18 unit variants mirroring the
   Rust `AiProvider` positionally. Data-bearing variants
-  (`OpenAICompatible`, `Bedrock`) are configured via companion
-  setters. The Rust→FFI converter uses an **exhaustive match** so
-  adding a Rust variant forces a compile error in `src/ffi.rs`.
+  (`OpenAICompatible`, `Bedrock`, `AzureOpenAI`) are configured via
+  companion setters. The Rust→FFI converter uses an **exhaustive
+  match** so adding a Rust variant forces a compile error in `src/ffi.rs`.
 - **`build.rs`** — extended from Windows-icon-embedding-only to also
   invoke `cbindgen` and regenerate `include/ai_assistant.h` when
   building with `--features ffi`. Emits a `cargo:warning` on the

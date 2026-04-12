@@ -135,6 +135,13 @@ colleagues can use, with role-based access control **and** server-side
 PII redaction, budget enforcement, and audit logging — without bolting
 middlewares on top of every deployment.
 
+**Azure OpenAI note (V80).** The upstream server supports Azure OpenAI
+as a first-class provider. Set `provider = "azure_openai"` in your config,
+or pass `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, and
+`AZURE_OPENAI_DEPLOYMENT` as environment variables. Azure uses the
+`api-key` header (not Bearer) and the Azure-specific deployment URL
+automatically.
+
 **Binaries.** `ai_assistant_server` (or `ai_assistant_standalone`) as
 the upstream, **`ai_proxy` (V78)** as the hardened gateway.
 
@@ -367,7 +374,8 @@ Add `full` to unlock every provider and tool the library supports.
 ## Cross-references
 
 - [`docs/BINARIES.md`](BINARIES.md) — the 20-binary authoritative inventory.
-- [`docs/FFI.md`](FFI.md) — V79 C FFI API reference.
+- [`docs/FFI.md`](FFI.md) — V79 C FFI API reference (updated V80: Azure setters).
+- [`docs/IMPROVEMENTS_V80.md`](IMPROVEMENTS_V80.md) — V80 Azure OpenAI provider.
 - [`docs/IMPROVEMENTS_V79.md`](IMPROVEMENTS_V79.md) — V79 workstreams
   and design decisions.
 - [`docs/IMPROVEMENTS_V77.md`](IMPROVEMENTS_V77.md) — why V77 added `ai_jobs`

@@ -1,6 +1,6 @@
 # ai_assistant — C FFI (V79)
 
-V79 introduces **20 `extern "C"` entry points** that wrap
+V79 introduces **22 `extern "C"` entry points** that wrap
 [`AiAssistant`] so the library can be driven from any language with a
 C FFI bridge: C, C++, C#, Unity, Unreal, Bevy, Python (via `ctypes`),
 Lua, JavaScript (via N-API), ....
@@ -224,15 +224,16 @@ surprised silently.
 
 ## Data-bearing provider variants
 
-`AiProvider` has two variants that carry data:
+`AiProvider` has three variants that carry data:
 
 ```rust
 OpenAICompatible { base_url: String }
 Bedrock { region: String }
+AzureOpenAI { endpoint: String, deployment: String }
 ```
 
 A flat C enum cannot model this. The FFI exposes `AiProviderKind`
-with 17 unit values (matching every Rust variant positionally) and
+with 18 unit values (matching every Rust variant positionally) and
 adds **companion setters** for the carried data:
 
 ```c
@@ -243,13 +244,19 @@ ai_assistant_set_provider(h, AI_PROVIDER_KIND_OPEN_AI_COMPATIBLE);
 // Bedrock
 ai_assistant_set_bedrock_region(h, "us-east-1");
 ai_assistant_set_provider(h, AI_PROVIDER_KIND_BEDROCK);
+
+// Azure OpenAI (V80) — requires both endpoint and deployment.
+ai_assistant_set_azure_endpoint(h, "https://my-resource.openai.azure.com");
+ai_assistant_set_azure_deployment(h, "gpt-4o");
+ai_assistant_set_provider(h, AI_PROVIDER_KIND_AZURE_OPEN_AI);
 ```
 
-If you forget the companion setter, `ai_assistant_send_message`
+If you forget a companion setter, `ai_assistant_send_message`
 returns `AI_ERR_UNKNOWN_PROVIDER` with a clear last-error:
 
 ```
 OpenAICompatible requires prior ai_assistant_set_openai_compatible_url
+AzureOpenAI requires prior set_azure_endpoint
 ```
 
 The Rust side uses an **exhaustive match** on `AiProviderKind` to
@@ -280,6 +287,8 @@ int ai_assistant_set_system_prompt(AiAssistantHandle *h, const char *prompt);
 int ai_assistant_set_provider(AiAssistantHandle *h, AiProviderKind kind);
 int ai_assistant_set_openai_compatible_url(AiAssistantHandle *h, const char *url);
 int ai_assistant_set_bedrock_region(AiAssistantHandle *h, const char *region);
+int ai_assistant_set_azure_endpoint(AiAssistantHandle *h, const char *endpoint);
+int ai_assistant_set_azure_deployment(AiAssistantHandle *h, const char *deployment);
 int ai_assistant_set_model(AiAssistantHandle *h, const char *model);
 int ai_assistant_set_api_key(AiAssistantHandle *h, const char *key);
 int ai_assistant_set_ollama_url(AiAssistantHandle *h, const char *url);

@@ -35,6 +35,7 @@ pub fn resolve_api_key(config: &AiConfig) -> Result<String> {
             AiProvider::Mistral => "MISTRAL_API_KEY",
             AiProvider::Perplexity => "PERPLEXITY_API_KEY",
             AiProvider::OpenRouter => "OPENROUTER_API_KEY",
+            AiProvider::AzureOpenAI { .. } => "AZURE_OPENAI_API_KEY",
             _ => "API_KEY",
         };
         anyhow::anyhow!(
@@ -322,6 +323,193 @@ pub fn fetch_gemini_cloud_models() -> Vec<String> {
 }
 
 // ============================================================================
+// Azure OpenAI Cloud
+// ============================================================================
+
+/// Build the Azure OpenAI chat completions URL.
+///
+/// Format: `{endpoint}/openai/deployments/{deployment}/chat/completions?api-version=2024-10-21`
+fn azure_openai_url(endpoint: &str, deployment: &str) -> String {
+    format!(
+        "{}/openai/deployments/{}/chat/completions?api-version=2024-10-21",
+        endpoint.trim_end_matches('/'),
+        deployment
+    )
+}
+
+/// Generate a non-streaming response from Azure OpenAI Service.
+///
+/// Uses `api-key` header authentication (NOT `Authorization: Bearer`).
+/// The request/response JSON format is identical to standard OpenAI.
+pub fn generate_azure_openai_cloud(
+    config: &AiConfig,
+    messages: &[ChatMessage],
+    system_prompt: &str,
+) -> Result<String> {
+    let api_key = resolve_api_key(config)?;
+    let (endpoint, deployment) = match &config.provider {
+        AiProvider::AzureOpenAI {
+            endpoint,
+            deployment,
+        } => (endpoint.as_str(), deployment.as_str()),
+        _ => anyhow::bail!("generate_azure_openai_cloud called with non-Azure provider"),
+    };
+    let url = azure_openai_url(endpoint, deployment);
+
+    let mut api_messages = Vec::new();
+    if !system_prompt.is_empty() {
+        api_messages.push(serde_json::json!({
+            "role": "system",
+            "content": system_prompt,
+        }));
+    }
+    for msg in messages {
+        api_messages.push(serde_json::json!({
+            "role": msg.role,
+            "content": msg.content,
+        }));
+    }
+
+    let body = serde_json::json!({
+        "model": config.selected_model,
+        "messages": api_messages,
+        "temperature": config.temperature,
+    });
+
+    let response = ureq::post(&url)
+        .set("api-key", &api_key)
+        .set("Content-Type", "application/json")
+        .timeout(std::time::Duration::from_secs(120))
+        .send_json(&body)
+        .context("Azure OpenAI API request failed")?;
+
+    let json: serde_json::Value = response
+        .into_json()
+        .context("Failed to parse Azure OpenAI response")?;
+
+    json.get("choices")
+        .and_then(|c| c.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|c| c.get("message"))
+        .and_then(|m| m.get("content"))
+        .and_then(|c| c.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow::anyhow!("Unexpected Azure OpenAI response format"))
+}
+
+/// Generate a streaming response from Azure OpenAI Service.
+///
+/// Uses the same `api-key` header and Azure URL format as the blocking variant.
+/// SSE chunks are parsed identically to standard OpenAI streaming.
+pub fn generate_azure_openai_streaming(
+    config: &AiConfig,
+    messages: &[ChatMessage],
+    system_prompt: &str,
+    tx: &std::sync::mpsc::Sender<crate::messages::AiResponse>,
+) -> Result<()> {
+    let api_key = resolve_api_key(config)?;
+    let (endpoint, deployment) = match &config.provider {
+        AiProvider::AzureOpenAI {
+            endpoint,
+            deployment,
+        } => (endpoint.as_str(), deployment.as_str()),
+        _ => anyhow::bail!("generate_azure_openai_streaming called with non-Azure provider"),
+    };
+    let url = azure_openai_url(endpoint, deployment);
+
+    let mut api_messages = Vec::new();
+    if !system_prompt.is_empty() {
+        api_messages.push(serde_json::json!({
+            "role": "system",
+            "content": system_prompt,
+        }));
+    }
+    for msg in messages {
+        api_messages.push(serde_json::json!({
+            "role": msg.role,
+            "content": msg.content,
+        }));
+    }
+
+    let body = serde_json::json!({
+        "model": config.selected_model,
+        "messages": api_messages,
+        "temperature": config.temperature,
+        "stream": true,
+    });
+
+    let response = ureq::post(&url)
+        .set("api-key", &api_key)
+        .set("Content-Type", "application/json")
+        .timeout(std::time::Duration::from_secs(300))
+        .send_json(&body)
+        .context("Azure OpenAI streaming request failed")?;
+
+    let reader = std::io::BufReader::new(response.into_reader());
+    let mut full_response = String::new();
+
+    use std::io::BufRead;
+    for line in reader.lines() {
+        let line = line.context("Failed to read Azure OpenAI streaming line")?;
+
+        if line.is_empty() || line == "data: [DONE]" {
+            continue;
+        }
+
+        let json_str = if let Some(stripped) = line.strip_prefix("data: ") {
+            stripped
+        } else {
+            &line
+        };
+
+        if let Ok(chunk) = serde_json::from_str::<serde_json::Value>(json_str) {
+            if let Some(content) = chunk
+                .get("choices")
+                .and_then(|c| c.get(0))
+                .and_then(|c| c.get("delta"))
+                .and_then(|d| d.get("content"))
+                .and_then(|c| c.as_str())
+            {
+                if !content.is_empty() {
+                    full_response.push_str(content);
+                    let _ = tx.send(crate::messages::AiResponse::Chunk(content.to_string()));
+                }
+            }
+
+            if let Some(finish) = chunk
+                .get("choices")
+                .and_then(|c| c.get(0))
+                .and_then(|c| c.get("finish_reason"))
+            {
+                if !finish.is_null() {
+                    break;
+                }
+            }
+        }
+    }
+
+    let _ = tx.send(crate::messages::AiResponse::Complete(full_response));
+    Ok(())
+}
+
+/// Fetch available models for Azure OpenAI (returns known model list).
+///
+/// Azure doesn't expose a standard `/v1/models` endpoint with `api-key` auth,
+/// so we return the well-known deployment model IDs.
+pub fn fetch_azure_openai_models() -> Vec<String> {
+    vec![
+        "gpt-4o".to_string(),
+        "gpt-4o-mini".to_string(),
+        "gpt-4".to_string(),
+        "gpt-4-turbo".to_string(),
+        "gpt-35-turbo".to_string(),
+        "o1".to_string(),
+        "o1-mini".to_string(),
+        "o3-mini".to_string(),
+    ]
+}
+
+// ============================================================================
 // Unified Cloud Interface
 // ============================================================================
 
@@ -345,6 +533,9 @@ pub fn generate_cloud_response(
         | AiProvider::Mistral
         | AiProvider::Perplexity
         | AiProvider::OpenRouter => generate_openai_cloud(config, messages, system_prompt),
+        AiProvider::AzureOpenAI { .. } => {
+            generate_azure_openai_cloud(config, messages, system_prompt)
+        }
         AiProvider::Bedrock { .. } => {
             anyhow::bail!("AWS Bedrock requires the `aws-bedrock` feature flag.")
         }
@@ -409,6 +600,7 @@ pub fn fetch_cloud_models(config: &AiConfig) -> Result<Vec<String>> {
             "meta-llama/llama-3.1-70b-instruct".to_string(),
             "google/gemini-2.0-flash-001".to_string(),
         ]),
+        AiProvider::AzureOpenAI { .. } => Ok(fetch_azure_openai_models()),
         _ => anyhow::bail!(
             "{} is not a cloud provider.",
             config.provider.display_name()
@@ -627,5 +819,39 @@ mod tests {
         };
         let key = resolve_api_key(&config).unwrap();
         assert_eq!(key, "aws-key");
+    }
+
+    #[test]
+    fn test_azure_openai_url_construction() {
+        let url = azure_openai_url("https://my-resource.openai.azure.com", "gpt-4o");
+        assert_eq!(
+            url,
+            "https://my-resource.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-10-21"
+        );
+        // Trailing slash on endpoint should be stripped
+        let url2 = azure_openai_url("https://my-resource.openai.azure.com/", "gpt-4o");
+        assert_eq!(url, url2);
+    }
+
+    #[test]
+    fn test_azure_openai_unreachable_returns_err() {
+        let config = AiConfig {
+            provider: AiProvider::AzureOpenAI {
+                endpoint: "http://127.0.0.1:1".to_string(),
+                deployment: "gpt-4o".to_string(),
+            },
+            api_key: "fake-key".to_string(),
+            selected_model: "gpt-4o".to_string(),
+            ..Default::default()
+        };
+        let result = generate_azure_openai_cloud(&config, &[], "");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_fetch_azure_openai_models() {
+        let models = fetch_azure_openai_models();
+        assert!(!models.is_empty());
+        assert!(models.iter().any(|m| m.contains("gpt-4o")));
     }
 }

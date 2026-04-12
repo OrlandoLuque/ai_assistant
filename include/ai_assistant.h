@@ -43,6 +43,7 @@ typedef enum AiProviderKind {
   AI_PROVIDER_KIND_MISTRAL,
   AI_PROVIDER_KIND_PERPLEXITY,
   AI_PROVIDER_KIND_OPEN_ROUTER,
+  AI_PROVIDER_KIND_AZURE_OPEN_AI,
 } AiProviderKind;
 
 /**
@@ -158,6 +159,22 @@ extern const int AI_ERR_NO_RESPONSE;
  * `ai_assistant_set_provider`.
  */
  int ai_assistant_set_bedrock_region(struct AiAssistantHandle *handle, const char *region) ;
+
+/**
+ * Sets the Azure OpenAI endpoint URL (e.g. `https://my-resource.openai.azure.com`).
+ *
+ * Must be called before `ai_assistant_send_message` when the provider is
+ * `AiProviderKind::AzureOpenAI`.
+ */
+ int ai_assistant_set_azure_endpoint(struct AiAssistantHandle *handle, const char *endpoint) ;
+
+/**
+ * Sets the Azure OpenAI deployment name (e.g. `gpt-4o`).
+ *
+ * Must be called before `ai_assistant_send_message` when the provider is
+ * `AiProviderKind::AzureOpenAI`.
+ */
+ int ai_assistant_set_azure_deployment(struct AiAssistantHandle *handle, const char *deployment) ;
 
 /**
  * Sets the selected model name.

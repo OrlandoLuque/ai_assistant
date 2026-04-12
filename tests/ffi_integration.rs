@@ -11,9 +11,10 @@
 
 use ai_assistant::ffi::{
     ai_assistant_abi_version, ai_assistant_free, ai_assistant_free_string, ai_assistant_last_error,
-    ai_assistant_new, ai_assistant_new_with_prompt, ai_assistant_set_max_history,
-    ai_assistant_set_model, ai_assistant_set_provider, ai_assistant_set_system_prompt,
-    ai_assistant_set_temperature, ai_assistant_version, AiProviderKind,
+    ai_assistant_new, ai_assistant_new_with_prompt, ai_assistant_set_azure_deployment,
+    ai_assistant_set_azure_endpoint, ai_assistant_set_max_history, ai_assistant_set_model,
+    ai_assistant_set_provider, ai_assistant_set_system_prompt, ai_assistant_set_temperature,
+    ai_assistant_version, AiProviderKind,
 };
 use std::ffi::{CStr, CString};
 use std::ptr;
@@ -67,6 +68,20 @@ fn temperature_strict_reject_from_another_crate() {
         assert_eq!(ai_assistant_set_temperature(h, f32::NAN), -5);
         assert_eq!(ai_assistant_set_temperature(h, 3.0), -5);
         assert_eq!(ai_assistant_set_temperature(h, 0.9), 0);
+        ai_assistant_free(h);
+    }
+}
+
+#[test]
+fn azure_provider_kind_exists() {
+    unsafe {
+        let h = ai_assistant_new();
+        assert!(!h.is_null());
+        assert_eq!(ai_assistant_set_provider(h, AiProviderKind::AzureOpenAI), 0);
+        let ep = CString::new("https://my-resource.openai.azure.com").unwrap();
+        assert_eq!(ai_assistant_set_azure_endpoint(h, ep.as_ptr()), 0);
+        let dep = CString::new("gpt-4o").unwrap();
+        assert_eq!(ai_assistant_set_azure_deployment(h, dep.as_ptr()), 0);
         ai_assistant_free(h);
     }
 }

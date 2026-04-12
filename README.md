@@ -4,7 +4,7 @@
 
 # ai_assistant
 
-A comprehensive Rust library for LLM integration — local and cloud. 13+ providers, 5-tier RAG, multi-agent orchestration, autonomous agents, distributed computing, and 40+ MCP tools. Single crate, zero-runtime, ~386K LOC.
+A comprehensive Rust library for LLM integration — local and cloud. 18 providers, 5-tier RAG, multi-agent orchestration, autonomous agents, distributed computing, and 40+ MCP tools. Single crate, zero-runtime, ~410K LOC.
 
 ![Rust](https://img.shields.io/badge/Rust-Edition%202021-orange)
 ![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)
@@ -59,7 +59,7 @@ cargo build --release --bin ai_assistant_cli --features "full,butler"
 ## Features
 
 ### Core Features
-- **Multi-provider support**: 13+ LLM providers — Ollama, LM Studio, OpenAI, Anthropic, Google Gemini, Mistral, HuggingFace, AWS Bedrock, DeepSeek, Groq, Together AI, and any OpenAI-compatible API
+- **Multi-provider support**: 18 LLM providers — Ollama, LM Studio, OpenAI, Anthropic, Google Gemini, Azure OpenAI, AWS Bedrock, Mistral, DeepSeek, Groq, Together AI, Fireworks, Perplexity, OpenRouter, HuggingFace, LocalAI, Kobold.cpp, text-generation-webui, and any OpenAI-compatible API
 - **Provider failover**: Automatic fallback with configurable retry and API key rotation
 - **Streaming responses**: Real-time SSE and WebSocket (RFC 6455) streaming with cancellation support
 - **Resumable streaming**: Checkpoint/replay for long-running generations with `Last-Event-ID`
@@ -494,11 +494,15 @@ assistant.load_config(config);
 | DeepSeek (cloud) | OpenAI-compatible | `https://api.deepseek.com` | Yes |
 | Groq (cloud) | OpenAI-compatible | `https://api.groq.com/openai` | Yes |
 | Together AI (cloud) | OpenAI-compatible | `https://api.together.xyz` | Yes |
+| Fireworks AI (cloud) | OpenAI-compatible | `https://api.fireworks.ai/inference` | Yes |
+| Perplexity (cloud) | OpenAI-compatible | `https://api.perplexity.ai` | Yes |
+| OpenRouter (cloud) | OpenAI-compatible | `https://openrouter.ai/api` | Yes |
+| Azure OpenAI (cloud) | Native (api-key) | `{endpoint}/openai/deployments/{deployment}` | Yes |
 | Custom | OpenAI-compatible | User-defined | Yes |
 
 *Kobold.cpp falls back to non-streaming responses.
 
-Cloud providers require API keys. Set them via `AiConfig.api_key` or environment variables (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, etc.).
+Cloud providers require API keys. Set them via `AiConfig.api_key` or environment variables (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `AZURE_OPENAI_API_KEY`, etc.).
 
 ## Known Model Context Sizes
 
