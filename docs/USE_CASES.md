@@ -352,8 +352,13 @@ Add `full` to unlock every provider and tool the library supports.
 **See also.**
 
 - [`docs/FFI.md`](FFI.md) — full API reference
-- [`examples/ffi_c/`](../examples/ffi_c/) — complete C example with
-  per-platform build instructions
+- [`examples/ffi_c/`](../examples/ffi_c/) — C example with per-platform
+  build instructions
+- [`examples/ffi_python/`](../examples/ffi_python/) — Python example
+  (ctypes, zero-dep)
+- [`examples/ffi_node/`](../examples/ffi_node/) — Node.js example
+  (koffi, pure-JS FFI bridge)
+- [`examples/ffi_java/`](../examples/ffi_java/) — Java example (JNA)
 - [`docs/BINARIES.md`](BINARIES.md#library-artifacts-v79-new) —
   library artifact naming per platform
 

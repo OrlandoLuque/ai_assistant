@@ -52,10 +52,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`cbindgen.toml`** — new config file at repo root. Restricts
   emitted item types to functions/globals/enums/structs to keep
   cross-crate `pub const` definitions out of the FFI header.
-- **C example** — `examples/ffi_c/main.c` (~90 LOC NPC-style driver)
-  + `examples/ffi_c/README.md` with per-platform build instructions
-  (Linux, macOS, Windows MSVC, Windows GNU) and a library-naming
-  reference table.
+- **FFI examples** in four languages:
+  - **C**: `examples/ffi_c/main.c` (~90 LOC NPC-style driver) + README
+    with per-platform build instructions and library-naming table.
+  - **Python** (ctypes): `examples/ffi_python/main.py` — zero-dep,
+    uses the standard library's `ctypes`. Includes blocking + streaming.
+  - **Node.js** (koffi): `examples/ffi_node/index.js` — pure-JS FFI
+    bridge, no native compilation step. Includes blocking + streaming.
+  - **Java** (JNA): `examples/ffi_java/AiAssistantDemo.java` — zero-JNI,
+    standard `com.sun.jna` mapping. Includes blocking + streaming.
 - **Documentation**:
   - `docs/FFI.md` — 350+ line API reference with threading,
     memory, error, security, and build sections.

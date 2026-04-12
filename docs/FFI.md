@@ -57,9 +57,16 @@ int main(void) {
 }
 ```
 
-Full working example: [`examples/ffi_c/main.c`](../examples/ffi_c/main.c)
-with cross-platform build instructions in
-[`examples/ffi_c/README.md`](../examples/ffi_c/README.md).
+Full working examples:
+
+- **C**: [`examples/ffi_c/main.c`](../examples/ffi_c/main.c)
+  ([README](../examples/ffi_c/README.md))
+- **Python** (ctypes): [`examples/ffi_python/main.py`](../examples/ffi_python/main.py)
+  ([README](../examples/ffi_python/README.md))
+- **Node.js** (koffi): [`examples/ffi_node/index.js`](../examples/ffi_node/index.js)
+  ([README](../examples/ffi_node/README.md))
+- **Java** (JNA): [`examples/ffi_java/AiAssistantDemo.java`](../examples/ffi_java/AiAssistantDemo.java)
+  ([README](../examples/ffi_java/README.md))
 
 ## Design principles
 
@@ -411,10 +418,11 @@ Tier 2 and beyond:
 - Fallback provider chain configuration
 - Cancellation tokens (`ai_assistant_cancel`)
 - MCP tool-calling with C callback registration
-- PyO3 Python bindings
+- PyO3 Python bindings (native, beyond the ctypes example)
 - Unity / Unreal / Bevy sample projects
 - Async FFI (tokio-style callbacks)
 - C# P/Invoke sample project
+- Go (cgo) example
 - CI header-drift check (diff generated vs committed)
 - Valgrind / ASAN integration in test suite
 - C++ RAII wrapper headers

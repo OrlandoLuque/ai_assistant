@@ -1,0 +1,13 @@
+{
+  "name": "ai-assistant-ffi-node-example",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ai_assistant V79 FFI — Node.js example using koffi",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "koffi": "^2.9.0"
+  }
+}

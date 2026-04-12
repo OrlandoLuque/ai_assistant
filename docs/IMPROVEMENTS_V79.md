@@ -140,12 +140,20 @@ pub mod ffi;
 symbols in a **separate compilation unit**. Catches missing `pub use`
 re-exports that in-module tests would miss.
 
-### WS-7. C example
+### WS-7. FFI examples (C, Python, Node.js, Java)
 
-`examples/ffi_c/main.c` — minimal NPC-style driver (~90 LOC).
-`examples/ffi_c/README.md` — cross-platform build instructions
-(Linux, macOS, Windows MSVC, Windows GNU) with a library-naming
-reference table and troubleshooting section.
+Four language examples demonstrate the full lifecycle (create → configure
+→ send → stream → free):
+
+| Language | Directory | Bridge | Build step? |
+|----------|-----------|--------|-------------|
+| **C** | `examples/ffi_c/` | Direct linking | `gcc` / `cl` |
+| **Python** | `examples/ffi_python/` | `ctypes` (stdlib) | None |
+| **Node.js** | `examples/ffi_node/` | `koffi` (pure-JS) | `npm install` |
+| **Java** | `examples/ffi_java/` | JNA | `javac` + JNA jar |
+
+Each example includes a README with per-platform instructions and
+troubleshooting.
 
 ### WS-8. Documentation
 
@@ -286,6 +294,13 @@ consistent with NaN handling.
 | `include/ai_assistant.h`                     | +275 generated | NEW  |
 | `examples/ffi_c/main.c`                      | +90            | NEW  |
 | `examples/ffi_c/README.md`                   | +115           | NEW  |
+| `examples/ffi_python/main.py`                | +185           | NEW  |
+| `examples/ffi_python/README.md`              | +75            | NEW  |
+| `examples/ffi_node/index.js`                 | +175           | NEW  |
+| `examples/ffi_node/package.json`             | +12            | NEW  |
+| `examples/ffi_node/README.md`                | +90            | NEW  |
+| `examples/ffi_java/AiAssistantDemo.java`     | +165           | NEW  |
+| `examples/ffi_java/README.md`                | +100           | NEW  |
 | `docs/FFI.md`                                | +370           | NEW  |
 | `docs/IMPROVEMENTS_V79.md`                   | +this file     | NEW  |
 | `docs/BINARIES.md`                           | +50            | EDIT |
