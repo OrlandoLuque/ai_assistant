@@ -28,6 +28,12 @@ pub enum AgentRole {
     Reviewer,
     Executor,
     Validator,
+    /// Academic research assistant — searches papers, filters, summarizes
+    ResearchAssistant,
+    /// Peer reviewer — critiques drafts, verifies claims
+    PeerReviewer,
+    /// Writing coach — improves academic writing style
+    WritingCoach,
     Custom,
 }
 

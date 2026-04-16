@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.12"
+version = "0.2.20"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -110,6 +110,9 @@ server-tls = ["dep:rustls", "dep:rustls-pemfile"]
 # RAG with SQLite FTS5 and encrypted knowledge packages
 rag = ["rusqlite", "aes-gcm"]
 
+# Research: academic search APIs (arXiv, Semantic Scholar, PubMed), BibTeX, literature review
+research = []
+
 # egui widgets for chat UI
 egui-widgets = ["egui"]
 
@@ -130,6 +133,7 @@ full = [
     "binary-storage",
     "async-runtime",
     "advanced-memory",
+    "research",
 ]
 
 # Binary storage: bincode + gzip for internal data (faster, smaller than JSON)

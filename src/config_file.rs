@@ -80,6 +80,18 @@ pub struct ConfigFile {
     /// Container/Docker management settings
     #[serde(default)]
     pub containers: ContainersConfig,
+
+    /// Anti-hallucination settings
+    #[serde(default)]
+    pub anti_hallucination: AntiHallucinationFileConfig,
+
+    /// Quality gate settings
+    #[serde(default)]
+    pub quality_gates: Vec<QualityGateFileConfig>,
+
+    /// Research settings (requires `research` feature)
+    #[serde(default)]
+    pub research: ResearchFileConfig,
 }
 
 /// Provider configuration section
@@ -479,6 +491,133 @@ impl Default for ContainersConfig {
             default_timeout_secs: default_container_timeout(),
             allowed_images: Vec::new(),
             mcp_enabled: false,
+        }
+    }
+}
+
+/// Anti-hallucination pipeline configuration (file section).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct AntiHallucinationFileConfig {
+    /// Whether the anti-hallucination pipeline is enabled (default: false).
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Ungrounded claim strategy: "mark", "omit", "warn", "footnote",
+    /// "verify-mark", "verify-omit", "ask" (default: "mark").
+    #[serde(default = "default_ah_strategy")]
+    pub strategy: String,
+
+    /// Minimum confidence for output (0.0-1.0, default: 0.3).
+    #[serde(default = "default_ah_min_confidence")]
+    pub min_confidence: f64,
+
+    /// Enable Chain-of-Verification (default: false).
+    #[serde(default)]
+    pub chain_of_verification: bool,
+
+    /// Enable faithfulness scoring (default: false).
+    #[serde(default)]
+    pub faithfulness_scoring: bool,
+
+    /// Maximum extra LLM calls for verification (default: 5).
+    #[serde(default = "default_ah_max_calls")]
+    pub max_verification_calls: usize,
+}
+
+fn default_ah_strategy() -> String {
+    "mark".to_string()
+}
+
+fn default_ah_min_confidence() -> f64 {
+    0.3
+}
+
+fn default_ah_max_calls() -> usize {
+    5
+}
+
+impl Default for AntiHallucinationFileConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            strategy: default_ah_strategy(),
+            min_confidence: default_ah_min_confidence(),
+            chain_of_verification: false,
+            faithfulness_scoring: false,
+            max_verification_calls: default_ah_max_calls(),
+        }
+    }
+}
+
+/// Quality gate configuration entry (file section).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QualityGateFileConfig {
+    /// Gate name
+    pub name: String,
+    /// Metric: "faithfulness", "confidence", "grounding_ratio",
+    /// "consistency_score", "citation_coverage"
+    pub metric: String,
+    /// Minimum threshold (0.0-1.0)
+    pub threshold: f64,
+    /// Action on failure: "fail", "warn", "log" (default: "warn")
+    #[serde(default = "default_gate_action")]
+    pub action: String,
+}
+
+fn default_gate_action() -> String {
+    "warn".to_string()
+}
+
+/// Research configuration (file section).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct ResearchFileConfig {
+    /// Semantic Scholar API key (optional, falls back to SEMANTIC_SCHOLAR_API_KEY env var)
+    #[serde(default)]
+    pub semantic_scholar_api_key: Option<String>,
+
+    /// NCBI/PubMed API key (optional, falls back to NCBI_API_KEY env var)
+    #[serde(default)]
+    pub ncbi_api_key: Option<String>,
+
+    /// Default search providers: ["arxiv", "semantic_scholar", "pubmed"]
+    #[serde(default = "default_providers")]
+    pub default_providers: Vec<String>,
+
+    /// Default max results per search (default: 10)
+    #[serde(default = "default_max_results")]
+    pub default_max_results: usize,
+
+    /// Default bibliography format: "bibtex", "apa", "mla", "chicago", "ieee"
+    #[serde(default = "default_bib_format")]
+    pub default_bibliography_format: String,
+}
+
+fn default_providers() -> Vec<String> {
+    vec![
+        "arxiv".to_string(),
+        "semantic_scholar".to_string(),
+        "pubmed".to_string(),
+    ]
+}
+
+fn default_max_results() -> usize {
+    10
+}
+
+fn default_bib_format() -> String {
+    "bibtex".to_string()
+}
+
+impl Default for ResearchFileConfig {
+    fn default() -> Self {
+        Self {
+            semantic_scholar_api_key: None,
+            ncbi_api_key: None,
+            default_providers: default_providers(),
+            default_max_results: default_max_results(),
+            default_bibliography_format: default_bib_format(),
         }
     }
 }

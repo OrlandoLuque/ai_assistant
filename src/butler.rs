@@ -1528,6 +1528,18 @@ pub struct AdvisorConfig {
     /// Active feature flags (e.g., `["full", "butler", "rag"]`).
     #[serde(default)]
     pub active_features: Vec<String>,
+    /// Whether anti-hallucination pipeline is enabled.
+    #[serde(default)]
+    pub anti_hallucination_enabled: bool,
+    /// Whether quality gates are configured.
+    #[serde(default)]
+    pub quality_gates_configured: bool,
+    /// Whether research mode is enabled.
+    #[serde(default)]
+    pub research_mode_enabled: bool,
+    /// Whether academic API keys are present in environment.
+    #[serde(default)]
+    pub academic_api_keys_present: bool,
 }
 
 // =============================================================================
@@ -1806,6 +1818,88 @@ impl<'a> ButlerAdvisor<'a> {
             feature_flag: Some("prompt-signatures".into()),
             already_enabled: self.has_feature("prompt-signatures"),
         });
+
+        // Q7: Anti-hallucination pipeline
+        recs.push(ButlerRecommendation {
+            category: OptimizationCategory::Quality,
+            priority: RecommendationPriority::High,
+            title: "Enable anti-hallucination pipeline".into(),
+            description: "The anti-hallucination pipeline validates LLM output through \
+                calibrated abstention, faithfulness scoring, and attribution checks, \
+                dramatically reducing ungrounded claims."
+                .into(),
+            action: "Set anti_hallucination.enabled = true in config".into(),
+            feature_flag: None,
+            already_enabled: self.is_enabled(|c| c.anti_hallucination_enabled),
+        });
+
+        // Q8: Faithfulness scoring
+        recs.push(ButlerRecommendation {
+            category: OptimizationCategory::Quality,
+            priority: RecommendationPriority::Medium,
+            title: "Enable faithfulness scoring".into(),
+            description: "Faithfulness scoring decomposes responses into atomic claims and \
+                verifies each against source context using NLI, catching contradictions \
+                and unsupported statements."
+                .into(),
+            action: "Set anti_hallucination.faithfulness_scoring = true".into(),
+            feature_flag: None,
+            already_enabled: self.is_enabled(|c| c.anti_hallucination_enabled),
+        });
+
+        // Q9: Quality gates
+        recs.push(ButlerRecommendation {
+            category: OptimizationCategory::Quality,
+            priority: RecommendationPriority::Medium,
+            title: "Configure quality gates".into(),
+            description: "Quality gates enforce minimum thresholds on faithfulness, \
+                confidence, and grounding ratio, blocking low-quality responses \
+                before they reach users."
+                .into(),
+            action: "Add quality gate thresholds to config".into(),
+            feature_flag: None,
+            already_enabled: self.is_enabled(|c| c.quality_gates_configured),
+        });
+
+        // Q10: Chain-of-Verification
+        recs.push(ButlerRecommendation {
+            category: OptimizationCategory::Quality,
+            priority: RecommendationPriority::Low,
+            title: "Enable Chain-of-Verification for critical queries".into(),
+            description: "CoVe generates verification questions for each claim, checks them \
+                against sources, and corrects inaccuracies. Best for high-stakes domains."
+                .into(),
+            action: "Set anti_hallucination.chain_of_verification = true".into(),
+            feature_flag: None,
+            already_enabled: self.is_enabled(|c| c.anti_hallucination_enabled),
+        });
+
+        // Q11: Academic search (research feature)
+        if self.has_feature("research") {
+            recs.push(ButlerRecommendation {
+                category: OptimizationCategory::Quality,
+                priority: RecommendationPriority::Medium,
+                title: "Configure academic search providers".into(),
+                description: "Academic search integrates arXiv, Semantic Scholar, and PubMed \
+                    for research-grade fact verification and literature review."
+                    .into(),
+                action: "Set SEMANTIC_SCHOLAR_API_KEY and NCBI_API_KEY env vars".into(),
+                feature_flag: Some("research".into()),
+                already_enabled: self.is_enabled(|c| c.academic_api_keys_present),
+            });
+
+            recs.push(ButlerRecommendation {
+                category: OptimizationCategory::Quality,
+                priority: RecommendationPriority::Low,
+                title: "Enable research mode for academic use".into(),
+                description: "Research mode enables mandatory attribution, auto-temperature \
+                    adjustment, and reranking for academic writing workflows."
+                    .into(),
+                action: "Call RagFeatures::enable_research_mode()".into(),
+                feature_flag: Some("research".into()),
+                already_enabled: self.is_enabled(|c| c.research_mode_enabled),
+            });
+        }
     }
 
     // --- Cost ---
@@ -1891,6 +1985,20 @@ impl<'a> ButlerAdvisor<'a> {
                 already_enabled: false,
             });
         }
+
+        // C6: Anti-hallucination LLM call budget
+        recs.push(ButlerRecommendation {
+            category: OptimizationCategory::Cost,
+            priority: RecommendationPriority::High,
+            title: "Set anti-hallucination LLM call budget".into(),
+            description: "With faithfulness scoring, CoVe, and fact-checking enabled, a single \
+                query can trigger 15+ extra LLM calls. Set max_verification_calls to limit cost."
+                .into(),
+            action: "Set max_antihallucination_calls to limit verification cost (default: 5)"
+                .into(),
+            feature_flag: None,
+            already_enabled: self.is_enabled(|c| c.anti_hallucination_enabled),
+        });
     }
 
     // --- Security ---
@@ -2222,6 +2330,8 @@ pub enum DeploymentScenario {
     ClusterNode,
     /// Full + autonomous + butler + browser + devtools
     DeveloperWorkstation,
+    /// Full + research — academic workstation
+    ResearchWorkstation,
     /// Everything enabled
     EnterpriseAll,
 }
@@ -2395,6 +2505,19 @@ impl Butler {
                 estimated_ram: "~100 MB".to_string(),
                 cargo_command: "cargo build --release --features \"full,autonomous,butler,browser,devtools,server-axum\"".to_string(),
             },
+            DeploymentScenario::ResearchWorkstation => CompilationProfile {
+                scenario,
+                features: vec![
+                    "full".to_string(),
+                    "research".to_string(),
+                    "autonomous".to_string(),
+                    "butler".to_string(),
+                    "server-axum".to_string(),
+                ],
+                estimated_binary_size: "~28 MB".to_string(),
+                estimated_ram: "~120 MB".to_string(),
+                cargo_command: "cargo build --release --features \"full,research,autonomous,butler,server-axum\"".to_string(),
+            },
             DeploymentScenario::EnterpriseAll => CompilationProfile {
                 scenario,
                 features: vec![
@@ -2426,6 +2549,8 @@ impl Butler {
             DeploymentScenario::ClusterNode
         } else if has("autonomous") && has("browser") && has("devtools") {
             DeploymentScenario::DeveloperWorkstation
+        } else if has("research") && has("full") {
+            DeploymentScenario::ResearchWorkstation
         } else if has("server-axum") {
             DeploymentScenario::StandaloneServer
         } else if has("rag") || has("embeddings") {
@@ -3059,6 +3184,10 @@ mod tests {
                 "containers".into(),
                 "devtools".into(),
             ],
+            anti_hallucination_enabled: true,
+            quality_gates_configured: true,
+            research_mode_enabled: false,
+            academic_api_keys_present: false,
         };
         let result = ButlerAdvisor::with_config(&report, &config).analyze();
 
@@ -3251,6 +3380,7 @@ mod tests {
             DeploymentScenario::StandaloneServer,
             DeploymentScenario::ClusterNode,
             DeploymentScenario::DeveloperWorkstation,
+            DeploymentScenario::ResearchWorkstation,
             DeploymentScenario::EnterpriseAll,
         ];
         for s in scenarios {

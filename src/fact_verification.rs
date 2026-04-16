@@ -387,6 +387,239 @@ impl Default for FactVerifierBuilder {
     }
 }
 
+// =============================================================================
+// Search-integrated verification (V83)
+// =============================================================================
+
+/// Result of search-based verification with source provenance.
+#[derive(Debug, Clone)]
+pub struct SearchVerifiedFact {
+    /// The original fact verification result
+    pub fact: VerifiedFact,
+    /// Search results used for verification
+    pub search_sources: Vec<SearchFactSource>,
+    /// Total number of search results consulted
+    pub results_consulted: usize,
+}
+
+/// A search result used as a verification source.
+#[derive(Debug, Clone)]
+pub struct SearchFactSource {
+    /// Source label (e.g., "Web: example.com", "RAG: chunk #3")
+    pub source: String,
+    /// The text snippet from the search result
+    pub snippet: String,
+    /// Relevance to the claim (0.0-1.0)
+    pub relevance: f64,
+    /// Whether this source supports the claim
+    pub supports: bool,
+}
+
+impl FactVerifier {
+    /// Verify a claim using web search results.
+    ///
+    /// `claim` — the factual claim to verify.
+    /// `search_results` — snippets from web search (title, source, snippet).
+    pub fn verify_with_search(
+        &self,
+        claim: &str,
+        search_results: &[(&str, &str, &str)], // (title, source, snippet)
+    ) -> SearchVerifiedFact {
+        let claim_lower = claim.to_lowercase();
+        let claim_words: Vec<&str> = claim_lower.split_whitespace().collect();
+
+        let mut supports = 0;
+        let mut contradicts = 0;
+        let mut search_sources = Vec::new();
+        let mut supporting_facts = Vec::new();
+
+        for (title, source, snippet) in search_results {
+            let snippet_lower = snippet.to_lowercase();
+            let snippet_words: Vec<&str> = snippet_lower.split_whitespace().collect();
+
+            // Compute word overlap
+            let overlap = claim_words
+                .iter()
+                .filter(|w| w.len() > 3)
+                .filter(|w| {
+                    snippet_words
+                        .iter()
+                        .any(|sw| sw.contains(*w) || w.contains(sw))
+                })
+                .count();
+
+            let overlap_ratio = overlap as f64 / claim_words.len().max(1) as f64;
+
+            if overlap_ratio > 0.2 {
+                // Check for negation mismatch
+                let has_neg_claim = claim_lower.contains("not ") || claim_lower.contains("never ");
+                let has_neg_source = snippet_lower.contains("not ")
+                    || snippet_lower.contains("never ")
+                    || snippet_lower.contains("false")
+                    || snippet_lower.contains("incorrect");
+
+                let source_supports = has_neg_claim == has_neg_source;
+
+                if source_supports {
+                    supports += 1;
+                    supporting_facts.push(FactSource::new(source, title, snippet));
+                } else {
+                    contradicts += 1;
+                }
+
+                search_sources.push(SearchFactSource {
+                    source: format!("Web: {}", source),
+                    snippet: snippet.to_string(),
+                    relevance: overlap_ratio,
+                    supports: source_supports,
+                });
+            }
+        }
+
+        // Determine status
+        let (status, confidence) = if supports > 0 && contradicts == 0 {
+            (
+                VerificationStatus::Verified,
+                (supports as f64 / search_results.len().max(1) as f64).min(1.0),
+            )
+        } else if contradicts > supports {
+            (
+                VerificationStatus::Contradicted,
+                contradicts as f64 / search_results.len().max(1) as f64,
+            )
+        } else if supports > 0 {
+            (
+                VerificationStatus::PartiallySupported,
+                (supports as f64 / (supports + contradicts) as f64) * 0.7,
+            )
+        } else {
+            (VerificationStatus::Unverified, 0.0)
+        };
+
+        let fact = VerifiedFact {
+            claim: claim.to_string(),
+            status,
+            confidence,
+            sources: supporting_facts,
+            explanation: Some(format!(
+                "Web search: {} supporting, {} contradicting out of {} consulted",
+                supports,
+                contradicts,
+                search_results.len()
+            )),
+            alternatives: Vec::new(),
+        };
+
+        SearchVerifiedFact {
+            fact,
+            search_sources,
+            results_consulted: search_results.len(),
+        }
+    }
+
+    /// Verify a claim using RAG chunks as evidence.
+    ///
+    /// `claim` — the factual claim to verify.
+    /// `rag_chunks` — retrieved chunks from knowledge base (chunk_id, content).
+    pub fn verify_with_rag(
+        &self,
+        claim: &str,
+        rag_chunks: &[(&str, &str)], // (chunk_id, content)
+    ) -> SearchVerifiedFact {
+        let claim_lower = claim.to_lowercase();
+        let claim_words: Vec<&str> = claim_lower.split_whitespace().collect();
+
+        let mut supports = 0;
+        let mut contradicts = 0;
+        let mut search_sources = Vec::new();
+        let mut supporting_facts = Vec::new();
+
+        for (chunk_id, content) in rag_chunks {
+            let content_lower = content.to_lowercase();
+            let content_words: Vec<&str> = content_lower.split_whitespace().collect();
+
+            let overlap = claim_words
+                .iter()
+                .filter(|w| w.len() > 3)
+                .filter(|w| {
+                    content_words
+                        .iter()
+                        .any(|cw| cw.contains(*w) || w.contains(cw))
+                })
+                .count();
+
+            let overlap_ratio = overlap as f64 / claim_words.len().max(1) as f64;
+
+            if overlap_ratio > 0.2 {
+                let has_neg_claim = claim_lower.contains("not ") || claim_lower.contains("never ");
+                let has_neg_content = content_lower.contains("not ")
+                    || content_lower.contains("never ")
+                    || content_lower.contains("false")
+                    || content_lower.contains("incorrect");
+
+                let source_supports = has_neg_claim == has_neg_content;
+
+                if source_supports {
+                    supports += 1;
+                    supporting_facts.push(FactSource::new(
+                        chunk_id,
+                        &format!("RAG chunk {}", chunk_id),
+                        content,
+                    ));
+                } else {
+                    contradicts += 1;
+                }
+
+                search_sources.push(SearchFactSource {
+                    source: format!("RAG: {}", chunk_id),
+                    snippet: content.to_string(),
+                    relevance: overlap_ratio,
+                    supports: source_supports,
+                });
+            }
+        }
+
+        let (status, confidence) = if supports > 0 && contradicts == 0 {
+            (
+                VerificationStatus::Verified,
+                (supports as f64 / rag_chunks.len().max(1) as f64).min(1.0),
+            )
+        } else if contradicts > supports {
+            (
+                VerificationStatus::Contradicted,
+                contradicts as f64 / rag_chunks.len().max(1) as f64,
+            )
+        } else if supports > 0 {
+            (
+                VerificationStatus::PartiallySupported,
+                (supports as f64 / (supports + contradicts) as f64) * 0.7,
+            )
+        } else {
+            (VerificationStatus::Unverified, 0.0)
+        };
+
+        let fact = VerifiedFact {
+            claim: claim.to_string(),
+            status,
+            confidence,
+            sources: supporting_facts,
+            explanation: Some(format!(
+                "RAG verification: {} supporting, {} contradicting out of {} chunks",
+                supports,
+                contradicts,
+                rag_chunks.len()
+            )),
+            alternatives: Vec::new(),
+        };
+
+        SearchVerifiedFact {
+            fact,
+            search_sources,
+            results_consulted: rag_chunks.len(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -508,5 +741,73 @@ mod tests {
             .build();
 
         assert_eq!(verifier.config.min_confidence, 0.8);
+    }
+
+    // === V83: verify_with_search / verify_with_rag ===
+
+    #[test]
+    fn test_verify_with_search_supported() {
+        let verifier = FactVerifier::default();
+        let results = vec![
+            (
+                "Python Wikipedia",
+                "wikipedia.org",
+                "Python is a programming language",
+            ),
+            (
+                "Python docs",
+                "python.org",
+                "Python is a high-level language",
+            ),
+        ];
+        let sv = verifier.verify_with_search("Python is a programming language", &results);
+        assert_eq!(sv.fact.status, VerificationStatus::Verified);
+        assert!(sv.fact.confidence > 0.0);
+        assert_eq!(sv.results_consulted, 2);
+    }
+
+    #[test]
+    fn test_verify_with_search_contradicted() {
+        let verifier = FactVerifier::default();
+        let results = vec![(
+            "Fact check",
+            "factcheck.org",
+            "It is not true and incorrect that the earth is flat",
+        )];
+        let sv = verifier.verify_with_search("The earth is flat", &results);
+        assert_eq!(sv.fact.status, VerificationStatus::Contradicted);
+    }
+
+    #[test]
+    fn test_verify_with_search_unverified() {
+        let verifier = FactVerifier::default();
+        let results: Vec<(&str, &str, &str)> = Vec::new();
+        let sv = verifier.verify_with_search("Some obscure claim", &results);
+        assert_eq!(sv.fact.status, VerificationStatus::Unverified);
+        assert_eq!(sv.results_consulted, 0);
+    }
+
+    #[test]
+    fn test_verify_with_rag_supported() {
+        let verifier = FactVerifier::default();
+        let chunks = vec![
+            (
+                "chunk1",
+                "Rust is a systems programming language focused on safety",
+            ),
+            ("chunk2", "Rust was first released in 2015"),
+        ];
+        let sv = verifier.verify_with_rag("Rust is a systems programming language", &chunks);
+        assert_eq!(sv.fact.status, VerificationStatus::Verified);
+        assert!(!sv.search_sources.is_empty());
+        assert!(sv.search_sources[0].source.starts_with("RAG:"));
+    }
+
+    #[test]
+    fn test_verify_with_rag_unverified() {
+        let verifier = FactVerifier::default();
+        let chunks = vec![("chunk1", "Completely unrelated content about cooking")];
+        let sv = verifier.verify_with_rag("Quantum computing uses qubits", &chunks);
+        assert_eq!(sv.fact.status, VerificationStatus::Unverified);
     }
 }

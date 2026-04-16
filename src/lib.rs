@@ -1331,6 +1331,21 @@ pub use html_extraction::{
 };
 
 // =============================================================================
+// RESEARCH FEATURE
+// =============================================================================
+
+#[cfg(feature = "research")]
+pub mod academic_search;
+#[cfg(feature = "research")]
+pub mod bibtex;
+#[cfg(feature = "research")]
+pub mod literature_review;
+#[cfg(feature = "research")]
+pub mod mcp_research_tools;
+#[cfg(feature = "research")]
+pub mod paper_metadata;
+
+// =============================================================================
 // EVAL FEATURE
 // =============================================================================
 
@@ -1339,15 +1354,21 @@ pub mod ab_testing;
 #[cfg(feature = "eval")]
 pub mod agent_eval;
 #[cfg(feature = "eval")]
+pub mod anti_hallucination;
+#[cfg(feature = "eval")]
 pub mod auto_model_selection;
 #[cfg(feature = "eval")]
 pub mod benchmark;
+#[cfg(feature = "eval")]
+pub mod chain_of_verification;
 #[cfg(feature = "eval")]
 pub mod confidence_scoring;
 #[cfg(feature = "eval")]
 pub mod cot_parsing;
 #[cfg(feature = "eval")]
 pub mod evaluation;
+#[cfg(feature = "eval")]
+pub mod faithfulness;
 #[cfg(feature = "eval")]
 pub mod fine_tuning;
 #[cfg(feature = "eval")]
@@ -1356,6 +1377,8 @@ pub mod hallucination_detection;
 pub mod model_ensemble;
 #[cfg(feature = "eval")]
 pub mod output_validation;
+#[cfg(feature = "eval")]
+pub mod quality_gates;
 #[cfg(feature = "eval")]
 pub mod red_team;
 #[cfg(feature = "eval")]

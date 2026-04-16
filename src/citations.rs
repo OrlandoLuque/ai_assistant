@@ -84,6 +84,12 @@ pub struct Source {
     pub embedding: Option<Vec<f32>>,
     /// Source type
     pub source_type: SourceType,
+    /// DOI (Digital Object Identifier) for academic papers
+    pub doi: Option<String>,
+    /// Venue (journal, conference) for academic papers
+    pub venue: Option<String>,
+    /// Citation count for academic papers
+    pub citation_count: Option<u32>,
 }
 
 /// Types of sources
@@ -104,6 +110,8 @@ pub enum SourceType {
     Database,
     /// User input/conversation
     UserInput,
+    /// Academic paper (arXiv, Semantic Scholar, PubMed, etc.)
+    AcademicPaper,
     /// Other
     Other,
 }
@@ -125,6 +133,9 @@ impl Source {
             content: content.into(),
             embedding: None,
             source_type: SourceType::Other,
+            doi: None,
+            venue: None,
+            citation_count: None,
         }
     }
 
@@ -605,6 +616,86 @@ impl Default for CitationConfigBuilder {
     }
 }
 
+// ============================================================================
+// Grounded generation helpers (V82)
+// ============================================================================
+
+/// Anchor response sentences to their best-matching source.
+///
+/// For each sentence, finds the source with the highest word overlap.
+/// Returns a list of `(sentence, Option<source_id>)` pairs. If no source
+/// meets the minimum similarity threshold, the sentence is unanchored (`None`).
+///
+/// Used by the grounded generation pipeline to trace claims back to sources.
+pub fn anchor_to_sources(
+    sentences: &[&str],
+    sources: &[Source],
+    min_similarity: f64,
+) -> Vec<(String, Option<String>)> {
+    sentences
+        .iter()
+        .map(|sentence| {
+            let sent_words = words_set_lower(sentence);
+            if sent_words.is_empty() {
+                return (sentence.to_string(), None);
+            }
+
+            let mut best_id: Option<String> = None;
+            let mut best_sim = 0.0f64;
+
+            for source in sources {
+                let source_words = words_set_lower(&source.content);
+                if source_words.is_empty() {
+                    continue;
+                }
+
+                let intersection = sent_words
+                    .iter()
+                    .filter(|w| source_words.contains(*w))
+                    .count() as f64;
+                let union_size = {
+                    let mut all: Vec<_> = sent_words.iter().cloned().collect();
+                    for w in &source_words {
+                        if !all.contains(w) {
+                            all.push(w.clone());
+                        }
+                    }
+                    all.len() as f64
+                };
+                let sim = if union_size > 0.0 {
+                    intersection / union_size
+                } else {
+                    0.0
+                };
+
+                if sim > best_sim {
+                    best_sim = sim;
+                    best_id = Some(source.id.clone());
+                }
+            }
+
+            if best_sim >= min_similarity {
+                (sentence.to_string(), best_id)
+            } else {
+                (sentence.to_string(), None)
+            }
+        })
+        .collect()
+}
+
+/// Build a lowercase word set for similarity computation.
+fn words_set_lower(text: &str) -> Vec<String> {
+    text.split_whitespace()
+        .map(|w| {
+            w.to_lowercase()
+                .chars()
+                .filter(|c| c.is_alphanumeric())
+                .collect::<String>()
+        })
+        .filter(|w| !w.is_empty() && w.len() > 1)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -753,5 +844,61 @@ mod tests {
         let style = CitationStyle::Custom("({author} - {year})".to_string());
         assert_ne!(style, CitationStyle::Numeric);
         assert_ne!(style, CitationStyle::AuthorYear);
+    }
+
+    // --- V82: anchor_to_sources tests ---
+
+    #[test]
+    fn test_anchor_to_sources_basic() {
+        let sources = vec![
+            Source::new("s1", "Rust Guide", "Rust is a systems programming language"),
+            Source::new("s2", "Python Guide", "Python is an interpreted language"),
+        ];
+        let sentences = &["Rust is a systems language"];
+        let result = anchor_to_sources(sentences, &sources, 0.2);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].1, Some("s1".to_string()));
+    }
+
+    #[test]
+    fn test_anchor_to_sources_no_match() {
+        let sources = vec![Source::new("s1", "Rust", "Rust programming language")];
+        let sentences = &["Quantum physics entanglement"];
+        let result = anchor_to_sources(sentences, &sources, 0.5);
+        assert_eq!(result[0].1, None);
+    }
+
+    #[test]
+    fn test_anchor_to_sources_empty() {
+        let result = anchor_to_sources(&[], &[], 0.3);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_source_type_academic_paper() {
+        let source = Source::new("paper1", "Neural Nets", "Deep learning methods")
+            .with_type(SourceType::AcademicPaper);
+        assert_eq!(source.source_type, SourceType::AcademicPaper);
+    }
+
+    #[test]
+    fn test_source_academic_fields() {
+        let mut source = Source::new("paper1", "Neural Nets", "Deep learning methods")
+            .with_type(SourceType::AcademicPaper);
+        source.doi = Some("10.1234/test.2024".to_string());
+        source.venue = Some("NeurIPS 2024".to_string());
+        source.citation_count = Some(42);
+
+        assert_eq!(source.doi.as_deref(), Some("10.1234/test.2024"));
+        assert_eq!(source.venue.as_deref(), Some("NeurIPS 2024"));
+        assert_eq!(source.citation_count, Some(42));
+    }
+
+    #[test]
+    fn test_source_academic_fields_default_none() {
+        let source = Source::new("id", "Title", "Content");
+        assert!(source.doi.is_none());
+        assert!(source.venue.is_none());
+        assert!(source.citation_count.is_none());
     }
 }

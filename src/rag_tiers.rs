@@ -227,6 +227,45 @@ pub struct RagFeatures {
     /// `None` inherits from ContextBudgetConfig, `Some(mode)` overrides.
     /// Cost: depends on mode (Static=0, Heuristic=0, LlmEnhanced=1 call)
     pub context_scoring_mode: Option<crate::context_budget::ScoringMode>,
+
+    // === Anti-Hallucination (V81+) ===
+    /// Calibrated abstention — refuse to answer when model confidence is
+    /// below a configurable threshold. Prevents low-quality hallucinated responses.
+    /// Cost: None (post-generation check) | Requires: None
+    pub calibrated_abstention: bool,
+
+    /// Mandatory attribution — require that all factual claims in the response
+    /// are traced back to a retrieved source. Ungrounded claims are marked,
+    /// annotated, or omitted according to the configured strategy.
+    /// Cost: None (post-generation check) | Requires: None
+    pub mandatory_attribution: bool,
+
+    /// Auto-temperature — automatically lower generation temperature for
+    /// queries detected as factual/objective, reducing hallucination risk.
+    /// Cost: None (heuristic classification) | Requires: None
+    pub auto_temperature: bool,
+
+    // === Faithfulness & Grounding (V82+) ===
+    /// Faithfulness scoring — evaluate whether response claims are supported
+    /// by retrieved context using NLI (word overlap or LLM-based).
+    /// Cost: 0-1 LLM calls | Requires: Context/RAG results
+    pub faithfulness_scoring: bool,
+
+    /// Grounded generation — anchor every response sentence to a source chunk.
+    /// Unanchored sentences are marked, omitted, or warned per strategy.
+    /// Cost: None (post-generation check) | Requires: Source chunks
+    pub grounded_generation: bool,
+
+    // === Verification Pipeline (V83+) ===
+    /// Chain-of-Verification — extract claims from response, verify each
+    /// against sources (RAG/web), then correct or annotate the response.
+    /// Cost: 1-N LLM calls (capped by max_claims_to_verify) | Requires: Context
+    pub chain_of_verification: bool,
+
+    /// Fact-check with search — verify factual claims using web search or RAG
+    /// as evidence sources. Integrates with fact_verification module.
+    /// Cost: 1+ API/LLM calls | Requires: Search provider or RAG DB
+    pub fact_check_search: bool,
 }
 
 impl RagFeatures {
@@ -277,7 +316,39 @@ impl RagFeatures {
             self_query_filter: true,
             chunk_granular_scoring: true,
             context_scoring_mode: Some(crate::context_budget::ScoringMode::Heuristic),
+            calibrated_abstention: true,
+            mandatory_attribution: true,
+            auto_temperature: true,
+            faithfulness_scoring: true,
+            grounded_generation: true,
+            chain_of_verification: true,
+            fact_check_search: true,
         }
+    }
+
+    /// Enable verification mode: anti-hallucination + faithfulness + quality gates.
+    pub fn enable_verification_mode(&mut self) {
+        self.calibrated_abstention = true;
+        self.mandatory_attribution = true;
+        self.auto_temperature = true;
+        self.faithfulness_scoring = true;
+        self.grounded_generation = true;
+        self.chain_of_verification = true;
+        self.fact_check_search = true;
+    }
+
+    /// Enable research mode: web search + attribution (academic providers are separate).
+    pub fn enable_research_mode(&mut self) {
+        self.mandatory_attribution = true;
+        self.auto_temperature = true;
+        self.reranking = true;
+        self.cross_encoder_rerank = true;
+    }
+
+    /// Enable academic mode: research + verification combined.
+    pub fn enable_academic_mode(&mut self) {
+        self.enable_research_mode();
+        self.enable_verification_mode();
     }
 
     /// Count enabled features
@@ -395,6 +466,27 @@ impl RagFeatures {
             count += 1;
         }
         if self.chunk_granular_scoring {
+            count += 1;
+        }
+        if self.calibrated_abstention {
+            count += 1;
+        }
+        if self.mandatory_attribution {
+            count += 1;
+        }
+        if self.auto_temperature {
+            count += 1;
+        }
+        if self.faithfulness_scoring {
+            count += 1;
+        }
+        if self.grounded_generation {
+            count += 1;
+        }
+        if self.chain_of_verification {
+            count += 1;
+        }
+        if self.fact_check_search {
             count += 1;
         }
         count
@@ -516,6 +608,27 @@ impl RagFeatures {
         }
         if self.chunk_granular_scoring {
             features.push("chunk_granular_scoring");
+        }
+        if self.calibrated_abstention {
+            features.push("calibrated_abstention");
+        }
+        if self.mandatory_attribution {
+            features.push("mandatory_attribution");
+        }
+        if self.auto_temperature {
+            features.push("auto_temperature");
+        }
+        if self.faithfulness_scoring {
+            features.push("faithfulness_scoring");
+        }
+        if self.grounded_generation {
+            features.push("grounded_generation");
+        }
+        if self.chain_of_verification {
+            features.push("chain_of_verification");
+        }
+        if self.fact_check_search {
+            features.push("fact_check_search");
         }
         features
     }
@@ -647,6 +760,8 @@ impl RagTier {
                 topic_matching: true,
                 autocut: true,
                 context_scoring_mode: Some(crate::context_budget::ScoringMode::Heuristic),
+                mandatory_attribution: true,
+                auto_temperature: true,
                 ..Default::default()
             },
 
@@ -679,6 +794,11 @@ impl RagTier {
                 context_scoring_mode: Some(crate::context_budget::ScoringMode::Hybrid {
                     confidence_threshold: 0.6,
                 }),
+                calibrated_abstention: true,
+                mandatory_attribution: true,
+                auto_temperature: true,
+                faithfulness_scoring: true,
+                grounded_generation: true,
                 ..Default::default()
             },
 
@@ -714,6 +834,13 @@ impl RagTier {
                 context_scoring_mode: Some(crate::context_budget::ScoringMode::Hybrid {
                     confidence_threshold: 0.6,
                 }),
+                calibrated_abstention: true,
+                mandatory_attribution: true,
+                auto_temperature: true,
+                faithfulness_scoring: true,
+                grounded_generation: true,
+                chain_of_verification: true,
+                fact_check_search: true,
                 ..Default::default()
             },
 
@@ -754,6 +881,13 @@ impl RagTier {
                 context_scoring_mode: Some(crate::context_budget::ScoringMode::Hybrid {
                     confidence_threshold: 0.6,
                 }),
+                calibrated_abstention: true,
+                mandatory_attribution: true,
+                auto_temperature: true,
+                faithfulness_scoring: true,
+                grounded_generation: true,
+                chain_of_verification: true,
+                fact_check_search: true,
                 ..Default::default()
             },
 
@@ -1369,6 +1503,33 @@ impl RagTierConfig {
             max += 1; // 0-1 LLM calls
         }
 
+        // Anti-hallucination features (V81-V83)
+        if f.calibrated_abstention {
+            min += 1;
+            max += 1; // Confidence estimation
+        }
+        if f.mandatory_attribution {
+            max += 1; // Attribution check
+        }
+        if f.auto_temperature {
+            // No extra LLM calls — adjusts temperature pre-generation
+        }
+        if f.faithfulness_scoring {
+            min += 1;
+            max += 2; // NLI decomposition + scoring
+        }
+        if f.grounded_generation {
+            max += 1; // Anchoring check
+        }
+        if f.chain_of_verification {
+            min += 1;
+            max += 3; // Verify + correct + re-check
+        }
+        if f.fact_check_search {
+            min += 1;
+            max += 2; // Search + verify
+        }
+
         // Apply hard cap
         max = max.min(self.max_extra_llm_calls);
 
@@ -1462,6 +1623,23 @@ impl RagTierConfig {
             "multi_layer_graph" => f.multi_layer_graph,
             "raptor" => f.raptor,
             "multimodal" => f.multimodal,
+            "semantic_dedup_fusion" => f.semantic_dedup_fusion,
+            "distributed_search" => f.distributed_search,
+            "context_budget_allocation" => f.context_budget_allocation,
+            "fresh_context" => f.fresh_context,
+            "emotion_aware" => f.emotion_aware,
+            "topic_matching" => f.topic_matching,
+            "autocut" => f.autocut,
+            "topic_matching_llm" => f.topic_matching_llm,
+            "self_query_filter" => f.self_query_filter,
+            "chunk_granular_scoring" => f.chunk_granular_scoring,
+            "calibrated_abstention" => f.calibrated_abstention,
+            "mandatory_attribution" => f.mandatory_attribution,
+            "auto_temperature" => f.auto_temperature,
+            "faithfulness_scoring" => f.faithfulness_scoring,
+            "grounded_generation" => f.grounded_generation,
+            "chain_of_verification" => f.chain_of_verification,
+            "fact_check_search" => f.fact_check_search,
             _ => false,
         }
     }
@@ -2072,7 +2250,7 @@ mod tests {
         assert!(semantic.hybrid_search);
 
         let full = RagTier::Full.to_features();
-        assert_eq!(full.enabled_count(), 38); // All features
+        assert_eq!(full.enabled_count(), 45); // All features (38 base + 5 anti-hallucination + 2 verification)
     }
 
     #[test]
@@ -2224,8 +2402,8 @@ mod tests {
         let features = RagTier::Full.to_features();
         assert_eq!(
             features.enabled_count(),
-            38,
-            "Full tier must have all 38 features enabled"
+            45,
+            "Full tier must have all 45 features enabled (38 base + 5 anti-hallucination + 2 verification)"
         );
         assert!(features.fts_search);
         assert!(features.semantic_search);
@@ -2261,8 +2439,8 @@ mod tests {
         let features = RagFeatures::all();
         assert_eq!(
             features.enabled_count(),
-            38,
-            "all() must produce exactly 38 features"
+            45,
+            "all() must produce exactly 45 features (38 base + 5 anti-hallucination + 2 verification)"
         );
     }
 
@@ -2821,5 +2999,232 @@ mod tests {
         // Should use heuristic, not LLM
         assert!(suggestion.is_none());
         assert_ne!(tier, RagTier::Full); // Heuristic would not suggest Full for "hello"
+    }
+
+    // == Anti-Hallucination fields (V81) ==
+
+    #[test]
+    fn test_anti_hallucination_fields_disabled_by_default() {
+        let features = RagFeatures::none();
+        assert!(!features.calibrated_abstention);
+        assert!(!features.mandatory_attribution);
+        assert!(!features.auto_temperature);
+    }
+
+    #[test]
+    fn test_anti_hallucination_fields_all_enabled() {
+        let features = RagFeatures::all();
+        assert!(features.calibrated_abstention);
+        assert!(features.mandatory_attribution);
+        assert!(features.auto_temperature);
+    }
+
+    #[test]
+    fn test_enhanced_tier_has_attribution_and_auto_temp() {
+        let features = RagTier::Enhanced.to_features();
+        assert!(features.mandatory_attribution);
+        assert!(features.auto_temperature);
+        assert!(
+            !features.calibrated_abstention,
+            "Enhanced should NOT have calibrated_abstention"
+        );
+    }
+
+    #[test]
+    fn test_thorough_tier_has_all_anti_hallucination() {
+        let features = RagTier::Thorough.to_features();
+        assert!(features.calibrated_abstention);
+        assert!(features.mandatory_attribution);
+        assert!(features.auto_temperature);
+    }
+
+    #[test]
+    fn test_agentic_tier_has_all_anti_hallucination() {
+        let features = RagTier::Agentic.to_features();
+        assert!(features.calibrated_abstention);
+        assert!(features.mandatory_attribution);
+        assert!(features.auto_temperature);
+    }
+
+    #[test]
+    fn test_graph_tier_has_all_anti_hallucination() {
+        let features = RagTier::Graph.to_features();
+        assert!(features.calibrated_abstention);
+        assert!(features.mandatory_attribution);
+        assert!(features.auto_temperature);
+    }
+
+    #[test]
+    fn test_fast_tier_no_anti_hallucination() {
+        let features = RagTier::Fast.to_features();
+        assert!(!features.calibrated_abstention);
+        assert!(!features.mandatory_attribution);
+        assert!(!features.auto_temperature);
+    }
+
+    #[test]
+    fn test_anti_hallucination_in_enabled_features() {
+        let mut features = RagFeatures::none();
+        features.calibrated_abstention = true;
+        features.mandatory_attribution = true;
+        features.auto_temperature = true;
+        let names = features.enabled_features();
+        assert!(names.contains(&"calibrated_abstention"));
+        assert!(names.contains(&"mandatory_attribution"));
+        assert!(names.contains(&"auto_temperature"));
+        assert_eq!(features.enabled_count(), 3);
+    }
+
+    #[test]
+    fn test_anti_hallucination_fields_in_count() {
+        let mut features = RagFeatures::none();
+        assert_eq!(features.enabled_count(), 0);
+        features.calibrated_abstention = true;
+        assert_eq!(features.enabled_count(), 1);
+        features.mandatory_attribution = true;
+        assert_eq!(features.enabled_count(), 2);
+        features.auto_temperature = true;
+        assert_eq!(features.enabled_count(), 3);
+    }
+
+    // == Faithfulness & Grounding fields (V82) ==
+
+    #[test]
+    fn test_faithfulness_fields_disabled_by_default() {
+        let features = RagFeatures::none();
+        assert!(!features.faithfulness_scoring);
+        assert!(!features.grounded_generation);
+    }
+
+    #[test]
+    fn test_faithfulness_fields_in_all() {
+        let features = RagFeatures::all();
+        assert!(features.faithfulness_scoring);
+        assert!(features.grounded_generation);
+    }
+
+    #[test]
+    fn test_thorough_tier_has_faithfulness() {
+        let features = RagTier::Thorough.to_features();
+        assert!(features.faithfulness_scoring);
+        assert!(features.grounded_generation);
+    }
+
+    #[test]
+    fn test_enhanced_tier_no_faithfulness() {
+        let features = RagTier::Enhanced.to_features();
+        assert!(!features.faithfulness_scoring);
+        assert!(!features.grounded_generation);
+    }
+
+    #[test]
+    fn test_faithfulness_in_enabled_features() {
+        let mut features = RagFeatures::none();
+        features.faithfulness_scoring = true;
+        features.grounded_generation = true;
+        let names = features.enabled_features();
+        assert!(names.contains(&"faithfulness_scoring"));
+        assert!(names.contains(&"grounded_generation"));
+        assert_eq!(features.enabled_count(), 2);
+    }
+
+    // == Verification Pipeline fields (V83) ==
+
+    #[test]
+    fn test_verification_fields_disabled_by_default() {
+        let features = RagFeatures::none();
+        assert!(!features.chain_of_verification);
+        assert!(!features.fact_check_search);
+    }
+
+    #[test]
+    fn test_verification_fields_in_all() {
+        let features = RagFeatures::all();
+        assert!(features.chain_of_verification);
+        assert!(features.fact_check_search);
+    }
+
+    #[test]
+    fn test_agentic_tier_has_verification() {
+        let features = RagTier::Agentic.to_features();
+        assert!(features.chain_of_verification);
+        assert!(features.fact_check_search);
+    }
+
+    #[test]
+    fn test_graph_tier_has_verification() {
+        let features = RagTier::Graph.to_features();
+        assert!(features.chain_of_verification);
+        assert!(features.fact_check_search);
+    }
+
+    #[test]
+    fn test_thorough_tier_no_verification() {
+        let features = RagTier::Thorough.to_features();
+        assert!(!features.chain_of_verification);
+        assert!(!features.fact_check_search);
+    }
+
+    #[test]
+    fn test_verification_in_enabled_features() {
+        let mut features = RagFeatures::none();
+        features.chain_of_verification = true;
+        features.fact_check_search = true;
+        let names = features.enabled_features();
+        assert!(names.contains(&"chain_of_verification"));
+        assert!(names.contains(&"fact_check_search"));
+        assert_eq!(features.enabled_count(), 2);
+    }
+
+    #[test]
+    fn test_enable_verification_mode() {
+        let mut features = RagFeatures::none();
+        features.enable_verification_mode();
+        assert!(features.calibrated_abstention);
+        assert!(features.mandatory_attribution);
+        assert!(features.auto_temperature);
+        assert!(features.faithfulness_scoring);
+        assert!(features.grounded_generation);
+        assert!(features.chain_of_verification);
+        assert!(features.fact_check_search);
+        assert_eq!(features.enabled_count(), 7);
+    }
+
+    #[test]
+    fn test_enable_research_mode() {
+        let mut features = RagFeatures::none();
+        features.enable_research_mode();
+        assert!(features.mandatory_attribution);
+        assert!(features.auto_temperature);
+        assert!(features.reranking);
+        assert!(features.cross_encoder_rerank);
+        assert_eq!(features.enabled_count(), 4);
+    }
+
+    #[test]
+    fn test_enable_academic_mode() {
+        let mut features = RagFeatures::none();
+        features.enable_academic_mode();
+        // Should have both research + verification features
+        assert!(features.mandatory_attribution);
+        assert!(features.auto_temperature);
+        assert!(features.reranking);
+        assert!(features.cross_encoder_rerank);
+        assert!(features.calibrated_abstention);
+        assert!(features.faithfulness_scoring);
+        assert!(features.chain_of_verification);
+        assert!(features.fact_check_search);
+        // Some overlap, so count won't be simple sum
+        assert!(features.enabled_count() >= 8);
+    }
+
+    #[test]
+    fn test_enable_modes_idempotent() {
+        let mut features = RagFeatures::none();
+        features.enable_verification_mode();
+        let count1 = features.enabled_count();
+        features.enable_verification_mode(); // second call
+        let count2 = features.enabled_count();
+        assert_eq!(count1, count2);
     }
 }

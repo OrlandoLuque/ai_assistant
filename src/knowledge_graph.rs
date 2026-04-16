@@ -183,6 +183,10 @@ pub enum EntityType {
     Location,
     Concept,
     Event,
+    /// Academic paper
+    Paper,
+    /// Paper author
+    Author,
     Other,
 }
 
@@ -195,6 +199,8 @@ impl EntityType {
             EntityType::Location => "location",
             EntityType::Concept => "concept",
             EntityType::Event => "event",
+            EntityType::Paper => "paper",
+            EntityType::Author => "author",
             EntityType::Other => "other",
         }
     }
@@ -207,6 +213,8 @@ impl EntityType {
             "location" | "place" | "system" | "planet" | "station" => EntityType::Location,
             "concept" | "mechanic" | "feature" => EntityType::Concept,
             "event" | "mission" | "battle" => EntityType::Event,
+            "paper" | "article" | "publication" | "preprint" => EntityType::Paper,
+            "author" | "researcher" | "scientist" => EntityType::Author,
             _ => EntityType::Other,
         }
     }
@@ -219,6 +227,8 @@ impl EntityType {
             EntityType::Location,
             EntityType::Concept,
             EntityType::Event,
+            EntityType::Paper,
+            EntityType::Author,
             EntityType::Other,
         ]
     }
@@ -3437,8 +3447,8 @@ mod tests {
     #[test]
     fn test_entity_type_all_variants() {
         let all = EntityType::all();
-        assert_eq!(all.len(), 7);
-        // Check round-trip conversion for each variant
+        assert_eq!(all.len(), 9); // 7 original + Paper + Author (V85)
+                                  // Check round-trip conversion for each variant
         for et in all {
             let s = et.as_str();
             let back = EntityType::from_str(s);
@@ -3599,15 +3609,17 @@ mod tests {
     }
 
     #[test]
-    fn test_entity_type_all_returns_seven() {
+    fn test_entity_type_all_returns_nine() {
         let all = EntityType::all();
-        assert_eq!(all.len(), 7);
+        assert_eq!(all.len(), 9); // 7 original + Paper + Author (V85)
         assert!(all.contains(&EntityType::Organization));
         assert!(all.contains(&EntityType::Product));
         assert!(all.contains(&EntityType::Person));
         assert!(all.contains(&EntityType::Location));
         assert!(all.contains(&EntityType::Concept));
         assert!(all.contains(&EntityType::Event));
+        assert!(all.contains(&EntityType::Paper));
+        assert!(all.contains(&EntityType::Author));
         assert!(all.contains(&EntityType::Other));
     }
 

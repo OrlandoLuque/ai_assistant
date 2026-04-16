@@ -239,6 +239,19 @@ pub struct AdaptiveThinkingConfig {
     /// Whether to adjust temperature based on depth.
     pub adjust_temperature: bool,
 
+    /// Whether to force lower temperature for factual queries.
+    ///
+    /// When enabled, queries detected as factual (dates, names, definitions,
+    /// calculations, etc.) get a lower temperature regardless of depth,
+    /// reducing hallucination risk. Integrates with the anti-hallucination
+    /// pipeline.
+    pub auto_temperature_factual: bool,
+
+    /// Temperature to use for queries detected as factual.
+    /// Only applies when `auto_temperature_factual` is `true`.
+    /// Default: 0.3.
+    pub factual_temperature: f32,
+
     /// Whether to suggest a RAG tier based on depth.
     pub adjust_rag_tier: bool,
 
@@ -272,6 +285,8 @@ impl Default for AdaptiveThinkingConfig {
             strip_thinking_from_response: true,
             transparent_thinking_parse: true,
             adjust_temperature: true,
+            auto_temperature_factual: false,
+            factual_temperature: 0.3,
             adjust_rag_tier: true,
             rag_tier_priority: RagTierPriority::Adaptive,
             adjust_max_tokens: true,
@@ -581,15 +596,19 @@ impl QueryClassifier {
         depth: ThinkingDepth,
         signals: ClassificationSignals,
     ) -> ThinkingStrategy {
-        let temperature = if self.config.adjust_temperature {
-            self.config
-                .temperature_map
-                .as_ref()
-                .and_then(|m| m.get(&depth).copied())
-                .unwrap_or_else(|| Self::default_temperature(depth))
-        } else {
-            0.7
-        };
+        let temperature =
+            if self.config.auto_temperature_factual && Self::is_factual_signals(&signals) {
+                // Factual query detected — force low temperature to reduce hallucinations
+                self.config.factual_temperature
+            } else if self.config.adjust_temperature {
+                self.config
+                    .temperature_map
+                    .as_ref()
+                    .and_then(|m| m.get(&depth).copied())
+                    .unwrap_or_else(|| Self::default_temperature(depth))
+            } else {
+                0.7
+            };
 
         let max_tokens = if self.config.adjust_max_tokens {
             self.config
@@ -769,6 +788,115 @@ impl QueryClassifier {
                  Take your time and be thorough. Quality over brevity."
             }
         }
+    }
+
+    // === Factual query detection (anti-hallucination auto-temperature) ===
+
+    /// Keywords that strongly suggest a factual/objective query.
+    const FACTUAL_KEYWORDS: &'static [&'static str] = &[
+        "what is",
+        "what are",
+        "what was",
+        "what were",
+        "who is",
+        "who was",
+        "who are",
+        "when did",
+        "when was",
+        "when is",
+        "where is",
+        "where was",
+        "how many",
+        "how much",
+        "how old",
+        "how tall",
+        "how far",
+        "how long",
+        "define ",
+        "definition of",
+        "capital of",
+        "population of",
+        "founded in",
+        "invented by",
+        "discovered by",
+        "formula for",
+        "equation for",
+        "calculate ",
+        "compute ",
+        "convert ",
+        "translate ",
+        "name the",
+        "list the",
+        "true or false",
+        "fact check",
+        "is it true",
+    ];
+
+    /// Keywords that suggest a creative/subjective query.
+    const CREATIVE_KEYWORDS: &'static [&'static str] = &[
+        "write a story",
+        "write a poem",
+        "creative writing",
+        "brainstorm",
+        "imagine",
+        "make up",
+        "invent a",
+        "compose",
+        "fiction",
+        "roleplay",
+        "pretend",
+        "what if",
+        "hypothetical",
+        "opinion",
+        "your thoughts",
+        "what do you think",
+        "suggest ideas",
+        "free write",
+    ];
+
+    /// Check if classification signals suggest a factual query.
+    ///
+    /// A query is considered factual if it matches factual keywords and
+    /// does NOT match creative keywords. Used by auto-temperature to
+    /// force lower temperature on fact-seeking queries.
+    fn is_factual_signals(signals: &ClassificationSignals) -> bool {
+        let intent = signals.detected_intent.as_str();
+        // Only "Question" intent suggests factual lookup.
+        // "Command" is too broad (includes "write a story", "compose", etc.)
+        if intent == "Question"
+            && !signals.has_comparison
+            && !signals.has_analysis
+            && signals.word_count <= 15
+        {
+            return true;
+        }
+        false
+    }
+
+    /// Check if a query text is factual (public API for integration).
+    ///
+    /// Returns `true` if the query appears to be seeking objective facts
+    /// rather than creative, analytical, or subjective content.
+    pub fn is_factual_query(&self, query: &str) -> bool {
+        let lower = query.to_lowercase();
+
+        // Check creative keywords first — if creative, not factual
+        for kw in Self::CREATIVE_KEYWORDS {
+            if lower.contains(kw) {
+                return false;
+            }
+        }
+
+        // Check factual keywords
+        for kw in Self::FACTUAL_KEYWORDS {
+            if lower.contains(kw) {
+                return true;
+            }
+        }
+
+        // Fall back to signal-based detection
+        let signals = self.analyze_signals(query);
+        Self::is_factual_signals(&signals)
     }
 }
 
@@ -1621,6 +1749,68 @@ mod tests {
             "Long conversation context should upgrade depth, got {:?}",
             strategy.depth
         );
+    }
+
+    // === Auto-temperature for factual queries ===
+
+    #[test]
+    fn test_auto_temp_factual_query_uses_low_temperature() {
+        let config = AdaptiveThinkingConfig {
+            enabled: true,
+            auto_temperature_factual: true,
+            factual_temperature: 0.25,
+            ..Default::default()
+        };
+        let classifier = QueryClassifier::new(config);
+        // "What is the capital of France?" is a factual query
+        let strategy = classifier.classify("What is the capital of France?");
+        assert!(
+            (strategy.temperature - 0.25).abs() < f64::EPSILON as f32,
+            "Factual query should use factual_temperature, got {}",
+            strategy.temperature
+        );
+    }
+
+    #[test]
+    fn test_auto_temp_creative_query_uses_normal_temperature() {
+        let config = AdaptiveThinkingConfig {
+            enabled: true,
+            auto_temperature_factual: true,
+            factual_temperature: 0.25,
+            ..Default::default()
+        };
+        let classifier = QueryClassifier::new(config);
+        // Creative query should NOT get the factual temperature
+        let strategy = classifier.classify("Write a story about dragons");
+        assert!(
+            strategy.temperature > 0.25,
+            "Creative query should NOT use factual_temperature, got {}",
+            strategy.temperature
+        );
+    }
+
+    #[test]
+    fn test_auto_temp_disabled_by_default() {
+        let config = AdaptiveThinkingConfig::default();
+        assert!(!config.auto_temperature_factual);
+    }
+
+    #[test]
+    fn test_is_factual_query() {
+        let classifier = QueryClassifier::new(enabled_config());
+        assert!(classifier.is_factual_query("What is the speed of light?"));
+        assert!(classifier.is_factual_query("Who invented the telephone?"));
+        assert!(classifier.is_factual_query("How many planets are in the solar system?"));
+        assert!(classifier.is_factual_query("Define photosynthesis"));
+        assert!(!classifier.is_factual_query("Write a poem about the ocean"));
+        assert!(!classifier.is_factual_query("Brainstorm ideas for a startup"));
+        assert!(!classifier.is_factual_query("What do you think about AI?"));
+    }
+
+    #[test]
+    fn test_auto_temp_factual_temperature_default() {
+        let config = AdaptiveThinkingConfig::default();
+        assert!((config.factual_temperature - 0.3).abs() < f64::EPSILON as f32);
     }
 
     // === Confidence tests ===

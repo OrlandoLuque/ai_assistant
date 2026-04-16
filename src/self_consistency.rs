@@ -542,6 +542,106 @@ impl Default for ConsistencyAggregator {
     }
 }
 
+// =============================================================================
+// Divergence Metrics (V83)
+// =============================================================================
+
+/// Recommendation based on divergence analysis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ConsistencyRecommendation {
+    /// High consistency — safe to use the consensus answer
+    High,
+    /// Medium consistency — usable but consider caveats
+    Medium,
+    /// Low consistency — treat answer with caution
+    Low,
+    /// Abstain — too much divergence, do not use
+    Abstain,
+}
+
+impl ConsistencyRecommendation {
+    /// Human-readable label for the recommendation.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::High => "High consistency — safe to use",
+            Self::Medium => "Medium consistency — usable with caveats",
+            Self::Low => "Low consistency — treat with caution",
+            Self::Abstain => "Abstain — too much divergence",
+        }
+    }
+}
+
+/// Divergence metrics for self-consistency results.
+///
+/// Quantifies how much the sampled answers diverge from each other,
+/// providing richer signal than a simple consensus boolean.
+#[derive(Debug, Clone)]
+pub struct DivergenceMetrics {
+    /// Shannon entropy of the answer distribution (0 = all identical, higher = more diverse).
+    pub entropy: f64,
+    /// Maximum group ratio (fraction of samples in the largest group).
+    pub max_group_ratio: f64,
+    /// Number of distinct answer groups.
+    pub distinct_groups: usize,
+    /// Overall recommendation based on the metrics.
+    pub recommendation: ConsistencyRecommendation,
+    /// Effective number of distinct answers (2^entropy).
+    pub effective_distinct: f64,
+}
+
+impl ConsistencyResult {
+    /// Compute divergence metrics from the consistency result.
+    ///
+    /// Uses the answer groups to compute entropy and derive a recommendation.
+    pub fn measure_divergence(&self) -> DivergenceMetrics {
+        let total = self.successful_samples;
+        let distinct_groups = self.groups.len();
+
+        if total == 0 || distinct_groups == 0 {
+            return DivergenceMetrics {
+                entropy: 0.0,
+                max_group_ratio: 0.0,
+                distinct_groups: 0,
+                recommendation: ConsistencyRecommendation::Abstain,
+                effective_distinct: 1.0,
+            };
+        }
+
+        // Shannon entropy: H = -sum(p_i * log2(p_i))
+        let mut entropy = 0.0_f64;
+        for group in &self.groups {
+            let p = group.count as f64 / total as f64;
+            if p > 0.0 {
+                entropy -= p * p.log2();
+            }
+        }
+
+        let max_group_ratio = self.groups.iter().map(|g| g.ratio).fold(0.0_f64, f64::max);
+
+        let effective_distinct = 2.0_f64.powf(entropy);
+
+        // Derive recommendation
+        let recommendation = if max_group_ratio >= 0.8 && entropy < 1.0 {
+            ConsistencyRecommendation::High
+        } else if max_group_ratio >= 0.5 && entropy < 1.5 {
+            ConsistencyRecommendation::Medium
+        } else if max_group_ratio >= 0.3 {
+            ConsistencyRecommendation::Low
+        } else {
+            ConsistencyRecommendation::Abstain
+        };
+
+        DivergenceMetrics {
+            entropy,
+            max_group_ratio,
+            distinct_groups,
+            recommendation,
+            effective_distinct,
+        }
+    }
+}
+
 /// Aggregated statistics
 #[derive(Debug, Clone)]
 pub struct AggregatedStats {
@@ -691,6 +791,105 @@ mod tests {
         let failed: Vec<_> = result2.samples.iter().filter(|s| !s.success).collect();
         assert_eq!(failed.len(), 2);
         assert!(failed[0].error.is_some());
+    }
+
+    // === V83: Divergence Metrics ===
+
+    #[test]
+    fn test_divergence_all_identical() {
+        let checker = ConsistencyChecker::default();
+        let result = checker.check("What is 2+2?", "model", |_, _, _| Ok("4".to_string()));
+
+        let metrics = result.measure_divergence();
+        assert!((metrics.entropy - 0.0).abs() < f64::EPSILON);
+        assert!((metrics.max_group_ratio - 1.0).abs() < f64::EPSILON);
+        assert_eq!(metrics.distinct_groups, 1);
+        assert_eq!(metrics.recommendation, ConsistencyRecommendation::High);
+        assert!((metrics.effective_distinct - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_divergence_all_different() {
+        let config = ConsistencyConfig {
+            num_samples: 5,
+            min_consensus: 0.8,
+            similarity_threshold: 0.95,
+            ..Default::default()
+        };
+        let checker = ConsistencyChecker::new(config);
+        let counter = std::cell::Cell::new(0u32);
+        let result = checker.check("divergent", "model", |_, _, _| {
+            let n = counter.get();
+            counter.set(n + 1);
+            Ok(format!("completely unique answer number {}", n))
+        });
+
+        let metrics = result.measure_divergence();
+        // With 5 unique answers: H = log2(5) ≈ 2.32
+        assert!(metrics.entropy > 2.0);
+        assert!((metrics.max_group_ratio - 0.2).abs() < f64::EPSILON);
+        assert_eq!(metrics.distinct_groups, 5);
+        assert_eq!(metrics.recommendation, ConsistencyRecommendation::Abstain);
+    }
+
+    #[test]
+    fn test_divergence_majority() {
+        let config = ConsistencyConfig {
+            num_samples: 5,
+            min_consensus: 0.5,
+            similarity_threshold: 0.95,
+            ..Default::default()
+        };
+        let checker = ConsistencyChecker::new(config);
+        let counter = std::cell::Cell::new(0u32);
+        let result = checker.check("majority", "model", |_, _, _| {
+            let n = counter.get();
+            counter.set(n + 1);
+            if n < 3 {
+                Ok("consensus answer here".to_string())
+            } else {
+                Ok(format!("minority answer number {}", n))
+            }
+        });
+
+        let metrics = result.measure_divergence();
+        // 3/5 = 0.6 for main group
+        assert!(metrics.max_group_ratio >= 0.5);
+        assert!(metrics.entropy > 0.0 && metrics.entropy < 2.0);
+        assert!(
+            metrics.recommendation == ConsistencyRecommendation::Medium
+                || metrics.recommendation == ConsistencyRecommendation::High
+        );
+    }
+
+    #[test]
+    fn test_divergence_empty() {
+        let result = ConsistencyResult {
+            prompt: "empty".to_string(),
+            samples: Vec::new(),
+            groups: Vec::new(),
+            consensus: None,
+            confidence: 0.0,
+            total_duration: Duration::from_secs(0),
+            successful_samples: 0,
+            has_consensus: false,
+        };
+
+        let metrics = result.measure_divergence();
+        assert_eq!(metrics.recommendation, ConsistencyRecommendation::Abstain);
+        assert_eq!(metrics.distinct_groups, 0);
+    }
+
+    #[test]
+    fn test_recommendation_labels() {
+        assert!(ConsistencyRecommendation::High.label().contains("safe"));
+        assert!(ConsistencyRecommendation::Medium
+            .label()
+            .contains("caveats"));
+        assert!(ConsistencyRecommendation::Low.label().contains("caution"));
+        assert!(ConsistencyRecommendation::Abstain
+            .label()
+            .contains("divergence"));
     }
 
     #[test]

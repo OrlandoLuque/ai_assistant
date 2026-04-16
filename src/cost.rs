@@ -143,6 +143,18 @@ pub struct CostTracker {
     pub currency: String,
     /// Cost history
     history: Vec<CostEstimate>,
+    /// Cost attributed to verification (anti-hallucination) LLM calls.
+    #[serde(default)]
+    pub verification_cost: f64,
+    /// Number of verification LLM calls.
+    #[serde(default)]
+    pub verification_calls: usize,
+    /// Cost attributed to academic search API calls.
+    #[serde(default)]
+    pub academic_search_cost: f64,
+    /// Number of academic search API calls.
+    #[serde(default)]
+    pub academic_search_calls: usize,
 }
 
 impl CostTracker {

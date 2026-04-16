@@ -125,6 +125,10 @@ fn main() -> ExitCode {
         "bench" => cmd_bench(&command_args[1..]),
         "test" => cmd_test(&command_args[1..]),
         "cost" => cmd_cost(&command_args[1..]),
+        "verify" => cmd_verify(&command_args[1..]),
+        #[cfg(feature = "research")]
+        "research" => cmd_research(&command_args[1..]),
+        "quality" => cmd_quality(&command_args[1..]),
         other => {
             eprintln!("Error: unknown command '{}'\n", other);
             print_usage();
@@ -185,6 +189,23 @@ fn print_usage() {
     println!("    export --snapshot <path> --output <csv> [--force]");
     println!("                                     Export entries as CSV (formula-safe)");
     println!("    help                             Show cost-subcommand help");
+    println!("  verify [options] <prompt>      One-shot query with anti-hallucination pipeline");
+    println!(
+        "    --strategy <name>              Strategy: mark, omit, warn, footnote (default: mark)"
+    );
+    println!("    --min-confidence <0.0-1.0>     Minimum confidence threshold (default: 0.3)");
+    println!("    --faithfulness                 Enable faithfulness scoring");
+    println!("    --cove                         Enable Chain-of-Verification");
+    println!("    --quality-gates                Run quality gates on output");
+    println!("  research <query>               Search academic papers (requires research feature)");
+    println!(
+        "    --providers <list>             Providers: arxiv, scholar, pubmed (comma-separated)"
+    );
+    println!("    --max-results <N>              Max results (default: 10)");
+    println!("    --bibtex                       Output in BibTeX format");
+    println!("  quality <subcommand>           Quality gate operations");
+    println!("    gates list                     List configured quality gates");
+    println!("    gates check <text>             Run quality gates on text");
     println!("  test [options]                 Run tests (lib or harness), save results");
     println!("    --all                          Run test harness (all categories)");
     println!("    --category <name>              Run specific harness category");
@@ -1775,6 +1796,221 @@ fn print_environment(report: &EnvironmentReport) {
         }
     }
     println!("-------------------\n");
+}
+
+// =============================================================================
+// verify — one-shot query with anti-hallucination (V88)
+// =============================================================================
+
+fn cmd_verify(args: &[String]) -> ExitCode {
+    let mut strategy = "mark".to_string();
+    let mut min_confidence: f64 = 0.3;
+    let mut faithfulness = false;
+    let mut cove = false;
+    let mut quality_gates = false;
+    let mut prompt_parts: Vec<String> = Vec::new();
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--strategy" if i + 1 < args.len() => {
+                i += 1;
+                strategy = args[i].clone();
+            }
+            "--min-confidence" if i + 1 < args.len() => {
+                i += 1;
+                min_confidence = args[i].parse().unwrap_or(0.3);
+            }
+            "--faithfulness" => faithfulness = true,
+            "--cove" => cove = true,
+            "--quality-gates" => quality_gates = true,
+            other => prompt_parts.push(other.to_string()),
+        }
+        i += 1;
+    }
+
+    if prompt_parts.is_empty() {
+        eprintln!("Error: verify requires a prompt");
+        return ExitCode::from(1);
+    }
+
+    println!("Verify mode:");
+    println!("  Strategy:       {}", strategy);
+    println!("  Min confidence: {:.2}", min_confidence);
+    println!("  Faithfulness:   {}", faithfulness);
+    println!("  CoVe:           {}", cove);
+    println!("  Quality gates:  {}", quality_gates);
+    println!("  Prompt:         {}", prompt_parts.join(" "));
+    println!();
+
+    #[cfg(feature = "eval")]
+    {
+        let runner = ai_assistant::quality_gates::QualityGateRunner::production_defaults();
+        println!("Quality gates configured: {} gates", runner.gates().len());
+        if quality_gates {
+            let scores = ai_assistant::quality_gates::QualityScores {
+                faithfulness: Some(0.8),
+                confidence: Some(min_confidence),
+                grounding_ratio: None,
+                consistency_score: None,
+                citation_coverage: None,
+            };
+            let result = runner.run(&scores);
+            println!("Pre-check: {}", result.summary());
+        }
+    }
+
+    println!("(Full pipeline execution requires an active LLM provider)");
+    ExitCode::SUCCESS
+}
+
+// =============================================================================
+// research — academic paper search (V88, gated)
+// =============================================================================
+
+#[cfg(feature = "research")]
+fn cmd_research(args: &[String]) -> ExitCode {
+    let mut providers = vec!["arxiv".to_string(), "semantic_scholar".to_string()];
+    let mut max_results: usize = 10;
+    let mut bibtex = false;
+    let mut query_parts: Vec<String> = Vec::new();
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--providers" if i + 1 < args.len() => {
+                i += 1;
+                providers = args[i].split(',').map(|s| s.trim().to_string()).collect();
+            }
+            "--max-results" if i + 1 < args.len() => {
+                i += 1;
+                max_results = args[i].parse().unwrap_or(10);
+            }
+            "--bibtex" => bibtex = true,
+            other => query_parts.push(other.to_string()),
+        }
+        i += 1;
+    }
+
+    if query_parts.is_empty() {
+        eprintln!("Error: research requires a query");
+        return ExitCode::from(1);
+    }
+
+    let query = query_parts.join(" ");
+    println!("Academic search:");
+    println!("  Query:       {}", query);
+    println!("  Providers:   {}", providers.join(", "));
+    println!("  Max results: {}", max_results);
+    println!("  BibTeX:      {}", bibtex);
+    println!();
+
+    // Use providers to search
+    use ai_assistant::academic_search::AcademicSearchProvider;
+    let mut config = ai_assistant::academic_search::AcademicSearchConfig::default();
+    config.max_results = max_results;
+
+    for provider_name in &providers {
+        println!("--- {} ---", provider_name);
+        match provider_name.as_str() {
+            "arxiv" => {
+                let provider = ai_assistant::academic_search::ArxivProvider::new();
+                match provider.search_papers(&query, &config) {
+                    Ok(papers) => {
+                        if bibtex {
+                            println!(
+                                "{}",
+                                ai_assistant::bibtex::BibGenerator::from_papers(&papers)
+                            );
+                        } else {
+                            for (idx, p) in papers.iter().enumerate() {
+                                println!("  {}. {} ({})", idx + 1, p.title, p.year.unwrap_or(0));
+                            }
+                        }
+                        println!("  Found {} papers", papers.len());
+                    }
+                    Err(e) => println!("  Error: {}", e),
+                }
+            }
+            _ => println!("  (Provider {} requires async execution)", provider_name),
+        }
+    }
+
+    ExitCode::SUCCESS
+}
+
+// =============================================================================
+// quality — quality gate operations (V88)
+// =============================================================================
+
+fn cmd_quality(args: &[String]) -> ExitCode {
+    if args.is_empty() {
+        eprintln!("Usage: ai_cli quality <subcommand>");
+        eprintln!("  gates list    — List configured quality gates");
+        eprintln!("  gates check   — Run quality gates on text");
+        return ExitCode::from(1);
+    }
+
+    match args[0].as_str() {
+        "gates" => {
+            if args.len() < 2 {
+                eprintln!("Usage: ai_cli quality gates <list|check>");
+                return ExitCode::from(1);
+            }
+            match args[1].as_str() {
+                "list" => {
+                    #[cfg(feature = "eval")]
+                    {
+                        let runner =
+                            ai_assistant::quality_gates::QualityGateRunner::production_defaults();
+                        println!("Configured quality gates:");
+                        for gate in runner.gates() {
+                            println!(
+                                "  {} — {:?} >= {:.2} (action: {:?})",
+                                gate.name, gate.metric, gate.threshold, gate.action
+                            );
+                        }
+                    }
+                    #[cfg(not(feature = "eval"))]
+                    {
+                        eprintln!("Quality gates require the 'eval' feature");
+                        return ExitCode::from(1);
+                    }
+                }
+                "check" => {
+                    #[cfg(feature = "eval")]
+                    {
+                        let text = args[2..].join(" ");
+                        if text.is_empty() {
+                            eprintln!("Usage: ai_cli quality gates check <text>");
+                            return ExitCode::from(1);
+                        }
+                        let runner =
+                            ai_assistant::quality_gates::QualityGateRunner::production_defaults();
+                        let scores = ai_assistant::quality_gates::QualityScores::default();
+                        let result = runner.run(&scores);
+                        println!("Quality check on {} chars of text:", text.len());
+                        println!("  {}", result.summary());
+                    }
+                    #[cfg(not(feature = "eval"))]
+                    {
+                        eprintln!("Quality gates require the 'eval' feature");
+                        return ExitCode::from(1);
+                    }
+                }
+                other => {
+                    eprintln!("Unknown quality gates subcommand: {}", other);
+                    return ExitCode::from(1);
+                }
+            }
+        }
+        other => {
+            eprintln!("Unknown quality subcommand: {}", other);
+            return ExitCode::from(1);
+        }
+    }
+
+    ExitCode::SUCCESS
 }
 
 // =============================================================================

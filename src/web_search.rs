@@ -1402,6 +1402,174 @@ impl Default for WebCrawler {
     }
 }
 
+// =============================================================================
+// Claim-oriented search helper (V83)
+// =============================================================================
+
+/// Search for evidence related to a specific factual claim.
+///
+/// Extracts keywords from the claim and searches using the provided engine.
+/// Returns results sorted by relevance to the claim.
+pub fn search_for_claim(
+    engine: &mut WebSearchEngine,
+    claim: &str,
+    max_results: usize,
+) -> Result<Vec<SearchResult>, SearchError> {
+    // Extract keywords from the claim (filter stopwords, keep significant words)
+    let stopwords = [
+        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
+        "do", "does", "did", "will", "would", "could", "should", "may", "might", "shall", "can",
+        "and", "but", "or", "nor", "not", "no", "so", "yet", "for", "at", "by", "to", "from", "in",
+        "on", "of", "with", "that", "this", "it", "its", "very", "also",
+    ];
+
+    let keywords: Vec<&str> = claim
+        .split_whitespace()
+        .filter(|w| w.len() > 2)
+        .filter(|w| !stopwords.contains(&w.to_lowercase().as_str()))
+        .collect();
+
+    if keywords.is_empty() {
+        return Err(SearchError::InvalidQuery);
+    }
+
+    // Build query from keywords (max 8 keywords for focused search)
+    let query: String = keywords
+        .iter()
+        .take(8)
+        .copied()
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let mut results = engine.search(&query)?;
+    results.truncate(max_results);
+
+    // Score results by relevance to the original claim
+    let claim_lower = claim.to_lowercase();
+    let claim_words: std::collections::HashSet<&str> = claim_lower
+        .split_whitespace()
+        .filter(|w| w.len() > 2)
+        .collect();
+
+    for result in &mut results {
+        let snippet_lower = result.snippet.to_lowercase();
+        let snippet_words: std::collections::HashSet<&str> = snippet_lower
+            .split_whitespace()
+            .filter(|w| w.len() > 2)
+            .collect();
+
+        let intersection = claim_words.intersection(&snippet_words).count();
+        let union = claim_words.union(&snippet_words).count();
+
+        result.relevance_score = if union > 0 {
+            intersection as f64 / union as f64
+        } else {
+            0.0
+        };
+    }
+
+    // Sort by relevance descending
+    results.sort_by(|a, b| {
+        b.relevance_score
+            .partial_cmp(&a.relevance_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    Ok(results)
+}
+
+// =============================================================================
+// Academic Search Adapter
+// =============================================================================
+
+/// Adapter that wraps an academic search provider to implement `SearchProvider`.
+///
+/// This allows academic search results to flow through the standard web search
+/// pipeline (e.g., for fact verification, claim checking).
+#[cfg(feature = "research")]
+pub struct AcademicSearchAdapter {
+    /// Which academic source to search
+    pub source: crate::academic_search::AcademicSource,
+}
+
+#[cfg(feature = "research")]
+impl AcademicSearchAdapter {
+    /// Create a new adapter for the given academic source.
+    pub fn new(source: crate::academic_search::AcademicSource) -> Self {
+        Self { source }
+    }
+
+    /// Create adapters for all default providers (arXiv, Semantic Scholar, PubMed).
+    pub fn default_providers() -> Vec<Self> {
+        use crate::academic_search::AcademicSource;
+        vec![
+            Self::new(AcademicSource::ArXiv),
+            Self::new(AcademicSource::SemanticScholar),
+            Self::new(AcademicSource::PubMed),
+        ]
+    }
+
+    /// Convert an AcademicPaper to a SearchResult.
+    fn paper_to_result(paper: &crate::academic_search::AcademicPaper) -> SearchResult {
+        let snippet = paper
+            .abstract_text
+            .as_deref()
+            .unwrap_or("")
+            .chars()
+            .take(300)
+            .collect::<String>();
+
+        let url = paper.url.as_deref().unwrap_or("").to_string();
+
+        let mut result = SearchResult::new(&paper.title, &url, &snippet);
+        result.source = paper.source.display_name().to_string();
+        if let Some(year) = paper.year {
+            result.date = Some(year.to_string());
+        }
+        result
+    }
+}
+
+#[cfg(feature = "research")]
+impl SearchProvider for AcademicSearchAdapter {
+    fn search(&self, query: &str, config: &SearchConfig) -> Result<Vec<SearchResult>, SearchError> {
+        use crate::academic_search::*;
+
+        let academic_config = AcademicSearchConfig {
+            max_results: config.max_results,
+            timeout: config.timeout,
+            ..Default::default()
+        };
+
+        let provider: Box<dyn AcademicSearchProvider> = match self.source {
+            AcademicSource::ArXiv => Box::new(ArxivProvider::new()),
+            AcademicSource::SemanticScholar => Box::new(SemanticScholarProvider::new()),
+            AcademicSource::PubMed => Box::new(PubMedProvider::new()),
+            _ => {
+                return Err(SearchError::Network(format!(
+                    "Provider {} not yet supported",
+                    self.source
+                )))
+            }
+        };
+
+        let papers = provider
+            .search_papers(query, &academic_config)
+            .map_err(|e| SearchError::Network(e.to_string()))?;
+
+        Ok(papers.iter().map(Self::paper_to_result).collect())
+    }
+
+    fn name(&self) -> &str {
+        match self.source {
+            crate::academic_search::AcademicSource::ArXiv => "arXiv",
+            crate::academic_search::AcademicSource::SemanticScholar => "Semantic Scholar",
+            crate::academic_search::AcademicSource::PubMed => "PubMed",
+            _ => "Academic",
+        }
+    }
+}
+
 /// Search error
 #[derive(Debug)]
 #[non_exhaustive]
@@ -1812,5 +1980,102 @@ Disallow: /nogoogle/
         let rules = WebCrawler::parse_robots_txt(content, "TestBot/1.0");
         assert!(WebCrawler::path_allowed(&rules, "/anything"));
         assert!(rules.disallowed.is_empty());
+    }
+
+    // === V83: search_for_claim ===
+
+    #[test]
+    fn test_search_for_claim_with_cached_engine() {
+        let mut engine = WebSearchEngine::new(SearchConfig::default());
+        // Manually insert a cached result
+        let cached = vec![
+            SearchResult::new(
+                "Python info",
+                "https://python.org",
+                "Python is a programming language",
+            ),
+            SearchResult::new(
+                "Unrelated",
+                "https://other.com",
+                "Cooking recipes for pasta",
+            ),
+        ];
+        engine.cache.insert(
+            "python programming language".to_string(),
+            (cached, std::time::Instant::now()),
+        );
+
+        let results = search_for_claim(&mut engine, "Python is a programming language", 10);
+        assert!(results.is_ok());
+        let results = results.unwrap();
+        // First result should be the more relevant one
+        assert!(!results.is_empty());
+        assert!(results[0].relevance_score >= results.last().unwrap().relevance_score);
+    }
+
+    #[test]
+    fn test_search_for_claim_empty_query() {
+        let mut engine = WebSearchEngine::new(SearchConfig::default());
+        // All stopwords → empty keywords → InvalidQuery
+        let result = search_for_claim(&mut engine, "the is a an", 5);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_search_for_claim_truncates_results() {
+        let mut engine = WebSearchEngine::new(SearchConfig::default());
+        let cached = vec![
+            SearchResult::new("R1", "https://a.com", "result one content"),
+            SearchResult::new("R2", "https://b.com", "result two content"),
+            SearchResult::new("R3", "https://c.com", "result three content"),
+        ];
+        engine.cache.insert(
+            "result content".to_string(),
+            (cached, std::time::Instant::now()),
+        );
+
+        let results = search_for_claim(&mut engine, "result content", 2).unwrap();
+        assert!(results.len() <= 2);
+    }
+
+    #[cfg(feature = "research")]
+    #[test]
+    fn test_academic_adapter_creation() {
+        use crate::academic_search::AcademicSource;
+        let adapter = AcademicSearchAdapter::new(AcademicSource::ArXiv);
+        assert_eq!(adapter.name(), "arXiv");
+
+        let adapter_s2 = AcademicSearchAdapter::new(AcademicSource::SemanticScholar);
+        assert_eq!(adapter_s2.name(), "Semantic Scholar");
+
+        let adapter_pm = AcademicSearchAdapter::new(AcademicSource::PubMed);
+        assert_eq!(adapter_pm.name(), "PubMed");
+    }
+
+    #[cfg(feature = "research")]
+    #[test]
+    fn test_academic_adapter_default_providers() {
+        let adapters = AcademicSearchAdapter::default_providers();
+        assert_eq!(adapters.len(), 3);
+        assert_eq!(adapters[0].name(), "arXiv");
+        assert_eq!(adapters[1].name(), "Semantic Scholar");
+        assert_eq!(adapters[2].name(), "PubMed");
+    }
+
+    #[cfg(feature = "research")]
+    #[test]
+    fn test_academic_adapter_paper_to_result() {
+        use crate::academic_search::{AcademicPaper, AcademicSource, Author};
+        let mut paper = AcademicPaper::new("123", "Test Paper Title", AcademicSource::ArXiv);
+        paper.authors = vec![Author::new("John Doe")];
+        paper.abstract_text = Some("This is the abstract of the paper.".to_string());
+        paper.url = Some("https://arxiv.org/abs/123".to_string());
+        paper.year = Some(2024);
+
+        let result = AcademicSearchAdapter::paper_to_result(&paper);
+        assert_eq!(result.title, "Test Paper Title");
+        assert!(result.snippet.contains("abstract"));
+        assert_eq!(result.source, "arXiv");
+        assert_eq!(result.date.as_deref(), Some("2024"));
     }
 }

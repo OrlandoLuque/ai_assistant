@@ -62,6 +62,10 @@ pub enum RequestType {
     Rerank,
     Completion,
     ImageGeneration,
+    /// LLM calls for verification/anti-hallucination (faithfulness, CoVe, etc.).
+    Verification,
+    /// Academic search API calls (arXiv, Semantic Scholar, PubMed).
+    AcademicSearch,
 }
 
 impl RequestType {
@@ -73,6 +77,8 @@ impl RequestType {
             RequestType::Rerank => "Rerank",
             RequestType::Completion => "Completion",
             RequestType::ImageGeneration => "ImageGeneration",
+            RequestType::Verification => "Verification",
+            RequestType::AcademicSearch => "AcademicSearch",
         }
     }
 }

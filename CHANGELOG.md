@@ -5,6 +5,195 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v44 (2026-04-11) — V88: Wiring Completo, Butler, Binarios
+
+### Added
+- **Anti-hallucination wiring (V88)** — full integration across all layers:
+  - `assistant.rs`: opt-in `anti_hallucination_config` and `quality_gate_runner` fields.
+  - `config_file.rs`: `AntiHallucinationFileConfig`, `QualityGateFileConfig`, `ResearchFileConfig`.
+  - `server_axum.rs`: 6 new REST endpoints (`/api/v1/verify/*`, `/api/v1/research/*`).
+  - MCP: 9 new tools (6 research + 3 verification: check_faithfulness, verify_claims, run_quality_gates).
+- **Context budget (V88)** — `ContextSourceType::AcademicPaper` with peer-reviewed boost (0.75).
+- **RAG tiers (V88)** — `estimate_extra_calls()` now includes 7 anti-hallucination features.
+- **Telemetry (V88)** — 5 new convenience methods: `record_faithfulness_check`, `record_academic_search`,
+  `record_quality_gate_run`, `record_cove_verification`, `record_abstention`.
+- **OpenTelemetry (V88)** — 5 new spans: `anti_hallucination.pipeline`, `faithfulness.score`,
+  `cove.verify`, `academic.search`, `quality.gate`.
+- **Cost tracking (V88)** — `RequestType::Verification`, `RequestType::AcademicSearch` in cost_integration.
+  `CostTracker`: `verification_cost`, `verification_calls`, `academic_search_cost`, `academic_search_calls`.
+- **Autonomous loop (V88)** — `AgentResult.quality_score: Option<f64>`.
+- **Butler (V88)** — 8 new recommendations (Q7-Q11 quality, C6 cost, 2 research).
+  `DeploymentScenario::ResearchWorkstation`. New `AdvisorConfig` fields:
+  `anti_hallucination_enabled`, `quality_gates_configured`, `research_mode_enabled`, `academic_api_keys_present`.
+- **Agent wiring (V88)** — system prompts for `ResearchAssistant`, `PeerReviewer`, `WritingCoach` roles.
+- **ai_cli (V88)** — 3 new subcommands: `verify`, `research` (gated), `quality`.
+- **ai_test_harness (V88)** — 5 new categories: anti-hallucination, quality-gates, faithfulness,
+  verification (eval), research (research feature).
+- ~30 new integration tests across harness categories.
+
+### Changed
+- Version 0.2.19 → 0.2.20.
+
+## [Unreleased] - v43 (2026-04-11) — V87: Quality Gates & RAG Tier Integration
+
+### Added
+- **Quality gates (V87)** — configurable quality gates that check LLM outputs
+  against minimum thresholds. Five metrics: Faithfulness, Confidence, GroundingRatio,
+  ConsistencyScore, CitationCoverage. Three actions: Fail, Warn, Log.
+  - New module: `quality_gates.rs` (~400 lines, gated `eval` feature).
+  - `QualityGateRunner` — presets: `production_defaults()`, `strict()`.
+  - `QualityScores` — overall score, badge color (green/yellow/red).
+  - `QualityGateResult` — per-gate results, summary, pass/fail.
+- **Feature group helpers (V87)** — in `rag_tiers.rs`:
+  - `enable_verification_mode()` — all anti-hallucination features (7 fields).
+  - `enable_research_mode()` — attribution + reranking (4 fields).
+  - `enable_academic_mode()` — combined research + verification.
+- 25 new tests (21 quality_gates + 4 rag_tiers).
+
+### Changed
+- Version 0.2.18 → 0.2.19.
+
+## [Unreleased] - v42 (2026-04-11) — V86: Literature Review Pipeline + MCP Tools
+
+### Added
+- **Literature review pipeline (V86)** — end-to-end pipeline: search → filter → categorize → synthesize → format. Four synthesis styles (Narrative, Systematic, Annotated, Comparative). Multiple bibliography formats (BibTeX, APA, MLA, Chicago, IEEE).
+  - New module: `literature_review.rs` (~600 lines, gated `research` feature).
+  - `LiteratureReviewPipeline` — configurable with `SearchDepth` and `SynthesisStyle`.
+  - `LiteratureReview` — output with sections, bibliography, BibTeX, statistics.
+  - Presets: `quick()` (10 papers, annotated), `systematic()` (50 papers, deep).
+- **MCP research tools (V86)** — 6 MCP tool definitions for research operations.
+  - New module: `mcp_research_tools.rs` (~300 lines, gated `research` feature).
+  - `ResearchToolRegistry` — tool discovery and dispatch.
+  - Tools: `search_papers`, `get_paper_metadata`, `import_bibtex`, `export_bibtex`, `literature_review`, `extract_paper_metadata`.
+  - Immediate dispatch for `import_bibtex` and `extract_paper_metadata`.
+- 31 new tests (20 literature_review + 11 mcp_research_tools).
+
+### Changed
+- Version 0.2.17 → 0.2.18.
+
+## [Unreleased] - v41 (2026-04-11) — V85: Paper Metadata & Agent Roles
+
+### Added
+- **Paper metadata extraction (V85)** — heuristic-based extraction of title,
+  authors, abstract, DOI, year, keywords, sections, and references from
+  academic paper text. Section type classification (10 types).
+  - New module: `paper_metadata.rs` (~400 lines, gated `research` feature).
+  - `PaperMetadataExtractor` — configurable extraction with confidence scoring.
+  - `PaperSection` — detected sections with heading, content, level, and type.
+  - `SectionType` — Abstract, Introduction, RelatedWork, Methodology, Results,
+    Discussion, Conclusion, References, Appendix, Other.
+- **Research agent roles (V85)** — 3 new `AgentRole` variants in `multi_agent.rs`:
+  `ResearchAssistant`, `PeerReviewer`, `WritingCoach`.
+- **Knowledge graph entity types (V85)** — `EntityType::Paper` and
+  `EntityType::Author` in `knowledge_graph.rs` with aliases.
+- 20 new tests (paper_metadata).
+
+### Changed
+- `EntityType::all()` returns 9 variants (was 7).
+- Version 0.2.16 → 0.2.17.
+
+## [Unreleased] - v40 (2026-04-11) — V84: Academic APIs & BibTeX
+
+### Added
+- **Academic search APIs (V84)** — unified `AcademicSearchProvider` trait with
+  three provider implementations: `ArxivProvider` (Atom/XML), `SemanticScholarProvider`
+  (REST/JSON), `PubMedProvider` (E-utilities XML). Multi-provider aggregation via
+  `AcademicSearchEngine` with DOI-based deduplication.
+  - New module: `academic_search.rs` (~800 lines, gated `research` feature).
+  - `AcademicPaper` — full metadata: authors, abstract, year, venue, DOI, citations,
+    fields of study, external IDs.
+  - Rate limiting per provider (arXiv 3s, S2 100/5min, PubMed 3/s).
+  - API keys via env vars (`SEMANTIC_SCHOLAR_API_KEY`, `NCBI_API_KEY`).
+- **BibTeX parser/generator (V84)** — parse `.bib` files and generate BibTeX
+  from academic papers.
+  - New module: `bibtex.rs` (~500 lines, gated `research` feature).
+  - `BibParser` — handles brace nesting, quoted values, bare numbers, `@comment`/`@preamble`/`@string`.
+  - `BibGenerator` — deterministic output, `from_paper()` for automatic cite key generation.
+  - Security: LaTeX injection sanitization (strips `\input`, `\write18`, `\immediate`, etc.).
+  - Limits: max 10MB file, 10K entries, 10K chars per field.
+  - `latex_to_unicode()` — common accent commands to Unicode.
+- **`AcademicSearchAdapter`** — in `web_search.rs`, wraps academic providers to
+  implement `SearchProvider` for integration with fact verification pipeline.
+- **Academic paper source fields** — `doi`, `venue`, `citation_count` added to
+  `Source` in `citations.rs`.
+- **`research` feature flag** — new Cargo feature, included in `full`.
+- 54 new tests (26 academic_search + 23 bibtex + 3 web_search + 2 citations).
+
+### Changed
+- `Source` struct in `citations.rs` now has 3 optional fields for academic papers.
+- Version 0.2.15 → 0.2.16.
+
+## [Unreleased] - v39 (2026-04-11) — V83: Verification Pipeline
+
+### Added
+- **Chain-of-Verification (V83)** — CoVe pipeline that extracts claims from
+  LLM responses, verifies each against RAG/web search sources, and corrects
+  or annotates the response. Configurable `VerificationSource` (RagOnly,
+  WebSearchOnly, RagThenWeb, Both) and `CorrectionMode` (Replace, Annotate,
+  Footnote). Hard cap `max_claims_to_verify=10` to control cost.
+  - New module: `chain_of_verification.rs` (~490 lines).
+  - `CoVeConfig` — strict/permissive presets, budget-aware.
+  - `CoVeResult` — per-claim verdicts, corrections, overall accuracy.
+- **Search-integrated fact verification** — `FactVerifier::verify_with_search()`
+  and `verify_with_rag()` in `fact_verification.rs` for verifying claims against
+  web search results or RAG chunks with source provenance tracking.
+- **Divergence metrics** — `ConsistencyResult::measure_divergence()` in
+  `self_consistency.rs` computes Shannon entropy, max group ratio, effective
+  distinct count, and derives a `ConsistencyRecommendation` (High/Medium/Low/Abstain).
+- **`search_for_claim()`** — keyword-based claim search helper in `web_search.rs`
+  with stopword filtering and relevance scoring.
+- **RagFeatures verification fields** — 2 new: `chain_of_verification`,
+  `fact_check_search`. Enabled at Agentic+ tier. Total RagFeatures: 45.
+- 45 new tests across 5 modules.
+
+## [Unreleased] - v38 (2026-04-11) — V82: Faithfulness & Grounded Generation
+
+### Added
+- **Faithfulness NLI scoring (V82)** — NLI-based claim-level faithfulness
+  evaluation against retrieved context. `FaithfulnessScorer` decomposes
+  responses into atomic claims and evaluates each via word overlap (zero-cost)
+  or LLM-based NLI.
+  - New module: `faithfulness.rs` (~380 lines).
+  - `NliVerdict` — Entailed, Contradicted, Neutral per claim.
+  - `FaithfulnessReport` — overall score, per-claim verdicts, processed text.
+- **Grounded generation** — anchor every response sentence to a source chunk.
+  `GroundedGenerator` in `anti_hallucination.rs` with `ChunkAnchorMethod`
+  (PostHoc, Prompted) and configurable similarity threshold.
+- **`decompose_atomic()`** — finer-grained atomic claim decomposition in
+  `hallucination_detection.rs` for faithfulness NLI evaluation.
+- **`anchor_to_sources()`** — sentence-to-source anchoring in `citations.rs`
+  with word overlap similarity.
+- **`SourceType::AcademicPaper`** — new citation source type.
+- **`FaithfulnessEvaluator`** — evaluator implementing `Evaluator` trait in
+  `evaluation.rs` with `MetricType::Faithfulness` and `MetricType::GroundingRatio`.
+- **RagFeatures fields** — 2 new: `faithfulness_scoring`, `grounded_generation`.
+  Enabled at Thorough+ tier. Total RagFeatures: 43.
+- 50 new tests across 6 modules.
+
+## [Unreleased] - v37 (2026-04-11) — V81: Anti-Hallucination Orchestrator + Foundation
+
+### Added
+- **Anti-Hallucination Pipeline (V81)** — central orchestrator
+  (`AntiHallucinationPipeline`) with 7 configurable strategies (Omit, Mark,
+  Warn, Footnote, VerifyThenMark, VerifyThenOmit, Ask), calibrated abstention,
+  per-claim confidence scoring, and auto-temperature for factual queries.
+  - New module: `anti_hallucination.rs` (~580 lines).
+  - `is_factual_query()` — heuristic factual vs creative detection.
+  - Preset configs: `production()`, `strict()`, `permissive()`.
+- **Per-claim confidence scoring** — `ConfidenceScorer::score_per_claim()`
+  and `score_texts()` methods in `confidence_scoring.rs`.
+- **Auto-temperature** — `AdaptiveThinkingConfig.auto_temperature_factual`
+  forces lower temperature for factual queries, reducing hallucination risk.
+  `QueryClassifier::is_factual_query()` public API for integration.
+- **AbstentionGuard** — guardrail that blocks low-confidence responses
+  (PostReceive stage), with configurable threshold and custom message.
+- **AttributionGuard** — guardrail that warns on ungrounded claim patterns
+  ("studies show", "experts say", etc.), with configurable severity.
+- **RagFeatures anti-hallucination fields** — 3 new fields:
+  `calibrated_abstention`, `mandatory_attribution`, `auto_temperature`.
+  Mapped to tiers: Enhanced+ gets attribution+auto-temp, Thorough+ gets all.
+- 67 new tests across 5 modules.
+
 ## [Unreleased] - v36 (2026-04-11) — V80: Azure OpenAI as first-class provider
 
 ### Added

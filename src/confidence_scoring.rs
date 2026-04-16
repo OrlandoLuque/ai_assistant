@@ -494,6 +494,38 @@ impl Default for ConfidenceScorer {
     }
 }
 
+impl ConfidenceScorer {
+    /// Score confidence for each claim individually.
+    ///
+    /// Returns a vector of (claim_text, confidence_score) pairs.
+    /// Uses linguistic markers within each claim to estimate per-claim confidence.
+    pub fn score_per_claim(
+        &self,
+        claims: &[crate::hallucination_detection::Claim],
+    ) -> Vec<(String, f64)> {
+        claims
+            .iter()
+            .map(|claim| {
+                let score = self.score(&claim.text, None);
+                (claim.text.clone(), score.overall)
+            })
+            .collect()
+    }
+
+    /// Score confidence for a list of text strings.
+    ///
+    /// Simpler API when you don't have `Claim` structs — just pass raw strings.
+    pub fn score_texts(&self, texts: &[&str]) -> Vec<(String, f64)> {
+        texts
+            .iter()
+            .map(|text| {
+                let score = self.score(text, None);
+                (text.to_string(), score.overall)
+            })
+            .collect()
+    }
+}
+
 /// Calibration statistics
 #[derive(Debug, Clone)]
 pub struct CalibrationStats {
@@ -640,5 +672,75 @@ mod tests {
         let stats = scorer.calibration_stats();
         assert_eq!(stats.total_predictions, 0);
         assert!(stats.accuracy_by_bucket.is_empty());
+    }
+
+    #[test]
+    fn test_score_per_claim() {
+        use crate::hallucination_detection::{Claim, ClaimType};
+        let scorer = ConfidenceScorer::default();
+        let claims = vec![
+            Claim {
+                text: "The Earth is definitely the third planet from the Sun.".to_string(),
+                position: 0,
+                claim_type: ClaimType::Factual,
+                supported: true,
+                confidence: 0.9,
+            },
+            Claim {
+                text: "I think maybe the answer could be around 42.".to_string(),
+                position: 1,
+                claim_type: ClaimType::Factual,
+                supported: false,
+                confidence: 0.3,
+            },
+        ];
+        let results = scorer.score_per_claim(&claims);
+        assert_eq!(results.len(), 2);
+        // First claim has certainty markers → higher score
+        assert!(
+            results[0].1 > results[1].1,
+            "certain claim should score higher than uncertain"
+        );
+        // All scores in valid range
+        for (_, score) in &results {
+            assert!(*score >= 0.0 && *score <= 1.0);
+        }
+    }
+
+    #[test]
+    fn test_score_per_claim_empty() {
+        let scorer = ConfidenceScorer::default();
+        let results = scorer.score_per_claim(&[]);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_score_texts() {
+        let scorer = ConfidenceScorer::default();
+        let texts = &[
+            "This is certainly true and well-established.",
+            "I'm not sure, maybe possibly this could be right.",
+        ];
+        let results = scorer.score_texts(texts);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].0, texts[0]);
+        assert_eq!(results[1].0, texts[1]);
+        // Certain text should score higher
+        assert!(results[0].1 > results[1].1);
+    }
+
+    #[test]
+    fn test_score_texts_empty() {
+        let scorer = ConfidenceScorer::default();
+        let results = scorer.score_texts(&[]);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_score_texts_single() {
+        let scorer = ConfidenceScorer::default();
+        let results = scorer.score_texts(&["The answer is 42."]);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].1 >= 0.0 && results[0].1 <= 1.0);
     }
 }

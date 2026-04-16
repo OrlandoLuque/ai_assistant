@@ -275,6 +275,31 @@ impl OtelTracer {
             .unwrap_or_default()
     }
 
+    /// Start a span for the anti-hallucination pipeline.
+    pub fn start_anti_hallucination_span(&self) -> AiSpan {
+        self.start_span("anti_hallucination.pipeline")
+    }
+
+    /// Start a span for faithfulness scoring.
+    pub fn start_faithfulness_span(&self) -> AiSpan {
+        self.start_span("faithfulness.score")
+    }
+
+    /// Start a span for Chain-of-Verification.
+    pub fn start_cove_span(&self) -> AiSpan {
+        self.start_span("cove.verify")
+    }
+
+    /// Start a span for academic search.
+    pub fn start_academic_search_span(&self) -> AiSpan {
+        self.start_span("academic.search")
+    }
+
+    /// Start a span for quality gate checks.
+    pub fn start_quality_gate_span(&self) -> AiSpan {
+        self.start_span("quality.gate")
+    }
+
     /// Get the tracer's service name.
     pub fn service_name(&self) -> &str {
         &self.config.service_name

@@ -105,6 +105,8 @@ pub struct AgentResult {
     pub cost: f64,
     /// Wall-clock duration in milliseconds.
     pub duration_ms: u64,
+    /// Quality score from quality gates (0.0-1.0), if evaluated.
+    pub quality_score: Option<f64>,
 }
 
 // ============================================================================
@@ -304,6 +306,7 @@ impl AutonomousAgent {
                         tools_called: self.collect_tools_called(),
                         cost: self.total_cost,
                         duration_ms: elapsed,
+                        quality_score: None,
                     });
                 }
             }
@@ -345,6 +348,7 @@ impl AutonomousAgent {
                         tools_called: self.collect_tools_called(),
                         cost: self.total_cost,
                         duration_ms: elapsed,
+                        quality_score: None,
                     });
                 }
                 IterationOutcome::AskUser(question) => {
@@ -391,6 +395,7 @@ impl AutonomousAgent {
                 tools_called: self.collect_tools_called(),
                 cost: self.total_cost,
                 duration_ms: elapsed,
+                quality_score: None,
             })
         } else {
             Err("Agent ended without producing a result".into())

@@ -2021,6 +2021,266 @@ impl Guard for OutputToxicityGuard {
     }
 }
 
+// =============================================================================
+// ANTI-HALLUCINATION GUARDS (V81)
+// =============================================================================
+
+/// Guard that blocks responses when overall confidence is below a threshold.
+///
+/// When the anti-hallucination pipeline determines that the model's confidence
+/// in its response is too low, this guard triggers abstention — blocking the
+/// response with a user-friendly message instead of returning uncertain content.
+///
+/// Runs at [`GuardStage::PostReceive`] since it evaluates generated output.
+#[derive(Debug, Clone)]
+pub struct AbstentionGuard {
+    /// Minimum confidence threshold (0.0–1.0). Responses with
+    /// confidence below this are blocked.
+    pub threshold: f64,
+    /// Custom abstention message. If empty, uses default.
+    pub abstention_message: String,
+}
+
+impl AbstentionGuard {
+    /// Create a new abstention guard with the given threshold.
+    pub fn new(threshold: f64) -> Self {
+        Self {
+            threshold: threshold.clamp(0.0, 1.0),
+            abstention_message: String::new(),
+        }
+    }
+
+    /// Create with a custom abstention message.
+    pub fn with_message(threshold: f64, message: impl Into<String>) -> Self {
+        Self {
+            threshold: threshold.clamp(0.0, 1.0),
+            abstention_message: message.into(),
+        }
+    }
+
+    /// Estimate confidence from text using simple linguistic heuristics.
+    ///
+    /// This is a lightweight heuristic for use within the guard pipeline.
+    /// For full confidence scoring, use `ConfidenceScorer` directly.
+    fn estimate_confidence(text: &str) -> f64 {
+        let lower = text.to_lowercase();
+        let word_count = text.split_whitespace().count().max(1) as f64;
+
+        let uncertainty_markers = [
+            "i'm not sure",
+            "i am not sure",
+            "i don't know",
+            "i do not know",
+            "maybe",
+            "perhaps",
+            "possibly",
+            "might be",
+            "could be",
+            "uncertain",
+            "not certain",
+            "i think",
+            "i believe",
+            "it seems",
+            "it appears",
+            "approximately",
+            "roughly",
+            "unclear",
+        ];
+
+        let certainty_markers = [
+            "definitely",
+            "certainly",
+            "absolutely",
+            "clearly",
+            "undoubtedly",
+            "well-established",
+            "well established",
+            "confirmed",
+            "proven",
+            "documented",
+            "according to",
+        ];
+
+        let uncertainty_count = uncertainty_markers
+            .iter()
+            .filter(|m| lower.contains(*m))
+            .count() as f64;
+        let certainty_count = certainty_markers
+            .iter()
+            .filter(|m| lower.contains(*m))
+            .count() as f64;
+
+        // Base confidence adjusted by markers
+        let base = 0.5;
+        let uncertainty_penalty = (uncertainty_count * 0.15).min(0.4);
+        let certainty_bonus = (certainty_count * 0.1).min(0.3);
+
+        // Very short responses are less confident
+        let length_factor = if word_count < 5.0 { -0.1 } else { 0.0 };
+
+        (base - uncertainty_penalty + certainty_bonus + length_factor).clamp(0.0, 1.0)
+    }
+}
+
+impl Default for AbstentionGuard {
+    fn default() -> Self {
+        Self::new(0.3)
+    }
+}
+
+impl Guard for AbstentionGuard {
+    fn name(&self) -> &str {
+        "abstention"
+    }
+
+    fn stage(&self) -> GuardStage {
+        GuardStage::PostReceive
+    }
+
+    fn check(&self, text: &str) -> GuardCheckResult {
+        let confidence = Self::estimate_confidence(text);
+
+        if confidence < self.threshold {
+            let message = if self.abstention_message.is_empty() {
+                format!(
+                    "I'm not confident enough to provide a reliable answer \
+                     (confidence: {:.0}%, threshold: {:.0}%). \
+                     Please rephrase your question or provide more context.",
+                    confidence * 100.0,
+                    self.threshold * 100.0
+                )
+            } else {
+                self.abstention_message.clone()
+            };
+
+            GuardCheckResult {
+                guard_name: self.name().to_string(),
+                action: GuardAction::Block(message),
+                score: 1.0 - confidence,
+                details: format!(
+                    "confidence={:.2}, threshold={:.2}, abstained=true",
+                    confidence, self.threshold
+                ),
+            }
+        } else {
+            GuardCheckResult {
+                guard_name: self.name().to_string(),
+                action: GuardAction::Pass,
+                score: 0.0,
+                details: format!(
+                    "confidence={:.2}, threshold={:.2}, abstained=false",
+                    confidence, self.threshold
+                ),
+            }
+        }
+    }
+}
+
+/// Guard that warns or annotates responses containing ungrounded claims.
+///
+/// Scans the output for patterns that suggest unverified/unsupported assertions
+/// and applies the configured [`UngroundedClaimStrategy`] equivalent action.
+/// By default, marks suspicious content with `[unverified]` annotations.
+///
+/// Runs at [`GuardStage::PostReceive`] since it evaluates generated output.
+#[derive(Debug, Clone)]
+pub struct AttributionGuard {
+    /// The annotation to add for potentially ungrounded claims.
+    pub mark_format: String,
+    /// Severity score for ungrounded claims (0.0–1.0).
+    /// Controls whether the guard warns or blocks.
+    pub severity: f64,
+}
+
+impl AttributionGuard {
+    /// Create a new attribution guard with default mark format.
+    pub fn new() -> Self {
+        Self {
+            mark_format: "[unverified]".to_string(),
+            severity: 0.5,
+        }
+    }
+
+    /// Create with a custom mark format and severity.
+    pub fn with_config(mark_format: impl Into<String>, severity: f64) -> Self {
+        Self {
+            mark_format: mark_format.into(),
+            severity: severity.clamp(0.0, 1.0),
+        }
+    }
+
+    /// Patterns that suggest potentially ungrounded assertions.
+    const UNGROUNDED_PATTERNS: &'static [&'static str] = &[
+        "studies show",
+        "research shows",
+        "research has shown",
+        "scientists have found",
+        "experts say",
+        "according to experts",
+        "it is well known",
+        "it is a fact",
+        "statistics show",
+        "data shows",
+        "evidence suggests",
+        "it has been proven",
+        "widely accepted",
+        "commonly believed",
+    ];
+
+    /// Count how many ungrounded patterns appear in the text.
+    fn count_ungrounded_patterns(text: &str) -> usize {
+        let lower = text.to_lowercase();
+        Self::UNGROUNDED_PATTERNS
+            .iter()
+            .filter(|p| lower.contains(*p))
+            .count()
+    }
+}
+
+impl Default for AttributionGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Guard for AttributionGuard {
+    fn name(&self) -> &str {
+        "attribution"
+    }
+
+    fn stage(&self) -> GuardStage {
+        GuardStage::PostReceive
+    }
+
+    fn check(&self, text: &str) -> GuardCheckResult {
+        let pattern_count = Self::count_ungrounded_patterns(text);
+
+        if pattern_count > 0 {
+            let score = (pattern_count as f64 * 0.2).min(1.0) * self.severity;
+            GuardCheckResult {
+                guard_name: self.name().to_string(),
+                action: GuardAction::Warn(format!(
+                    "Found {} potentially ungrounded claim pattern(s). \
+                     Consider adding citations or qualifying language.",
+                    pattern_count
+                )),
+                score,
+                details: format!(
+                    "ungrounded_patterns={}, mark_format={}, score={:.2}",
+                    pattern_count, self.mark_format, score
+                ),
+            }
+        } else {
+            GuardCheckResult {
+                guard_name: self.name().to_string(),
+                action: GuardAction::Pass,
+                score: 0.0,
+                details: "no ungrounded claim patterns detected".to_string(),
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -3127,5 +3387,153 @@ mod tests {
         let guard = OutputToxicityGuard::default();
         assert_eq!(guard.name(), "output_toxicity");
         assert_eq!(guard.stage(), GuardStage::PostReceive);
+    }
+
+    // == AbstentionGuard tests ==
+
+    #[test]
+    fn test_abstention_guard_passes_confident_text() {
+        let guard = AbstentionGuard::new(0.3);
+        let result = guard.check("The speed of light is definitely 299,792,458 meters per second.");
+        assert!(
+            matches!(result.action, GuardAction::Pass),
+            "Confident text should pass, got {:?}",
+            result.action
+        );
+    }
+
+    #[test]
+    fn test_abstention_guard_blocks_uncertain_text() {
+        let guard = AbstentionGuard::new(0.5);
+        let result =
+            guard.check("I'm not sure, maybe possibly I don't know, it could be something.");
+        assert!(
+            matches!(result.action, GuardAction::Block(_)),
+            "Uncertain text should be blocked at threshold 0.5, got {:?}",
+            result.action
+        );
+    }
+
+    #[test]
+    fn test_abstention_guard_custom_message() {
+        let guard = AbstentionGuard::with_message(0.9, "Cannot answer reliably.");
+        let result = guard.check("Some neutral text.");
+        // With threshold 0.9, most text will be blocked
+        if let GuardAction::Block(msg) = &result.action {
+            assert_eq!(msg, "Cannot answer reliably.");
+        }
+    }
+
+    #[test]
+    fn test_abstention_guard_name_and_stage() {
+        let guard = AbstentionGuard::default();
+        assert_eq!(guard.name(), "abstention");
+        assert_eq!(guard.stage(), GuardStage::PostReceive);
+    }
+
+    #[test]
+    fn test_abstention_guard_default_threshold() {
+        let guard = AbstentionGuard::default();
+        assert!((guard.threshold - 0.3).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_abstention_guard_threshold_clamped() {
+        let guard = AbstentionGuard::new(2.0);
+        assert!((guard.threshold - 1.0).abs() < f64::EPSILON);
+        let guard = AbstentionGuard::new(-1.0);
+        assert!((guard.threshold - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_abstention_confidence_estimation() {
+        // High uncertainty
+        let low = AbstentionGuard::estimate_confidence(
+            "I'm not sure, maybe possibly it could be something, I think.",
+        );
+        // High certainty
+        let high = AbstentionGuard::estimate_confidence(
+            "This is definitely confirmed and well-established documented fact.",
+        );
+        assert!(
+            low < high,
+            "uncertain={:.2} should be < certain={:.2}",
+            low,
+            high
+        );
+        assert!(low >= 0.0 && low <= 1.0);
+        assert!(high >= 0.0 && high <= 1.0);
+    }
+
+    // == AttributionGuard tests ==
+
+    #[test]
+    fn test_attribution_guard_passes_clean_text() {
+        let guard = AttributionGuard::new();
+        let result = guard.check("Rust is a systems programming language.");
+        assert!(matches!(result.action, GuardAction::Pass));
+    }
+
+    #[test]
+    fn test_attribution_guard_warns_on_ungrounded_claims() {
+        let guard = AttributionGuard::new();
+        let result = guard.check(
+            "Studies show that 90% of developers prefer Rust. Research has shown this is true.",
+        );
+        assert!(
+            matches!(result.action, GuardAction::Warn(_)),
+            "Ungrounded claims should trigger warning, got {:?}",
+            result.action
+        );
+    }
+
+    #[test]
+    fn test_attribution_guard_counts_patterns() {
+        let count = AttributionGuard::count_ungrounded_patterns(
+            "Studies show X. Research shows Y. Experts say Z.",
+        );
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn test_attribution_guard_no_patterns() {
+        let count = AttributionGuard::count_ungrounded_patterns("Rust uses ownership.");
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_attribution_guard_name_and_stage() {
+        let guard = AttributionGuard::default();
+        assert_eq!(guard.name(), "attribution");
+        assert_eq!(guard.stage(), GuardStage::PostReceive);
+    }
+
+    #[test]
+    fn test_attribution_guard_custom_mark() {
+        let guard = AttributionGuard::with_config("[needs-citation]", 0.8);
+        assert_eq!(guard.mark_format, "[needs-citation]");
+        assert!((guard.severity - 0.8).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_attribution_guard_severity_clamped() {
+        let guard = AttributionGuard::with_config("[x]", 5.0);
+        assert!((guard.severity - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_abstention_guard_in_pipeline() {
+        let mut pipeline = GuardrailPipeline::new();
+        pipeline.add_guard(Box::new(AbstentionGuard::new(0.3)));
+        let result = pipeline.check_output("The answer is certainly and definitely correct.");
+        assert!(result.passed);
+    }
+
+    #[test]
+    fn test_attribution_guard_in_pipeline() {
+        let mut pipeline = GuardrailPipeline::new();
+        pipeline.add_guard(Box::new(AttributionGuard::new()));
+        let result = pipeline.check_output("Rust is fast.");
+        assert!(result.passed);
     }
 }

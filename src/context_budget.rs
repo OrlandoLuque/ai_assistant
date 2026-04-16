@@ -186,6 +186,7 @@ impl ContextBudgetConfig {
             ContextSourceType::Graph => self.graph_base_score,
             ContextSourceType::UserNotes => self.notes_base_score,
             ContextSourceType::Custom => 0.5,
+            ContextSourceType::AcademicPaper => 0.75, // Peer-reviewed boost
             _ => 0.5,
         }
     }
@@ -319,6 +320,8 @@ pub enum ContextSourceType {
     UserNotes,
     /// Other/custom source.
     Custom,
+    /// Academic papers from research APIs (arXiv, Semantic Scholar, PubMed).
+    AcademicPaper,
 }
 
 impl std::fmt::Display for ContextSourceType {
@@ -331,6 +334,7 @@ impl std::fmt::Display for ContextSourceType {
             Self::Graph => write!(f, "GRAPH"),
             Self::UserNotes => write!(f, "USER_NOTES"),
             Self::Custom => write!(f, "CUSTOM"),
+            Self::AcademicPaper => write!(f, "ACADEMIC_PAPER"),
             _ => write!(f, "UNKNOWN"),
         }
     }
@@ -607,6 +611,7 @@ impl ContextBudgetAllocator {
             ContextSourceType::Memory,
             ContextSourceType::Rag,
             ContextSourceType::Graph,
+            ContextSourceType::AcademicPaper,
             ContextSourceType::Custom,
         ];
 
@@ -714,6 +719,7 @@ impl ContextBudgetAllocator {
             ContextSourceType::Memory,
             ContextSourceType::Rag,
             ContextSourceType::Graph,
+            ContextSourceType::AcademicPaper,
             ContextSourceType::Custom,
         ];
 

@@ -99,6 +99,24 @@ pub fn role_system_prompt(role: &AgentRole) -> String {
         AgentRole::Custom => "You are an AI assistant. Complete the assigned task using the tools \
              available to you. Be clear, accurate, and thorough."
             .to_string(),
+        AgentRole::ResearchAssistant => {
+            "You are a Research Assistant agent. Your role is to search for academic \
+             papers, filter relevant results, summarize findings, and provide structured \
+             literature overviews. Use academic search APIs and cite sources properly."
+                .to_string()
+        }
+        AgentRole::PeerReviewer => {
+            "You are a Peer Reviewer agent. Your role is to critically evaluate drafts, \
+             verify claims against sources, check citations, and provide constructive \
+             feedback on academic rigor, methodology, and clarity."
+                .to_string()
+        }
+        AgentRole::WritingCoach => {
+            "You are a Writing Coach agent. Your role is to improve academic writing \
+             quality — clarity, structure, argumentation, and proper citation style. \
+             Suggest concrete improvements while preserving the author's voice."
+                .to_string()
+        }
     }
 }
 

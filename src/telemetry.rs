@@ -158,6 +158,54 @@ impl TelemetryCollector {
         );
     }
 
+    /// Record a faithfulness check event.
+    pub fn record_faithfulness_check(&self, score: f64, claims_count: usize, duration: Duration) {
+        self.record(
+            TelemetryEvent::new("faithfulness_check")
+                .with_duration(duration)
+                .with_metric("score", score)
+                .with_metric("claims_count", claims_count as f64),
+        );
+    }
+
+    /// Record an academic search event.
+    pub fn record_academic_search(&self, provider: &str, query: &str, results_count: usize) {
+        self.record(
+            TelemetryEvent::new("academic_search")
+                .with_property("provider", provider)
+                .with_property("query", query)
+                .with_metric("results_count", results_count as f64),
+        );
+    }
+
+    /// Record a quality gate run event.
+    pub fn record_quality_gate_run(&self, passed: bool, score: f64) {
+        self.record(
+            TelemetryEvent::new("quality_gate_run")
+                .with_property("passed", if passed { "true" } else { "false" })
+                .with_metric("score", score),
+        );
+    }
+
+    /// Record a Chain-of-Verification event.
+    pub fn record_cove_verification(&self, corrections: usize, accuracy: f64, duration: Duration) {
+        self.record(
+            TelemetryEvent::new("cove_verification")
+                .with_duration(duration)
+                .with_metric("corrections", corrections as f64)
+                .with_metric("accuracy", accuracy),
+        );
+    }
+
+    /// Record an abstention event.
+    pub fn record_abstention(&self, reason: &str, confidence: f64) {
+        self.record(
+            TelemetryEvent::new("abstention")
+                .with_property("reason", reason)
+                .with_metric("confidence", confidence),
+        );
+    }
+
     pub fn get_aggregated(&self) -> AggregatedMetrics {
         self.aggregated
             .lock()

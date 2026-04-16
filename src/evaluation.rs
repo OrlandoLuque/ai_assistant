@@ -29,6 +29,12 @@ pub enum MetricType {
     CompletionTokens,
     TotalCost,
 
+    // Anti-hallucination metrics (V82)
+    /// Faithfulness score: ratio of claims supported by context.
+    Faithfulness,
+    /// Grounding ratio: ratio of sentences anchored to sources.
+    GroundingRatio,
+
     // Custom
     Custom,
 }
@@ -1245,6 +1251,131 @@ impl Evaluator for LlmJudgeEvaluator {
     }
 }
 
+// ============================================================================
+// Faithfulness evaluator (V82)
+// ============================================================================
+
+/// Evaluator that scores faithfulness of a response against its context.
+///
+/// Uses word overlap to estimate what fraction of claims in the response
+/// are supported by the provided context. Produces two metrics:
+/// - `Faithfulness`: ratio of entailed claims (0.0–1.0)
+/// - `GroundingRatio`: ratio of sentences traceable to sources (0.0–1.0)
+///
+/// For more sophisticated NLI, use [`crate::faithfulness::FaithfulnessScorer`]
+/// directly.
+pub struct FaithfulnessEvaluator {
+    /// Minimum word overlap to consider a claim supported.
+    pub min_overlap: f64,
+}
+
+impl FaithfulnessEvaluator {
+    /// Create a new evaluator with the given overlap threshold.
+    pub fn new(min_overlap: f64) -> Self {
+        Self {
+            min_overlap: min_overlap.clamp(0.0, 1.0),
+        }
+    }
+
+    /// Compute Jaccard word overlap between two texts.
+    fn word_overlap(a: &str, b: &str) -> f64 {
+        let words_a: std::collections::HashSet<String> = a
+            .split_whitespace()
+            .map(|w| {
+                w.to_lowercase()
+                    .chars()
+                    .filter(|c| c.is_alphanumeric())
+                    .collect()
+            })
+            .filter(|w: &String| w.len() > 1)
+            .collect();
+        let words_b: std::collections::HashSet<String> = b
+            .split_whitespace()
+            .map(|w| {
+                w.to_lowercase()
+                    .chars()
+                    .filter(|c| c.is_alphanumeric())
+                    .collect()
+            })
+            .filter(|w: &String| w.len() > 1)
+            .collect();
+
+        if words_a.is_empty() || words_b.is_empty() {
+            return 0.0;
+        }
+
+        let intersection = words_a.intersection(&words_b).count() as f64;
+        let union = words_a.union(&words_b).count() as f64;
+        if union > 0.0 {
+            intersection / union
+        } else {
+            0.0
+        }
+    }
+}
+
+impl Default for FaithfulnessEvaluator {
+    fn default() -> Self {
+        Self::new(0.2)
+    }
+}
+
+impl Evaluator for FaithfulnessEvaluator {
+    fn name(&self) -> &str {
+        "faithfulness"
+    }
+
+    fn evaluate(&self, sample: &EvalSample) -> Vec<MetricResult> {
+        let context = sample
+            .context
+            .as_deref()
+            .or(sample.reference.as_deref())
+            .unwrap_or("");
+
+        if context.is_empty() || sample.response.is_empty() {
+            return vec![
+                MetricResult::new(MetricType::Faithfulness, "faithfulness", 1.0)
+                    .with_range(0.0, 1.0),
+                MetricResult::new(MetricType::GroundingRatio, "grounding_ratio", 1.0)
+                    .with_range(0.0, 1.0),
+            ];
+        }
+
+        // Split response into sentences
+        let sentences: Vec<&str> = sample
+            .response
+            .split(|c| c == '.' || c == '!' || c == '?')
+            .map(|s| s.trim())
+            .filter(|s| s.len() >= 5)
+            .collect();
+
+        if sentences.is_empty() {
+            return vec![
+                MetricResult::new(MetricType::Faithfulness, "faithfulness", 1.0)
+                    .with_range(0.0, 1.0),
+                MetricResult::new(MetricType::GroundingRatio, "grounding_ratio", 1.0)
+                    .with_range(0.0, 1.0),
+            ];
+        }
+
+        let mut supported = 0usize;
+        for sentence in &sentences {
+            let overlap = Self::word_overlap(sentence, context);
+            if overlap >= self.min_overlap {
+                supported += 1;
+            }
+        }
+
+        let score = supported as f64 / sentences.len() as f64;
+
+        vec![
+            MetricResult::new(MetricType::Faithfulness, "faithfulness", score).with_range(0.0, 1.0),
+            MetricResult::new(MetricType::GroundingRatio, "grounding_ratio", score)
+                .with_range(0.0, 1.0),
+        ]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1533,5 +1664,71 @@ mod tests {
         assert!(result.p_value > 0.05, "p_value was {}", result.p_value);
         assert!(!result.significant);
         assert!(result.winner.is_none());
+    }
+
+    // --- FaithfulnessEvaluator tests (V82) ---
+
+    #[test]
+    fn test_faithfulness_evaluator_name() {
+        let eval = FaithfulnessEvaluator::default();
+        assert_eq!(eval.name(), "faithfulness");
+    }
+
+    #[test]
+    fn test_faithfulness_evaluator_supported_response() {
+        let eval = FaithfulnessEvaluator::new(0.2);
+        let sample = EvalSample {
+            id: "1".to_string(),
+            prompt: "What is Rust?".to_string(),
+            response: "Rust is a systems programming language.".to_string(),
+            reference: None,
+            context: Some("Rust is a systems programming language created by Mozilla.".to_string()),
+            metadata: std::collections::HashMap::new(),
+        };
+        let results = eval.evaluate(&sample);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].metric_type, MetricType::Faithfulness);
+        assert!(
+            results[0].value > 0.0,
+            "Supported response should have positive faithfulness"
+        );
+    }
+
+    #[test]
+    fn test_faithfulness_evaluator_empty_context() {
+        let eval = FaithfulnessEvaluator::default();
+        let sample = EvalSample::new("1", "test", "Some response text.");
+        let results = eval.evaluate(&sample);
+        assert_eq!(results[0].value, 1.0, "No context = vacuously faithful");
+    }
+
+    #[test]
+    fn test_faithfulness_evaluator_unrelated_response() {
+        let eval = FaithfulnessEvaluator::new(0.3);
+        let sample = EvalSample {
+            id: "1".to_string(),
+            prompt: "What is Rust?".to_string(),
+            response: "Quantum physics studies subatomic particles.".to_string(),
+            reference: None,
+            context: Some("Rust is a systems programming language.".to_string()),
+            metadata: std::collections::HashMap::new(),
+        };
+        let results = eval.evaluate(&sample);
+        assert!(
+            results[0].value < 1.0,
+            "Unrelated response should have lower faithfulness"
+        );
+    }
+
+    #[test]
+    fn test_metric_type_faithfulness_variant() {
+        let m = MetricType::Faithfulness;
+        assert_eq!(format!("{:?}", m), "Faithfulness");
+    }
+
+    #[test]
+    fn test_metric_type_grounding_ratio_variant() {
+        let m = MetricType::GroundingRatio;
+        assert_eq!(format!("{:?}", m), "GroundingRatio");
     }
 }

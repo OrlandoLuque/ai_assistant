@@ -494,6 +494,17 @@ pub struct AiAssistant {
     /// UCB1 multi-armed bandit for learning the best overflow strategy.
     /// Only active when `context_budget_config.enable_strategy_learning` is true.
     pub strategy_bandit: Option<crate::context_budget::StrategyBandit>,
+
+    /// Anti-hallucination pipeline configuration.
+    /// When enabled, LLM outputs are post-processed to detect and handle
+    /// ungrounded claims. Opt-in: disabled by default.
+    #[cfg(feature = "eval")]
+    pub anti_hallucination_config: Option<crate::anti_hallucination::AntiHallucinationConfig>,
+
+    /// Quality gate runner for output validation.
+    /// Checks faithfulness, confidence, grounding ratio against thresholds.
+    #[cfg(feature = "eval")]
+    pub quality_gate_runner: Option<crate::quality_gates::QualityGateRunner>,
 }
 
 impl Default for AiAssistant {
@@ -695,6 +706,11 @@ impl AiAssistant {
 
             context_budget_config: crate::context_budget::ContextBudgetConfig::default(),
             strategy_bandit: None,
+
+            #[cfg(feature = "eval")]
+            anti_hallucination_config: None,
+            #[cfg(feature = "eval")]
+            quality_gate_runner: None,
         }
     }
 

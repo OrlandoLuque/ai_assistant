@@ -87,6 +87,9 @@ pub struct AppState {
     /// Optional distributed log collector (behind `distributed-network` feature).
     #[cfg(feature = "distributed-network")]
     pub log_collector: Option<Arc<tokio::sync::Mutex<crate::distributed_log::LogCollector>>>,
+    /// Quality gate runner (behind `eval` feature).
+    #[cfg(feature = "eval")]
+    pub quality_gate_runner: Option<Arc<crate::quality_gates::QualityGateRunner>>,
 }
 
 /// Per-session metadata stored in the DashMap.
@@ -796,6 +799,30 @@ pub fn build_router(state: AppState, config: &ServerConfig) -> Router {
     #[cfg(all(feature = "containers", feature = "tools"))]
     {
         app = app.route("/mcp", post(mcp_handler));
+    }
+
+    // Verification endpoints (behind eval feature)
+    #[cfg(feature = "eval")]
+    {
+        app = app
+            .route("/api/v1/verify/quality-check", post(quality_check_handler))
+            .route("/api/v1/verify/config", get(verify_config_handler))
+            .route("/api/v1/verify/faithfulness", post(faithfulness_handler));
+    }
+
+    // Research endpoints (behind research feature)
+    #[cfg(feature = "research")]
+    {
+        app = app
+            .route("/api/v1/research/search", post(research_search_handler))
+            .route(
+                "/api/v1/research/bibtex/import",
+                post(bibtex_import_handler),
+            )
+            .route(
+                "/api/v1/research/bibtex/export",
+                post(bibtex_export_handler),
+            );
     }
 
     // Distributed log endpoints (behind distributed-network feature)
@@ -2133,6 +2160,154 @@ async fn get_trace_handler(
 }
 
 // ============================================================================
+// Verification & Research Endpoints (V88)
+// ============================================================================
+
+/// POST /api/v1/verify/quality-check — Run quality gates on text.
+#[cfg(feature = "eval")]
+async fn quality_check_handler(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let text = body
+        .get("text")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+
+    let assistant = state.assistant.lock().await;
+    if let Some(ref runner) = assistant.quality_gate_runner {
+        let scores = crate::quality_gates::QualityScores {
+            faithfulness: body.get("faithfulness").and_then(|v| v.as_f64()),
+            confidence: body.get("confidence").and_then(|v| v.as_f64()),
+            grounding_ratio: body.get("grounding_ratio").and_then(|v| v.as_f64()),
+            consistency_score: body.get("consistency_score").and_then(|v| v.as_f64()),
+            citation_coverage: body.get("citation_coverage").and_then(|v| v.as_f64()),
+        };
+        let result = runner.run(&scores);
+        Ok(Json(serde_json::json!({
+            "passed": result.passed,
+            "summary": result.summary(),
+            "failing_gates": result.failing_gates.len(),
+            "warnings": result.warnings.len(),
+            "text_length": text.len(),
+        })))
+    } else {
+        Err(AppError::ServiceUnavailable(
+            "Quality gates not configured".into(),
+        ))
+    }
+}
+
+/// GET /api/v1/verify/config — Get current verification config.
+#[cfg(feature = "eval")]
+async fn verify_config_handler(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let assistant = state.assistant.lock().await;
+    let has_ah = assistant.anti_hallucination_config.is_some();
+    let has_qg = assistant.quality_gate_runner.is_some();
+    Ok(Json(serde_json::json!({
+        "anti_hallucination_enabled": has_ah,
+        "quality_gates_enabled": has_qg,
+    })))
+}
+
+/// POST /api/v1/verify/faithfulness — Evaluate faithfulness of text.
+#[cfg(feature = "eval")]
+async fn faithfulness_handler(Json(body): Json<serde_json::Value>) -> Json<serde_json::Value> {
+    let text = body
+        .get("text")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    let context = body
+        .get("context")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+
+    // Word-overlap based faithfulness scoring
+    let text_words: std::collections::HashSet<&str> = text.split_whitespace().collect();
+    let ctx_words: std::collections::HashSet<&str> = context.split_whitespace().collect();
+    let overlap = text_words.intersection(&ctx_words).count();
+    let score = if text_words.is_empty() {
+        1.0
+    } else {
+        overlap as f64 / text_words.len() as f64
+    };
+
+    Json(serde_json::json!({
+        "faithfulness_score": score,
+        "text_words": text_words.len(),
+        "context_words": ctx_words.len(),
+        "overlap_words": overlap,
+    }))
+}
+
+/// POST /api/v1/research/search — Search academic papers.
+#[cfg(feature = "research")]
+async fn research_search_handler(Json(body): Json<serde_json::Value>) -> Json<serde_json::Value> {
+    let query = body
+        .get("query")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    let max_results = body
+        .get("max_results")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(10) as usize;
+    let providers: Vec<String> = body
+        .get("providers")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_else(|| vec!["arxiv".into(), "semantic_scholar".into()]);
+
+    Json(serde_json::json!({
+        "status": "accepted",
+        "query": query,
+        "max_results": max_results,
+        "providers": providers,
+        "message": "Academic search requires async provider execution",
+    }))
+}
+
+/// POST /api/v1/research/bibtex/import — Import BibTeX file.
+#[cfg(feature = "research")]
+async fn bibtex_import_handler(Json(body): Json<serde_json::Value>) -> Json<serde_json::Value> {
+    let bibtex = body
+        .get("bibtex")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+
+    match crate::bibtex::BibParser::parse(bibtex) {
+        Ok(entries) => Json(serde_json::json!({
+            "status": "ok",
+            "entries_parsed": entries.len(),
+        })),
+        Err(e) => Json(serde_json::json!({
+            "status": "error",
+            "error": e.to_string(),
+        })),
+    }
+}
+
+/// POST /api/v1/research/bibtex/export — Export citations as BibTeX.
+#[cfg(feature = "research")]
+async fn bibtex_export_handler(Json(body): Json<serde_json::Value>) -> Json<serde_json::Value> {
+    let entries: Vec<crate::bibtex::BibEntry> = body
+        .get("entries")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default();
+
+    let output = crate::bibtex::BibGenerator::generate(&entries);
+    Json(serde_json::json!({
+        "bibtex": output,
+        "entries_count": entries.len(),
+    }))
+}
+
+// ============================================================================
 // AxumServer — Entrypoint + Graceful Shutdown (Phase 5)
 // ============================================================================
 
@@ -2260,6 +2435,8 @@ fn build_app_state(config: ServerConfig, assistant: AiAssistant) -> AppState {
         mcp_server: Some(build_unified_mcp_server()),
         #[cfg(feature = "distributed-network")]
         log_collector: None,
+        #[cfg(feature = "eval")]
+        quality_gate_runner: None,
     }
 }
 
@@ -2386,6 +2563,120 @@ fn build_unified_mcp_server() -> Arc<std::sync::RwLock<crate::mcp_protocol::McpS
         crate::eval_suite::register_eval_tools(&mut mcp, generator);
         tool_count += 3;
         log::info!("MCP: +3 Eval suite tools");
+    }
+
+    // ── Research tools ──────────────────────────────────────────────
+    #[cfg(feature = "research")]
+    {
+        let registry = crate::mcp_research_tools::ResearchToolRegistry::new();
+        for tool_def in registry.list_tools() {
+            let name = tool_def.name.clone();
+            mcp.register_tool(
+                crate::mcp_protocol::McpTool {
+                    name: tool_def.name.clone(),
+                    description: Some(tool_def.description.clone()),
+                    input_schema: tool_def.input_schema.clone(),
+                },
+                move |_args| {
+                    Ok(serde_json::json!({
+                        "status": "accepted",
+                        "tool": name,
+                        "message": "Research tool invocation requires async provider execution"
+                    }))
+                },
+            );
+        }
+        tool_count += 6;
+        log::info!("MCP: +6 Research tools");
+    }
+
+    // ── Verification tools ─────────────────────────────────────────
+    #[cfg(feature = "eval")]
+    {
+        use crate::mcp_protocol::McpTool;
+
+        mcp.register_tool(
+            McpTool {
+                name: "check_faithfulness".into(),
+                description: Some("Evaluate faithfulness of a response against context".into()),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string", "description": "Response text to evaluate"},
+                        "context": {"type": "string", "description": "Context to check against"}
+                    },
+                    "required": ["text", "context"]
+                }),
+            },
+            |args| {
+                let text = args.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                let ctx = args.get("context").and_then(|v| v.as_str()).unwrap_or("");
+                let t_words: std::collections::HashSet<&str> = text.split_whitespace().collect();
+                let c_words: std::collections::HashSet<&str> = ctx.split_whitespace().collect();
+                let overlap = t_words.intersection(&c_words).count();
+                let score = if t_words.is_empty() {
+                    1.0
+                } else {
+                    overlap as f64 / t_words.len() as f64
+                };
+                Ok(serde_json::json!({"faithfulness_score": score, "overlap": overlap}))
+            },
+        );
+
+        mcp.register_tool(
+            McpTool {
+                name: "verify_claims".into(),
+                description: Some("Verify claims in text using Chain-of-Verification pipeline".into()),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string", "description": "Text containing claims to verify"}
+                    },
+                    "required": ["text"]
+                }),
+            },
+            |args| {
+                let text = args.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                let sentences: Vec<&str> = text.split('.').filter(|s| !s.trim().is_empty()).collect();
+                Ok(serde_json::json!({
+                    "claims_found": sentences.len(),
+                    "status": "requires_llm_for_full_verification"
+                }))
+            },
+        );
+
+        mcp.register_tool(
+            McpTool {
+                name: "run_quality_gates".into(),
+                description: Some("Run quality gates on text with provided scores".into()),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "faithfulness": {"type": "number"},
+                        "confidence": {"type": "number"},
+                        "grounding_ratio": {"type": "number"}
+                    }
+                }),
+            },
+            |args| {
+                let runner = crate::quality_gates::QualityGateRunner::production_defaults();
+                let scores = crate::quality_gates::QualityScores {
+                    faithfulness: args.get("faithfulness").and_then(|v| v.as_f64()),
+                    confidence: args.get("confidence").and_then(|v| v.as_f64()),
+                    grounding_ratio: args.get("grounding_ratio").and_then(|v| v.as_f64()),
+                    consistency_score: None,
+                    citation_coverage: None,
+                };
+                let result = runner.run(&scores);
+                Ok(serde_json::json!({
+                    "passed": result.passed,
+                    "summary": result.summary(),
+                }))
+            },
+        );
+
+        tool_count += 3;
+        log::info!("MCP: +3 Verification tools");
     }
 
     log::info!("MCP unified server: {} total tools registered", tool_count);

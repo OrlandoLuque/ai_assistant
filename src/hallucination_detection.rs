@@ -242,8 +242,12 @@ impl HallucinationDetector {
         }
     }
 
-    /// Extract claims from text
-    fn extract_claims(&self, text: &str) -> Vec<Claim> {
+    /// Extract claims from text.
+    ///
+    /// Splits text into sentences and classifies each as a claim with
+    /// type, support status, and confidence. Used by the anti-hallucination
+    /// pipeline for per-claim analysis.
+    pub fn extract_claims(&self, text: &str) -> Vec<Claim> {
         let mut claims = Vec::new();
 
         // Extract sentences as claims
@@ -563,6 +567,48 @@ impl Default for HallucinationConfigBuilder {
     fn default() -> Self {
         Self::new()
     }
+}
+
+// ============================================================================
+// Atomic decomposition (V82)
+// ============================================================================
+
+/// Decompose text into atomic claims at sentence level.
+///
+/// Finer-grained than [`HallucinationDetector::extract_claims`] — produces
+/// [`crate::faithfulness::AtomicClaim`] structs suitable for NLI evaluation.
+/// Each sentence that contains a factual assertion becomes an atomic claim.
+#[cfg(feature = "eval")]
+pub fn decompose_atomic(text: &str) -> Vec<crate::faithfulness::AtomicClaim> {
+    let mut claims = Vec::new();
+    let mut pos = 0usize;
+
+    let sentences: Vec<&str> = text
+        .split(|c| c == '.' || c == '!' || c == '?')
+        .filter(|s| !s.trim().is_empty())
+        .collect();
+
+    for sentence in &sentences {
+        let trimmed = sentence.trim();
+        if trimmed.len() < 5 {
+            // Skip very short fragments
+            pos += sentence.len() + 1; // +1 for delimiter
+            continue;
+        }
+
+        let start = text[pos..].find(trimmed).map(|i| i + pos).unwrap_or(pos);
+
+        claims.push(crate::faithfulness::AtomicClaim {
+            text: trimmed.to_string(),
+            position: start,
+            length: trimmed.len(),
+            source_sentence: trimmed.to_string(),
+        });
+
+        pos = start + trimmed.len();
+    }
+
+    claims
 }
 
 #[cfg(test)]
@@ -905,5 +951,44 @@ mod tests {
             types.contains(&HallucinationType::IncorrectStatistic),
             "Should detect the 200% incorrect statistic"
         );
+    }
+
+    #[test]
+    fn test_extract_claims_public() {
+        let detector = HallucinationDetector::default();
+        let claims = detector.extract_claims("Rust is fast. Python is slow.");
+        assert_eq!(claims.len(), 2);
+        assert!(claims[0].text.contains("Rust"));
+        assert!(claims[1].text.contains("Python"));
+    }
+
+    #[test]
+    fn test_extract_claims_empty() {
+        let detector = HallucinationDetector::default();
+        let claims = detector.extract_claims("");
+        assert!(claims.is_empty());
+    }
+
+    #[test]
+    fn test_decompose_atomic() {
+        let claims = decompose_atomic("Rust was released in 2015. It is a systems language.");
+        assert_eq!(claims.len(), 2);
+        assert!(claims[0].text.contains("Rust"));
+        assert!(claims[1].text.contains("systems language"));
+        // Check positions are valid
+        assert!(claims[0].position < claims[1].position);
+    }
+
+    #[test]
+    fn test_decompose_atomic_short_fragments() {
+        let claims = decompose_atomic("Hi. Rust is a programming language.");
+        // "Hi" is < 5 chars, should be skipped
+        assert_eq!(claims.len(), 1);
+    }
+
+    #[test]
+    fn test_decompose_atomic_empty() {
+        let claims = decompose_atomic("");
+        assert!(claims.is_empty());
     }
 }
