@@ -4,16 +4,16 @@
 
 # ai_assistant
 
-A comprehensive Rust library for LLM integration — local and cloud. 18 providers, 5-tier RAG, multi-agent orchestration, autonomous agents, distributed computing, and 40+ MCP tools. Single crate, zero-runtime, ~410K LOC.
+A comprehensive Rust library for LLM integration — local and cloud. 18 providers, 5-tier RAG, multi-agent orchestration, autonomous agents, distributed computing, anti-hallucination pipeline, academic research APIs, and 49+ MCP tools. Single crate, zero-runtime, ~423K LOC.
 
 ![Rust](https://img.shields.io/badge/Rust-Edition%202021-orange)
 ![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)
-![Tests](https://img.shields.io/badge/tests-7469-brightgreen)
-![LOC](https://img.shields.io/badge/LOC-~410K-blue)
+![Tests](https://img.shields.io/badge/tests-6095-brightgreen)
+![LOC](https://img.shields.io/badge/LOC-~423K-blue)
 
 > **Status: Experimental**
 >
-> This project compiles and passes 7,469+ tests, but it has not been validated in production
+> This project compiles and passes 6,095+ tests, but it has not been validated in production
 > or real-world usage. Developed iteratively with AI assistance, some modules may be
 > incomplete, loosely wired, or tested only at a surface level. A comprehensive review is
 > pending. **Use at your own risk.**
@@ -87,7 +87,7 @@ cargo build --release --bin ai_assistant_cli --features "full,butler"
 - **5-role orchestration**: Coordinator, Researcher, Analyst, Writer, Reviewer
 - **Autonomous agent**: 5 autonomy levels, policy-based sandbox, cron scheduler
 - **Browser automation**: Chrome DevTools Protocol (CDP) via WebSocket
-- **Butler Advisor**: 30 optimization recommendations across 6 categories
+- **Butler Advisor**: 37 optimization recommendations across 6 categories
 - **FreshContext Advisor API**: Library-level diagnostic reporting (effectiveness, warnings) — usable from code and GUI
 - **Memory integration**: Optional MemoryManager with auto-injection in FreshContext mode
 - **Distributed agents**: Task distribution across nodes with heartbeats and MapReduce
@@ -109,7 +109,7 @@ cargo build --release --bin ai_assistant_cli --features "full,butler"
 ### Streaming & Protocols
 - **SSE streaming**: With gzip compression and aggregation
 - **WebSocket**: RFC 6455 with handshake from scratch
-- **MCP protocol**: 2025-03-26 spec with 40+ tools, annotations, pagination, knowledge tools
+- **MCP protocol**: 2025-03-26 spec with 49+ tools (40 core + 6 research + 3 verification), annotations, pagination, knowledge tools
 - **A2A protocol**: Agent-to-agent communication
 
 ### Distributed Computing (`distributed`, `distributed-network` features)
@@ -125,6 +125,23 @@ cargo build --release --bin ai_assistant_cli --features "full,butler"
 - **LLM-as-judge**: Multi-criteria evaluation
 - **A/B testing**: Experiment framework with Welch's t-test significance
 
+### Anti-Hallucination & Verification
+- **Anti-hallucination pipeline**: 7 configurable strategies (Omit, Mark, Warn, Footnote, VerifyThenMark, VerifyThenOmit, Ask)
+- **Calibrated abstention**: Refuses to answer when confidence < threshold instead of guessing
+- **Faithfulness scoring**: NLI-based (word overlap + LLM) to verify claims against source context
+- **Grounded generation**: Anchor every sentence to source chunks, mark ungrounded claims
+- **Chain-of-Verification (CoVe)**: Decompose claims, verify each with RAG/web search, correct response
+- **Auto-temperature**: Detect factual vs creative queries, force low temperature for facts
+- **Quality gates**: Configurable metric thresholds (faithfulness, confidence, grounding ratio) with fail/warn/log actions
+
+### Academic Research (`research` feature)
+- **Academic search**: arXiv, Semantic Scholar, PubMed APIs with rate limiting and API key management
+- **BibTeX**: Full parser (braces, LaTeX accents, author splitting) and generator with 9 entry types
+- **Literature review pipeline**: Automated search, filter, synthesis in 4 styles (narrative, systematic, annotated, comparative)
+- **Paper metadata extraction**: Title, authors, abstract, sections, DOI, references from plain text
+- **Research agent roles**: ResearchAssistant, PeerReviewer, WritingCoach with specialized system prompts
+- **MCP research tools**: 6 tools (search_papers, get_paper_metadata, import/export_bibtex, literature_review, extract_paper_metadata)
+
 ### More Features
 - **Voice agent**: STT/TTS with cloud and local providers
 - **Media generation**: Image/audio/video generation pipelines
@@ -138,10 +155,10 @@ cargo build --release --bin ai_assistant_cli --features "full,butler"
 
 ### Code Quality
 - **Zero `.unwrap()` in production**: Proper error handling across all files
-- **7,469+ tests**: Comprehensive unit tests with 0 clippy warnings
-- **360 source files**: Fully implemented — zero stubs or TODOs
-- **60 feature flags**: Granular dependency control
-- **~410,000 lines of Rust**: Single crate, modular architecture
+- **6,095+ tests**: Comprehensive unit tests with 0 clippy warnings
+- **369 source files**: Fully implemented — zero stubs or TODOs
+- **61 feature flags**: Granular dependency control
+- **~423,000 lines of Rust**: Single crate, modular architecture
 - **Security audited**: 300+ attack vectors catalogued and mitigated (exhaustive multi-pass audit)
 
 ## Building from Source
@@ -199,6 +216,7 @@ ai_assistant_core = { version = "0.1", features = ["full", "autonomous", "schedu
 | `a2a` | Agent-to-agent protocol | Yes |
 | `async-runtime` | reqwest + tokio async providers | Yes |
 | `egui-widgets` | Pre-built chat UI components | Yes |
+| `research` | Academic search APIs, BibTeX, literature review | Yes |
 | `autonomous` | Autonomous agent loop | No |
 | `scheduler` | Cron scheduler (requires `autonomous`) | No |
 | `butler` | Environment auto-detection (requires `autonomous`) | No |
@@ -1767,8 +1785,8 @@ cargo run --features "server-axum" --bin ai_proxy -- --backends "localhost:8091,
 | Cold start | <100 ms | 5-10 s |
 | GC pauses | None | Unpredictable |
 | Runtime deps | None | Python + pip |
-| Modules | 313 | ~50 |
-| Tests | 6,696 | Varies |
+| Modules | 369 | ~50 |
+| Tests | 6,095 | Varies |
 
 See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for detailed comparisons.
 

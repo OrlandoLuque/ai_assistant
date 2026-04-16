@@ -9,10 +9,10 @@ Esto te da el contexto completo: dónde estamos, qué se ha hecho, cómo trabaja
 
 ## Sobre el Proyecto
 - **Librería Rust** para integración con LLMs locales y cloud
-- **~410K líneas de código**, 360 archivos fuente (.rs), 7.469+ tests
+- **~423K líneas de código**, 369 archivos fuente (.rs), 6.095+ tests
 - **Autor único**: Orlando José Luque Moraira (Lander) — orlando.luque@gmail.com
 - **Estado**: NO publicado en ningún sitio (ni crates.io, ni GitHub público, ni distribuido a terceros)
-- **Feature flags**: 60 (core, multi-agent, security, analytics, rag, distributed, autonomous, gui-pro, audio-io, gpu-sharing, etc.)
+- **Feature flags**: 61 (core, multi-agent, security, analytics, rag, distributed, autonomous, gui-pro, audio-io, gpu-sharing, research, etc.)
 
 ## Módulos Principales
 - Multi-proveedor LLM (18): Ollama, LM Studio, OpenAI, Anthropic, Gemini, Azure OpenAI, Bedrock, Groq, Together AI, Fireworks, DeepSeek, Mistral, Perplexity, OpenRouter, HuggingFace, LocalAI, Kobold.cpp, text-gen-webui
@@ -27,6 +27,12 @@ Esto te da el contexto completo: dónde estamos, qué se ha hecho, cómo trabaja
 - Memory integration: MemoryManager con auto-inyección en FreshContext
 - FreshContext Advisor API: diagnóstico programático (effectiveness, warnings)
 - ContextBudgetAllocator: scoring dinámico (4 modos), intent-based, integrado con RAG tiers
+- Anti-Hallucination: pipeline configurable (7 estrategias), abstención calibrada, auto-temperature, attribution
+- Faithfulness scoring: NLI-based (word overlap + LLM), grounded generation, claim decomposition
+- Chain-of-Verification (CoVe): fact-check con RAG/web search, self-consistency mejorado
+- Quality Gates: métricas configurables (faithfulness, confidence, grounding ratio), acciones fail/warn/log
+- Research académico: arXiv, Semantic Scholar, PubMed APIs, BibTeX parser/generator, literature review pipeline
+- Paper metadata: extracción estructurada (título, autores, secciones, DOI, referencias), 3 agent roles research
 
 ## Decisiones Estratégicas Tomadas (Febrero 2026)
 
@@ -64,7 +70,7 @@ Esto te da el contexto completo: dónde estamos, qué se ha hecho, cómo trabaja
 3. Respetar la estructura modular existente basada en feature flags de Cargo
 4. Zero `.unwrap()` en producción — usar proper error handling siempre
 5. Zero warnings del compilador — compilación limpia en todas las combinaciones de features
-6. Tests para todo — el proyecto tiene 7.469+ tests y debe mantenerse así
+6. Tests para todo — el proyecto tiene 6.095+ tests y debe mantenerse así
 
 ## Documentos Generados
 - `Informe_Viabilidad_ai_assistant.docx` — Informe completo de viabilidad v2 (monetización, PI, licenciamiento)

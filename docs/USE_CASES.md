@@ -9,7 +9,7 @@ answers four questions:
 3. **Commands** — a copy-pasteable recipe
 4. **Required features** — the Cargo feature flags you need
 
-Eight canonical scenarios are documented below. Additional scenarios are
+Eleven canonical scenarios are documented below. Additional scenarios are
 listed in the companion website page
 [`ai_assistant-website/use_cases.html`](../../ai_assistant-website/use_cases.html).
 
@@ -371,10 +371,91 @@ Add `full` to unlock every provider and tool the library supports.
 
 ---
 
+## 10. Verified AI responses with anti-hallucination pipeline
+
+**Problem.** You need LLM responses that are factually grounded — for a
+medical assistant, legal research tool, or any application where
+hallucinations are unacceptable.
+
+**Binaries.** `ai_cli`, `ai_assistant_server`.
+
+**Commands.**
+
+```bash
+# 1. One-shot verified query with faithfulness scoring and quality gates
+cargo run --bin ai_cli --features full -- verify \
+    "What are the side effects of ibuprofen?" \
+    --strategy verify-mark \
+    --faithfulness \
+    --quality-gates \
+    --min-confidence 0.5
+
+# 2. Or run the server with verification enabled
+cargo run --bin ai_assistant_server --features full -- \
+    --enable-verification \
+    --verification-strategy mark
+
+# 3. Check quality gates from the API
+curl -X POST http://localhost:8090/api/v1/verify/quality-check \
+    -H "Content-Type: application/json" \
+    -d '{"text": "Paris is the capital of Germany.", "gates": "production"}'
+```
+
+**Required features.** `full` (includes `eval` which gates quality gates
+and faithfulness scoring).
+
+**How it works.** The anti-hallucination pipeline decomposes the LLM
+response into atomic claims, scores each for groundedness against the
+provided context (RAG chunks, knowledge base), and applies the configured
+strategy to ungrounded claims. Seven strategies are available:
+`omit`, `mark`, `warn`, `footnote`, `verify-mark`, `verify-omit`, `ask`.
+
+---
+
+## 11. Academic literature review with BibTeX export
+
+**Problem.** You are writing a research paper and need to search academic
+databases, generate a structured literature review, and export citations
+in BibTeX format.
+
+**Binaries.** `ai_cli` (with `research` feature).
+
+**Commands.**
+
+```bash
+# 1. Search across arXiv, Semantic Scholar, and PubMed
+cargo run --bin ai_cli --features "full,research" -- research \
+    "transformer attention mechanisms" \
+    --providers arxiv,scholar,pubmed \
+    --max-results 20 \
+    --year-range 2020-2026
+
+# 2. Generate a full literature review with BibTeX bibliography
+cargo run --bin ai_cli --features "full,research" -- research \
+    "reinforcement learning from human feedback" \
+    --review \
+    --format systematic \
+    --bibtex
+
+# 3. Import an existing .bib file into the knowledge base
+# (via MCP tool or programmatically)
+```
+
+**Required features.** `full`, `research`.
+
+**Security notes.** Academic API keys (`SEMANTIC_SCHOLAR_API_KEY`,
+`NCBI_API_KEY`) are read from environment variables and never logged.
+BibTeX input is sanitized against LaTeX injection (`\input`, `\write18`).
+File size limits: max 10 MB, max 10K entries.
+
+---
+
 ## Cross-references
 
 - [`docs/BINARIES.md`](BINARIES.md) — the 20-binary authoritative inventory.
 - [`docs/FFI.md`](FFI.md) — V79 C FFI API reference (updated V80: Azure setters).
+- [`docs/IMPROVEMENTS_V88.md`](IMPROVEMENTS_V88.md) — V88 anti-hallucination,
+  research, and quality gates wiring.
 - [`docs/IMPROVEMENTS_V80.md`](IMPROVEMENTS_V80.md) — V80 Azure OpenAI provider.
 - [`docs/IMPROVEMENTS_V79.md`](IMPROVEMENTS_V79.md) — V79 workstreams
   and design decisions.

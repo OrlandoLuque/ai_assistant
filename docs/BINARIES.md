@@ -42,16 +42,30 @@ companion page
 
 #### `ai_cli`
 Non-interactive CLI for scripting, CI/CD, and one-shot queries. Ships with
-10 subcommands including the new V77 `cost` subcommand.
+13 subcommands including V77 `cost`, and V88 `verify`, `research`, `quality`.
 
 ```bash
 cargo run --bin ai_cli -- scan
 cargo run --bin ai_cli -- query "What is Rust?"
 cargo run --bin ai_cli --features full -- cost report --snapshot cost.json
+cargo run --bin ai_cli --features full -- verify "Is water wet?" --strategy mark --faithfulness
+cargo run --bin ai_cli --features "full,research" -- research "transformer attention" --bibtex
+cargo run --bin ai_cli --features full -- quality gates list
 ```
 
 Subcommands: `scan`, `providers`, `models`, `config`, `butler`, `query`,
-`bench`, `test`, `cost`, `help`.
+`bench`, `test`, `cost`, `verify` (V88), `research` (V88, gated `research`),
+`quality` (V88), `help`.
+
+**V88 subcommands:**
+
+- `verify <prompt>` — One-shot query with anti-hallucination pipeline.
+  Flags: `--strategy <mark|omit|warn|footnote|verify-mark|verify-omit|ask>`,
+  `--min-confidence <0.0-1.0>`, `--faithfulness`, `--cove`, `--quality-gates`.
+- `research <query>` — Search academic databases (requires `research` feature).
+  Flags: `--providers <arxiv,scholar,pubmed>`, `--max-results <N>`,
+  `--year-range <2020-2026>`, `--bibtex`, `--review`, `--format <narrative|systematic|annotated|comparative>`.
+- `quality gates list|check <text>` — Inspect or run quality gates.
 
 #### `ai_assistant_cli`
 Interactive terminal REPL. Good for exploring models without leaving the
@@ -223,6 +237,10 @@ feature-gated integration tests without having to remember every
 `cargo test` incantation. Requires `full` + `browser` (for crawl policy
 tests).
 
+**V88 categories added:** `anti-hallucination` (3 tests), `quality-gates`
+(4 tests), `faithfulness` (2 tests), `verification` (2 tests),
+`research` (4 tests, gated `research`).
+
 ## Library artifacts (V79, new)
 
 Beyond the 20 binaries, V79 ships `ai_assistant` itself as a shared
@@ -274,4 +292,6 @@ enable every provider/tool/middleware the Rust side knows about.
   and design decisions.
 - [`docs/IMPROVEMENTS_V77.md`](IMPROVEMENTS_V77.md) — rationale behind the
   V77 additions (`ai_jobs`, `ai_cli cost`, etc.).
+- [`docs/IMPROVEMENTS_V88.md`](IMPROVEMENTS_V88.md) — V88 anti-hallucination,
+  research, and quality gates wiring.
 - [`CHANGELOG.md`](../CHANGELOG.md) — release-by-release history.
