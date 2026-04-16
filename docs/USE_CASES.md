@@ -452,6 +452,10 @@ File size limits: max 10 MB, max 10K entries.
 
 ## Cross-references
 
+- [`docs/GUIDE_ANTI_HALLUCINATION.md`](GUIDE_ANTI_HALLUCINATION.md) — practical
+  guide to the anti-hallucination pipeline, strategies, and quality gates.
+- [`docs/GUIDE_RESEARCH.md`](GUIDE_RESEARCH.md) — practical guide to academic
+  search, literature reviews, BibTeX, and verified research.
 - [`docs/BINARIES.md`](BINARIES.md) — the 20-binary authoritative inventory.
 - [`docs/FFI.md`](FFI.md) — V79 C FFI API reference (updated V80: Azure setters).
 - [`docs/IMPROVEMENTS_V88.md`](IMPROVEMENTS_V88.md) — V88 anti-hallucination,
