@@ -696,6 +696,10 @@ name = "eval_demo"
 required-features = ["eval"]
 
 [[example]]
+name = "eval_benchmarks_demo"
+required-features = ["eval"]
+
+[[example]]
 name = "code_sandbox_demo"
 required-features = ["code-sandbox"]
 
