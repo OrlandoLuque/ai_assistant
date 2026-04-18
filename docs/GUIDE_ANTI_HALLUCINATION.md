@@ -796,7 +796,85 @@ let gates = QualityGateRunner::production_defaults();
 
 ---
 
-## 15. Cross-References
+## 15. Dataset Benchmarks (V90)
+
+V90 adds a harness for running the pipeline against standard community
+benchmarks so you can produce numbers that are directly comparable with
+published model cards and prior art.
+
+### Registered benchmarks
+
+| Name | Sample type | License | Opt-in |
+|------|-------------|---------|--------|
+| `truthfulqa`   | QA (correct vs. incorrect references)       | Apache-2.0      | no  |
+| `halueval_qa`  | right vs. hallucinated answer pairs          | MIT             | no  |
+| `factscore`    | atomic-claim decomposition (bios)            | MIT             | no  |
+| `ragas_wikiqa` | contextual QA (question + context + answer)  | Apache-2.0      | no  |
+| `fever`        | claim vs. evidence (Supports/Refutes/NEI)    | CC-BY-SA 3.0    | yes |
+
+Opt-in datasets require `--accept-license` on download. Nothing is vendored;
+all data is fetched on explicit user action and cached under
+`$CARGO_TARGET_DIR/eval_benchmarks/<loader>/`.
+
+### CLI
+
+```bash
+ai_cli benchmark list
+ai_cli benchmark info truthfulqa
+ai_cli benchmark download fever --accept-license
+
+ai_cli benchmark run truthfulqa \
+    --provider ollama --model mistral:7b-instruct --limit 50
+
+ai_cli benchmark calibrate halueval_qa \
+    --provider ollama --model llama3.2 \
+    --limit 200 --objective f1 --json
+```
+
+`run` reports total, correct, accuracy, mean score, per-category breakdown,
+and the wall-clock duration. `calibrate` adds a post-hoc threshold sweep so
+you can see where accuracy / F1 peaks for a given model without re-running.
+
+### HTTP
+
+```
+GET /benchmarks             → { "total": N, "benchmarks": [...] }
+GET /benchmarks/<name>      → metadata or 404
+GET /api/v1/benchmarks...   → same, versioned prefix
+```
+
+Both are read-only and return JSON; they only surface the loader registry,
+not download or run state, so they are safe to expose to any caller.
+
+### MCP
+
+Two tools are registered via
+`ai_assistant::mcp_protocol::register_benchmark_tools(&mut server)`:
+
+- `list_benchmarks` — enumerate all loaders (annotated read-only + idempotent).
+- `get_benchmark(name)` — metadata lookup; returns `found: false` when absent.
+
+### Programmatic use
+
+```rust
+use ai_assistant::eval_benchmarks::{
+    get_loader, run, sweep, default_grid, Objective, RunOptions, report,
+};
+
+let loader = get_loader("truthfulqa").unwrap();
+let path = loader.download(cache.dir_for(loader.name())?)?;
+let samples = loader.load(&path, Some(100))?;
+
+let r = run(loader.name(), &samples, &RunOptions::default(), |prompt| {
+    my_llm_call(prompt) // Result<String, String>
+});
+
+println!("{}", report::to_text(&r));
+let best = sweep(&r, &default_grid(), Objective::F1).best;
+println!("Best F1 threshold: {:.2}", best.threshold);
+```
+
+## 16. Cross-References
 
 - **Concepts**: [`docs/CONCEPTS.md`](CONCEPTS.md), sections 269-273 cover the
   theoretical foundations of hallucination, NLI, and claim verification.
@@ -806,8 +884,9 @@ let gates = QualityGateRunner::production_defaults();
   step was introduced.
 - **Implementation History**:
   [`docs/IMPROVEMENTS_V81.md`](IMPROVEMENTS_V81.md) through
-  [`docs/IMPROVEMENTS_V88.md`](IMPROVEMENTS_V88.md) document the iterative
-  development of the anti-hallucination pipeline.
+  [`docs/IMPROVEMENTS_V90.md`](IMPROVEMENTS_V90.md) document the iterative
+  development of the anti-hallucination pipeline, with V90 covering the
+  dataset-benchmark harness described above.
 
 ---
 
