@@ -9,11 +9,16 @@
 //! measuring latency / throughput of internal operations).
 
 pub mod cache;
+pub mod calibration;
 pub mod http;
 pub mod loaders;
+pub mod report;
+pub mod runner;
 pub mod types;
 
 pub use cache::BenchmarkCache;
+pub use calibration::{default_grid, sweep, CalibrationPoint, CalibrationReport, Objective};
 pub use http::{download_file, DownloadOptions, MAX_DOWNLOAD_BYTES};
 pub use loaders::{all_loaders, get_loader};
+pub use runner::{run, BenchmarkReport, RunOptions, SampleResult};
 pub use types::{BenchmarkError, BenchmarkLoader, BenchmarkSample, GroundTruth, Label, SampleType};
