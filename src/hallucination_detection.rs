@@ -200,7 +200,56 @@ impl HallucinationDetector {
     /// Detect potential hallucinations
     pub fn detect(&self, text: &str, context: Option<&str>) -> HallucinationResult {
         let mut detections = Vec::new();
-        let claims = self.extract_claims(text);
+        let mut claims = self.extract_claims(text);
+
+        // Update claim support status from context via sentence-level Jaccard
+        if let Some(ctx) = context {
+            let ctx_sentences: Vec<&str> = ctx
+                .split(|c: char| c == '.' || c == '\n')
+                .map(|s| s.trim())
+                .filter(|s| s.len() > 5)
+                .collect();
+
+            for claim in &mut claims {
+                if !claim.supported {
+                    let claim_words: std::collections::HashSet<String> = claim
+                        .text
+                        .to_lowercase()
+                        .split_whitespace()
+                        .filter(|w| w.len() > 2)
+                        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_string())
+                        .filter(|w| !w.is_empty())
+                        .collect();
+
+                    if claim_words.is_empty() {
+                        continue;
+                    }
+
+                    for sentence in &ctx_sentences {
+                        let sent_words: std::collections::HashSet<String> = sentence
+                            .to_lowercase()
+                            .split_whitespace()
+                            .filter(|w| w.len() > 2)
+                            .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_string())
+                            .filter(|w| !w.is_empty())
+                            .collect();
+
+                        let intersection = claim_words.intersection(&sent_words).count();
+                        let union = claim_words.union(&sent_words).count();
+                        let jaccard = if union > 0 {
+                            intersection as f64 / union as f64
+                        } else {
+                            0.0
+                        };
+
+                        if jaccard >= 0.3 {
+                            claim.supported = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
 
         // Check for hedging
         let mut hedging_indicators = Vec::new();

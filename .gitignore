@@ -10,3 +10,10 @@ INNOVATIONS.md
 INNOVATIONS.html
 ACKNOWLEDGMENTS.md
 ACKNOWLEDGMENTS.html
+/node_identity/
+*.tmp
+*.bak
+*.bak2
+_*.py
+_*.tmp
+_*.txt

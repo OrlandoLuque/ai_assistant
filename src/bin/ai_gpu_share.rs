@@ -23,9 +23,13 @@
 //! ai_gpu_share --help                        Show help
 //! ```
 
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use ai_assistant::gpu_sharing::{GpuSharingConfig, SharingMode};
+use ai_assistant::node_security::CertificateManager;
+
+const NODE_IDENTITY_DIR: &str = "./node_identity";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
@@ -95,20 +99,25 @@ fn cmd_start(args: &[String]) -> ExitCode {
     );
     println!();
 
-    // GPU detection (placeholder — real detection would query NVML/ROCm/Metal)
+    // GPU detection — subprocess checks (nvidia-smi / CUDA env / Apple sysctl).
+    // Parallel impl of butler::GpuDetector to avoid requiring the `butler` feature
+    // from gpu-sharing. Keep in sync with src/butler.rs:GpuDetector.
     println!("{}GPU Detection:{}", BOLD, RESET);
     println!("  {}*{} Scanning for GPUs...", GREEN, RESET);
-    println!(
-        "  {}*{} No GPU auto-detection available (placeholder)",
-        YELLOW, RESET
-    );
-    println!(
-        "  {}*{} Configure GPU manually in ai_setup config",
-        DIM, RESET
-    );
+    match detect_gpu() {
+        Some(info) => {
+            println!("  {}*{} {}", GREEN, RESET, info);
+        }
+        None => {
+            println!(
+                "  {}*{} No GPU detected — configure manually via ai_setup",
+                YELLOW, RESET
+            );
+        }
+    }
     println!();
 
-    // Network join (placeholder)
+    // Node identity — load-or-create so the node has a stable ID
     println!("{}Network:{}", BOLD, RESET);
     println!(
         "  {}*{} Mode: {}{}{}",
@@ -122,10 +131,22 @@ fn cmd_start(args: &[String]) -> ExitCode {
         "  {}*{} Privacy: {}{}{}",
         GREEN, RESET, CYAN, config.privacy_level, RESET
     );
-    println!(
-        "  {}*{} Joined network (0 peers — discovery pending)",
-        YELLOW, RESET
-    );
+    match CertificateManager::load_or_create(Path::new(NODE_IDENTITY_DIR)) {
+        Ok((identity, is_new)) => {
+            let tag = if is_new { "generated" } else { "loaded" };
+            println!(
+                "  {}*{} Node identity {} ({}{:?}{})",
+                GREEN, RESET, tag, CYAN, identity.node_id, RESET
+            );
+            println!(
+                "  {}*{} Peer discovery pending — full async bootstrap available via `ai_cluster_node`",
+                YELLOW, RESET
+            );
+        }
+        Err(e) => {
+            println!("  {}*{} Identity init failed: {}{}", RED, RESET, e, "");
+        }
+    }
     println!();
 
     match config.mode {
@@ -276,22 +297,55 @@ fn cmd_backup_keys(args: &[String]) -> ExitCode {
         Some(p) => p,
         None => {
             eprintln!(
-                "{}Usage: ai_gpu_share backup-keys <output-path>{}",
+                "{}Usage: ai_gpu_share backup-keys <output-dir>{}",
                 RED, RESET
             );
             return ExitCode::from(1);
         }
     };
 
+    let src = PathBuf::from(NODE_IDENTITY_DIR);
+    if !src.exists() {
+        eprintln!(
+            "{}No node identity to back up. Run `ai_gpu_share start` first to generate one.{}",
+            RED, RESET
+        );
+        return ExitCode::from(1);
+    }
+
+    let identity = match CertificateManager::load_identity(&src) {
+        Ok(id) => id,
+        Err(e) => {
+            eprintln!("{}Failed to load identity: {}{}", RED, e, RESET);
+            return ExitCode::from(1);
+        }
+    };
+
+    let dst = PathBuf::from(path);
     println!(
-        "{}Backing up node identity keys to: {}{}{}",
-        GREEN, CYAN, path, RESET
-    );
-    println!(
-        "{}Key backup not yet implemented — requires distributed-network feature.{}",
-        YELLOW, RESET
+        "{}Backing up node identity ({}{:?}{}) to: {}{}{}",
+        GREEN,
+        CYAN,
+        identity.node_id,
+        RESET,
+        CYAN,
+        dst.display(),
+        RESET
     );
 
+    if let Err(e) = CertificateManager::save_identity(&identity, &dst) {
+        eprintln!("{}Failed to save backup: {}{}", RED, e, RESET);
+        return ExitCode::from(1);
+    }
+
+    println!(
+        "{}*{} Backup written: cert.der, key.der, ca.der",
+        GREEN, RESET
+    );
+    println!(
+        "{}WARNING: the private key is stored in plain DER. Protect the backup directory.{}",
+        YELLOW, RESET
+    );
     ExitCode::SUCCESS
 }
 
@@ -299,21 +353,92 @@ fn cmd_restore(args: &[String]) -> ExitCode {
     let path = match args.first() {
         Some(p) => p,
         None => {
-            eprintln!("{}Usage: ai_gpu_share restore <backup-path>{}", RED, RESET);
+            eprintln!("{}Usage: ai_gpu_share restore <backup-dir>{}", RED, RESET);
             return ExitCode::from(1);
         }
     };
 
+    let src = PathBuf::from(path);
+    if !src.exists() {
+        eprintln!(
+            "{}Backup directory not found: {}{}",
+            RED,
+            src.display(),
+            RESET
+        );
+        return ExitCode::from(1);
+    }
+
+    let identity = match CertificateManager::load_identity(&src) {
+        Ok(id) => id,
+        Err(e) => {
+            eprintln!("{}Failed to load backup: {}{}", RED, e, RESET);
+            return ExitCode::from(1);
+        }
+    };
+
+    let dst = PathBuf::from(NODE_IDENTITY_DIR);
     println!(
-        "{}Restoring node identity from: {}{}{}",
-        GREEN, CYAN, path, RESET
-    );
-    println!(
-        "{}Key restore not yet implemented — requires distributed-network feature.{}",
-        YELLOW, RESET
+        "{}Restoring node identity ({}{:?}{}) to: {}{}{}",
+        GREEN,
+        CYAN,
+        identity.node_id,
+        RESET,
+        CYAN,
+        dst.display(),
+        RESET
     );
 
+    if let Err(e) = CertificateManager::save_identity(&identity, &dst) {
+        eprintln!("{}Failed to write identity: {}{}", RED, e, RESET);
+        return ExitCode::from(1);
+    }
+
+    println!("{}*{} Identity restored.", GREEN, RESET);
     ExitCode::SUCCESS
+}
+
+fn detect_gpu() -> Option<String> {
+    #[cfg(not(target_os = "macos"))]
+    {
+        if let Ok(output) = std::process::Command::new("nvidia-smi")
+            .args(["--query-gpu=name,memory.total", "--format=csv,noheader"])
+            .output()
+        {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let gpus: Vec<&str> = stdout.trim().lines().collect();
+                if !gpus.is_empty() {
+                    return Some(format!(
+                        "NVIDIA: {} GPU(s), first: {}",
+                        gpus.len(),
+                        gpus[0].trim()
+                    ));
+                }
+            }
+        }
+    }
+
+    if std::env::var("CUDA_VISIBLE_DEVICES").is_ok() || std::env::var("CUDA_HOME").is_ok() {
+        return Some("CUDA env vars present (no nvidia-smi output)".into());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(output) = std::process::Command::new("sysctl")
+            .args(["-n", "machdep.cpu.brand_string"])
+            .output()
+        {
+            if output.status.success() {
+                let cpu = String::from_utf8_lossy(&output.stdout).to_string();
+                if cpu.contains("Apple") {
+                    return Some(format!("Apple Silicon: {}", cpu.trim()));
+                }
+            }
+        }
+    }
+
+    None
 }
 
 fn print_help() {

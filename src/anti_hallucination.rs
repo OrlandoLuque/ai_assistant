@@ -441,8 +441,13 @@ impl AntiHallucinationPipeline {
                     overall_confidence
                 };
 
-                let grounded =
-                    claim.supported || claim_confidence >= self.config.min_confidence_for_output;
+                let grounded = if context.is_some() {
+                    // With reference context: ground based on evidence support
+                    claim.supported
+                } else {
+                    // No reference context: use confidence as proxy
+                    claim.supported || claim_confidence >= self.config.min_confidence_for_output
+                };
 
                 ProcessedClaim {
                     text: claim.text.clone(),

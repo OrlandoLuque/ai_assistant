@@ -129,6 +129,8 @@ fn main() -> ExitCode {
         #[cfg(feature = "research")]
         "research" => cmd_research(&command_args[1..]),
         "quality" => cmd_quality(&command_args[1..]),
+        "tool" => cmd_tool(&command_args[1..]),
+        "workflow" => cmd_workflow(&command_args[1..]),
         other => {
             eprintln!("Error: unknown command '{}'\n", other);
             print_usage();
@@ -191,9 +193,15 @@ fn print_usage() {
     println!("    help                             Show cost-subcommand help");
     println!("  verify [options] <prompt>      One-shot query with anti-hallucination pipeline");
     println!(
+        "    --provider <name>              Provider (ollama, openai, anthropic, gemini, ...)"
+    );
+    println!("    --model <name>                 Model name");
+    println!("    --url <url>                    Provider URL");
+    println!(
         "    --strategy <name>              Strategy: mark, omit, warn, footnote (default: mark)"
     );
     println!("    --min-confidence <0.0-1.0>     Minimum confidence threshold (default: 0.3)");
+    println!("    --knowledge <path>             Reference document for grounding");
     println!("    --faithfulness                 Enable faithfulness scoring");
     println!("    --cove                         Enable Chain-of-Verification");
     println!("    --quality-gates                Run quality gates on output");
@@ -206,6 +214,15 @@ fn print_usage() {
     println!("  quality <subcommand>           Quality gate operations");
     println!("    gates list                     List configured quality gates");
     println!("    gates check <text>             Run quality gates on text");
+    println!("  tool <name> [options]          Delegated tool invocation (best-effort NL bridge)");
+    println!("    --args <json>                  JSON arguments for the tool (default: {{}})");
+    println!("    --provider <name>              Provider (ollama, openai, anthropic, ...)");
+    println!("    --model <name>                 Model name");
+    println!("    --url <url>                    Provider URL");
+    println!("  workflow <id> [options]        Delegated workflow invocation (best-effort)");
+    println!("    --provider <name>              Provider");
+    println!("    --model <name>                 Model name");
+    println!("    --url <url>                    Provider URL");
     println!("  test [options]                 Run tests (lib or harness), save results");
     println!("    --all                          Run test harness (all categories)");
     println!("    --category <name>              Run specific harness category");
@@ -1046,6 +1063,119 @@ fn cmd_query(args: &[String]) -> ExitCode {
 }
 
 // =============================================================================
+// tool / workflow — delegated NL-bridge to the LLM
+//
+// These are best-effort "delegated runtime" bridges used by `ai_jobs` when
+// runtime="delegated". The LLM receives a natural-language instruction to
+// run the tool/workflow. A real MCP tool dispatcher is available only in
+// the embedded runtime (ai_jobs with feature="full"). When precise tool
+// invocation is required, prefer runtime="embedded".
+// =============================================================================
+
+fn cmd_tool(args: &[String]) -> ExitCode {
+    if args.is_empty() {
+        eprintln!("Usage: ai_cli tool <name> [--args <json>] [--provider X] [--model Y] [--url Z]");
+        return ExitCode::from(1);
+    }
+    let tool_name = args[0].clone();
+    let rest = &args[1..];
+
+    let args_json = find_flag_value(rest, "--args").unwrap_or("{}").to_string();
+    let prompt = format!(
+        "Use the tool `{}` with these JSON arguments:\n{}\n\nReturn the tool's result.",
+        tool_name, args_json
+    );
+    run_delegated_llm(rest, &prompt)
+}
+
+fn cmd_workflow(args: &[String]) -> ExitCode {
+    if args.is_empty() {
+        eprintln!("Usage: ai_cli workflow <id> [--provider X] [--model Y] [--url Z]");
+        return ExitCode::from(1);
+    }
+    let workflow_id = args[0].clone();
+    let rest = &args[1..];
+    let prompt = format!("Run workflow `{}`.", workflow_id);
+    run_delegated_llm(rest, &prompt)
+}
+
+fn run_delegated_llm(args: &[String], prompt: &str) -> ExitCode {
+    let provider_name = find_flag_value(args, "--provider").map(String::from);
+    let model_name = find_flag_value(args, "--model").map(String::from);
+    let url_override = find_flag_value(args, "--url").map(String::from);
+
+    let mut assistant = AiAssistant::new();
+    if let Some(ref name) = provider_name {
+        assistant.config.provider = provider_from_name(name);
+    }
+    if let Some(ref name) = model_name {
+        assistant.config.selected_model = name.clone();
+    }
+    if let Some(ref url) = url_override {
+        match assistant.config.provider {
+            ai_assistant::AiProvider::Ollama => assistant.config.ollama_url = url.clone(),
+            ai_assistant::AiProvider::LMStudio => assistant.config.lm_studio_url = url.clone(),
+            _ => assistant.config.custom_url = url.clone(),
+        }
+    }
+
+    if assistant.config.selected_model.is_empty() {
+        eprintln!(
+            "Error: no model set. Pass --provider and --model (e.g. --provider ollama \
+             --model mistral:7b-instruct)."
+        );
+        return ExitCode::from(1);
+    }
+
+    assistant.send_message(prompt.to_string(), "");
+    let start = Instant::now();
+    let deadline = Duration::from_secs(120);
+    let mut out = String::new();
+    let mut errored = false;
+
+    loop {
+        if start.elapsed() > deadline {
+            eprintln!(
+                "\nError: delegated LLM query exceeded {}s",
+                deadline.as_secs()
+            );
+            errored = true;
+            break;
+        }
+        if let Some(response) = assistant.poll_response() {
+            match response {
+                AiResponse::Chunk(text) => {
+                    print!("{}", text);
+                    let _ = std::io::stdout().flush();
+                    out.push_str(&text);
+                }
+                AiResponse::Complete(text) => {
+                    if out.is_empty() && !text.is_empty() {
+                        print!("{}", text);
+                    }
+                    println!();
+                    break;
+                }
+                AiResponse::Error(e) => {
+                    eprintln!("\nError: {}", e);
+                    errored = true;
+                    break;
+                }
+                AiResponse::Cancelled(_) => break,
+                _ => {}
+            }
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    if errored {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+// =============================================================================
 // bench — run Criterion benchmarks with output capture
 // =============================================================================
 
@@ -1577,20 +1707,99 @@ fn cost_subcommand_budget(args: &[String]) -> ExitCode {
 }
 
 fn cost_subcommand_savings(args: &[String]) -> ExitCode {
-    let _snapshot_path = match find_flag_value(args, "--snapshot") {
+    let snapshot_path = match find_flag_value(args, "--snapshot") {
         Some(p) => p,
         None => {
             eprintln!("ai_cli cost savings: missing --snapshot <path>");
             return ExitCode::from(1);
         }
     };
-    // CostDashboardSnapshot (V75) does not yet include AllocationResult
-    // savings metrics (total_tokens_saved, compression_ratio). Wire-up is
-    // deferred to V78 — see docs/IMPROVEMENTS_V77.md and the MCP tool
-    // `cost_savings_summary` for runtime access.
-    println!("cost savings: snapshot persistence for savings metrics is not yet wired.");
-    println!("Use the runtime API or MCP tool `cost_savings_summary` instead.");
-    println!("(Deferred to V78.)");
+    let dashboard = match load_cost_snapshot(snapshot_path) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return ExitCode::from(1);
+        }
+    };
+
+    let total = dashboard.total_cost();
+    let requests = dashboard.total_requests();
+    let avg = dashboard.average_cost_per_request();
+    let by_model = dashboard.cost_by_model();
+    let top = dashboard.most_expensive(5);
+
+    println!("Cost Savings Analysis");
+    println!("=====================");
+    println!("Total spend:          ${:.4}", total);
+    println!("Requests:             {}", requests);
+    println!("Avg cost / request:   ${:.6}", avg);
+    println!();
+
+    if by_model.is_empty() {
+        println!("(no recorded entries — savings analysis unavailable)");
+        return ExitCode::SUCCESS;
+    }
+
+    let mut models: Vec<(String, f64, usize)> = by_model
+        .iter()
+        .map(|(m, c)| {
+            let count = dashboard.entries().iter().filter(|e| &e.model == m).count();
+            (m.clone(), *c, count)
+        })
+        .collect();
+    models.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    println!("By model:");
+    for (m, c, n) in &models {
+        let avg_model = if *n > 0 { c / *n as f64 } else { 0.0 };
+        println!(
+            "  {:<32} ${:>10.4}  ({} req, avg ${:.6})",
+            m, c, n, avg_model
+        );
+    }
+    println!();
+
+    // Hypothetical-max savings: cost if every request had used the most
+    // expensive model (by average cost/request).
+    if let Some(most_expensive) = models.iter().filter(|(_, _, n)| *n > 0).max_by(|a, b| {
+        let ea = a.1 / a.2 as f64;
+        let eb = b.1 / b.2 as f64;
+        ea.partial_cmp(&eb).unwrap_or(std::cmp::Ordering::Equal)
+    }) {
+        let worst_avg = most_expensive.1 / most_expensive.2 as f64;
+        let hypothetical = worst_avg * requests as f64;
+        let saved = (hypothetical - total).max(0.0);
+        let pct = if hypothetical > 0.0 {
+            saved / hypothetical * 100.0
+        } else {
+            0.0
+        };
+        println!("Hypothetical single-model cost (worst avg):");
+        println!(
+            "  If all {} requests had used '{}' (avg ${:.6}/req):",
+            requests, most_expensive.0, worst_avg
+        );
+        println!("    Hypothetical total: ${:.4}", hypothetical);
+        println!("    Actual total:       ${:.4}", total);
+        println!("    Savings:            ${:.4} ({:.1}%)", saved, pct);
+        println!();
+    }
+
+    if !top.is_empty() {
+        println!("Top {} most expensive requests:", top.len());
+        for (i, e) in top.iter().enumerate() {
+            println!(
+                "  {}. {} — ${:.6} ({}/{} tok, {})",
+                i + 1,
+                e.model,
+                e.cost_usd,
+                e.input_tokens,
+                e.output_tokens,
+                e.timestamp
+            );
+        }
+    }
+
     ExitCode::SUCCESS
 }
 
@@ -1803,16 +2012,44 @@ fn print_environment(report: &EnvironmentReport) {
 // =============================================================================
 
 fn cmd_verify(args: &[String]) -> ExitCode {
+    let mut provider_name: Option<String> = None;
+    let mut model_name: Option<String> = None;
+    let mut url_override: Option<String> = None;
     let mut strategy = "mark".to_string();
     let mut min_confidence: f64 = 0.3;
     let mut faithfulness = false;
     let mut cove = false;
     let mut quality_gates = false;
+    let mut knowledge_path: Option<String> = None;
     let mut prompt_parts: Vec<String> = Vec::new();
 
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
+            "--provider" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: --provider requires a value");
+                    return ExitCode::from(1);
+                }
+                provider_name = Some(args[i].clone());
+            }
+            "--model" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: --model requires a value");
+                    return ExitCode::from(1);
+                }
+                model_name = Some(args[i].clone());
+            }
+            "--url" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: --url requires a value");
+                    return ExitCode::from(1);
+                }
+                url_override = Some(args[i].clone());
+            }
             "--strategy" if i + 1 < args.len() => {
                 i += 1;
                 strategy = args[i].clone();
@@ -1824,6 +2061,14 @@ fn cmd_verify(args: &[String]) -> ExitCode {
             "--faithfulness" => faithfulness = true,
             "--cove" => cove = true,
             "--quality-gates" => quality_gates = true,
+            "--knowledge" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: --knowledge requires a path");
+                    return ExitCode::from(1);
+                }
+                knowledge_path = Some(args[i].clone());
+            }
             other => prompt_parts.push(other.to_string()),
         }
         i += 1;
@@ -1834,33 +2079,396 @@ fn cmd_verify(args: &[String]) -> ExitCode {
         return ExitCode::from(1);
     }
 
-    println!("Verify mode:");
-    println!("  Strategy:       {}", strategy);
-    println!("  Min confidence: {:.2}", min_confidence);
-    println!("  Faithfulness:   {}", faithfulness);
-    println!("  CoVe:           {}", cove);
-    println!("  Quality gates:  {}", quality_gates);
-    println!("  Prompt:         {}", prompt_parts.join(" "));
-    println!();
+    let user_prompt = prompt_parts.join(" ");
 
-    #[cfg(feature = "eval")]
-    {
-        let runner = ai_assistant::quality_gates::QualityGateRunner::production_defaults();
-        println!("Quality gates configured: {} gates", runner.gates().len());
-        if quality_gates {
-            let scores = ai_assistant::quality_gates::QualityScores {
-                faithfulness: Some(0.8),
-                confidence: Some(min_confidence),
-                grounding_ratio: None,
-                consistency_score: None,
-                citation_coverage: None,
-            };
-            let result = runner.run(&scores);
-            println!("Pre-check: {}", result.summary());
+    // Load knowledge context for grounding
+    let knowledge = if let Some(ref path) = knowledge_path {
+        match std::fs::read_to_string(path) {
+            Ok(content) => {
+                eprintln!("Loaded knowledge: {} chars from {}", content.len(), path);
+                content
+            }
+            Err(e) => {
+                eprintln!("Error reading knowledge file '{}': {}", path, e);
+                return ExitCode::from(1);
+            }
+        }
+    } else {
+        String::new()
+    };
+
+    eprintln!("Verify mode:");
+    eprintln!("  Strategy:       {}", strategy);
+    eprintln!("  Min confidence: {:.2}", min_confidence);
+    eprintln!("  Faithfulness:   {}", faithfulness);
+    eprintln!("  CoVe:           {}", cove);
+    eprintln!("  Quality gates:  {}", quality_gates);
+    if !knowledge.is_empty() {
+        eprintln!("  Knowledge:      {} chars", knowledge.len());
+    }
+    eprintln!();
+
+    // --- Build assistant and query LLM ---
+    let mut assistant = AiAssistant::new();
+
+    if let Some(ref name) = provider_name {
+        assistant.config.provider = provider_from_name(name);
+    }
+    if let Some(ref name) = model_name {
+        assistant.config.selected_model = name.clone();
+    }
+    if let Some(ref url) = url_override {
+        match assistant.config.provider {
+            ai_assistant::AiProvider::Ollama => assistant.config.ollama_url = url.clone(),
+            ai_assistant::AiProvider::LMStudio => assistant.config.lm_studio_url = url.clone(),
+            _ => assistant.config.custom_url = url.clone(),
         }
     }
 
-    println!("(Full pipeline execution requires an active LLM provider)");
+    // Auto-detect model if not specified
+    if assistant.config.selected_model.is_empty() {
+        #[cfg(feature = "butler")]
+        {
+            eprint!("Auto-detecting providers...");
+            let mut butler = Butler::new();
+            let report = butler.scan();
+            eprintln!(" done.");
+            let models = build_unified_model_list(&report);
+            if !models.is_empty() {
+                assistant.config.selected_model = models[0].name.clone();
+                assistant.config.provider = models[0].provider.clone();
+                apply_provider_url(&mut assistant, &report, &models[0].provider);
+                eprintln!(
+                    "Using: {} ({})",
+                    models[0].name,
+                    models[0].provider.display_name()
+                );
+            } else if !report.llm_providers.is_empty() {
+                fetch_models_blocking(&mut assistant);
+            }
+        }
+
+        #[cfg(not(feature = "butler"))]
+        {
+            fetch_models_blocking(&mut assistant);
+        }
+
+        if assistant.config.selected_model.is_empty() {
+            eprintln!(
+                "Error: no model available. Specify --provider and --model, or install a model."
+            );
+            return ExitCode::from(1);
+        }
+    }
+
+    eprintln!(
+        "Querying {:?} / {} ...",
+        assistant.config.provider, assistant.config.selected_model
+    );
+
+    let start = Instant::now();
+    assistant.send_message(user_prompt.clone(), &knowledge);
+
+    // Poll for response
+    let mut full_response = String::new();
+    let mut errored = false;
+
+    loop {
+        if let Some(response) = assistant.poll_response() {
+            match response {
+                AiResponse::Chunk(text) => {
+                    print!("{}", text);
+                    let _ = std::io::stdout().flush();
+                    full_response.push_str(&text);
+                }
+                AiResponse::Complete(text) => {
+                    if !text.is_empty() && full_response.is_empty() {
+                        print!("{}", text);
+                    }
+                    println!();
+                    if full_response.is_empty() {
+                        full_response = text;
+                    }
+                    break;
+                }
+                AiResponse::Error(e) => {
+                    eprintln!("\nError: {}", e);
+                    errored = true;
+                    break;
+                }
+                AiResponse::Cancelled(partial) => {
+                    full_response = partial;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    // Drain remaining messages
+    for _ in 0..50 {
+        if assistant.poll_response().is_none() {
+            break;
+        }
+    }
+
+    let elapsed = start.elapsed();
+    eprintln!(
+        "\n[{:?} / {} / {:.1}s]",
+        assistant.config.provider,
+        assistant.config.selected_model,
+        elapsed.as_secs_f64()
+    );
+
+    if errored || full_response.is_empty() {
+        return ExitCode::from(1);
+    }
+
+    // --- Run anti-hallucination pipeline ---
+    #[cfg(feature = "eval")]
+    {
+        use ai_assistant::anti_hallucination::{
+            AntiHallucinationConfig, AntiHallucinationPipeline,
+        };
+
+        let strategy_enum = match strategy.as_str() {
+            "omit" => ai_assistant::anti_hallucination::UngroundedClaimStrategy::Omit,
+            "warn" => ai_assistant::anti_hallucination::UngroundedClaimStrategy::Warn,
+            "footnote" => ai_assistant::anti_hallucination::UngroundedClaimStrategy::Footnote,
+            "verify_then_mark" => {
+                ai_assistant::anti_hallucination::UngroundedClaimStrategy::VerifyThenMark
+            }
+            "verify_then_omit" => {
+                ai_assistant::anti_hallucination::UngroundedClaimStrategy::VerifyThenOmit
+            }
+            "ask" => ai_assistant::anti_hallucination::UngroundedClaimStrategy::Ask,
+            _ => ai_assistant::anti_hallucination::UngroundedClaimStrategy::Mark,
+        };
+
+        let mut ah_config = AntiHallucinationConfig::production();
+        ah_config.ungrounded_strategy = strategy_enum;
+        ah_config.min_confidence_for_output = min_confidence;
+
+        let pipeline = AntiHallucinationPipeline::new(ah_config);
+        // Only use knowledge for grounding; without it, fall back to confidence-based
+        let grounding_context = if !knowledge.is_empty() {
+            Some(knowledge.as_str())
+        } else {
+            None
+        };
+        let ah_result = pipeline.process(&full_response, grounding_context);
+
+        println!();
+        println!("--- Anti-Hallucination Analysis ---");
+        println!("  Strategy:        {:?}", ah_result.strategy_applied);
+        println!("  Confidence:      {:.2}", ah_result.overall_confidence);
+        println!("  Grounding ratio: {:.2}", ah_result.grounding_ratio());
+        println!("  Ungrounded:      {} claims", ah_result.ungrounded_count);
+        println!("  Abstained:       {}", ah_result.abstained);
+        if ah_result.abstained {
+            if let Some(ref reason) = ah_result.abstention_reason {
+                println!("  Reason:          {}", reason);
+            }
+        }
+        println!("  Claims found:    {}", ah_result.claims.len());
+
+        // Faithfulness scoring
+        let mut faith_score: Option<f64> = None;
+        if faithfulness {
+            use ai_assistant::faithfulness::{FaithfulnessConfig, FaithfulnessScorer};
+
+            // Split context into individual sentences for better Jaccard matching.
+            // WordOverlap uses Jaccard(claim_words, chunk_words) — a single large
+            // chunk dilutes the ratio, so we split into per-sentence chunks.
+            let source = if !knowledge.is_empty() {
+                &knowledge
+            } else {
+                &user_prompt
+            };
+            let context_sentences: Vec<&str> = source
+                .split(|c: char| c == '.' || c == '\n')
+                .map(|s| s.trim())
+                .filter(|s| s.len() > 5)
+                .collect();
+
+            let f_scorer = FaithfulnessScorer::new(FaithfulnessConfig::default());
+            let f_report = f_scorer.score(&full_response, &context_sentences);
+
+            println!();
+            println!("--- Faithfulness Report ---");
+            println!("  Overall score:   {:.2}", f_report.overall_score);
+            println!(
+                "  Entailed: {} | Contradicted: {} | Neutral: {}",
+                f_report.entailed_count, f_report.contradicted_count, f_report.neutral_count
+            );
+            faith_score = Some(f_report.overall_score);
+        }
+
+        // Chain-of-Verification
+        if cove {
+            use ai_assistant::chain_of_verification::{
+                ChainOfVerification, CoVeConfig, VerificationContext, VerificationSource,
+            };
+
+            let cove_source = if !knowledge.is_empty() {
+                &knowledge
+            } else {
+                &user_prompt
+            };
+            let reliability = if !knowledge.is_empty() { 0.9 } else { 0.5 };
+            let source_type = if !knowledge.is_empty() {
+                "file"
+            } else {
+                "user_query"
+            };
+            let cove_contexts: Vec<VerificationContext> = cove_source
+                .split(|c: char| c == '.' || c == '\n')
+                .map(|s| s.trim())
+                .filter(|s| s.len() > 5)
+                .enumerate()
+                .map(|(i, sentence)| VerificationContext {
+                    source_id: format!("ctx-{}", i),
+                    source_type: source_type.to_string(),
+                    content: sentence.to_string(),
+                    reliability,
+                })
+                .collect();
+
+            // Configure CoVe with Both source (accepts any source_type)
+            let mut cove_config = CoVeConfig::default();
+            cove_config.verification_source = VerificationSource::Both;
+
+            // Build LLM verifier closure
+            let v_provider = assistant.config.provider.clone();
+            let v_model = assistant.config.selected_model.clone();
+            let v_ollama_url = assistant.config.ollama_url.clone();
+            let v_lm_url = assistant.config.lm_studio_url.clone();
+            let v_custom_url = assistant.config.custom_url.clone();
+
+            let llm_verify = move |prompt: &str| -> Option<String> {
+                let mut verifier = AiAssistant::new();
+                verifier.config.provider = v_provider.clone();
+                verifier.config.selected_model = v_model.clone();
+                verifier.config.ollama_url = v_ollama_url.clone();
+                verifier.config.lm_studio_url = v_lm_url.clone();
+                verifier.config.custom_url = v_custom_url.clone();
+                verifier.config.temperature = 0.1;
+
+                verifier.send_message(prompt.to_string(), "");
+
+                let mut full = String::new();
+                let deadline = Instant::now() + Duration::from_secs(30);
+                loop {
+                    if Instant::now() > deadline {
+                        return None;
+                    }
+                    if let Some(resp) = verifier.poll_response() {
+                        match resp {
+                            AiResponse::Chunk(t) => full.push_str(&t),
+                            AiResponse::Complete(t) => {
+                                if full.is_empty() {
+                                    full = t;
+                                }
+                                return Some(full);
+                            }
+                            AiResponse::Error(_) => return None,
+                            AiResponse::Cancelled(t) => return Some(t),
+                            _ => {}
+                        }
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            };
+
+            eprintln!("Running Chain-of-Verification with LLM...");
+            let cove_engine = ChainOfVerification::new(cove_config).with_llm_verifier(llm_verify);
+            let cove_result = cove_engine.verify(&full_response, &cove_contexts);
+
+            // Count by status
+            let supported = cove_result
+                .verified_claims
+                .iter()
+                .filter(|c| {
+                    c.status
+                        == ai_assistant::chain_of_verification::ClaimVerificationStatus::Supported
+                })
+                .count();
+            let contradicted = cove_result
+                .verified_claims
+                .iter()
+                .filter(|c| {
+                    c.status
+                        == ai_assistant::chain_of_verification::ClaimVerificationStatus::Contradicted
+                })
+                .count();
+            let unverifiable = cove_result.verified_claims.len() - supported - contradicted;
+
+            println!();
+            println!("--- Chain-of-Verification ---");
+            println!("  Claims verified: {}", cove_result.verified_claims.len());
+            println!(
+                "  Supported: {} | Contradicted: {} | Unverifiable: {}",
+                supported, contradicted, unverifiable
+            );
+            println!("  Accuracy:        {:.2}", cove_result.overall_accuracy);
+            println!("  Corrections:     {}", cove_result.corrections_made);
+            if cove_result.corrections_made > 0 {
+                println!();
+                println!("  Corrected response:");
+                println!("  {}", cove_result.corrected_response);
+            }
+        }
+
+        // Quality gates
+        if quality_gates {
+            use ai_assistant::quality_gates::{QualityGateRunner, QualityScores};
+
+            let scores = QualityScores {
+                faithfulness: faith_score,
+                confidence: Some(ah_result.overall_confidence),
+                grounding_ratio: Some(ah_result.grounding_ratio()),
+                consistency_score: None,
+                citation_coverage: None,
+            };
+            let runner = QualityGateRunner::production_defaults();
+            let gate_result = runner.run(&scores);
+
+            println!();
+            println!("--- Quality Gates ---");
+            println!(
+                "  {} ({}/{})",
+                gate_result.summary(),
+                gate_result.passed_count(),
+                gate_result.total_checked()
+            );
+            if !gate_result.warnings.is_empty() {
+                for w in &gate_result.warnings {
+                    println!("  Warning: {}", w);
+                }
+            }
+            if !gate_result.passed {
+                for f in &gate_result.failing_gates {
+                    println!("  FAILED: {}", f);
+                }
+            }
+        }
+    }
+
+    #[cfg(not(feature = "eval"))]
+    {
+        let _ = (
+            strategy,
+            min_confidence,
+            faithfulness,
+            cove,
+            quality_gates,
+            knowledge,
+            user_prompt,
+        );
+        eprintln!("Anti-hallucination pipeline requires the 'eval' feature");
+    }
+
     ExitCode::SUCCESS
 }
 
@@ -1910,29 +2518,56 @@ fn cmd_research(args: &[String]) -> ExitCode {
     let mut config = ai_assistant::academic_search::AcademicSearchConfig::default();
     config.max_results = max_results;
 
+    let display_papers = |papers: &[ai_assistant::academic_search::AcademicPaper], bibtex: bool| {
+        if bibtex {
+            println!(
+                "{}",
+                ai_assistant::bibtex::BibGenerator::from_papers(papers)
+            );
+        } else {
+            for (idx, p) in papers.iter().enumerate() {
+                println!("  {}. {} ({})", idx + 1, p.title, p.year.unwrap_or(0));
+                if let Some(ref doi) = p.doi {
+                    println!("     DOI: {}", doi);
+                }
+                if let Some(ref url) = p.url {
+                    println!("     URL: {}", url);
+                }
+            }
+        }
+        println!("  Found {} papers", papers.len());
+    };
+
     for provider_name in &providers {
         println!("--- {} ---", provider_name);
         match provider_name.as_str() {
             "arxiv" => {
                 let provider = ai_assistant::academic_search::ArxivProvider::new();
                 match provider.search_papers(&query, &config) {
-                    Ok(papers) => {
-                        if bibtex {
-                            println!(
-                                "{}",
-                                ai_assistant::bibtex::BibGenerator::from_papers(&papers)
-                            );
-                        } else {
-                            for (idx, p) in papers.iter().enumerate() {
-                                println!("  {}. {} ({})", idx + 1, p.title, p.year.unwrap_or(0));
-                            }
-                        }
-                        println!("  Found {} papers", papers.len());
-                    }
+                    Ok(papers) => display_papers(&papers, bibtex),
                     Err(e) => println!("  Error: {}", e),
                 }
             }
-            _ => println!("  (Provider {} requires async execution)", provider_name),
+            "scholar" | "semantic_scholar" => {
+                let provider = ai_assistant::academic_search::SemanticScholarProvider::new();
+                match provider.search_papers(&query, &config) {
+                    Ok(papers) => display_papers(&papers, bibtex),
+                    Err(e) => println!("  Error: {}", e),
+                }
+            }
+            "pubmed" => {
+                let provider = ai_assistant::academic_search::PubMedProvider::new();
+                match provider.search_papers(&query, &config) {
+                    Ok(papers) => display_papers(&papers, bibtex),
+                    Err(e) => println!("  Error: {}", e),
+                }
+            }
+            other => {
+                println!(
+                    "  Unknown provider '{}'. Available: arxiv, scholar, pubmed",
+                    other
+                );
+            }
         }
     }
 
@@ -1985,12 +2620,51 @@ fn cmd_quality(args: &[String]) -> ExitCode {
                             eprintln!("Usage: ai_cli quality gates check <text>");
                             return ExitCode::from(1);
                         }
+
+                        // Compute real confidence score
+                        let conf_scorer = ai_assistant::confidence_scoring::ConfidenceScorer::new(
+                            ai_assistant::confidence_scoring::ConfidenceConfig::default(),
+                        );
+                        let conf_score = conf_scorer.score(&text, None);
+
+                        // Compute faithfulness (self-reference baseline)
+                        let faith_scorer = ai_assistant::faithfulness::FaithfulnessScorer::new(
+                            ai_assistant::faithfulness::FaithfulnessConfig::default(),
+                        );
+                        let faith_report = faith_scorer.score(&text, &[&text]);
+
+                        let scores = ai_assistant::quality_gates::QualityScores {
+                            faithfulness: Some(faith_report.overall_score),
+                            confidence: Some(conf_score.overall),
+                            grounding_ratio: Some(faith_report.grounding_ratio()),
+                            consistency_score: None,
+                            citation_coverage: None,
+                        };
+
                         let runner =
                             ai_assistant::quality_gates::QualityGateRunner::production_defaults();
-                        let scores = ai_assistant::quality_gates::QualityScores::default();
                         let result = runner.run(&scores);
+
                         println!("Quality check on {} chars of text:", text.len());
-                        println!("  {}", result.summary());
+                        println!("  Confidence:      {:.2}", conf_score.overall);
+                        println!("  Faithfulness:    {:.2}", faith_report.overall_score);
+                        println!("  Grounding ratio: {:.2}", faith_report.grounding_ratio());
+                        println!(
+                            "  Result: {} ({}/{})",
+                            result.summary(),
+                            result.passed_count(),
+                            result.total_checked()
+                        );
+                        if !result.warnings.is_empty() {
+                            for w in &result.warnings {
+                                println!("  Warning: {}", w);
+                            }
+                        }
+                        if !result.passed {
+                            for f in &result.failing_gates {
+                                println!("  FAILED: {}", f);
+                            }
+                        }
                     }
                     #[cfg(not(feature = "eval"))]
                     {

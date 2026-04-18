@@ -1,0 +1,19 @@
+Rust is a systems programming language created by Graydon Hoare.
+Rust was first released publicly in 2010 as version 0.1.
+Rust 1.0, the first stable release, was published on May 15, 2015.
+Mozilla Research sponsored the early development of Rust.
+Rust uses an ownership system with borrowing rules instead of a garbage collector.
+The Rust compiler enforces memory safety at compile time without runtime overhead.
+Cargo is Rust's official package manager and build system.
+Rust packages are called crates and are published on crates.io.
+Rust has had several edition releases: 2015, 2018, 2021, and 2024.
+Rust's type system includes traits, generics, and algebraic data types (enums).
+Rust does not have null values; it uses Option<T> for optional values.
+Rust uses Result<T, E> for error handling instead of exceptions.
+Rust supports zero-cost abstractions, meaning high-level features compile to efficient code.
+Rust has been voted the most loved programming language on Stack Overflow surveys from 2016 to 2024.
+The Rust Foundation was established in February 2021 to steward the language.
+Rust supports concurrent programming with fearless concurrency through its ownership system.
+Rust can interoperate with C code through its Foreign Function Interface (FFI).
+The Rust standard library provides collections, I/O, threading, and networking.
+Rust uses the LLVM compiler backend for code generation.

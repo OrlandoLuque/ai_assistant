@@ -383,22 +383,62 @@ fn ai_cli_path() -> PathBuf {
     PathBuf::from("ai_cli")
 }
 
-fn run_delegated_tool(tool: &str, args: &serde_json::Value) -> Result<String, String> {
-    // `ai_cli tool` is not yet implemented (deferred to V78). Surface a
-    // clear message so operators know why the action is a no-op.
-    Err(format!(
-        "delegated tool execution not yet supported (tool='{}', args={}); \
-         use runtime=\"embedded\" or wait for V78",
-        tool, args
-    ))
+fn run_delegated_tool(
+    tool: &str,
+    args: &serde_json::Value,
+    timeout_secs: u64,
+) -> Result<String, String> {
+    run_delegated_ai_cli(
+        &[
+            "tool".to_string(),
+            tool.to_string(),
+            "--args".to_string(),
+            args.to_string(),
+        ],
+        timeout_secs,
+    )
 }
 
-fn run_delegated_workflow(id: &str) -> Result<String, String> {
-    Err(format!(
-        "delegated workflow execution not yet supported (id='{}'); \
-         use runtime=\"embedded\" or wait for V78",
-        id
-    ))
+fn run_delegated_workflow(id: &str, timeout_secs: u64) -> Result<String, String> {
+    run_delegated_ai_cli(&["workflow".to_string(), id.to_string()], timeout_secs)
+}
+
+fn run_delegated_ai_cli(subcmd_args: &[String], timeout_secs: u64) -> Result<String, String> {
+    let exe = ai_cli_path();
+    let out = Command::new(&exe)
+        .args(subcmd_args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .and_then(|mut c| {
+            let start = Instant::now();
+            let timeout = Duration::from_secs(timeout_secs);
+            loop {
+                match c.try_wait()? {
+                    Some(_) => return c.wait_with_output(),
+                    None => {
+                        if start.elapsed() > timeout {
+                            let _ = c.kill();
+                            return Err(std::io::Error::new(
+                                std::io::ErrorKind::TimedOut,
+                                "ai_cli subcommand timed out",
+                            ));
+                        }
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                }
+            }
+        })
+        .map_err(|e| format!("failed to run ai_cli ({}): {}", exe.display(), e))?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    } else {
+        Err(format!(
+            "ai_cli {} failed: {}",
+            subcmd_args.first().map(String::as_str).unwrap_or("?"),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ))
+    }
 }
 
 // =============================================================================
@@ -881,9 +921,11 @@ fn execute_job(
                 run_delegated_agent(task, meta.timeout_secs)
             }
             (JobRuntime::Delegated, ActionConfig::Tool { tool, args }) => {
-                run_delegated_tool(tool, args)
+                run_delegated_tool(tool, args, meta.timeout_secs)
             }
-            (JobRuntime::Delegated, ActionConfig::Workflow { id }) => run_delegated_workflow(id),
+            (JobRuntime::Delegated, ActionConfig::Workflow { id }) => {
+                run_delegated_workflow(id, meta.timeout_secs)
+            }
 
             // Embedded paths.
             #[cfg(feature = "full")]

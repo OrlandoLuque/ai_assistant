@@ -1062,6 +1062,11 @@ struct AiGuiApp {
 
     // Persistence
     data_dir: PathBuf,
+
+    // Google Drive OAuth (manual token entry flow)
+    gdrive_oauth_modal: bool,
+    gdrive_token_input: String,
+    gdrive_token: Option<String>,
 }
 
 impl AiGuiApp {
@@ -1160,7 +1165,11 @@ impl AiGuiApp {
             diag_component_filter: String::new(),
             diag_auto_scroll: true,
 
-            data_dir,
+            data_dir: data_dir.clone(),
+
+            gdrive_oauth_modal: false,
+            gdrive_token_input: String::new(),
+            gdrive_token: load_gdrive_token(&data_dir),
         }
     }
 
@@ -3733,8 +3742,18 @@ impl AiGuiApp {
                     "Supports file listing, upload, and download.",
                 );
                 ui.add_space(8.0);
-                if ui.button("Authenticate").clicked() {
-                    self.add_toast("Google Drive OAuth flow not yet wired", false);
+                let connected = self.gdrive_token.is_some();
+                if connected {
+                    ui.colored_label(Color32::from_rgb(120, 220, 120), "Connected.");
+                    ui.add_space(4.0);
+                    if ui.button("Disconnect").clicked() {
+                        self.gdrive_token = None;
+                        let _ = delete_gdrive_token(&self.data_dir);
+                        self.add_toast("Google Drive disconnected", false);
+                    }
+                } else if ui.button("Authenticate").clicked() {
+                    self.gdrive_oauth_modal = true;
+                    self.gdrive_token_input.clear();
                 }
             }
             _ => {
@@ -5221,6 +5240,85 @@ impl AiGuiApp {
         }
     }
 
+    fn render_gdrive_oauth_modal(&mut self, ctx: &egui::Context) {
+        if !self.gdrive_oauth_modal {
+            return;
+        }
+        let mut open = true;
+        let mut save_clicked = false;
+        let mut cancel_clicked = false;
+        egui::Window::new("Google Drive Authentication")
+            .open(&mut open)
+            .resizable(false)
+            .default_width(500.0)
+            .collapsible(false)
+            .show(ctx, |ui| {
+                ui.label("Manual OAuth token entry:");
+                ui.add_space(4.0);
+                ui.colored_label(
+                    Color32::from_gray(180),
+                    "1. Open https://developers.google.com/oauthplayground",
+                );
+                ui.colored_label(
+                    Color32::from_gray(180),
+                    "2. In Step 1, select 'Drive API v3' > drive.file scope",
+                );
+                ui.colored_label(
+                    Color32::from_gray(180),
+                    "3. Click 'Authorize APIs' and sign in",
+                );
+                ui.colored_label(
+                    Color32::from_gray(180),
+                    "4. Step 2: 'Exchange authorization code for tokens'",
+                );
+                ui.colored_label(
+                    Color32::from_gray(180),
+                    "5. Copy the 'Access token' and paste below:",
+                );
+                ui.add_space(8.0);
+                ui.label("Access token:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.gdrive_token_input)
+                        .password(true)
+                        .desired_width(f32::INFINITY),
+                );
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Save").clicked() {
+                        save_clicked = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancel_clicked = true;
+                    }
+                });
+            });
+
+        if cancel_clicked || !open {
+            self.gdrive_oauth_modal = false;
+            self.gdrive_token_input.clear();
+            return;
+        }
+
+        if save_clicked {
+            let token = self.gdrive_token_input.trim().to_string();
+            if token.is_empty() {
+                self.add_toast("Token is empty", true);
+                return;
+            }
+            match save_gdrive_token(&self.data_dir, &token) {
+                Ok(()) => {
+                    self.gdrive_token = Some(token);
+                    self.gdrive_token_input.clear();
+                    self.gdrive_oauth_modal = false;
+                    self.add_toast("Google Drive connected", false);
+                }
+                Err(e) => {
+                    self.add_toast(&format!("Failed to save token: {}", e), true);
+                }
+            }
+        }
+    }
+
     fn render_toasts(&mut self, ctx: &egui::Context) {
         // Remove expired toasts (5 seconds)
         self.toasts
@@ -5366,6 +5464,7 @@ impl eframe::App for AiGuiApp {
             }
         }
 
+        self.render_gdrive_oauth_modal(ctx);
         self.render_toasts(ctx);
     }
 
@@ -5373,6 +5472,41 @@ impl eframe::App for AiGuiApp {
         self.assistant.save_current_session();
         self.save_sessions();
     }
+}
+
+// =============================================================================
+// Google Drive OAuth token persistence (manual entry flow)
+// =============================================================================
+
+fn gdrive_token_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("gdrive_token.txt")
+}
+
+fn load_gdrive_token(data_dir: &Path) -> Option<String> {
+    let path = gdrive_token_path(data_dir);
+    std::fs::read_to_string(&path)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn save_gdrive_token(data_dir: &Path, token: &str) -> Result<(), String> {
+    let path = gdrive_token_path(data_dir);
+    std::fs::write(&path, token).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+    Ok(())
+}
+
+fn delete_gdrive_token(data_dir: &Path) -> Result<(), String> {
+    let path = gdrive_token_path(data_dir);
+    if path.exists() {
+        std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 // =============================================================================

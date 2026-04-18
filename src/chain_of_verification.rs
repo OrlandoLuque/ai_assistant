@@ -219,12 +219,28 @@ pub struct VerificationContext {
 /// Chain-of-Verification pipeline.
 pub struct ChainOfVerification {
     config: CoVeConfig,
+    /// Optional LLM callback for claim verification. When set, each claim is
+    /// verified by sending a prompt to the LLM instead of relying on word overlap.
+    llm_fn: Option<Box<dyn Fn(&str) -> Option<String>>>,
 }
 
 impl ChainOfVerification {
     /// Create a new CoVe pipeline with the given configuration.
     pub fn new(config: CoVeConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            llm_fn: None,
+        }
+    }
+
+    /// Attach an LLM verifier callback. When set, `verify_claim()` will
+    /// query the LLM for each claim instead of using word-overlap only.
+    pub fn with_llm_verifier<F>(mut self, f: F) -> Self
+    where
+        F: Fn(&str) -> Option<String> + 'static,
+    {
+        self.llm_fn = Some(Box::new(f));
+        self
     }
 
     /// Run the full verification pipeline on a response.
@@ -365,14 +381,9 @@ impl ChainOfVerification {
     fn verify_claim(
         &self,
         claim: &str,
-        _verification_question: &str,
+        verification_question: &str,
         context: &[VerificationContext],
     ) -> VerifiedClaimResult {
-        let claim_words = words_set(claim);
-        let mut evidence_list = Vec::new();
-        let mut best_support: f64 = 0.0;
-        let mut has_contradiction = false;
-
         // Filter context by verification source config
         let relevant_context: Vec<&VerificationContext> = match self.config.verification_source {
             VerificationSource::RagOnly => {
@@ -391,6 +402,61 @@ impl ChainOfVerification {
             }
             VerificationSource::Both => context.iter().collect(),
         };
+
+        // LLM-based verification (when available)
+        if let Some(ref llm_fn) = self.llm_fn {
+            if !relevant_context.is_empty() {
+                let context_text = relevant_context
+                    .iter()
+                    .map(|c| c.content.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+
+                let prompt = format!(
+                    "Based on the following reference context, determine if this claim is \
+                     supported, contradicted, or unsupported.\n\n\
+                     Reference context:\n{}\n\n\
+                     Claim: \"{}\"\n\n\
+                     Answer with exactly one word: Supported, Contradicted, or Unsupported.",
+                    context_text, claim
+                );
+
+                if let Some(response) = llm_fn(&prompt) {
+                    let lower = response.to_lowercase();
+                    let status = if lower.contains("contradicted") {
+                        ClaimVerificationStatus::Contradicted
+                    } else if lower.contains("supported") && !lower.contains("unsupported") {
+                        ClaimVerificationStatus::Supported
+                    } else {
+                        ClaimVerificationStatus::Unverifiable
+                    };
+                    let confidence = match status {
+                        ClaimVerificationStatus::Supported => 0.9,
+                        ClaimVerificationStatus::Contradicted => 0.85,
+                        _ => 0.1,
+                    };
+                    return VerifiedClaimResult {
+                        claim: claim.to_string(),
+                        status,
+                        confidence,
+                        evidence: vec![VerificationEvidence {
+                            source: "LLM verification".to_string(),
+                            content: response,
+                            relevance: 1.0,
+                            supports: status == ClaimVerificationStatus::Supported,
+                        }],
+                        correction: None,
+                        verification_question: verification_question.to_string(),
+                    };
+                }
+            }
+        }
+
+        // Fallback: word-overlap verification
+        let claim_words = words_set(claim);
+        let mut evidence_list = Vec::new();
+        let mut best_support: f64 = 0.0;
+        let mut has_contradiction = false;
 
         for ctx in &relevant_context {
             let ctx_words = words_set(&ctx.content);
