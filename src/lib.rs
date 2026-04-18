@@ -1366,6 +1366,8 @@ pub mod confidence_scoring;
 #[cfg(feature = "eval")]
 pub mod cot_parsing;
 #[cfg(feature = "eval")]
+pub mod eval_benchmarks;
+#[cfg(feature = "eval")]
 pub mod evaluation;
 #[cfg(feature = "eval")]
 pub mod faithfulness;
