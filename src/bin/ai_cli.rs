@@ -131,6 +131,7 @@ fn main() -> ExitCode {
         "quality" => cmd_quality(&command_args[1..]),
         "tool" => cmd_tool(&command_args[1..]),
         "workflow" => cmd_workflow(&command_args[1..]),
+        "benchmark" => cmd_benchmark(&command_args[1..]),
         other => {
             eprintln!("Error: unknown command '{}'\n", other);
             print_usage();
@@ -223,6 +224,21 @@ fn print_usage() {
     println!("    --provider <name>              Provider");
     println!("    --model <name>                 Model name");
     println!("    --url <url>                    Provider URL");
+    println!(
+        "  benchmark <subcommand>         Dataset hallucination / faithfulness benchmarks (V90)"
+    );
+    println!("    list                             List available benchmarks");
+    println!("    info <name>                      Show benchmark metadata and citation");
+    println!("    download <name> [--accept-license] [--cache-dir <path>]");
+    println!("                                     Fetch the benchmark dataset into the cache");
+    println!("    run <name> --provider X --model Y [--limit N] [--threshold 0.5]");
+    println!("               [--cache-dir <path>] [--json]");
+    println!("                                     Run the model against the benchmark and report");
+    println!("    calibrate <name> --provider X --model Y [--limit N] [--objective accuracy|f1]");
+    println!("               [--cache-dir <path>] [--json]");
+    println!(
+        "                                     Run the benchmark and sweep correctness threshold"
+    );
     println!("  test [options]                 Run tests (lib or harness), save results");
     println!("    --all                          Run test harness (all categories)");
     println!("    --category <name>              Run specific harness category");
@@ -2684,6 +2700,461 @@ fn cmd_quality(args: &[String]) -> ExitCode {
         }
     }
 
+    ExitCode::SUCCESS
+}
+
+// =============================================================================
+// benchmark — dataset hallucination / faithfulness benchmarks (V90)
+// =============================================================================
+
+fn cmd_benchmark(args: &[String]) -> ExitCode {
+    #[cfg(not(feature = "eval"))]
+    {
+        let _ = args;
+        eprintln!("Error: 'benchmark' requires the 'eval' feature.");
+        eprintln!("  cargo run --bin ai_cli --features \"full,eval\" -- benchmark list");
+        ExitCode::from(1)
+    }
+    #[cfg(feature = "eval")]
+    {
+        if args.is_empty() {
+            print_benchmark_usage();
+            return ExitCode::from(1);
+        }
+        match args[0].as_str() {
+            "help" | "-h" | "--help" => {
+                print_benchmark_usage();
+                ExitCode::SUCCESS
+            }
+            "list" => cmd_benchmark_list(),
+            "info" => cmd_benchmark_info(&args[1..]),
+            "download" => cmd_benchmark_download(&args[1..]),
+            "run" => cmd_benchmark_run(&args[1..]),
+            "calibrate" => cmd_benchmark_calibrate(&args[1..]),
+            other => {
+                eprintln!("Error: unknown benchmark subcommand '{}'\n", other);
+                print_benchmark_usage();
+                ExitCode::from(1)
+            }
+        }
+    }
+}
+
+#[cfg(feature = "eval")]
+fn print_benchmark_usage() {
+    println!("ai_cli benchmark — dataset hallucination / faithfulness benchmarks\n");
+    println!("Usage: ai_cli benchmark <subcommand> [options]\n");
+    println!("Subcommands:");
+    println!("  list                                 List available benchmarks");
+    println!("  info <name>                          Show metadata (license, citation, URL)");
+    println!("  download <name> [--accept-license] [--cache-dir <path>]");
+    println!("                                       Fetch the dataset into the cache");
+    println!("  run <name> --provider X --model Y [--limit N] [--threshold 0.5]");
+    println!("             [--cache-dir <path>] [--json]");
+    println!("                                       Run the model against the benchmark");
+    println!("  calibrate <name> --provider X --model Y [--limit N]");
+    println!("                   [--objective accuracy|f1] [--cache-dir <path>] [--json]");
+    println!("                                       Sweep the correctness threshold post-hoc");
+    println!();
+    println!("Notes:");
+    println!("  * FEVER and other datasets with share-alike terms require --accept-license");
+    println!("    on 'download' before anything will be fetched.");
+    println!("  * --cache-dir defaults to target/eval_benchmarks (respects CARGO_TARGET_DIR).");
+    println!();
+    println!("Examples:");
+    println!("  ai_cli benchmark list");
+    println!("  ai_cli benchmark info truthfulqa");
+    println!("  ai_cli benchmark download fever --accept-license");
+    println!("  ai_cli benchmark run truthfulqa --provider ollama --model mistral:7b --limit 20");
+    println!("  ai_cli benchmark calibrate halueval --provider ollama --model llama3.2 \\");
+    println!("      --limit 50 --objective f1 --json");
+}
+
+#[cfg(feature = "eval")]
+fn cmd_benchmark_list() -> ExitCode {
+    let loaders = ai_assistant::eval_benchmarks::all_loaders();
+    println!("Available benchmarks ({}):\n", loaders.len());
+    for l in &loaders {
+        let opt = if l.requires_opt_in() { " [opt-in]" } else { "" };
+        println!(
+            "  {:<12} {} — {}{}",
+            l.name(),
+            format!("[{:?}]", l.sample_type()),
+            l.description(),
+            opt
+        );
+    }
+    println!();
+    ExitCode::SUCCESS
+}
+
+#[cfg(feature = "eval")]
+fn cmd_benchmark_info(args: &[String]) -> ExitCode {
+    if args.is_empty() {
+        eprintln!("Usage: ai_cli benchmark info <name>");
+        return ExitCode::from(1);
+    }
+    let name = &args[0];
+    let loader = match ai_assistant::eval_benchmarks::get_loader(name) {
+        Some(l) => l,
+        None => {
+            eprintln!(
+                "Error: unknown benchmark '{}'. Try: ai_cli benchmark list",
+                name
+            );
+            return ExitCode::from(1);
+        }
+    };
+    println!("Benchmark: {}", loader.name());
+    println!("  Type:       {:?}", loader.sample_type());
+    println!("  Description: {}", loader.description());
+    println!("  License:    {}", loader.license());
+    println!("  Citation:   {}", loader.citation());
+    println!("  Opt-in:     {}", loader.requires_opt_in());
+    println!("  URLs:");
+    for u in loader.download_urls() {
+        println!("    - {}", u);
+    }
+    println!();
+    ExitCode::SUCCESS
+}
+
+#[cfg(feature = "eval")]
+fn resolve_cache_dir(args: &[String]) -> std::path::PathBuf {
+    if let Some(p) = find_flag_value(args, "--cache-dir") {
+        std::path::PathBuf::from(p)
+    } else {
+        ai_assistant::eval_benchmarks::BenchmarkCache::default_root()
+            .root()
+            .to_path_buf()
+    }
+}
+
+#[cfg(feature = "eval")]
+fn cmd_benchmark_download(args: &[String]) -> ExitCode {
+    if args.is_empty() {
+        eprintln!(
+            "Usage: ai_cli benchmark download <name> [--accept-license] [--cache-dir <path>]"
+        );
+        return ExitCode::from(1);
+    }
+    let name = &args[0];
+    let rest = &args[1..];
+    let accept = rest.iter().any(|a| a == "--accept-license");
+
+    let loader = match ai_assistant::eval_benchmarks::get_loader(name) {
+        Some(l) => l,
+        None => {
+            eprintln!(
+                "Error: unknown benchmark '{}'. Try: ai_cli benchmark list",
+                name
+            );
+            return ExitCode::from(1);
+        }
+    };
+
+    if loader.requires_opt_in() && !accept {
+        eprintln!(
+            "Error: benchmark '{}' requires explicit license acceptance.",
+            loader.name()
+        );
+        eprintln!("  License: {}", loader.license());
+        eprintln!("  Re-run with --accept-license to proceed.");
+        return ExitCode::from(1);
+    }
+
+    let cache = ai_assistant::eval_benchmarks::BenchmarkCache::with_root(resolve_cache_dir(rest));
+    let dir = match cache.dir_for(loader.name()) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("Error: cannot prepare cache dir: {}", e);
+            return ExitCode::from(1);
+        }
+    };
+    eprintln!("[benchmark] cache dir: {}", dir.display());
+    eprintln!("[benchmark] downloading {} ...", loader.name());
+    match loader.download(&dir) {
+        Ok(path) => {
+            let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            println!("Downloaded: {}", path.display());
+            println!("  Size: {} bytes", size);
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("Error downloading benchmark: {}", e);
+            ExitCode::from(1)
+        }
+    }
+}
+
+#[cfg(feature = "eval")]
+struct BenchmarkRunSetup {
+    loader: Box<dyn ai_assistant::eval_benchmarks::BenchmarkLoader>,
+    samples: Vec<ai_assistant::eval_benchmarks::BenchmarkSample>,
+    limit: Option<usize>,
+    threshold: f64,
+    json: bool,
+    provider: ai_assistant::AiProvider,
+    model: String,
+    ollama_url: String,
+    lm_studio_url: String,
+    custom_url: String,
+}
+
+#[cfg(feature = "eval")]
+fn prepare_benchmark_run(args: &[String]) -> Result<BenchmarkRunSetup, ExitCode> {
+    if args.is_empty() {
+        eprintln!("Error: missing benchmark name.");
+        return Err(ExitCode::from(1));
+    }
+    let name = &args[0];
+    let rest = &args[1..];
+
+    let loader = match ai_assistant::eval_benchmarks::get_loader(name) {
+        Some(l) => l,
+        None => {
+            eprintln!(
+                "Error: unknown benchmark '{}'. Try: ai_cli benchmark list",
+                name
+            );
+            return Err(ExitCode::from(1));
+        }
+    };
+
+    let provider_name = match find_flag_value(rest, "--provider") {
+        Some(v) => v.to_string(),
+        None => {
+            eprintln!("Error: --provider is required (e.g. --provider ollama).");
+            return Err(ExitCode::from(1));
+        }
+    };
+    let model = match find_flag_value(rest, "--model") {
+        Some(v) => v.to_string(),
+        None => {
+            eprintln!("Error: --model is required.");
+            return Err(ExitCode::from(1));
+        }
+    };
+    let url_override = find_flag_value(rest, "--url").map(String::from);
+    let limit = find_flag_value(rest, "--limit").and_then(|s| s.parse::<usize>().ok());
+    let threshold = find_flag_value(rest, "--threshold")
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(0.5);
+    let json = rest.iter().any(|a| a == "--json");
+
+    let cache = ai_assistant::eval_benchmarks::BenchmarkCache::with_root(resolve_cache_dir(rest));
+    let dir = cache.dir_for(loader.name()).map_err(|e| {
+        eprintln!("Error: cannot prepare cache dir: {}", e);
+        ExitCode::from(1)
+    })?;
+
+    if loader.requires_opt_in() {
+        eprintln!(
+            "Note: benchmark '{}' is opt-in; cached data reuses a previous --accept-license.",
+            loader.name()
+        );
+    }
+
+    let dataset_path = loader.download(&dir).map_err(|e| {
+        eprintln!("Error loading benchmark data: {}", e);
+        eprintln!(
+            "  Hint: run 'ai_cli benchmark download {}{}' first.",
+            loader.name(),
+            if loader.requires_opt_in() {
+                " --accept-license"
+            } else {
+                ""
+            }
+        );
+        ExitCode::from(1)
+    })?;
+
+    let samples = loader.load(&dataset_path, limit).map_err(|e| {
+        eprintln!("Error parsing benchmark dataset: {}", e);
+        ExitCode::from(1)
+    })?;
+
+    let provider = provider_from_name(&provider_name);
+    let (ollama_url, lm_studio_url, custom_url) = {
+        let defaults = AiConfig::default();
+        let mut o = defaults.ollama_url.clone();
+        let mut l = defaults.lm_studio_url.clone();
+        let mut c = defaults.custom_url.clone();
+        if let Some(u) = url_override {
+            match provider {
+                ai_assistant::AiProvider::Ollama => o = u,
+                ai_assistant::AiProvider::LMStudio => l = u,
+                _ => c = u,
+            }
+        }
+        (o, l, c)
+    };
+
+    Ok(BenchmarkRunSetup {
+        loader,
+        samples,
+        limit,
+        threshold,
+        json,
+        provider,
+        model,
+        ollama_url,
+        lm_studio_url,
+        custom_url,
+    })
+}
+
+#[cfg(feature = "eval")]
+fn query_llm_for_benchmark(
+    provider: &ai_assistant::AiProvider,
+    model: &str,
+    ollama_url: &str,
+    lm_studio_url: &str,
+    custom_url: &str,
+    prompt: &str,
+) -> Result<String, String> {
+    let mut assistant = AiAssistant::new();
+    assistant.config.provider = provider.clone();
+    assistant.config.selected_model = model.to_string();
+    assistant.config.ollama_url = ollama_url.to_string();
+    assistant.config.lm_studio_url = lm_studio_url.to_string();
+    assistant.config.custom_url = custom_url.to_string();
+    assistant.config.temperature = 0.1;
+
+    assistant.send_message(prompt.to_string(), "");
+    let start = Instant::now();
+    let deadline = Duration::from_secs(90);
+    let mut out = String::new();
+    loop {
+        if start.elapsed() > deadline {
+            return Err(format!("timeout after {}s", deadline.as_secs()));
+        }
+        if let Some(response) = assistant.poll_response() {
+            match response {
+                AiResponse::Chunk(t) => out.push_str(&t),
+                AiResponse::Complete(t) => {
+                    if out.is_empty() {
+                        out = t;
+                    }
+                    return Ok(out);
+                }
+                AiResponse::Error(e) => return Err(e),
+                AiResponse::Cancelled(t) => return Ok(t),
+                _ => {}
+            }
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[cfg(feature = "eval")]
+fn cmd_benchmark_run(args: &[String]) -> ExitCode {
+    let setup = match prepare_benchmark_run(args) {
+        Ok(s) => s,
+        Err(code) => return code,
+    };
+
+    let opts = ai_assistant::eval_benchmarks::RunOptions {
+        limit: setup.limit,
+        correctness_threshold: setup.threshold,
+        max_consecutive_errors: 10,
+    };
+
+    eprintln!(
+        "[benchmark] running {} with {} samples (limit={:?})",
+        setup.loader.name(),
+        setup.samples.len(),
+        setup.limit
+    );
+
+    let provider = setup.provider.clone();
+    let model = setup.model.clone();
+    let ollama = setup.ollama_url.clone();
+    let lm = setup.lm_studio_url.clone();
+    let custom = setup.custom_url.clone();
+    let report = ai_assistant::eval_benchmarks::run(
+        setup.loader.name(),
+        &setup.samples,
+        &opts,
+        move |prompt: &str| {
+            query_llm_for_benchmark(&provider, &model, &ollama, &lm, &custom, prompt)
+        },
+    );
+
+    if setup.json {
+        println!(
+            "{}",
+            ai_assistant::eval_benchmarks::report::to_json(&report)
+        );
+    } else {
+        println!(
+            "{}",
+            ai_assistant::eval_benchmarks::report::to_text(&report)
+        );
+    }
+    ExitCode::SUCCESS
+}
+
+#[cfg(feature = "eval")]
+fn cmd_benchmark_calibrate(args: &[String]) -> ExitCode {
+    let objective = match find_flag_value(args, "--objective").unwrap_or("accuracy") {
+        "accuracy" => ai_assistant::eval_benchmarks::Objective::Accuracy,
+        "f1" => ai_assistant::eval_benchmarks::Objective::F1,
+        other => {
+            eprintln!(
+                "Error: --objective must be 'accuracy' or 'f1' (got '{}')",
+                other
+            );
+            return ExitCode::from(1);
+        }
+    };
+
+    let setup = match prepare_benchmark_run(args) {
+        Ok(s) => s,
+        Err(code) => return code,
+    };
+    let json = setup.json;
+
+    let opts = ai_assistant::eval_benchmarks::RunOptions {
+        limit: setup.limit,
+        correctness_threshold: 0.5,
+        max_consecutive_errors: 10,
+    };
+
+    eprintln!(
+        "[benchmark] running {} for calibration with {} samples",
+        setup.loader.name(),
+        setup.samples.len()
+    );
+
+    let provider = setup.provider.clone();
+    let model = setup.model.clone();
+    let ollama = setup.ollama_url.clone();
+    let lm = setup.lm_studio_url.clone();
+    let custom = setup.custom_url.clone();
+    let report = ai_assistant::eval_benchmarks::run(
+        setup.loader.name(),
+        &setup.samples,
+        &opts,
+        move |prompt: &str| {
+            query_llm_for_benchmark(&provider, &model, &ollama, &lm, &custom, prompt)
+        },
+    );
+
+    let grid = ai_assistant::eval_benchmarks::default_grid();
+    let calibration = ai_assistant::eval_benchmarks::sweep(&report, &grid, objective);
+
+    if json {
+        println!(
+            "{}",
+            ai_assistant::eval_benchmarks::report::calibration_to_json(&calibration)
+        );
+    } else {
+        println!(
+            "{}",
+            ai_assistant::eval_benchmarks::report::calibration_to_text(&calibration)
+        );
+    }
     ExitCode::SUCCESS
 }
 
