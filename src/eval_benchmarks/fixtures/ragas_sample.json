@@ -1,0 +1,31 @@
+{
+  "rows": [
+    {
+      "row_idx": 0,
+      "row": {
+        "question": "What is the capital of France?",
+        "contexts": ["France is a country in Western Europe.", "Paris is the capital and most populous city of France."],
+        "ground_truth": "Paris",
+        "answer": "Paris is the capital of France."
+      }
+    },
+    {
+      "row_idx": 1,
+      "row": {
+        "question": "Who wrote the novel '1984'?",
+        "contexts": ["1984 is a dystopian novel published in 1949.", "It was written by the English author George Orwell."],
+        "ground_truth": "George Orwell",
+        "answer": "George Orwell wrote 1984."
+      }
+    },
+    {
+      "row_idx": 2,
+      "row": {
+        "question": "What element has the atomic number 1?",
+        "contexts": ["Hydrogen is the lightest chemical element.", "Hydrogen has atomic number 1."],
+        "ground_truth": "Hydrogen",
+        "answer": "Hydrogen has the atomic number 1."
+      }
+    }
+  ]
+}

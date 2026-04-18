@@ -1,0 +1,3 @@
+{"id": 1, "label": "SUPPORTS", "claim": "Nikola Tesla was born in 1856.", "evidence": [[[0, "Nikola_Tesla", 12, "Nikola Tesla (Serbian Cyrillic: Никола Тесла; 10 July 1856 – 7 January 1943)..."]]]}
+{"id": 2, "label": "REFUTES", "claim": "Nikola Tesla was born in 1900.", "evidence": [[[1, "Nikola_Tesla", 12, "Nikola Tesla was born on 10 July 1856."]]]}
+{"id": 3, "label": "NOT ENOUGH INFO", "claim": "Nikola Tesla enjoyed eating pizza.", "evidence": []}

@@ -10,8 +10,10 @@
 
 pub mod cache;
 pub mod http;
+pub mod loaders;
 pub mod types;
 
 pub use cache::BenchmarkCache;
 pub use http::{download_file, DownloadOptions, MAX_DOWNLOAD_BYTES};
+pub use loaders::{all_loaders, get_loader};
 pub use types::{BenchmarkError, BenchmarkLoader, BenchmarkSample, GroundTruth, Label, SampleType};

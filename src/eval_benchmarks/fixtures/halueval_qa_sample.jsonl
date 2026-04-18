@@ -1,0 +1,3 @@
+{"knowledge": "The Eiffel Tower is a wrought-iron lattice tower in Paris, France. It is 330 metres tall.", "question": "Where is the Eiffel Tower located?", "right_answer": "Paris, France", "hallucinated_answer": "London, United Kingdom"}
+{"knowledge": "Mount Everest is the highest mountain above sea level, at 8,848.86 metres.", "question": "What is the height of Mount Everest?", "right_answer": "About 8,848 metres", "hallucinated_answer": "About 12,000 metres"}
+{"knowledge": "The Pacific Ocean is the largest and deepest of Earth's oceans.", "question": "Which is Earth's largest ocean?", "right_answer": "The Pacific Ocean", "hallucinated_answer": "The Atlantic Ocean"}
