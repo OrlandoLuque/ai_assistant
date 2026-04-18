@@ -4,6 +4,8 @@
 //! tool use and context sharing between AI models and external systems.
 
 // Submodules
+#[cfg(feature = "eval")]
+pub mod benchmark_tools;
 pub mod client;
 #[cfg(feature = "rag")]
 pub mod knowledge_tools;
@@ -86,3 +88,7 @@ pub use v2_completion::{
     CompletionProvider, CompletionRefType, CompletionRegistry, CompletionRequest, CompletionResult,
     CompletionSuggestion, StaticCompletionProvider,
 };
+
+// --- benchmark_tools.rs ---
+#[cfg(feature = "eval")]
+pub use benchmark_tools::register_benchmark_tools;

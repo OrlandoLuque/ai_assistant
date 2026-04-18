@@ -2457,6 +2457,15 @@ fn route_request_with_config(
             )
         }
         ("GET", "/api/v1/metrics") => ("200 OK".to_string(), metrics.render_prometheus()),
+        #[cfg(feature = "eval")]
+        ("GET", "/benchmarks") | ("GET", "/api/v1/benchmarks") => handle_list_benchmarks(),
+        #[cfg(feature = "eval")]
+        ("GET", path)
+            if path.starts_with("/benchmarks/") || path.starts_with("/api/v1/benchmarks/") =>
+        {
+            let name = path.rsplit('/').next().unwrap_or("");
+            handle_get_benchmark(name)
+        }
         ("GET", "/api/v1/sessions") => handle_list_sessions(assistant),
         ("DELETE", path) if path.starts_with("/api/v1/sessions/") => {
             let id = &path[17..];
@@ -2513,6 +2522,54 @@ fn handle_list_models(assistant: &Arc<Mutex<AiAssistant>>) -> (String, String) {
         "200 OK".to_string(),
         serde_json::to_string(&models).unwrap_or_default(),
     )
+}
+
+#[cfg(feature = "eval")]
+fn benchmark_loader_to_json(
+    loader: &dyn crate::eval_benchmarks::BenchmarkLoader,
+) -> serde_json::Value {
+    serde_json::json!({
+        "name": loader.name(),
+        "description": loader.description(),
+        "license": loader.license(),
+        "citation": loader.citation(),
+        "sample_type": format!("{:?}", loader.sample_type()),
+        "requires_opt_in": loader.requires_opt_in(),
+        "download_urls": loader.download_urls(),
+    })
+}
+
+#[cfg(feature = "eval")]
+fn handle_list_benchmarks() -> (String, String) {
+    let items: Vec<serde_json::Value> = crate::eval_benchmarks::all_loaders()
+        .iter()
+        .map(|l| benchmark_loader_to_json(l.as_ref()))
+        .collect();
+    let body = serde_json::json!({
+        "total": items.len(),
+        "benchmarks": items,
+    });
+    (
+        "200 OK".to_string(),
+        serde_json::to_string(&body).unwrap_or_default(),
+    )
+}
+
+#[cfg(feature = "eval")]
+fn handle_get_benchmark(name: &str) -> (String, String) {
+    match crate::eval_benchmarks::get_loader(name) {
+        Some(loader) => (
+            "200 OK".to_string(),
+            serde_json::to_string(&benchmark_loader_to_json(loader.as_ref())).unwrap_or_default(),
+        ),
+        None => (
+            "404 Not Found".to_string(),
+            serde_json::to_string(&ErrorResponse {
+                error: format!("Unknown benchmark: {}", name),
+            })
+            .unwrap_or_default(),
+        ),
+    }
 }
 
 fn handle_chat(
@@ -3466,6 +3523,46 @@ mod tests {
         let (status, body) = route_request(&request, &assistant, &metrics);
         assert_eq!(status, "404 Not Found");
         assert!(body.contains("Unknown endpoint"));
+    }
+
+    #[cfg(feature = "eval")]
+    #[test]
+    fn test_benchmarks_list_and_get() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let metrics = Arc::new(ServerMetrics::new());
+
+        let list_req = HttpRequest {
+            method: "GET".to_string(),
+            path: "/benchmarks".to_string(),
+            headers: vec![],
+            body: String::new(),
+        };
+        let (status, body) = route_request(&list_req, &assistant, &metrics);
+        assert_eq!(status, "200 OK");
+        let v: serde_json::Value = serde_json::from_str(&body).expect("json body");
+        assert!(v["total"].as_u64().unwrap_or(0) >= 5);
+
+        let get_req = HttpRequest {
+            method: "GET".to_string(),
+            path: "/benchmarks/truthfulqa".to_string(),
+            headers: vec![],
+            body: String::new(),
+        };
+        let (status, body) = route_request(&get_req, &assistant, &metrics);
+        assert_eq!(status, "200 OK");
+        let v: serde_json::Value = serde_json::from_str(&body).expect("json body");
+        assert_eq!(v["name"], "truthfulqa");
+        assert!(v["license"].is_string());
+
+        let miss_req = HttpRequest {
+            method: "GET".to_string(),
+            path: "/benchmarks/nope".to_string(),
+            headers: vec![],
+            body: String::new(),
+        };
+        let (status, body) = route_request(&miss_req, &assistant, &metrics);
+        assert_eq!(status, "404 Not Found");
+        assert!(body.contains("Unknown benchmark"));
     }
 
     #[test]
