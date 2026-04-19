@@ -1250,6 +1250,27 @@ println!("Regression: {}", comparison.has_regression);
 
 Built-in benchmarks: token estimation, entity extraction, quality analysis, language detection, sentiment analysis, topic detection.
 
+#### Dataset benchmarks (hallucination & faithfulness)
+
+Under `feature = "eval"`, `ai_assistant::eval_benchmarks` exposes five
+community benchmarks — **TruthfulQA**, **HaluEval-QA**, **FActScore**,
+**RAGAS (WikiEval)**, and **FEVER** (opt-in, CC-BY-SA 3.0) — behind a
+uniform `BenchmarkLoader` trait with on-disk cache, runner, post-hoc
+threshold calibration, and text/JSON reports.
+
+```bash
+ai_cli benchmark list
+ai_cli benchmark info truthfulqa
+ai_cli benchmark download truthfulqa
+ai_cli benchmark run truthfulqa --provider ollama --model mistral:7b-instruct --limit 50
+ai_cli benchmark calibrate halueval_qa --objective f1 --json
+```
+
+HTTP surface: `GET /benchmarks` and `GET /benchmarks/<name>`.
+MCP tools: `list_benchmarks`, `get_benchmark` (read-only, idempotent) —
+register with `mcp_protocol::register_benchmark_tools(&mut server)`.
+See `docs/GUIDE_ANTI_HALLUCINATION.md` and `docs/IMPROVEMENTS_V90.md`.
+
 ### Provider Plugins
 
 Auto-discover and use LLM providers:

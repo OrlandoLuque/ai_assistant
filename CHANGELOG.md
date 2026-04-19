@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v46 (2026-04-19) — V90: Dataset hallucination/faithfulness benchmarks (0.2.22)
+
+### Added
+- **`eval_benchmarks` module** — uniform `BenchmarkLoader` trait, on-disk cache,
+  HTTP downloader with atomic writes + 200 MB cap, runner, post-hoc threshold
+  calibrator, and text/JSON report renderers.
+- **Five loaders** — `truthfulqa`, `halueval_qa`, `factscore`, `ragas_wikiqa`,
+  `fever` (opt-in, CC-BY-SA 3.0). Datasets fetched on demand, never vendored.
+- **CLI** — `ai_cli benchmark <list|info|download|run|calibrate>` with
+  `--json`, `--limit`, `--objective`, `--accept-license`, `--cache-dir`.
+- **HTTP server** — `GET /benchmarks` and `GET /benchmarks/<name>` (read-only;
+  also under `/api/v1/benchmarks`).
+- **MCP** — `list_benchmarks` and `get_benchmark` tools (read-only, idempotent)
+  via `mcp_protocol::register_benchmark_tools(&mut server)`.
+- **Example** — `examples/eval_benchmarks_demo.rs` exercises the full pipeline
+  with an in-tree fixture and a mock generator (no network, no LLM).
+- **Docs** — `docs/IMPROVEMENTS_V90.md` + new *Dataset Benchmarks (V90)*
+  section in `docs/GUIDE_ANTI_HALLUCINATION.md` and the matching HTML guide.
+
+### Changed
+- Zero new dependencies: CSV parser hand-rolled, HTTP via existing `ureq`,
+  RAGAS via HF datasets-server JSON API (no `parquet`), cache root resolved
+  from `CARGO_TARGET_DIR` (no `dirs`).
+- Everything gated behind `feature = "eval"` — default builds unchanged.
+
+## [Unreleased] - v45 (2026-04-11) — V89: Wire all binary stubs (0.2.21)
+
+### Added
+- **`ai_cli` cost savings** — `cost savings` replaces the old stub with a real
+  `CostDashboardSnapshot` loader, cost-by-model breakdown, top-5 most expensive
+  requests, and hypothetical single-model projection.
+- **`ai_cli tool` / `ai_cli workflow`** — new subcommands that delegate to a
+  local LLM via `run_delegated_llm`, wiring the existing tool and workflow
+  APIs end-to-end.
+- **Stubs removed** — audit of the 20 binaries in `src/bin/` found 5 real
+  stubs across 4 binaries; every one is now backed by a real implementation
+  using already-available library APIs.
+
+### Changed
+- Zero new dependencies for V89.
+
 ## [Unreleased] - v44 (2026-04-11) — V88: Wiring Completo, Butler, Binarios
 
 ### Added
