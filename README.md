@@ -46,15 +46,30 @@ cargo build --release --bin ai_assistant_cli --features "full,butler"
 
 ## Included Binaries
 
+All 20 binaries ship in the release zip. See `docs/BINARIES.md` for full per-binary documentation.
+
 | Binary | Description |
 |--------|-------------|
 | `ai_cli` | Power-user CLI with scan, query, config, diagnostics (-v/-vv/-vvv) |
 | `ai_assistant_cli` | Interactive REPL with auto-detection of local LLMs |
+| `ai_assistant_server` | HTTP API server — OpenAI-compatible drop-in replacement |
+| `ai_assistant_standalone` | All-in-one launcher with server + bundled GUI |
 | `ai_gui` | Desktop GUI with chat, knowledge management, and FreshContext mode |
 | `ai_gui-pro` | Full-feature desktop app with 18 panels across 6 categories |
-| `ai_assistant_server` | HTTP API server — OpenAI-compatible drop-in replacement |
-| `kpkg_tool` | Create, inspect, and extract encrypted knowledge packages |
 | `ai_cluster_node` | Distributed cluster node with QUIC mesh and CRDTs |
+| `ai_proxy` | OpenAI-compatible reverse proxy with failover + quality gates |
+| `ai_optimize` | Context / prompt / RAG optimizer and tuner |
+| `ai_jobs` | Background job runner for scheduled and autonomous tasks |
+| `ai_logs` | CLI log viewer with redaction and filtering |
+| `ai_logs_gui` | Desktop log viewer with live tail and search |
+| `ai_setup` | Interactive setup + provider detection CLI |
+| `ai_setup_gui` | Graphical onboarding wizard |
+| `ai_test_harness` | End-to-end test and evaluation harness |
+| `ai_gpu_share` | GPU sharing daemon for multi-process LLM inference |
+| `ai_virtual_cam` | Virtual camera source driven by LLM output |
+| `ai_virtual_mic` | Virtual microphone source driven by TTS |
+| `ai_virtual_mic_host` | Audio routing host for ai_virtual_mic |
+| `kpkg_tool` | Create, inspect, and extract encrypted knowledge packages |
 
 ## Features
 
