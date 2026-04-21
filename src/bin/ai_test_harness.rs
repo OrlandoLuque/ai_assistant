@@ -14724,7 +14724,7 @@ fn tests_research() -> CategoryResult {
             Ok(())
         }),
         run_test("research_bibtex_parse_empty", || {
-            let entries = ai_assistant::bibtex::BibParser::parse("")?;
+            let entries = ai_assistant::bibtex::BibParser::parse("").map_err(|e| e.to_string())?;
             assert!(entries.is_empty());
             Ok(())
         }),
@@ -14734,7 +14734,7 @@ fn tests_research() -> CategoryResult {
         }),
         run_test("research_mcp_tools", || {
             let registry = ai_assistant::mcp_research_tools::ResearchToolRegistry::new();
-            assert_eq!(registry.list_tools().len(), 6);
+            assert_eq!(registry.tools().len(), 6);
             Ok(())
         }),
     ];

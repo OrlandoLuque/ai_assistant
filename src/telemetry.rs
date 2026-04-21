@@ -86,6 +86,18 @@ pub struct AggregatedMetrics {
     pub total_errors: usize,
     pub avg_latency_ms: f64,
     pub latency_samples: usize,
+    /// Cumulative count of user-stall events detected by the in-crate
+    /// [`crate::stall_detection`] heuristic. Only incremented when the
+    /// `stall-detection` feature is enabled; otherwise remains zero.
+    pub user_stall_events_total: u64,
+    /// Cumulative count of sub-agent spawn requests recorded via
+    /// [`TelemetryCollector::record_sub_agent_spawn`]. Only incremented when
+    /// the `sub-agents` feature is enabled; otherwise remains zero.
+    pub sub_agents_spawned_total: u64,
+    /// Cumulative count of sub-agent completions recorded via
+    /// [`TelemetryCollector::record_sub_agent_complete`] with a successful
+    /// status. Only incremented when the `sub-agents` feature is enabled.
+    pub sub_agents_completed_total: u64,
 }
 
 impl TelemetryCollector {
@@ -155,6 +167,58 @@ impl TelemetryCollector {
             TelemetryEvent::new("error")
                 .with_property("provider", provider)
                 .with_property("error", error),
+        );
+    }
+
+    /// Record a user-stall event detected by the in-crate
+    /// [`crate::stall_detection`] heuristic. Increments
+    /// `user_stall_events_total` on the aggregated metrics and logs a
+    /// structured event with the signal name (e.g. `"Frustrated"` or
+    /// `"RepeatedToolCall"`).
+    ///
+    /// The signal is intentionally a `&str` instead of a typed enum so this
+    /// method is callable whether or not the `stall-detection` feature is
+    /// compiled in — telemetry stays a thin collector, the heuristic stays
+    /// behind the feature.
+    pub fn record_user_stall(&self, signal: &str) {
+        {
+            let mut agg = self.aggregated.lock().unwrap_or_else(|e| e.into_inner());
+            agg.user_stall_events_total = agg.user_stall_events_total.saturating_add(1);
+        }
+        self.record(TelemetryEvent::new("user_stall_detected").with_property("signal", signal));
+    }
+
+    /// Record that a sub-agent was spawned (see [`crate::sub_agents`]).
+    /// Increments `sub_agents_spawned_total` and emits a
+    /// `sub_agent_spawned` event with `kind` and `isolation` properties.
+    ///
+    /// `kind` and `isolation` are `&str` (not typed enums) for the same
+    /// reason as [`Self::record_user_stall`]: telemetry stays callable
+    /// without the `sub-agents` feature compiled in.
+    pub fn record_sub_agent_spawn(&self, kind: &str, isolation: &str) {
+        {
+            let mut agg = self.aggregated.lock().unwrap_or_else(|e| e.into_inner());
+            agg.sub_agents_spawned_total = agg.sub_agents_spawned_total.saturating_add(1);
+        }
+        self.record(
+            TelemetryEvent::new("sub_agent_spawned")
+                .with_property("kind", kind)
+                .with_property("isolation", isolation),
+        );
+    }
+
+    /// Record that a sub-agent finished. Increments
+    /// `sub_agents_completed_total` only when `success` is true and emits a
+    /// `sub_agent_completed` event with `kind` + `status` properties.
+    pub fn record_sub_agent_complete(&self, kind: &str, status: &str, success: bool) {
+        if success {
+            let mut agg = self.aggregated.lock().unwrap_or_else(|e| e.into_inner());
+            agg.sub_agents_completed_total = agg.sub_agents_completed_total.saturating_add(1);
+        }
+        self.record(
+            TelemetryEvent::new("sub_agent_completed")
+                .with_property("kind", kind)
+                .with_property("status", status),
         );
     }
 
@@ -341,6 +405,56 @@ mod tests {
         let agg = collector.get_aggregated();
         assert_eq!(agg.total_requests, 1);
         assert_eq!(agg.total_errors, 1);
+    }
+
+    #[test]
+    fn test_record_user_stall_increments_counter() {
+        let config = TelemetryConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        let collector = TelemetryCollector::new(config);
+
+        collector.record_user_stall("Frustrated");
+        collector.record_user_stall("RepeatedToolCall");
+
+        let agg = collector.get_aggregated();
+        assert_eq!(agg.user_stall_events_total, 2);
+        assert_eq!(agg.total_requests, 2);
+    }
+
+    #[test]
+    fn test_record_sub_agent_spawn_increments_counter() {
+        let config = TelemetryConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        let collector = TelemetryCollector::new(config);
+
+        collector.record_sub_agent_spawn("Fork", "InProcess");
+        collector.record_sub_agent_spawn("Teammate", "ContextIsolated");
+        collector.record_sub_agent_spawn("Explore", "InProcess");
+
+        let agg = collector.get_aggregated();
+        assert_eq!(agg.sub_agents_spawned_total, 3);
+        assert_eq!(agg.sub_agents_completed_total, 0);
+    }
+
+    #[test]
+    fn test_record_sub_agent_complete_counts_only_success() {
+        let config = TelemetryConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        let collector = TelemetryCollector::new(config);
+
+        collector.record_sub_agent_complete("Fork", "Completed", true);
+        collector.record_sub_agent_complete("Fork", "Failed", false);
+        collector.record_sub_agent_complete("Teammate", "Cancelled", false);
+        collector.record_sub_agent_complete("Teammate", "Completed", true);
+
+        let agg = collector.get_aggregated();
+        assert_eq!(agg.sub_agents_completed_total, 2);
     }
 
     #[test]

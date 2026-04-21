@@ -300,6 +300,31 @@ impl OtelTracer {
         self.start_span("quality.gate")
     }
 
+    /// Start a span for a user-stall detection event.
+    ///
+    /// The `signal` value is attached as an attribute (key `"signal"`) and is
+    /// typically either `"Frustrated"` or `"RepeatedToolCall"`, matching the
+    /// variants of [`crate::stall_detection::StallSignal`] when the
+    /// `stall-detection` feature is enabled. The caller is responsible for
+    /// calling [`OtelTracer::end_span`] (or `record_error`) on the returned
+    /// span.
+    pub fn start_user_stall_span(&self, signal: &str) -> AiSpan {
+        self.start_span("agent.user_stall_detected")
+            .with_attribute("signal", signal)
+    }
+
+    /// Start a span for a sub-agent spawn (see [`crate::sub_agents`]).
+    ///
+    /// Attached attributes: `kind` (e.g. `"Fork"`/`"Teammate"`/`"Explore"`)
+    /// and `isolation` (e.g. `"InProcess"`/`"ContextIsolated"`/
+    /// `"ExternalProcess"`). The caller is responsible for ending the span
+    /// once the sub-agent run returns.
+    pub fn start_sub_agent_span(&self, kind: &str, isolation: &str) -> AiSpan {
+        self.start_span("agent.sub_agent_spawned")
+            .with_attribute("kind", kind)
+            .with_attribute("isolation", isolation)
+    }
+
     /// Get the tracer's service name.
     pub fn service_name(&self) -> &str {
         &self.config.service_name
@@ -3428,5 +3453,47 @@ mod tests {
         prom.record_request("openai", "gpt-4", "ok", 1.5, 100, 50);
         let rendered = prom.render();
         assert!(rendered.contains("ai_request_duration_seconds"));
+    }
+
+    #[test]
+    fn test_start_user_stall_span_tags_signal() {
+        let tracer = OtelTracer::new(OtelConfig::default());
+        let span = tracer.start_user_stall_span("Frustrated");
+        assert_eq!(span.operation, "agent.user_stall_detected");
+        assert_eq!(
+            span.attributes.get("signal").map(String::as_str),
+            Some("Frustrated")
+        );
+
+        let span2 = tracer.start_user_stall_span("RepeatedToolCall");
+        assert_eq!(
+            span2.attributes.get("signal").map(String::as_str),
+            Some("RepeatedToolCall")
+        );
+    }
+
+    #[test]
+    fn test_start_sub_agent_span_tags_kind_and_isolation() {
+        let tracer = OtelTracer::new(OtelConfig::default());
+        let span = tracer.start_sub_agent_span("Fork", "InProcess");
+        assert_eq!(span.operation, "agent.sub_agent_spawned");
+        assert_eq!(
+            span.attributes.get("kind").map(String::as_str),
+            Some("Fork")
+        );
+        assert_eq!(
+            span.attributes.get("isolation").map(String::as_str),
+            Some("InProcess")
+        );
+
+        let span2 = tracer.start_sub_agent_span("Teammate", "ContextIsolated");
+        assert_eq!(
+            span2.attributes.get("kind").map(String::as_str),
+            Some("Teammate")
+        );
+        assert_eq!(
+            span2.attributes.get("isolation").map(String::as_str),
+            Some("ContextIsolated")
+        );
     }
 }

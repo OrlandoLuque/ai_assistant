@@ -13,28 +13,30 @@ companion page
 
 ## Summary table
 
+Each binary has a dedicated page in [`docs/binaries/`](binaries/) — click the name to open it.
+
 | # | Binary | Group | `required-features` | Purpose |
 |---|--------|-------|---------------------|---------|
-| 1 | `ai_cli` | CLI | — | Non-interactive CLI (scan, query, bench, test, cost, ...) |
-| 2 | `ai_assistant_cli` | CLI | — | Interactive REPL (chat-style) |
-| 3 | `ai_assistant_server` | Server | `full` | HTTP + MCP server |
-| 4 | `ai_assistant_standalone` | Server | `full`, `server-axum` | Single-binary service (HTTP only) |
-| 5 | `ai_cluster_node` | Server | `full`, `server-cluster` | Distributed cluster node (QUIC mesh) |
-| 6 | `ai_proxy` | Server | `server-axum` | Reverse-proxy in front of providers |
-| 7 | `ai_gui` | GUI | `gui` | egui desktop chat |
-| 8 | `ai_gui-pro` | GUI | `gui-pro` | Extended desktop GUI (power users) |
-| 9 | `ai_setup_gui` | GUI | `gui` | Graphical setup wizard |
-| 10 | `ai_logs_gui` | GUI | `gui-logs` | Log viewer desktop app |
-| 11 | `ai_setup` | Setup & Ops | `full` | Terminal setup wizard |
-| 12 | `ai_optimize` | Setup & Ops | `full` | Configuration optimizer |
-| 13 | `ai_jobs` **(new in V77)** | Setup & Ops | `scheduler` | Cron-like job daemon (delegated + embedded) |
-| 14 | `ai_logs` | Setup & Ops | `distributed-network` | Distributed log aggregator |
-| 15 | `ai_virtual_mic` | Media | `audio-io` | Virtual microphone (voice effects) |
-| 16 | `ai_virtual_mic_host` | Media | `audio` | Host driver for the virtual mic |
-| 17 | `ai_virtual_cam` | Media | `video-io` | Virtual camera (video effects) |
-| 18 | `kpkg_tool` | Knowledge | `rag` | Encrypted knowledge package tool (.kpkg) |
-| 19 | `ai_gpu_share` | GPU Sharing | `full`, `gpu-sharing` | GPU sharing network CLI |
-| 20 | `ai_test_harness` | Testing | `full`, `browser` | Multi-category test harness |
+| 1 | [`ai_cli`](binaries/ai_cli.md) | CLI | — | Non-interactive CLI (scan, query, bench, test, cost, ...) |
+| 2 | [`ai_assistant_cli`](binaries/ai_assistant_cli.md) | CLI | — | Interactive REPL (chat-style) |
+| 3 | [`ai_assistant_server`](binaries/ai_assistant_server.md) | Server | `full` | HTTP + MCP server |
+| 4 | [`ai_assistant_standalone`](binaries/ai_assistant_standalone.md) | Server | `full`, `server-axum` | Single-binary service (HTTP only) |
+| 5 | [`ai_cluster_node`](binaries/ai_cluster_node.md) | Server | `full`, `server-cluster` | Distributed cluster node (QUIC mesh) |
+| 6 | [`ai_proxy`](binaries/ai_proxy.md) | Server | `server-axum` | Reverse-proxy in front of providers |
+| 7 | [`ai_gui`](binaries/ai_gui.md) | GUI | `gui` | egui desktop chat |
+| 8 | [`ai_gui-pro`](binaries/ai_gui-pro.md) | GUI | `gui-pro` | Extended desktop GUI (power users) |
+| 9 | [`ai_setup_gui`](binaries/ai_setup_gui.md) | GUI | `gui` | Graphical setup wizard |
+| 10 | [`ai_logs_gui`](binaries/ai_logs_gui.md) | GUI | `gui-logs` | Log viewer desktop app |
+| 11 | [`ai_setup`](binaries/ai_setup.md) | Setup & Ops | `full` | Terminal setup wizard |
+| 12 | [`ai_optimize`](binaries/ai_optimize.md) | Setup & Ops | `full` | Configuration optimizer |
+| 13 | [`ai_jobs`](binaries/ai_jobs.md) **(new in V77)** | Setup & Ops | `scheduler` | Cron-like job daemon (delegated + embedded) |
+| 14 | [`ai_logs`](binaries/ai_logs.md) | Setup & Ops | `distributed-network` | Distributed log aggregator |
+| 15 | [`ai_virtual_mic`](binaries/ai_virtual_mic.md) | Media | `audio-io` | Virtual microphone (voice effects) |
+| 16 | [`ai_virtual_mic_host`](binaries/ai_virtual_mic_host.md) | Media | `audio` | Host driver for the virtual mic |
+| 17 | [`ai_virtual_cam`](binaries/ai_virtual_cam.md) | Media | `video-io` | Virtual camera (video effects) |
+| 18 | [`kpkg_tool`](binaries/kpkg_tool.md) | Knowledge | `rag` | Encrypted knowledge package tool (.kpkg) |
+| 19 | [`ai_gpu_share`](binaries/ai_gpu_share.md) | GPU Sharing | `full`, `gpu-sharing` | GPU sharing network CLI |
+| 20 | [`ai_test_harness`](binaries/ai_test_harness.md) | Testing | `full`, `browser` | Multi-category test harness |
 
 ## Detailed descriptions
 

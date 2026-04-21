@@ -622,6 +622,125 @@ fn is_risky_command(cmd: &str) -> bool {
 }
 
 // ============================================================================
+// PermissionRequirement — presentation-layer adapter
+// ============================================================================
+
+/// What a policy decides to do with an action by default (before any user
+/// interaction).
+///
+/// This is the "default decision" side of a [`PermissionRequirement`]. It is
+/// derived from the policy's configuration, not from an individual approval
+/// handler's runtime decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum DefaultDecision {
+    /// Execute without asking.
+    Allow,
+    /// Ask the user first.
+    Prompt,
+    /// Reject outright; do not ask.
+    Deny,
+}
+
+/// A permission requirement for a specific action under a specific policy.
+///
+/// This is a **presentation-layer adapter**: it bundles our internal
+/// `(ActionType, RiskLevel, DefaultDecision)` triple so callers can render it
+/// in whichever vocabulary they prefer. [`to_claude_code_label`] in particular
+/// emits the labels used by Claude Code
+/// (`ReadOnly` / `WorkspaceWrite` / `DangerFullAccess` / `Prompt` / `Allow`),
+/// which is handy for docs, UIs, and examples that want to speak that
+/// vocabulary. The runtime permission taxonomy is unchanged.
+///
+/// [`to_claude_code_label`]: PermissionRequirement::to_claude_code_label
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PermissionRequirement {
+    pub action_type: ActionType,
+    pub risk: RiskLevel,
+    pub default_decision: DefaultDecision,
+}
+
+impl PermissionRequirement {
+    /// Build a requirement from its triple.
+    pub fn new(
+        action_type: ActionType,
+        risk: RiskLevel,
+        default_decision: DefaultDecision,
+    ) -> Self {
+        Self {
+            action_type,
+            risk,
+            default_decision,
+        }
+    }
+
+    /// Derive a requirement from an [`ActionDescriptor`] and an [`AgentPolicy`].
+    ///
+    /// Uses [`AgentPolicy::assess_risk`] for the risk level and compares
+    /// against `policy.require_approval_above` to pick the default decision:
+    /// `Prompt` when the action would need approval, `Allow` otherwise. This
+    /// helper does not consult deny lists or per-tool overrides — callers that
+    /// need the full `validate_action` answer should call that directly and
+    /// build the requirement manually (e.g. with [`DefaultDecision::Deny`]).
+    pub fn from_policy(policy: &AgentPolicy, action: &ActionDescriptor) -> Self {
+        let risk = policy.assess_risk(action);
+        let default_decision = if policy.needs_approval(action) {
+            DefaultDecision::Prompt
+        } else {
+            DefaultDecision::Allow
+        };
+        Self::new(action.action_type.clone(), risk, default_decision)
+    }
+
+    /// Render this requirement using Claude Code's permission vocabulary.
+    ///
+    /// The returned label is one of `"ReadOnly"`, `"WorkspaceWrite"`,
+    /// `"DangerFullAccess"`, `"Prompt"`, or `"Allow"`.
+    ///
+    /// Mapping (presentation-only, does not influence runtime behaviour):
+    ///
+    /// - `Deny` or `Prompt` → `"Prompt"` (in Claude Code's taxonomy there is
+    ///   no explicit `Deny` label; a denial surfaces as a prompt that will be
+    ///   rejected — callers that need the distinction can read
+    ///   `self.default_decision` directly).
+    /// - Auto-`Allow` + `FileRead` (any risk) → `"ReadOnly"`.
+    /// - Auto-`Allow` + read-like tool call (`ToolCall` / `McpCall` /
+    ///   `HttpRequest`) at `Safe` or `Low` risk → `"ReadOnly"`.
+    /// - Auto-`Allow` + `FileWrite` / `FileDelete` / `BrowserAction` →
+    ///   `"WorkspaceWrite"`.
+    /// - Auto-`Allow` + `ShellExec` or any action at `High`/`Critical` risk →
+    ///   `"DangerFullAccess"`.
+    /// - Anything else that is auto-`Allow` → `"Allow"`.
+    pub fn to_claude_code_label(&self) -> &'static str {
+        // Prompt/Deny dominate: they are what the user actually sees.
+        match self.default_decision {
+            DefaultDecision::Prompt | DefaultDecision::Deny => return "Prompt",
+            DefaultDecision::Allow => {}
+        }
+
+        use ActionType::*;
+        use RiskLevel::*;
+        match (&self.action_type, self.risk) {
+            // Read-only categories.
+            (FileRead, _) => "ReadOnly",
+            (ToolCall | McpCall | HttpRequest, Safe | Low) => "ReadOnly",
+
+            // High/Critical auto-allows (rare, but possible under Autonomous).
+            (_, High | Critical) => "DangerFullAccess",
+
+            // Shell is always "dangerous" even when auto-allowed.
+            (ShellExec, _) => "DangerFullAccess",
+
+            // Workspace writes.
+            (FileWrite | FileDelete | BrowserAction, _) => "WorkspaceWrite",
+
+            // Catch-all for anything else the policy auto-allows.
+            _ => "Allow",
+        }
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -881,5 +1000,130 @@ mod tests {
         assert!(RiskLevel::Low < RiskLevel::Medium);
         assert!(RiskLevel::Medium < RiskLevel::High);
         assert!(RiskLevel::High < RiskLevel::Critical);
+    }
+
+    // ---- PermissionRequirement adapter ----
+
+    #[test]
+    fn requirement_label_file_read_is_readonly() {
+        let req = PermissionRequirement::new(
+            ActionType::FileRead,
+            RiskLevel::Safe,
+            DefaultDecision::Allow,
+        );
+        assert_eq!(req.to_claude_code_label(), "ReadOnly");
+    }
+
+    #[test]
+    fn requirement_label_low_risk_http_is_readonly() {
+        let req = PermissionRequirement::new(
+            ActionType::HttpRequest,
+            RiskLevel::Low,
+            DefaultDecision::Allow,
+        );
+        assert_eq!(req.to_claude_code_label(), "ReadOnly");
+    }
+
+    #[test]
+    fn requirement_label_file_write_is_workspace_write() {
+        let req = PermissionRequirement::new(
+            ActionType::FileWrite,
+            RiskLevel::Medium,
+            DefaultDecision::Allow,
+        );
+        assert_eq!(req.to_claude_code_label(), "WorkspaceWrite");
+    }
+
+    #[test]
+    fn requirement_label_shell_exec_is_danger_full_access() {
+        let req = PermissionRequirement::new(
+            ActionType::ShellExec,
+            RiskLevel::Medium,
+            DefaultDecision::Allow,
+        );
+        assert_eq!(req.to_claude_code_label(), "DangerFullAccess");
+    }
+
+    #[test]
+    fn requirement_label_file_delete_is_workspace_write() {
+        let req = PermissionRequirement::new(
+            ActionType::FileDelete,
+            RiskLevel::High,
+            DefaultDecision::Allow,
+        );
+        // FileDelete at High risk becomes DangerFullAccess (High/Critical
+        // dominates category), not WorkspaceWrite.
+        assert_eq!(req.to_claude_code_label(), "DangerFullAccess");
+    }
+
+    #[test]
+    fn requirement_label_browser_action_is_workspace_write() {
+        let req = PermissionRequirement::new(
+            ActionType::BrowserAction,
+            RiskLevel::Medium,
+            DefaultDecision::Allow,
+        );
+        assert_eq!(req.to_claude_code_label(), "WorkspaceWrite");
+    }
+
+    #[test]
+    fn requirement_label_prompt_decision_overrides_category() {
+        let req = PermissionRequirement::new(
+            ActionType::FileRead,
+            RiskLevel::Safe,
+            DefaultDecision::Prompt,
+        );
+        assert_eq!(req.to_claude_code_label(), "Prompt");
+    }
+
+    #[test]
+    fn requirement_label_deny_decision_reports_as_prompt() {
+        let req = PermissionRequirement::new(
+            ActionType::FileWrite,
+            RiskLevel::Medium,
+            DefaultDecision::Deny,
+        );
+        // Claude Code's label set has no "Deny" — we report as "Prompt"
+        // (callers that need the distinction can read default_decision directly).
+        assert_eq!(req.to_claude_code_label(), "Prompt");
+    }
+
+    #[test]
+    fn requirement_from_policy_derives_risk_and_decision() {
+        let policy = AgentPolicy::default(); // Normal: approval above Medium
+        let read = ActionDescriptor::new(ActionType::FileRead, "/tmp/a.txt");
+        let req = PermissionRequirement::from_policy(&policy, &read);
+        assert_eq!(req.action_type, ActionType::FileRead);
+        assert_eq!(req.risk, RiskLevel::Safe);
+        assert_eq!(req.default_decision, DefaultDecision::Allow);
+        assert_eq!(req.to_claude_code_label(), "ReadOnly");
+    }
+
+    #[test]
+    fn requirement_from_policy_prompts_on_high_risk_under_default() {
+        let policy = AgentPolicy::default(); // approve above Medium
+        let delete = ActionDescriptor::new(ActionType::FileDelete, "/tmp/a.txt");
+        let req = PermissionRequirement::from_policy(&policy, &delete);
+        assert_eq!(req.risk, RiskLevel::High);
+        assert_eq!(req.default_decision, DefaultDecision::Prompt);
+        assert_eq!(req.to_claude_code_label(), "Prompt");
+    }
+
+    #[test]
+    fn requirement_from_policy_paranoid_prompts_everything() {
+        let policy = AgentPolicy::paranoid();
+        let read = ActionDescriptor::new(ActionType::FileRead, "/tmp/a.txt");
+        let req = PermissionRequirement::from_policy(&policy, &read);
+        assert_eq!(req.default_decision, DefaultDecision::Prompt);
+        assert_eq!(req.to_claude_code_label(), "Prompt");
+    }
+
+    #[test]
+    fn requirement_from_policy_autonomous_allows_most_things() {
+        let policy = AgentPolicy::autonomous(); // approve only above Critical
+        let write = ActionDescriptor::new(ActionType::FileWrite, "/tmp/a.txt");
+        let req = PermissionRequirement::from_policy(&policy, &write);
+        assert_eq!(req.default_decision, DefaultDecision::Allow);
+        assert_eq!(req.to_claude_code_label(), "WorkspaceWrite");
     }
 }

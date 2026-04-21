@@ -800,7 +800,8 @@ pub use distributed_agents::{
 #[cfg(feature = "autonomous")]
 pub use agent_policy::{
     ActionDescriptor, ActionType, AgentPolicy, AgentPolicyBuilder, ApprovalHandler, AutoApproveAll,
-    AutoDenyAll, AutonomyLevel, ClosureApprovalHandler, InternetMode, RiskLevel as AgentRiskLevel,
+    AutoDenyAll, AutonomyLevel, ClosureApprovalHandler, DefaultDecision, InternetMode,
+    PermissionRequirement, RiskLevel as AgentRiskLevel,
 };
 
 #[cfg(feature = "autonomous")]
@@ -2212,6 +2213,34 @@ pub use emotion_detection::{
     AudioEvent, EmotionCategory, EmotionDetector, EmotionState, KeywordEmotionDetector,
 };
 
+#[cfg(feature = "stall-detection")]
+pub mod stall_detection;
+
+#[cfg(feature = "stall-detection")]
+pub use stall_detection::{
+    hash_tool_call, KeywordStallDetector, RateThresholds, StallDecision, StallHeuristic,
+    StallKeywordLexicon, StallLanguage, StallSignal, DEFAULT_RATE_MAX_CALLS, DEFAULT_RATE_WINDOW,
+    RING_BUFFER_SIZE as STALL_RING_BUFFER_SIZE, SPAN_NAME as STALL_SPAN_NAME,
+};
+
+#[cfg(feature = "stall-detection-llm")]
+pub mod stall_detection_llm;
+
+#[cfg(feature = "stall-detection-llm")]
+pub use stall_detection_llm::{
+    LlmAssistedStallDetector, LlmVerdict, LlmVerdictFn, LlmVerdictInput, DEFAULT_LLM_COOLDOWN,
+    TOOL_TRAIL_CAP,
+};
+
+#[cfg(feature = "sub-agents")]
+pub mod sub_agents;
+
+#[cfg(feature = "sub-agents")]
+pub use sub_agents::{
+    InProcessSubAgentRunner, IsolationLevel, SubAgentKind, SubAgentResult, SubAgentRunner,
+    SubAgentSpec, SubAgentStatus, SPAN_NAME as SUB_AGENT_SPAN_NAME,
+};
+
 #[cfg(feature = "audio")]
 pub use speech::{
     assess_enrollment_quality, create_speech_provider, AudioFormat, ClonedVoiceId,
@@ -2272,6 +2301,19 @@ pub use prompt_signature::{
     JsonSchemaAssertion, LengthAssertion, LmAdapter, MIPROv2Config, MIPROv2Optimizer,
     OptimizationResult, ParetoFront, ParetoSolution, PromptAssertion, PromptExample,
     RandomSearchOptimizer, SelfReflector, Signature, SignatureField, TrainingExample,
+};
+
+// =============================================================================
+// PROMPT FRAGMENTS (composable conditional prompt assembly)
+// =============================================================================
+
+#[cfg(feature = "prompt-fragments")]
+pub mod prompt_fragments;
+
+#[cfg(feature = "prompt-fragments")]
+pub use prompt_fragments::{
+    AppliedFragment, FragmentCategory, Platform, PromptBuilder, PromptContext, PromptFragment,
+    PromptPreset,
 };
 
 // =============================================================================

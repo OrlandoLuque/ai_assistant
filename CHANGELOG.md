@@ -5,6 +5,249 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v51 (2026-04-20) — V95: StallHeuristic robustness + LLM-light backend (0.2.27)
+
+### Added
+- **`StallSignal::Overheating`** — third signal for rate-based detection.
+  Fires when the sliding window of tool-call timestamps exceeds
+  `RateThresholds::max_calls` within `RateThresholds::window`.
+- **`StallLanguage` enum** (`English`, `Spanish`, `French`, `German`) +
+  **`StallKeywordLexicon`** with compact per-language frustration word
+  lists and `contains_frustration(text, lang)` helper.
+- **`RateThresholds { window, max_calls }`** struct + `Default` impl +
+  constants `DEFAULT_RATE_WINDOW = 60s`, `DEFAULT_RATE_MAX_CALLS = 30`.
+- **`KeywordStallDetector` builders:** `with_language(StallLanguage)` and
+  `with_rate_thresholds(RateThresholds)`. Introspection: `language()`,
+  `rate_thresholds()`, `recent_timestamp_count()`.
+- **New feature flag `stall-detection-llm`** — implies `stall-detection`,
+  zero new dependencies. Adds module `src/stall_detection_llm.rs` with:
+  - `LlmVerdict` (`Stalled(StallSignal)` | `Continue` | `Abstain`).
+  - `LlmVerdictInput { recent_tool_names, last_user_message }`.
+  - `LlmVerdictFn = Arc<dyn Fn(&LlmVerdictInput) -> LlmVerdict + Send + Sync>`.
+  - `LlmAssistedStallDetector<H>` wrapper — `new`, `with_min_interval`,
+    `cached_verdict`, `inner`, `inner_mut`. Caller-provided LLM callback is
+    called at most once per cooldown (default 30s via
+    `DEFAULT_LLM_COOLDOWN`); tool-name trail capped at
+    `TOOL_TRAIL_CAP = 16`.
+  - 11 unit tests.
+- **16 new tests** in `stall_detection::tests` covering overheating, rate
+  thresholds, multi-language lexicons, and signal precedence.
+- **Docs** — `docs/IMPROVEMENTS_V95.md` with design rationale for signal
+  precedence (`RepeatedToolCall > Overheating > Frustrated`), the
+  English-vs-lexicon split, and the cooldown model.
+
+### Changed
+- **`StallSignal` is now `#[non_exhaustive]`** — future signals can be added
+  without a major bump. Callers matching exhaustively must add a `_` arm.
+- `observe_user_message` in `KeywordStallDetector` dispatches by language —
+  English still routes through `KeywordEmotionDetector`; other languages use
+  the new lexicon (they do **not** populate `last_emotion()`).
+- `check()` precedence: RepeatedToolCall > Overheating > Frustrated.
+- `src/lib.rs` re-exports `RateThresholds`, `StallKeywordLexicon`,
+  `StallLanguage`, `DEFAULT_RATE_WINDOW`, `DEFAULT_RATE_MAX_CALLS` under
+  `feature = "stall-detection"`, and `LlmAssistedStallDetector`, `LlmVerdict`,
+  `LlmVerdictFn`, `LlmVerdictInput`, `DEFAULT_LLM_COOLDOWN`, `TOOL_TRAIL_CAP`
+  under `feature = "stall-detection-llm"`.
+- Version `0.2.26 → 0.2.27` (patch-level, additive only).
+
+### Notes
+- No new telemetry counters or OTel spans. Existing `record_user_stall` and
+  `start_user_stall_span` accept any signal `&str`, so `"Overheating"` flows
+  through the V93 paths unchanged.
+- LLM wrapper holds the user message only for the callback invocation — the
+  struct has no persistent `String` field reachable after `check()` returns.
+
+### AgenticLoop auto-integration
+- `AgenticLoop` gained an optional `Box<dyn StallHeuristic>` field, gated on
+  `feature = "stall-detection"`, plus builders/accessors:
+  `with_stall_heuristic`, `stall_heuristic`, `stall_heuristic_mut`.
+- `process()` forwards the user message to `observe_user_message` and, after
+  each iteration, hashes new `ToolCall`s via `hash_tool_call` and feeds them
+  to `observe_tool_call` + `check()`. A `Stalled` verdict sets
+  `state.status = LoopStatus::UserStalled` and breaks the loop.
+- 2 new tests in `agentic_loop::tests` cover the builder surface and the
+  frustrated-user-message path.
+
+## [Unreleased] - v50 (2026-04-20) — V94: Ephemeral sub-agent spawning (0.2.26)
+
+### Added
+- **`sub-agents` feature flag** — opt-in, composes
+  `["multi-agent", "analytics"]` (both zero-dep). Zero new dependencies added.
+- **`src/sub_agents.rs`** — new module with:
+  - `SubAgentKind` enum (`Fork`, `Teammate`, `Explore`) — structural
+    equivalent of Claude Code's `Task` tool sub-types.
+  - `IsolationLevel` enum (`InProcess`, `ContextIsolated`, `ExternalProcess`).
+  - `SubAgentSpec` with fluent builder (`with_role`, `with_context_summary`,
+    `with_isolation`, `with_budget_hint`).
+  - `SubAgentStatus` (`Completed`, `Failed`, `Cancelled`, `Deferred`) +
+    `is_success()` helper.
+  - `SubAgentResult` + `::deferred(id, reason)` helper.
+  - `trait SubAgentRunner: Send + Sync` — `supports` + `run`.
+  - Default `InProcessSubAgentRunner` — accepts `InProcess` and
+    `ContextIsolated`; returns `Deferred` for `ExternalProcess` isolation so
+    callers can chain runners. LLM-free by design — hermetic tests, no
+    required network deps.
+  - Constant `SPAN_NAME = "agent.sub_agent_spawned"`.
+  - 15 unit tests.
+- **Telemetry** in `src/telemetry.rs`:
+  - `AggregatedMetrics::sub_agents_spawned_total: u64`.
+  - `AggregatedMetrics::sub_agents_completed_total: u64` (only incremented
+    when `record_sub_agent_complete(..., success = true)`).
+  - `TelemetryCollector::record_sub_agent_spawn(kind: &str, isolation: &str)`.
+  - `TelemetryCollector::record_sub_agent_complete(kind: &str, status: &str, success: bool)`.
+- **OpenTelemetry** in `src/opentelemetry_integration.rs`:
+  - `OtelTracer::start_sub_agent_span(kind: &str, isolation: &str) -> AiSpan`,
+    operation `agent.sub_agent_spawned`, attributes `kind` + `isolation`.
+- **Docs** — `docs/IMPROVEMENTS_V94.md` with framing (orthogonal to
+  multi-agent orchestrator), design rationale (LLM-free default, Deferred vs
+  Failed, &str signals for telemetry portability), and roadmap pointer.
+
+### Changed
+- `src/lib.rs` re-exports `sub_agents::*` under `feature = "sub-agents"`.
+- Version `0.2.25 → 0.2.26` (patch-level, additive only).
+
+### Notes
+- Real filesystem/process isolation (git worktree, spawned subprocess) stays
+  a caller concern (`memory/feedback_library_framing.md` rule). Callers that
+  need host-level isolation implement `SubAgentRunner` themselves; the
+  default `Deferred` path routes those specs explicitly instead of pretending
+  to handle them.
+
+## [Unreleased] - v49 (2026-04-20) — V93: In-crate StallHeuristic (0.2.25)
+
+### Added
+- **`stall-detection` feature flag** — opt-in, composes
+  `["autonomous", "audio", "analytics"]` (all three zero-dep). Zero new
+  dependencies added.
+- **`src/stall_detection.rs`** — new module with:
+  - `StallSignal` (`Frustrated`, `RepeatedToolCall`) and `StallDecision`
+    (`Continue`, `Stalled(StallSignal)`).
+  - `trait StallHeuristic` — `observe_tool_call`, `observe_user_message`,
+    `check`, `reset`.
+  - `KeywordStallDetector` — default implementation backed by a
+    `VecDeque<u64>` ring buffer (capacity 8) of FNV-1a hashes plus
+    `KeywordEmotionDetector` applied to the latest user message. Stores
+    only derived signals — no raw text.
+  - `hash_tool_call(name, args_bytes)` helper (FNV-1a).
+  - Constants `RING_BUFFER_SIZE = 8`, `REPEAT_THRESHOLD = 3`,
+    `SPAN_NAME = "agent.user_stall_detected"`.
+  - 14 unit tests.
+- **`LoopStatus::UserStalled`** variant in `src/agentic_loop.rs`. Present
+  unconditionally so exhaustive matches stay stable regardless of feature
+  selection; only ever produced when `stall-detection` is enabled.
+- **`TelemetryCollector::record_user_stall(&self, signal: &str)`** in
+  `src/telemetry.rs`, with new `AggregatedMetrics::user_stall_events_total:
+  u64` counter. Accepts a `&str` signal so telemetry remains callable
+  without the `stall-detection` feature compiled in.
+- **`OtelTracer::start_user_stall_span(&self, signal: &str)`** in
+  `src/opentelemetry_integration.rs`. Produces an `AiSpan` with operation
+  `agent.user_stall_detected` and attribute
+  `signal=Frustrated|RepeatedToolCall`.
+- **Docs** — `docs/IMPROVEMENTS_V93.md` with design rationale, privacy
+  guarantees, feature composition, and roadmap pointer to task #155.
+
+### Changed
+- `src/lib.rs` re-exports `stall_detection::*` under
+  `feature = "stall-detection"`.
+- Version `0.2.24 → 0.2.25` (patch-level, additive only).
+
+### Privacy
+- The stall heuristic persists only a `u64` hash per tool call and an
+  `Option<EmotionCategory>` for the latest user message. Raw text is never
+  stored, consistent with `pii_tokenizer` guarantees.
+
+### Notes
+- Signal precedence: when both fire, `RepeatedToolCall` dominates
+  `Frustrated` (stronger invariant — budget is being burned this tick).
+- Task #155 will add an LLM-assisted fallback, multi-language lexicons, and
+  an overheating/burn-rate signal.
+
+## [Unreleased] - v48 (2026-04-20) — V92: Claude Code permission-label adapter (0.2.24)
+
+### Added
+- **`PermissionRequirement`** (src/agent_policy.rs) — presentation-layer
+  adapter bundling `ActionType` + `RiskLevel` + `DefaultDecision`. Build
+  directly with `PermissionRequirement::new(...)` or derive from an action and
+  a policy with `PermissionRequirement::from_policy(&policy, &action)`.
+- **`DefaultDecision`** enum — `Allow` / `Prompt` / `Deny`. Captures what the
+  policy decides before any user interaction, distinct from runtime approval
+  handler decisions.
+- **`to_claude_code_label`** — renders a `PermissionRequirement` using Claude
+  Code's vocabulary (`ReadOnly` / `WorkspaceWrite` / `DangerFullAccess` /
+  `Prompt` / `Allow`). Useful for docs, UIs, and examples that prefer the
+  Claude Code naming without changing the internal permission taxonomy.
+- **12 unit tests** in `agent_policy::tests` covering every branch of the
+  mapping table plus the three policy presets.
+- **Docs** — `docs/IMPROVEMENTS_V92.md` with the full mapping table and
+  design rationale.
+
+### Changed
+- `src/lib.rs` now re-exports `DefaultDecision` and `PermissionRequirement`
+  under `feature = "autonomous"` alongside `AgentPolicy`.
+- Version `0.2.23 → 0.2.24` (patch-level, additive only; no runtime paths
+  changed, no new dependencies, no API breakage).
+
+### Notes
+- The adapter is presentation-only: `to_claude_code_label` does not influence
+  approval decisions. Runtime behaviour still flows through `AgentPolicy` +
+  `ApprovalHandler`.
+- Claude Code's label set has no explicit `Deny`; denials surface as
+  `"Prompt"`. Callers that need the distinction should read
+  `requirement.default_decision` directly.
+
+## [Unreleased] - v47 (2026-04-20) — V91: Composable prompt fragments (0.2.23)
+
+### Added
+- **`prompt_fragments` module** — composable conditional prompt assembly.
+  Structural equivalent of Claude Code's ~110 conditional instruction strings,
+  but extensible by the caller rather than hardcoded.
+- **Public API** — `PromptBuilder`, `PromptContext`, `PromptFragment`,
+  `PromptPreset`, `FragmentCategory`, `Platform`, `AppliedFragment`.
+- **Built-in catalog** — 11 fragments under `prompt_fragments::catalog::*`:
+  shell notes (Windows/Unix), tool-use guidance, plan/execute mode, RAG
+  citation reminder, GDPR-EU notice, TDD workflow, git commit conventions,
+  Rust idioms, academic citation style.
+- **Six curated presets** — `Minimal`, `ToolUseChatbot`, `RagAssistant`,
+  `AgenticLoop`, `ResearchAgent`, `CodeDeveloper`.
+- **Introspection** — `build_with_trace` returns the applied fragments in
+  output order for debugging and OpenTelemetry spans.
+- **Example** — `examples/prompt_fragments.rs` with 4 scenarios
+  (agentic loop, code developer, RAG + EU GDPR, custom-signal fragment).
+- **Docs** — `docs/PROMPT_FRAGMENTS.md` (complete guide) and
+  `docs/IMPROVEMENTS_V91.md` (design rationale + status).
+- **Website** — new `prompt_fragments.html` guide page, link cards on
+  `index.html` / `product_overview.html` / `ai_assistant_overview.html`, new
+  row in `feature_matrix.html`, cross-links from the anti-hallucination and
+  research guide pages.
+- **Butler integration (Phase 3)** —
+  `Butler::recommend_prompt_fragments(intent, &report) -> PromptRecommendation`.
+  Rule-based keyword dispatch picks a seed `PromptPreset` (research / code /
+  RAG / autonomous / chat), with a project-type fallback, and overlays extras
+  (`git_commit_conventions` when a VCS is detected, `rust_idioms` for Rust
+  projects, platform shell notes that self-gate by host OS). Returns the
+  preset, overlay keys, and a human-readable justification.
+- **CLI** — `ai_cli butler recommend-prompt --intent "<description>"`
+  surfaces the recommendation for a user-supplied intent against the scanned
+  environment.
+- **10 unit tests** for `Butler::recommend_prompt_fragments`
+  (`butler::tests::prompt_fragments_tests`) in addition to the 23 tests in
+  `prompt_fragments.rs`.
+
+### Changed
+- Everything gated behind new `feature = "prompt-fragments"` (opt-in, not in
+  `full`). Butler integration additionally requires `feature = "butler"`.
+  Zero new dependencies, zero API breakage for existing callers.
+- Reuses `OperationMode` from `mode_manager` when `feature = "autonomous"` is
+  active — no type duplication.
+
+### Notes
+- Fragment text is trusted input; it is concatenated verbatim into the system
+  prompt. Never build fragments directly from end-user input (prompt-injection
+  vector). The module docs and guide both spell this out.
+- An LLM-assisted variant of `recommend_prompt_fragments` is deferred to a
+  follow-up behind a separate feature flag; the rule-based path already covers
+  the intended shape.
+
 ## [Unreleased] - v46 (2026-04-19) — V90: Dataset hallucination/faithfulness benchmarks (0.2.22)
 
 ### Added

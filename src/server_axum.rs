@@ -2297,7 +2297,28 @@ async fn bibtex_import_handler(Json(body): Json<serde_json::Value>) -> Json<serd
 async fn bibtex_export_handler(Json(body): Json<serde_json::Value>) -> Json<serde_json::Value> {
     let entries: Vec<crate::bibtex::BibEntry> = body
         .get("entries")
-        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| {
+                    let entry_type = crate::bibtex::BibEntryType::from_str_loose(
+                        v.get("entry_type")
+                            .and_then(|s| s.as_str())
+                            .unwrap_or("misc"),
+                    );
+                    let cite_key = v.get("cite_key").and_then(|s| s.as_str())?;
+                    let mut entry = crate::bibtex::BibEntry::new(entry_type, cite_key);
+                    if let Some(fields) = v.get("fields").and_then(|f| f.as_object()) {
+                        for (k, val) in fields {
+                            if let Some(s) = val.as_str() {
+                                entry.set_field(k, s);
+                            }
+                        }
+                    }
+                    Some(entry)
+                })
+                .collect()
+        })
         .unwrap_or_default();
 
     let output = crate::bibtex::BibGenerator::generate(&entries);
@@ -2569,13 +2590,14 @@ fn build_unified_mcp_server() -> Arc<std::sync::RwLock<crate::mcp_protocol::McpS
     #[cfg(feature = "research")]
     {
         let registry = crate::mcp_research_tools::ResearchToolRegistry::new();
-        for tool_def in registry.list_tools() {
+        for tool_def in registry.tools() {
             let name = tool_def.name.clone();
             mcp.register_tool(
                 crate::mcp_protocol::McpTool {
                     name: tool_def.name.clone(),
-                    description: Some(tool_def.description.clone()),
+                    description: tool_def.description.clone(),
                     input_schema: tool_def.input_schema.clone(),
+                    annotations: None,
                 },
                 move |_args| {
                     Ok(serde_json::json!({
@@ -2598,7 +2620,7 @@ fn build_unified_mcp_server() -> Arc<std::sync::RwLock<crate::mcp_protocol::McpS
         mcp.register_tool(
             McpTool {
                 name: "check_faithfulness".into(),
-                description: Some("Evaluate faithfulness of a response against context".into()),
+                description: "Evaluate faithfulness of a response against context".into(),
                 input_schema: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -2607,6 +2629,7 @@ fn build_unified_mcp_server() -> Arc<std::sync::RwLock<crate::mcp_protocol::McpS
                     },
                     "required": ["text", "context"]
                 }),
+                annotations: None,
             },
             |args| {
                 let text = args.get("text").and_then(|v| v.as_str()).unwrap_or("");
@@ -2626,7 +2649,7 @@ fn build_unified_mcp_server() -> Arc<std::sync::RwLock<crate::mcp_protocol::McpS
         mcp.register_tool(
             McpTool {
                 name: "verify_claims".into(),
-                description: Some("Verify claims in text using Chain-of-Verification pipeline".into()),
+                description: "Verify claims in text using Chain-of-Verification pipeline".into(),
                 input_schema: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -2634,6 +2657,7 @@ fn build_unified_mcp_server() -> Arc<std::sync::RwLock<crate::mcp_protocol::McpS
                     },
                     "required": ["text"]
                 }),
+                annotations: None,
             },
             |args| {
                 let text = args.get("text").and_then(|v| v.as_str()).unwrap_or("");
@@ -2648,7 +2672,7 @@ fn build_unified_mcp_server() -> Arc<std::sync::RwLock<crate::mcp_protocol::McpS
         mcp.register_tool(
             McpTool {
                 name: "run_quality_gates".into(),
-                description: Some("Run quality gates on text with provided scores".into()),
+                description: "Run quality gates on text with provided scores".into(),
                 input_schema: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -2657,6 +2681,7 @@ fn build_unified_mcp_server() -> Arc<std::sync::RwLock<crate::mcp_protocol::McpS
                         "grounding_ratio": {"type": "number"}
                     }
                 }),
+                annotations: None,
             },
             |args| {
                 let runner = crate::quality_gates::QualityGateRunner::production_defaults();

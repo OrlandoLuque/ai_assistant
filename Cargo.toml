@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.22"
+version = "0.2.27"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -207,6 +207,31 @@ workflows = ["dep:tokio"]
 # DSPy-style prompt optimization: signatures, bootstrap few-shot, metric search, self-reflect
 # Not in 'full' by default — involves LLM calls for optimization. Opt-in: --features prompt-signatures
 prompt-signatures = []
+
+# Composable prompt fragments: conditional prompt assembly (equivalent structural
+# pattern to Claude Code's ~110 conditional strings, but extensible by the caller).
+# Not in 'full' by default — opt-in. Use: --features prompt-fragments
+prompt-fragments = []
+
+# In-crate user-stall detection: ring buffer of repeated tool-call hashes +
+# keyword emotion classification of the last user message. Fires a Stalled
+# verdict and emits a `user_stall_events_total` counter + OTel span.
+# Not in 'full' by default — opt-in. Use: --features stall-detection
+stall-detection = ["autonomous", "audio", "analytics"]
+
+# Ephemeral sub-agent spawning (Fork/Teammate/Explore pattern — structural
+# equivalent to Claude Code's Task tool). In-crate declarative model +
+# trait SubAgentRunner with an in-process default impl over AgentOrchestrator.
+# Real process/worktree isolation stays a caller concern (host-level).
+# Not in 'full' by default — opt-in. Use: --features sub-agents
+sub-agents = ["multi-agent", "analytics"]
+
+# LLM-assisted second-opinion wrapper over `StallHeuristic`. Wraps any stall
+# detector with a pluggable verdict callback; the library calls into the
+# caller-provided LLM at most once per configurable cooldown window. Zero
+# new dependencies — the callback is a plain `Fn` supplied by the caller.
+# Not in 'full' by default — opt-in. Use: --features stall-detection-llm
+stall-detection-llm = ["stall-detection"]
 
 # Agent-to-Agent protocol (Google A2A): agent cards, task lifecycle, JSON-RPC 2.0
 # Not in 'full' by default — requires tokio for async server. Opt-in: --features a2a

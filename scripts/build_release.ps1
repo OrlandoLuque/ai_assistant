@@ -1,18 +1,11 @@
 <#
 .SYNOPSIS
-    Build and package user-facing binaries for a GitHub Release.
+    Build and package all 20 binaries for a GitHub Release.
 
 .DESCRIPTION
-    Compiles the 6 user-facing binaries in --release mode, packages them into
-    a zip file with a README.txt and SHA256 checksums.
-
-    Binaries:
-      ai_cli              (features: full,diagnostic-logging)
-      ai_assistant_cli    (features: full,butler)
-      ai_gui              (features: gui)
-      ai_assistant_server (features: full)
-      kpkg_tool           (features: rag)
-      ai_cluster_node     (features: full,server-cluster)
+    Compiles every binary declared in Cargo.toml in --release mode with its
+    required-features, packages them into a zip with README.txt and SHA256
+    checksums.
 
 .PARAMETER Version
     Version string for the zip file name (default: read from Cargo.toml)
@@ -44,12 +37,26 @@ function Write-Fail { param($msg) Write-Host " -  $msg" -ForegroundColor Red }
 # --------------------------------------------------------------------------- #
 
 $binaries = @(
-    @{ Name = "ai_cli";             Features = "full,diagnostic-logging"; Desc = "Power-user CLI (scan, query, config, diagnostics)" },
-    @{ Name = "ai_assistant_cli";    Features = "full,butler";            Desc = "Interactive Chat CLI with auto-detection" },
-    @{ Name = "ai_gui";             Features = "gui";                    Desc = "Desktop GUI (WIP)" },
-    @{ Name = "ai_assistant_server"; Features = "full";                   Desc = "HTTP API server (OpenAI-compatible)" },
-    @{ Name = "kpkg_tool";          Features = "rag";                    Desc = "Knowledge package manager" },
-    @{ Name = "ai_cluster_node";    Features = "full,server-cluster";    Desc = "Distributed cluster node (QUIC mesh)" }
+    @{ Name = "ai_cli";                 Features = "full,diagnostic-logging";  Desc = "Power-user CLI (scan, query, config, diagnostics)" },
+    @{ Name = "ai_assistant_cli";       Features = "full,butler";              Desc = "Interactive Chat CLI with auto-detection" },
+    @{ Name = "ai_assistant_server";    Features = "full";                     Desc = "HTTP API server (OpenAI-compatible)" },
+    @{ Name = "ai_assistant_standalone";Features = "full,server-axum";         Desc = "Self-contained server + embedded assistant" },
+    @{ Name = "ai_cluster_node";        Features = "full,server-cluster";      Desc = "Distributed cluster node (QUIC mesh)" },
+    @{ Name = "ai_proxy";               Features = "server-axum,security";     Desc = "Hardened LLM gateway (rate limit, PII, budget, audit)" },
+    @{ Name = "ai_gui";                 Features = "gui";                      Desc = "Desktop GUI (WIP)" },
+    @{ Name = "ai_gui-pro";             Features = "gui-pro";                  Desc = "Advanced desktop GUI (egui widgets, tabs, search)" },
+    @{ Name = "ai_setup";               Features = "full";                     Desc = "Interactive setup wizard (provider + model picker)" },
+    @{ Name = "ai_setup_gui";           Features = "gui";                      Desc = "Setup wizard, graphical variant" },
+    @{ Name = "ai_optimize";            Features = "full";                     Desc = "ML config optimiser (auto-tune for your hardware)" },
+    @{ Name = "ai_gpu_share";           Features = "full,gpu-sharing";         Desc = "GPU-sharing network client (SETI-style LLM inference)" },
+    @{ Name = "ai_jobs";                Features = "scheduler";                Desc = "Cron-like job daemon (delegated / embedded modes)" },
+    @{ Name = "ai_logs";                Features = "distributed-network";      Desc = "Distributed log aggregator (read + tail)" },
+    @{ Name = "ai_logs_gui";            Features = "gui-logs";                 Desc = "Log viewer GUI" },
+    @{ Name = "ai_virtual_mic";         Features = "audio-io";                 Desc = "Virtual microphone output (loop-back for meetings)" },
+    @{ Name = "ai_virtual_mic_host";    Features = "audio";                    Desc = "Virtual mic host (multi-client audio routing)" },
+    @{ Name = "ai_virtual_cam";         Features = "video-io";                 Desc = "Virtual camera output (avatar / screen share)" },
+    @{ Name = "ai_test_harness";        Features = "full,browser";             Desc = "Browser-driven E2E test harness" },
+    @{ Name = "kpkg_tool";              Features = "rag";                      Desc = "Knowledge package manager (create, inspect, extract)" }
 )
 
 # Read version from Cargo.toml if not specified

@@ -70,6 +70,12 @@ pub enum LoopStatus {
     Finished,
     Error,
     MaxIterationsReached,
+    /// The agent stopped because the in-crate stall heuristic (see
+    /// [`crate::stall_detection`]) detected repeated tool calls or user
+    /// frustration. Produced only when the `stall-detection` feature is
+    /// enabled; the variant is always present so existing matches stay
+    /// exhaustive regardless of feature selection.
+    UserStalled,
 }
 
 /// Message in the agent conversation
@@ -99,6 +105,8 @@ pub struct AgenticLoop {
     conversation: Vec<LoopMessage>,
     state: LoopState,
     response_generator: Option<Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync>>,
+    #[cfg(feature = "stall-detection")]
+    stall_heuristic: Option<Box<dyn crate::stall_detection::StallHeuristic>>,
 }
 
 impl AgenticLoop {
@@ -124,7 +132,43 @@ impl AgenticLoop {
                 final_answer: None,
             },
             response_generator: None,
+            #[cfg(feature = "stall-detection")]
+            stall_heuristic: None,
         }
+    }
+
+    /// Attach an in-crate [`crate::stall_detection::StallHeuristic`] so the
+    /// loop automatically observes user messages and tool calls, and halts
+    /// with [`LoopStatus::UserStalled`] when the heuristic fires.
+    ///
+    /// The heuristic is consumed by value (boxed) so any trait object works —
+    /// including [`crate::stall_detection::KeywordStallDetector`] and the
+    /// feature-gated `LlmAssistedStallDetector`.
+    #[cfg(feature = "stall-detection")]
+    pub fn with_stall_heuristic(
+        mut self,
+        heuristic: Box<dyn crate::stall_detection::StallHeuristic>,
+    ) -> Self {
+        self.stall_heuristic = Some(heuristic);
+        self
+    }
+
+    /// Access the attached stall heuristic, if any. Useful for inspecting
+    /// state after the loop returns (e.g. reading `last_emotion`).
+    #[cfg(feature = "stall-detection")]
+    pub fn stall_heuristic(&self) -> Option<&dyn crate::stall_detection::StallHeuristic> {
+        self.stall_heuristic.as_deref()
+    }
+
+    /// Mutable access to the attached stall heuristic, if any. Needed to call
+    /// [`crate::stall_detection::StallHeuristic::check`] from outside the loop
+    /// (the trait method takes `&mut self` because some heuristics advance
+    /// internal cooldowns).
+    #[cfg(feature = "stall-detection")]
+    pub fn stall_heuristic_mut(
+        &mut self,
+    ) -> Option<&mut (dyn crate::stall_detection::StallHeuristic + 'static)> {
+        self.stall_heuristic.as_deref_mut()
     }
 
     /// Enable web search capability
@@ -182,6 +226,12 @@ impl AgenticLoop {
             tool_results: None,
         });
 
+        // Feed the user message to the stall heuristic, if one is attached.
+        #[cfg(feature = "stall-detection")]
+        if let Some(h) = self.stall_heuristic.as_mut() {
+            h.observe_user_message(user_message);
+        }
+
         // Check if we should auto-search
         let needs_search = self.config.auto_search && self.needs_web_search(user_message);
 
@@ -191,10 +241,33 @@ impl AgenticLoop {
         while self.state.iteration < self.config.max_iterations {
             self.state.iteration += 1;
 
+            #[cfg(feature = "stall-detection")]
+            let tool_calls_before = self.state.tool_calls.len();
+
             let iteration_result = self.run_iteration(needs_search && self.state.iteration == 1);
             iterations.push(iteration_result.clone());
 
-            if matches!(self.state.status, LoopStatus::Finished | LoopStatus::Error) {
+            // After the iteration, let the stall heuristic observe any tool
+            // calls that fired, then evaluate. If stalled, stop the loop.
+            #[cfg(feature = "stall-detection")]
+            {
+                let new_calls = self.state.tool_calls[tool_calls_before..].to_vec();
+                if let Some(h) = self.stall_heuristic.as_mut() {
+                    for call in &new_calls {
+                        let args_bytes = serde_json::to_vec(&call.arguments).unwrap_or_default();
+                        let hash = crate::stall_detection::hash_tool_call(&call.name, &args_bytes);
+                        h.observe_tool_call(&call.name, hash);
+                    }
+                    if let crate::stall_detection::StallDecision::Stalled(_) = h.check() {
+                        self.state.status = LoopStatus::UserStalled;
+                    }
+                }
+            }
+
+            if matches!(
+                self.state.status,
+                LoopStatus::Finished | LoopStatus::Error | LoopStatus::UserStalled
+            ) {
                 break;
             }
         }
@@ -877,6 +950,7 @@ mod tests {
             LoopStatus::Finished,
             LoopStatus::Error,
             LoopStatus::MaxIterationsReached,
+            LoopStatus::UserStalled,
         ];
 
         for status in statuses {
@@ -1048,5 +1122,29 @@ mod tests {
             .final_answer
             .unwrap()
             .contains("based on available context"));
+    }
+
+    #[cfg(feature = "stall-detection")]
+    #[test]
+    fn test_stall_heuristic_builder_and_accessor() {
+        use crate::stall_detection::KeywordStallDetector;
+        let agent = AgenticLoop::new(LoopConfig::default())
+            .with_stall_heuristic(Box::new(KeywordStallDetector::new()));
+        assert!(agent.stall_heuristic().is_some());
+    }
+
+    #[cfg(feature = "stall-detection")]
+    #[test]
+    fn test_stall_heuristic_observes_user_message() {
+        use crate::stall_detection::{KeywordStallDetector, StallDecision, StallHeuristic};
+        let mut agent = AgenticLoop::new(LoopConfig {
+            auto_search: false,
+            ..Default::default()
+        })
+        .with_stall_heuristic(Box::new(KeywordStallDetector::new()));
+        let _ = agent.process("I'm so frustrated with this, it's useless!");
+        // Heuristic has absorbed the frustrated user message; check() should fire.
+        let h = agent.stall_heuristic_mut().expect("heuristic attached");
+        assert!(matches!(h.check(), StallDecision::Stalled(_)));
     }
 }

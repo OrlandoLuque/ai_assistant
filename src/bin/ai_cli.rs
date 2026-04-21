@@ -685,6 +685,13 @@ fn cmd_config_set(path: &str, args: &[String]) -> ExitCode {
 fn cmd_butler(args: &[String]) -> ExitCode {
     #[cfg(feature = "butler")]
     {
+        // Subcommand dispatch: `butler recommend-prompt ...`
+        if let Some(first) = args.first() {
+            if first == "recommend-prompt" {
+                return cmd_butler_recommend_prompt(&args[1..]);
+            }
+        }
+
         let mut config_path: Option<&str> = None;
         let mut i = 0;
         while i < args.len() {
@@ -770,6 +777,85 @@ fn cmd_butler(args: &[String]) -> ExitCode {
         eprintln!("  cargo run --bin ai_cli --features \"full,butler\" -- butler");
         ExitCode::from(1)
     }
+}
+
+#[cfg(all(feature = "butler", feature = "prompt-fragments"))]
+fn cmd_butler_recommend_prompt(args: &[String]) -> ExitCode {
+    let mut intent: Option<String> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--intent" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: --intent requires a value");
+                    return ExitCode::from(1);
+                }
+                intent = Some(args[i].clone());
+            }
+            "-h" | "--help" => {
+                println!("Usage: ai_cli butler recommend-prompt --intent \"<natural language>\"");
+                println!();
+                println!("Recommends a PromptPreset and overlay fragments based on a natural");
+                println!("language intent and the current environment.");
+                return ExitCode::SUCCESS;
+            }
+            other => {
+                eprintln!(
+                    "Error: unknown option '{}' for 'butler recommend-prompt'",
+                    other
+                );
+                return ExitCode::from(1);
+            }
+        }
+        i += 1;
+    }
+
+    let intent = match intent {
+        Some(s) if !s.trim().is_empty() => s,
+        _ => {
+            eprintln!("Error: --intent \"<description>\" is required.");
+            eprintln!(
+                "  Example: ai_cli butler recommend-prompt --intent \"help me refactor Rust code\""
+            );
+            return ExitCode::from(1);
+        }
+    };
+
+    eprint!("Scanning environment...");
+    let mut butler = Butler::new();
+    let report = butler.scan();
+    eprintln!(" done.");
+
+    let rec = butler.recommend_prompt_fragments(&intent, &report);
+
+    println!("--- Prompt Fragments Recommendation ---");
+    println!("Intent:        {}", intent);
+    println!("Recommended preset: {:?}", rec.preset);
+    if rec.extra_fragment_keys.is_empty() {
+        println!("Extra fragments:    (none)");
+    } else {
+        println!("Extra fragments:");
+        for key in &rec.extra_fragment_keys {
+            println!("  - {}", key);
+        }
+    }
+    println!();
+    println!("Justification:");
+    for line in rec.justification.lines() {
+        println!("  {}", line);
+    }
+    println!("---------------------------------------\n");
+    ExitCode::SUCCESS
+}
+
+#[cfg(all(feature = "butler", not(feature = "prompt-fragments")))]
+fn cmd_butler_recommend_prompt(_args: &[String]) -> ExitCode {
+    eprintln!("Error: 'butler recommend-prompt' requires the 'prompt-fragments' feature.");
+    eprintln!(
+        "  cargo run --bin ai_cli --features \"full,butler,prompt-fragments\" -- butler recommend-prompt --intent \"...\""
+    );
+    ExitCode::from(1)
 }
 
 // =============================================================================

@@ -2566,6 +2566,144 @@ impl Butler {
 }
 
 // =============================================================================
+// Prompt fragments integration (Phase 3 of V91)
+// =============================================================================
+
+/// Recommendation produced by [`Butler::recommend_prompt_fragments`].
+///
+/// The `preset` is a good seed; `extra_fragment_keys` lists additional built-in
+/// fragment keys to overlay (strings so callers can look them up in
+/// `prompt_fragments::catalog`). `justification` explains the choice in human
+/// terms — surface it to the end user when asking for confirmation.
+#[cfg(feature = "prompt-fragments")]
+#[derive(Debug, Clone)]
+pub struct PromptRecommendation {
+    pub preset: crate::prompt_fragments::PromptPreset,
+    pub extra_fragment_keys: Vec<&'static str>,
+    pub justification: String,
+}
+
+#[cfg(feature = "prompt-fragments")]
+impl Butler {
+    /// Recommend a [`PromptPreset`](crate::prompt_fragments::PromptPreset) plus
+    /// overlay fragments given a natural-language intent and a scanned
+    /// environment report.
+    ///
+    /// This is rule-based and deterministic. An LLM-assisted variant is
+    /// planned as a follow-up behind a separate feature flag.
+    pub fn recommend_prompt_fragments(
+        &self,
+        intent: &str,
+        report: &EnvironmentReport,
+    ) -> PromptRecommendation {
+        use crate::prompt_fragments::PromptPreset;
+
+        let lower = intent.to_lowercase();
+        let mut reasons: Vec<String> = Vec::new();
+
+        // --- pick preset based on intent keywords first, then env fallback ---
+        let preset = if Self::intent_matches(
+            &lower,
+            &["research", "paper", "arxiv", "literature", "review"],
+        ) {
+            reasons.push("intent mentions research / paper / literature review".to_string());
+            PromptPreset::ResearchAgent
+        } else if Self::intent_matches(
+            &lower,
+            &[
+                "code",
+                "develop",
+                "programm",
+                "implement",
+                "fix",
+                "bug",
+                "refactor",
+                "test",
+            ],
+        ) {
+            reasons.push("intent mentions coding / development".to_string());
+            PromptPreset::CodeDeveloper
+        } else if Self::intent_matches(&lower, &["retriev", "rag", "document", "search over"]) {
+            reasons.push("intent mentions retrieval / RAG / documents".to_string());
+            PromptPreset::RagAssistant
+        } else if Self::intent_matches(
+            &lower,
+            &["autonomous", "agent loop", "automatic", "loop over"],
+        ) {
+            reasons.push("intent mentions autonomous / agentic behaviour".to_string());
+            PromptPreset::AgenticLoop
+        } else if Self::intent_matches(&lower, &["chat", "conversation", "assistant"]) {
+            reasons.push("intent suggests a conversational assistant".to_string());
+            PromptPreset::ToolUseChatbot
+        } else {
+            // Fallback: infer from project type
+            match report.project_type.as_ref() {
+                Some(ProjectType::Rust)
+                | Some(ProjectType::Node)
+                | Some(ProjectType::Python)
+                | Some(ProjectType::Go)
+                | Some(ProjectType::Java)
+                | Some(ProjectType::DotNet)
+                | Some(ProjectType::Ruby) => {
+                    reasons.push("no intent keyword matched; detected a code project".to_string());
+                    PromptPreset::CodeDeveloper
+                }
+                _ => {
+                    reasons.push(
+                        "no intent keyword matched and no code project detected; \
+                         defaulting to a generic tool-use chatbot"
+                            .to_string(),
+                    );
+                    PromptPreset::ToolUseChatbot
+                }
+            }
+        };
+
+        // --- overlay extra fragments based on detected environment ---
+        let mut extras: Vec<&'static str> = Vec::new();
+
+        if report.vcs.is_some() && !Self::preset_includes(preset, "git_commit_conventions") {
+            extras.push("git_commit_conventions");
+            reasons.push("git repository detected → add git_commit_conventions".to_string());
+        }
+
+        if matches!(report.project_type, Some(ProjectType::Rust))
+            && !Self::preset_includes(preset, "rust_idioms")
+        {
+            extras.push("rust_idioms");
+            reasons.push("Rust project detected → add rust_idioms".to_string());
+        }
+
+        // Platform shell notes always overlay (fragment applies-closure gates actual inclusion).
+        extras.push("windows_shell_note");
+        extras.push("unix_shell_note");
+        reasons
+            .push("platform shell notes overlaid (the fragment self-gates by host OS)".to_string());
+
+        let justification = format!(
+            "Recommended preset: {:?}. Extras: [{}]. Reasons:\n  - {}",
+            preset,
+            extras.join(", "),
+            reasons.join("\n  - ")
+        );
+
+        PromptRecommendation {
+            preset,
+            extra_fragment_keys: extras,
+            justification,
+        }
+    }
+
+    fn intent_matches(haystack: &str, needles: &[&str]) -> bool {
+        needles.iter().any(|n| haystack.contains(n))
+    }
+
+    fn preset_includes(preset: crate::prompt_fragments::PromptPreset, key: &str) -> bool {
+        preset.fragments().iter().any(|f| f.key == key)
+    }
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 
@@ -3548,5 +3686,132 @@ mod tests {
         let analysis = butler.analyze_features(&report, &[]);
         assert!(analysis.unnecessary_flags.is_empty());
         assert!(analysis.active_flags.is_empty());
+    }
+
+    // ---- Phase 3 of V91: prompt_fragments recommendations ----
+
+    #[cfg(feature = "prompt-fragments")]
+    mod prompt_fragments_tests {
+        use super::*;
+        use crate::prompt_fragments::PromptPreset;
+
+        fn empty_report() -> EnvironmentReport {
+            EnvironmentReport {
+                llm_providers: vec![],
+                project_type: None,
+                vcs: None,
+                runtime: RuntimeInfo {
+                    os: "test".to_string(),
+                    arch: "x86_64".to_string(),
+                    cpus: 4,
+                    has_gpu: false,
+                    has_docker: false,
+                    has_browser: false,
+                },
+                capabilities: Vec::new(),
+                suggested_agent_profile: "research-agent".to_string(),
+                suggested_mode: OperationMode::Assistant,
+            }
+        }
+
+        fn rust_report_with_vcs() -> EnvironmentReport {
+            let mut r = empty_report();
+            r.project_type = Some(ProjectType::Rust);
+            r.vcs = Some(VcsInfo {
+                vcs_type: "git".to_string(),
+                branch: "main".to_string(),
+                has_remotes: false,
+            });
+            r
+        }
+
+        #[test]
+        fn research_intent_picks_research_preset() {
+            let rec = Butler::new().recommend_prompt_fragments(
+                "Help me write a literature review on arxiv papers",
+                &empty_report(),
+            );
+            assert_eq!(rec.preset, PromptPreset::ResearchAgent);
+            assert!(rec.justification.contains("research"));
+        }
+
+        #[test]
+        fn coding_intent_picks_code_developer_preset() {
+            let rec = Butler::new()
+                .recommend_prompt_fragments("I need to refactor and fix a bug", &empty_report());
+            assert_eq!(rec.preset, PromptPreset::CodeDeveloper);
+        }
+
+        #[test]
+        fn rag_intent_picks_rag_assistant_preset() {
+            let rec = Butler::new().recommend_prompt_fragments(
+                "Answer questions using retrieval over my documents",
+                &empty_report(),
+            );
+            assert_eq!(rec.preset, PromptPreset::RagAssistant);
+        }
+
+        #[test]
+        fn autonomous_intent_picks_agentic_loop_preset() {
+            let rec = Butler::new().recommend_prompt_fragments(
+                "Build an autonomous agent that can loop over tasks automatically",
+                &empty_report(),
+            );
+            assert_eq!(rec.preset, PromptPreset::AgenticLoop);
+        }
+
+        #[test]
+        fn chat_intent_picks_tool_use_chatbot_preset() {
+            let rec = Butler::new()
+                .recommend_prompt_fragments("Build a conversation assistant", &empty_report());
+            assert_eq!(rec.preset, PromptPreset::ToolUseChatbot);
+        }
+
+        #[test]
+        fn fallback_picks_code_developer_for_rust_project() {
+            let mut report = empty_report();
+            report.project_type = Some(ProjectType::Rust);
+            let rec = Butler::new().recommend_prompt_fragments("just do something", &report);
+            assert_eq!(rec.preset, PromptPreset::CodeDeveloper);
+            assert!(rec.justification.contains("code project"));
+        }
+
+        #[test]
+        fn fallback_picks_tool_use_chatbot_when_no_signals() {
+            let rec = Butler::new().recommend_prompt_fragments("???", &empty_report());
+            assert_eq!(rec.preset, PromptPreset::ToolUseChatbot);
+        }
+
+        #[test]
+        fn rust_project_with_vcs_overlays_extras() {
+            let rec = Butler::new()
+                .recommend_prompt_fragments("help me refactor this code", &rust_report_with_vcs());
+            assert_eq!(rec.preset, PromptPreset::CodeDeveloper);
+            // CodeDeveloper preset may already include some of these — we only
+            // care that we don't double-add and that the extras list has the
+            // expected shell notes at minimum.
+            assert!(rec.extra_fragment_keys.contains(&"windows_shell_note"));
+            assert!(rec.extra_fragment_keys.contains(&"unix_shell_note"));
+        }
+
+        #[test]
+        fn justification_is_non_empty_and_mentions_preset() {
+            let rec =
+                Butler::new().recommend_prompt_fragments("let's code something", &empty_report());
+            assert!(!rec.justification.is_empty());
+            assert!(rec.justification.contains("CodeDeveloper"));
+        }
+
+        #[test]
+        fn extras_dedup_against_preset_contents() {
+            // CodeDeveloper preset already carries git_commit_conventions and
+            // rust_idioms, so asking with a Rust+git environment should NOT
+            // re-add them as extras.
+            let rec =
+                Butler::new().recommend_prompt_fragments("fix a bug", &rust_report_with_vcs());
+            assert_eq!(rec.preset, PromptPreset::CodeDeveloper);
+            assert!(!rec.extra_fragment_keys.contains(&"git_commit_conventions"));
+            assert!(!rec.extra_fragment_keys.contains(&"rust_idioms"));
+        }
     }
 }

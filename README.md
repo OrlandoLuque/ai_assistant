@@ -142,6 +142,14 @@ cargo build --release --bin ai_assistant_cli --features "full,butler"
 - **Research agent roles**: ResearchAssistant, PeerReviewer, WritingCoach with specialized system prompts
 - **MCP research tools**: 6 tools (search_papers, get_paper_metadata, import/export_bibtex, literature_review, extract_paper_metadata)
 
+### Prompt composition (`prompt-fragments` feature)
+- **Composable conditional prompts**: builder + catalog for system-prompt assembly from small, keyed fragments, each gated on runtime context (platform, tools, mode, region, …)
+- **Curated presets**: `Minimal`, `ToolUseChatbot`, `RagAssistant`, `AgenticLoop`, `ResearchAgent`, `CodeDeveloper`
+- **Built-in catalog**: shell notes, tool-use guidance, plan/execute mode, RAG citation reminder, GDPR-EU notice, TDD workflow, git commit conventions, Rust idioms, academic citation style
+- **Override-by-key**: any caller fragment replaces a preset fragment with the same key — no forking needed
+- **Introspection**: `build_with_trace` returns which fragments fired, in output order — ideal for debugging and OpenTelemetry spans
+- See [`docs/PROMPT_FRAGMENTS.md`](docs/PROMPT_FRAGMENTS.md) for the complete guide
+
 ### More Features
 - **Voice agent**: STT/TTS with cloud and local providers
 - **Media generation**: Image/audio/video generation pipelines
@@ -221,6 +229,10 @@ ai_assistant_core = { version = "0.1", features = ["full", "autonomous", "schedu
 | `scheduler` | Cron scheduler (requires `autonomous`) | No |
 | `butler` | Environment auto-detection (requires `autonomous`) | No |
 | `browser` | CDP browser automation (requires `autonomous`) | No |
+| `prompt-fragments` | Composable conditional prompt builder + curated presets | No |
+| `stall-detection` | In-crate user-stall heuristic — 3 signals (RepeatedToolCall, Overheating, Frustrated) + EN/ES/FR/DE lexicons. Implies `autonomous`, `audio`, `analytics` — zero new deps | No |
+| `stall-detection-llm` | LLM-assisted second-opinion wrapper over any `StallHeuristic` with a caller-provided verdict callback on a cooldown. Implies `stall-detection` — zero new deps | No |
+| `sub-agents` | Ephemeral sub-agent spawning (Fork/Teammate/Explore) with pluggable `SubAgentRunner`. Implies `multi-agent`, `analytics` — zero new deps | No |
 | `containers` | Docker execution via bollard | No |
 | `audio` | Speech STT/TTS | No |
 | `distributed` | CRDTs, DHT, MapReduce | Yes |
