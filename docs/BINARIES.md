@@ -5,7 +5,7 @@ shipped by the `ai_assistant` crate. It is kept in lockstep with the
 companion page
 [`ai_assistant-website/binaries.html`](../../ai_assistant-website/binaries.html).
 
-> **Total binaries: 20** (as of V77 — added `ai_jobs`)
+> **Total binaries: 26** (V96 added 6 auditors: `ai_skills`/`_gui`, `ai_prompt_synth`/`_gui`, `ai_feedback`/`_gui`)
 >
 > Each binary is a first-class consumer of the library and is gated behind
 > the feature flags listed below. Binaries with `required-features` that
@@ -37,6 +37,12 @@ Each binary has a dedicated page in [`docs/binaries/`](binaries/) — click the 
 | 18 | [`kpkg_tool`](binaries/kpkg_tool.md) | Knowledge | `rag` | Encrypted knowledge package tool (.kpkg) |
 | 19 | [`ai_gpu_share`](binaries/ai_gpu_share.md) | GPU Sharing | `full`, `gpu-sharing` | GPU sharing network CLI |
 | 20 | [`ai_test_harness`](binaries/ai_test_harness.md) | Testing | `full`, `browser` | Multi-category test harness |
+| 21 | [`ai_skills`](binaries/ai_skills.md) **(V96)** | Self-Learning | `skill-forge` | Skill Forge auditor CLI |
+| 22 | [`ai_skills_gui`](binaries/ai_skills_gui.md) **(V96)** | Self-Learning | `skill-forge`, `gui-pro` | Skill Forge auditor GUI |
+| 23 | [`ai_prompt_synth`](binaries/ai_prompt_synth.md) **(V96)** | Self-Learning | `prompt-synthesis` | Fragment Synthesis auditor CLI |
+| 24 | [`ai_prompt_synth_gui`](binaries/ai_prompt_synth_gui.md) **(V96)** | Self-Learning | `prompt-synthesis`, `gui-pro` | Fragment Synthesis dashboard |
+| 25 | [`ai_feedback`](binaries/ai_feedback.md) **(V96)** | Self-Learning | `feedback-loop` | Feedback Loop auditor CLI |
+| 26 | [`ai_feedback_gui`](binaries/ai_feedback_gui.md) **(V96)** | Self-Learning | `feedback-loop`, `gui-pro` | Feedback Loop dashboard |
 
 ## Detailed descriptions
 

@@ -46,7 +46,7 @@ cargo build --release --bin ai_assistant_cli --features "full,butler"
 
 ## Included Binaries
 
-All 20 binaries ship in the release zip. See `docs/BINARIES.md` for full per-binary documentation.
+All 26 binaries ship in the release zip. See `docs/BINARIES.md` for full per-binary documentation.
 
 | Binary | Description |
 |--------|-------------|
@@ -70,6 +70,12 @@ All 20 binaries ship in the release zip. See `docs/BINARIES.md` for full per-bin
 | `ai_virtual_mic` | Virtual microphone source driven by TTS |
 | `ai_virtual_mic_host` | Audio routing host for ai_virtual_mic |
 | `kpkg_tool` | Create, inspect, and extract encrypted knowledge packages |
+| `ai_skills` | Skill Forge auditor CLI (list, inspect, verify ledger) — requires `skill-forge` |
+| `ai_skills_gui` | Skill Forge auditor GUI with content/WASM hash verification — `skill-forge + gui-pro` |
+| `ai_prompt_synth` | Fragment Synthesis auditor CLI (show ledger, arms summary) — `prompt-synthesis` |
+| `ai_prompt_synth_gui` | Fragment Synthesis dashboard (clusters, arms, reward history) — `prompt-synthesis + gui-pro` |
+| `ai_feedback` | Feedback Loop auditor CLI (ledger, stats, retractions) — `feedback-loop` |
+| `ai_feedback_gui` | Feedback Loop dashboard (sinks, drops, retractions) — `feedback-loop + gui-pro` |
 
 ## Features
 

@@ -202,6 +202,8 @@ pub mod events;
 pub mod fallback;
 #[cfg(any(test, feature = "chaos-testing"))]
 pub mod fault_injection;
+#[cfg(feature = "feedback-loop")]
+pub mod feedback_loop;
 // V79: C FFI bindings — 20 extern "C" entry points behind the `ffi`
 // feature. Consumed by C/C++/C#/Unity/Unreal/Bevy via the generated
 // header at `include/ai_assistant.h`.
@@ -233,6 +235,8 @@ pub mod plugins;
 pub mod prelude;
 pub mod profiles;
 pub mod progress;
+#[cfg(feature = "prompt-synthesis")]
+pub mod prompt_synthesis;
 #[cfg(feature = "redis-backend")]
 pub mod redis_backend;
 pub mod request_queue;
@@ -243,6 +247,8 @@ pub mod semantic_dedup;
 pub mod server;
 #[cfg(feature = "server-axum")]
 pub mod server_axum;
+#[cfg(feature = "skill-forge")]
+pub mod skill_forge;
 pub mod storage_context;
 pub mod streaming;
 pub mod structured;
@@ -334,6 +340,37 @@ pub use wasm_hooks::{
     AgentConfig as WasmAgentConfig, AgentState as WasmAgentState, ChatConfig as WasmChatConfig,
     ChatMessage as WasmChatMessage, ToolCallInfo as WasmToolCallInfo, UseAgentHook, UseChatHook,
     UseCompletionHook,
+};
+
+#[cfg(feature = "skill-forge")]
+pub use skill_forge::{
+    Capability as SkillCapability, CapabilitySet as SkillCapabilitySet, DeclarativeExecutor,
+    GateOutcome, GateVerdict, LedgerEvent, LedgerEventKind, LedgerVerifyError, NetAllowList,
+    PathGlob, PromotionDecision, PromotionGate, PromotionPipeline, PromotionReason,
+    SkillDefinition, SkillError, SkillId, SkillInputs, SkillLedger, SkillMode, SkillOutput,
+    SkillRegistry, SkillRegistryError, SkillStatus, SkillStep, SkillVersion, StepKind,
+    WasmArtifact,
+};
+
+#[cfg(feature = "prompt-synthesis")]
+pub use prompt_synthesis::{
+    ArmProposer, ArmSelection, BanditError, BanditStats, EpsilonRandomProposer, ExplorationControl,
+    ExplorationError, FragmentBandit, FragmentBanditConfig, FragmentEvent, FragmentEventKind,
+    FragmentLedger, FragmentLedgerError, IntentCluster, IntentClusterId, IntentClusterManager,
+    IntentClusterManagerConfig, IntentEmbedding, PromptArm, PromptArmId, ProviderFingerprint,
+    RejectProposer, RewardPolicy as FragmentRewardPolicy,
+    RewardPolicyConfig as FragmentRewardPolicyConfig, RewardSignal as FragmentRewardSignal,
+    SelectionReason,
+};
+
+#[cfg(feature = "feedback-loop")]
+pub use feedback_loop::{
+    CollectorSink, DatasetWriter, DispatchEvent, DispatchEventKind, DispatchLedger,
+    DispatchLedgerError, DispatchSigner, FailingSink, FeedbackDispatcher, FeedbackDispatcherConfig,
+    FeedbackQueue, FeedbackSink, NoopDispatchSigner, Outcome as FeedbackLoopOutcome,
+    OverflowAction as FeedbackOverflowAction, PrivacyTier, QueueError as FeedbackQueueError,
+    RetractionLedger, RewardComponents, SinkError, SubmitResult,
+    TrajectoryId as FeedbackTrajectoryId, TrajectoryRecord, DEFAULT_MINIMUM_SOURCES,
 };
 
 pub use async_support::{

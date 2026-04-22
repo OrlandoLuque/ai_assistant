@@ -34,6 +34,14 @@ pub struct LearningFreezeConfig {
     pub freeze_user_beliefs: bool,
     /// RAG tier auto-selection — don't auto-adjust.
     pub freeze_rag_tiers: bool,
+    /// V96 F1: Skill Forge — don't register new skills or change status.
+    pub freeze_skill_forge: bool,
+    /// V96 F2: Fragment Synthesis — FragmentBandit accepts queries but
+    /// rejects reward updates; cluster manager rejects new clusters.
+    pub freeze_fragment_synthesis: bool,
+    /// V96 F3: Feedback Loop — dispatcher drops new records (counts in
+    /// metrics) without feeding any downstream sink.
+    pub freeze_feedback_loop: bool,
 }
 
 impl LearningFreezeConfig {
@@ -49,6 +57,9 @@ impl LearningFreezeConfig {
             freeze_model_selection: false,
             freeze_user_beliefs: false,
             freeze_rag_tiers: false,
+            freeze_skill_forge: false,
+            freeze_fragment_synthesis: false,
+            freeze_feedback_loop: false,
         }
     }
 
@@ -74,6 +85,9 @@ impl LearningFreezeConfig {
             LearningSubsystem::ModelSelection => self.freeze_model_selection,
             LearningSubsystem::UserBeliefs => self.freeze_user_beliefs,
             LearningSubsystem::RagTiers => self.freeze_rag_tiers,
+            LearningSubsystem::SkillForge => self.freeze_skill_forge,
+            LearningSubsystem::FragmentSynthesis => self.freeze_fragment_synthesis,
+            LearningSubsystem::FeedbackLoop => self.freeze_feedback_loop,
         }
     }
 
@@ -88,6 +102,9 @@ impl LearningFreezeConfig {
             LearningSubsystem::ModelSelection => self.freeze_model_selection = true,
             LearningSubsystem::UserBeliefs => self.freeze_user_beliefs = true,
             LearningSubsystem::RagTiers => self.freeze_rag_tiers = true,
+            LearningSubsystem::SkillForge => self.freeze_skill_forge = true,
+            LearningSubsystem::FragmentSynthesis => self.freeze_fragment_synthesis = true,
+            LearningSubsystem::FeedbackLoop => self.freeze_feedback_loop = true,
         }
     }
 
@@ -102,13 +119,16 @@ impl LearningFreezeConfig {
             LearningSubsystem::ModelSelection => self.freeze_model_selection = false,
             LearningSubsystem::UserBeliefs => self.freeze_user_beliefs = false,
             LearningSubsystem::RagTiers => self.freeze_rag_tiers = false,
+            LearningSubsystem::SkillForge => self.freeze_skill_forge = false,
+            LearningSubsystem::FragmentSynthesis => self.freeze_fragment_synthesis = false,
+            LearningSubsystem::FeedbackLoop => self.freeze_feedback_loop = false,
         }
     }
 
     /// Count of frozen subsystems.
     pub fn frozen_count(&self) -> usize {
         if self.freeze_all {
-            return 8;
+            return 11;
         }
         [
             self.freeze_bandit,
@@ -119,6 +139,9 @@ impl LearningFreezeConfig {
             self.freeze_model_selection,
             self.freeze_user_beliefs,
             self.freeze_rag_tiers,
+            self.freeze_skill_forge,
+            self.freeze_fragment_synthesis,
+            self.freeze_feedback_loop,
         ]
         .iter()
         .filter(|&&f| f)
@@ -136,6 +159,9 @@ impl LearningFreezeConfig {
             (self.freeze_model_selection, "model_selection"),
             (self.freeze_user_beliefs, "user_beliefs"),
             (self.freeze_rag_tiers, "rag_tiers"),
+            (self.freeze_skill_forge, "skill_forge"),
+            (self.freeze_fragment_synthesis, "fragment_synthesis"),
+            (self.freeze_feedback_loop, "feedback_loop"),
         ];
         if self.freeze_all {
             return all.iter().map(|(_, name)| *name).collect();
@@ -155,6 +181,7 @@ impl Default for LearningFreezeConfig {
 
 /// Identifiers for learning subsystems.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum LearningSubsystem {
     Bandit,
     Procedures,
@@ -164,6 +191,12 @@ pub enum LearningSubsystem {
     ModelSelection,
     UserBeliefs,
     RagTiers,
+    /// V96 F1: Skill Forge.
+    SkillForge,
+    /// V96 F2: Fragment Synthesis.
+    FragmentSynthesis,
+    /// V96 F3: Feedback Loop.
+    FeedbackLoop,
 }
 
 impl std::fmt::Display for LearningSubsystem {
@@ -177,6 +210,9 @@ impl std::fmt::Display for LearningSubsystem {
             Self::ModelSelection => write!(f, "model_selection"),
             Self::UserBeliefs => write!(f, "user_beliefs"),
             Self::RagTiers => write!(f, "rag_tiers"),
+            Self::SkillForge => write!(f, "skill_forge"),
+            Self::FragmentSynthesis => write!(f, "fragment_synthesis"),
+            Self::FeedbackLoop => write!(f, "feedback_loop"),
         }
     }
 }
@@ -199,7 +235,10 @@ mod tests {
         assert!(config.is_frozen(LearningSubsystem::Bandit));
         assert!(config.is_frozen(LearningSubsystem::Procedures));
         assert!(config.is_frozen(LearningSubsystem::Reputation));
-        assert_eq!(config.frozen_count(), 8);
+        assert!(config.is_frozen(LearningSubsystem::SkillForge));
+        assert!(config.is_frozen(LearningSubsystem::FragmentSynthesis));
+        assert!(config.is_frozen(LearningSubsystem::FeedbackLoop));
+        assert_eq!(config.frozen_count(), 11);
     }
 
     #[test]
@@ -242,7 +281,7 @@ mod tests {
     #[test]
     fn test_frozen_list_all() {
         let config = LearningFreezeConfig::all_frozen();
-        assert_eq!(config.frozen_list().len(), 8);
+        assert_eq!(config.frozen_list().len(), 11);
     }
 
     #[test]

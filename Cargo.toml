@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.27"
+version = "0.2.28"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -346,6 +346,42 @@ server-openapi = ["server-axum", "dep:utoipa", "dep:utoipa-swagger-ui"]
 # Redis backend: alternative to CRDT sync for rate limiting, sessions, caching
 redis-backend = ["dep:redis"]
 
+# === V96: Self-Learning (Skill Forge + Fragment Synthesis + Feedback Loop) ===
+
+# Skill Forge: LLM-authored skills with Declarative DSL + WASM-Rust execution.
+# Hash-chained evidence ledger (Blake3) + Ed25519 signatures + capability sandbox.
+# Not in 'full' — heavy deps (wasmtime). Opt-in: --features skill-forge
+skill-forge = [
+    "dep:wasmtime",
+    "dep:wasmtime-wasi",
+    "dep:wasi-common",
+    "dep:ed25519-dalek",
+    "dep:blake3",
+    "dep:hkdf",
+    "dep:sha2",
+    "security",
+]
+
+# Prompt Synthesis: contextual bandit over fragment combinations, clustered by
+# intent embedding. FragmentBandit + cluster manager + reward ledger.
+# Not in 'full' — opt-in. Use: --features prompt-synthesis
+prompt-synthesis = [
+    "prompt-fragments",
+    "embeddings",
+    "dep:blake3",
+    "advanced-memory",
+]
+
+# Feedback Loop: dispatcher routing trajectory+reward to memory, routing bandit,
+# fragment bandit, skill forge, dataset writer. Hash-chained dispatch ledger.
+# Not in 'full' — opt-in. Use: --features feedback-loop
+feedback-loop = [
+    "distillation",
+    "advanced-memory",
+    "dep:blake3",
+    "dep:ed25519-dalek",
+]
+
 [dependencies]
 anyhow = "1"
 log = "0.4"
@@ -454,6 +490,18 @@ async-stream = { version = "0.3", optional = true }
 # Futures core traits (Stream trait for SSE)
 futures-core = { version = "0.3", optional = true }
 
+# === V96: Self-Learning deps ===
+# Wasmtime runtime for Skill Forge WASM execution (fuel + ResourceLimiter)
+wasmtime = { version = "25", optional = true, default-features = false, features = ["cranelift", "runtime"] }
+wasmtime-wasi = { version = "25", optional = true }
+wasi-common = { version = "25", optional = true }
+# Ed25519 signatures for skill integrity and ledger event attestation
+ed25519-dalek = { version = "2", optional = true, default-features = false, features = ["std", "rand_core"] }
+# Blake3 for hash-chained ledger prev_hash and content hashing
+blake3 = { version = "1", optional = true }
+# HKDF per-tenant key derivation from master Ed25519 key
+hkdf = { version = "0.12", optional = true }
+
 # V78: libc is only needed by ai_proxy on Unix for O_NOFOLLOW when opening the
 # audit log (symlink-safe append). Already transitive via other deps; declared
 # here as a direct dep so `ai_proxy.rs` can name it. No effect on Windows.
@@ -557,6 +605,38 @@ required-features = ["gui"]
 name = "ai_jobs"
 path = "src/bin/ai_jobs.rs"
 required-features = ["scheduler"]
+
+# === V96: Self-Learning auditor binaries ===
+
+[[bin]]
+name = "ai_skills"
+path = "src/bin/ai_skills.rs"
+required-features = ["skill-forge"]
+
+[[bin]]
+name = "ai_skills_gui"
+path = "src/bin/ai_skills_gui.rs"
+required-features = ["skill-forge", "gui-pro"]
+
+[[bin]]
+name = "ai_prompt_synth"
+path = "src/bin/ai_prompt_synth.rs"
+required-features = ["prompt-synthesis"]
+
+[[bin]]
+name = "ai_prompt_synth_gui"
+path = "src/bin/ai_prompt_synth_gui.rs"
+required-features = ["prompt-synthesis", "gui-pro"]
+
+[[bin]]
+name = "ai_feedback"
+path = "src/bin/ai_feedback.rs"
+required-features = ["feedback-loop"]
+
+[[bin]]
+name = "ai_feedback_gui"
+path = "src/bin/ai_feedback_gui.rs"
+required-features = ["feedback-loop", "gui-pro"]
 
 [[example]]
 name = "autonomous_agent"

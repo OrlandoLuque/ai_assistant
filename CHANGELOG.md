@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v52 (2026-04-22) — V96: Self-Learning (Skill Forge + Fragment Synthesis + Feedback Loop) (0.2.28)
+
+### Added
+- **F1 Skill Forge** (`skill-forge` feature): LLM-authored skills with Declarative DSL
+  + WASM-Rust execution, content+artifact Blake3 hashing, Ed25519 signatures,
+  hash-chained `SkillLedger`, promotion pipeline with 6 gates, capability gating
+  (path globs + net allow-list + fuel/memory caps).
+- **F2 Fragment Synthesis** (`prompt-synthesis` feature): contextual bandit over
+  prompt-fragment combinations — adaptive `IntentClusterManager` (1..64),
+  Bayesian UCB with Beta prior + ε-random 5% safety floor, provider-fingerprint
+  isolation, hash-chained `FragmentLedger`, fixed-weight `RewardPolicy`.
+- **F3 Feedback Loop** (`feedback-loop` feature): `FeedbackDispatcher` routing
+  `TrajectoryRecord`s to registered `FeedbackSink`s (memory / dataset / bandits),
+  `FeedbackQueue` with priority lane + drop-oldest overflow, hash-chained
+  `DispatchLedger` + `RetractionLedger`, privacy-tier gating, minimum-sources
+  defense against reward hacking.
+- **6 new binaries** (20→26): `ai_skills`, `ai_skills_gui`, `ai_prompt_synth`,
+  `ai_prompt_synth_gui`, `ai_feedback`, `ai_feedback_gui` — each pair is an
+  auditor (CLI + GUI) per `feedback_auditable_subsystems` memory.
+- **Runtime freeze** — `LearningFreezeConfig` gains `freeze_skill_forge`,
+  `freeze_fragment_synthesis`, `freeze_feedback_loop` fields and three
+  `LearningSubsystem` variants. `FeedbackDispatcher::set_frozen` honored in
+  `submit()` — frozen records are ledgered as `Dropped{reason: "frozen"}` but
+  not forwarded to sinks.
+- **Docs** — `docs/IMPROVEMENTS_V96.md` with design rationale per phase,
+  threat model summary, binary catalog update.
+
+### Tests
+- F1: 58 passing (skill_forge::capability, declarative, ledger, promotion, registry, wasm).
+- F2: 48 passing (prompt_synthesis::arm, bandit, exploration, intent, ledger, reward).
+- F3: 35 passing (feedback_loop::dataset, dispatcher, ledger, queue, sinks, trajectory).
+
+### Changed
+- Bumped to 0.2.28. Binary catalog updated in `README.md` (26 binaries).
+
 ## [Unreleased] - v51 (2026-04-20) — V95: StallHeuristic robustness + LLM-light backend (0.2.27)
 
 ### Added
