@@ -5,6 +5,93 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v54 (2026-04-23) — V98: Self-Correction Framework (Reflexion pattern) (0.2.30)
+
+### Added
+- **Self-Correction Framework** (`self-correction` feature, opt-in, not in
+  `full`): generic validator-corrector harness implementing the Reflexion /
+  Self-Refine pattern. `execute → validate → feedback → regenerate` loop with
+  4-dimensional budget (max attempts, max total tokens, max total cost USD,
+  max total wall-clock ms).
+- **`CorrectableTask` trait** — generic over `Output` and `Issue`, with 5
+  methods: `name`, `execute`, `validate`, `build_feedback`, `quality_score`.
+  The `Issue` trait carries `is_retryable()`; fatal issues (RBAC denial, PII
+  leak, jailbreak) stop the engine immediately.
+- **`SelfCorrectionEngine`** orchestrator — tracks 4-dim budget, detects
+  regression and no-improvement via quality-score delta, aggregates tokens /
+  cost / wall-clock across attempts, returns best-so-far on budget
+  exhaustion.
+- **`StopReason`** enum — 10 variants: `AllPassed`, `CalibratedAbstention`,
+  `MaxAttempts`, `TokenBudgetExhausted`, `CostBudgetExhausted`,
+  `TimeBudgetExhausted`, `NoImprovement`, `QualityRegression`,
+  `RegenerationFailed`, `FatalIssue(String)`. `is_success()` returns true
+  only for `AllPassed` and `CalibratedAbstention`.
+- **Feedback sanitization** — prior-response segments wrapped in
+  `<<<PRIOR_RESPONSE\n…\n>>>` delimiters with control-character stripping
+  and character-count truncation (default 4000) to mitigate prompt-injection
+  amplification across attempts.
+- **`CorrectionLedger`** — JSONL append-only audit trail. Each run appends
+  one `LedgerEntry`. Malformed lines are skipped with a count.
+- **`ClaimVerificationTask`** — first concrete task. Wraps CoVe +
+  FaithfulnessScorer + QualityGateRunner into one retry loop. Detects
+  calibrated abstention and treats as honest success.
+- **`SelfCorrectionConfig`** — default / strict / permissive presets.
+
+### Tests
+- self_correction: 36 passing (mod/engine/ledger/claim across 4 files).
+
+### Changed
+- `Cargo.toml`: version 0.2.29 → 0.2.30, new feature `self-correction = []`.
+- `src/lib.rs` re-exports framework behind the feature flag with
+  `Correction*` aliases to avoid collisions.
+
+### Notes
+- V98 ships the foundation. V99 adds code tasks (`CodeCompileTask`,
+  `CodeTestTask`); V100 adds tool-call, research-citation, agent-handoff,
+  and safety-guardrail tasks.
+
+## [Unreleased] - v53 (2026-04-23) — V97: PromptBreeder (self-referential prompt evolution) (0.2.29)
+
+### Added
+- **PromptBreeder** (`prompt-breeder` feature): self-referential evolution of
+  `(task_prompt, mutation_prompt)` pairs (Fernando et al. 2023). 19 configurable
+  axes, 9 mutation operators (ZeroOrder, FirstOrder, Eda, EdaRankAndIndex,
+  LineageBased, HyperMutationZeroOrder, HyperMutationFirstOrder, Lamarckian,
+  PromptCrossover), provider-fingerprint isolation (`ProviderFingerprint`
+  shape-compatible with `prompt_synthesis`), UCB1 bandit scheduler, Blake3
+  hash-chained `BreederLedger` with optional Ed25519 signer trait.
+- **Selection strategies** — Tournament / RouletteWheel / RankBased / Truncation
+  / Boltzmann.
+- **Replacement policies** — Generational / SteadyState / Elitism / TournamentReplace.
+- **Crossover strategies** — None / SinglePoint / TwoPoint / Uniform / SemanticLlm / LineageInformed.
+- **NSGA-II helpers** — `pareto_ranks` + `crowding_distance` for multi-objective.
+- **Diversity metrics** — EditDistance (Levenshtein) / NGramJaccard / EmbeddingCosine.
+- **Fitness smoothing** — Single / MeanOfK / SelfConsistency{Majority|Plurality|BestOfN} / Bayesian.
+- **Safety filters** — PromptInjectionBlock / PiiBlock / Constitutional / Composite.
+- **Atomic checkpoints** — `Checkpoint{run_id, generation, config_hash_hex,
+  ledger_tip_hash_hex, population, lineage}` written via `.tmp` + rename, MAGIC
+  `AIBR-CKPT\x01`, refuses resume on config hash mismatch.
+- **Budget meter** — `BudgetMeter` enforces MaxCalls / MaxTokens / MaxWallTime /
+  MaxCostUsd via `CostEstimator` (anthropic/openai/ollama default prices).
+- **Eval cache** — `(prompt, input, fingerprint, sample_idx)` → score memo,
+  bypassed on fingerprint change.
+- **2 new binaries** (26→28): `ai_breeder` CLI (list-runs / show-run /
+  ledger-verify / ledger-show / export-population / compare-runs) and
+  `ai_breeder_gui` (egui: Overview / Population / Lineage / Ledger / Events /
+  Fitness tabs, auto-refresh).
+- **Docs** — `docs/IMPROVEMENTS_V97.md`, `docs/PROMPT_BREEDER_GUIDE.md`.
+
+### Tests
+- prompt_breeder: 77 passing (budget, cache, checkpoint, config, eval, fitness,
+  ledger, llm, operators, population, rng, safety, breeder).
+
+### Changed
+- `Cargo.toml` declares `prompt-breeder` feature enabling `dep:blake3`.
+- `src/lib.rs` re-exports with `Breeder*` aliases where names collide
+  (`CostEstimator as BreederCostEstimator`, `ProviderFingerprint as
+  BreederProviderFingerprint`, `TokenUsage as BreederTokenUsage`,
+  `LlmClient as BreederLlmClient`).
+
 ## [Unreleased] - v52 (2026-04-22) — V96: Self-Learning (Skill Forge + Fragment Synthesis + Feedback Loop) (0.2.28)
 
 ### Added

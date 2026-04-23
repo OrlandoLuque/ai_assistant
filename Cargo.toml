@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.28"
+version = "0.2.30"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -382,6 +382,29 @@ feedback-loop = [
     "dep:ed25519-dalek",
 ]
 
+# === V97: PromptBreeder — Self-Referential Prompt Evolution ===
+
+# Self-referential prompt evolution (Fernando et al. 2023, DeepMind) with 3
+# additions vs paper: provider-fingerprint-isolated fitness, hash-chained
+# Blake3 ledger + optional Ed25519, UCB bandit over operators.
+# 19 configurable axes (seed source, eval augmenter, diversity metric,
+# lineage narrator, fitness smoothing, scheduler, selection, crossover,
+# replacement, fitness objective, budget, cache, checkpoint, safety,
+# retry, output parser, operator set, max prompt tokens, rng seed).
+# Not in 'full' — opt-in. Use: --features prompt-breeder
+prompt-breeder = [
+    "dep:blake3",
+]
+
+# === V98: Self-Correction Framework ===
+
+# Generic validator-corrector harness (Reflexion pattern). Trait
+# `CorrectableTask`, 4-dim budget engine (attempts/tokens/cost/time), JSONL
+# ledger, auditor binaries. Ships `ClaimVerificationTask` wrapping CoVe +
+# faithfulness + quality gates. Not in 'full' — opt-in. Use:
+# --features self-correction
+self-correction = []
+
 [dependencies]
 anyhow = "1"
 log = "0.4"
@@ -637,6 +660,18 @@ required-features = ["feedback-loop"]
 name = "ai_feedback_gui"
 path = "src/bin/ai_feedback_gui.rs"
 required-features = ["feedback-loop", "gui-pro"]
+
+# === V97: PromptBreeder auditor binaries ===
+
+[[bin]]
+name = "ai_breeder"
+path = "src/bin/ai_breeder.rs"
+required-features = ["prompt-breeder"]
+
+[[bin]]
+name = "ai_breeder_gui"
+path = "src/bin/ai_breeder_gui.rs"
+required-features = ["prompt-breeder", "gui-pro"]
 
 [[example]]
 name = "autonomous_agent"

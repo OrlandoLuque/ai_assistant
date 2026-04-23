@@ -235,6 +235,8 @@ pub mod plugins;
 pub mod prelude;
 pub mod profiles;
 pub mod progress;
+#[cfg(feature = "prompt-breeder")]
+pub mod prompt_breeder;
 #[cfg(feature = "prompt-synthesis")]
 pub mod prompt_synthesis;
 #[cfg(feature = "redis-backend")]
@@ -243,6 +245,8 @@ pub mod request_queue;
 pub mod retry;
 pub mod search;
 pub mod secure_credentials;
+#[cfg(feature = "self-correction")]
+pub mod self_correction;
 pub mod semantic_dedup;
 pub mod server;
 #[cfg(feature = "server-axum")]
@@ -361,6 +365,30 @@ pub use prompt_synthesis::{
     RejectProposer, RewardPolicy as FragmentRewardPolicy,
     RewardPolicyConfig as FragmentRewardPolicyConfig, RewardSignal as FragmentRewardSignal,
     SelectionReason,
+};
+
+#[cfg(feature = "prompt-breeder")]
+pub use prompt_breeder::{
+    BreederError, BreederEvent, BreederLedger, BreederLedgerError, BreederOutcome, BudgetKind,
+    BudgetLimit, BudgetMeter, CacheHit, CheckpointPolicy, CompositeEvaluator, ContainsEvaluator,
+    CostEstimator as BreederCostEstimator, CrossoverStrategy, DiversityMetric, EvalAugmenter,
+    EvalCache, EvalCacheMode, EvalDataset, EvalExample, ExactMatchEvaluator, FitnessEvaluator,
+    FitnessObjective, FitnessScore, FitnessSmoothing, JsonSchemaEvaluator, LineageDag,
+    LineageNarrator, LlmClient as BreederLlmClient, LlmJudgeEvaluator, Metric, MockLlmClient,
+    MutationOperator, OperatorPhase, OperatorScheduler, OutputParser, Population, PromptBreeder,
+    PromptBreederConfig, ProviderFingerprint as BreederProviderFingerprint, RegexEvaluator,
+    RejectReason, ReplacementPolicy, RetryPolicy, SafetyFilter, SeedProvenance, SeedSource,
+    SelectionStrategy, TokenUsage as BreederTokenUsage, Unit, VoteRule,
+};
+
+#[cfg(feature = "self-correction")]
+pub use self_correction::{
+    sanitize_for_feedback as sanitize_correction_feedback,
+    AttemptRecord as CorrectionAttemptRecord, ClaimIssue, ClaimVerificationTask, CorrectableTask,
+    CorrectionLedger, Issue as CorrectionIssue, LedgerEntry as CorrectionLedgerEntry,
+    LedgerError as CorrectionLedgerError, SelfCorrectionConfig, SelfCorrectionEngine,
+    SelfCorrectionResult, StopReason as CorrectionStopReason, TaskError as CorrectionTaskError,
+    TaskOutcome as CorrectionTaskOutcome,
 };
 
 #[cfg(feature = "feedback-loop")]
