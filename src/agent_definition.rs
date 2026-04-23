@@ -24,10 +24,22 @@ use crate::error::{AiError, AiResult, SerializationError};
 // ── Known valid values ──────────────────────────────────────────────────────
 
 const KNOWN_ROLES: &[&str] = &["Analyst", "Manager", "Worker", "Expert", "Validator"];
+// Accepted autonomy-level strings. Must stay aligned with
+// `agent_wiring::parse_autonomy_level`, which collapses these synonyms to
+// three runtime variants (`AutonomyLevel::Paranoid | Normal | Autonomous`).
+// Matching is case-insensitive (see validation below).
 const KNOWN_AUTONOMY_LEVELS: &[&str] = &[
+    // → Paranoid
     "manual",
+    "paranoid",
+    // → Normal
     "assisted",
+    "balanced",
+    "cautious",
     "delegated",
+    "normal",
+    // → Autonomous
+    "autonomous",
     "independent",
     "proactive",
 ];
@@ -305,7 +317,8 @@ impl AgentDefinitionLoader {
 
         // ── agent.autonomy_level ───────────────────────────────────────
         if let Some(ref level) = def.agent.autonomy_level {
-            if !KNOWN_AUTONOMY_LEVELS.contains(&level.as_str()) {
+            let level_lc = level.to_lowercase();
+            if !KNOWN_AUTONOMY_LEVELS.iter().any(|k| *k == level_lc) {
                 warnings.push(ValidationWarning {
                     field: "agent.autonomy_level".to_string(),
                     message: format!(
@@ -872,6 +885,37 @@ mod tests {
         assert!(warnings
             .iter()
             .any(|w| w.field == "agent.autonomy_level" && w.severity == WarningSeverity::Warning));
+    }
+
+    /// Every string that `agent_wiring::parse_autonomy_level` accepts must
+    /// validate cleanly here — otherwise a valid YAML lands with a spurious
+    /// warning. Case-insensitive by design.
+    #[test]
+    fn test_validate_autonomy_level_aliases_accepted() {
+        let aliases = [
+            "manual",
+            "Manual",
+            "PARANOID",
+            "assisted",
+            "balanced",
+            "cautious",
+            "delegated",
+            "normal",
+            "autonomous",
+            "independent",
+            "proactive",
+        ];
+        for a in aliases {
+            let json = format!(r#"{{ "agent": {{ "name": "x", "autonomy_level": "{a}" }} }}"#);
+            let def =
+                AgentDefinitionLoader::from_json(&json).unwrap_or_else(|_| panic!("parse {a}"));
+            let warnings =
+                AgentDefinitionLoader::validate(&def).unwrap_or_else(|_| panic!("validate {a}"));
+            assert!(
+                !warnings.iter().any(|w| w.field == "agent.autonomy_level"),
+                "alias {a} produced an autonomy_level warning",
+            );
+        }
     }
 
     // ── 9. Validate tool with empty name (error) ────────────────────────
