@@ -5,6 +5,66 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v56 (2026-04-23) — V100: Self-Correction for Tool/Research/Agent/Safety (0.2.32)
+
+### Added
+- **`ToolCallTask`** (`src/self_correction/tool_call.rs`) — retries
+  tool-call payloads that fail JSON / schema / constraint validation.
+  `ToolCallIssue::{InvalidJson, SchemaViolation, ConstraintViolation,
+  UnknownTool}`. Builder `with_schema_hint(json_schema_text)` injects the
+  target schema verbatim into feedback.
+- **`ResearchCitationTask`** (`src/self_correction/research.rs`) — retries
+  until in-text citations resolve and cover claims.
+  `CitationIssue::{DanglingReference, UnusedReference, UnsupportedClaim,
+  UnresolvableTarget, LowCoverage}`. Builder `with_coverage_threshold(t)`
+  (default 0.7). All issues retryable.
+- **`AgentHandoffTask`** (`src/self_correction/agent_handoff.rs`) — retries
+  planner/executor handoff payloads until complete.
+  `HandoffIssue::{MissingField, InvalidField, UnknownTarget,
+  DependencyNotMet}`. Builders `with_required_fields(iter)` and
+  `with_valid_targets(iter)` display the exact vocabulary in feedback.
+- **`SafetyGuardrailTask`** (`src/self_correction/safety.rs`) — retries
+  safety violations with **per-variant retryability**.
+  `SafetyIssue::{PiiLeak (retryable), PromptInjection (caller), 
+  DisallowedContent (caller), JailbreakAttempt (FATAL), PolicyError
+  (FATAL)}`. `quality_score` = 0.0 if any fatal issue. Jailbreak / policy
+  errors stop the engine with `FatalIssue(msg)` so callers can refuse.
+- **Public API**: `ToolCallTask`, `ToolCallIssue`, `ResearchCitationTask`,
+  `CitationIssue`, `AgentHandoffTask`, `HandoffIssue`,
+  `SafetyGuardrailTask`, `SafetyIssue`, `SafetyIssueSpec`, plus their
+  validate/regenerate fn type aliases and result types, re-exported from
+  `lib.rs` under `#[cfg(feature = "self-correction")]`.
+
+### Pattern
+- All four new tasks adopt the V99 `RefCell<FnMut>` interior-mutability
+  pattern so `FnMut` validator/regenerator closures can run inside
+  `validate(&self, …)`.
+
+### Tests
+- self_correction::tool_call: 5 tests.
+- self_correction::research: 5 tests.
+- self_correction::agent_handoff: 5 tests.
+- self_correction::safety: 8 tests (clean, PII-retryable, jailbreak-fatal,
+  disallowed-non-retryable-fatal, injection-retryable, feedback rule,
+  quality=0 for fatal, Display).
+- **Total self-correction tests: 72** (V98=36 + V99=13 + V100=23).
+
+### Changed
+- `Cargo.toml`: 0.2.31 → 0.2.32.
+- `src/self_correction/mod.rs` registers the four new submodules and
+  re-exports the full V100 surface.
+
+### Notes
+- V100 completes the task-type matrix: claims (V98), code (V99),
+  tool-call / research / agent-handoff / safety (V100).
+- Surface-area wiring (auditor binaries `ai_corrections` / `_gui`,
+  `ai_cli` `--auto-correct` / `--auto-fix` flags, HTTP
+  `POST /api/v1/correct`, MCP `self_correct_*` tools, GUI widget,
+  `SelfCorrectionFileConfig`, `record_correction_attempt` telemetry)
+  is deliberately grouped as a separate "surface wiring" follow-up
+  because it touches code shared across all three V-versions and is
+  cleaner to land as one coherent batch.
+
 ## [Unreleased] - v55 (2026-04-23) — V99: Self-Correction for Code Tasks (0.2.31)
 
 ### Added

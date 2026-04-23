@@ -22,11 +22,18 @@
 //! # }
 //! ```
 
+pub mod agent_handoff;
 pub mod claim;
 pub mod code;
 pub mod engine;
 pub mod ledger;
+pub mod research;
+pub mod safety;
+pub mod tool_call;
 
+pub use agent_handoff::{
+    AgentHandoffTask, HandoffIssue, HandoffRegenerateFn, HandoffValidateFn, HandoffValidationResult,
+};
 pub use claim::{ClaimIssue, ClaimVerificationTask};
 pub use code::{
     cargo_compile_check, cargo_run_tests, parse_cargo_test_failures, CodeCompileTask,
@@ -35,6 +42,17 @@ pub use code::{
 };
 pub use engine::SelfCorrectionEngine;
 pub use ledger::{CorrectionLedger, LedgerEntry, LedgerError};
+pub use research::{
+    CitationIssue, CitationRegenerateFn, CitationValidateFn, CitationValidationResult,
+    ResearchCitationTask,
+};
+pub use safety::{
+    SafetyCheckResult, SafetyGuardrailTask, SafetyIssue, SafetyIssueSpec, SafetyRegenerateFn,
+    SafetyValidateFn,
+};
+pub use tool_call::{
+    ToolCallIssue, ToolCallTask, ToolRegenerateFn, ToolValidateFn, ToolValidationResult,
+};
 
 use std::fmt;
 use std::path::PathBuf;
