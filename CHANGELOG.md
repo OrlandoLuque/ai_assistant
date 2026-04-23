@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v55 (2026-04-23) — V99: Self-Correction for Code Tasks (0.2.31)
+
+### Added
+- **`CodeCompileTask`** / **`CodeCompileTaskCell`** — retry loop for
+  code-that-compiles. `Cell` variant uses `RefCell<CompileFn>` so the
+  validator can invoke the compile closure from `validate(&self)`.
+  Ships `with_warnings_as_errors(bool)` opt-in.
+- **`CodeTestTask`** — retry loop for code-that-passes-tests. Distinguishes
+  `TestsFailed` from `TestRunnerError` (subprocess spawn / test-binary
+  compile failures) because the appropriate feedback differs.
+- **Convenience helpers** (Rust-specific):
+  - `cargo_compile_check(crate_dir, target_path, code)` — shells out to
+    `cargo check --message-format=short`.
+  - `cargo_run_tests(crate_dir, target_path, code, test_filter)` — shells
+    out to `cargo test`.
+  - `parse_cargo_test_failures(output)` — best-effort parser for
+    `test X ... FAILED` lines and `test result:` summaries.
+- **Issue types**: `CompileIssue::{Failed, WarningsAsErrors}`,
+  `TestIssue::{TestsFailed, TestRunnerError}`.
+- **Feedback templates** customized per task — compile feedback asks "fix
+  every compiler error, keep public API unchanged"; test feedback says
+  "don't change test assertions, preserve signatures".
+- **Display implementations** truncate long stderr at 800 chars with
+  `…[truncated]` marker.
+
+### Tests
+- self_correction::code: 13 passing (total framework: 49 tests).
+
+### Changed
+- `Cargo.toml`: 0.2.30 → 0.2.31.
+- `src/lib.rs` re-exports V99 types alongside V98 with `correction_*`
+  prefix for the convenience helpers.
+
+### Notes
+- Auditor binaries (`ai_corrections`, `ai_corrections_gui`), `ai_cli
+  code --auto-fix` flag, HTTP/MCP endpoints remain scheduled — they span
+  V98+V99+V100 and will land after V100.
+
 ## [Unreleased] - v54 (2026-04-23) — V98: Self-Correction Framework (Reflexion pattern) (0.2.30)
 
 ### Added

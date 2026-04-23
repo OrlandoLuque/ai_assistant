@@ -383,12 +383,17 @@ pub use prompt_breeder::{
 
 #[cfg(feature = "self-correction")]
 pub use self_correction::{
+    cargo_compile_check as correction_cargo_compile_check,
+    cargo_run_tests as correction_cargo_run_tests,
+    parse_cargo_test_failures as correction_parse_cargo_test_failures,
     sanitize_for_feedback as sanitize_correction_feedback,
-    AttemptRecord as CorrectionAttemptRecord, ClaimIssue, ClaimVerificationTask, CorrectableTask,
-    CorrectionLedger, Issue as CorrectionIssue, LedgerEntry as CorrectionLedgerEntry,
-    LedgerError as CorrectionLedgerError, SelfCorrectionConfig, SelfCorrectionEngine,
-    SelfCorrectionResult, StopReason as CorrectionStopReason, TaskError as CorrectionTaskError,
-    TaskOutcome as CorrectionTaskOutcome,
+    AttemptRecord as CorrectionAttemptRecord, ClaimIssue, ClaimVerificationTask, CodeCompileTask,
+    CodeCompileTaskCell, CodeRegenerateFn, CodeTestTask, CompileCheckResult, CompileFn,
+    CompileIssue, CorrectableTask, CorrectionLedger, Issue as CorrectionIssue,
+    LedgerEntry as CorrectionLedgerEntry, LedgerError as CorrectionLedgerError,
+    SelfCorrectionConfig, SelfCorrectionEngine, SelfCorrectionResult,
+    StopReason as CorrectionStopReason, TaskError as CorrectionTaskError,
+    TaskOutcome as CorrectionTaskOutcome, TestFn, TestIssue, TestRunResult,
 };
 
 #[cfg(feature = "feedback-loop")]

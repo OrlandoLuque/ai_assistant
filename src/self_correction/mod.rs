@@ -23,10 +23,16 @@
 //! ```
 
 pub mod claim;
+pub mod code;
 pub mod engine;
 pub mod ledger;
 
 pub use claim::{ClaimIssue, ClaimVerificationTask};
+pub use code::{
+    cargo_compile_check, cargo_run_tests, parse_cargo_test_failures, CodeCompileTask,
+    CodeCompileTaskCell, CodeRegenerateFn, CodeTestTask, CompileCheckResult, CompileFn,
+    CompileIssue, TestFn, TestIssue, TestRunResult,
+};
 pub use engine::SelfCorrectionEngine;
 pub use ledger::{CorrectionLedger, LedgerEntry, LedgerError};
 
