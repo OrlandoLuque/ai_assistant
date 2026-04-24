@@ -42,6 +42,9 @@ pub struct LearningFreezeConfig {
     /// V96 F3: Feedback Loop — dispatcher drops new records (counts in
     /// metrics) without feeding any downstream sink.
     pub freeze_feedback_loop: bool,
+    /// V97: PromptBreeder — rejects run() (no new generations) and
+    /// rejects reward/ledger appends beyond FreezeChanged.
+    pub freeze_prompt_breeder: bool,
 }
 
 impl LearningFreezeConfig {
@@ -60,6 +63,7 @@ impl LearningFreezeConfig {
             freeze_skill_forge: false,
             freeze_fragment_synthesis: false,
             freeze_feedback_loop: false,
+            freeze_prompt_breeder: false,
         }
     }
 
@@ -88,6 +92,7 @@ impl LearningFreezeConfig {
             LearningSubsystem::SkillForge => self.freeze_skill_forge,
             LearningSubsystem::FragmentSynthesis => self.freeze_fragment_synthesis,
             LearningSubsystem::FeedbackLoop => self.freeze_feedback_loop,
+            LearningSubsystem::PromptBreeder => self.freeze_prompt_breeder,
         }
     }
 
@@ -105,6 +110,7 @@ impl LearningFreezeConfig {
             LearningSubsystem::SkillForge => self.freeze_skill_forge = true,
             LearningSubsystem::FragmentSynthesis => self.freeze_fragment_synthesis = true,
             LearningSubsystem::FeedbackLoop => self.freeze_feedback_loop = true,
+            LearningSubsystem::PromptBreeder => self.freeze_prompt_breeder = true,
         }
     }
 
@@ -122,13 +128,14 @@ impl LearningFreezeConfig {
             LearningSubsystem::SkillForge => self.freeze_skill_forge = false,
             LearningSubsystem::FragmentSynthesis => self.freeze_fragment_synthesis = false,
             LearningSubsystem::FeedbackLoop => self.freeze_feedback_loop = false,
+            LearningSubsystem::PromptBreeder => self.freeze_prompt_breeder = false,
         }
     }
 
     /// Count of frozen subsystems.
     pub fn frozen_count(&self) -> usize {
         if self.freeze_all {
-            return 11;
+            return 12;
         }
         [
             self.freeze_bandit,
@@ -142,6 +149,7 @@ impl LearningFreezeConfig {
             self.freeze_skill_forge,
             self.freeze_fragment_synthesis,
             self.freeze_feedback_loop,
+            self.freeze_prompt_breeder,
         ]
         .iter()
         .filter(|&&f| f)
@@ -162,6 +170,7 @@ impl LearningFreezeConfig {
             (self.freeze_skill_forge, "skill_forge"),
             (self.freeze_fragment_synthesis, "fragment_synthesis"),
             (self.freeze_feedback_loop, "feedback_loop"),
+            (self.freeze_prompt_breeder, "prompt_breeder"),
         ];
         if self.freeze_all {
             return all.iter().map(|(_, name)| *name).collect();
@@ -197,6 +206,8 @@ pub enum LearningSubsystem {
     FragmentSynthesis,
     /// V96 F3: Feedback Loop.
     FeedbackLoop,
+    /// V97: PromptBreeder.
+    PromptBreeder,
 }
 
 impl std::fmt::Display for LearningSubsystem {
@@ -213,6 +224,7 @@ impl std::fmt::Display for LearningSubsystem {
             Self::SkillForge => write!(f, "skill_forge"),
             Self::FragmentSynthesis => write!(f, "fragment_synthesis"),
             Self::FeedbackLoop => write!(f, "feedback_loop"),
+            Self::PromptBreeder => write!(f, "prompt_breeder"),
         }
     }
 }
@@ -238,7 +250,8 @@ mod tests {
         assert!(config.is_frozen(LearningSubsystem::SkillForge));
         assert!(config.is_frozen(LearningSubsystem::FragmentSynthesis));
         assert!(config.is_frozen(LearningSubsystem::FeedbackLoop));
-        assert_eq!(config.frozen_count(), 11);
+        assert!(config.is_frozen(LearningSubsystem::PromptBreeder));
+        assert_eq!(config.frozen_count(), 12);
     }
 
     #[test]
@@ -281,7 +294,7 @@ mod tests {
     #[test]
     fn test_frozen_list_all() {
         let config = LearningFreezeConfig::all_frozen();
-        assert_eq!(config.frozen_list().len(), 11);
+        assert_eq!(config.frozen_list().len(), 12);
     }
 
     #[test]
