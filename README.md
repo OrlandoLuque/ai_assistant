@@ -82,7 +82,7 @@ All 26 binaries ship in the release zip. See `docs/BINARIES.md` for full per-bin
 ## Features
 
 ### Core Features
-- **Multi-provider support**: 19 LLM providers — Ollama, LM Studio, OpenAI, Anthropic, Google Gemini, Azure OpenAI, AWS Bedrock, Mistral, DeepSeek, Groq, Together AI, Fireworks, Perplexity, OpenRouter, HuggingFace, LocalAI, Kobold.cpp, text-generation-webui, llama.cpp (incl. PrismML fork for 1-bit Bonsai), and any OpenAI-compatible API
+- **Multi-provider support**: 20 LLM providers — Ollama, LM Studio, OpenAI, Anthropic, Google Gemini, Azure OpenAI, AWS Bedrock, Mistral, DeepSeek, Groq, Together AI, Fireworks, Perplexity, OpenRouter, HuggingFace, LocalAI, Kobold.cpp, text-generation-webui, llama.cpp (incl. PrismML fork for 1-bit Bonsai), **vLLM (GPU-optimised: PagedAttention + continuous batching, 2-10x throughput under concurrent load)**, and any OpenAI-compatible API
 - **Provider failover**: Automatic fallback with configurable retry and API key rotation
 - **Streaming responses**: Real-time SSE and WebSocket (RFC 6455) streaming with cancellation support
 - **Resumable streaming**: Checkpoint/replay for long-running generations with `Last-Event-ID`
@@ -178,6 +178,16 @@ All 26 binaries ship in the release zip. See `docs/BINARIES.md` for full per-bin
 - **Ollama zero-copy registration**: `register_with_ollama_hardlink` pre-seeds Ollama's blob store with a hard link so the GGUF bytes exist once on disk instead of being duplicated.
 - **`LlamaCppCapability` probe**: hits `llama-server`'s `/props` to detect PrismML fork / `Q1_0` / ternary support before loading a 1-bit Bonsai.
 - **Curated-model picker widget** (`egui-widgets`): renders the V101 catalog with a `Requires:` banner for PrismML-fork-gated entries.
+
+### vLLM + Runtime Recommender (V103)
+- **`AiProvider::VLLM`**: first-class GPU-optimised runtime (PagedAttention + continuous batching). 2-10x aggregate throughput vs. Ollama/llama.cpp under concurrent load.
+- **`probe_vllm`** + **`HfModelInfo`**: introspect the running vLLM server and HuggingFace repo metadata (gated / private / on-disk size / pipeline tag) before launch.
+- **`vllm_launch_command` / `vllm_docker_command`**: generate ready-to-paste native and Docker commands from a `VLlmLaunchConfig` (tensor-parallel, AWQ/GPTQ/FP8, LoRA hot-swap, `--ipc=host`). Never executes.
+- **8 curated vLLM models**: Qwen2.5-7B/32B-AWQ, Llama-3.1-8B/70B (gated), DeepSeek-R1-Distill, Qwen2.5-Coder, FP8 Llama-3-8B, bge-m3.
+- **Butler `recommend_runtime(report, workload) -> RuntimeRecommendation`**: rule-based, deterministic, never hits the network. Takes a `WorkloadHint` (`InteractiveChat`, `CodeAssist`, `MultiAgent { concurrent_agents }`, `AgenticCoding`, `ResearchPipeline`, `EvalBatch { prompt_count }`, `AutonomousScheduler`, `Auto`) and returns preferred runtime + fallback + reason + speedup estimate + caveats + install hint.
+- **`ai_setup recommend --workload <kind>`**: CLI surface for the recommender. Also `ai_setup install vllm` / `install llamacpp` now emit per-OS install instructions (Linux pip, Windows WSL/Docker, macOS experimental).
+- **Advisor SC5**: fires a High-priority "switch to vLLM" recommendation when GPU is present, multi-agent / autonomous features are active, but vLLM is not running.
+- See [`docs/RUNTIMES_INSTALL.md`](docs/RUNTIMES_INSTALL.md) and [`docs/RUNTIMES_COMPARISON.md`](docs/RUNTIMES_COMPARISON.md) for the full guide.
 
 ### More Features
 - **Voice agent**: STT/TTS with cloud and local providers
@@ -545,6 +555,7 @@ assistant.load_config(config);
 | Kobold.cpp | Native | `http://localhost:5001` | No* |
 | LocalAI | OpenAI-compatible | `http://localhost:8080` | Yes |
 | llama.cpp (incl. PrismML fork) | OpenAI-compatible | `http://localhost:8080` | Yes |
+| vLLM (GPU-optimised) | OpenAI-compatible | `http://localhost:8000` | Yes |
 | OpenAI (cloud) | Native | `https://api.openai.com` | Yes |
 | Anthropic (cloud) | Native | `https://api.anthropic.com` | Yes |
 | Google Gemini (cloud) | Native | `https://generativelanguage.googleapis.com` | Yes |

@@ -64,6 +64,7 @@ fn provider_matches(catalog: &AiProvider, query: &AiProvider) -> bool {
         (Ollama, Ollama)
             | (LMStudio, LMStudio)
             | (LlamaCpp, LlamaCpp)
+            | (VLLM, VLLM)
             | (LocalAI, LocalAI)
             | (TextGenWebUI, TextGenWebUI)
             | (KoboldCpp, KoboldCpp)
@@ -222,6 +223,108 @@ const CURATED_MODELS: &[CuratedModel] = &[
         requirements: None,
     },
     // ------------------------------------------------------------------
+    // vLLM — HuggingFace repo IDs (GPU-backed, OpenAI-compatible)
+    // ------------------------------------------------------------------
+    CuratedModel {
+        provider: AiProvider::VLLM,
+        id: "Qwen/Qwen2.5-7B-Instruct",
+        display_name: "Qwen2.5 7B Instruct (vLLM)",
+        description:
+            "Strong 7B instruct model — single consumer GPU (≥12 GB VRAM). Good default for multi-agent workloads.",
+        parameters: "7B",
+        approx_size: "~15 GB (fp16)",
+        quantization: "fp16 / bf16",
+        source_url: Some("https://huggingface.co/Qwen/Qwen2.5-7B-Instruct"),
+        requirements: Some("Needs ≥12 GB VRAM at fp16. Use AWQ quantization for ≥8 GB cards."),
+    },
+    CuratedModel {
+        provider: AiProvider::VLLM,
+        id: "meta-llama/Llama-3.1-8B-Instruct",
+        display_name: "Llama 3.1 8B Instruct (vLLM, gated)",
+        description: "Meta's tool-calling 8B. Gated — requires HF license acceptance + HF_TOKEN.",
+        parameters: "8B",
+        approx_size: "~16 GB (fp16)",
+        quantization: "fp16",
+        source_url: Some("https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct"),
+        requirements: Some("Gated HF repo — accept license at huggingface.co then export HF_TOKEN."),
+    },
+    CuratedModel {
+        provider: AiProvider::VLLM,
+        id: "Qwen/Qwen2.5-32B-Instruct-AWQ",
+        display_name: "Qwen2.5 32B Instruct (AWQ 4-bit, vLLM)",
+        description: "32B quality at 4-bit AWQ — fits on a single 24 GB GPU (RTX 3090/4090).",
+        parameters: "32B",
+        approx_size: "~19 GB (AWQ 4-bit)",
+        quantization: "AWQ 4-bit",
+        source_url: Some("https://huggingface.co/Qwen/Qwen2.5-32B-Instruct-AWQ"),
+        requirements: Some("Launch with --quantization awq. Needs ≥24 GB VRAM for KV cache headroom."),
+    },
+    CuratedModel {
+        provider: AiProvider::VLLM,
+        id: "meta-llama/Llama-3.1-70B-Instruct",
+        display_name: "Llama 3.1 70B Instruct (tensor-parallel, vLLM)",
+        description:
+            "Flagship 70B. Requires multi-GPU tensor parallelism (4x 24 GB or 2x 80 GB). Gated.",
+        parameters: "70B",
+        approx_size: "~140 GB (fp16)",
+        quantization: "fp16 (use AWQ for less VRAM)",
+        source_url: Some("https://huggingface.co/meta-llama/Llama-3.1-70B-Instruct"),
+        requirements: Some(
+            "Multi-GPU only. Launch with --tensor-parallel-size=N where N divides attention heads (64). Gated — needs HF_TOKEN.",
+        ),
+    },
+    CuratedModel {
+        provider: AiProvider::VLLM,
+        id: "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
+        display_name: "DeepSeek R1 Distill Qwen 7B (vLLM)",
+        description: "Reasoning-tuned distill of DeepSeek R1. Strong chain-of-thought for agentic loops.",
+        parameters: "7B",
+        approx_size: "~15 GB (fp16)",
+        quantization: "fp16",
+        source_url: Some(
+            "https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
+        ),
+        requirements: Some("Needs ≥12 GB VRAM at fp16. Ideal for multi-agent reasoning workflows."),
+    },
+    CuratedModel {
+        provider: AiProvider::VLLM,
+        id: "Qwen/Qwen2.5-Coder-7B-Instruct",
+        display_name: "Qwen2.5-Coder 7B Instruct (vLLM)",
+        description: "Code-specialized instruct model — excels at multi-file edits and tool-use coding.",
+        parameters: "7B",
+        approx_size: "~15 GB (fp16)",
+        quantization: "fp16",
+        source_url: Some("https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct"),
+        requirements: Some("Needs ≥12 GB VRAM at fp16. Best choice for agentic coding workflows."),
+    },
+    CuratedModel {
+        provider: AiProvider::VLLM,
+        id: "neuralmagic/Meta-Llama-3-8B-Instruct-FP8",
+        display_name: "Llama 3 8B Instruct (FP8, vLLM)",
+        description: "FP8-quantized Llama 3 — ~2x throughput vs fp16 on Hopper/Ada GPUs.",
+        parameters: "8B",
+        approx_size: "~8 GB (FP8)",
+        quantization: "FP8",
+        source_url: Some("https://huggingface.co/neuralmagic/Meta-Llama-3-8B-Instruct-FP8"),
+        requirements: Some(
+            "Launch with --quantization fp8. Best on H100/L40S/RTX 4090; falls back on older GPUs.",
+        ),
+    },
+    CuratedModel {
+        provider: AiProvider::VLLM,
+        id: "BAAI/bge-m3",
+        display_name: "BGE-M3 Embeddings (vLLM)",
+        description:
+            "Multilingual embeddings (100+ languages). Dense + sparse + ColBERT vectors from one model.",
+        parameters: "567M",
+        approx_size: "~2.3 GB (fp16)",
+        quantization: "fp16",
+        source_url: Some("https://huggingface.co/BAAI/bge-m3"),
+        requirements: Some(
+            "Launch with `vllm serve BAAI/bge-m3 --task embed`. Outputs 1024-dim dense vectors by default.",
+        ),
+    },
+    // ------------------------------------------------------------------
     // Cloud anchor entries (optional — helps GUI pickers offer a default)
     // ------------------------------------------------------------------
     CuratedModel {
@@ -322,5 +425,63 @@ mod tests {
     #[test]
     fn all_curated_models_is_nonempty() {
         assert!(!all_curated_models().is_empty());
+    }
+
+    #[test]
+    fn vllm_catalog_has_entries() {
+        let models = suggested_models_for(&AiProvider::VLLM);
+        assert!(
+            models.len() >= 6,
+            "expected at least 6 vLLM curated models, got {}",
+            models.len()
+        );
+    }
+
+    #[test]
+    fn vllm_entries_use_huggingface_repo_ids() {
+        // HF repo IDs are of the form `org/name` — no local filename,
+        // no Ollama `<name>:<tag>` syntax.
+        for m in suggested_models_for(&AiProvider::VLLM) {
+            assert!(
+                m.id.contains('/') && !m.id.ends_with(".gguf") && !m.id.contains(':'),
+                "vLLM id must look like a HF repo (org/name): {}",
+                m.id
+            );
+        }
+    }
+
+    #[test]
+    fn vllm_has_a_coder_entry() {
+        let models = suggested_models_for(&AiProvider::VLLM);
+        assert!(
+            models.iter().any(|m| m.id.to_lowercase().contains("coder")),
+            "vLLM catalog should include a coding-specialist model"
+        );
+    }
+
+    #[test]
+    fn vllm_has_an_embedding_entry() {
+        let models = suggested_models_for(&AiProvider::VLLM);
+        assert!(
+            models
+                .iter()
+                .any(|m| m.display_name.to_lowercase().contains("embed")
+                    || m.id.to_lowercase().contains("bge")),
+            "vLLM catalog should include an embedding model"
+        );
+    }
+
+    #[test]
+    fn vllm_gated_entries_flag_hf_token() {
+        for m in suggested_models_for(&AiProvider::VLLM) {
+            if m.id.starts_with("meta-llama/") {
+                let req = m.requirements.expect("gated vLLM entry needs requirements");
+                assert!(
+                    req.to_lowercase().contains("hf_token") || req.to_lowercase().contains("gated"),
+                    "gated repo must flag HF_TOKEN requirement: {}",
+                    m.id
+                );
+            }
+        }
     }
 }

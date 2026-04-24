@@ -4822,4 +4822,18 @@ mod v102_picker_tests {
             "Bonsai Q1_0 must flag PrismML fork requirement"
         );
     }
+
+    #[test]
+    fn picker_has_entries_for_vllm() {
+        let ms = suggested_models_for(&AiProvider::VLLM);
+        assert!(!ms.is_empty(), "vLLM should have curated entries");
+        // Every vLLM entry should be a HuggingFace repo (owner/name).
+        for m in &ms {
+            assert!(
+                m.id.contains('/'),
+                "vLLM entry id should be a HuggingFace repo id: {}",
+                m.id
+            );
+        }
+    }
 }

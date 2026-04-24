@@ -218,6 +218,7 @@ pub mod group_queue_host;
 #[cfg(feature = "audio")]
 pub mod group_queue_runtime;
 pub mod http_client;
+pub mod huggingface;
 pub mod internal_storage;
 pub mod knowledge_watcher;
 pub mod learning_control;
@@ -266,6 +267,11 @@ pub mod topic_matcher;
 #[cfg(feature = "video-io")]
 pub mod video_filter;
 pub mod virtual_model;
+pub mod vllm_capability;
+pub mod vllm_guided;
+pub mod vllm_launch;
+pub mod vllm_lora;
+pub mod vllm_metrics;
 #[cfg(feature = "wasm")]
 pub mod wasm;
 #[cfg(feature = "wasm")]
@@ -288,6 +294,7 @@ pub use gguf_downloader::{
     register_with_ollama, register_with_ollama_hardlink, write_ollama_modelfile, DownloadRequest,
     DownloadedFile, ProgressFn,
 };
+pub use huggingface::{huggingface_model_info, parse_hf_response, HfModelInfo};
 pub use llamacpp_capability::{parse_props, probe_llamacpp, LlamaCppCapability};
 pub use messages::{AiResponse, ChatMessage};
 pub use models::{ModelCapabilityInfo, ModelInfo, ModelRegistry};
@@ -303,6 +310,17 @@ pub use session::{
     recover_session, ChatSession, ChatSessionStore, JournalEntry, JournalEntryType, JournalSession,
     RecoveryResult, ResponseStyle, UserPreferences,
 };
+pub use vllm_capability::{
+    parse_models_response, parse_version_response, probe_vllm, vllm_wait_until_ready,
+    VLlmCapability, VLlmServedModel,
+};
+pub use vllm_guided::{apply_guided, VLlmGuidedOptions};
+pub use vllm_launch::{
+    vllm_docker_command, vllm_launch_command, VLlmLaunchConfig, DEFAULT_VLLM_DOCKER_IMAGE,
+    DEFAULT_VLLM_PORT,
+};
+pub use vllm_lora::{load_lora_adapter, unload_lora_adapter, LoadLoraRequest, UnloadLoraRequest};
+pub use vllm_metrics::{parse_vllm_metrics, scrape_vllm_metrics, VLlmMetrics};
 
 pub use error::{
     AiError, AiResult, ConfigError, ContextualError, IoError as AiIoError, NetworkError,
@@ -840,8 +858,10 @@ pub mod browser_tools;
 pub mod butler;
 #[cfg(feature = "butler")]
 pub use butler::{
-    AdvisorConfig, AdvisorReport, AdvisorSummary, ButlerAdvisor, ButlerRecommendation,
-    OptimizationCategory, RecommendationPriority,
+    pick_quantization_for_vram, suggest_tensor_parallel_size, AdvisorConfig, AdvisorReport,
+    AdvisorSummary, Butler, ButlerAdvisor, ButlerRecommendation, EnvironmentReport,
+    LlamaCppDetector, OptimizationCategory, RecommendationPriority, RuntimeKind,
+    RuntimeRecommendation, VLlmDetector, WorkloadHint,
 };
 #[cfg(any(feature = "autonomous", feature = "containers"))]
 pub mod container_backend;

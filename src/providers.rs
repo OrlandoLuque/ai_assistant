@@ -335,6 +335,7 @@ pub fn generate_openai_streaming(
         AiProvider::TextGenWebUI => config.text_gen_webui_url.clone(),
         AiProvider::LocalAI => config.local_ai_url.clone(),
         AiProvider::LlamaCpp => config.llamacpp_url.clone(),
+        AiProvider::VLLM => config.vllm_url.clone(),
         AiProvider::OpenAICompatible { base_url } => base_url.clone(),
         AiProvider::OpenAI
         | AiProvider::Anthropic
@@ -467,6 +468,7 @@ pub fn generate_openai_response(
         AiProvider::TextGenWebUI => config.text_gen_webui_url.clone(),
         AiProvider::LocalAI => config.local_ai_url.clone(),
         AiProvider::LlamaCpp => config.llamacpp_url.clone(),
+        AiProvider::VLLM => config.vllm_url.clone(),
         AiProvider::OpenAICompatible { base_url } => base_url.clone(),
         AiProvider::OpenAI
         | AiProvider::Anthropic
@@ -657,6 +659,7 @@ pub fn generate_response_streaming(
         | AiProvider::TextGenWebUI
         | AiProvider::LocalAI
         | AiProvider::LlamaCpp
+        | AiProvider::VLLM
         | AiProvider::OpenAICompatible { .. }
         | AiProvider::OpenAI
         | AiProvider::Anthropic
@@ -772,6 +775,7 @@ pub fn generate_response(
         | AiProvider::TextGenWebUI
         | AiProvider::LocalAI
         | AiProvider::LlamaCpp
+        | AiProvider::VLLM
         | AiProvider::OpenAICompatible { .. }
         | AiProvider::OpenAI
         | AiProvider::Anthropic
@@ -907,6 +911,7 @@ pub fn generate_openai_streaming_cancellable(
         AiProvider::TextGenWebUI => config.text_gen_webui_url.clone(),
         AiProvider::LocalAI => config.local_ai_url.clone(),
         AiProvider::LlamaCpp => config.llamacpp_url.clone(),
+        AiProvider::VLLM => config.vllm_url.clone(),
         AiProvider::OpenAICompatible { base_url } => base_url.clone(),
         AiProvider::OpenAI
         | AiProvider::Anthropic
@@ -1078,6 +1083,7 @@ pub fn generate_response_streaming_cancellable(
         | AiProvider::TextGenWebUI
         | AiProvider::LocalAI
         | AiProvider::LlamaCpp
+        | AiProvider::VLLM
         | AiProvider::OpenAICompatible { .. }
         | AiProvider::OpenAI
         | AiProvider::Anthropic
@@ -1171,6 +1177,7 @@ pub fn fetch_model_context_size(config: &AiConfig, model_name: &str) -> Option<u
         }
         AiProvider::LocalAI => fetch_openai_model_context(&config.local_ai_url, model_name),
         AiProvider::LlamaCpp => fetch_openai_model_context(&config.llamacpp_url, model_name),
+        AiProvider::VLLM => fetch_openai_model_context(&config.vllm_url, model_name),
         AiProvider::OpenAICompatible { base_url } => {
             fetch_openai_model_context(base_url, model_name)
         }

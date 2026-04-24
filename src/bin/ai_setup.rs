@@ -59,6 +59,7 @@ fn main() -> ExitCode {
         Some("backup") => cmd_backup(&args[2..]),
         Some("restore") => cmd_restore(&args[2..]),
         Some("install") => cmd_install(&args[2..]),
+        Some("recommend") => cmd_recommend(&args[2..]),
         Some("--help") | Some("-h") | None => {
             print_help();
             ExitCode::SUCCESS
@@ -190,7 +191,11 @@ fn print_help() -> ExitCode {
         "  {}restore{}  <archive> [--target <dir>] Restore from backup",
         CYAN, RESET
     );
-    println!("  {}install{}  <target>                Install a prerequisite (ollama, docker, model <name>)", CYAN, RESET);
+    println!("  {}install{}  <target>                Install a prerequisite (ollama, docker, vllm, llamacpp, model <name>)", CYAN, RESET);
+    println!(
+        "  {}recommend{} [--workload <kind>]       Recommend a local inference runtime (Ollama / vLLM / llama.cpp / LM Studio)",
+        CYAN, RESET
+    );
     println!();
     println!("{}Examples:{}", BOLD, RESET);
     println!("  ai_setup init");
@@ -199,7 +204,10 @@ fn print_help() -> ExitCode {
     println!("  ai_setup config set provider.model mistral");
     println!("  ai_setup docker status");
     println!("  ai_setup install ollama");
+    println!("  ai_setup install vllm");
+    println!("  ai_setup install llamacpp");
     println!("  ai_setup install model llama3");
+    println!("  ai_setup recommend --workload multi-agent");
     println!("  ai_setup backup --output my_backup.gz");
     ExitCode::SUCCESS
 }
@@ -951,7 +959,7 @@ fn cmd_restore(args: &[String]) -> ExitCode {
 
 fn cmd_install(args: &[String]) -> ExitCode {
     if args.is_empty() {
-        eprintln!("Usage: ai_setup install <ollama|docker|model name>");
+        eprintln!("Usage: ai_setup install <ollama|docker|vllm|llamacpp|model name>");
         return ExitCode::from(1);
     }
 
@@ -982,4 +990,172 @@ fn cmd_install(args: &[String]) -> ExitCode {
             ExitCode::from(1)
         }
     }
+}
+
+// =============================================================================
+// recommend — runtime recommendation (Ollama / vLLM / llama.cpp / LM Studio)
+// =============================================================================
+
+#[cfg(feature = "butler")]
+fn cmd_recommend(args: &[String]) -> ExitCode {
+    use ai_assistant::{Butler, RuntimeKind, WorkloadHint};
+
+    // Parse --workload <kind>
+    let mut workload = WorkloadHint::Auto;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--workload" | "-w" => {
+                let v = match args.get(i + 1) {
+                    Some(v) => v.clone(),
+                    None => {
+                        eprintln!("--workload requires a value");
+                        return ExitCode::from(1);
+                    }
+                };
+                workload = match v.as_str() {
+                    "auto" => WorkloadHint::Auto,
+                    "chat" | "interactive" => WorkloadHint::InteractiveChat,
+                    "code" | "code-assist" => WorkloadHint::CodeAssist,
+                    "agentic" | "agentic-coding" => WorkloadHint::AgenticCoding,
+                    "research" => WorkloadHint::ResearchPipeline,
+                    "multi-agent" => WorkloadHint::MultiAgent {
+                        concurrent_agents: 4,
+                    },
+                    "eval" | "batch" => WorkloadHint::EvalBatch { prompt_count: 100 },
+                    "autonomous" | "scheduler" => WorkloadHint::AutonomousScheduler,
+                    other => {
+                        eprintln!(
+                            "Unknown workload: {}. Expected: auto, chat, code, agentic, research, multi-agent, eval, autonomous",
+                            other
+                        );
+                        return ExitCode::from(1);
+                    }
+                };
+                i += 2;
+            }
+            "--help" | "-h" => {
+                println!(
+                    "{}ai_setup recommend{} — Recommend a local inference runtime",
+                    BOLD, RESET
+                );
+                println!();
+                println!(
+                    "{}Usage:{} ai_setup recommend [--workload <kind>]",
+                    BOLD, RESET
+                );
+                println!();
+                println!("{}Workload kinds:{}", BOLD, RESET);
+                println!("  auto            Let Butler decide from the environment (default)");
+                println!("  chat            Single-user interactive chat");
+                println!("  code            IDE-integrated coding assistant");
+                println!("  agentic         Autonomous coding agent (Aider/Cline-style)");
+                println!("  research        Research pipeline (many sequential queries)");
+                println!("  multi-agent     Multi-agent orchestration (N concurrent agents)");
+                println!("  eval            Eval / benchmark batch over many prompts");
+                println!("  autonomous      Autonomous scheduler running cron-style jobs");
+                return ExitCode::SUCCESS;
+            }
+            other => {
+                eprintln!("Unknown argument: {}", other);
+                return ExitCode::from(1);
+            }
+        }
+    }
+
+    println!("{}Scanning environment...{}", DIM, RESET);
+    let mut butler = Butler::new();
+    let report = butler.scan();
+    let rec = butler.recommend_runtime(&report, workload);
+
+    println!();
+    println!("{}Recommended runtime:{} {}", BOLD, RESET, rec.preferred);
+    if let Some(fb) = rec.fallback {
+        println!("  {}Fallback:{} {}", DIM, RESET, fb);
+    }
+    println!();
+    println!("  {}Reason:{}", BOLD, RESET);
+    for line in textwrap_simple(&rec.reason, 76) {
+        println!("    {}", line);
+    }
+    if !rec.estimated_speedup.is_empty() {
+        println!();
+        println!("  {}Speedup:{} {}", BOLD, RESET, rec.estimated_speedup);
+    }
+    if let Some(tp) = rec.suggested_tensor_parallel_size {
+        println!();
+        println!(
+            "  {}Tensor parallelism:{} shard across {} GPU{} \
+             ({}--tensor-parallel-size {}{})",
+            BOLD,
+            RESET,
+            tp,
+            if tp == 1 { "" } else { "s" },
+            CYAN,
+            tp,
+            RESET
+        );
+    }
+    if !rec.caveats.is_empty() {
+        println!();
+        println!("  {}Caveats:{}", BOLD, RESET);
+        for c in &rec.caveats {
+            for line in textwrap_simple(c, 74) {
+                println!("    - {}", line);
+            }
+        }
+    }
+    if let Some(hint) = &rec.install_hint {
+        println!();
+        println!("  {}Install:{} {}{}{}", BOLD, RESET, CYAN, hint, RESET);
+    }
+    println!();
+
+    let running = report.llm_providers.iter().any(|p| match rec.preferred {
+        RuntimeKind::Ollama => matches!(p.provider_type, ai_assistant::AiProvider::Ollama),
+        RuntimeKind::LmStudio => matches!(p.provider_type, ai_assistant::AiProvider::LMStudio),
+        RuntimeKind::LlamaCpp => matches!(p.provider_type, ai_assistant::AiProvider::LlamaCpp),
+        RuntimeKind::VLlm => matches!(p.provider_type, ai_assistant::AiProvider::VLLM),
+        _ => false,
+    });
+    if running {
+        ok(&format!("{} is already running.", rec.preferred));
+    } else {
+        warn(&format!(
+            "{} is not currently running — install or start it.",
+            rec.preferred
+        ));
+    }
+
+    ExitCode::SUCCESS
+}
+
+#[cfg(not(feature = "butler"))]
+fn cmd_recommend(_args: &[String]) -> ExitCode {
+    eprintln!(
+        "{}`recommend` requires the `butler` feature. Rebuild with `cargo build --features butler`.{}",
+        RED, RESET
+    );
+    ExitCode::from(1)
+}
+
+#[cfg(feature = "butler")]
+fn textwrap_simple(text: &str, width: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        if current.is_empty() {
+            current.push_str(word);
+        } else if current.len() + 1 + word.len() <= width {
+            current.push(' ');
+            current.push_str(word);
+        } else {
+            out.push(std::mem::take(&mut current));
+            current.push_str(word);
+        }
+    }
+    if !current.is_empty() {
+        out.push(current);
+    }
+    out
 }

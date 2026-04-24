@@ -109,6 +109,14 @@ pub struct RuntimeInfo {
     pub cpus: usize,
     /// Whether a GPU was detected.
     pub has_gpu: bool,
+    /// Number of GPUs detected (0 when none). Populated from the NVIDIA
+    /// detector's `gpu_count` detail; other vendors currently report 1 when
+    /// `has_gpu` is true.
+    pub gpu_count: usize,
+    /// Total GPU VRAM in MiB across all detected GPUs. `None` when we
+    /// cannot read it (non-NVIDIA, nvidia-smi missing, CUDA env-var-only
+    /// fallback). Drives quantization choice in the runtime recommender.
+    pub gpu_vram_mb: Option<u64>,
     /// Whether Docker tooling was detected.
     pub has_docker: bool,
     /// Whether a browser binary was detected.
@@ -222,6 +230,158 @@ impl LmStudioDetector {
 impl ResourceDetector for LmStudioDetector {
     fn name(&self) -> &str {
         "lm_studio"
+    }
+
+    fn detect(&self) -> DetectionResult {
+        let url = format!("{}/v1/models", self.base_url);
+        match ureq::get(&url)
+            .timeout(std::time::Duration::from_secs(2))
+            .call()
+        {
+            Ok(resp) => {
+                let mut models = Vec::new();
+                if let Ok(body) = resp.into_string() {
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&body) {
+                        if let Some(data) = val.get("data").and_then(|v| v.as_array()) {
+                            for m in data {
+                                if let Some(id) = m.get("id").and_then(|v| v.as_str()) {
+                                    models.push(id.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+                let mut details = HashMap::new();
+                details.insert("url".to_string(), self.base_url.clone());
+                details.insert("model_count".to_string(), models.len().to_string());
+                if !models.is_empty() {
+                    details.insert("models".to_string(), models.join(", "));
+                }
+                DetectionResult {
+                    detected: true,
+                    details,
+                    suggested_config: None,
+                }
+            }
+            Err(_) => DetectionResult {
+                detected: false,
+                details: {
+                    let mut d = HashMap::new();
+                    d.insert("url".to_string(), self.base_url.clone());
+                    d.insert(
+                        "error".to_string(),
+                        "Connection refused or timeout".to_string(),
+                    );
+                    d
+                },
+                suggested_config: None,
+            },
+        }
+    }
+}
+
+/// Detects vLLM by probing `/v1/models` (OpenAI-compatible endpoint).
+///
+/// vLLM is a GPU-optimized LLM serving engine with PagedAttention and
+/// continuous batching. Default port is 8000. Falls back to
+/// `VLLM_BASE_URL` env var if set.
+#[derive(Debug)]
+pub struct VLlmDetector {
+    pub base_url: String,
+}
+
+impl VLlmDetector {
+    pub fn new() -> Self {
+        let base_url =
+            std::env::var("VLLM_BASE_URL").unwrap_or_else(|_| "http://localhost:8000".to_string());
+        Self { base_url }
+    }
+}
+
+impl Default for VLlmDetector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ResourceDetector for VLlmDetector {
+    fn name(&self) -> &str {
+        "vllm"
+    }
+
+    fn detect(&self) -> DetectionResult {
+        let url = format!("{}/v1/models", self.base_url);
+        match ureq::get(&url)
+            .timeout(std::time::Duration::from_secs(2))
+            .call()
+        {
+            Ok(resp) => {
+                let mut models = Vec::new();
+                if let Ok(body) = resp.into_string() {
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&body) {
+                        if let Some(data) = val.get("data").and_then(|v| v.as_array()) {
+                            for m in data {
+                                if let Some(id) = m.get("id").and_then(|v| v.as_str()) {
+                                    models.push(id.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+                let mut details = HashMap::new();
+                details.insert("url".to_string(), self.base_url.clone());
+                details.insert("model_count".to_string(), models.len().to_string());
+                if !models.is_empty() {
+                    details.insert("models".to_string(), models.join(", "));
+                }
+                DetectionResult {
+                    detected: true,
+                    details,
+                    suggested_config: None,
+                }
+            }
+            Err(_) => DetectionResult {
+                detected: false,
+                details: {
+                    let mut d = HashMap::new();
+                    d.insert("url".to_string(), self.base_url.clone());
+                    d.insert(
+                        "error".to_string(),
+                        "Connection refused or timeout".to_string(),
+                    );
+                    d
+                },
+                suggested_config: None,
+            },
+        }
+    }
+}
+
+/// Detects `llama.cpp`'s `llama-server` by probing `/health` (or `/v1/models`).
+///
+/// Default port 8080. Falls back to `LLAMACPP_BASE_URL` env var if set.
+#[derive(Debug)]
+pub struct LlamaCppDetector {
+    pub base_url: String,
+}
+
+impl LlamaCppDetector {
+    pub fn new() -> Self {
+        let base_url = std::env::var("LLAMACPP_BASE_URL")
+            .unwrap_or_else(|_| "http://localhost:8080".to_string());
+        Self { base_url }
+    }
+}
+
+impl Default for LlamaCppDetector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ResourceDetector for LlamaCppDetector {
+    fn name(&self) -> &str {
+        "llamacpp"
     }
 
     fn detect(&self) -> DetectionResult {
@@ -485,6 +645,26 @@ impl ResourceDetector for GpuDetector {
                     details.insert("gpu_count".to_string(), gpus.len().to_string());
                     if let Some(first) = gpus.first() {
                         details.insert("gpu_info".to_string(), first.to_string());
+                    }
+                    // Parse total VRAM across all GPUs. Format is
+                    // "NAME, MEM MiB" per line.
+                    let mut total_vram_mb: u64 = 0;
+                    for line in &gpus {
+                        if let Some(mem) = line.split(',').nth(1) {
+                            let num = mem
+                                .trim()
+                                .split_whitespace()
+                                .next()
+                                .unwrap_or("")
+                                .parse::<u64>()
+                                .ok();
+                            if let Some(n) = num {
+                                total_vram_mb += n;
+                            }
+                        }
+                    }
+                    if total_vram_mb > 0 {
+                        details.insert("gpu_vram_mb".to_string(), total_vram_mb.to_string());
                     }
                     return DetectionResult {
                         detected: true,
@@ -929,6 +1109,8 @@ impl Butler {
         let detectors: Vec<Box<dyn ResourceDetector>> = vec![
             Box::new(OllamaDetector::new()),
             Box::new(LmStudioDetector::new()),
+            Box::new(VLlmDetector::new()),
+            Box::new(LlamaCppDetector::new()),
             Box::new(CloudApiDetector),
             Box::new(ProjectTypeDetector { root: root.clone() }),
             Box::new(GitDetector { root: root.clone() }),
@@ -1005,6 +1187,50 @@ impl Butler {
                         .unwrap_or_default(),
                 });
                 capabilities.push("lm_studio".to_string());
+            }
+        }
+
+        // vLLM
+        if let Some(r) = self.cache.get("vllm") {
+            if r.detected {
+                let url = r
+                    .details
+                    .get("url")
+                    .cloned()
+                    .unwrap_or_else(|| "http://localhost:8000".to_string());
+                llm_providers.push(DetectedProvider {
+                    name: "vLLM".to_string(),
+                    provider_type: AiProvider::VLLM,
+                    url,
+                    available_models: r
+                        .details
+                        .get("models")
+                        .map(|m| m.split(", ").map(|s| s.to_string()).collect())
+                        .unwrap_or_default(),
+                });
+                capabilities.push("vllm".to_string());
+            }
+        }
+
+        // llama.cpp
+        if let Some(r) = self.cache.get("llamacpp") {
+            if r.detected {
+                let url = r
+                    .details
+                    .get("url")
+                    .cloned()
+                    .unwrap_or_else(|| "http://localhost:8080".to_string());
+                llm_providers.push(DetectedProvider {
+                    name: "llama.cpp".to_string(),
+                    provider_type: AiProvider::LlamaCpp,
+                    url,
+                    available_models: r
+                        .details
+                        .get("models")
+                        .map(|m| m.split(", ").map(|s| s.to_string()).collect())
+                        .unwrap_or_default(),
+                });
+                capabilities.push("llamacpp".to_string());
             }
         }
 
@@ -1093,7 +1319,15 @@ impl Butler {
         }
 
         // GPU
-        let has_gpu = self.cache.get("gpu").map(|r| r.detected).unwrap_or(false);
+        let gpu_result = self.cache.get("gpu");
+        let has_gpu = gpu_result.map(|r| r.detected).unwrap_or(false);
+        let gpu_count = gpu_result
+            .and_then(|r| r.details.get("gpu_count"))
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(if has_gpu { 1 } else { 0 });
+        let gpu_vram_mb = gpu_result
+            .and_then(|r| r.details.get("gpu_vram_mb"))
+            .and_then(|s| s.parse::<u64>().ok());
         if has_gpu {
             capabilities.push("gpu".to_string());
         }
@@ -1143,6 +1377,8 @@ impl Butler {
                 .map(|n| n.get())
                 .unwrap_or(1),
             has_gpu,
+            gpu_count,
+            gpu_vram_mb,
             has_docker,
             has_browser,
         };
@@ -1194,6 +1430,26 @@ impl Butler {
                 AiProvider::Ollama => {
                     config.provider = AiProvider::Ollama;
                     config.ollama_url = provider.url.clone();
+                    return config;
+                }
+                _ => {}
+            }
+        }
+        for provider in &report.llm_providers {
+            match &provider.provider_type {
+                AiProvider::VLLM => {
+                    config.provider = AiProvider::VLLM;
+                    config.vllm_url = provider.url.clone();
+                    return config;
+                }
+                _ => {}
+            }
+        }
+        for provider in &report.llm_providers {
+            match &provider.provider_type {
+                AiProvider::LlamaCpp => {
+                    config.provider = AiProvider::LlamaCpp;
+                    config.llamacpp_url = provider.url.clone();
                     return config;
                 }
                 _ => {}
@@ -2156,6 +2412,35 @@ impl<'a> ButlerAdvisor<'a> {
                 already_enabled: self.has_feature("containers"),
             });
         }
+
+        // SC5: vLLM for multi-agent / autonomous workloads on GPU
+        let multi_agent_active = self.has_feature("multi-agent")
+            || self.has_feature("autonomous")
+            || self.has_feature("agents");
+        let has_vllm = self
+            .report
+            .llm_providers
+            .iter()
+            .any(|p| matches!(p.provider_type, AiProvider::VLLM));
+        if self.report.runtime.has_gpu && multi_agent_active && !has_vllm {
+            recs.push(ButlerRecommendation {
+                category: OptimizationCategory::Scalability,
+                priority: RecommendationPriority::High,
+                title: "Switch to vLLM for multi-agent / autonomous workloads".into(),
+                description: "GPU detected and multi-agent / autonomous features are active, \
+                    but vLLM is not running. vLLM's continuous batching + PagedAttention \
+                    typically give 2-10x higher aggregate throughput than Ollama or \
+                    llama.cpp once you have multiple concurrent requests — the exact \
+                    pattern multi-agent orchestration and autonomous scheduling produce."
+                    .into(),
+                action: "Install vLLM (`ai_setup install vllm` or `docker run \
+                    vllm/vllm-openai:latest`) and point the assistant at it \
+                    (provider: VLLM, url: http://localhost:8000)."
+                    .into(),
+                feature_flag: None,
+                already_enabled: false,
+            });
+        }
     }
 
     // --- Observability ---
@@ -2566,6 +2851,412 @@ impl Butler {
 }
 
 // =============================================================================
+// Runtime recommendation (V103 — vLLM / llama.cpp / Ollama / LM Studio)
+// =============================================================================
+
+/// High-level workload hint used to bias [`Butler::recommend_runtime`].
+///
+/// Each runtime (Ollama, llama.cpp, LM Studio, vLLM) has different sweet
+/// spots: Ollama is easiest for single-user interactive chat; vLLM wins on
+/// GPU-bound multi-agent or batch workloads because of continuous batching
+/// and PagedAttention; llama.cpp is unbeatable on CPU and exotic quants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum WorkloadHint {
+    /// Let the butler decide from the environment alone (default).
+    Auto,
+    /// Single-user interactive chat — latency matters more than throughput.
+    InteractiveChat,
+    /// IDE-integrated coding assistant, 1–3 concurrent requests.
+    CodeAssist,
+    /// Multi-agent orchestration with N concurrent agents hitting the same
+    /// model.
+    MultiAgent { concurrent_agents: usize },
+    /// Long-running autonomous coding agent (e.g. Aider/Cline-style loops).
+    AgenticCoding,
+    /// Research pipeline: many sequential queries per document, often with
+    /// long context.
+    ResearchPipeline,
+    /// Eval / benchmark batch over many prompts.
+    EvalBatch { prompt_count: usize },
+    /// Autonomous scheduler running cron-style jobs.
+    AutonomousScheduler,
+}
+
+impl Default for WorkloadHint {
+    fn default() -> Self {
+        Self::Auto
+    }
+}
+
+/// Kind of local inference runtime the Butler can recommend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum RuntimeKind {
+    Ollama,
+    LmStudio,
+    LlamaCpp,
+    VLlm,
+}
+
+impl fmt::Display for RuntimeKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Ollama => write!(f, "Ollama"),
+            Self::LmStudio => write!(f, "LM Studio"),
+            Self::LlamaCpp => write!(f, "llama.cpp"),
+            Self::VLlm => write!(f, "vLLM"),
+        }
+    }
+}
+
+/// Output of [`Butler::recommend_runtime`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuntimeRecommendation {
+    /// Preferred runtime for the given workload + environment.
+    pub preferred: RuntimeKind,
+    /// Fallback runtime if the preferred one isn't installed (`None` when
+    /// the preferred is already the most universal option).
+    pub fallback: Option<RuntimeKind>,
+    /// One-paragraph justification surfaced to the user.
+    pub reason: String,
+    /// Coarse speedup estimate vs. the fallback (e.g. "2-4x"). Empty when
+    /// no meaningful comparison applies.
+    pub estimated_speedup: String,
+    /// Caveats the user should know (missing GPU, Windows-only WSL, gated
+    /// repos, etc.).
+    pub caveats: Vec<String>,
+    /// Short install hint — points at `ai_setup install <target>` or the
+    /// native installer.
+    pub install_hint: Option<String>,
+    /// Suggested `--tensor-parallel-size` value when the preferred runtime is
+    /// vLLM and multiple GPUs were detected. `None` means "do not shard"
+    /// (single-GPU or non-vLLM target).
+    pub suggested_tensor_parallel_size: Option<u8>,
+}
+
+impl Butler {
+    /// Recommend a local inference runtime for the given workload.
+    ///
+    /// Scoring is rule-based and deterministic — never hits the network.
+    /// Takes the [`EnvironmentReport`] from [`Butler::scan`] and a
+    /// [`WorkloadHint`]. Returns a [`RuntimeRecommendation`] with a
+    /// primary choice, a fallback, and a human-readable justification.
+    ///
+    /// Rules of thumb (V103):
+    /// - **vLLM** when: GPU present AND (multi-agent OR eval batch OR
+    ///   autonomous scheduler OR research pipeline OR agentic coding).
+    ///   Continuous batching + PagedAttention scale well past 4 parallel
+    ///   requests.
+    /// - **Ollama** when: single-user interactive chat, or GPU not
+    ///   detected and user wants the path of least resistance.
+    /// - **llama.cpp** when: CPU-only or exotic quant (Q1_0, ternary,
+    ///   Bonsai).
+    /// - **LM Studio** when: user already has it running and no strong
+    ///   reason to switch.
+    pub fn recommend_runtime(
+        &self,
+        report: &EnvironmentReport,
+        workload: WorkloadHint,
+    ) -> RuntimeRecommendation {
+        let has_gpu = report.runtime.has_gpu;
+        let has_vllm_running = report
+            .llm_providers
+            .iter()
+            .any(|p| matches!(p.provider_type, AiProvider::VLLM));
+        let has_ollama_running = report
+            .llm_providers
+            .iter()
+            .any(|p| matches!(p.provider_type, AiProvider::Ollama));
+        let has_llamacpp_running = report
+            .llm_providers
+            .iter()
+            .any(|p| matches!(p.provider_type, AiProvider::LlamaCpp));
+        let has_lmstudio_running = report
+            .llm_providers
+            .iter()
+            .any(|p| matches!(p.provider_type, AiProvider::LMStudio));
+
+        // Classify workload as GPU-heavy (continuous batching wins) vs
+        // interactive (latency wins).
+        let gpu_heavy = matches!(
+            workload,
+            WorkloadHint::MultiAgent { concurrent_agents } if concurrent_agents >= 2
+        ) || matches!(
+            workload,
+            WorkloadHint::EvalBatch { prompt_count } if prompt_count >= 20
+        ) || matches!(
+            workload,
+            WorkloadHint::AgenticCoding
+                | WorkloadHint::ResearchPipeline
+                | WorkloadHint::AutonomousScheduler
+        );
+
+        let interactive = matches!(
+            workload,
+            WorkloadHint::InteractiveChat | WorkloadHint::CodeAssist
+        );
+
+        // Decision tree.
+        let mut caveats: Vec<String> = Vec::new();
+
+        if gpu_heavy && has_gpu {
+            let mut reason = String::from(
+                "GPU-bound parallel workload detected. vLLM's continuous batching + \
+                 PagedAttention typically gives 2-10x higher throughput than \
+                 Ollama/llama.cpp once you have multiple concurrent requests.",
+            );
+            if !has_vllm_running {
+                reason.push_str(
+                    " vLLM does not appear to be running — install with \
+                     `pip install vllm` (Linux, CUDA 12.1+) or use the Docker image.",
+                );
+            }
+            let tp = suggest_tensor_parallel_size(report.runtime.gpu_count);
+            if let Some(n) = tp {
+                reason.push_str(&format!(
+                    " {n} GPUs detected — suggest `--tensor-parallel-size {n}` to \
+                     shard the model across them.",
+                    n = n
+                ));
+            }
+            // Prefix caching: agentic / multi-agent / research / autonomous
+            // workloads reuse a large system prompt across turns, so the
+            // cache hit rate is usually high.
+            let agentic = matches!(
+                workload,
+                WorkloadHint::AgenticCoding
+                    | WorkloadHint::MultiAgent { .. }
+                    | WorkloadHint::ResearchPipeline
+                    | WorkloadHint::AutonomousScheduler
+            );
+            if agentic {
+                reason.push_str(
+                    " Agentic/multi-turn workload — add `--enable-prefix-caching` \
+                     so repeated system prompts re-use KV cache (5-30% latency win).",
+                );
+            }
+            if cfg!(target_os = "windows") {
+                caveats.push(
+                    "vLLM does not support Windows natively — use WSL2 or Docker.".to_string(),
+                );
+            }
+            if cfg!(target_os = "macos") {
+                caveats.push(
+                    "vLLM support on macOS is experimental (CPU/MPS); llama.cpp \
+                     usually wins on Apple Silicon."
+                        .to_string(),
+                );
+            }
+            let prefix_flag = if agentic {
+                " --enable-prefix-caching"
+            } else {
+                ""
+            };
+            let install_hint = match tp {
+                Some(n) => format!(
+                    "ai_setup install vllm  # then: vllm serve <repo> --tensor-parallel-size {}{}",
+                    n, prefix_flag
+                ),
+                None => format!(
+                    "ai_setup install vllm  # then: vllm serve <repo>{}",
+                    prefix_flag
+                ),
+            };
+            return RuntimeRecommendation {
+                preferred: RuntimeKind::VLlm,
+                fallback: Some(if has_ollama_running {
+                    RuntimeKind::Ollama
+                } else {
+                    RuntimeKind::LlamaCpp
+                }),
+                reason,
+                estimated_speedup: "2-10x vs. Ollama for concurrent requests".to_string(),
+                caveats,
+                install_hint: Some(install_hint),
+                suggested_tensor_parallel_size: tp,
+            };
+        }
+
+        if gpu_heavy && !has_gpu {
+            caveats.push(
+                "No GPU detected — vLLM would give the biggest win but requires CUDA. \
+                 Falling back to llama.cpp (CPU-optimized) for this workload."
+                    .to_string(),
+            );
+            return RuntimeRecommendation {
+                preferred: RuntimeKind::LlamaCpp,
+                fallback: Some(RuntimeKind::Ollama),
+                reason: "No GPU available. llama.cpp has the best CPU throughput \
+                 of the local runtimes and supports exotic quantizations (Q4_K_M, \
+                 Q1_0 on PrismML fork)."
+                    .to_string(),
+                estimated_speedup: String::new(),
+                caveats,
+                install_hint: Some("ai_setup install llamacpp".to_string()),
+                suggested_tensor_parallel_size: None,
+            };
+        }
+
+        if interactive {
+            // Prefer whatever is already running. Ollama is the usual default
+            // because model management is one command.
+            let preferred = if has_ollama_running {
+                RuntimeKind::Ollama
+            } else if has_lmstudio_running {
+                RuntimeKind::LmStudio
+            } else if has_llamacpp_running {
+                RuntimeKind::LlamaCpp
+            } else if has_vllm_running {
+                RuntimeKind::VLlm
+            } else {
+                RuntimeKind::Ollama
+            };
+            return RuntimeRecommendation {
+                preferred,
+                fallback: if preferred == RuntimeKind::Ollama {
+                    None
+                } else {
+                    Some(RuntimeKind::Ollama)
+                },
+                reason: "Interactive single-user workload: pick the runtime with \
+                 the lowest friction. Ollama manages models with a single \
+                 `ollama pull` command; LM Studio offers a GUI."
+                    .to_string(),
+                estimated_speedup: String::new(),
+                caveats,
+                install_hint: if preferred == RuntimeKind::Ollama && !has_ollama_running {
+                    Some("ai_setup install ollama".to_string())
+                } else {
+                    None
+                },
+                suggested_tensor_parallel_size: None,
+            };
+        }
+
+        // Auto / unknown: pick whatever is already running, with a mild
+        // preference for vLLM when a GPU is available.
+        if has_gpu && has_vllm_running {
+            let tp = suggest_tensor_parallel_size(report.runtime.gpu_count);
+            return RuntimeRecommendation {
+                preferred: RuntimeKind::VLlm,
+                fallback: Some(RuntimeKind::Ollama),
+                reason: "GPU detected and vLLM is already running — keep using it \
+                 for best throughput."
+                    .to_string(),
+                estimated_speedup: String::new(),
+                caveats,
+                install_hint: None,
+                suggested_tensor_parallel_size: tp,
+            };
+        }
+        if has_ollama_running {
+            return RuntimeRecommendation {
+                preferred: RuntimeKind::Ollama,
+                fallback: None,
+                reason: "Ollama is already running — using it keeps friction low. \
+                 Switch to vLLM if you start running multi-agent or batch workloads \
+                 on a GPU."
+                    .to_string(),
+                estimated_speedup: String::new(),
+                caveats,
+                install_hint: None,
+                suggested_tensor_parallel_size: None,
+            };
+        }
+        if has_llamacpp_running {
+            return RuntimeRecommendation {
+                preferred: RuntimeKind::LlamaCpp,
+                fallback: Some(RuntimeKind::Ollama),
+                reason: "llama.cpp is already running. Good CPU performance and \
+                 supports exotic quantizations."
+                    .to_string(),
+                estimated_speedup: String::new(),
+                caveats,
+                install_hint: None,
+                suggested_tensor_parallel_size: None,
+            };
+        }
+        if has_lmstudio_running {
+            return RuntimeRecommendation {
+                preferred: RuntimeKind::LmStudio,
+                fallback: Some(RuntimeKind::Ollama),
+                reason: "LM Studio is already running — keep using it for the GUI \
+                 convenience."
+                    .to_string(),
+                estimated_speedup: String::new(),
+                caveats,
+                install_hint: None,
+                suggested_tensor_parallel_size: None,
+            };
+        }
+
+        // Nothing running — default to Ollama.
+        RuntimeRecommendation {
+            preferred: RuntimeKind::Ollama,
+            fallback: Some(RuntimeKind::LlamaCpp),
+            reason: "No local runtime detected. Ollama is the recommended starting \
+             point: one-command install and model management."
+                .to_string(),
+            estimated_speedup: String::new(),
+            caveats,
+            install_hint: Some("ai_setup install ollama".to_string()),
+            suggested_tensor_parallel_size: None,
+        }
+    }
+}
+
+/// Pick a vLLM `--tensor-parallel-size` for a multi-GPU host.
+///
+/// vLLM requires the attention-head count to divide the TP size evenly;
+/// in practice the safe choices are powers of two (1, 2, 4, 8). This
+/// returns the largest power of two ≤ `gpu_count`, capped at 8. Returns
+/// `None` for zero or single-GPU hosts (TP would add overhead without
+/// speedup).
+pub fn suggest_tensor_parallel_size(gpu_count: usize) -> Option<u8> {
+    if gpu_count < 2 {
+        return None;
+    }
+    let capped = gpu_count.min(8);
+    let mut n: u8 = 1;
+    while (n as usize) * 2 <= capped {
+        n *= 2;
+    }
+    Some(n)
+}
+
+/// Pick a vLLM weight-quantization flag value given a parameter count (in
+/// billions) and available VRAM (in MiB).
+///
+/// Rules of thumb:
+/// - FP16 needs ≈ 2 GiB per billion parameters plus ~20% overhead (KV
+///   cache, activations, framework).
+/// - AWQ/GPTQ 4-bit needs ≈ 0.55 GiB per billion params + overhead.
+///
+/// Returns `Some("awq")` / `Some("gptq")` when quantization is required to
+/// fit, `None` when full precision fits comfortably.
+pub fn pick_quantization_for_vram(params_b: f32, vram_mb: u64) -> Option<&'static str> {
+    if params_b <= 0.0 || vram_mb == 0 {
+        return None;
+    }
+    let vram_gib = (vram_mb as f32) / 1024.0;
+    let fp16_gib = params_b * 2.0 * 1.2;
+    if vram_gib >= fp16_gib {
+        return None;
+    }
+    // Needs quantization. Prefer AWQ (better quality than GPTQ at 4-bit).
+    let awq_gib = params_b * 0.55 * 1.3;
+    if vram_gib >= awq_gib {
+        Some("awq")
+    } else {
+        // Even 4-bit barely fits — still suggest AWQ so the user at least
+        // tries; the server will OOM and the user will know to pick a
+        // smaller model.
+        Some("awq")
+    }
+}
+
+// =============================================================================
 // Prompt fragments integration (Phase 3 of V91)
 // =============================================================================
 
@@ -2787,8 +3478,10 @@ mod tests {
     #[test]
     fn test_butler_new() {
         let butler = Butler::new();
-        // Should have 12 built-in detectors
-        assert_eq!(butler.detectors.len(), 12);
+        // Should have 14 built-in detectors (Ollama, LMStudio, vLLM, llama.cpp,
+        // CloudApi, ProjectType, Git, Docker, GPU, Browser, Network, Whisper,
+        // Piper, Coqui)
+        assert_eq!(butler.detectors.len(), 14);
         assert!(butler.cache.is_empty());
     }
 
@@ -2825,6 +3518,8 @@ mod tests {
                 arch: "x86_64".to_string(),
                 cpus: 4,
                 has_gpu: false,
+                gpu_count: 0,
+                gpu_vram_mb: None,
                 has_docker: false,
                 has_browser: false,
             },
@@ -2855,6 +3550,8 @@ mod tests {
                 arch: "x86_64".to_string(),
                 cpus: 4,
                 has_gpu: false,
+                gpu_count: 0,
+                gpu_vram_mb: None,
                 has_docker: false,
                 has_browser: false,
             },
@@ -2879,6 +3576,8 @@ mod tests {
                 arch: "x86_64".to_string(),
                 cpus: 4,
                 has_gpu: false,
+                gpu_count: 0,
+                gpu_vram_mb: None,
                 has_docker: false,
                 has_browser: false,
             },
@@ -2904,6 +3603,8 @@ mod tests {
                 arch: "x86_64".to_string(),
                 cpus: 4,
                 has_gpu: false,
+                gpu_count: 0,
+                gpu_vram_mb: None,
                 has_docker: false,
                 has_browser: false,
             },
@@ -3063,9 +3764,9 @@ mod tests {
     }
 
     #[test]
-    fn test_butler_has_12_detectors() {
+    fn test_butler_has_14_detectors() {
         let butler = Butler::new();
-        assert_eq!(butler.detectors.len(), 12);
+        assert_eq!(butler.detectors.len(), 14);
     }
 
     #[test]
@@ -3158,6 +3859,8 @@ mod tests {
                 arch: "x86_64".to_string(),
                 cpus,
                 has_gpu,
+                gpu_count: if has_gpu { 1 } else { 0 },
+                gpu_vram_mb: if has_gpu { Some(24576) } else { None },
                 has_docker,
                 has_browser: false,
             },
@@ -3195,6 +3898,8 @@ mod tests {
                 arch: "x86_64".to_string(),
                 cpus: 4,
                 has_gpu,
+                gpu_count: if has_gpu { 1 } else { 0 },
+                gpu_vram_mb: if has_gpu { Some(24576) } else { None },
                 has_docker,
                 has_browser,
             },
@@ -3688,6 +4393,248 @@ mod tests {
         assert!(analysis.active_flags.is_empty());
     }
 
+    // ---- V103: vLLM + llama.cpp detector + runtime recommendation ----
+
+    fn empty_runtime_report() -> EnvironmentReport {
+        EnvironmentReport {
+            llm_providers: Vec::new(),
+            project_type: None,
+            vcs: None,
+            runtime: RuntimeInfo {
+                os: "test".to_string(),
+                arch: "x86_64".to_string(),
+                cpus: 4,
+                has_gpu: false,
+                gpu_count: 0,
+                gpu_vram_mb: None,
+                has_docker: false,
+                has_browser: false,
+            },
+            capabilities: Vec::new(),
+            suggested_agent_profile: "research-agent".to_string(),
+            suggested_mode: OperationMode::Assistant,
+        }
+    }
+
+    #[test]
+    fn vllm_detector_name_and_default_url() {
+        // Detector should have deterministic name + URL when no env vars.
+        std::env::remove_var("VLLM_BASE_URL");
+        let detector = VLlmDetector::new();
+        assert_eq!(detector.name(), "vllm");
+        assert_eq!(detector.base_url, "http://localhost:8000");
+    }
+
+    #[test]
+    fn vllm_detector_honors_env_var() {
+        std::env::set_var("VLLM_BASE_URL", "http://my-gpu-host:8000");
+        let detector = VLlmDetector::new();
+        assert_eq!(detector.base_url, "http://my-gpu-host:8000");
+        std::env::remove_var("VLLM_BASE_URL");
+    }
+
+    #[test]
+    fn llamacpp_detector_name_and_default_url() {
+        std::env::remove_var("LLAMACPP_BASE_URL");
+        let detector = LlamaCppDetector::new();
+        assert_eq!(detector.name(), "llamacpp");
+        assert_eq!(detector.base_url, "http://localhost:8080");
+    }
+
+    #[test]
+    fn recommend_runtime_prefers_vllm_for_multi_agent_on_gpu() {
+        let butler = Butler::new();
+        let mut report = empty_runtime_report();
+        report.runtime.has_gpu = true;
+        let rec = butler.recommend_runtime(
+            &report,
+            WorkloadHint::MultiAgent {
+                concurrent_agents: 4,
+            },
+        );
+        assert_eq!(rec.preferred, RuntimeKind::VLlm);
+        assert!(rec.reason.to_lowercase().contains("vllm"));
+        assert!(!rec.estimated_speedup.is_empty());
+    }
+
+    #[test]
+    fn recommend_runtime_falls_back_to_llamacpp_when_no_gpu_for_batch() {
+        let butler = Butler::new();
+        let mut report = empty_runtime_report();
+        report.runtime.has_gpu = false;
+        let rec = butler.recommend_runtime(&report, WorkloadHint::EvalBatch { prompt_count: 100 });
+        assert_eq!(rec.preferred, RuntimeKind::LlamaCpp);
+        assert!(rec.caveats.iter().any(|c| c.to_lowercase().contains("gpu")));
+    }
+
+    #[test]
+    fn recommend_runtime_prefers_ollama_for_interactive_chat_by_default() {
+        let butler = Butler::new();
+        let mut report = empty_runtime_report();
+        report.runtime.has_gpu = true;
+        let rec = butler.recommend_runtime(&report, WorkloadHint::InteractiveChat);
+        assert_eq!(rec.preferred, RuntimeKind::Ollama);
+    }
+
+    #[test]
+    fn recommend_runtime_keeps_running_vllm_on_auto() {
+        let butler = Butler::new();
+        let mut report = empty_runtime_report();
+        report.runtime.has_gpu = true;
+        report.llm_providers.push(DetectedProvider {
+            name: "vLLM".into(),
+            provider_type: AiProvider::VLLM,
+            url: "http://localhost:8000".into(),
+            available_models: vec![],
+        });
+        let rec = butler.recommend_runtime(&report, WorkloadHint::Auto);
+        assert_eq!(rec.preferred, RuntimeKind::VLlm);
+    }
+
+    #[test]
+    fn recommend_runtime_defaults_to_ollama_when_nothing_running() {
+        let butler = Butler::new();
+        let rec = butler.recommend_runtime(&empty_runtime_report(), WorkloadHint::Auto);
+        assert_eq!(rec.preferred, RuntimeKind::Ollama);
+        assert!(rec.install_hint.is_some());
+    }
+
+    #[test]
+    fn suggest_config_picks_up_vllm_when_detected() {
+        let butler = Butler::new();
+        let mut report = empty_runtime_report();
+        report.llm_providers.push(DetectedProvider {
+            name: "vLLM".into(),
+            provider_type: AiProvider::VLLM,
+            url: "http://localhost:8000".into(),
+            available_models: vec![],
+        });
+        let config = butler.suggest_config(&report);
+        assert_eq!(config.provider, AiProvider::VLLM);
+        assert_eq!(config.vllm_url, "http://localhost:8000");
+    }
+
+    #[test]
+    fn suggest_config_picks_up_llamacpp_when_detected() {
+        let butler = Butler::new();
+        let mut report = empty_runtime_report();
+        report.llm_providers.push(DetectedProvider {
+            name: "llama.cpp".into(),
+            provider_type: AiProvider::LlamaCpp,
+            url: "http://localhost:8080".into(),
+            available_models: vec![],
+        });
+        let config = butler.suggest_config(&report);
+        assert_eq!(config.provider, AiProvider::LlamaCpp);
+    }
+
+    #[test]
+    fn runtime_kind_display_shows_friendly_names() {
+        assert_eq!(RuntimeKind::Ollama.to_string(), "Ollama");
+        assert_eq!(RuntimeKind::VLlm.to_string(), "vLLM");
+        assert_eq!(RuntimeKind::LlamaCpp.to_string(), "llama.cpp");
+        assert_eq!(RuntimeKind::LmStudio.to_string(), "LM Studio");
+    }
+
+    #[test]
+    fn suggest_tensor_parallel_size_picks_power_of_two() {
+        assert_eq!(suggest_tensor_parallel_size(0), None);
+        assert_eq!(suggest_tensor_parallel_size(1), None);
+        assert_eq!(suggest_tensor_parallel_size(2), Some(2));
+        assert_eq!(suggest_tensor_parallel_size(3), Some(2));
+        assert_eq!(suggest_tensor_parallel_size(4), Some(4));
+        assert_eq!(suggest_tensor_parallel_size(7), Some(4));
+        assert_eq!(suggest_tensor_parallel_size(8), Some(8));
+        // Caps at 8 even for absurd GPU counts.
+        assert_eq!(suggest_tensor_parallel_size(16), Some(8));
+        assert_eq!(suggest_tensor_parallel_size(64), Some(8));
+    }
+
+    #[test]
+    fn vllm_recommendation_includes_tensor_parallel_on_multi_gpu() {
+        let mut report = empty_runtime_report();
+        report.runtime.has_gpu = true;
+        report.runtime.gpu_count = 4;
+        let butler = Butler::new();
+        let rec = butler.recommend_runtime(&report, WorkloadHint::AgenticCoding);
+        assert_eq!(rec.preferred, RuntimeKind::VLlm);
+        assert_eq!(rec.suggested_tensor_parallel_size, Some(4));
+        assert!(rec.reason.contains("tensor-parallel-size 4"));
+        assert!(rec
+            .install_hint
+            .as_ref()
+            .map(|h| h.contains("--tensor-parallel-size 4"))
+            .unwrap_or(false));
+    }
+
+    #[test]
+    fn vllm_recommendation_omits_tensor_parallel_on_single_gpu() {
+        let mut report = empty_runtime_report();
+        report.runtime.has_gpu = true;
+        report.runtime.gpu_count = 1;
+        let butler = Butler::new();
+        let rec = butler.recommend_runtime(&report, WorkloadHint::EvalBatch { prompt_count: 100 });
+        assert_eq!(rec.preferred, RuntimeKind::VLlm);
+        assert_eq!(rec.suggested_tensor_parallel_size, None);
+        assert!(!rec.reason.contains("tensor-parallel-size"));
+    }
+
+    #[test]
+    fn non_vllm_recommendation_has_no_tensor_parallel() {
+        let butler = Butler::new();
+        let report = empty_runtime_report();
+        let rec = butler.recommend_runtime(&report, WorkloadHint::InteractiveChat);
+        assert_eq!(rec.preferred, RuntimeKind::Ollama);
+        assert_eq!(rec.suggested_tensor_parallel_size, None);
+    }
+
+    #[test]
+    fn pick_quantization_none_when_fp16_fits() {
+        // 7B fp16 needs ~16.8 GiB; 24 GiB card fits it.
+        assert_eq!(pick_quantization_for_vram(7.0, 24 * 1024), None);
+    }
+
+    #[test]
+    fn pick_quantization_awq_when_only_4bit_fits() {
+        // 70B fp16 needs ~168 GiB; 4-bit needs ~50 GiB; 48 GiB card
+        // should still get AWQ suggestion.
+        assert_eq!(pick_quantization_for_vram(70.0, 48 * 1024), Some("awq"));
+    }
+
+    #[test]
+    fn pick_quantization_handles_zero_inputs() {
+        assert_eq!(pick_quantization_for_vram(0.0, 24 * 1024), None);
+        assert_eq!(pick_quantization_for_vram(7.0, 0), None);
+    }
+
+    #[test]
+    fn vllm_recommendation_enables_prefix_caching_for_agentic() {
+        let mut report = empty_runtime_report();
+        report.runtime.has_gpu = true;
+        report.runtime.gpu_count = 1;
+        let butler = Butler::new();
+        let rec = butler.recommend_runtime(&report, WorkloadHint::AgenticCoding);
+        assert_eq!(rec.preferred, RuntimeKind::VLlm);
+        assert!(rec.reason.contains("enable-prefix-caching"));
+        assert!(rec
+            .install_hint
+            .as_ref()
+            .map(|h| h.contains("--enable-prefix-caching"))
+            .unwrap_or(false));
+    }
+
+    #[test]
+    fn vllm_recommendation_skips_prefix_caching_for_eval_batch() {
+        let mut report = empty_runtime_report();
+        report.runtime.has_gpu = true;
+        report.runtime.gpu_count = 1;
+        let butler = Butler::new();
+        let rec = butler.recommend_runtime(&report, WorkloadHint::EvalBatch { prompt_count: 100 });
+        assert_eq!(rec.preferred, RuntimeKind::VLlm);
+        // Eval batches use distinct prompts; prefix caching adds cost without win.
+        assert!(!rec.reason.contains("enable-prefix-caching"));
+    }
+
     // ---- Phase 3 of V91: prompt_fragments recommendations ----
 
     #[cfg(feature = "prompt-fragments")]
@@ -3705,6 +4652,8 @@ mod tests {
                     arch: "x86_64".to_string(),
                     cpus: 4,
                     has_gpu: false,
+                    gpu_count: 0,
+                    gpu_vram_mb: None,
                     has_docker: false,
                     has_browser: false,
                 },

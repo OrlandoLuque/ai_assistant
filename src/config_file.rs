@@ -154,6 +154,10 @@ pub struct UrlConfig {
     /// llama.cpp `llama-server` URL (upstream and PrismML fork).
     #[serde(default = "default_llamacpp_url")]
     pub llamacpp: String,
+
+    /// vLLM OpenAI-compatible server URL (default port 8000).
+    #[serde(default = "default_vllm_url")]
+    pub vllm: String,
 }
 
 fn default_ollama_url() -> String {
@@ -174,6 +178,9 @@ fn default_local_ai_url() -> String {
 fn default_llamacpp_url() -> String {
     "http://localhost:8080".to_string()
 }
+fn default_vllm_url() -> String {
+    "http://localhost:8000".to_string()
+}
 
 impl Default for UrlConfig {
     fn default() -> Self {
@@ -184,6 +191,7 @@ impl Default for UrlConfig {
             kobold: default_kobold_url(),
             local_ai: default_local_ai_url(),
             llamacpp: default_llamacpp_url(),
+            vllm: default_vllm_url(),
         }
     }
 }
@@ -749,6 +757,7 @@ impl ConfigFile {
             "kobold" | "koboldcpp" => AiProvider::KoboldCpp,
             "localai" | "local_ai" => AiProvider::LocalAI,
             "llamacpp" | "llama_cpp" | "llama.cpp" | "llama-cpp" => AiProvider::LlamaCpp,
+            "vllm" | "v_llm" | "v-llm" => AiProvider::VLLM,
             "openai_compatible" => AiProvider::OpenAICompatible {
                 base_url: self.provider.custom_url.clone().unwrap_or_default(),
             },
@@ -800,6 +809,7 @@ impl ConfigFile {
             kobold_url: self.urls.kobold.clone(),
             local_ai_url: self.urls.local_ai.clone(),
             llamacpp_url: self.urls.llamacpp.clone(),
+            vllm_url: self.urls.vllm.clone(),
             custom_url: self.provider.custom_url.clone().unwrap_or_default(),
             api_key: self.provider.api_key.clone().unwrap_or_default(),
             max_history_messages: self.generation.max_history,
@@ -817,6 +827,7 @@ impl ConfigFile {
             AiProvider::KoboldCpp => ("kobold".to_string(), None),
             AiProvider::LocalAI => ("localai".to_string(), None),
             AiProvider::LlamaCpp => ("llamacpp".to_string(), None),
+            AiProvider::VLLM => ("vllm".to_string(), None),
             AiProvider::OpenAICompatible { base_url } => {
                 ("openai_compatible".to_string(), Some(base_url.clone()))
             }
@@ -851,6 +862,7 @@ impl ConfigFile {
                 kobold: config.kobold_url.clone(),
                 local_ai: config.local_ai_url.clone(),
                 llamacpp: config.llamacpp_url.clone(),
+                vllm: config.vllm_url.clone(),
             },
             generation: GenerationConfig {
                 temperature: config.temperature,
@@ -901,6 +913,7 @@ impl ConfigFile {
                         "kobold" => config.urls.kobold = value,
                         "local_ai" => config.urls.local_ai = value,
                         "llamacpp" | "llama_cpp" | "llama-cpp" => config.urls.llamacpp = value,
+                        "vllm" | "v_llm" | "v-llm" => config.urls.vllm = value,
                         _ => {}
                     },
                     "generation" => match key {

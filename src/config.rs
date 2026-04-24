@@ -9,6 +9,11 @@ fn default_llamacpp_url() -> String {
     "http://localhost:8080".to_string()
 }
 
+/// Default URL for vLLM OpenAI-compatible server (matches upstream default).
+fn default_vllm_url() -> String {
+    "http://localhost:8000".to_string()
+}
+
 /// Available AI provider types
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[non_exhaustive]
@@ -29,6 +34,15 @@ pub enum AiProvider {
     /// `PrismML-Eng/llama.cpp` (which adds the custom `Q1_0` quantization
     /// type used by the Bonsai 1-bit models).
     LlamaCpp,
+    /// vLLM OpenAI-compatible high-throughput server.
+    ///
+    /// vLLM (<https://github.com/vllm-project/vllm>) is a GPU-optimized LLM
+    /// serving engine using PagedAttention + continuous batching for
+    /// high-concurrency workloads (multi-agent, eval batches, research
+    /// pipelines). Loads any HuggingFace transformer repo by ID and exposes
+    /// `/v1/chat/completions`, `/v1/models`, `/version`, `/health`,
+    /// `/metrics`, and `/v1/load_lora_adapter` (LoRA hot-swap).
+    VLLM,
     /// Custom OpenAI-compatible endpoint
     OpenAICompatible { base_url: String },
     /// OpenAI cloud API (requires API key)
@@ -76,6 +90,7 @@ impl AiProvider {
             AiProvider::KoboldCpp => "Kobold.cpp",
             AiProvider::LocalAI => "LocalAI",
             AiProvider::LlamaCpp => "llama.cpp",
+            AiProvider::VLLM => "vLLM",
             AiProvider::OpenAICompatible { .. } => "OpenAI Compatible",
             AiProvider::OpenAI => "OpenAI",
             AiProvider::Anthropic => "Anthropic",
@@ -101,6 +116,7 @@ impl AiProvider {
             AiProvider::KoboldCpp => "🐉",
             AiProvider::LocalAI => "🤖",
             AiProvider::LlamaCpp => "🦫",
+            AiProvider::VLLM => "🚀",
             AiProvider::OpenAICompatible { .. } => "🔌",
             AiProvider::OpenAI => "🧠",
             AiProvider::Anthropic => "🏛️",
@@ -125,6 +141,7 @@ impl AiProvider {
                 | AiProvider::TextGenWebUI
                 | AiProvider::LocalAI
                 | AiProvider::LlamaCpp
+                | AiProvider::VLLM
                 | AiProvider::OpenAICompatible { .. }
                 | AiProvider::OpenAI
                 | AiProvider::Groq
@@ -180,6 +197,10 @@ pub struct AiConfig {
     /// Default port for upstream llama-server is 8080.
     #[serde(default = "default_llamacpp_url")]
     pub llamacpp_url: String,
+    /// vLLM OpenAI-compatible server URL.
+    /// Default port for vLLM is 8000.
+    #[serde(default = "default_vllm_url")]
+    pub vllm_url: String,
     /// Custom OpenAI-compatible URL
     pub custom_url: String,
     /// API key for cloud providers (OpenAI, Anthropic).
@@ -207,6 +228,7 @@ impl std::fmt::Debug for AiConfig {
             .field("kobold_url", &self.kobold_url)
             .field("local_ai_url", &self.local_ai_url)
             .field("llamacpp_url", &self.llamacpp_url)
+            .field("vllm_url", &self.vllm_url)
             .field("custom_url", &self.custom_url)
             .field(
                 "api_key",
@@ -233,6 +255,7 @@ impl Default for AiConfig {
             kobold_url: "http://localhost:5001".to_string(),
             local_ai_url: "http://localhost:8080".to_string(),
             llamacpp_url: default_llamacpp_url(),
+            vllm_url: default_vllm_url(),
             custom_url: String::new(),
             api_key: String::new(),
             max_history_messages: 20,
@@ -257,6 +280,7 @@ impl AiConfig {
             AiProvider::KoboldCpp => self.kobold_url.clone(),
             AiProvider::LocalAI => self.local_ai_url.clone(),
             AiProvider::LlamaCpp => self.llamacpp_url.clone(),
+            AiProvider::VLLM => self.vllm_url.clone(),
             AiProvider::OpenAICompatible { base_url } => base_url.clone(),
             AiProvider::OpenAI => "https://api.openai.com".to_string(),
             AiProvider::Anthropic => "https://api.anthropic.com".to_string(),
@@ -465,6 +489,37 @@ mod tests {
             deployment: "gpt-4o".into(),
         };
         assert!(p.is_openai_compatible());
+    }
+
+    #[test]
+    fn test_vllm_default_url() {
+        let config = AiConfig::default();
+        assert_eq!(config.vllm_url, "http://localhost:8000");
+    }
+
+    #[test]
+    fn test_vllm_get_provider_url() {
+        let mut config = AiConfig::default();
+        config.provider = AiProvider::VLLM;
+        assert_eq!(config.get_base_url(), "http://localhost:8000");
+        config.vllm_url = "http://gpu-box:8000".to_string();
+        assert_eq!(config.get_base_url(), "http://gpu-box:8000");
+    }
+
+    #[test]
+    fn test_vllm_is_openai_compatible() {
+        assert!(AiProvider::VLLM.is_openai_compatible());
+    }
+
+    #[test]
+    fn test_vllm_is_not_cloud() {
+        assert!(!AiProvider::VLLM.is_cloud());
+    }
+
+    #[test]
+    fn test_vllm_display_name_and_icon() {
+        assert_eq!(AiProvider::VLLM.display_name(), "vLLM");
+        assert!(!AiProvider::VLLM.icon().is_empty());
     }
 
     #[test]
