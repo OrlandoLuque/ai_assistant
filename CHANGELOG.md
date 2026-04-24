@@ -5,6 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v57 (2026-04-24) — V101: llama.cpp provider + curated model catalog (0.2.33)
+
+### Added
+- **`AiProvider::LlamaCpp`** — first-class variant for `llama.cpp`'s
+  `llama-server` (OpenAI-compatible API). Works with upstream llama.cpp
+  *and* forks such as PrismML's `PrismML-Eng/llama.cpp` (which adds the
+  `Q1_0` quantization used by the Bonsai 1-bit models). Default URL:
+  `http://localhost:8080`. Display: `llama.cpp` (🦫).
+  - `AiConfig` gains `llamacpp_url: String`.
+  - `config_file::UrlConfig` gains `llamacpp: String` field and the
+    string-tag parser accepts `"llamacpp"` / `"llama_cpp"` / `"llama.cpp"`
+    / `"llama-cpp"` in `[provider]`.
+  - Dispatched through the same OpenAI-compatible paths as `LMStudio`
+    (`generate_openai_response`, `generate_openai_streaming`,
+    `generate_openai_streaming_cancellable`, `fetch_model_context_size`).
+- **`curated_models` module** — hand-picked recommended models per
+  provider, always compiled (no feature flag). Public API:
+  `CuratedModel`, `suggested_models_for(&provider)`,
+  `all_curated_models()`. Zero runtime cost (static `const` slice).
+- **Curated PrismML Bonsai entries** for `LlamaCpp`:
+  `Bonsai-{8B,4B,1.7B}-Q1_0.gguf` (1.125 bpw) and
+  `TernaryBonsai-{8B,4B,1.7B}.gguf` — each with `source_url` to the
+  Hugging Face repo and a `requirements` note documenting the PrismML
+  fork prerequisite.
+- **Other curated entries**: Qwen2.5-7B, Llama-3.1-8B (llama.cpp);
+  qwen2.5, llama3.1, mistral, deepseek-coder (Ollama); claude-opus-4-7,
+  gpt-4o, gemini-2.0-flash (cloud anchors).
+
+### Rationale
+- Before V101, running llama.cpp required the generic
+  `OpenAICompatible { base_url }` variant — no branding, no default URL,
+  no preset. Needed for PrismML Bonsai adoption.
+- The PrismML fork shares the exact wire protocol with upstream
+  llama.cpp — no separate enum variant is needed; the fork requirement
+  is surfaced via the `CuratedModel::requirements` field instead.
+
+### Tests
+- `config::tests`: 3 new (`test_llamacpp_default_url`,
+  `test_llamacpp_get_provider_url`, `test_llamacpp_not_cloud`) plus
+  `LlamaCpp` assertions in existing display-name / OpenAI-compat tests.
+- `curated_models::tests`: 6 new (catalog non-empty, Bonsai entries
+  flag PrismML fork, cloud entries flag API keys, etc.).
+- **Total V101 net new tests: 11.** All passing.
+
+### Changed
+- `Cargo.toml`: 0.2.32 → 0.2.33.
+
+### Notes
+- The `AiProvider` enum is `#[non_exhaustive]`, so adding the `LlamaCpp`
+  variant is not a source-breaking change for library consumers.
+- Because llama-server's API is byte-identical to OpenAI's, llama.cpp
+  reuses the `LMStudio` code path — no new wire-level code.
+
 ## [Unreleased] - v56 (2026-04-23) — V100: Self-Correction for Tool/Research/Agent/Safety (0.2.32)
 
 ### Added

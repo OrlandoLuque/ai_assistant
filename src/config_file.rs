@@ -150,6 +150,10 @@ pub struct UrlConfig {
     /// LocalAI API URL
     #[serde(default = "default_local_ai_url")]
     pub local_ai: String,
+
+    /// llama.cpp `llama-server` URL (upstream and PrismML fork).
+    #[serde(default = "default_llamacpp_url")]
+    pub llamacpp: String,
 }
 
 fn default_ollama_url() -> String {
@@ -167,6 +171,9 @@ fn default_kobold_url() -> String {
 fn default_local_ai_url() -> String {
     "http://localhost:8080".to_string()
 }
+fn default_llamacpp_url() -> String {
+    "http://localhost:8080".to_string()
+}
 
 impl Default for UrlConfig {
     fn default() -> Self {
@@ -176,6 +183,7 @@ impl Default for UrlConfig {
             text_gen_webui: default_text_gen_url(),
             kobold: default_kobold_url(),
             local_ai: default_local_ai_url(),
+            llamacpp: default_llamacpp_url(),
         }
     }
 }
@@ -740,6 +748,7 @@ impl ConfigFile {
             "textgenwebui" | "text_gen_webui" => AiProvider::TextGenWebUI,
             "kobold" | "koboldcpp" => AiProvider::KoboldCpp,
             "localai" | "local_ai" => AiProvider::LocalAI,
+            "llamacpp" | "llama_cpp" | "llama.cpp" | "llama-cpp" => AiProvider::LlamaCpp,
             "openai_compatible" => AiProvider::OpenAICompatible {
                 base_url: self.provider.custom_url.clone().unwrap_or_default(),
             },
@@ -790,6 +799,7 @@ impl ConfigFile {
             text_gen_webui_url: self.urls.text_gen_webui.clone(),
             kobold_url: self.urls.kobold.clone(),
             local_ai_url: self.urls.local_ai.clone(),
+            llamacpp_url: self.urls.llamacpp.clone(),
             custom_url: self.provider.custom_url.clone().unwrap_or_default(),
             api_key: self.provider.api_key.clone().unwrap_or_default(),
             max_history_messages: self.generation.max_history,
@@ -806,6 +816,7 @@ impl ConfigFile {
             AiProvider::TextGenWebUI => ("textgenwebui".to_string(), None),
             AiProvider::KoboldCpp => ("kobold".to_string(), None),
             AiProvider::LocalAI => ("localai".to_string(), None),
+            AiProvider::LlamaCpp => ("llamacpp".to_string(), None),
             AiProvider::OpenAICompatible { base_url } => {
                 ("openai_compatible".to_string(), Some(base_url.clone()))
             }
@@ -839,6 +850,7 @@ impl ConfigFile {
                 text_gen_webui: config.text_gen_webui_url.clone(),
                 kobold: config.kobold_url.clone(),
                 local_ai: config.local_ai_url.clone(),
+                llamacpp: config.llamacpp_url.clone(),
             },
             generation: GenerationConfig {
                 temperature: config.temperature,
@@ -888,6 +900,7 @@ impl ConfigFile {
                         "text_gen_webui" => config.urls.text_gen_webui = value,
                         "kobold" => config.urls.kobold = value,
                         "local_ai" => config.urls.local_ai = value,
+                        "llamacpp" | "llama_cpp" | "llama-cpp" => config.urls.llamacpp = value,
                         _ => {}
                     },
                     "generation" => match key {
@@ -1003,6 +1016,7 @@ impl ConfigFile {
         ));
         out.push_str(&format!("kobold = \"{}\"\n", self.urls.kobold));
         out.push_str(&format!("local_ai = \"{}\"\n", self.urls.local_ai));
+        out.push_str(&format!("llamacpp = \"{}\"\n", self.urls.llamacpp));
         out.push('\n');
 
         out.push_str("[generation]\n");

@@ -191,6 +191,7 @@ pub mod connection_pool;
 pub mod context_budget;
 #[cfg(feature = "browser")]
 pub mod crawl_policy;
+pub mod curated_models;
 pub mod data_source_client;
 pub mod debug;
 pub mod diff;
@@ -277,6 +278,7 @@ pub use context::{
     clear_context_size_cache, context_size_cache_len, estimate_tokens, estimate_tokens_for_model,
     get_model_context_size, get_model_context_size_cached, ContextUsage,
 };
+pub use curated_models::{all_curated_models, suggested_models_for, CuratedModel};
 pub use messages::{AiResponse, ChatMessage};
 pub use models::{ModelCapabilityInfo, ModelInfo, ModelRegistry};
 pub use providers::{

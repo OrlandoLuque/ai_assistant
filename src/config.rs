@@ -4,6 +4,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::retry::RetryConfig;
 
+/// Default URL for `llama.cpp` `llama-server` (matches upstream default).
+fn default_llamacpp_url() -> String {
+    "http://localhost:8080".to_string()
+}
+
 /// Available AI provider types
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[non_exhaustive]
@@ -18,6 +23,12 @@ pub enum AiProvider {
     KoboldCpp,
     /// LocalAI (OpenAI-compatible)
     LocalAI,
+    /// llama.cpp `llama-server` (OpenAI-compatible).
+    ///
+    /// Works with both upstream llama.cpp and forks such as PrismML's
+    /// `PrismML-Eng/llama.cpp` (which adds the custom `Q1_0` quantization
+    /// type used by the Bonsai 1-bit models).
+    LlamaCpp,
     /// Custom OpenAI-compatible endpoint
     OpenAICompatible { base_url: String },
     /// OpenAI cloud API (requires API key)
@@ -64,6 +75,7 @@ impl AiProvider {
             AiProvider::TextGenWebUI => "text-generation-webui",
             AiProvider::KoboldCpp => "Kobold.cpp",
             AiProvider::LocalAI => "LocalAI",
+            AiProvider::LlamaCpp => "llama.cpp",
             AiProvider::OpenAICompatible { .. } => "OpenAI Compatible",
             AiProvider::OpenAI => "OpenAI",
             AiProvider::Anthropic => "Anthropic",
@@ -88,6 +100,7 @@ impl AiProvider {
             AiProvider::TextGenWebUI => "🌐",
             AiProvider::KoboldCpp => "🐉",
             AiProvider::LocalAI => "🤖",
+            AiProvider::LlamaCpp => "🦫",
             AiProvider::OpenAICompatible { .. } => "🔌",
             AiProvider::OpenAI => "🧠",
             AiProvider::Anthropic => "🏛️",
@@ -111,6 +124,7 @@ impl AiProvider {
             AiProvider::LMStudio
                 | AiProvider::TextGenWebUI
                 | AiProvider::LocalAI
+                | AiProvider::LlamaCpp
                 | AiProvider::OpenAICompatible { .. }
                 | AiProvider::OpenAI
                 | AiProvider::Groq
@@ -162,6 +176,10 @@ pub struct AiConfig {
     pub kobold_url: String,
     /// LocalAI API URL
     pub local_ai_url: String,
+    /// llama.cpp `llama-server` URL (and PrismML fork).
+    /// Default port for upstream llama-server is 8080.
+    #[serde(default = "default_llamacpp_url")]
+    pub llamacpp_url: String,
     /// Custom OpenAI-compatible URL
     pub custom_url: String,
     /// API key for cloud providers (OpenAI, Anthropic).
@@ -188,6 +206,7 @@ impl std::fmt::Debug for AiConfig {
             .field("text_gen_webui_url", &self.text_gen_webui_url)
             .field("kobold_url", &self.kobold_url)
             .field("local_ai_url", &self.local_ai_url)
+            .field("llamacpp_url", &self.llamacpp_url)
             .field("custom_url", &self.custom_url)
             .field(
                 "api_key",
@@ -213,6 +232,7 @@ impl Default for AiConfig {
             text_gen_webui_url: "http://localhost:5000".to_string(),
             kobold_url: "http://localhost:5001".to_string(),
             local_ai_url: "http://localhost:8080".to_string(),
+            llamacpp_url: default_llamacpp_url(),
             custom_url: String::new(),
             api_key: String::new(),
             max_history_messages: 20,
@@ -236,6 +256,7 @@ impl AiConfig {
             AiProvider::TextGenWebUI => self.text_gen_webui_url.clone(),
             AiProvider::KoboldCpp => self.kobold_url.clone(),
             AiProvider::LocalAI => self.local_ai_url.clone(),
+            AiProvider::LlamaCpp => self.llamacpp_url.clone(),
             AiProvider::OpenAICompatible { base_url } => base_url.clone(),
             AiProvider::OpenAI => "https://api.openai.com".to_string(),
             AiProvider::Anthropic => "https://api.anthropic.com".to_string(),
@@ -310,6 +331,7 @@ mod tests {
         );
         assert_eq!(AiProvider::KoboldCpp.display_name(), "Kobold.cpp");
         assert_eq!(AiProvider::LocalAI.display_name(), "LocalAI");
+        assert_eq!(AiProvider::LlamaCpp.display_name(), "llama.cpp");
         let custom = AiProvider::OpenAICompatible {
             base_url: "http://custom".to_string(),
         };
@@ -323,10 +345,31 @@ mod tests {
         assert!(AiProvider::TextGenWebUI.is_openai_compatible());
         assert!(!AiProvider::KoboldCpp.is_openai_compatible());
         assert!(AiProvider::LocalAI.is_openai_compatible());
+        assert!(AiProvider::LlamaCpp.is_openai_compatible());
         let custom = AiProvider::OpenAICompatible {
             base_url: "http://x".to_string(),
         };
         assert!(custom.is_openai_compatible());
+    }
+
+    #[test]
+    fn test_llamacpp_default_url() {
+        let config = AiConfig::default();
+        assert_eq!(config.llamacpp_url, "http://localhost:8080");
+    }
+
+    #[test]
+    fn test_llamacpp_get_provider_url() {
+        let mut config = AiConfig::default();
+        config.provider = AiProvider::LlamaCpp;
+        assert_eq!(config.get_base_url(), "http://localhost:8080");
+        config.llamacpp_url = "http://localhost:9999".to_string();
+        assert_eq!(config.get_base_url(), "http://localhost:9999");
+    }
+
+    #[test]
+    fn test_llamacpp_not_cloud() {
+        assert!(!AiProvider::LlamaCpp.is_cloud());
     }
 
     #[test]

@@ -4,7 +4,7 @@
 
 # ai_assistant
 
-A comprehensive Rust library for LLM integration — local and cloud. 18 providers, 5-tier RAG, multi-agent orchestration, autonomous agents, distributed computing, anti-hallucination pipeline, academic research APIs, and 49+ MCP tools. Single crate, zero-runtime, ~423K LOC.
+A comprehensive Rust library for LLM integration — local and cloud. 19 providers, 5-tier RAG, multi-agent orchestration, autonomous agents, distributed computing, anti-hallucination pipeline, academic research APIs, and 49+ MCP tools. Single crate, zero-runtime, ~423K LOC.
 
 ![Rust](https://img.shields.io/badge/Rust-Edition%202021-orange)
 ![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)
@@ -76,11 +76,13 @@ All 26 binaries ship in the release zip. See `docs/BINARIES.md` for full per-bin
 | `ai_prompt_synth_gui` | Fragment Synthesis dashboard (clusters, arms, reward history) — `prompt-synthesis + gui-pro` |
 | `ai_feedback` | Feedback Loop auditor CLI (ledger, stats, retractions) — `feedback-loop` |
 | `ai_feedback_gui` | Feedback Loop dashboard (sinks, drops, retractions) — `feedback-loop + gui-pro` |
+| `ai_breeder` | PromptBreeder V97 auditor CLI (list-runs, show-run, ledger-verify, export, compare) — `prompt-breeder` |
+| `ai_breeder_gui` | PromptBreeder V97 dashboard (population, lineage, ledger, fitness timeline) — `prompt-breeder + gui-pro` |
 
 ## Features
 
 ### Core Features
-- **Multi-provider support**: 18 LLM providers — Ollama, LM Studio, OpenAI, Anthropic, Google Gemini, Azure OpenAI, AWS Bedrock, Mistral, DeepSeek, Groq, Together AI, Fireworks, Perplexity, OpenRouter, HuggingFace, LocalAI, Kobold.cpp, text-generation-webui, and any OpenAI-compatible API
+- **Multi-provider support**: 19 LLM providers — Ollama, LM Studio, OpenAI, Anthropic, Google Gemini, Azure OpenAI, AWS Bedrock, Mistral, DeepSeek, Groq, Together AI, Fireworks, Perplexity, OpenRouter, HuggingFace, LocalAI, Kobold.cpp, text-generation-webui, llama.cpp (incl. PrismML fork for 1-bit Bonsai), and any OpenAI-compatible API
 - **Provider failover**: Automatic fallback with configurable retry and API key rotation
 - **Streaming responses**: Real-time SSE and WebSocket (RFC 6455) streaming with cancellation support
 - **Resumable streaming**: Checkpoint/replay for long-running generations with `Last-Event-ID`
@@ -536,6 +538,7 @@ assistant.load_config(config);
 | text-generation-webui | OpenAI-compatible | `http://localhost:5000` | Yes |
 | Kobold.cpp | Native | `http://localhost:5001` | No* |
 | LocalAI | OpenAI-compatible | `http://localhost:8080` | Yes |
+| llama.cpp (incl. PrismML fork) | OpenAI-compatible | `http://localhost:8080` | Yes |
 | OpenAI (cloud) | Native | `https://api.openai.com` | Yes |
 | Anthropic (cloud) | Native | `https://api.anthropic.com` | Yes |
 | Google Gemini (cloud) | Native | `https://generativelanguage.googleapis.com` | Yes |
