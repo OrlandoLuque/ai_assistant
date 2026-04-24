@@ -4682,3 +4682,144 @@ pub fn rag_features_editor(ui: &mut Ui, features: &mut RagFeatures) -> bool {
 
     changed
 }
+
+// ====================================================================
+// V102: Curated-model picker
+// ====================================================================
+
+use crate::config::AiProvider;
+use crate::curated_models::{suggested_models_for, CuratedModel};
+
+/// Response from the curated-model picker.
+pub struct CuratedModelPickerResponse {
+    /// True when the user clicked "Use this model" on an entry.
+    pub selected: bool,
+    /// The chosen model (valid only when `selected == true`).
+    pub model_id: Option<String>,
+}
+
+/// Render a vertical picker listing curated models for a given
+/// provider. Each entry shows name, params, size, quantization, and —
+/// when set — a `requirements` banner (e.g. "needs PrismML-Eng fork"
+/// for 1-bit Bonsai).
+///
+/// Returns `CuratedModelPickerResponse { selected: true, model_id:
+/// Some(...) }` the frame the user clicks **Use this model**.
+pub fn curated_model_picker(ui: &mut Ui, provider: &AiProvider) -> CuratedModelPickerResponse {
+    let models = suggested_models_for(provider);
+    let mut out = CuratedModelPickerResponse {
+        selected: false,
+        model_id: None,
+    };
+
+    ui.vertical(|ui| {
+        ui.label(
+            RichText::new(format!("Curated models for {}", provider.display_name())).heading(),
+        );
+        ui.separator();
+        if models.is_empty() {
+            ui.label(
+                RichText::new("No curated models for this provider yet.")
+                    .color(Color32::GRAY)
+                    .italics(),
+            );
+            return;
+        }
+        for m in &models {
+            render_curated_entry(ui, m, &mut out);
+            ui.add_space(6.0);
+        }
+    });
+
+    out
+}
+
+fn render_curated_entry(ui: &mut Ui, m: &CuratedModel, out: &mut CuratedModelPickerResponse) {
+    egui::Frame::group(ui.style())
+        .fill(Color32::from_rgb(32, 38, 48))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(m.display_name).strong().size(14.0));
+                ui.add_space(6.0);
+                pill(ui, m.parameters, Color32::from_rgb(60, 80, 120));
+                pill(ui, m.quantization, Color32::from_rgb(80, 60, 100));
+                pill(ui, m.approx_size, Color32::from_rgb(60, 80, 70));
+            });
+            ui.label(RichText::new(m.description).color(Color32::LIGHT_GRAY));
+            if let Some(req) = m.requirements {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new("Requires:")
+                            .color(Color32::from_rgb(240, 170, 60))
+                            .strong(),
+                    );
+                    ui.label(RichText::new(req).color(Color32::from_rgb(240, 170, 60)));
+                });
+            }
+            if let Some(url) = m.source_url {
+                ui.hyperlink_to(
+                    RichText::new(url).size(11.0).color(Color32::LIGHT_BLUE),
+                    url,
+                );
+            }
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(m.id).monospace().size(11.0));
+                let resp = ui.button("Use this model");
+                if resp.clicked() {
+                    out.selected = true;
+                    out.model_id = Some(m.id.to_string());
+                }
+            });
+        });
+}
+
+fn pill(ui: &mut Ui, text: &str, bg: Color32) {
+    let _ = ui.add(
+        egui::Label::new(
+            RichText::new(format!(" {} ", text))
+                .size(11.0)
+                .background_color(bg)
+                .color(Color32::WHITE),
+        )
+        .selectable(false),
+    );
+}
+
+#[cfg(test)]
+mod v102_picker_tests {
+    use super::*;
+    use crate::config::AiProvider;
+    use crate::curated_models::suggested_models_for;
+
+    #[test]
+    fn picker_response_default_not_selected() {
+        let r = CuratedModelPickerResponse {
+            selected: false,
+            model_id: None,
+        };
+        assert!(!r.selected);
+        assert!(r.model_id.is_none());
+    }
+
+    #[test]
+    fn picker_has_entries_for_llamacpp() {
+        let ms = suggested_models_for(&AiProvider::LlamaCpp);
+        assert!(!ms.is_empty(), "LlamaCpp should have curated entries");
+    }
+
+    #[test]
+    fn picker_flags_prismml_requirement_on_bonsai() {
+        let ms = suggested_models_for(&AiProvider::LlamaCpp);
+        let bonsai_q1 = ms
+            .iter()
+            .find(|m| m.id.contains("Bonsai") && m.quantization.contains("Q1_0"))
+            .expect("Bonsai Q1_0 entry");
+        assert!(
+            bonsai_q1
+                .requirements
+                .map(|r| r.to_lowercase().contains("prism"))
+                .unwrap_or(false),
+            "Bonsai Q1_0 must flag PrismML fork requirement"
+        );
+    }
+}

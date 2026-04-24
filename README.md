@@ -173,6 +173,12 @@ All 26 binaries ship in the release zip. See `docs/BINARIES.md` for full per-bin
 - **Introspection**: `build_with_trace` returns which fragments fired, in output order — ideal for debugging and OpenTelemetry spans
 - See [`docs/PROMPT_FRAGMENTS.md`](docs/PROMPT_FRAGMENTS.md) for the complete guide
 
+### Local-Model Bootstrap (V102)
+- **GGUF auto-downloader** (`auto-download` feature): HuggingFace → local cache with resume, SHA256 verification, HF bearer token, progress callback, atomic rename. Works with llama.cpp, LM Studio, Kobold.cpp, LocalAI, text-gen-webui.
+- **Ollama zero-copy registration**: `register_with_ollama_hardlink` pre-seeds Ollama's blob store with a hard link so the GGUF bytes exist once on disk instead of being duplicated.
+- **`LlamaCppCapability` probe**: hits `llama-server`'s `/props` to detect PrismML fork / `Q1_0` / ternary support before loading a 1-bit Bonsai.
+- **Curated-model picker widget** (`egui-widgets`): renders the V101 catalog with a `Requires:` banner for PrismML-fork-gated entries.
+
 ### More Features
 - **Voice agent**: STT/TTS with cloud and local providers
 - **Media generation**: Image/audio/video generation pipelines

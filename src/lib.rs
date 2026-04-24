@@ -211,6 +211,8 @@ pub mod feedback_loop;
 #[cfg(feature = "ffi")]
 pub mod ffi;
 pub mod formatting;
+#[cfg(feature = "auto-download")]
+pub mod gguf_downloader;
 #[cfg(feature = "audio")]
 pub mod group_queue_host;
 #[cfg(feature = "audio")]
@@ -219,6 +221,7 @@ pub mod http_client;
 pub mod internal_storage;
 pub mod knowledge_watcher;
 pub mod learning_control;
+pub mod llamacpp_capability;
 pub mod llm_enhance;
 pub mod llm_judge;
 pub mod load_shedding;
@@ -279,6 +282,13 @@ pub use context::{
     get_model_context_size, get_model_context_size_cached, ContextUsage,
 };
 pub use curated_models::{all_curated_models, suggested_models_for, CuratedModel};
+#[cfg(feature = "auto-download")]
+pub use gguf_downloader::{
+    default_cache_dir, default_ollama_models_dir, download, huggingface_resolve_url,
+    register_with_ollama, register_with_ollama_hardlink, write_ollama_modelfile, DownloadRequest,
+    DownloadedFile, ProgressFn,
+};
+pub use llamacpp_capability::{parse_props, probe_llamacpp, LlamaCppCapability};
 pub use messages::{AiResponse, ChatMessage};
 pub use models::{ModelCapabilityInfo, ModelInfo, ModelRegistry};
 pub use providers::{

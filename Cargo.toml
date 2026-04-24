@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.33"
+version = "0.2.34"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -116,6 +116,12 @@ research = []
 # egui widgets for chat UI
 egui-widgets = ["egui"]
 
+# V102: GGUF weight auto-downloader (resume, progress, SHA256, HF token).
+# Generic — usable by any local provider that loads GGUF (llama.cpp,
+# LM Studio, Kobold.cpp, LocalAI, text-gen-webui). For Ollama, the
+# module also exposes a Modelfile helper.
+auto-download = ["dep:sha2"]
+
 # Full feature set (includes everything except egui)
 full = [
     "multi-agent",
@@ -134,6 +140,7 @@ full = [
     "async-runtime",
     "advanced-memory",
     "research",
+    "auto-download",
 ]
 
 # Binary storage: bincode + gzip for internal data (faster, smaller than JSON)

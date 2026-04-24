@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v58 (2026-04-24) — V102: llama.cpp capability probe + GGUF auto-downloader + curated picker widget (0.2.34)
+
+### Added
+- **`LlamaCppCapability` probe** (`src/llamacpp_capability.rs`, always
+  compiled). `probe_llamacpp(base_url)` hits `/props` and reports
+  build info, default context, plus heuristic booleans
+  `is_prismml_fork`, `supports_q1_0`, `supports_ternary`. Method
+  `can_run_quantization("Q1_0")` answers the "will this build load a
+  Bonsai GGUF?" question. Pure parser (`parse_props`) split out for
+  offline tests.
+- **GGUF auto-downloader** (`src/gguf_downloader.rs`, feature
+  `auto-download`, included in `full`). Generic — usable by any
+  local provider that loads GGUF. `download(&DownloadRequest, ...)`
+  supports resume via `Range` header, SHA256 verification, HF bearer
+  token, progress callback, `.part` + atomic rename, idempotent
+  re-runs. Helpers: `huggingface_resolve_url`, `default_cache_dir`.
+- **Ollama registration helpers**: `register_with_ollama` (POST
+  `/api/create`, copy-based), `register_with_ollama_hardlink`
+  (zero-copy — pre-seeds Ollama's blob store with `hard_link` so
+  Ollama reuses the bytes instead of duplicating them),
+  `write_ollama_modelfile`, `default_ollama_models_dir`.
+- **`curated_model_picker` egui widget** (`src/widgets.rs`, feature
+  `egui-widgets`). Renders `suggested_models_for(provider)` as
+  bordered cards with parameters/quantization/size pills, a
+  `Requires:` banner (amber) for PrismML-fork-gated Bonsai entries,
+  source URL hyperlink, and a **Use this model** button.
+
+### Dependencies
+- `auto-download = ["dep:sha2"]`. `sha2` was already an optional
+  dep used by `security` and `distributed-network`.
+
+### Tests
+- `llamacpp_capability::tests` — 7 new
+- `gguf_downloader::tests` — 11 new
+- `widgets::v102_picker_tests` — 3 new
+
+Net +21 tests, all passing.
+
+### Docs
+- `docs/IMPROVEMENTS_V102.md` (new).
+
+---
+
 ## [Unreleased] - v57 (2026-04-24) — V101: llama.cpp provider + curated model catalog (0.2.33)
 
 ### Added
