@@ -856,6 +856,8 @@ pub mod autonomous_loop;
 pub mod browser_tools;
 #[cfg(feature = "butler")]
 pub mod butler;
+#[cfg(feature = "autonomous")]
+pub mod project_conventions;
 #[cfg(feature = "butler")]
 pub use butler::{
     pick_quantization_for_vram, suggest_tensor_parallel_size, AdvisorConfig, AdvisorReport,
@@ -916,6 +918,12 @@ pub use agent_sandbox::{AuditDecision, AuditEntry, SandboxError, SandboxValidato
 #[cfg(feature = "autonomous")]
 pub use agent_profiles::{
     AgentProfile, ConversationProfile, ProfileRegistry, WorkflowPhase, WorkflowProfile,
+};
+
+#[cfg(feature = "autonomous")]
+pub use project_conventions::{
+    load_project_conventions, ConventionSource, ConventionsConfig, ConventionsError,
+    FileTrustCache, LoadedConventions, MergeNotice, MergeSummary, TrustCache, TrustStatus,
 };
 
 #[cfg(feature = "autonomous")]
