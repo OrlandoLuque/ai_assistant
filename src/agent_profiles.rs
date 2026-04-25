@@ -453,6 +453,130 @@ fn builtin_agent_profiles() -> Vec<AgentProfile> {
             mode: OperationMode::Chat,
             tags: vec!["security".to_string(), "restricted".to_string()],
         },
+        // 9. opencode-build — emulates sst/opencode `build` mode (full access).
+        //
+        // Mirrors opencode's primary agent: edits + bash + git + web search,
+        // long sessions, project memory loaded from AGENTS.md / CLAUDE.md.
+        // Flip to `opencode-plan` for the read-only counterpart (the Tab
+        // toggle in opencode's TUI).
+        AgentProfile {
+            name: "opencode-build".to_string(),
+            description: "Opencode-style coding agent in build mode — full filesystem, shell, \
+                 git, and web access. Long autonomous sessions over a project."
+                .to_string(),
+            policy: AgentPolicyBuilder::new()
+                .autonomy(AutonomyLevel::Autonomous)
+                .internet(InternetMode::SearchOnly)
+                .allow_command("git")
+                .allow_command("cargo")
+                .allow_command("npm")
+                .allow_command("pnpm")
+                .allow_command("yarn")
+                .allow_command("bun")
+                .allow_command("node")
+                .allow_command("python")
+                .allow_command("python3")
+                .allow_command("pip")
+                .allow_command("make")
+                .allow_command("bash")
+                .allow_command("sh")
+                .allow_path("/home")
+                .max_iterations(200)
+                .max_cost(5.0)
+                .max_runtime(7200)
+                .require_approval_above(RiskLevel::High)
+                .build(),
+            model: None,
+            system_prompt: Some(
+                "You are an opencode-style coding agent in BUILD mode. You have full \
+                 read/write access to the project, shell execution, git, and web search. \
+                 \n\nLoad project conventions from AGENTS.md (or fallback to CLAUDE.md) at \
+                 the project root and from the user's global ~/.config/opencode/AGENTS.md. \
+                 Honour any instructions found there over your defaults.\n\n\
+                 Workflow: explore the codebase with read_file / git_status / git_log first, \
+                 propose a plan in plain language, then make edits. Run tests after each \
+                 substantive change. Cite file paths as `path:line` when referring to code. \
+                 Pause and ask for approval before destructive shell operations or any \
+                 action whose risk you cannot assess.\n\n\
+                 If you need to step back and analyse without making changes, hand off to \
+                 the `opencode-plan` profile (the equivalent of opencode's Tab toggle to \
+                 plan mode)."
+                    .to_string(),
+            ),
+            tools: vec![
+                "read_file",
+                "write_file",
+                "run_command",
+                "web_search",
+                "web_fetch",
+                "git_status",
+                "git_diff",
+                "git_log",
+            ]
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect(),
+            mcp_servers: Vec::new(),
+            mode: OperationMode::Autonomous,
+            tags: vec![
+                "coding".to_string(),
+                "opencode".to_string(),
+                "build".to_string(),
+            ],
+        },
+        // 10. opencode-plan — emulates sst/opencode `plan` mode (read-only).
+        //
+        // Mirrors the read-only counterpart of opencode-build: same tools
+        // for exploration but no writes / no shell. Use this for analysis,
+        // architecture review, root-cause investigation before flipping
+        // back to opencode-build for the actual edits.
+        AgentProfile {
+            name: "opencode-plan".to_string(),
+            description: "Opencode-style coding agent in plan mode — read-only analysis. \
+                 No edits, no shell. Pair with `opencode-build` for the edit phase."
+                .to_string(),
+            policy: AgentPolicyBuilder::new()
+                .autonomy(AutonomyLevel::Paranoid)
+                .internet(InternetMode::SearchOnly)
+                .allow_path("/home")
+                .max_iterations(80)
+                .max_cost(2.0)
+                .max_runtime(1800)
+                .require_approval_above(RiskLevel::Low)
+                .build(),
+            model: None,
+            system_prompt: Some(
+                "You are an opencode-style coding agent in PLAN mode. You can read files, \
+                 search the web, and inspect git history — but you cannot edit files or \
+                 run shell commands. Your job is to investigate, analyse, and propose a \
+                 written plan that the user can hand to the `opencode-build` profile to \
+                 execute.\n\n\
+                 Load project conventions from AGENTS.md (or fallback to CLAUDE.md). \
+                 Cite file paths as `path:line`. Output a numbered plan with \
+                 file-level changes, expected risks, and the verification steps that \
+                 should follow."
+                    .to_string(),
+            ),
+            tools: vec![
+                "read_file",
+                "web_search",
+                "web_fetch",
+                "git_status",
+                "git_diff",
+                "git_log",
+            ]
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect(),
+            mcp_servers: Vec::new(),
+            mode: OperationMode::Assistant,
+            tags: vec![
+                "coding".to_string(),
+                "opencode".to_string(),
+                "plan".to_string(),
+                "read-only".to_string(),
+            ],
+        },
     ]
 }
 
@@ -641,6 +765,45 @@ fn builtin_workflow_profiles() -> Vec<WorkflowProfile> {
             ],
             tags: vec!["coding".to_string(), "bugfix".to_string(), "pipeline".to_string()],
         },
+        // 4. opencode-session — emulates opencode's plan→build flow.
+        //
+        // The Tab toggle in opencode's TUI swaps between plan (read-only)
+        // and build (full-access) on the same conversation. We mirror that
+        // as a two-phase workflow: Plan produces the change list, Build
+        // executes it.
+        WorkflowProfile {
+            name: "opencode-session".to_string(),
+            description:
+                "Opencode-style two-phase coding session: plan (read-only) then build (apply)."
+                    .to_string(),
+            phases: vec![
+                WorkflowPhase {
+                    name: "Plan".to_string(),
+                    agent_profile: "opencode-plan".to_string(),
+                    task_template:
+                        "Investigate the user's request, propose a numbered plan with \
+                         file-level changes and verification steps. No edits yet."
+                            .to_string(),
+                    depends_on: Vec::new(),
+                    output_key: "plan".to_string(),
+                },
+                WorkflowPhase {
+                    name: "Build".to_string(),
+                    agent_profile: "opencode-build".to_string(),
+                    task_template:
+                        "Execute {{plan}}: apply the file changes, run the verification \
+                         steps, and report results. Pause before any destructive shell op."
+                            .to_string(),
+                    depends_on: vec!["Plan".to_string()],
+                    output_key: "build_result".to_string(),
+                },
+            ],
+            tags: vec![
+                "coding".to_string(),
+                "opencode".to_string(),
+                "pipeline".to_string(),
+            ],
+        },
     ]
 }
 
@@ -665,7 +828,7 @@ mod tests {
     fn test_with_defaults_has_agent_profiles() {
         let reg = ProfileRegistry::with_defaults();
         let names = reg.list_agent_profiles();
-        assert_eq!(names.len(), 8);
+        assert_eq!(names.len(), 10);
         assert!(names.contains(&"coding-assistant"));
         assert!(names.contains(&"research-agent"));
         assert!(names.contains(&"devops-agent"));
@@ -674,6 +837,8 @@ mod tests {
         assert!(names.contains(&"code-reviewer"));
         assert!(names.contains(&"sysadmin"));
         assert!(names.contains(&"paranoid"));
+        assert!(names.contains(&"opencode-build"));
+        assert!(names.contains(&"opencode-plan"));
     }
 
     #[test]
@@ -691,10 +856,11 @@ mod tests {
     fn test_with_defaults_has_workflow_profiles() {
         let reg = ProfileRegistry::with_defaults();
         let names = reg.list_workflow_profiles();
-        assert_eq!(names.len(), 3);
+        assert_eq!(names.len(), 4);
         assert!(names.contains(&"code-review-pipeline"));
         assert!(names.contains(&"research-report"));
         assert!(names.contains(&"bug-fix"));
+        assert!(names.contains(&"opencode-session"));
     }
 
     #[test]
@@ -843,6 +1009,80 @@ mod tests {
         assert!(!profile.policy.can_run_command("ls"));
         // No internet
         assert!(!profile.policy.can_access_internet("https://example.com"));
+    }
+
+    #[test]
+    fn test_opencode_build_profile() {
+        let reg = ProfileRegistry::with_defaults();
+        let profile = reg.get_agent_profile("opencode-build").unwrap();
+
+        assert_eq!(profile.policy.autonomy, AutonomyLevel::Autonomous);
+        assert_eq!(profile.policy.internet, InternetMode::SearchOnly);
+        assert_eq!(profile.mode, OperationMode::Autonomous);
+
+        // Coding-agent toolset
+        assert!(profile.tools.contains(&"write_file".to_string()));
+        assert!(profile.tools.contains(&"run_command".to_string()));
+        assert!(profile.tools.contains(&"git_diff".to_string()));
+
+        // Shell commands typical of a coding session
+        assert!(profile.policy.can_run_command("git status"));
+        assert!(profile.policy.can_run_command("cargo build"));
+        assert!(profile.policy.can_run_command("npm install"));
+
+        // System prompt should mention the AGENTS.md convention (opencode-style)
+        let prompt = profile.system_prompt.as_ref().unwrap();
+        assert!(prompt.contains("AGENTS.md"));
+
+        // Tagging
+        assert!(profile.tags.contains(&"opencode".to_string()));
+        assert!(profile.tags.contains(&"build".to_string()));
+    }
+
+    #[test]
+    fn test_opencode_plan_profile() {
+        let reg = ProfileRegistry::with_defaults();
+        let profile = reg.get_agent_profile("opencode-plan").unwrap();
+
+        assert_eq!(profile.policy.autonomy, AutonomyLevel::Paranoid);
+        assert_eq!(profile.policy.internet, InternetMode::SearchOnly);
+        assert_eq!(profile.mode, OperationMode::Assistant);
+
+        // Read-only: no edits, no shell
+        assert!(!profile.tools.contains(&"write_file".to_string()));
+        assert!(!profile.tools.contains(&"run_command".to_string()));
+        assert!(profile.tools.contains(&"read_file".to_string()));
+
+        // No commands allowed (allowlist empty)
+        assert!(!profile.policy.can_run_command("git status"));
+        assert!(!profile.policy.can_run_command("cargo build"));
+
+        // System prompt should describe PLAN mode
+        let prompt = profile.system_prompt.as_ref().unwrap();
+        assert!(prompt.contains("PLAN"));
+
+        // Tagging
+        assert!(profile.tags.contains(&"opencode".to_string()));
+        assert!(profile.tags.contains(&"plan".to_string()));
+        assert!(profile.tags.contains(&"read-only".to_string()));
+    }
+
+    #[test]
+    fn test_opencode_session_workflow() {
+        let reg = ProfileRegistry::with_defaults();
+        let wf = reg.get_workflow_profile("opencode-session").unwrap();
+
+        assert_eq!(wf.phases.len(), 2);
+
+        let plan = &wf.phases[0];
+        assert_eq!(plan.name, "Plan");
+        assert_eq!(plan.agent_profile, "opencode-plan");
+        assert!(plan.depends_on.is_empty());
+
+        let build = &wf.phases[1];
+        assert_eq!(build.name, "Build");
+        assert_eq!(build.agent_profile, "opencode-build");
+        assert!(build.depends_on.contains(&"Plan".to_string()));
     }
 
     #[test]
