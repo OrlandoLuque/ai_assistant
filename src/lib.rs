@@ -888,6 +888,7 @@ pub mod scheduler;
 pub mod task_board;
 #[cfg(feature = "scheduler")]
 pub mod trigger_system;
+pub mod unified_audit;
 pub mod update_checker;
 #[cfg(feature = "autonomous")]
 pub mod user_interaction;
@@ -942,6 +943,11 @@ pub use config_layered::{
 pub use slash_commands::{
     discover_slash_commands, render_slash_command, RenderedCommand, SlashCommand,
     SlashCommandConfig, SlashCommandError, SlashCommandRegistry,
+};
+
+pub use unified_audit::{
+    AuditSeverity, AuditSink, AuditSinkError, CallbackSink, InMemorySink, JsonLinesFileSink,
+    Redactor, UnifiedAuditBus, UnifiedAuditConfig, UnifiedAuditEvent,
 };
 
 #[cfg(feature = "autonomous")]
