@@ -185,6 +185,7 @@ pub mod cloud_providers;
 #[cfg(feature = "server-cluster")]
 pub mod cluster;
 pub mod config_file;
+pub mod config_layered;
 pub mod config_optimizer;
 pub mod config_security;
 pub mod connection_pool;
@@ -930,6 +931,11 @@ pub use project_conventions::{
 pub use file_references::{
     expand_file_refs, parse_file_refs, ExpandedRef, FileRef, FileRefConfig, FileRefError,
     FileRefExpansion,
+};
+
+pub use config_layered::{
+    load_layered_config, ArrayMergeStrategy, LayerLoadConfig, LayerStep, LayeredConfig,
+    LayeredError,
 };
 
 #[cfg(feature = "autonomous")]
