@@ -260,6 +260,7 @@ pub mod server;
 pub mod server_axum;
 #[cfg(feature = "skill-forge")]
 pub mod skill_forge;
+pub mod slash_commands;
 pub mod storage_context;
 pub mod streaming;
 pub mod structured;
@@ -936,6 +937,11 @@ pub use file_references::{
 pub use config_layered::{
     load_layered_config, ArrayMergeStrategy, LayerLoadConfig, LayerStep, LayeredConfig,
     LayeredError,
+};
+
+pub use slash_commands::{
+    discover_slash_commands, render_slash_command, RenderedCommand, SlashCommand,
+    SlashCommandConfig, SlashCommandError, SlashCommandRegistry,
 };
 
 #[cfg(feature = "autonomous")]
