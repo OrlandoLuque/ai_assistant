@@ -672,13 +672,21 @@ mod tests {
             detector2.heartbeat();
             thread::sleep(Duration::from_millis(2));
         }
-        // Right after heartbeat, phi should be low, not suspicious
-        let phi_now = detector2.phi();
-        assert_eq!(
-            detector2.is_suspicious(),
-            phi_now > 16.0 * 0.5,
-            "is_suspicious should agree with phi > threshold*0.5 (phi={}, threshold=16.0)",
-            phi_now
+        // Right after heartbeat, phi should be low, not suspicious.
+        // phi() reads wall-clock elapsed time, so two consecutive calls can drift;
+        // accept disagreement only if phi demonstrably crossed the threshold/2 boundary
+        // between calls.
+        let phi_before = detector2.phi();
+        let is_susp = detector2.is_suspicious();
+        let phi_after = detector2.phi();
+        let expected_before = phi_before > 16.0 * 0.5;
+        let expected_after = phi_after > 16.0 * 0.5;
+        assert!(
+            is_susp == expected_before || is_susp == expected_after,
+            "is_suspicious={} inconsistent with phi readings (before={}, after={}, threshold/2=8.0)",
+            is_susp,
+            phi_before,
+            phi_after
         );
 
         // With a lower threshold (8.0), rapid heartbeats then a pause
@@ -690,14 +698,18 @@ mod tests {
         // Wait for phi to rise
         thread::sleep(Duration::from_millis(100));
 
-        let phi_after_wait = detector3.phi();
-        let expected_suspicious = phi_after_wait > 8.0 * 0.5;
-        assert_eq!(
-            detector3.is_suspicious(),
-            expected_suspicious,
-            "is_suspicious consistency: phi={}, threshold=8.0, expected_suspicious={}",
-            phi_after_wait,
-            expected_suspicious
+        // Same drift-tolerance guard: accept agreement with phi reading before OR after.
+        let phi_before = detector3.phi();
+        let is_susp = detector3.is_suspicious();
+        let phi_after = detector3.phi();
+        let expected_before = phi_before > 8.0 * 0.5;
+        let expected_after = phi_after > 8.0 * 0.5;
+        assert!(
+            is_susp == expected_before || is_susp == expected_after,
+            "is_suspicious={} inconsistent with phi readings (before={}, after={}, threshold/2=4.0)",
+            is_susp,
+            phi_before,
+            phi_after
         );
     }
 

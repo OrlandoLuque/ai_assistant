@@ -3771,7 +3771,6 @@ mod tests {
                 preserve_recent: 5,
                 preserve_first: 2,
                 min_importance: 0.5,
-                llm_enhanced: false,
             },
             ..Default::default()
         };

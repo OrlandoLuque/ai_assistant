@@ -62,7 +62,6 @@ impl TurnConfig {
 
 /// P2P network configuration
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[non_exhaustive]
 pub struct P2PConfig {
     /// Enable P2P networking
     pub enabled: bool,
