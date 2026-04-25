@@ -205,6 +205,7 @@ pub mod fallback;
 pub mod fault_injection;
 #[cfg(feature = "feedback-loop")]
 pub mod feedback_loop;
+pub mod file_references;
 // V79: C FFI bindings — 20 extern "C" entry points behind the `ffi`
 // feature. Consumed by C/C++/C#/Unity/Unreal/Bevy via the generated
 // header at `include/ai_assistant.h`.
@@ -924,6 +925,11 @@ pub use agent_profiles::{
 pub use project_conventions::{
     load_project_conventions, ConventionSource, ConventionsConfig, ConventionsError,
     FileTrustCache, LoadedConventions, MergeNotice, MergeSummary, TrustCache, TrustStatus,
+};
+
+pub use file_references::{
+    expand_file_refs, parse_file_refs, ExpandedRef, FileRef, FileRefConfig, FileRefError,
+    FileRefExpansion,
 };
 
 #[cfg(feature = "autonomous")]
