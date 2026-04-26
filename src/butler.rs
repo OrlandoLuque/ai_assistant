@@ -3204,6 +3204,65 @@ impl Butler {
             suggested_tensor_parallel_size: None,
         }
     }
+
+    /// Return a model-specific runtime hint when the model needs a non-stock
+    /// runtime (custom fork, exotic kernel, etc.). Returns `None` for models
+    /// that run on mainline runtimes without special handling.
+    ///
+    /// Pattern matching is case-insensitive substring on the bare model name
+    /// (e.g. `"prism-ml/Bonsai-8B-gguf"` or `"bonsai-8b"` both match `bonsai`).
+    pub fn model_runtime_hint(&self, model_name: &str) -> Option<ModelRuntimeHint> {
+        let lower = model_name.to_lowercase();
+        if lower.contains("bonsai") {
+            let family = if lower.contains("ternary") {
+                "Ternary Bonsai (1.58-bit)"
+            } else {
+                "Bonsai (Q1_0, 1.125 bpw)"
+            };
+            return Some(ModelRuntimeHint {
+                model_family: family.to_string(),
+                required_runtime: RuntimeKind::LlamaCpp,
+                requires_fork: true,
+                fork_repo: Some("https://github.com/PrismML-Eng/llama.cpp".to_string()),
+                reason: format!(
+                    "{family} weights ship with a custom Q1_0 / 1.58-bit kernel \
+                     that mainline llama.cpp does not implement. Build the \
+                     PrismML fork (CUDA + Metal + CPU) before serving these \
+                     GGUFs."
+                ),
+                install_hint: Some(
+                    "git clone https://github.com/PrismML-Eng/llama.cpp && \
+                     cd llama.cpp && cmake -B build -DGGML_CUDA=ON && \
+                     cmake --build build -j"
+                        .to_string(),
+                ),
+                alt_runtime: Some("MLX (Apple Silicon) via PrismML/mlx fork".to_string()),
+            });
+        }
+        None
+    }
+}
+
+/// Runtime advisory tied to a specific model (returned by
+/// [`Butler::model_runtime_hint`]). Surfaces fork / kernel requirements that
+/// the generic [`Butler::recommend_runtime`] flow cannot infer from
+/// environment alone.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelRuntimeHint {
+    /// Human-readable family name (e.g. "Bonsai (Q1_0, 1.125 bpw)").
+    pub model_family: String,
+    /// Runtime that must be used (typically `LlamaCpp` when a fork is needed).
+    pub required_runtime: RuntimeKind,
+    /// Whether the official runtime release is insufficient.
+    pub requires_fork: bool,
+    /// Repo URL of the required fork, if any.
+    pub fork_repo: Option<String>,
+    /// One-paragraph justification surfaced to the user.
+    pub reason: String,
+    /// Build / install hint for the required runtime.
+    pub install_hint: Option<String>,
+    /// Alternative runtime path (e.g. MLX on Apple Silicon).
+    pub alt_runtime: Option<String>,
 }
 
 /// Pick a vLLM `--tensor-parallel-size` for a multi-GPU host.
@@ -4762,5 +4821,42 @@ mod tests {
             assert!(!rec.extra_fragment_keys.contains(&"git_commit_conventions"));
             assert!(!rec.extra_fragment_keys.contains(&"rust_idioms"));
         }
+    }
+
+    #[test]
+    fn model_runtime_hint_flags_bonsai_as_fork_required() {
+        let butler = Butler::new();
+        let hint = butler
+            .model_runtime_hint("prism-ml/Bonsai-8B-gguf")
+            .expect("bonsai should produce a hint");
+        assert!(hint.requires_fork);
+        assert_eq!(hint.required_runtime, RuntimeKind::LlamaCpp);
+        assert!(hint.fork_repo.as_deref().unwrap().contains("PrismML-Eng"));
+        assert!(hint.model_family.contains("Bonsai"));
+    }
+
+    #[test]
+    fn model_runtime_hint_distinguishes_ternary_bonsai() {
+        let butler = Butler::new();
+        let hint = butler
+            .model_runtime_hint("Ternary-Bonsai-4B-gguf")
+            .expect("ternary bonsai should produce a hint");
+        assert!(hint.model_family.contains("Ternary"));
+        assert!(hint.requires_fork);
+    }
+
+    #[test]
+    fn model_runtime_hint_returns_none_for_mainline_models() {
+        let butler = Butler::new();
+        assert!(butler.model_runtime_hint("llama-3-8b").is_none());
+        assert!(butler.model_runtime_hint("qwen2.5-coder-7b").is_none());
+        assert!(butler.model_runtime_hint("gemma3:12b").is_none());
+    }
+
+    #[test]
+    fn model_runtime_hint_is_case_insensitive() {
+        let butler = Butler::new();
+        assert!(butler.model_runtime_hint("BONSAI-8B").is_some());
+        assert!(butler.model_runtime_hint("bonsai-8b").is_some());
     }
 }

@@ -274,18 +274,56 @@ impl ModelRouter {
                 .with_vision(),
         );
 
-        // Phi models (fast)
+        // Phi models (fast). phi-3.5-vision must precede generic "phi".
+        self.profiles.push(
+            ModelCapabilityProfile::new("phi-3.5-vision", 128_000, 80)
+                .with_task_score(TaskType::Vision, 82)
+                .with_task_score(TaskType::Chat, 78)
+                .with_vision(),
+        );
         self.profiles.push(
             ModelCapabilityProfile::new("phi", 4096, 72)
                 .with_task_score(TaskType::Chat, 70)
                 .with_task_score(TaskType::FastResponse, 90),
         );
 
-        // Gemma
+        // Gemma. More specific patterns first so `find()` prefers them.
+        // gemma3 (4B/12B/27B) is multimodal with 128K context.
         self.profiles.push(
-            ModelCapabilityProfile::new("gemma", 8000, 78)
-                .with_task_score(TaskType::Chat, 80)
-                .with_task_score(TaskType::Technical, 75),
+            ModelCapabilityProfile::new("gemma3", 128_000, 84)
+                .with_task_score(TaskType::Chat, 86)
+                .with_task_score(TaskType::Technical, 82)
+                .with_task_score(TaskType::Vision, 80)
+                .with_task_score(TaskType::LongContext, 85)
+                .with_vision(),
+        );
+        self.profiles.push(
+            ModelCapabilityProfile::new("gemma2", 8192, 80)
+                .with_task_score(TaskType::Chat, 82)
+                .with_task_score(TaskType::Technical, 78),
+        );
+        // Generic gemma (legacy v1) — last so v3/v2 win.
+        self.profiles.push(
+            ModelCapabilityProfile::new("gemma", 8000, 76)
+                .with_task_score(TaskType::Chat, 78)
+                .with_task_score(TaskType::Technical, 74),
+        );
+
+        // PrismML Bonsai (Qwen3 base, Q1_0 / ternary). Text-only, 64K ctx,
+        // tiny footprint — strong for FastResponse / edge. Requires the
+        // PrismML llama.cpp fork (see `Butler::model_runtime_hint`).
+        // ternary-bonsai must precede bonsai so the more specific pattern wins.
+        self.profiles.push(
+            ModelCapabilityProfile::new("ternary-bonsai", 65_536, 75)
+                .with_task_score(TaskType::Chat, 76)
+                .with_task_score(TaskType::FastResponse, 92)
+                .with_task_score(TaskType::LongContext, 78),
+        );
+        self.profiles.push(
+            ModelCapabilityProfile::new("bonsai", 65_536, 74)
+                .with_task_score(TaskType::Chat, 75)
+                .with_task_score(TaskType::FastResponse, 94)
+                .with_task_score(TaskType::LongContext, 78),
         );
     }
 
@@ -727,5 +765,59 @@ mod tests {
         assert!(req.requires_vision);
         assert!(req.requires_functions);
         assert_eq!(req.min_context_size, Some(64000));
+    }
+
+    #[test]
+    fn test_gemma3_profile_supports_vision_and_long_context() {
+        let router = ModelRouter::new();
+        let p = router.get_profile("gemma3:12b").expect("gemma3 profile");
+        assert!(p.supports_vision, "gemma3 must be marked as vision-capable");
+        assert!(p.context_size >= 128_000, "gemma3 must declare 128K ctx");
+        assert!(p.get_task_score(TaskType::Vision) >= 75);
+    }
+
+    #[test]
+    fn test_gemma2_profile_text_only() {
+        let router = ModelRouter::new();
+        let p = router.get_profile("gemma2-9b").expect("gemma2 profile");
+        assert!(!p.supports_vision);
+        assert_eq!(p.context_size, 8192);
+    }
+
+    #[test]
+    fn test_bonsai_profile_fast_response_dominant() {
+        let router = ModelRouter::new();
+        let p = router
+            .get_profile("Bonsai-8B-gguf")
+            .expect("bonsai profile");
+        // Bonsai must beat phi on FastResponse — that is its raison d'être.
+        let phi = router.get_profile("phi-3-mini").expect("phi profile");
+        assert!(
+            p.get_task_score(TaskType::FastResponse) >= phi.get_task_score(TaskType::FastResponse)
+        );
+        assert_eq!(p.context_size, 65_536);
+        assert!(!p.supports_vision);
+    }
+
+    #[test]
+    fn test_ternary_bonsai_more_specific_than_bonsai() {
+        let router = ModelRouter::new();
+        // The pattern `ternary-bonsai` must be tried before `bonsai` so that
+        // a ternary model resolves to the ternary profile, not the 1-bit one.
+        let p = router
+            .get_profile("Ternary-Bonsai-8B-gguf")
+            .expect("ternary profile");
+        assert_eq!(p.model_pattern, "ternary-bonsai");
+    }
+
+    #[test]
+    fn test_phi_vision_resolves_to_vision_profile() {
+        let router = ModelRouter::new();
+        // phi-3.5-vision must beat the generic phi profile.
+        let p = router
+            .get_profile("phi-3.5-vision-instruct")
+            .expect("phi vision profile");
+        assert!(p.supports_vision);
+        assert_eq!(p.model_pattern, "phi-3.5-vision");
     }
 }

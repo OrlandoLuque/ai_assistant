@@ -865,7 +865,7 @@ pub mod project_conventions;
 pub use butler::{
     pick_quantization_for_vram, suggest_tensor_parallel_size, AdvisorConfig, AdvisorReport,
     AdvisorSummary, Butler, ButlerAdvisor, ButlerRecommendation, EnvironmentReport,
-    LlamaCppDetector, OptimizationCategory, RecommendationPriority, RuntimeKind,
+    LlamaCppDetector, ModelRuntimeHint, OptimizationCategory, RecommendationPriority, RuntimeKind,
     RuntimeRecommendation, VLlmDetector, WorkloadHint,
 };
 #[cfg(any(feature = "autonomous", feature = "containers"))]
