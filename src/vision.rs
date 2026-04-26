@@ -178,6 +178,50 @@ impl ImageInput {
         }
     }
 
+    /// Convert to Anthropic Messages API format.
+    ///
+    /// Anthropic accepts two source types:
+    /// - `{"type":"base64","media_type":"image/png","data":"..."}`
+    /// - `{"type":"url","url":"https://..."}` (added 2024)
+    pub fn to_anthropic_format(&self) -> serde_json::Value {
+        let source = match &self.data {
+            ImageData::Base64(b64) => serde_json::json!({
+                "type": "base64",
+                "media_type": self.media_type,
+                "data": b64,
+            }),
+            ImageData::Url(url) => serde_json::json!({
+                "type": "url",
+                "url": url,
+            }),
+        };
+        serde_json::json!({
+            "type": "image",
+            "source": source,
+        })
+    }
+
+    /// Convert to Google Gemini `inlineData` / `fileData` format.
+    ///
+    /// Gemini requires the raw base64 (not a data URL) and a `mimeType`.
+    /// URLs are wrapped as `fileData` with `fileUri`.
+    pub fn to_gemini_format(&self) -> serde_json::Value {
+        match &self.data {
+            ImageData::Base64(b64) => serde_json::json!({
+                "inlineData": {
+                    "mimeType": self.media_type,
+                    "data": b64,
+                }
+            }),
+            ImageData::Url(url) => serde_json::json!({
+                "fileData": {
+                    "mimeType": self.media_type,
+                    "fileUri": url,
+                }
+            }),
+        }
+    }
+
     /// Get estimated token cost (rough approximation)
     pub fn estimate_tokens(&self) -> usize {
         match self.detail {
@@ -274,6 +318,62 @@ impl VisionMessage {
         }
 
         msg
+    }
+
+    /// Convert to Anthropic Messages API format.
+    ///
+    /// Builds a content array with text + image blocks. The `system` role
+    /// is NOT supported in Anthropic's `messages` array; callers should
+    /// route system prompts to the top-level `system` parameter.
+    pub fn to_anthropic_format(&self) -> serde_json::Value {
+        let role = if self.role == "system" {
+            "user"
+        } else {
+            self.role.as_str()
+        };
+        if self.images.is_empty() {
+            return serde_json::json!({
+                "role": role,
+                "content": self.text,
+            });
+        }
+        let mut content = Vec::with_capacity(self.images.len() + 1);
+        for image in &self.images {
+            content.push(image.to_anthropic_format());
+        }
+        if !self.text.is_empty() {
+            content.push(serde_json::json!({
+                "type": "text",
+                "text": self.text,
+            }));
+        }
+        serde_json::json!({
+            "role": role,
+            "content": content,
+        })
+    }
+
+    /// Convert to Google Gemini `contents` format (single entry).
+    ///
+    /// Roles map: `assistant` → `model`, `system` → `user` (system prompt
+    /// is supplied via top-level `systemInstruction`).
+    pub fn to_gemini_format(&self) -> serde_json::Value {
+        let role = match self.role.as_str() {
+            "assistant" => "model",
+            "system" => "user",
+            other => other,
+        };
+        let mut parts = Vec::with_capacity(self.images.len() + 1);
+        if !self.text.is_empty() {
+            parts.push(serde_json::json!({ "text": self.text }));
+        }
+        for image in &self.images {
+            parts.push(image.to_gemini_format());
+        }
+        serde_json::json!({
+            "role": role,
+            "parts": parts,
+        })
     }
 
     /// Estimate total tokens
@@ -625,5 +725,92 @@ mod tests {
     fn test_image_detail_default() {
         let image = ImageInput::from_url("https://example.com/image.jpg");
         assert_eq!(image.detail, ImageDetail::Auto);
+    }
+
+    #[test]
+    fn test_image_anthropic_format_base64() {
+        let image = ImageInput::from_bytes(&[0xFF, 0xD8], "image/jpeg");
+        let v = image.to_anthropic_format();
+        assert_eq!(v["type"], "image");
+        assert_eq!(v["source"]["type"], "base64");
+        assert_eq!(v["source"]["media_type"], "image/jpeg");
+        assert!(v["source"]["data"].as_str().unwrap().len() > 0);
+    }
+
+    #[test]
+    fn test_image_anthropic_format_url() {
+        let image = ImageInput::from_url("https://example.com/cat.png");
+        let v = image.to_anthropic_format();
+        assert_eq!(v["type"], "image");
+        assert_eq!(v["source"]["type"], "url");
+        assert_eq!(v["source"]["url"], "https://example.com/cat.png");
+    }
+
+    #[test]
+    fn test_image_gemini_format_inline_data() {
+        let image = ImageInput::from_bytes(&[0x89, 0x50, 0x4E, 0x47], "image/png");
+        let v = image.to_gemini_format();
+        assert_eq!(v["inlineData"]["mimeType"], "image/png");
+        assert!(v["inlineData"]["data"].as_str().unwrap().len() > 0);
+    }
+
+    #[test]
+    fn test_image_gemini_format_file_data() {
+        let image = ImageInput::from_url("https://example.com/cat.jpg");
+        let v = image.to_gemini_format();
+        assert_eq!(v["fileData"]["mimeType"], "image/jpeg");
+        assert_eq!(v["fileData"]["fileUri"], "https://example.com/cat.jpg");
+    }
+
+    #[test]
+    fn test_message_anthropic_text_only() {
+        let m = VisionMessage::user("hello", vec![]);
+        let v = m.to_anthropic_format();
+        assert_eq!(v["role"], "user");
+        assert_eq!(v["content"], "hello");
+    }
+
+    #[test]
+    fn test_message_anthropic_with_images() {
+        let m = VisionMessage::user(
+            "What is this?",
+            vec![ImageInput::from_url("https://example.com/x.png")],
+        );
+        let v = m.to_anthropic_format();
+        let content = v["content"].as_array().expect("array content");
+        // image first, then text
+        assert_eq!(content[0]["type"], "image");
+        assert_eq!(content[1]["type"], "text");
+        assert_eq!(content[1]["text"], "What is this?");
+    }
+
+    #[test]
+    fn test_message_anthropic_system_role_remapped_to_user() {
+        let m = VisionMessage::system("You are a helper");
+        let v = m.to_anthropic_format();
+        assert_eq!(
+            v["role"], "user",
+            "Anthropic doesn't accept system in messages"
+        );
+    }
+
+    #[test]
+    fn test_message_gemini_role_remap() {
+        let m = VisionMessage::assistant("done");
+        let v = m.to_gemini_format();
+        assert_eq!(v["role"], "model", "assistant must map to model for Gemini");
+    }
+
+    #[test]
+    fn test_message_gemini_with_image() {
+        let m = VisionMessage::user(
+            "describe",
+            vec![ImageInput::from_bytes(&[0x89, 0x50], "image/png")],
+        );
+        let v = m.to_gemini_format();
+        let parts = v["parts"].as_array().expect("array parts");
+        assert_eq!(parts.len(), 2);
+        assert!(parts[0].get("text").is_some());
+        assert!(parts[1].get("inlineData").is_some());
     }
 }

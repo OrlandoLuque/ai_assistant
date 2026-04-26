@@ -261,13 +261,9 @@ impl ModelRouter {
                 .with_functions(),
         );
 
-        // Vision models
-        self.profiles.push(
-            ModelCapabilityProfile::new("llava", 4096, 75)
-                .with_task_score(TaskType::Vision, 85)
-                .with_vision(),
-        );
-
+        // Vision models — local LLMs (specific llava variants come later
+        // in the cloud-vision block; the generic `llava` here only matches
+        // bare `llava` / `llava:13b` etc.)
         self.profiles.push(
             ModelCapabilityProfile::new("moondream", 4096, 70)
                 .with_task_score(TaskType::Vision, 75)
@@ -325,6 +321,174 @@ impl ModelRouter {
                 .with_task_score(TaskType::FastResponse, 94)
                 .with_task_score(TaskType::LongContext, 78),
         );
+
+        // ===== Cloud vision-capable models =====
+        // These mirror the adapters in openai_adapter.rs / anthropic_adapter.rs /
+        // cloud_providers.rs so `select_best(Vision)` can pick them. Order is
+        // specific-before-generic so `find()` resolves the right profile.
+
+        // OpenAI GPT-4o (multimodal flagship)
+        self.profiles.push(
+            ModelCapabilityProfile::new("gpt-4o", 128_000, 95)
+                .with_task_score(TaskType::Chat, 95)
+                .with_task_score(TaskType::Coding, 92)
+                .with_task_score(TaskType::Vision, 92)
+                .with_task_score(TaskType::Analysis, 92)
+                .with_task_score(TaskType::LongContext, 90)
+                .with_vision()
+                .with_functions(),
+        );
+        self.profiles.push(
+            ModelCapabilityProfile::new("gpt-4-turbo", 128_000, 92)
+                .with_task_score(TaskType::Chat, 92)
+                .with_task_score(TaskType::Coding, 90)
+                .with_task_score(TaskType::Vision, 88)
+                .with_task_score(TaskType::LongContext, 90)
+                .with_vision()
+                .with_functions(),
+        );
+        self.profiles.push(
+            ModelCapabilityProfile::new("gpt-4-vision", 128_000, 88)
+                .with_task_score(TaskType::Vision, 88)
+                .with_task_score(TaskType::Chat, 85)
+                .with_vision(),
+        );
+
+        // Anthropic Claude 3 / 3.5 (vision via base64)
+        self.profiles.push(
+            ModelCapabilityProfile::new("claude-3.5-sonnet", 200_000, 95)
+                .with_task_score(TaskType::Chat, 94)
+                .with_task_score(TaskType::Coding, 96)
+                .with_task_score(TaskType::Vision, 92)
+                .with_task_score(TaskType::Analysis, 94)
+                .with_task_score(TaskType::LongContext, 95)
+                .with_vision()
+                .with_functions(),
+        );
+        self.profiles.push(
+            ModelCapabilityProfile::new("claude-3-opus", 200_000, 94)
+                .with_task_score(TaskType::Chat, 92)
+                .with_task_score(TaskType::Coding, 92)
+                .with_task_score(TaskType::Vision, 90)
+                .with_task_score(TaskType::Creative, 95)
+                .with_task_score(TaskType::LongContext, 95)
+                .with_vision()
+                .with_functions(),
+        );
+        self.profiles.push(
+            ModelCapabilityProfile::new("claude-3-sonnet", 200_000, 88)
+                .with_task_score(TaskType::Chat, 88)
+                .with_task_score(TaskType::Coding, 88)
+                .with_task_score(TaskType::Vision, 85)
+                .with_task_score(TaskType::LongContext, 92)
+                .with_vision()
+                .with_functions(),
+        );
+        self.profiles.push(
+            ModelCapabilityProfile::new("claude-3-haiku", 200_000, 80)
+                .with_task_score(TaskType::Chat, 80)
+                .with_task_score(TaskType::FastResponse, 92)
+                .with_task_score(TaskType::Vision, 78)
+                .with_task_score(TaskType::LongContext, 90)
+                .with_vision()
+                .with_functions(),
+        );
+
+        // Google Gemini (1M ctx, native multimodal)
+        self.profiles.push(
+            ModelCapabilityProfile::new("gemini-1.5-pro", 1_000_000, 92)
+                .with_task_score(TaskType::Chat, 90)
+                .with_task_score(TaskType::Vision, 90)
+                .with_task_score(TaskType::Analysis, 90)
+                .with_task_score(TaskType::LongContext, 98)
+                .with_vision()
+                .with_functions(),
+        );
+        self.profiles.push(
+            ModelCapabilityProfile::new("gemini-1.5-flash", 1_000_000, 84)
+                .with_task_score(TaskType::Chat, 82)
+                .with_task_score(TaskType::Vision, 84)
+                .with_task_score(TaskType::FastResponse, 90)
+                .with_task_score(TaskType::LongContext, 95)
+                .with_vision()
+                .with_functions(),
+        );
+        self.profiles.push(
+            ModelCapabilityProfile::new("gemini-pro-vision", 32_000, 80)
+                .with_task_score(TaskType::Vision, 82)
+                .with_vision(),
+        );
+
+        // Mistral Pixtral (vision)
+        self.profiles.push(
+            ModelCapabilityProfile::new("pixtral", 128_000, 84)
+                .with_task_score(TaskType::Vision, 86)
+                .with_task_score(TaskType::Chat, 82)
+                .with_vision(),
+        );
+
+        // Qwen2-VL / Qwen-VL family
+        self.profiles.push(
+            ModelCapabilityProfile::new("qwen2-vl", 32_000, 82)
+                .with_task_score(TaskType::Vision, 84)
+                .with_task_score(TaskType::Chat, 80)
+                .with_vision(),
+        );
+        self.profiles.push(
+            ModelCapabilityProfile::new("qwen-vl", 32_000, 78)
+                .with_task_score(TaskType::Vision, 80)
+                .with_vision(),
+        );
+
+        // OpenBMB MiniCPM-V (small but capable)
+        self.profiles.push(
+            ModelCapabilityProfile::new("minicpm-v", 32_000, 76)
+                .with_task_score(TaskType::Vision, 80)
+                .with_task_score(TaskType::FastResponse, 82)
+                .with_vision(),
+        );
+
+        // Other open vision models
+        self.profiles.push(
+            ModelCapabilityProfile::new("cogvlm", 8_192, 76)
+                .with_task_score(TaskType::Vision, 80)
+                .with_vision(),
+        );
+        self.profiles.push(
+            ModelCapabilityProfile::new("yi-vl", 4_096, 72)
+                .with_task_score(TaskType::Vision, 75)
+                .with_vision(),
+        );
+        // llava variants — specific first, generic last. Generic `llava` is
+        // appended LAST so `llava-llama3:8b` resolves to the specific profile
+        // (find() returns the first match in iteration order).
+        self.profiles.push(
+            ModelCapabilityProfile::new("llava-llama3", 8_192, 78)
+                .with_task_score(TaskType::Vision, 82)
+                .with_vision(),
+        );
+        self.profiles.push(
+            ModelCapabilityProfile::new("llava-phi3", 4_096, 74)
+                .with_task_score(TaskType::Vision, 78)
+                .with_task_score(TaskType::FastResponse, 84)
+                .with_vision(),
+        );
+        self.profiles.push(
+            ModelCapabilityProfile::new("llava-next", 32_000, 80)
+                .with_task_score(TaskType::Vision, 84)
+                .with_vision(),
+        );
+        self.profiles.push(
+            ModelCapabilityProfile::new("bakllava", 4_096, 72)
+                .with_task_score(TaskType::Vision, 76)
+                .with_vision(),
+        );
+        // Generic llava (last so specific variants win)
+        self.profiles.push(
+            ModelCapabilityProfile::new("llava", 4096, 75)
+                .with_task_score(TaskType::Vision, 85)
+                .with_vision(),
+        );
     }
 
     /// Add a custom profile
@@ -345,9 +509,18 @@ impl ModelRouter {
         self.fallback_model = Some(model_name.to_string());
     }
 
-    /// Get the capability profile for a model
+    /// Get the capability profile for a model.
+    ///
+    /// Resolves to the **longest matching pattern** (not the first), so
+    /// `llava-phi3:3.8b` resolves to `llava-phi3` rather than the generic
+    /// `phi` profile. Length-based tiebreak removes the ordering hazard
+    /// that simple `find()` introduces when one profile name is a substring
+    /// of another (e.g. `phi` ⊂ `phi-3.5-vision` ⊂ `llava-phi3`).
     pub fn get_profile(&self, model_name: &str) -> Option<&ModelCapabilityProfile> {
-        self.profiles.iter().find(|p| p.matches(model_name))
+        self.profiles
+            .iter()
+            .filter(|p| p.matches(model_name))
+            .max_by_key(|p| p.model_pattern.len())
     }
 
     /// Score a model for given requirements
@@ -819,5 +992,89 @@ mod tests {
             .expect("phi vision profile");
         assert!(p.supports_vision);
         assert_eq!(p.model_pattern, "phi-3.5-vision");
+    }
+
+    #[test]
+    fn test_cloud_vision_models_all_supported() {
+        let router = ModelRouter::new();
+        let cases = &[
+            ("gpt-4o", "gpt-4o"),
+            ("gpt-4o-mini", "gpt-4o"),
+            ("gpt-4-turbo-2024-04-09", "gpt-4-turbo"),
+            ("gpt-4-vision-preview", "gpt-4-vision"),
+            ("claude-3.5-sonnet-20241022", "claude-3.5-sonnet"),
+            ("claude-3-opus-20240229", "claude-3-opus"),
+            ("claude-3-sonnet-20240229", "claude-3-sonnet"),
+            ("claude-3-haiku-20240307", "claude-3-haiku"),
+            ("gemini-1.5-pro-latest", "gemini-1.5-pro"),
+            ("gemini-1.5-flash-002", "gemini-1.5-flash"),
+            ("pixtral-12b-2409", "pixtral"),
+            ("Qwen2-VL-7B-Instruct", "qwen2-vl"),
+            ("MiniCPM-V-2_6", "minicpm-v"),
+            ("cogvlm-chat", "cogvlm"),
+        ];
+        for (model_name, expected_pattern) in cases {
+            let p = router
+                .get_profile(model_name)
+                .unwrap_or_else(|| panic!("missing profile for {}", model_name));
+            assert!(p.supports_vision, "{} should be vision-capable", model_name);
+            assert_eq!(
+                p.model_pattern, *expected_pattern,
+                "{} resolved to wrong profile",
+                model_name
+            );
+        }
+    }
+
+    #[test]
+    fn test_llava_specific_variants_win_over_generic() {
+        let router = ModelRouter::new();
+        let p = router
+            .get_profile("llava-llama3:8b")
+            .expect("llava-llama3 profile");
+        assert_eq!(p.model_pattern, "llava-llama3");
+        let p = router
+            .get_profile("llava-phi3:3.8b")
+            .expect("llava-phi3 profile");
+        assert_eq!(p.model_pattern, "llava-phi3");
+        // bare llava still resolves
+        let p = router.get_profile("llava:13b").expect("bare llava profile");
+        assert_eq!(p.model_pattern, "llava");
+    }
+
+    #[test]
+    fn test_gemini_long_context_dominance() {
+        let router = ModelRouter::new();
+        let p = router
+            .get_profile("gemini-1.5-pro")
+            .expect("gemini-1.5-pro profile");
+        assert!(
+            p.context_size >= 1_000_000,
+            "gemini 1.5 must declare 1M ctx"
+        );
+        assert!(p.supports_vision);
+        assert!(p.get_task_score(TaskType::LongContext) >= 95);
+    }
+
+    #[test]
+    fn test_select_best_vision_picks_cloud_model_when_available() {
+        let router = ModelRouter::new();
+        let models = vec![
+            ModelInfo::new("llama-3-8b", AiProvider::Ollama),
+            ModelInfo::new("gpt-4o", AiProvider::OpenAI),
+            ModelInfo::new("claude-3.5-sonnet", AiProvider::Anthropic),
+            ModelInfo::new("llava:13b", AiProvider::Ollama),
+        ];
+        let req = ModelRequirements::for_task(TaskType::Vision);
+        let best = router
+            .select_best(&models, &req)
+            .expect("vision-capable pick");
+        // Either gpt-4o or claude-3.5-sonnet should win (both score ≥ 92 on Vision),
+        // not llava (85). The exact winner depends on quality_score tiebreak.
+        assert!(
+            best.name == "gpt-4o" || best.name == "claude-3.5-sonnet",
+            "expected gpt-4o or claude-3.5-sonnet, got {}",
+            best.name
+        );
     }
 }

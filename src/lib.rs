@@ -639,6 +639,12 @@ pub use cloud_providers::{
     generate_anthropic_cloud, generate_cloud_response, generate_openai_cloud, resolve_api_key,
 };
 
+#[cfg(feature = "vision")]
+pub use cloud_providers::{
+    generate_anthropic_cloud_with_images, generate_cloud_response_with_images,
+    generate_gemini_cloud_with_images, generate_openai_cloud_with_images,
+};
+
 pub use request_queue::{
     QueueStats as RequestQueueStats, QueuedRequest, RequestPriority, RequestQueue,
 };

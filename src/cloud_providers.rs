@@ -609,6 +609,256 @@ pub fn fetch_cloud_models(config: &AiConfig) -> Result<Vec<String>> {
 }
 
 // ============================================================================
+// Vision-aware cloud generation
+// ============================================================================
+//
+// These mirror the text-only helpers above but accept `VisionMessage`
+// (text + images) and serialize the multimodal payload in each provider's
+// native format. Gated on the `vision` feature.
+
+/// Generate an OpenAI response from vision messages.
+///
+/// Uses the standard `/v1/chat/completions` endpoint; each message is
+/// emitted via `VisionMessage::to_openai_format()` so image_url blocks are
+/// included verbatim. Works against any OpenAI-compatible endpoint
+/// (Groq/Together/Fireworks/etc.) that accepts the `image_url` content
+/// type — providers without vision support will reject the payload.
+#[cfg(feature = "vision")]
+pub fn generate_openai_cloud_with_images(
+    config: &AiConfig,
+    messages: &[crate::vision::VisionMessage],
+    system_prompt: &str,
+) -> Result<String> {
+    let api_key = resolve_api_key(config)?;
+    let base_url = config.get_base_url();
+    let url = format!("{}/v1/chat/completions", base_url);
+
+    let mut api_messages: Vec<serde_json::Value> = Vec::with_capacity(messages.len() + 1);
+    if !system_prompt.is_empty() {
+        api_messages.push(serde_json::json!({
+            "role": "system",
+            "content": system_prompt,
+        }));
+    }
+    for msg in messages {
+        api_messages.push(msg.to_openai_format());
+    }
+
+    let body = serde_json::json!({
+        "model": config.selected_model,
+        "messages": api_messages,
+        "temperature": config.temperature,
+    });
+
+    let response = ureq::post(&url)
+        .set("Authorization", &format!("Bearer {}", api_key))
+        .timeout(std::time::Duration::from_secs(120))
+        .send_json(&body)
+        .context("OpenAI vision API request failed")?;
+
+    let json: serde_json::Value = response
+        .into_json()
+        .context("Failed to parse OpenAI response")?;
+
+    json.get("choices")
+        .and_then(|c| c.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|c| c.get("message"))
+        .and_then(|m| m.get("content"))
+        .and_then(|c| c.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow::anyhow!("Unexpected OpenAI response format"))
+}
+
+/// Generate an Anthropic response from vision messages.
+///
+/// Routes the system prompt to the top-level `system` field (Anthropic
+/// does NOT accept the `system` role inside `messages`). Each message is
+/// serialized via `VisionMessage::to_anthropic_format()` which builds the
+/// `{"type":"image", "source":{...}}` blocks alongside text.
+#[cfg(feature = "vision")]
+pub fn generate_anthropic_cloud_with_images(
+    config: &AiConfig,
+    messages: &[crate::vision::VisionMessage],
+    system_prompt: &str,
+) -> Result<String> {
+    let api_key = resolve_api_key(config)?;
+    let base_url = config.get_base_url();
+    let url = format!("{}/v1/messages", base_url);
+
+    let api_messages: Vec<serde_json::Value> = messages
+        .iter()
+        .filter(|m| m.role != "system") // system must go to top-level field
+        .map(|m| m.to_anthropic_format())
+        .collect();
+
+    let mut body = serde_json::json!({
+        "model": config.selected_model,
+        "messages": api_messages,
+        "max_tokens": 4096,
+        "temperature": config.temperature,
+    });
+
+    // Combine explicit system_prompt with any in-message system entries.
+    let mut system_parts: Vec<&str> = Vec::new();
+    if !system_prompt.is_empty() {
+        system_parts.push(system_prompt);
+    }
+    for m in messages {
+        if m.role == "system" && !m.text.is_empty() {
+            system_parts.push(&m.text);
+        }
+    }
+    if !system_parts.is_empty() {
+        body["system"] = serde_json::json!(system_parts.join("\n\n"));
+    }
+
+    let response = ureq::post(&url)
+        .set("x-api-key", &api_key)
+        .set("anthropic-version", "2023-06-01")
+        .set("content-type", "application/json")
+        .timeout(std::time::Duration::from_secs(120))
+        .send_json(&body)
+        .context("Anthropic vision API request failed")?;
+
+    let json: serde_json::Value = response
+        .into_json()
+        .context("Failed to parse Anthropic response")?;
+
+    json.get("content")
+        .and_then(|c| c.as_array())
+        .and_then(|arr| {
+            arr.iter()
+                .filter_map(|block| {
+                    if block.get("type").and_then(|t| t.as_str()) == Some("text") {
+                        block
+                            .get("text")
+                            .and_then(|t| t.as_str())
+                            .map(|s| s.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .next()
+        })
+        .ok_or_else(|| anyhow::anyhow!("Unexpected Anthropic response format"))
+}
+
+/// Generate a Gemini response from vision messages.
+///
+/// Each message is serialized via `VisionMessage::to_gemini_format()` which
+/// emits `inlineData` (base64) or `fileData` (URL) parts. The system
+/// prompt is sent in the top-level `systemInstruction` field.
+#[cfg(feature = "vision")]
+pub fn generate_gemini_cloud_with_images(
+    config: &AiConfig,
+    messages: &[crate::vision::VisionMessage],
+    system_prompt: &str,
+) -> Result<String> {
+    let api_key = resolve_api_key(config)?;
+    let model = if config.selected_model.is_empty() {
+        "gemini-2.0-flash"
+    } else {
+        &config.selected_model
+    };
+
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
+        model
+    );
+
+    let contents: Vec<serde_json::Value> = messages
+        .iter()
+        .filter(|m| m.role != "system")
+        .map(|m| m.to_gemini_format())
+        .collect();
+
+    let mut body = serde_json::json!({
+        "contents": contents,
+        "generationConfig": {
+            "temperature": config.temperature,
+            "maxOutputTokens": 4096,
+        }
+    });
+
+    let mut system_parts: Vec<&str> = Vec::new();
+    if !system_prompt.is_empty() {
+        system_parts.push(system_prompt);
+    }
+    for m in messages {
+        if m.role == "system" && !m.text.is_empty() {
+            system_parts.push(&m.text);
+        }
+    }
+    if !system_parts.is_empty() {
+        body["systemInstruction"] = serde_json::json!({
+            "parts": [{ "text": system_parts.join("\n\n") }]
+        });
+    }
+
+    let response = ureq::post(&url)
+        .set("content-type", "application/json")
+        .set("x-goog-api-key", &api_key)
+        .timeout(std::time::Duration::from_secs(120))
+        .send_json(&body)
+        .context("Gemini vision API request failed")?;
+
+    let json: serde_json::Value = response
+        .into_json()
+        .context("Failed to parse Gemini response")?;
+
+    json.get("candidates")
+        .and_then(|c| c.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|candidate| candidate.get("content"))
+        .and_then(|content| content.get("parts"))
+        .and_then(|parts| parts.as_array())
+        .and_then(|parts| parts.first())
+        .and_then(|part| part.get("text"))
+        .and_then(|t| t.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow::anyhow!("Unexpected Gemini response format"))
+}
+
+/// Dispatch a vision request to the right cloud provider based on
+/// `config.provider`. Returns an error for non-cloud providers and for
+/// providers without vision support (e.g. Bedrock without the feature).
+#[cfg(feature = "vision")]
+pub fn generate_cloud_response_with_images(
+    config: &AiConfig,
+    messages: &[crate::vision::VisionMessage],
+    system_prompt: &str,
+) -> Result<String> {
+    match config.provider {
+        AiProvider::OpenAI
+        | AiProvider::Groq
+        | AiProvider::Together
+        | AiProvider::Fireworks
+        | AiProvider::DeepSeek
+        | AiProvider::Mistral
+        | AiProvider::Perplexity
+        | AiProvider::OpenRouter => {
+            generate_openai_cloud_with_images(config, messages, system_prompt)
+        }
+        AiProvider::Anthropic => {
+            generate_anthropic_cloud_with_images(config, messages, system_prompt)
+        }
+        AiProvider::Gemini => generate_gemini_cloud_with_images(config, messages, system_prompt),
+        AiProvider::AzureOpenAI { .. } => anyhow::bail!(
+            "Azure OpenAI vision requires deployment-specific routing; use \
+             generate_openai_cloud_with_images directly with the deployment URL."
+        ),
+        AiProvider::Bedrock { .. } => {
+            anyhow::bail!("AWS Bedrock vision requires the `aws-bedrock` feature flag.")
+        }
+        _ => anyhow::bail!(
+            "{} is not a cloud provider with vision support.",
+            config.provider.display_name()
+        ),
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -853,5 +1103,105 @@ mod tests {
         let models = fetch_azure_openai_models();
         assert!(!models.is_empty());
         assert!(models.iter().any(|m| m.contains("gpt-4o")));
+    }
+
+    // -- Vision-aware cloud generation: payload-only tests (no network) --
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_openai_vision_returns_error_without_api_key() {
+        use crate::vision::{ImageInput, VisionMessage};
+        // Clear env so resolve_api_key fails deterministically.
+        std::env::remove_var("OPENAI_API_KEY");
+        let config = AiConfig {
+            provider: AiProvider::OpenAI,
+            api_key: String::new(),
+            selected_model: "gpt-4o".to_string(),
+            ..Default::default()
+        };
+        let msgs = vec![VisionMessage::user(
+            "describe",
+            vec![ImageInput::from_url("https://example.com/x.png")],
+        )];
+        let result = generate_openai_cloud_with_images(&config, &msgs, "");
+        assert!(result.is_err(), "expected key-resolution failure");
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_anthropic_vision_returns_error_without_api_key() {
+        use crate::vision::{ImageInput, VisionMessage};
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        let config = AiConfig {
+            provider: AiProvider::Anthropic,
+            api_key: String::new(),
+            selected_model: "claude-3-5-sonnet-20241022".to_string(),
+            ..Default::default()
+        };
+        let msgs = vec![VisionMessage::user(
+            "describe",
+            vec![ImageInput::from_bytes(&[0xFF], "image/jpeg")],
+        )];
+        let result = generate_anthropic_cloud_with_images(&config, &msgs, "");
+        assert!(result.is_err());
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_gemini_vision_returns_error_without_api_key() {
+        use crate::vision::{ImageInput, VisionMessage};
+        std::env::remove_var("GOOGLE_API_KEY");
+        let config = AiConfig {
+            provider: AiProvider::Gemini,
+            api_key: String::new(),
+            selected_model: "gemini-1.5-flash".to_string(),
+            ..Default::default()
+        };
+        let msgs = vec![VisionMessage::user(
+            "describe",
+            vec![ImageInput::from_bytes(&[0xFF], "image/png")],
+        )];
+        let result = generate_gemini_cloud_with_images(&config, &msgs, "");
+        assert!(result.is_err());
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_dispatch_with_images_rejects_local_provider() {
+        use crate::vision::{ImageInput, VisionMessage};
+        let config = AiConfig {
+            provider: AiProvider::Ollama,
+            selected_model: "llava".to_string(),
+            ..Default::default()
+        };
+        let msgs = vec![VisionMessage::user(
+            "x",
+            vec![ImageInput::from_url("https://e.com/x.png")],
+        )];
+        let result = generate_cloud_response_with_images(&config, &msgs, "");
+        assert!(
+            result.is_err(),
+            "Ollama is not a cloud provider — must reject"
+        );
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_dispatch_with_images_rejects_bedrock_without_feature() {
+        use crate::vision::{ImageInput, VisionMessage};
+        let config = AiConfig {
+            provider: AiProvider::Bedrock {
+                region: "us-east-1".to_string(),
+            },
+            selected_model: "anthropic.claude-3-5-sonnet-20241022-v2:0".to_string(),
+            ..Default::default()
+        };
+        let msgs = vec![VisionMessage::user(
+            "x",
+            vec![ImageInput::from_url("https://e.com/x.png")],
+        )];
+        let err = generate_cloud_response_with_images(&config, &msgs, "")
+            .expect_err("expected bedrock rejection");
+        assert!(format!("{:?}", err).contains("aws-bedrock"));
     }
 }
