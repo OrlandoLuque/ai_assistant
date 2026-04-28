@@ -406,9 +406,11 @@ mod tests {
         let text = "Testing Gemini model routing.";
         let count = estimate_tokens_for_model(text, "gemini-1.5-pro");
         assert!(count > 0);
-        // Should use BPE (same as GPT)
-        let gpt_count = estimate_tokens_for_model(text, "gpt-4o");
-        assert_eq!(count, gpt_count);
+        // Gemini should use BPE. Compare against another BPE-routed model
+        // (claude is BPE under both default and `precise-tokens` features —
+        // tiktoken routing only fires for gpt-*/o-* models).
+        let claude_count = estimate_tokens_for_model(text, "claude-3-opus");
+        assert_eq!(count, claude_count);
     }
 
     #[test]

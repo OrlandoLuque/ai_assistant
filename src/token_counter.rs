@@ -789,15 +789,26 @@ mod tests {
         assert!(count <= text.len());
     }
 
-    // 10. ProviderTokenCounter routes OpenAI to BPE
+    // 10. ProviderTokenCounter routes OpenAI to BPE (or Tiktoken with precise-tokens)
     #[test]
     fn test_provider_counter_openai() {
         let provider = ProviderTokenCounter::new();
-        let bpe = BpeTokenCounter::new();
         let text = "Test sentence for token counting.";
 
         let counter = provider.for_model("gpt-4o");
-        assert_eq!(counter.count(text), bpe.count(text));
+        let got = counter.count(text);
+
+        #[cfg(feature = "precise-tokens")]
+        {
+            // Under precise-tokens, gpt-4o routes to o200k tiktoken — must match it.
+            if let Some(tk) = TiktokenCounter::for_model("gpt-4o") {
+                assert_eq!(got, tk.count(text));
+                return;
+            }
+        }
+        // Fallback: routing returns BPE.
+        let bpe = BpeTokenCounter::new();
+        assert_eq!(got, bpe.count(text));
     }
 
     // 11. ProviderTokenCounter routes Claude to BPE
@@ -913,12 +924,21 @@ mod tests {
         );
     }
 
-    // 19. ProviderTokenCounter routes o4-* to BPE
+    // 19. ProviderTokenCounter routes o4-* to BPE (or Tiktoken with precise-tokens)
     #[test]
     fn test_provider_counter_o4() {
         let provider = ProviderTokenCounter::new();
-        let bpe = BpeTokenCounter::new();
         let text = "o4-mini model test.";
-        assert_eq!(provider.for_model("o4-mini").count(text), bpe.count(text));
+        let got = provider.for_model("o4-mini").count(text);
+
+        #[cfg(feature = "precise-tokens")]
+        {
+            if let Some(tk) = TiktokenCounter::for_model("o4-mini") {
+                assert_eq!(got, tk.count(text));
+                return;
+            }
+        }
+        let bpe = BpeTokenCounter::new();
+        assert_eq!(got, bpe.count(text));
     }
 }
