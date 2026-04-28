@@ -275,6 +275,12 @@ pub struct ChatMessage {
     pub content: String,
     pub timestamp: u64,
     pub metadata: HashMap<String, String>,
+    /// Image attachments for the UI to render. Carries content-addressed
+    /// [`crate::vision::ImageRef`]s so the UI layer can decide whether to
+    /// stream bytes from the `ImageStore` lazily or inline a thumbnail.
+    #[cfg(feature = "vision")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<crate::vision::ImageRef>,
 }
 
 impl ChatMessage {
@@ -291,12 +297,21 @@ impl ChatMessage {
             content: content.to_string(),
             timestamp: ts,
             metadata: HashMap::new(),
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         }
     }
 
     /// Builder-style method to add a metadata key-value pair.
     pub fn with_metadata(mut self, key: &str, value: &str) -> Self {
         self.metadata.insert(key.to_string(), value.to_string());
+        self
+    }
+
+    /// Attach an image ref to this UI message.
+    #[cfg(feature = "vision")]
+    pub fn with_image(mut self, image: crate::vision::ImageRef) -> Self {
+        self.images.push(image);
         self
     }
 }

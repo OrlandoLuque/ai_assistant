@@ -182,6 +182,12 @@ pub struct ToolResult {
     pub data: Option<Value>,
     /// Error message if failed
     pub error: Option<String>,
+    /// Optional image attachments emitted by the tool (e.g., browser
+    /// screenshot, chart renderer). Empty by default; serialised only when
+    /// non-empty so existing wire payloads remain byte-identical.
+    #[cfg(feature = "vision")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<crate::vision::ImageInput>,
 }
 
 impl ToolResult {
@@ -193,6 +199,8 @@ impl ToolResult {
             content: content.to_string(),
             data: None,
             error: None,
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         }
     }
 
@@ -204,6 +212,8 @@ impl ToolResult {
             content: content.to_string(),
             data: Some(data),
             error: None,
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         }
     }
 
@@ -215,7 +225,29 @@ impl ToolResult {
             content: format!("Error: {}", error),
             data: None,
             error: Some(error.to_string()),
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         }
+    }
+
+    /// Builder method: attach an image to the tool result (e.g., a screenshot).
+    #[cfg(feature = "vision")]
+    pub fn with_image(mut self, image: crate::vision::ImageInput) -> Self {
+        self.images.push(image);
+        self
+    }
+
+    /// Builder method: attach multiple images to the tool result.
+    #[cfg(feature = "vision")]
+    pub fn with_images(mut self, images: Vec<crate::vision::ImageInput>) -> Self {
+        self.images.extend(images);
+        self
+    }
+
+    /// Whether this tool result emitted any image attachments.
+    #[cfg(feature = "vision")]
+    pub fn has_images(&self) -> bool {
+        !self.images.is_empty()
     }
 }
 

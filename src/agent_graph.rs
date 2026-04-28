@@ -104,6 +104,8 @@ pub struct AgentNode {
     pub agent_type: String,
     pub capabilities: Vec<String>,
     pub metadata: HashMap<String, String>,
+    #[cfg(feature = "vision")]
+    pub accepts_images: bool,
 }
 
 impl AgentNode {
@@ -115,7 +117,16 @@ impl AgentNode {
             agent_type: agent_type.to_string(),
             capabilities: Vec::new(),
             metadata: HashMap::new(),
+            #[cfg(feature = "vision")]
+            accepts_images: false,
         }
+    }
+
+    /// Builder: declare that this agent accepts image inputs.
+    #[cfg(feature = "vision")]
+    pub fn with_image_support(mut self) -> Self {
+        self.accepts_images = true;
+        self
     }
 
     /// Builder: add a capability.

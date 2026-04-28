@@ -26,6 +26,14 @@ pub struct SnapshotMessage {
     pub content: String,
     pub timestamp: u64,
     pub metadata: HashMap<String, String>,
+    /// Image attachments preserved across snapshot/restore. Snapshots store
+    /// content-addressed [`crate::vision::ImageRef`]s — bytes live in the
+    /// configured `ImageStore` so snapshot files stay small. Note: no
+    /// `skip_serializing_if` because bincode (used when `binary-storage`
+    /// is on) ignores it and would mis-align field positions on read.
+    #[cfg(feature = "vision")]
+    #[serde(default)]
+    pub images: Vec<crate::vision::ImageRef>,
 }
 
 /// Full conversation snapshot
@@ -91,6 +99,8 @@ impl ConversationSnapshot {
             content: content.to_string(),
             timestamp: now,
             metadata: HashMap::new(),
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         });
 
         self.update_metadata();

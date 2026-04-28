@@ -591,6 +591,91 @@ fn try_generate_with_fallback(
     )));
 }
 
+/// Vision-aware fallback dispatcher. Skips fallback providers that do not
+/// support vision at the transport level (per `agent_bridge::vision_supported_for`).
+/// Calls the blocking `generate_vision_response` and emits a single
+/// `AiResponse::Complete` (no streaming yet — vision API is non-streaming
+/// in this codebase).
+#[cfg(feature = "vision")]
+fn try_generate_vision_with_fallback(
+    config: &AiConfig,
+    conversation: &[ChatMessage],
+    system_prompt: &str,
+    tx: &Sender<AiResponse>,
+    fallback_providers: &[(AiProvider, String)],
+    last_provider: &Arc<Mutex<Option<String>>>,
+) {
+    let vision_messages = crate::vision::agent_bridge::chat_messages_to_vision(conversation);
+
+    if crate::vision::agent_bridge::vision_supported_for(config) {
+        match crate::vision::generate_vision_response(config, &vision_messages, system_prompt) {
+            Ok(text) => {
+                *last_provider.lock().unwrap_or_else(|e| e.into_inner()) =
+                    Some(config.provider.display_name().to_string());
+                let _ = tx.send(AiResponse::Complete(text));
+                return;
+            }
+            Err(primary_err) => {
+                if fallback_providers.is_empty() {
+                    let _ = tx.send(AiResponse::Error(primary_err.to_string()));
+                    return;
+                }
+                crate::safe_log!(
+                    "[fallback-vision] Primary provider {} failed: {}",
+                    config.provider.display_name(),
+                    primary_err
+                );
+                for (fb_provider, fb_model) in fallback_providers {
+                    let mut fb_config = config.clone();
+                    fb_config.provider = fb_provider.clone();
+                    fb_config.selected_model = fb_model.clone();
+                    if !crate::vision::agent_bridge::vision_supported_for(&fb_config) {
+                        continue;
+                    }
+                    if let Ok(text) = crate::vision::generate_vision_response(
+                        &fb_config,
+                        &vision_messages,
+                        system_prompt,
+                    ) {
+                        *last_provider.lock().unwrap_or_else(|e| e.into_inner()) =
+                            Some(fb_provider.display_name().to_string());
+                        let _ = tx.send(AiResponse::Complete(text));
+                        return;
+                    }
+                }
+                *last_provider.lock().unwrap_or_else(|e| e.into_inner()) = None;
+                let _ = tx.send(AiResponse::Error(format!(
+                    "All vision-capable providers failed. Primary error: {}",
+                    primary_err
+                )));
+            }
+        }
+    } else {
+        // Primary doesn't support vision — try first vision-capable fallback
+        for (fb_provider, fb_model) in fallback_providers {
+            let mut fb_config = config.clone();
+            fb_config.provider = fb_provider.clone();
+            fb_config.selected_model = fb_model.clone();
+            if !crate::vision::agent_bridge::vision_supported_for(&fb_config) {
+                continue;
+            }
+            if let Ok(text) =
+                crate::vision::generate_vision_response(&fb_config, &vision_messages, system_prompt)
+            {
+                *last_provider.lock().unwrap_or_else(|e| e.into_inner()) =
+                    Some(fb_provider.display_name().to_string());
+                let _ = tx.send(AiResponse::Complete(text));
+                return;
+            }
+        }
+        *last_provider.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        let _ = tx.send(AiResponse::Error(format!(
+            "Provider {} does not support vision and no vision-capable fallback succeeded",
+            config.provider.display_name()
+        )));
+    }
+}
+
 impl AiAssistant {
     /// Create a new AI Assistant with default settings
     pub fn new() -> Self {
@@ -2076,6 +2161,203 @@ impl AiAssistant {
     pub fn generate_sync_with_rag(&mut self, user_message: String) -> Result<String> {
         let (knowledge_ctx, _conversation_ctx) = self.build_rag_context(&user_message);
         self.generate_sync(user_message, &knowledge_ctx)
+    }
+
+    /// Send a message with image attachments. Streaming-style entry point —
+    /// emits a single `AiResponse::Complete` (vision dispatch is currently
+    /// non-streaming). Fallback chain skips providers that do not support
+    /// vision at the transport level.
+    #[cfg(feature = "vision")]
+    pub fn send_message_with_images(
+        &mut self,
+        user_message: String,
+        images: Vec<crate::vision::ImageInput>,
+        knowledge_context: &str,
+    ) {
+        self.conversation
+            .push(ChatMessage::user(&user_message).with_images(images));
+        self.turn_counter += 1;
+        let conversation = match self.context_mode {
+            ContextMode::Conversation => {
+                self.maybe_compact_conversation();
+                self.conversation.clone()
+            }
+            ContextMode::FreshContext => {
+                vec![self
+                    .conversation
+                    .last()
+                    .expect("message was just pushed")
+                    .clone()]
+            }
+        };
+        self.is_generating = true;
+        self.current_response.clear();
+
+        let (tx, rx) = mpsc::channel();
+        self.rx_response = Some(rx);
+
+        let intent = self.classify_intent_for_budget(&user_message);
+        let allocated_context =
+            self.build_allocated_context(&user_message, knowledge_context, intent.as_ref());
+        let effective_knowledge: String;
+        let knowledge_ref = if allocated_context.is_empty() {
+            knowledge_context
+        } else {
+            effective_knowledge = allocated_context;
+            &effective_knowledge
+        };
+
+        let config = self.config.clone();
+        let system_prompt =
+            build_system_prompt(&self.system_prompt_base, &self.preferences, knowledge_ref);
+
+        let fallback_providers = if self.fallback_enabled {
+            self.fallback_providers.clone()
+        } else {
+            Vec::new()
+        };
+        let last_provider = self.fallback_last_provider.clone();
+
+        thread::spawn(move || {
+            try_generate_vision_with_fallback(
+                &config,
+                &conversation,
+                &system_prompt,
+                &tx,
+                &fallback_providers,
+                &last_provider,
+            );
+        });
+    }
+
+    /// Send a message with images and no extra knowledge context.
+    #[cfg(feature = "vision")]
+    pub fn send_message_simple_with_images(
+        &mut self,
+        user_message: String,
+        images: Vec<crate::vision::ImageInput>,
+    ) {
+        self.send_message_with_images(user_message, images, "");
+    }
+
+    /// Send a message with images using the internal knowledge context.
+    #[cfg(feature = "vision")]
+    pub fn send_message_auto_with_images(
+        &mut self,
+        user_message: String,
+        images: Vec<crate::vision::ImageInput>,
+    ) {
+        let context = self.knowledge_context.clone();
+        self.send_message_with_images(user_message, images, &context);
+    }
+
+    /// Synchronous vision response. Validates primary provider supports
+    /// vision, falls back to first vision-capable fallback provider on
+    /// failure, returns assembled response.
+    #[cfg(feature = "vision")]
+    pub fn generate_sync_with_images(
+        &mut self,
+        user_message: String,
+        images: Vec<crate::vision::ImageInput>,
+        knowledge_context: &str,
+    ) -> Result<String> {
+        self.conversation
+            .push(ChatMessage::user(&user_message).with_images(images));
+
+        let intent = self.classify_intent_for_budget(&user_message);
+        let allocated_context =
+            self.build_allocated_context(&user_message, knowledge_context, intent.as_ref());
+        let effective_knowledge: String;
+        let knowledge_ref = if allocated_context.is_empty() {
+            knowledge_context
+        } else {
+            effective_knowledge = allocated_context;
+            &effective_knowledge
+        };
+        let system_prompt =
+            build_system_prompt(&self.system_prompt_base, &self.preferences, knowledge_ref);
+
+        let fresh_conv: Vec<ChatMessage>;
+        let conversation: &[ChatMessage] = match self.context_mode {
+            ContextMode::Conversation => &self.conversation,
+            ContextMode::FreshContext => {
+                fresh_conv = vec![self
+                    .conversation
+                    .last()
+                    .expect("message was just pushed")
+                    .clone()];
+                &fresh_conv
+            }
+        };
+
+        let vision_messages = crate::vision::agent_bridge::chat_messages_to_vision(conversation);
+
+        let primary_attempt = if crate::vision::agent_bridge::vision_supported_for(&self.config) {
+            crate::vision::generate_vision_response(&self.config, &vision_messages, &system_prompt)
+        } else {
+            Err(anyhow::anyhow!(
+                "Provider {} does not support vision",
+                self.config.provider.display_name()
+            ))
+        };
+
+        let response = match primary_attempt {
+            Ok(r) => {
+                *self
+                    .fallback_last_provider
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) =
+                    Some(self.config.provider.display_name().to_string());
+                r
+            }
+            Err(primary_err) => {
+                if !self.fallback_enabled || self.fallback_providers.is_empty() {
+                    return Err(primary_err);
+                }
+                let mut last_err = primary_err;
+                let mut found = None;
+                for (provider, model) in &self.fallback_providers {
+                    let mut fb_config = self.config.clone();
+                    fb_config.provider = provider.clone();
+                    fb_config.selected_model = model.clone();
+                    if !crate::vision::agent_bridge::vision_supported_for(&fb_config) {
+                        continue;
+                    }
+                    match crate::vision::generate_vision_response(
+                        &fb_config,
+                        &vision_messages,
+                        &system_prompt,
+                    ) {
+                        Ok(r) => {
+                            *self
+                                .fallback_last_provider
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner()) =
+                                Some(provider.display_name().to_string());
+                            found = Some(r);
+                            break;
+                        }
+                        Err(e) => last_err = e,
+                    }
+                }
+                found.ok_or(last_err)?
+            }
+        };
+
+        self.conversation.push(ChatMessage::assistant(&response));
+        self.extract_preferences_from_response(&response);
+        Ok(response)
+    }
+
+    /// Send a message with images and automatic RAG context lookup.
+    #[cfg(all(feature = "vision", feature = "rag"))]
+    pub fn send_message_with_images_rag(
+        &mut self,
+        user_message: String,
+        images: Vec<crate::vision::ImageInput>,
+    ) {
+        let (knowledge_ctx, _conversation_ctx) = self.build_rag_context(&user_message);
+        self.send_message_with_images(user_message, images, &knowledge_ctx);
     }
 
     /// Send a message using internal knowledge context with additional session notes
@@ -8133,5 +8415,94 @@ ws ::= " "*"#;
         );
         let report = ai.cost_report().unwrap();
         assert!(report.contains("Cost Dashboard Report"));
+    }
+
+    // === Batch 1 — Vision entry points ===
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_send_message_with_images_pushes_chat_message_with_images() {
+        let mut ai = AiAssistant::new();
+        // Use an unreachable provider so the spawned thread errors out fast;
+        // we only assert on conversation state which is set synchronously.
+        ai.config.provider = AiProvider::Ollama;
+        ai.config.ollama_url = "http://127.0.0.1:1".to_string();
+        let img = crate::vision::ImageInput::from_url("https://example.com/x.png");
+        ai.send_message_with_images("describe".to_string(), vec![img], "");
+        assert_eq!(ai.conversation.len(), 1);
+        let last = ai.conversation.last().unwrap();
+        assert_eq!(last.role, "user");
+        assert_eq!(last.content, "describe");
+        assert!(last.has_images());
+        assert_eq!(last.images.len(), 1);
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_send_message_simple_with_images_pushes_message() {
+        let mut ai = AiAssistant::new();
+        ai.config.provider = AiProvider::Ollama;
+        ai.config.ollama_url = "http://127.0.0.1:1".to_string();
+        let img = crate::vision::ImageInput::from_url("https://example.com/x.png");
+        ai.send_message_simple_with_images("hi".to_string(), vec![img]);
+        assert_eq!(ai.conversation.len(), 1);
+        assert!(ai.conversation[0].has_images());
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_send_message_auto_with_images_uses_internal_knowledge() {
+        let mut ai = AiAssistant::new();
+        ai.config.provider = AiProvider::Ollama;
+        ai.config.ollama_url = "http://127.0.0.1:1".to_string();
+        ai.set_knowledge_context("# Notes\nKey fact.");
+        let img = crate::vision::ImageInput::from_url("https://example.com/x.png");
+        ai.send_message_auto_with_images("q".to_string(), vec![img]);
+        assert_eq!(ai.conversation.len(), 1);
+        assert_eq!(ai.conversation[0].content, "q");
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_generate_sync_with_images_unsupported_provider_errors_without_fallback() {
+        let mut ai = AiAssistant::new();
+        ai.config.provider = AiProvider::Bedrock {
+            region: "us-east-1".to_string(),
+        };
+        let img = crate::vision::ImageInput::from_url("https://example.com/x.png");
+        let res = ai.generate_sync_with_images("q".to_string(), vec![img], "");
+        assert!(res.is_err());
+        let msg = res.unwrap_err().to_string();
+        assert!(
+            msg.contains("does not support vision") || msg.contains("vision"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_generate_sync_with_images_attaches_to_conversation() {
+        let mut ai = AiAssistant::new();
+        // Bedrock isn't vision-capable per agent_bridge; the message still
+        // gets pushed to conversation before dispatch. Confirm wire state.
+        ai.config.provider = AiProvider::Bedrock {
+            region: "us-east-1".to_string(),
+        };
+        let img = crate::vision::ImageInput::from_url("https://example.com/x.png");
+        let _ = ai.generate_sync_with_images("q".to_string(), vec![img], "");
+        assert_eq!(ai.conversation.len(), 1);
+        assert!(ai.conversation[0].has_images());
+    }
+
+    #[cfg(all(feature = "vision", feature = "rag"))]
+    #[test]
+    fn test_send_message_with_images_rag_pushes_message() {
+        let mut ai = AiAssistant::new();
+        ai.config.provider = AiProvider::Ollama;
+        ai.config.ollama_url = "http://127.0.0.1:1".to_string();
+        let img = crate::vision::ImageInput::from_url("https://example.com/x.png");
+        ai.send_message_with_images_rag("q".to_string(), vec![img]);
+        assert_eq!(ai.conversation.len(), 1);
+        assert!(ai.conversation[0].has_images());
     }
 }

@@ -125,6 +125,9 @@ pub struct ExportedMessage {
     pub timestamp: Option<DateTime<Utc>>,
     /// Additional data
     pub metadata: Option<HashMap<String, String>>,
+    #[cfg(feature = "vision")]
+    #[serde(default)]
+    pub images: Vec<crate::vision::ImageRef>,
 }
 
 /// Conversation exporter
@@ -596,12 +599,16 @@ mod tests {
                     content: "Hello, how are you?".to_string(),
                     timestamp: Some(Utc::now()),
                     metadata: None,
+                    #[cfg(feature = "vision")]
+                    images: Vec::new(),
                 },
                 ExportedMessage {
                     role: "assistant".to_string(),
                     content: "I'm doing well, thank you!".to_string(),
                     timestamp: Some(Utc::now()),
                     metadata: None,
+                    #[cfg(feature = "vision")]
+                    images: Vec::new(),
                 },
             ],
             created_at: Utc::now(),

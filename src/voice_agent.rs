@@ -138,6 +138,44 @@ mod inner {
         fn receive_audio(&mut self) -> Result<Option<AudioChunk>, AiError>;
         /// Close the transport.
         fn close(&mut self) -> Result<(), AiError>;
+
+        /// Send a single video frame alongside the audio stream. Default
+        /// implementation drops the frame — transports that support video
+        /// (camera/screen-share) override this to forward the bytes.
+        ///
+        /// The frame is delivered as a vision [`crate::vision::ImageInput`]
+        /// so the same content-addressed pipeline as still-image attachments
+        /// applies (sha256 keying, EXIF scrub, ImageStore lookup).
+        #[cfg(feature = "vision")]
+        fn send_video_frame(&self, _frame: &crate::vision::ImageInput) -> Result<(), AiError> {
+            Ok(())
+        }
+    }
+
+    /// Strategy for when to forward a video frame to the remote model.
+    ///
+    /// Voice agents that have access to a camera or screen-share can use this
+    /// to control how aggressively video gets sent — frame-per-tick is
+    /// expensive on tokens, so the default policies sample sparingly.
+    #[cfg(feature = "vision")]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[non_exhaustive]
+    pub enum VideoFrameStrategy {
+        /// Never send video frames.
+        Off,
+        /// Send every Nth frame (drops the rest).
+        EveryNthFrame(u32),
+        /// Send one frame at the start of each user utterance.
+        OnUtteranceBoundary,
+        /// Only send when the LLM-callback explicitly requests one.
+        OnDemand,
+    }
+
+    #[cfg(feature = "vision")]
+    impl Default for VideoFrameStrategy {
+        fn default() -> Self {
+            Self::Off
+        }
     }
 
     /// In-memory transport for testing — stores sent and received audio in Vecs.
@@ -832,6 +870,10 @@ mod inner {
         /// Maximum audio duration in seconds before forced STT (prevents DoS).
         /// Default: 60 seconds. Set lower for stricter limits.
         pub max_audio_duration_secs: u32,
+        /// Strategy for forwarding video frames to the model alongside audio.
+        /// Defaults to `Off` so vision-capable voice agents must opt in.
+        #[cfg(feature = "vision")]
+        pub video_frame_strategy: VideoFrameStrategy,
     }
 
     impl Default for VoiceAgentConfig {
@@ -849,6 +891,8 @@ mod inner {
                 emotion_tts_instruction: String::new(),
                 language: None,
                 max_audio_duration_secs: 60,
+                #[cfg(feature = "vision")]
+                video_frame_strategy: VideoFrameStrategy::Off,
             }
         }
     }

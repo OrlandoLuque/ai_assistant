@@ -874,6 +874,7 @@ fn cmd_query(args: &[String]) -> ExitCode {
     let mut json_output = false;
     let mut temperature: Option<f32> = None;
     let mut prompt_parts: Vec<String> = Vec::new();
+    let mut image_paths: Vec<String> = Vec::new();
 
     let mut i = 0;
     while i < args.len() {
@@ -885,6 +886,14 @@ fn cmd_query(args: &[String]) -> ExitCode {
                     return ExitCode::from(1);
                 }
                 provider_name = Some(args[i].clone());
+            }
+            "--image" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: --image requires a path or URL");
+                    return ExitCode::from(1);
+                }
+                image_paths.push(args[i].clone());
             }
             "--model" => {
                 i += 1;
@@ -1081,6 +1090,72 @@ fn cmd_query(args: &[String]) -> ExitCode {
     } else {
         String::new()
     };
+
+    // Vision path: when --image is supplied, bypass the streaming assistant
+    // and call the vision dispatcher directly. Knowledge (if any) is appended
+    // to the user prompt because the dispatcher takes a single user message.
+    #[cfg(feature = "vision")]
+    if !image_paths.is_empty() {
+        let start = Instant::now();
+        let combined_prompt = if knowledge.is_empty() {
+            user_prompt.clone()
+        } else {
+            format!("Reference context:\n{}\n\n{}", knowledge, user_prompt)
+        };
+
+        let images = match load_images(&image_paths) {
+            Ok(imgs) => imgs,
+            Err(e) => {
+                eprintln!("Error loading images: {}", e);
+                return ExitCode::from(1);
+            }
+        };
+
+        let vmsg = ai_assistant::VisionMessage::user(&combined_prompt, images);
+        let sys_prompt = system_prompt.unwrap_or_default();
+        let result =
+            ai_assistant::generate_vision_response(&assistant.config, &[vmsg], &sys_prompt);
+
+        let elapsed = start.elapsed();
+        match result {
+            Ok(text) => {
+                if json_output {
+                    let json = serde_json::json!({
+                        "provider": format!("{:?}", assistant.config.provider),
+                        "model": assistant.config.selected_model,
+                        "images": image_paths,
+                        "response": text,
+                        "elapsed_ms": elapsed.as_millis(),
+                        "error": false,
+                    });
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&json).unwrap_or_default()
+                    );
+                } else {
+                    println!("{}", text);
+                    eprintln!(
+                        "\n[{:?} / {} / {} image(s) / {:.1}s]",
+                        assistant.config.provider,
+                        assistant.config.selected_model,
+                        image_paths.len(),
+                        elapsed.as_secs_f64()
+                    );
+                }
+                return ExitCode::SUCCESS;
+            }
+            Err(e) => {
+                eprintln!("Vision request failed: {}", e);
+                return ExitCode::from(1);
+            }
+        }
+    }
+
+    #[cfg(not(feature = "vision"))]
+    if !image_paths.is_empty() {
+        eprintln!("Error: --image requires the `vision` feature. Rebuild with --features vision.");
+        return ExitCode::from(1);
+    }
 
     // Send query
     let start = Instant::now();
@@ -1982,6 +2057,35 @@ fn load_config(path: &str) -> Result<AiConfig, String> {
     serde_json::from_str(&content).map_err(|e| format!("invalid JSON: {}", e))
 }
 
+/// Load images for a vision request from a list of paths or http(s) URLs.
+///
+/// Validates: file size ≤ 20 MB, supported extension (.jpg, .jpeg, .png,
+/// .gif, .webp, .bmp). URLs are passed through without download — the
+/// provider fetches them server-side.
+#[cfg(feature = "vision")]
+fn load_images(paths: &[String]) -> Result<Vec<ai_assistant::ImageInput>, String> {
+    const MAX_BYTES: u64 = 20 * 1024 * 1024;
+    let mut out = Vec::with_capacity(paths.len());
+    for p in paths {
+        if p.starts_with("http://") || p.starts_with("https://") {
+            out.push(ai_assistant::ImageInput::from_url(p));
+            continue;
+        }
+        let pb = std::path::PathBuf::from(p);
+        if !pb.exists() {
+            return Err(format!("image not found: {}", p));
+        }
+        let meta = std::fs::metadata(&pb).map_err(|e| format!("stat {}: {}", p, e))?;
+        if meta.len() > MAX_BYTES {
+            return Err(format!("image {} is {} bytes (>20 MB max)", p, meta.len()));
+        }
+        let img =
+            ai_assistant::ImageInput::from_file(&pb).map_err(|e| format!("load {}: {}", p, e))?;
+        out.push(img);
+    }
+    Ok(out)
+}
+
 fn save_config(path: &str, config: &AiConfig) -> Result<(), String> {
     let json =
         serde_json::to_string_pretty(config).map_err(|e| format!("serialize error: {}", e))?;
@@ -2124,6 +2228,7 @@ fn cmd_verify(args: &[String]) -> ExitCode {
     let mut quality_gates = false;
     let mut knowledge_path: Option<String> = None;
     let mut prompt_parts: Vec<String> = Vec::new();
+    let mut image_paths: Vec<String> = Vec::new();
 
     let mut i = 0;
     while i < args.len() {
@@ -2151,6 +2256,14 @@ fn cmd_verify(args: &[String]) -> ExitCode {
                     return ExitCode::from(1);
                 }
                 url_override = Some(args[i].clone());
+            }
+            "--image" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: --image requires a path or URL");
+                    return ExitCode::from(1);
+                }
+                image_paths.push(args[i].clone());
             }
             "--strategy" if i + 1 < args.len() => {
                 i += 1;
@@ -2269,49 +2382,101 @@ fn cmd_verify(args: &[String]) -> ExitCode {
     );
 
     let start = Instant::now();
-    assistant.send_message(user_prompt.clone(), &knowledge);
+
+    // Vision short-circuit: if --image was supplied, run a non-streaming
+    // vision request and continue into the anti-hallucination pipeline with
+    // the resulting `full_response`.
+    #[cfg(feature = "vision")]
+    let mut __vision_response: Option<String> = None;
+    #[cfg(feature = "vision")]
+    if !image_paths.is_empty() {
+        let combined = if knowledge.is_empty() {
+            user_prompt.clone()
+        } else {
+            format!("Reference context:\n{}\n\n{}", knowledge, user_prompt)
+        };
+        let images = match load_images(&image_paths) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("Error loading images: {}", e);
+                return ExitCode::from(1);
+            }
+        };
+        let vmsg = ai_assistant::VisionMessage::user(&combined, images);
+        match ai_assistant::generate_vision_response(&assistant.config, &[vmsg], "") {
+            Ok(text) => {
+                println!("{}", text);
+                __vision_response = Some(text);
+            }
+            Err(e) => {
+                eprintln!("Vision request failed: {}", e);
+                return ExitCode::from(1);
+            }
+        }
+    } else {
+        assistant.send_message(user_prompt.clone(), &knowledge);
+    }
+    #[cfg(not(feature = "vision"))]
+    if !image_paths.is_empty() {
+        eprintln!("Error: --image requires the `vision` feature.");
+        return ExitCode::from(1);
+    } else {
+        assistant.send_message(user_prompt.clone(), &knowledge);
+    }
 
     // Poll for response
     let mut full_response = String::new();
     let mut errored = false;
 
-    loop {
-        if let Some(response) = assistant.poll_response() {
-            match response {
-                AiResponse::Chunk(text) => {
-                    print!("{}", text);
-                    let _ = std::io::stdout().flush();
-                    full_response.push_str(&text);
-                }
-                AiResponse::Complete(text) => {
-                    if !text.is_empty() && full_response.is_empty() {
-                        print!("{}", text);
-                    }
-                    println!();
-                    if full_response.is_empty() {
-                        full_response = text;
-                    }
-                    break;
-                }
-                AiResponse::Error(e) => {
-                    eprintln!("\nError: {}", e);
-                    errored = true;
-                    break;
-                }
-                AiResponse::Cancelled(partial) => {
-                    full_response = partial;
-                    break;
-                }
-                _ => {}
-            }
-        }
-        std::thread::sleep(Duration::from_millis(10));
+    #[cfg(feature = "vision")]
+    let skip_polling = __vision_response.is_some();
+    #[cfg(not(feature = "vision"))]
+    let skip_polling = false;
+
+    #[cfg(feature = "vision")]
+    if let Some(text) = __vision_response.take() {
+        full_response = text;
     }
 
-    // Drain remaining messages
-    for _ in 0..50 {
-        if assistant.poll_response().is_none() {
-            break;
+    if !skip_polling {
+        loop {
+            if let Some(response) = assistant.poll_response() {
+                match response {
+                    AiResponse::Chunk(text) => {
+                        print!("{}", text);
+                        let _ = std::io::stdout().flush();
+                        full_response.push_str(&text);
+                    }
+                    AiResponse::Complete(text) => {
+                        if !text.is_empty() && full_response.is_empty() {
+                            print!("{}", text);
+                        }
+                        println!();
+                        if full_response.is_empty() {
+                            full_response = text;
+                        }
+                        break;
+                    }
+                    AiResponse::Error(e) => {
+                        eprintln!("\nError: {}", e);
+                        errored = true;
+                        break;
+                    }
+                    AiResponse::Cancelled(partial) => {
+                        full_response = partial;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        // Drain remaining messages
+        for _ in 0..50 {
+            if assistant.poll_response().is_none() {
+                break;
+            }
         }
     }
 

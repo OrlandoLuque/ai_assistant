@@ -1038,12 +1038,16 @@ fn tests_export() -> CategoryResult {
                 content: "What is Rust?".to_string(),
                 timestamp: Some(chrono::Utc::now()),
                 metadata: None,
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             },
             ai_assistant::ExportedMessage {
                 role: "assistant".to_string(),
                 content: "Rust is a systems programming language.".to_string(),
                 timestamp: Some(chrono::Utc::now()),
                 metadata: None,
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             },
         ],
         created_at: chrono::Utc::now(),
@@ -1342,6 +1346,7 @@ fn tests_cost() -> CategoryResult {
             output_tokens: 50,
             images: 0,
             cost: 0.005,
+            vision_cost: 0.0,
             currency: "USD".to_string(),
             model: "test".to_string(),
             provider: "local".to_string(),
@@ -1352,6 +1357,7 @@ fn tests_cost() -> CategoryResult {
             output_tokens: 100,
             images: 0,
             cost: 0.010,
+            vision_cost: 0.0,
             currency: "USD".to_string(),
             model: "test".to_string(),
             provider: "local".to_string(),
@@ -5447,6 +5453,8 @@ fn tests_chain_facts_memory_context_compact() -> CategoryResult {
                 importance: f.confidence as f64,
                 topics: vec!["architecture".to_string()],
                 entities: vec![],
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             }
         }).collect();
         // Add more messages to trigger compaction
@@ -5459,6 +5467,8 @@ fn tests_chain_facts_memory_context_compact() -> CategoryResult {
                 importance: 0.3,
                 topics: vec![],
                 entities: vec![],
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             });
         }
 
@@ -5511,12 +5521,16 @@ fn tests_chain_moderation_version_merge_export() -> CategoryResult {
                     content: format!("Original: {}", mod_result.processed),
                     timestamp: None,
                     metadata: None,
+                    #[cfg(feature = "vision")]
+                    images: Vec::new(),
                 },
                 ai_assistant::ExportedMessage {
                     role: "assistant".to_string(),
                     content: format!("Merged result: {}", merge.merged),
                     timestamp: None,
                     metadata: None,
+                    #[cfg(feature = "vision")]
+                    images: Vec::new(),
                 },
             ],
             created_at: chrono::Utc::now(),
@@ -5617,6 +5631,7 @@ fn tests_chain_latency_health_select_cost() -> CategoryResult {
                 } else {
                     0.0
                 },
+                vision_cost: 0.0,
                 currency: "USD".to_string(),
                 model: selection.model_id.clone(),
                 provider: selection.profile.provider.clone(),
@@ -5709,6 +5724,8 @@ fn tests_chain_analytics_topics_compact_export() -> CategoryResult {
                     importance: if m.is_user() { 0.8 } else { 0.6 },
                     topics: topics.iter().map(|t| t.name.clone()).collect(),
                     entities: vec![],
+                    #[cfg(feature = "vision")]
+                    images: Vec::new(),
                 })
                 .collect();
             let compactor = ai_assistant::ConversationCompactor::new(
@@ -5725,6 +5742,8 @@ fn tests_chain_analytics_topics_compact_export() -> CategoryResult {
                     content: m.content.clone(),
                     timestamp: None,
                     metadata: None,
+                    #[cfg(feature = "vision")]
+                    images: Vec::new(),
                 })
                 .collect();
             let conversation = ai_assistant::ExportedConversation {
@@ -6121,12 +6140,16 @@ fn tests_pipeline_content_safety() -> CategoryResult {
                         content: mod_result.processed.clone(),
                         timestamp: None,
                         metadata: None,
+                        #[cfg(feature = "vision")]
+                        images: Vec::new(),
                     },
                     ai_assistant::ExportedMessage {
                         role: "assistant".to_string(),
                         content: cited.cited_text.clone(),
                         timestamp: None,
                         metadata: None,
+                        #[cfg(feature = "vision")]
+                        images: Vec::new(),
                     },
                 ],
                 created_at: chrono::Utc::now(),
@@ -6197,6 +6220,8 @@ fn tests_pipeline_session_lifecycle() -> CategoryResult {
                 importance: if m.is_user() { 0.9 } else { 0.7 },
                 topics: topics.iter().map(|t| t.name.clone()).collect(),
                 entities: vec![],
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             }
         }).collect();
         let compactor = ai_assistant::ConversationCompactor::new(ai_assistant::ConvCompactionConfig::default());
@@ -6305,6 +6330,7 @@ fn tests_pipeline_request_processing() -> CategoryResult {
                 output_tokens: 1200,
                 images: 0,
                 cost: 0.015 * 0.8 + 0.075 * 1.2, // input + output cost
+                vision_cost: 0.0,
                 currency: "USD".to_string(),
                 model: selection.model_id.clone(),
                 provider: "anthropic".to_string(),
@@ -6577,6 +6603,8 @@ fn tests_pipeline_multi_format_export() -> CategoryResult {
                 importance: 0.7,
                 topics: vec!["api-help".to_string()],
                 entities: vec![],
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             }
         }).collect();
         let compactor = ai_assistant::ConversationCompactor::new(ai_assistant::ConvCompactionConfig::default());
@@ -6589,6 +6617,8 @@ fn tests_pipeline_multi_format_export() -> CategoryResult {
                 content: m.content.clone(),
                 timestamp: None,
                 metadata: None,
+#[cfg(feature = "vision")]
+images: Vec::new(),
             }
         }).collect();
         let conversation = ai_assistant::ExportedConversation {
@@ -10321,6 +10351,8 @@ fn tests_stress_error_paths() -> CategoryResult {
                     content: "Line1\nLine2\tTabbed\r\nWindows\\Path".to_string(),
                     timestamp: Some(chrono::Utc::now()),
                     metadata: None,
+                    #[cfg(feature = "vision")]
+                    images: Vec::new(),
                 }],
                 created_at: chrono::Utc::now(),
                 updated_at: chrono::Utc::now(),
@@ -10421,6 +10453,7 @@ fn tests_stress_boundaries() -> CategoryResult {
             output_tokens: 0,
             images: 0,
             cost: 0.0,
+            vision_cost: 0.0,
             currency: "USD".to_string(),
             model: "free-model".to_string(),
             provider: "local".to_string(),
@@ -10523,6 +10556,7 @@ fn tests_stress_concurrency() -> CategoryResult {
                         output_tokens: 50,
                         images: 0,
                         cost: 0.001,
+                        vision_cost: 0.0,
                         currency: "USD".to_string(),
                         model: format!("model-{}", t),
                         provider: "test".to_string(),
@@ -10818,6 +10852,7 @@ fn tests_stress_memory() -> CategoryResult {
                 output_tokens: 50,
                 images: 0,
                 cost: 0.001,
+                vision_cost: 0.0,
                 currency: "USD".to_string(),
                 model: format!("model-{}", i % 10),
                 provider: "test".to_string(),
@@ -10964,6 +10999,7 @@ fn tests_stress_regression() -> CategoryResult {
             output_tokens: 0,
             images: 0,
             cost: 0.0,
+            vision_cost: 0.0,
             currency: "USD".to_string(),
             model: "test".to_string(),
             provider: "test".to_string(),
@@ -10976,6 +11012,7 @@ fn tests_stress_regression() -> CategoryResult {
             output_tokens: usize::MAX / 2,
             images: 0,
             cost: 999999.99,
+            vision_cost: 0.0,
             currency: "USD".to_string(),
             model: "test".to_string(),
             provider: "test".to_string(),
@@ -11196,6 +11233,7 @@ fn tests_stress_performance() -> CategoryResult {
                 output_tokens: 50,
                 images: 0,
                 cost: 0.001,
+                vision_cost: 0.0,
                 currency: "USD".to_string(),
                 model: format!("model-{}", i % 5),
                 provider: "test".to_string(),
@@ -11456,6 +11494,7 @@ fn tests_stress_api_contracts() -> CategoryResult {
             output_tokens: 50,
             images: 0,
             cost: 0.01,
+            vision_cost: 0.0,
             currency: "USD".to_string(),
             model: "test".to_string(),
             provider: "test".to_string(),
@@ -11720,6 +11759,7 @@ fn tests_stress_serialization() -> CategoryResult {
             output_tokens: 200,
             images: 2,
             cost: 0.025,
+            vision_cost: 0.0,
             currency: "USD".to_string(),
             model: "gpt-4".to_string(),
             provider: "openai".to_string(),
@@ -11895,6 +11935,7 @@ fn tests_stress_chaos() -> CategoryResult {
                     output_tokens: (i % 200) + 50,
                     images: 0,
                     cost: 0.001,
+                    vision_cost: 0.0,
                     currency: "USD".to_string(),
                     model: format!("model-{}", burst % 3),
                     provider: "test".to_string(),

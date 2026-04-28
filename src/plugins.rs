@@ -121,6 +121,9 @@ pub enum PluginCapability {
     Embeddings,
     /// Can store data
     Storage,
+    /// Can process or analyze images (vision-capable plugin)
+    #[cfg(feature = "vision")]
+    Vision,
     /// Custom capability
     Custom(String),
 }

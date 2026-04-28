@@ -140,6 +140,8 @@ pub fn chat_to_loop_message(role: &str, content: &str) -> LoopMessage {
         content: content.to_string(),
         tool_calls: None,
         tool_results: None,
+        #[cfg(feature = "vision")]
+        images: Vec::new(),
     }
 }
 
@@ -1503,6 +1505,8 @@ mod tests {
             content: "test".to_string(),
             tool_calls: None,
             tool_results: None,
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         };
         let (role, content) = loop_message_to_pair(&msg);
         assert_eq!(role, "system");
@@ -1547,6 +1551,10 @@ mod tests {
                 max_tokens: Some(1000),
                 top_p: None,
                 autonomy_level: Some("balanced".to_string()),
+                #[cfg(feature = "vision")]
+                accepts_images: false,
+                #[cfg(feature = "vision")]
+                max_images_per_request: None,
             },
             tools: vec![],
             memory: None,

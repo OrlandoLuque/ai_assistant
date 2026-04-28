@@ -518,6 +518,8 @@ mod tests {
             role: "user".to_string(),
             content: "Hello".to_string(),
             timestamp: chrono::Utc::now(),
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         }];
 
         let config = AiConfig {
@@ -554,6 +556,8 @@ mod tests {
             role: "user".to_string(),
             content: "Who are you?".to_string(),
             timestamp: chrono::Utc::now(),
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         }];
 
         let config = AiConfig {
@@ -588,6 +592,8 @@ mod tests {
             role: "user".to_string(),
             content: "Hi".to_string(),
             timestamp: chrono::Utc::now(),
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         }];
 
         let config = AiConfig {

@@ -41,6 +41,10 @@ pub struct ChatMessage {
     pub content: String,
     /// Unix timestamp in seconds.
     pub timestamp: u64,
+    /// Image attachments for this message. Refs only (the WASM/web SDK
+    /// resolves bytes via the host `ImageStore`).
+    #[cfg(feature = "vision")]
+    pub images: Vec<crate::vision::ImageRef>,
 }
 
 /// Configuration for chat hooks.
@@ -230,6 +234,8 @@ mod wasm_impl {
                 role: "user".to_string(),
                 content: content.to_string(),
                 timestamp: js_sys::Date::now() as u64 / 1000,
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             });
             self.is_loading = true;
             // In real implementation, would use web_sys::Request + fetch API
@@ -358,6 +364,8 @@ mod wasm_impl {
                 role: "user".to_string(),
                 content: prompt.to_string(),
                 timestamp: js_sys::Date::now() as u64 / 1000,
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             });
         }
 
@@ -566,6 +574,8 @@ mod native {
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs(),
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             });
             self.is_loading = true;
 
@@ -577,6 +587,8 @@ mod native {
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs(),
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             });
             self.is_loading = false;
         }
@@ -709,6 +721,8 @@ mod native {
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs(),
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             });
 
             // Simulate a tool call
@@ -738,6 +752,8 @@ mod native {
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
                         .as_secs(),
+                    #[cfg(feature = "vision")]
+                    images: Vec::new(),
                 });
                 self.state = AgentState::Done;
             } else {
@@ -758,6 +774,8 @@ mod native {
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs(),
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             });
             self.state = AgentState::Done;
         }
@@ -993,6 +1011,8 @@ mod tests {
             role: "user".to_string(),
             content: "Hello".to_string(),
             timestamp: 1234567890,
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         };
         assert_eq!(msg.role, "user");
         assert_eq!(msg.content, "Hello");
@@ -1005,6 +1025,8 @@ mod tests {
             role: "assistant".to_string(),
             content: "World".to_string(),
             timestamp: 999,
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         };
         let cloned = msg.clone();
         assert_eq!(cloned.role, msg.role);

@@ -19,6 +19,11 @@ pub struct ChatMessage {
     pub tool_calls: Option<Vec<ToolCallInfo>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    /// Optional vision attachments for this message. Default-empty so the
+    /// wire format stays compatible with non-vision peers.
+    #[cfg(feature = "vision")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<crate::vision::ImageInput>,
 }
 
 /// Message role
@@ -386,6 +391,8 @@ impl IntegratedModelClient {
                     name: None,
                     tool_calls: None,
                     tool_call_id: None,
+                    #[cfg(feature = "vision")]
+                    images: Vec::new(),
                 });
             }
         }
@@ -397,6 +404,8 @@ impl IntegratedModelClient {
             name: None,
             tool_calls: None,
             tool_call_id: None,
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         });
 
         // Get tools schema if provider supports them
@@ -425,6 +434,8 @@ impl IntegratedModelClient {
                 name: None,
                 tool_calls: None,
                 tool_call_id: None,
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             });
         }
 
@@ -442,6 +453,8 @@ impl IntegratedModelClient {
             name: None,
             tool_calls: Some(response.tool_calls.clone()),
             tool_call_id: None,
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         });
 
         // Execute each tool call
@@ -455,6 +468,8 @@ impl IntegratedModelClient {
                 name: Some(tool_call.function.name.clone()),
                 tool_calls: None,
                 tool_call_id: Some(tool_call.id.clone()),
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             });
         }
 
@@ -484,6 +499,8 @@ impl IntegratedModelClient {
                 name: None,
                 tool_calls: None,
                 tool_call_id: None,
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             });
         }
 
@@ -582,6 +599,8 @@ mod tests {
             name: None,
             tool_calls: None,
             tool_call_id: None,
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         };
 
         let json = serde_json::to_string(&msg).unwrap();

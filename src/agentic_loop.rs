@@ -85,6 +85,11 @@ pub struct LoopMessage {
     pub content: String,
     pub tool_calls: Option<Vec<ToolCall>>,
     pub tool_results: Option<Vec<ToolResult>>,
+    /// Optional image attachments. Empty by default; populated by
+    /// `AgenticLoop::process_with_images` and propagated to vision-capable
+    /// providers via [`crate::vision::agent_bridge::loop_messages_to_vision`].
+    #[cfg(feature = "vision")]
+    pub images: Vec<crate::vision::ImageInput>,
 }
 
 /// Role in agent conversation
@@ -105,6 +110,10 @@ pub struct AgenticLoop {
     conversation: Vec<LoopMessage>,
     state: LoopState,
     response_generator: Option<Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync>>,
+    /// Vision configuration. When set, [`process_with_images`] uses it to
+    /// validate the loaded model is vision-capable before dispatching.
+    #[cfg(feature = "vision")]
+    vision_config: Option<crate::vision::VisionLimits>,
     #[cfg(feature = "stall-detection")]
     stall_heuristic: Option<Box<dyn crate::stall_detection::StallHeuristic>>,
 }
@@ -132,6 +141,8 @@ impl AgenticLoop {
                 final_answer: None,
             },
             response_generator: None,
+            #[cfg(feature = "vision")]
+            vision_config: None,
             #[cfg(feature = "stall-detection")]
             stall_heuristic: None,
         }
@@ -196,6 +207,103 @@ impl AgenticLoop {
         self
     }
 
+    /// Configure vision limits used by [`process_with_images`].
+    /// Calling this is what opts the loop into vision dispatch — without
+    /// it, [`process_with_images`] uses default limits.
+    #[cfg(feature = "vision")]
+    pub fn with_vision_config(mut self, limits: crate::vision::VisionLimits) -> Self {
+        self.vision_config = Some(limits);
+        self
+    }
+
+    /// Process a user message with image attachments. Validates each image
+    /// against the configured (or default) [`crate::vision::VisionLimits`],
+    /// rejects oversize/animated/decompression-bomb payloads, and pushes a
+    /// `LoopMessage` carrying the validated images. The downstream
+    /// `response_generator` receives the conversation including images via
+    /// `LoopMessage.images`; vision-aware generators should use
+    /// [`crate::vision::agent_bridge::loop_messages_to_vision`] to translate
+    /// before dispatching.
+    #[cfg(feature = "vision")]
+    pub fn process_with_images(
+        &mut self,
+        user_message: &str,
+        images: Vec<crate::vision::ImageInput>,
+    ) -> Result<AgentLoopResult, String> {
+        let limits = self.vision_config.unwrap_or_default();
+        let preprocessor = crate::vision::ImagePreprocessor::high_detail().with_limits(limits);
+
+        // Validate each base64-encoded image up-front. URL-only references
+        // are fetched (and validated) by the provider layer. Reject the whole
+        // batch on first failure so the loop never sees a partial set.
+        for img in &images {
+            if let crate::vision::ImageData::Base64(b64) = &img.data {
+                let bytes = crate::vision::base64_decode(b64)
+                    .map_err(|e| format!("vision image base64 decode failed: {e}"))?;
+                preprocessor
+                    .validate_bytes(&bytes)
+                    .map_err(|e| format!("vision image validation failed: {e}"))?;
+            }
+        }
+
+        // Reset state for new query
+        self.state = LoopState {
+            iteration: 0,
+            status: LoopStatus::Thinking,
+            thought: None,
+            tool_calls: Vec::new(),
+            tool_results: Vec::new(),
+            final_answer: None,
+        };
+
+        if !self.config.system_prompt.is_empty() && self.conversation.is_empty() {
+            self.conversation.push(LoopMessage {
+                role: LoopRole::System,
+                content: self.config.system_prompt.clone(),
+                tool_calls: None,
+                tool_results: None,
+                images: Vec::new(),
+            });
+        }
+
+        self.conversation.push(LoopMessage {
+            role: LoopRole::User,
+            content: user_message.to_string(),
+            tool_calls: None,
+            tool_results: None,
+            images,
+        });
+
+        // Run the standard iteration loop. Vision-aware response_generator
+        // is responsible for inspecting `LoopMessage.images`; non-vision
+        // generators see images as empty (transparent fallback).
+        let mut iterations = Vec::new();
+        while self.state.iteration < self.config.max_iterations {
+            self.state.iteration += 1;
+            let it = self.run_iteration(false);
+            iterations.push(it);
+            if matches!(
+                self.state.status,
+                LoopStatus::Finished | LoopStatus::Error | LoopStatus::UserStalled
+            ) {
+                break;
+            }
+        }
+        if self.state.iteration >= self.config.max_iterations
+            && self.state.status != LoopStatus::Finished
+        {
+            self.state.status = LoopStatus::MaxIterationsReached;
+        }
+        Ok(AgentLoopResult {
+            final_answer: self.state.final_answer.clone(),
+            iterations,
+            total_iterations: self.state.iteration,
+            status: self.state.status,
+            tool_calls_made: self.state.tool_calls.clone(),
+            tool_results: self.state.tool_results.clone(),
+        })
+    }
+
     /// Process a user message and run the agent loop
     pub fn process(&mut self, user_message: &str) -> AgentLoopResult {
         // Reset state for new query
@@ -215,6 +323,8 @@ impl AgenticLoop {
                 content: self.config.system_prompt.clone(),
                 tool_calls: None,
                 tool_results: None,
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             });
         }
 
@@ -224,6 +334,8 @@ impl AgenticLoop {
             content: user_message.to_string(),
             tool_calls: None,
             tool_results: None,
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         });
 
         // Feed the user message to the stall heuristic, if one is attached.
@@ -343,6 +455,8 @@ impl AgenticLoop {
                         content: output_content,
                         tool_calls: None,
                         tool_results: Some(vec![tool_result.clone()]),
+                        #[cfg(feature = "vision")]
+                        images: tool_result.images.clone(),
                     });
                 }
 
@@ -416,6 +530,8 @@ impl AgenticLoop {
                             success: true,
                             output: formatted,
                             error: None,
+                            #[cfg(feature = "vision")]
+                            images: Vec::new(),
                         };
                     }
                     Err(e) => {
@@ -425,6 +541,8 @@ impl AgenticLoop {
                             success: false,
                             output: String::new(),
                             error: Some(e.to_string()),
+                            #[cfg(feature = "vision")]
+                            images: Vec::new(),
                         };
                     }
                 }
@@ -974,6 +1092,8 @@ mod tests {
                 content: "test".to_string(),
                 tool_calls: None,
                 tool_results: None,
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             };
             assert_eq!(msg.role, role);
         }
@@ -1146,5 +1266,101 @@ mod tests {
         // Heuristic has absorbed the frustrated user message; check() should fire.
         let h = agent.stall_heuristic_mut().expect("heuristic attached");
         assert!(matches!(h.check(), StallDecision::Stalled(_)));
+    }
+
+    // === Batch 2 — vision wiring ===
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_loop_message_carries_images() {
+        use crate::vision::ImageInput;
+        let img = ImageInput::from_url("https://example.com/x.png");
+        let msg = LoopMessage {
+            role: LoopRole::User,
+            content: "look".to_string(),
+            tool_calls: None,
+            tool_results: None,
+            images: vec![img],
+        };
+        assert_eq!(msg.images.len(), 1);
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_tool_result_with_image_builder() {
+        use crate::tool_calling::ToolResult;
+        use crate::vision::ImageInput;
+        let img = ImageInput::from_url("https://example.com/screenshot.png");
+        let tr = ToolResult {
+            call_id: "1".to_string(),
+            name: "screenshot".to_string(),
+            success: true,
+            output: "captured".to_string(),
+            error: None,
+            images: Vec::new(),
+        }
+        .with_image(img);
+        assert!(tr.has_images());
+        assert_eq!(tr.images.len(), 1);
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_with_vision_config_sets_limits() {
+        use crate::vision::VisionLimits;
+        let agent = AgenticLoop::new(LoopConfig::default()).with_vision_config(VisionLimits {
+            max_decoded_pixels: 1024 * 1024,
+            max_encoded_bytes: 1024,
+            max_dimension: 1024,
+        });
+        assert!(agent.vision_config.is_some());
+        let cfg = agent.vision_config.unwrap();
+        assert_eq!(cfg.max_dimension, 1024);
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_process_with_images_rejects_oversize_payload() {
+        use crate::vision::{ImageInput, VisionLimits};
+        let mut agent = AgenticLoop::new(LoopConfig {
+            auto_search: false,
+            max_iterations: 1,
+            ..Default::default()
+        })
+        .with_vision_config(VisionLimits {
+            max_decoded_pixels: 100,
+            max_encoded_bytes: 8,
+            max_dimension: 100,
+        });
+        // Build a fake JPEG header big enough to fail the encoded-bytes cap.
+        let big_payload = vec![0xFFu8; 1024];
+        let b64 = crate::vision::base64_encode(&big_payload);
+        let img = ImageInput::from_base64(&b64, "image/jpeg");
+        let res = agent.process_with_images("describe", vec![img]);
+        assert!(res.is_err());
+        assert!(res.unwrap_err().contains("validation failed"));
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_process_with_images_url_only_skips_validation() {
+        let mut agent = AgenticLoop::new(LoopConfig {
+            auto_search: false,
+            max_iterations: 1,
+            ..Default::default()
+        });
+        agent.set_response_generator(|_| "ok".to_string());
+        let img = crate::vision::ImageInput::from_url("https://example.com/x.png");
+        let res = agent.process_with_images("look", vec![img]);
+        assert!(res.is_ok());
+        let r = res.unwrap();
+        // The conversation now carries the image-bearing user message.
+        let user_msg = agent
+            .conversation
+            .iter()
+            .find(|m| m.role == LoopRole::User)
+            .unwrap();
+        assert_eq!(user_msg.images.len(), 1);
+        assert_eq!(r.status, LoopStatus::Finished);
     }
 }

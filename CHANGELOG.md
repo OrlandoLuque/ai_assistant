@@ -5,6 +5,96 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v63 (2026-04-28) — V90.19: vision wiring across persistence, agents, FFI, plugins, embeddings (0.2.49)
+
+### Added
+- **`messages::ChatMessage.images`** (cfg-gated `vision`) — canonical
+  multimodal field at the centre of the message graph. `with_image` /
+  `with_images` builders; `has_images()`. `#[serde(default)]` only
+  (deliberately *not* `skip_serializing_if`) so bincode positional
+  layout stays stable for the `binary-storage` session format.
+- **`agent_definition::AgentSpec.{accepts_images, max_images_per_request}`**
+  — declarative vision capability on agent specs.
+- **`agent_graph::AgentNode.accepts_images`** + `with_image_support()`
+  builder — graph-level capability flag.
+- **`plugins::PluginCapability::Vision`** variant (additive, leverages
+  `#[non_exhaustive]`).
+- **`embedding_providers::VisionEmbeddingProvider` trait** with
+  `LocalHashImageEmbedding` (FNV-1a fallback, no `sha2` dep) and
+  `create_vision_embedding_provider("local-hash")` factory. Re-exported
+  under `cfg(all(feature = "embeddings", feature = "vision"))`.
+- **Persistence surface**: `images` field added to
+  `conversation_snapshot::SnapshotMessage`, `export::ExportedMessage`,
+  `conversation_compaction::CompactableMessage`,
+  `context_composer::CompactableMessage`, `rag::StoredMessage`.
+- **Parallel `ChatMessage` types** — `model_integration::ChatMessage`,
+  `ui_hooks::ChatMessage`, `wasm_hooks::ChatMessage` all gain `.images`.
+
+### Changed
+- **`ai_assistant_send_message_with_image` (FFI)** — now dispatches via
+  `vision::generate_vision_response` (was a documented text-only fallback
+  that validated bytes but discarded them). Bytes still pass
+  `ImagePreprocessor::validate_bytes` first.
+
+### Fixed
+- **bincode round-trip regression** — initial drafts of the cfg-gated
+  `images` fields used `#[serde(default, skip_serializing_if = "Vec::is_empty")]`,
+  which mis-aligned positional offsets in the binary-storage format and
+  broke 4 `assistant::tests::*` session/snapshot round-trip tests.
+  Removed `skip_serializing_if` everywhere; documented the constraint
+  in-source on `messages.rs` and `conversation_snapshot.rs`.
+
+### Tests
+- Full lib suite: 6417/6417 pass under
+  `cargo test --features vision,security,advanced-memory,embeddings,multi-agent,rag,distributed,autonomous,research --lib`.
+- Previously failing `test_save_and_load_sessions` /
+  `test_save_sessions_*` / `test_load_sessions_*` now green.
+
+## [v62] (2026-04-26) — V90.16-18: vision dispatcher + local provider image transports + CLI `--image` flag (0.2.38)
+
+### Added
+- **`vision::generate_vision_response(config, messages, system_prompt)`** —
+  unified dispatcher that routes a `VisionMessage` request through the right
+  transport for the configured provider:
+  - Cloud (OpenAI / Anthropic / Gemini / Groq / Together / Fireworks /
+    DeepSeek / Mistral / Perplexity / OpenRouter) →
+    `cloud_providers::generate_cloud_response_with_images`
+  - Ollama → `providers::generate_ollama_response_with_images`
+  - LM Studio / LocalAI / llama.cpp / vLLM / text-gen-webui /
+    `OpenAICompatible` → `providers::generate_openai_compat_response_with_images`
+  - Azure OpenAI / Bedrock → explicit `bail!` with guidance
+- **`providers::generate_ollama_response_with_images`** — Ollama vision
+  transport using `VisionMessage::to_ollama_format` (`images: ["base64..."]`).
+- **`providers::generate_openai_compat_response_with_images`** — single
+  function for all OpenAI-compatible local servers; resolves the right
+  base URL from `AiConfig` (lm_studio_url / text_gen_webui_url /
+  local_ai_url / llamacpp_url / vllm_url / `OpenAICompatible{base_url}`).
+- **CLI `--image <path|URL>`** flag for both `ai_cli query` and
+  `ai_cli verify` (repeatable). Validates extension + 20 MB cap for local
+  files; URLs pass through to the provider.
+  - `query` short-circuits to vision dispatcher and prints the response
+    (text or JSON depending on `--json`).
+  - `verify` short-circuits to vision dispatcher, then feeds the response
+    into the existing anti-hallucination pipeline (faithfulness / CoVe /
+    quality gates) — so visual answers can be quality-gated like text ones.
+- **`ai_cli::load_images`** helper — paths or `http(s)://` URLs → `Vec<ImageInput>`.
+
+### Changed
+- `Cargo.toml`: version bumped `0.2.37` → `0.2.38`.
+- `lib.rs` re-exports: `generate_vision_response`,
+  `generate_ollama_response_with_images`,
+  `generate_openai_compat_response_with_images` (all gated by
+  `feature = "vision"`).
+
+### Why
+Closes the gap between "we can build a `VisionMessage`" and "an agent /
+operator can actually run a one-shot multimodal query from the CLI".
+Previously the cloud format helpers existed (V90.17) but no end-to-end
+path: callers had to hand-route to provider-specific functions. The
+dispatcher + CLI surface make vision a first-class verb, while the
+`verify --image` path means image-grounded answers go through the same
+anti-hallucination quality gates as text.
+
 ## [Unreleased] - v61 (2026-04-24) — V103.1: vLLM deep tuning (prefix caching, LoRA, metrics, structured output, FP8, spec-decoding) (0.2.37)
 
 ### Added

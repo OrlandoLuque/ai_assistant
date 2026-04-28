@@ -629,6 +629,8 @@ mod tests {
             embedding: vec![1.0, 0.0, 0.0],
             access_count: 0,
             last_accessed: 0,
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         }
     }
 
@@ -700,6 +702,8 @@ mod tests {
                 embedding: emb,
                 access_count: 0,
                 last_accessed: 0,
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             };
             handle.add_episode(ep);
         }
@@ -731,6 +735,8 @@ mod tests {
             embedding: vec![1.0, 0.0, 0.0],
             access_count: 0,
             last_accessed: 0,
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         });
 
         std::thread::sleep(Duration::from_millis(50));

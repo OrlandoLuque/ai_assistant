@@ -1064,6 +1064,103 @@ pub extern "C" fn ai_assistant_abi_version() -> c_int {
     1
 }
 
+/// Sends a user message together with a single image (raw bytes) and
+/// returns the assistant's reply.
+///
+/// `image_bytes` / `image_len` describe the encoded image (PNG/JPEG/WebP
+/// supported per `ImagePreprocessor::validate_bytes`). `media_type` is an
+/// optional NUL-terminated string (e.g. "image/png"); pass NULL to let
+/// the library detect from magic bytes.
+///
+/// Available only when the crate is built with `--features vision`.
+#[cfg(feature = "vision")]
+#[no_mangle]
+pub unsafe extern "C" fn ai_assistant_send_message_with_image(
+    handle: *mut AiAssistantHandle,
+    prompt: *const c_char,
+    image_bytes: *const u8,
+    image_len: usize,
+    media_type: *const c_char,
+    out: *mut *mut c_char,
+) -> c_int {
+    guard("ai_assistant_send_message_with_image", || {
+        let Some(inner) = handle_to_inner(handle) else {
+            set_last_error("handle is null");
+            return E_NULL_PTR;
+        };
+        check_thread(inner);
+        if out.is_null() {
+            set_last_error("out pointer is null");
+            return E_NULL_PTR;
+        }
+        *out = ptr::null_mut();
+        if image_bytes.is_null() || image_len == 0 {
+            set_last_error("image_bytes is null or empty");
+            return E_NULL_PTR;
+        }
+        let msg = match cstr_to_str(prompt) {
+            Ok(s) => s.to_string(),
+            Err(rc) => {
+                set_last_error(if rc == E_NULL_PTR {
+                    "prompt is null"
+                } else {
+                    "prompt is not valid UTF-8"
+                });
+                return rc;
+            }
+        };
+        let bytes = std::slice::from_raw_parts(image_bytes, image_len).to_vec();
+        let mt = if media_type.is_null() {
+            crate::vision::detect_image_media_type(&bytes)
+                .unwrap_or("application/octet-stream")
+                .to_string()
+        } else {
+            match cstr_to_str(media_type) {
+                Ok(s) => s.to_string(),
+                Err(rc) => {
+                    set_last_error("media_type is not valid UTF-8");
+                    return rc;
+                }
+            }
+        };
+        // Validate against vision limits before any provider dispatch.
+        let pre = crate::vision::ImagePreprocessor::default();
+        if let Err(e) = pre.validate_bytes(&bytes) {
+            set_last_error(&format!("image validation failed: {e}"));
+            return E_SEND_FAILED;
+        }
+        let image = crate::vision::ImageInput::from_bytes(bytes, &mt);
+        let provider = match build_provider(inner) {
+            Ok(p) => p,
+            Err(rc) => return rc,
+        };
+        let a = &mut *inner.assistant.get();
+        a.config.provider = provider;
+
+        let vmsg = crate::vision::VisionMessage::user(&msg, vec![image]);
+        let system_prompt = a.config.system_prompt.clone().unwrap_or_default();
+        let result = crate::vision::generate_vision_response(&a.config, &[vmsg], &system_prompt);
+
+        match result {
+            Ok(text) => match CString::new(text) {
+                Ok(c) => {
+                    *out = c.into_raw();
+                    clear_last_error();
+                    OK
+                }
+                Err(_) => {
+                    set_last_error("response contained interior NUL");
+                    E_INTERNAL
+                }
+            },
+            Err(e) => {
+                set_last_error(&format!("send failed: {e}"));
+                E_SEND_FAILED
+            }
+        }
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

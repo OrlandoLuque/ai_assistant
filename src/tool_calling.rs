@@ -72,6 +72,34 @@ pub struct ToolResult {
     pub success: bool,
     pub output: String,
     pub error: Option<String>,
+    /// Optional image attachments emitted by the tool (e.g., browser
+    /// screenshot, chart renderer). Empty by default; serialised only when
+    /// non-empty so existing wire payloads remain byte-identical.
+    #[cfg(feature = "vision")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<crate::vision::ImageInput>,
+}
+
+impl ToolResult {
+    /// Builder method: attach an image (e.g., a screenshot tool's output).
+    #[cfg(feature = "vision")]
+    pub fn with_image(mut self, image: crate::vision::ImageInput) -> Self {
+        self.images.push(image);
+        self
+    }
+
+    /// Builder method: attach multiple images.
+    #[cfg(feature = "vision")]
+    pub fn with_images(mut self, images: Vec<crate::vision::ImageInput>) -> Self {
+        self.images.extend(images);
+        self
+    }
+
+    /// Whether this tool result emitted any image attachments.
+    #[cfg(feature = "vision")]
+    pub fn has_images(&self) -> bool {
+        !self.images.is_empty()
+    }
 }
 
 impl Tool {
@@ -208,6 +236,8 @@ impl ToolRegistry {
                     success: false,
                     output: String::new(),
                     error: Some(format!("Tool '{}' not found", call.name)),
+                    #[cfg(feature = "vision")]
+                    images: Vec::new(),
                 };
             }
         };
@@ -221,6 +251,8 @@ impl ToolRegistry {
                     success: false,
                     output: String::new(),
                     error: Some("Tool has no handler".to_string()),
+                    #[cfg(feature = "vision")]
+                    images: Vec::new(),
                 };
             }
         };
@@ -232,6 +264,8 @@ impl ToolRegistry {
                 success: true,
                 output,
                 error: None,
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             },
             Err(e) => ToolResult {
                 call_id: call.id.clone(),
@@ -239,6 +273,8 @@ impl ToolRegistry {
                 success: false,
                 output: String::new(),
                 error: Some(e),
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             },
         }
     }
@@ -648,6 +684,8 @@ mod tests {
             success: true,
             output: "result: 42".to_string(),
             error: None,
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         }];
         let formatted = registry.format_results_for_context(&results);
         assert!(formatted.contains("test"));

@@ -119,6 +119,8 @@ impl MessageOperations {
             role: "user".to_string(),
             content: new_content.to_string(),
             timestamp: Utc::now(),
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         };
 
         Some(EditResult {

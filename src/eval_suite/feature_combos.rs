@@ -1525,6 +1525,8 @@ mod tests {
                 embedding: deterministic_embedding(content, 32),
                 access_count: 0,
                 last_accessed: 1000,
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             }
         }
 
@@ -1730,6 +1732,8 @@ mod tests {
                 embedding: deterministic_embedding(content, 32),
                 access_count: 0,
                 last_accessed: 1000,
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             }
         }
 
@@ -1929,6 +1933,8 @@ mod tests {
                 embedding: deterministic_embedding("Paris France capital", 32),
                 access_count: 0,
                 last_accessed: 900,
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             });
 
             // 2. Procedural memory with learned strategies
@@ -3339,6 +3345,8 @@ mod tests {
                     embedding: deterministic_embedding(&format!("{} {}", question, response), 32),
                     access_count: 0,
                     last_accessed: 0,
+                    #[cfg(feature = "vision")]
+                    images: Vec::new(),
                 };
                 episodic.add(episode);
             }
@@ -3622,6 +3630,8 @@ mod tests {
                     embedding: deterministic_embedding(content, 32),
                     access_count: 0,
                     last_accessed: 0,
+                    #[cfg(feature = "vision")]
+                    images: Vec::new(),
                 });
             }
             assert_eq!(episodic.len(), 3);
@@ -3855,6 +3865,8 @@ mod tests {
                     embedding: deterministic_embedding(&format!("{} {}", question, response), 32),
                     access_count: 0,
                     last_accessed: 0,
+                    #[cfg(feature = "vision")]
+                    images: Vec::new(),
                 });
             }
 

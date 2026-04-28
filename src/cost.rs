@@ -15,8 +15,12 @@ pub struct ModelPricing {
     pub input_cost_per_million: f64,
     /// Cost per 1M output tokens (in USD)
     pub output_cost_per_million: f64,
-    /// Cost per image (if applicable)
+    /// Flat cost per image (if applicable)
     pub image_cost: Option<f64>,
+    /// Cost per megapixel for vision input (resolution-based pricing).
+    /// Takes precedence over `image_cost` when set.
+    #[serde(default)]
+    pub image_cost_per_megapixel: Option<f64>,
     /// Currency (default USD)
     pub currency: String,
     /// Provider name
@@ -31,6 +35,7 @@ impl ModelPricing {
             input_cost_per_million: input_cost,
             output_cost_per_million: output_cost,
             image_cost: None,
+            image_cost_per_megapixel: None,
             currency: "USD".to_string(),
             provider: "unknown".to_string(),
         }
@@ -42,9 +47,17 @@ impl ModelPricing {
         self
     }
 
-    /// Set image cost
+    /// Set flat image cost
     pub fn with_image_cost(mut self, cost: f64) -> Self {
         self.image_cost = Some(cost);
+        self
+    }
+
+    /// Set per-megapixel image cost (resolution-based pricing).
+    /// When set, takes precedence over `image_cost` for vision estimates that
+    /// know image dimensions.
+    pub fn with_image_cost_per_megapixel(mut self, cost: f64) -> Self {
+        self.image_cost_per_megapixel = Some(cost);
         self
     }
 
@@ -75,6 +88,13 @@ impl ModelPricing {
     }
 }
 
+/// Estimate Anthropic vision input tokens for an image of given pixel
+/// dimensions. Anthropic's published heuristic: tokens ≈ (width × height) / 750.
+/// Source: <https://docs.anthropic.com/claude/docs/vision>.
+pub fn anthropic_image_tokens(width: u32, height: u32) -> usize {
+    ((width as f64 * height as f64) / 750.0).ceil() as usize
+}
+
 /// Cost estimation result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CostEstimate {
@@ -86,6 +106,13 @@ pub struct CostEstimate {
     pub images: usize,
     /// Estimated cost
     pub cost: f64,
+    /// Portion of `cost` attributable to vision/image processing.
+    /// Always `<= cost`. For Anthropic the vision cost is folded into
+    /// `input_tokens`, so `vision_cost` reflects the marginal token cost
+    /// of the image tokens; for resolution-priced or flat-priced
+    /// providers it reflects the image surcharge directly.
+    #[serde(default)]
+    pub vision_cost: f64,
     /// Currency
     pub currency: String,
     /// Model used
@@ -155,6 +182,12 @@ pub struct CostTracker {
     /// Number of academic search API calls.
     #[serde(default)]
     pub academic_search_calls: usize,
+    /// Cost attributed to vision/image processing (subset of `total_cost`).
+    #[serde(default)]
+    pub vision_cost: f64,
+    /// Number of requests that included at least one image.
+    #[serde(default)]
+    pub vision_request_count: usize,
 }
 
 impl CostTracker {
@@ -173,6 +206,11 @@ impl CostTracker {
         self.total_images += estimate.images;
         self.total_cost += estimate.cost;
         self.request_count += 1;
+
+        if estimate.vision_cost > 0.0 || estimate.images > 0 {
+            self.vision_cost += estimate.vision_cost;
+            self.vision_request_count += 1;
+        }
 
         *self
             .cost_by_model
@@ -346,6 +384,7 @@ impl CostEstimator {
                 output_tokens,
                 images: 0,
                 cost: 0.0,
+                vision_cost: 0.0,
                 currency: "USD".to_string(),
                 model: model_name.to_string(),
                 provider: provider.to_string(),
@@ -361,6 +400,7 @@ impl CostEstimator {
             output_tokens,
             images: 0,
             cost,
+            vision_cost: 0.0,
             currency: pricing.currency.clone(),
             model: model_name.to_string(),
             provider: provider.to_string(),
@@ -383,10 +423,92 @@ impl CostEstimator {
             let pricing = self.get_pricing(model_name);
             let image_cost = pricing.image_cost.unwrap_or(0.0) * images as f64;
             estimate.cost += image_cost;
+            estimate.vision_cost += image_cost;
             estimate.images = images;
         }
 
         estimate
+    }
+
+    /// Estimate cost for a vision request with per-image dimensions.
+    ///
+    /// Pricing model resolution priority per image:
+    /// 1. **Anthropic-style**: tokens are folded into `input_tokens` via
+    ///    `(width × height) / 750` (per Anthropic vision docs).
+    /// 2. **Resolution-priced**: `image_cost_per_megapixel × (w·h / 1e6)`.
+    /// 3. **Flat-priced**: `image_cost` per image.
+    /// 4. **None**: zero image cost (e.g., local-free model).
+    ///
+    /// `vision_cost` on the returned estimate reflects the marginal cost
+    /// added by the images (Anthropic: token-cost of image tokens; others:
+    /// the resolution/flat surcharge).
+    pub fn estimate_with_vision(
+        &self,
+        model_name: &str,
+        provider: &str,
+        input_tokens: usize,
+        output_tokens: usize,
+        image_dimensions: &[(u32, u32)],
+    ) -> CostEstimate {
+        // Local-free shortcut
+        if self.local_models_free && self.is_local_model(model_name, provider) {
+            return CostEstimate {
+                input_tokens,
+                output_tokens,
+                images: image_dimensions.len(),
+                cost: 0.0,
+                vision_cost: 0.0,
+                currency: "USD".to_string(),
+                model: model_name.to_string(),
+                provider: provider.to_string(),
+                pricing_tier: Some("local/free".to_string()),
+            };
+        }
+
+        let pricing = self.get_pricing(model_name);
+        let is_anthropic = pricing.provider.eq_ignore_ascii_case("anthropic")
+            || provider.to_lowercase().contains("anthropic");
+
+        let mut effective_input_tokens = input_tokens;
+        let mut anthropic_image_token_count: usize = 0;
+        let mut surcharge: f64 = 0.0;
+
+        for (w, h) in image_dimensions {
+            if is_anthropic {
+                let img_tokens = anthropic_image_tokens(*w, *h);
+                effective_input_tokens = effective_input_tokens.saturating_add(img_tokens);
+                anthropic_image_token_count =
+                    anthropic_image_token_count.saturating_add(img_tokens);
+            } else if let Some(rate) = pricing.image_cost_per_megapixel {
+                let mpix = (*w as f64 * *h as f64) / 1_000_000.0;
+                surcharge += mpix * rate;
+            } else if let Some(flat) = pricing.image_cost {
+                surcharge += flat;
+            }
+        }
+
+        let token_cost = pricing.calculate(effective_input_tokens, output_tokens);
+        let total = token_cost + surcharge;
+
+        // Vision cost: for Anthropic, the marginal cost of the image tokens;
+        // for surcharge-priced providers, the surcharge itself.
+        let vision_cost = if is_anthropic {
+            (anthropic_image_token_count as f64 / 1_000_000.0) * pricing.input_cost_per_million
+        } else {
+            surcharge
+        };
+
+        CostEstimate {
+            input_tokens: effective_input_tokens,
+            output_tokens,
+            images: image_dimensions.len(),
+            cost: total,
+            vision_cost,
+            currency: pricing.currency.clone(),
+            model: model_name.to_string(),
+            provider: provider.to_string(),
+            pricing_tier: Some(pricing.model_pattern.clone()),
+        }
     }
 
     /// Estimate cost from text (using token estimation)
@@ -423,6 +545,9 @@ pub struct BudgetManager {
     pub monthly_limit: Option<f64>,
     /// Per-request limit
     pub per_request_limit: Option<f64>,
+    /// Per-image cost cap (USD). Caps the marginal vision cost a single
+    /// image is allowed to add to a request — independent of per-request.
+    pub per_image_limit: Option<f64>,
     /// Spent today
     pub spent_today: f64,
     /// Spent this month
@@ -437,6 +562,7 @@ impl Default for BudgetManager {
             daily_limit: None,
             monthly_limit: None,
             per_request_limit: None,
+            per_image_limit: None,
             spent_today: 0.0,
             spent_month: 0.0,
             warning_threshold: 0.8,
@@ -466,6 +592,28 @@ impl BudgetManager {
     pub fn with_request_limit(mut self, limit: f64) -> Self {
         self.per_request_limit = Some(limit);
         self
+    }
+
+    /// Set per-image cost cap. Use [`BudgetManager::check_image`] to gate
+    /// individual images before sending them to the provider.
+    pub fn with_per_image_limit(mut self, limit: f64) -> Self {
+        self.per_image_limit = Some(limit);
+        self
+    }
+
+    /// Check whether the marginal cost of a single image is within budget.
+    /// Returns `Exceeded` if it overshoots [`BudgetManager::per_image_limit`].
+    pub fn check_image(&self, image_cost: f64) -> BudgetStatus {
+        if let Some(limit) = self.per_image_limit {
+            if image_cost > limit {
+                return BudgetStatus::Exceeded {
+                    limit_type: "per_image".to_string(),
+                    limit,
+                    current: image_cost,
+                };
+            }
+        }
+        BudgetStatus::Ok
     }
 
     /// Check if a cost is within budget
@@ -617,6 +765,7 @@ mod tests {
             output_tokens: 500,
             images: 0,
             cost: 0.05,
+            vision_cost: 0.0,
             currency: "USD".to_string(),
             model: "gpt-4".to_string(),
             provider: "openai".to_string(),
@@ -669,6 +818,7 @@ mod tests {
             output_tokens: 500,
             images: 0,
             cost: 0.005,
+            vision_cost: 0.0,
             currency: "USD".into(),
             model: "m".into(),
             provider: "p".into(),
@@ -690,6 +840,7 @@ mod tests {
                 output_tokens: 50 * (i + 1),
                 images: 0,
                 cost: 0.01 * (i + 1) as f64,
+                vision_cost: 0.0,
                 currency: "USD".into(),
                 model: "gpt-4".into(),
                 provider: "openai".into(),
@@ -712,6 +863,7 @@ mod tests {
             output_tokens: 50,
             images: 0,
             cost: 0.01,
+            vision_cost: 0.0,
             currency: "USD".into(),
             model: "m".into(),
             provider: "p".into(),
@@ -746,5 +898,107 @@ mod tests {
         // images: 0.01*3 = 0.03
         // total: 0.0425
         assert!((cost - 0.0425).abs() < 0.0001);
+    }
+
+    // === Batch 12 — vision-aware cost subsystem ===
+
+    #[test]
+    fn test_anthropic_image_tokens_formula() {
+        // 1024×1024 = 1_048_576 / 750 = 1398.10… → ceil 1399
+        assert_eq!(anthropic_image_tokens(1024, 1024), 1399);
+        // Tiny image still rounds up to 1
+        assert_eq!(anthropic_image_tokens(10, 10), 1);
+        // 750 px exactly = 1.0 → 1 token
+        assert_eq!(anthropic_image_tokens(30, 25), 1);
+    }
+
+    #[test]
+    fn test_with_image_cost_per_megapixel_builder() {
+        let p = ModelPricing::new("gpt-4o", 2.5, 10.0).with_image_cost_per_megapixel(0.5);
+        assert_eq!(p.image_cost_per_megapixel, Some(0.5));
+    }
+
+    #[test]
+    fn test_estimate_with_vision_anthropic_token_path() {
+        // Anthropic claude-3-opus: input $15/M. A 1024×1024 image adds 1399
+        // tokens → vision_cost ≈ 1399/1M * 15 = 0.020985.
+        let estimator = CostEstimator::new();
+        let dims = vec![(1024u32, 1024u32)];
+        let est = estimator.estimate_with_vision("claude-3-opus", "anthropic", 0, 0, &dims);
+        assert_eq!(est.images, 1);
+        assert_eq!(est.input_tokens, 1399);
+        assert!((est.vision_cost - 0.020985).abs() < 1e-6);
+        // No output tokens, so total cost equals vision token cost.
+        assert!((est.cost - est.vision_cost).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_estimate_with_vision_megapixel_path() {
+        // Custom OpenAI-style model with $0.50/MP vision pricing.
+        let mut estimator = CostEstimator::new();
+        estimator.add_pricing(
+            ModelPricing::new("custom-vision", 1.0, 2.0)
+                .with_provider("custom")
+                .with_image_cost_per_megapixel(0.5),
+        );
+        // 2000×1000 = 2.0 MP → 0.5 × 2.0 = $1.00 surcharge
+        let dims = vec![(2000u32, 1000u32)];
+        let est = estimator.estimate_with_vision("custom-vision", "custom", 0, 0, &dims);
+        assert_eq!(est.images, 1);
+        assert!((est.vision_cost - 1.0).abs() < 1e-9);
+        assert!((est.cost - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_estimate_with_vision_local_free() {
+        let estimator = CostEstimator::new();
+        let dims = vec![(2048u32, 2048u32)];
+        let est = estimator.estimate_with_vision("llava", "ollama", 100, 100, &dims);
+        assert_eq!(est.cost, 0.0);
+        assert_eq!(est.vision_cost, 0.0);
+        assert_eq!(est.images, 1);
+    }
+
+    #[test]
+    fn test_budget_per_image_limit() {
+        let budget = BudgetManager::new().with_per_image_limit(0.05);
+        assert!(budget.check_image(0.04).is_ok());
+        let exceeded = budget.check_image(0.10);
+        assert!(exceeded.is_exceeded());
+        if let BudgetStatus::Exceeded { limit_type, .. } = exceeded {
+            assert_eq!(limit_type, "per_image");
+        } else {
+            panic!("expected Exceeded");
+        }
+    }
+
+    #[test]
+    fn test_cost_tracker_vision_cost_accumulates() {
+        let mut tracker = CostTracker::new();
+        tracker.add(CostEstimate {
+            input_tokens: 100,
+            output_tokens: 50,
+            images: 1,
+            cost: 0.05,
+            vision_cost: 0.03,
+            currency: "USD".into(),
+            model: "gpt-4o".into(),
+            provider: "openai".into(),
+            pricing_tier: None,
+        });
+        tracker.add(CostEstimate {
+            input_tokens: 200,
+            output_tokens: 80,
+            images: 0,
+            cost: 0.02,
+            vision_cost: 0.0,
+            currency: "USD".into(),
+            model: "gpt-4o".into(),
+            provider: "openai".into(),
+            pricing_tier: None,
+        });
+        assert_eq!(tracker.request_count, 2);
+        assert_eq!(tracker.vision_request_count, 1);
+        assert!((tracker.vision_cost - 0.03).abs() < 1e-9);
     }
 }

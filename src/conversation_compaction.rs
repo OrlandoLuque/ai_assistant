@@ -46,6 +46,8 @@ pub struct CompactableMessage {
     pub importance: f64,
     pub topics: Vec<String>,
     pub entities: Vec<String>,
+    #[cfg(feature = "vision")]
+    pub images: Vec<crate::vision::ImageRef>,
 }
 
 impl CompactableMessage {
@@ -61,6 +63,8 @@ impl CompactableMessage {
             importance: 0.5,
             topics: Vec::new(),
             entities: Vec::new(),
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         }
     }
 

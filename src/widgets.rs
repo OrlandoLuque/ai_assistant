@@ -3015,6 +3015,9 @@ fn audit_event_style(event_type: &AuditEventType) -> (&'static str, Color32) {
         AuditEventType::InputSanitized => ("🧹", Color32::GRAY),
         AuditEventType::ConfigChanged => ("⚙", Color32::GRAY),
         AuditEventType::Error => ("❌", Color32::from_rgb(255, 100, 100)),
+        // Image-related events were added later; render them with a neutral
+        // glyph until the widget grows dedicated styling.
+        _ => ("🖼", Color32::GRAY),
     }
 }
 

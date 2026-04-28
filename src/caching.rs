@@ -315,6 +315,94 @@ impl ResponseCache {
         hasher.finish()
     }
 
+    /// Compute fingerprint for a query that carries images.
+    ///
+    /// The image SHA-256s are folded into the fingerprint in stable order so
+    /// two requests with the same prompt but different attached images do not
+    /// collide. Images contribute by content hash only — bytes and URLs are
+    /// never read into the fingerprint, preserving the invariant that the
+    /// cache key is bounded.
+    #[cfg(feature = "vision")]
+    pub fn compute_fingerprint_with_images(
+        &self,
+        query: &str,
+        model: &str,
+        images: &[crate::vision::ImageInput],
+    ) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.normalize_query(query).hash(&mut hasher);
+        model.hash(&mut hasher);
+        let mut shas: Vec<String> = images.iter().map(crate::vision::image_sha256).collect();
+        shas.sort();
+        for sha in &shas {
+            "img:".hash(&mut hasher);
+            sha.hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+
+    /// Get a cached response for a vision query (prompt + images).
+    #[cfg(feature = "vision")]
+    pub fn get_with_images(
+        &mut self,
+        query: &str,
+        model: &str,
+        images: &[crate::vision::ImageInput],
+    ) -> Option<CachedResponse> {
+        let fingerprint = self.compute_fingerprint_with_images(query, model, images);
+        if let Some(entry) = self.entries.get_mut(&fingerprint) {
+            if !entry.is_expired() {
+                entry.record_hit();
+                self.stats.hits += 1;
+                self.stats.tokens_saved += entry.tokens;
+                return Some(entry.clone());
+            } else {
+                self.entries.remove(&fingerprint);
+                self.stats.expired_removed += 1;
+            }
+        }
+        self.stats.misses += 1;
+        None
+    }
+
+    /// Store a response under a vision fingerprint (prompt + images).
+    #[cfg(feature = "vision")]
+    pub fn put_with_images(
+        &mut self,
+        query: &str,
+        model: &str,
+        images: &[crate::vision::ImageInput],
+        response: &str,
+        tokens: usize,
+        query_type: Option<&str>,
+    ) {
+        if self.config.auto_cleanup && self.last_cleanup.elapsed() > self.config.cleanup_interval {
+            self.cleanup();
+        }
+        if self.entries.len() >= self.config.max_entries {
+            self.evict_oldest();
+        }
+        let fingerprint = self.compute_fingerprint_with_images(query, model, images);
+        let ttl = query_type
+            .and_then(|t| self.config.ttl_by_type.get(t))
+            .copied()
+            .unwrap_or(self.config.default_ttl);
+        let now = Instant::now();
+        let entry = CachedResponse {
+            content: response.to_string(),
+            created_at: Some(now),
+            last_used: Some(now),
+            ttl,
+            hit_count: 0,
+            model: model.to_string(),
+            tokens,
+            fingerprint,
+            tags: query_type.map(|t| vec![t.to_string()]).unwrap_or_default(),
+        };
+        self.entries.insert(fingerprint, entry);
+        self.stats.total_entries = self.entries.len();
+    }
+
     /// Normalize a query for comparison
     fn normalize_query(&self, query: &str) -> String {
         query
@@ -1139,5 +1227,78 @@ mod tests {
         let r2 = cache.get("query", "model");
         assert!(r2.is_some());
         assert_eq!(r2.unwrap().hit_count, 2);
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_response_cache_image_aware_fingerprint() {
+        use crate::vision::ImageInput;
+
+        let cache = ResponseCache::default();
+        let img_a = ImageInput::from_bytes(&[1, 2, 3], "image/png");
+        let img_b = ImageInput::from_bytes(&[9, 9, 9], "image/png");
+
+        let fp_text = cache.compute_fingerprint("describe this", "gpt-4o");
+        let fp_a =
+            cache.compute_fingerprint_with_images("describe this", "gpt-4o", &[img_a.clone()]);
+        let fp_b =
+            cache.compute_fingerprint_with_images("describe this", "gpt-4o", &[img_b.clone()]);
+        let fp_a_again =
+            cache.compute_fingerprint_with_images("describe this", "gpt-4o", &[img_a.clone()]);
+
+        assert_ne!(
+            fp_text, fp_a,
+            "image-bearing key must differ from text-only"
+        );
+        assert_ne!(
+            fp_a, fp_b,
+            "different image bytes must produce different keys"
+        );
+        assert_eq!(fp_a, fp_a_again, "same prompt+image must be deterministic");
+
+        let fp_ab = cache.compute_fingerprint_with_images(
+            "describe this",
+            "gpt-4o",
+            &[img_a.clone(), img_b.clone()],
+        );
+        let fp_ba =
+            cache.compute_fingerprint_with_images("describe this", "gpt-4o", &[img_b, img_a]);
+        assert_eq!(fp_ab, fp_ba, "image order must not affect fingerprint");
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_response_cache_vision_get_put_roundtrip() {
+        use crate::vision::ImageInput;
+
+        let mut cache = ResponseCache::default();
+        let img = ImageInput::from_bytes(&[0xCA, 0xFE], "image/jpeg");
+
+        assert!(cache
+            .get_with_images("caption", "vlm", std::slice::from_ref(&img))
+            .is_none());
+
+        cache.put_with_images(
+            "caption",
+            "vlm",
+            std::slice::from_ref(&img),
+            "a cat",
+            12,
+            None,
+        );
+
+        let hit = cache
+            .get_with_images("caption", "vlm", std::slice::from_ref(&img))
+            .expect("should hit after put");
+        assert_eq!(hit.content, "a cat");
+        assert_eq!(hit.tokens, 12);
+
+        let img_other = ImageInput::from_bytes(&[0xDE, 0xAD], "image/jpeg");
+        assert!(
+            cache
+                .get_with_images("caption", "vlm", std::slice::from_ref(&img_other))
+                .is_none(),
+            "different image must miss"
+        );
     }
 }

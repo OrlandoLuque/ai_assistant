@@ -428,6 +428,122 @@ pub fn create_embedding_provider(name: &str) -> Result<Box<dyn EmbeddingProvider
 }
 
 // ============================================================================
+// VisionEmbeddingProvider — embed images into vectors
+// ============================================================================
+
+/// Trait for vision embedding providers — produce vectors from raw image
+/// bytes (encoded PNG/JPEG/WebP). Vectors are commonly used for:
+/// - Cross-modal retrieval (image-by-image, image-by-text via CLIP-like).
+/// - Near-duplicate detection in caches.
+/// - RAG indices that mix text and image artifacts.
+///
+/// All inputs are validated by `vision::ImagePreprocessor::validate_bytes`
+/// before any embedding work to gate decompression bombs / unsupported
+/// formats.
+#[cfg(feature = "vision")]
+pub trait VisionEmbeddingProvider: Send + Sync {
+    /// Provider name (stable identifier).
+    fn name(&self) -> &str;
+    /// Vector dimensionality.
+    fn dimensions(&self) -> usize;
+    /// Embed multiple images at once (batch).
+    fn embed_images(&self, images: &[&[u8]]) -> Result<Vec<Vec<f32>>>;
+    /// Embed a single image.
+    fn embed_image(&self, image: &[u8]) -> Result<Vec<f32>> {
+        let mut v = self.embed_images(&[image])?;
+        v.pop()
+            .ok_or_else(|| anyhow::anyhow!("Empty image embedding result"))
+    }
+}
+
+/// Local hash-based image embedder. Produces a deterministic
+/// fixed-dimension vector from SHA-256 of the validated image bytes.
+/// Useful as a baseline / dedup oracle when no neural backend is wired.
+#[cfg(feature = "vision")]
+pub struct LocalHashImageEmbedding {
+    dim: usize,
+}
+
+#[cfg(feature = "vision")]
+impl LocalHashImageEmbedding {
+    pub fn new() -> Self {
+        Self { dim: 256 }
+    }
+    pub fn with_dim(dim: usize) -> Self {
+        Self { dim: dim.max(32) }
+    }
+}
+
+#[cfg(feature = "vision")]
+impl Default for LocalHashImageEmbedding {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(feature = "vision")]
+impl VisionEmbeddingProvider for LocalHashImageEmbedding {
+    fn name(&self) -> &str {
+        "local-hash"
+    }
+    fn dimensions(&self) -> usize {
+        self.dim
+    }
+    fn embed_images(&self, images: &[&[u8]]) -> Result<Vec<Vec<f32>>> {
+        let pre = crate::vision::ImagePreprocessor::default();
+        let mut out = Vec::with_capacity(images.len());
+        for img in images {
+            pre.validate_bytes(img)
+                .map_err(|e| anyhow::anyhow!("image validation: {e}"))?;
+            let mut hasher = sha2_simple_hash(img);
+            let mut vec = vec![0f32; self.dim];
+            for i in 0..self.dim {
+                let byte = hasher[i % hasher.len()];
+                vec[i] = (byte as f32) / 255.0 - 0.5;
+                hasher[i % hasher.len()] = byte.wrapping_add(31);
+            }
+            // L2-normalize.
+            let norm: f32 = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
+            if norm > 0.0 {
+                for v in &mut vec {
+                    *v /= norm;
+                }
+            }
+            out.push(vec);
+        }
+        Ok(out)
+    }
+}
+
+#[cfg(feature = "vision")]
+fn sha2_simple_hash(bytes: &[u8]) -> [u8; 32] {
+    // FNV-1a 64-bit folded into 32 bytes — avoids pulling sha2 unless the
+    // `security` feature is on. Deterministic and good enough for the
+    // local-baseline embedder.
+    let mut out = [0u8; 32];
+    let mut h: u64 = 0xcbf29ce484222325;
+    for (i, b) in bytes.iter().enumerate() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+        out[i % 32] ^= ((h >> ((i % 8) * 8)) & 0xff) as u8;
+    }
+    out
+}
+
+/// Construct a vision embedding provider by name.
+///
+/// Currently supported: `"local-hash"` (dedup baseline). Cloud providers
+/// (OpenAI CLIP, HuggingFace) are exposed via dedicated constructors and
+/// will land in this factory in a follow-up batch.
+#[cfg(feature = "vision")]
+pub fn create_vision_embedding_provider(name: &str) -> Result<Box<dyn VisionEmbeddingProvider>> {
+    match name {
+        "local-hash" | "local" => Ok(Box::new(LocalHashImageEmbedding::new())),
+        _ => anyhow::bail!("Unknown vision embedding provider: {}", name),
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -441,6 +557,24 @@ mod tests {
         assert_eq!(provider.name(), "local-tfidf");
         assert_eq!(provider.dimensions(), 256);
         assert_eq!(provider.max_tokens(), 8192);
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_local_hash_image_embedding_deterministic() {
+        // Smallest valid PNG (1x1 transparent).
+        let png: &[u8] = &[
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+            0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0x9c, 0x62, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00,
+            0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+        ];
+        let p = LocalHashImageEmbedding::new();
+        let a = p.embed_image(png).expect("embed");
+        let b = p.embed_image(png).expect("embed");
+        assert_eq!(a.len(), 256);
+        assert_eq!(a, b, "hash embedding must be deterministic");
     }
 
     #[test]

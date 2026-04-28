@@ -71,6 +71,8 @@ impl CapabilitySet {
 /// - `Random` — access to CSPRNG.
 /// - `Time` — read the wall clock (otherwise only monotonic is available).
 /// - `ToolCall(String)` — invoke a specific named tool (Declarative mode).
+/// - `Vision` — accept image inputs and dispatch them to vision-capable models or
+///   vision tools. Required for any skill that consumes `ImageInput`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum Capability {
@@ -81,6 +83,7 @@ pub enum Capability {
     Random,
     Time,
     ToolCall(String),
+    Vision,
 }
 
 impl fmt::Display for Capability {
@@ -93,6 +96,7 @@ impl fmt::Display for Capability {
             Self::Random => f.write_str("random"),
             Self::Time => f.write_str("time"),
             Self::ToolCall(name) => write!(f, "tool_call[{name}]"),
+            Self::Vision => f.write_str("vision"),
         }
     }
 }
@@ -298,6 +302,18 @@ mod tests {
     fn capability_display_is_stable() {
         let c = Capability::NetFetch(NetAllowList::new(["a", "b"]));
         assert_eq!(c.to_string(), "net_fetch[a,b]");
+    }
+
+    #[test]
+    fn vision_capability_display_and_subset() {
+        assert_eq!(Capability::Vision.to_string(), "vision");
+        let skill = CapabilitySet::empty().with(Capability::Vision);
+        assert!(skill.contains(&Capability::Vision));
+        let granted = CapabilitySet::empty();
+        assert!(matches!(
+            skill.first_missing(&granted),
+            Some(Capability::Vision)
+        ));
     }
 
     #[test]

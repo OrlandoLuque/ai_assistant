@@ -95,6 +95,14 @@ pub struct AgentSpec {
     /// Autonomy level: "manual", "assisted", "delegated", "independent", "proactive".
     #[serde(default)]
     pub autonomy_level: Option<String>,
+    /// Whether the agent can accept image inputs (vision-capable model required).
+    #[cfg(feature = "vision")]
+    #[serde(default)]
+    pub accepts_images: bool,
+    /// Maximum number of images per request (None = no explicit cap).
+    #[cfg(feature = "vision")]
+    #[serde(default)]
+    pub max_images_per_request: Option<usize>,
 }
 
 /// Reference to a tool the agent may invoke.

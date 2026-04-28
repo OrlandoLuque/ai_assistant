@@ -42,6 +42,12 @@ pub struct EvalTrajectoryStep {
     pub cost: f64,
     pub success: bool,
     pub metadata: HashMap<String, String>,
+    /// Image attachments observed at this step (input frames or output
+    /// screenshots). Stored as content-addressed
+    /// [`crate::vision::ImageRef`]s so trajectories stay compact.
+    #[cfg(feature = "vision")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<crate::vision::ImageRef>,
 }
 
 // ---------------------------------------------------------------------------
@@ -805,6 +811,8 @@ mod tests {
             cost: 0.01,
             success,
             metadata: HashMap::new(),
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         }
     }
 
@@ -827,6 +835,8 @@ mod tests {
             cost,
             success,
             metadata: HashMap::new(),
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         }
     }
 

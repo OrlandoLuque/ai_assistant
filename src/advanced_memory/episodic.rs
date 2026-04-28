@@ -17,6 +17,14 @@ pub struct Episode {
     pub embedding: Vec<f32>,
     pub access_count: usize,
     pub last_accessed: u64,
+    /// Image references attached to this episode (e.g. screenshots,
+    /// diagrams). Carries content-addressed
+    /// [`crate::vision::ImageRef`]s, not raw bytes — bytes live in an
+    /// `ImageStore`. Empty by default; omitted from serialised form when
+    /// absent for wire-format compat.
+    #[cfg(feature = "vision")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<crate::vision::ImageRef>,
 }
 
 /// Store for episodic memories with capacity limits and temporal decay.

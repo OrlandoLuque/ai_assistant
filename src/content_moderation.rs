@@ -445,6 +445,31 @@ impl ContentModerator {
             "Critical"
         }
     }
+
+    /// Moderate an image based on its referenced URL and (optionally)
+    /// caller-supplied OCR text.
+    ///
+    /// The library does not bundle OCR; pair this with an external OCR
+    /// pipeline (tesseract subprocess, cloud vision, on-device) and pass
+    /// the extracted text via `ocr_text`. With `ocr_text = None` only the
+    /// URL is moderated (catches malicious link domains, blocked terms in
+    /// signed URLs); base64-encoded images contribute nothing on their own.
+    #[cfg(feature = "vision")]
+    pub fn moderate_image(
+        &self,
+        image: &crate::vision::ImageInput,
+        ocr_text: Option<&str>,
+    ) -> ModerationResult {
+        let mut combined = String::new();
+        if let crate::vision::ImageData::Url(url) = &image.data {
+            combined.push_str(url);
+            combined.push(' ');
+        }
+        if let Some(text) = ocr_text {
+            combined.push_str(text);
+        }
+        self.moderate(&combined)
+    }
 }
 
 impl Default for ContentModerator {
@@ -710,5 +735,45 @@ mod tests {
         assert_eq!(stats.failed, 1);
         assert!((stats.pass_rate() - 0.5).abs() < f64::EPSILON);
         assert!(stats.avg_risk_score > 0.0);
+    }
+
+    // === Batch 13 — image-aware moderation surface ===
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_moderate_image_blocks_url_with_blocked_term() {
+        let cfg = ModerationConfig {
+            blocked_terms: vec!["malware".to_string()],
+            ..Default::default()
+        };
+        let mod_ = ContentModerator::new(cfg);
+        let img = crate::vision::ImageInput::from_url("https://evil.example.com/malware.png");
+        let result = mod_.moderate_image(&img, None);
+        assert!(
+            !result.passed,
+            "URL containing blocked term must be flagged"
+        );
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_moderate_image_with_ocr_text_flagged() {
+        let cfg = ModerationConfig {
+            blocked_terms: vec!["forbidden".to_string()],
+            ..Default::default()
+        };
+        let mod_ = ContentModerator::new(cfg);
+        let img = crate::vision::ImageInput::from_base64("AAAA", "image/png");
+        let result = mod_.moderate_image(&img, Some("contains forbidden content"));
+        assert!(!result.passed);
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_moderate_image_clean_passes() {
+        let mod_ = ContentModerator::new(ModerationConfig::default());
+        let img = crate::vision::ImageInput::from_base64("AAAA", "image/png");
+        let result = mod_.moderate_image(&img, Some("a sunny landscape with mountains"));
+        assert!(result.passed);
     }
 }

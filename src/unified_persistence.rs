@@ -492,6 +492,8 @@ impl<'a> SqliteSessionStore<'a> {
                     role,
                     content,
                     timestamp,
+                    #[cfg(feature = "vision")]
+                    images: Vec::new(),
                 })
             })?
             .filter_map(|r| r.ok())

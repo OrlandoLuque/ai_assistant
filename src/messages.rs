@@ -12,6 +12,14 @@ pub struct ChatMessage {
     pub content: String,
     /// Timestamp when the message was created
     pub timestamp: chrono::DateTime<chrono::Utc>,
+    /// Optional image attachments. Empty by default; populated by
+    /// vision-aware surfaces (CLI `--image`, `send_message_with_images`,
+    /// browser screenshot tool, etc.). `#[serde(default)]` only — bincode
+    /// (the binary-storage format) ignores `skip_serializing_if` and would
+    /// mis-align field positions on read if it were used.
+    #[cfg(feature = "vision")]
+    #[serde(default)]
+    pub images: Vec<crate::vision::ImageInput>,
 }
 
 impl ChatMessage {
@@ -21,6 +29,8 @@ impl ChatMessage {
             role: "user".to_string(),
             content: content.into(),
             timestamp: chrono::Utc::now(),
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         }
     }
 
@@ -30,6 +40,8 @@ impl ChatMessage {
             role: "assistant".to_string(),
             content: content.into(),
             timestamp: chrono::Utc::now(),
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         }
     }
 
@@ -39,6 +51,8 @@ impl ChatMessage {
             role: "system".to_string(),
             content: content.into(),
             timestamp: chrono::Utc::now(),
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         }
     }
 
@@ -55,6 +69,26 @@ impl ChatMessage {
     /// Check if this is a system message
     pub fn is_system(&self) -> bool {
         self.role == "system"
+    }
+
+    /// Attach an image. Builder pattern for vision-aware callers.
+    #[cfg(feature = "vision")]
+    pub fn with_image(mut self, image: crate::vision::ImageInput) -> Self {
+        self.images.push(image);
+        self
+    }
+
+    /// Attach multiple images.
+    #[cfg(feature = "vision")]
+    pub fn with_images(mut self, images: Vec<crate::vision::ImageInput>) -> Self {
+        self.images.extend(images);
+        self
+    }
+
+    /// Whether this message carries any image attachments.
+    #[cfg(feature = "vision")]
+    pub fn has_images(&self) -> bool {
+        !self.images.is_empty()
     }
 }
 

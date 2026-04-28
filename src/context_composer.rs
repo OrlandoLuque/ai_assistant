@@ -1052,6 +1052,8 @@ pub struct CompactableMessage {
     pub content: String,
     /// Estimated token count.
     pub token_estimate: usize,
+    #[cfg(feature = "vision")]
+    pub images: Vec<crate::vision::ImageRef>,
 }
 
 impl ConversationCompactor {
@@ -2180,26 +2182,36 @@ mod tests {
                 role: "user".to_string(),
                 content: "Hello there.".to_string(),
                 token_estimate: 3,
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             },
             CompactableMessage {
                 role: "assistant".to_string(),
                 content: "Hi! How can I help?".to_string(),
                 token_estimate: 5,
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             },
             CompactableMessage {
                 role: "user".to_string(),
                 content: "Tell me about Rust.".to_string(),
                 token_estimate: 5,
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             },
             CompactableMessage {
                 role: "assistant".to_string(),
                 content: "Rust is a systems language.".to_string(),
                 token_estimate: 6,
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             },
             CompactableMessage {
                 role: "user".to_string(),
                 content: "Thanks!".to_string(),
                 token_estimate: 2,
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             },
         ];
 
@@ -2218,21 +2230,29 @@ mod tests {
                 role: "user".to_string(),
                 content: "First message.".to_string(),
                 token_estimate: 3,
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             },
             CompactableMessage {
                 role: "assistant".to_string(),
                 content: "Second message.".to_string(),
                 token_estimate: 3,
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             },
             CompactableMessage {
                 role: "user".to_string(),
                 content: "Third message.".to_string(),
                 token_estimate: 3,
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             },
             CompactableMessage {
                 role: "assistant".to_string(),
                 content: "Fourth message.".to_string(),
                 token_estimate: 3,
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             },
         ];
 
@@ -2250,16 +2270,22 @@ mod tests {
                 role: "user".to_string(),
                 content: "What is machine learning? It is cool.".to_string(),
                 token_estimate: 8,
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             },
             CompactableMessage {
                 role: "assistant".to_string(),
                 content: "ML is a subset of AI. It uses data.".to_string(),
                 token_estimate: 9,
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             },
             CompactableMessage {
                 role: "user".to_string(),
                 content: "Thanks!".to_string(),
                 token_estimate: 2,
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             },
         ];
 
@@ -2277,16 +2303,22 @@ mod tests {
                 role: "user".to_string(),
                 content: "Hello.".to_string(),
                 token_estimate: 2,
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             },
             CompactableMessage {
                 role: "assistant".to_string(),
                 content: "Hi.".to_string(),
                 token_estimate: 1,
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             },
             CompactableMessage {
                 role: "user".to_string(),
                 content: "Bye.".to_string(),
                 token_estimate: 1,
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             },
         ];
         assert_eq!(compactor.compaction_count(), 0);

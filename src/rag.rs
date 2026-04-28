@@ -63,6 +63,9 @@ pub struct StoredMessage {
     pub token_count: usize,
     /// Whether this message is currently in active context
     pub in_context: bool,
+    #[cfg(feature = "vision")]
+    #[serde(default)]
+    pub images: Vec<crate::vision::ImageRef>,
 }
 
 /// RAG configuration
@@ -1459,6 +1462,8 @@ impl RagDb {
                     timestamp: row.get(4)?,
                     token_count: row.get(5)?,
                     in_context: row.get::<_, i32>(6)? != 0,
+                    #[cfg(feature = "vision")]
+                    images: Vec::new(),
                 })
             },
         )?;
@@ -1501,6 +1506,8 @@ impl RagDb {
                 timestamp: row.get(4)?,
                 token_count: row.get(5)?,
                 in_context: row.get::<_, i32>(6)? != 0,
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             })
         })?;
 

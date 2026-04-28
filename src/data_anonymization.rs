@@ -317,6 +317,137 @@ impl DataAnonymizer {
         self.pseudonym_mapping.clear();
         self.pseudonym_counter = 0;
     }
+
+    /// Strip metadata segments from JPEG/PNG image bytes.
+    ///
+    /// JPEG: removes APP1 (EXIF/XMP), APP13 (Photoshop IPTC) and COM segments.
+    /// PNG: removes `tEXt`, `zTXt`, `iTXt` and `eXIf` ancillary chunks.
+    /// Other formats are passed through unchanged.
+    ///
+    /// Returns `(scrubbed_bytes, removed_segment_count)`. Pure-Rust, no
+    /// external decoder — safe to call on untrusted input because no pixel
+    /// decode is performed.
+    pub fn scrub_exif(bytes: &[u8]) -> (Vec<u8>, usize) {
+        if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+            return scrub_exif_jpeg(bytes);
+        }
+        if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+            return scrub_exif_png(bytes);
+        }
+        (bytes.to_vec(), 0)
+    }
+}
+
+fn scrub_exif_jpeg(bytes: &[u8]) -> (Vec<u8>, usize) {
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut removed = 0usize;
+
+    // Copy SOI (0xFFD8).
+    if bytes.len() < 2 {
+        return (bytes.to_vec(), 0);
+    }
+    out.extend_from_slice(&bytes[0..2]);
+    let mut i = 2usize;
+
+    while i + 1 < bytes.len() {
+        // Find next marker (skip fill bytes, which are 0xFF 0xFF...).
+        if bytes[i] != 0xFF {
+            // Malformed — bail out, preserve remainder.
+            out.extend_from_slice(&bytes[i..]);
+            return (out, removed);
+        }
+        // Skip 0xFF padding.
+        let mut j = i;
+        while j < bytes.len() && bytes[j] == 0xFF {
+            j += 1;
+        }
+        if j >= bytes.len() {
+            out.extend_from_slice(&bytes[i..]);
+            return (out, removed);
+        }
+        let marker = bytes[j];
+        let marker_start = j - 1; // position of the leading 0xFF
+        i = j + 1;
+
+        // SOS (0xDA): start of scan; copy marker + remainder verbatim
+        // (entropy-coded data follows; do not parse it).
+        if marker == 0xDA {
+            out.extend_from_slice(&bytes[marker_start..]);
+            return (out, removed);
+        }
+        // EOI (0xD9): end of image, no payload.
+        if marker == 0xD9 {
+            out.extend_from_slice(&bytes[marker_start..j + 1]);
+            return (out, removed);
+        }
+        // Standalone markers (RST0..RST7, TEM): no length, no payload.
+        if (0xD0..=0xD7).contains(&marker) || marker == 0x01 {
+            out.extend_from_slice(&bytes[marker_start..j + 1]);
+            continue;
+        }
+        // All other markers carry a 2-byte big-endian length (includes the
+        // length bytes themselves).
+        if i + 1 >= bytes.len() {
+            out.extend_from_slice(&bytes[marker_start..]);
+            return (out, removed);
+        }
+        let seg_len = ((bytes[i] as usize) << 8) | bytes[i + 1] as usize;
+        if seg_len < 2 {
+            out.extend_from_slice(&bytes[marker_start..]);
+            return (out, removed);
+        }
+        let seg_end = i + seg_len;
+        if seg_end > bytes.len() {
+            out.extend_from_slice(&bytes[marker_start..]);
+            return (out, removed);
+        }
+        // Strip APP1 (0xE1), APP13 (0xED), COM (0xFE).
+        let strip = matches!(marker, 0xE1 | 0xED | 0xFE);
+        if strip {
+            removed += 1;
+        } else {
+            out.extend_from_slice(&bytes[marker_start..seg_end]);
+        }
+        i = seg_end;
+    }
+    (out, removed)
+}
+
+fn scrub_exif_png(bytes: &[u8]) -> (Vec<u8>, usize) {
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut removed = 0usize;
+
+    if bytes.len() < 8 {
+        return (bytes.to_vec(), 0);
+    }
+    out.extend_from_slice(&bytes[0..8]);
+    let mut i = 8usize;
+
+    while i + 12 <= bytes.len() {
+        let len = u32::from_be_bytes([bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]]) as usize;
+        let chunk_type = &bytes[i + 4..i + 8];
+        let chunk_end = i + 8 + len + 4; // length + type + data + crc
+        if chunk_end > bytes.len() {
+            // Malformed: copy remainder verbatim.
+            out.extend_from_slice(&bytes[i..]);
+            return (out, removed);
+        }
+        let strip = matches!(chunk_type, b"tEXt" | b"zTXt" | b"iTXt" | b"eXIf" | b"tIME");
+        if strip {
+            removed += 1;
+        } else {
+            out.extend_from_slice(&bytes[i..chunk_end]);
+        }
+        // IEND terminates the file.
+        if chunk_type == b"IEND" {
+            return (out, removed);
+        }
+        i = chunk_end;
+    }
+    if i < bytes.len() {
+        out.extend_from_slice(&bytes[i..]);
+    }
+    (out, removed)
 }
 
 impl Default for DataAnonymizer {
@@ -466,5 +597,111 @@ mod tests {
         assert!(!result.anonymized.contains("user@test.com"));
         assert!(!result.anonymized.contains("555-123-4567"));
         assert!(!result.anonymized.contains("192.168.1.1"));
+    }
+
+    fn jpeg_with_exif() -> Vec<u8> {
+        let mut v = Vec::new();
+        // SOI
+        v.extend_from_slice(&[0xFF, 0xD8]);
+        // APP1 EXIF segment: marker 0xFFE1, length=10, payload "EXIFDATA1"
+        v.extend_from_slice(&[0xFF, 0xE1]);
+        let payload = b"EXIFDATA1";
+        let seg_len = (payload.len() + 2) as u16; // length includes the 2 length bytes
+        v.extend_from_slice(&seg_len.to_be_bytes());
+        v.extend_from_slice(payload);
+        // APP0 JFIF (kept): marker 0xFFE0, length=6, payload "JFIF\0"
+        v.extend_from_slice(&[0xFF, 0xE0]);
+        let jfif = b"JFIF\0";
+        let jfif_len = (jfif.len() + 2) as u16;
+        v.extend_from_slice(&jfif_len.to_be_bytes());
+        v.extend_from_slice(jfif);
+        // COM segment (stripped): "COMMENT"
+        v.extend_from_slice(&[0xFF, 0xFE]);
+        let com = b"COMMENT";
+        let com_len = (com.len() + 2) as u16;
+        v.extend_from_slice(&com_len.to_be_bytes());
+        v.extend_from_slice(com);
+        // SOS — copy verbatim until EOI
+        v.extend_from_slice(&[0xFF, 0xDA, 0x00, 0x02]);
+        // Some encoded entropy-coded data
+        v.extend_from_slice(&[0x12, 0x34, 0x56]);
+        // EOI
+        v.extend_from_slice(&[0xFF, 0xD9]);
+        v
+    }
+
+    #[test]
+    fn test_scrub_exif_jpeg_strips_app1_and_com() {
+        let bytes = jpeg_with_exif();
+        let (scrubbed, removed) = DataAnonymizer::scrub_exif(&bytes);
+        assert_eq!(removed, 2); // APP1 + COM
+        assert!(!scrubbed.windows(7).any(|w| w == b"COMMENT"));
+        assert!(!scrubbed.windows(9).any(|w| w == b"EXIFDATA1"));
+        // JFIF (APP0) preserved.
+        assert!(scrubbed.windows(4).any(|w| w == b"JFIF"));
+        // Entropy-coded image data preserved.
+        assert!(scrubbed.ends_with(&[0xFF, 0xD9]));
+    }
+
+    #[test]
+    fn test_scrub_exif_jpeg_no_metadata_pass_through() {
+        // SOI + minimal SOS + EOI — no metadata.
+        let bytes = vec![0xFF, 0xD8, 0xFF, 0xDA, 0x00, 0x02, 0x99, 0xFF, 0xD9];
+        let (scrubbed, removed) = DataAnonymizer::scrub_exif(&bytes);
+        assert_eq!(removed, 0);
+        assert_eq!(scrubbed, bytes);
+    }
+
+    fn png_with_text_chunks() -> Vec<u8> {
+        let mut v = Vec::new();
+        // PNG signature
+        v.extend_from_slice(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+        // IHDR chunk: length=13, type, 13 bytes data, 4 bytes CRC (zeros — content not validated by scrubber)
+        v.extend_from_slice(&13u32.to_be_bytes());
+        v.extend_from_slice(b"IHDR");
+        v.extend_from_slice(&[0; 13]);
+        v.extend_from_slice(&[0; 4]);
+        // tEXt chunk (stripped)
+        let text_data = b"Comment\0secret note";
+        v.extend_from_slice(&(text_data.len() as u32).to_be_bytes());
+        v.extend_from_slice(b"tEXt");
+        v.extend_from_slice(text_data);
+        v.extend_from_slice(&[0; 4]);
+        // eXIf chunk (stripped)
+        let exif_data = b"EXIFPAYLOAD";
+        v.extend_from_slice(&(exif_data.len() as u32).to_be_bytes());
+        v.extend_from_slice(b"eXIf");
+        v.extend_from_slice(exif_data);
+        v.extend_from_slice(&[0; 4]);
+        // IDAT chunk (kept)
+        let idat = b"FAKEIDAT";
+        v.extend_from_slice(&(idat.len() as u32).to_be_bytes());
+        v.extend_from_slice(b"IDAT");
+        v.extend_from_slice(idat);
+        v.extend_from_slice(&[0; 4]);
+        // IEND
+        v.extend_from_slice(&0u32.to_be_bytes());
+        v.extend_from_slice(b"IEND");
+        v.extend_from_slice(&[0; 4]);
+        v
+    }
+
+    #[test]
+    fn test_scrub_exif_png_strips_text_and_exif() {
+        let bytes = png_with_text_chunks();
+        let (scrubbed, removed) = DataAnonymizer::scrub_exif(&bytes);
+        assert_eq!(removed, 2);
+        assert!(!scrubbed.windows(11).any(|w| w == b"secret note"));
+        assert!(!scrubbed.windows(11).any(|w| w == b"EXIFPAYLOAD"));
+        assert!(scrubbed.windows(8).any(|w| w == b"FAKEIDAT"));
+        assert!(scrubbed.ends_with(b"IEND\0\0\0\0"));
+    }
+
+    #[test]
+    fn test_scrub_exif_unknown_format_pass_through() {
+        let bytes = vec![1, 2, 3, 4, 5];
+        let (scrubbed, removed) = DataAnonymizer::scrub_exif(&bytes);
+        assert_eq!(removed, 0);
+        assert_eq!(scrubbed, bytes);
     }
 }

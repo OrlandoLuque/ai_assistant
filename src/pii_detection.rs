@@ -556,6 +556,31 @@ impl PiiDetector {
         value.hash(&mut hasher);
         format!("[HASH:{}]", hasher.finish())
     }
+
+    /// Scan an image for PII embedded in metadata and (optionally) OCR text.
+    ///
+    /// The library does not bundle an OCR engine (would pull C deps); the
+    /// caller is expected to run OCR (e.g., tesseract via subprocess, cloud
+    /// vision API, on-device CoreML/MLKit) and pass the extracted text via
+    /// `ocr_text`. When `ocr_text` is `None`, only the URL (when the image
+    /// is URL-referenced) and media type are scanned — useful for catching
+    /// PII embedded in query strings (e.g., `?ssn=...`) or signed URLs.
+    #[cfg(feature = "vision")]
+    pub fn scan_image(
+        &self,
+        image: &crate::vision::ImageInput,
+        ocr_text: Option<&str>,
+    ) -> PiiResult {
+        let mut combined = String::new();
+        if let crate::vision::ImageData::Url(url) = &image.data {
+            combined.push_str(url);
+            combined.push(' ');
+        }
+        if let Some(text) = ocr_text {
+            combined.push_str(text);
+        }
+        self.detect(&combined)
+    }
 }
 
 impl Default for PiiDetector {
@@ -729,5 +754,40 @@ mod tests {
         let r_high = high.detect(text);
         let r_low = low.detect(text);
         assert!(r_high.detections.len() >= r_low.detections.len());
+    }
+
+    // === Batch 13 — image-aware PII surface ===
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_scan_image_url_with_pii_in_query_string() {
+        let detector = PiiDetector::new(PiiConfig::default());
+        let img = crate::vision::ImageInput::from_url("https://example.com/photo?ssn=123-45-6789");
+        let result = detector.scan_image(&img, None);
+        assert!(result.has_pii, "PII in URL query string should be detected");
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_scan_image_with_ocr_text() {
+        let detector = PiiDetector::new(PiiConfig::default());
+        let img = crate::vision::ImageInput::from_base64("AAAA", "image/png");
+        let ocr = "Contact me: alice@example.com";
+        let result = detector.scan_image(&img, Some(ocr));
+        assert!(result.has_pii, "PII in OCR text should be detected");
+        assert!(result
+            .detections
+            .iter()
+            .any(|d| d.value.contains("alice@example.com")));
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_scan_image_clean_base64_no_pii() {
+        let detector = PiiDetector::new(PiiConfig::default());
+        let img = crate::vision::ImageInput::from_base64("AAAA", "image/png");
+        // No URL, no OCR -> no PII surface
+        let result = detector.scan_image(&img, None);
+        assert!(!result.has_pii);
     }
 }

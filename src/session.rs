@@ -356,6 +356,8 @@ impl JournalEntry {
             role: role.to_string(),
             content: self.data.clone(),
             timestamp: self.timestamp,
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         })
     }
 }

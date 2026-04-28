@@ -67,5 +67,7 @@ pub fn new_episode(
         embedding,
         access_count: 0,
         last_accessed: now,
+        #[cfg(feature = "vision")]
+        images: Vec::new(),
     }
 }

@@ -268,6 +268,8 @@ impl AutonomousAgent {
                 content: self.config.system_prompt.clone(),
                 tool_calls: None,
                 tool_results: None,
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             });
         }
 
@@ -277,6 +279,8 @@ impl AutonomousAgent {
             content: task.to_string(),
             tool_calls: None,
             tool_results: None,
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         });
 
         // Notify interaction manager
@@ -323,6 +327,8 @@ impl AutonomousAgent {
                         ),
                         tool_calls: None,
                         tool_results: None,
+                        #[cfg(feature = "vision")]
+                        images: Vec::new(),
                     });
                 }
             }
@@ -361,6 +367,8 @@ impl AutonomousAgent {
                                     content: text,
                                     tool_calls: None,
                                     tool_results: None,
+                                    #[cfg(feature = "vision")]
+                                    images: Vec::new(),
                                 });
                                 self.state = AgentState::Running;
                             }
@@ -424,6 +432,8 @@ impl AutonomousAgent {
                     content: format!("--- KNOWLEDGE CONTEXT ---\n{}", context),
                     tool_calls: None,
                     tool_results: None,
+                    #[cfg(feature = "vision")]
+                    images: Vec::new(),
                 });
                 Some(idx)
             } else {
@@ -449,6 +459,8 @@ impl AutonomousAgent {
             content: response.clone(),
             tool_calls: None,
             tool_results: None,
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         });
 
         // 3. Parse tool calls
@@ -487,6 +499,8 @@ impl AutonomousAgent {
                         content: format!("Sandbox denied {}: {}", tc.name, e),
                         tool_calls: None,
                         tool_results: None,
+                        #[cfg(feature = "vision")]
+                        images: Vec::new(),
                     });
                     return IterationOutcome::Error(format!("Sandbox denied {}: {}", tc.name, e));
                 }
@@ -517,6 +531,8 @@ impl AutonomousAgent {
                         content: format!("[Tool: {}] {}", tc.name, output.content),
                         tool_calls: None,
                         tool_results: None,
+                        #[cfg(feature = "vision")]
+                        images: Vec::new(),
                     });
                 }
                 Err(e) => {
@@ -525,6 +541,8 @@ impl AutonomousAgent {
                         content: format!("[Tool: {} Error] {}", tc.name, e),
                         tool_calls: None,
                         tool_results: None,
+                        #[cfg(feature = "vision")]
+                        images: Vec::new(),
                     });
                 }
             }

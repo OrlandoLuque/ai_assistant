@@ -36,6 +36,21 @@ pub enum AuditEventType {
     ConfigChanged,
     /// Error occurred
     Error,
+    /// Vision: image arrived in the pipeline (user upload, tool screenshot, etc.).
+    /// Audit detail SHOULD include `sha256` and `media_type`; raw bytes MUST NOT be logged.
+    ImageReceived,
+    /// Vision: image dispatched to a model. Detail SHOULD include `sha256`,
+    /// `media_type`, `provider`, `model`.
+    ImageSent,
+    /// Vision: image rejected by a guardrail (PII, moderation, format, size).
+    /// Detail SHOULD include `sha256`, `reason`.
+    ImageBlocked,
+    /// Vision: image content redacted (EXIF stripped, region masked, etc.).
+    /// Detail SHOULD include `sha256_before`, `sha256_after`, `transform`.
+    ImageRedacted,
+    /// Vision: a vision-capable tool was invoked. Detail SHOULD include
+    /// `tool`, `image_count`, optional `tool_args_hash`.
+    VisionToolInvoked,
 }
 
 /// An audit log entry
@@ -443,5 +458,54 @@ mod tests {
 
         let deleted = logger.get_events_by_type(AuditEventType::SessionDeleted);
         assert_eq!(deleted.len(), 0);
+    }
+
+    #[test]
+    fn test_vision_audit_variants_recorded_and_serialised() {
+        let mut logger = AuditLogger::new(AuditConfig::default());
+        logger.log(
+            AuditEvent::new(AuditEventType::ImageReceived)
+                .with_detail("sha256", "abcd")
+                .with_detail("media_type", "image/png"),
+        );
+        logger.log(
+            AuditEvent::new(AuditEventType::ImageSent)
+                .with_detail("sha256", "abcd")
+                .with_detail("model", "gpt-4o"),
+        );
+        logger.log(
+            AuditEvent::new(AuditEventType::ImageBlocked)
+                .with_detail("sha256", "abcd")
+                .with_detail("reason", "pii"),
+        );
+        logger.log(
+            AuditEvent::new(AuditEventType::ImageRedacted)
+                .with_detail("sha256_before", "abcd")
+                .with_detail("sha256_after", "1234")
+                .with_detail("transform", "scrub_exif"),
+        );
+        logger.log(
+            AuditEvent::new(AuditEventType::VisionToolInvoked)
+                .with_detail("tool", "screenshot")
+                .with_detail("image_count", "1"),
+        );
+        assert_eq!(
+            logger
+                .get_events_by_type(AuditEventType::ImageReceived)
+                .len(),
+            1
+        );
+        assert_eq!(
+            logger
+                .get_events_by_type(AuditEventType::ImageBlocked)
+                .len(),
+            1
+        );
+        let json = logger.export_json();
+        assert!(json.contains("ImageReceived"));
+        assert!(json.contains("ImageBlocked"));
+        assert!(json.contains("ImageRedacted"));
+        assert!(json.contains("VisionToolInvoked"));
+        assert!(json.contains("scrub_exif"));
     }
 }

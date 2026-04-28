@@ -527,6 +527,128 @@ pub fn generate_openai_response(
     Ok(content)
 }
 
+/// Generate non-streaming response from Ollama with vision (images attached).
+///
+/// Uses [`crate::vision::VisionMessage::to_ollama_format`] for serialization,
+/// so multimodal requests follow Ollama's `images: ["base64..."]` convention.
+/// The model must be vision-capable (e.g. `llava`, `bakllava`, `gemma3:4b`,
+/// `minicpm-v`, `llava-phi3`); Ollama will reject the request otherwise.
+#[cfg(feature = "vision")]
+pub fn generate_ollama_response_with_images(
+    config: &AiConfig,
+    messages: &[crate::vision::VisionMessage],
+    system_prompt: &str,
+) -> Result<String> {
+    let url = format!("{}/api/chat", config.ollama_url);
+    log::debug!(
+        "[llm] ollama_vision_request model={} url={} images={}",
+        config.selected_model,
+        url,
+        messages.iter().map(|m| m.images.len()).sum::<usize>()
+    );
+
+    let mut msg_array: Vec<serde_json::Value> = Vec::new();
+    if !system_prompt.is_empty() {
+        msg_array.push(serde_json::json!({
+            "role": "system",
+            "content": system_prompt,
+        }));
+    }
+    for m in messages {
+        msg_array.push(m.to_ollama_format());
+    }
+
+    let request_body = serde_json::json!({
+        "model": config.selected_model,
+        "messages": msg_array,
+        "stream": false,
+        "options": { "temperature": config.temperature },
+    });
+
+    let response = retry_with_config(config.retry_config.clone(), || {
+        let resp = ureq::post(&url)
+            .timeout(std::time::Duration::from_secs(180))
+            .send_json(&request_body)?;
+        Ok(resp)
+    })
+    .context("Failed to send vision request to Ollama")?;
+
+    let body: serde_json::Value = response.into_json()?;
+    let content = body
+        .get("message")
+        .and_then(|m| m.get("content"))
+        .and_then(|c| c.as_str())
+        .unwrap_or("")
+        .to_string();
+    Ok(content)
+}
+
+/// Generate non-streaming response from any OpenAI-compatible local server
+/// (LM Studio, LocalAI, llama.cpp, vLLM, text-generation-webui) with images.
+///
+/// Uses [`crate::vision::VisionMessage::to_openai_format`] which produces the
+/// `content: [{type:"text"...}, {type:"image_url"...}]` array OpenAI-format
+/// servers expect. Whether the request succeeds depends on the loaded model.
+#[cfg(feature = "vision")]
+pub fn generate_openai_compat_response_with_images(
+    config: &AiConfig,
+    messages: &[crate::vision::VisionMessage],
+    system_prompt: &str,
+) -> Result<String> {
+    let base_url = match &config.provider {
+        AiProvider::LMStudio => config.lm_studio_url.clone(),
+        AiProvider::TextGenWebUI => config.text_gen_webui_url.clone(),
+        AiProvider::LocalAI => config.local_ai_url.clone(),
+        AiProvider::LlamaCpp => config.llamacpp_url.clone(),
+        AiProvider::VLLM => config.vllm_url.clone(),
+        AiProvider::OpenAICompatible { base_url } => base_url.clone(),
+        _ => {
+            return Err(anyhow::anyhow!(
+                "Provider {:?} is not OpenAI-compatible for vision",
+                config.provider
+            ))
+        }
+    };
+
+    let url = format!("{}/v1/chat/completions", base_url);
+    let mut msg_array: Vec<serde_json::Value> = Vec::new();
+    if !system_prompt.is_empty() {
+        msg_array.push(serde_json::json!({
+            "role": "system",
+            "content": system_prompt,
+        }));
+    }
+    for m in messages {
+        msg_array.push(m.to_openai_format());
+    }
+
+    let request_body = serde_json::json!({
+        "model": config.selected_model,
+        "messages": msg_array,
+        "temperature": config.temperature,
+        "stream": false,
+    });
+
+    let response = retry_with_config(config.retry_config.clone(), || {
+        let resp = ureq::post(&url)
+            .timeout(std::time::Duration::from_secs(180))
+            .send_json(&request_body)?;
+        Ok(resp)
+    })
+    .context("Failed to send vision request to OpenAI-compatible API")?;
+
+    let body: serde_json::Value = response.into_json()?;
+    let content = body
+        .get("choices")
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("message"))
+        .and_then(|m| m.get("content"))
+        .and_then(|c| c.as_str())
+        .unwrap_or("")
+        .to_string();
+    Ok(content)
+}
+
 /// Generate response using Kobold.cpp API (non-streaming only)
 pub fn generate_kobold_response(
     config: &AiConfig,

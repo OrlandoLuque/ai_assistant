@@ -153,6 +153,11 @@ pub struct SubAgentSpec {
     /// Optional token / iteration budget hint for the sub-agent. The runner
     /// is free to enforce or ignore this.
     pub budget_hint: Option<u32>,
+    /// Vision attachments for the sub-agent. Stored as content-addressed
+    /// [`crate::vision::ImageRef`]s so the spec stays small even with many
+    /// images; the runner resolves them through an `ImageStore`.
+    #[cfg(feature = "vision")]
+    pub images: Vec<crate::vision::ImageRef>,
 }
 
 impl SubAgentSpec {
@@ -167,6 +172,8 @@ impl SubAgentSpec {
             context_summary: None,
             isolation: IsolationLevel::InProcess,
             budget_hint: None,
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         }
     }
 
@@ -193,6 +200,21 @@ impl SubAgentSpec {
         self.budget_hint = Some(budget);
         self
     }
+
+    /// Attach a vision image (by ref) to this spec. Refs travel with the
+    /// spec; bytes live in an `ImageStore` and are pulled by the runner.
+    #[cfg(feature = "vision")]
+    pub fn with_image(mut self, image: crate::vision::ImageRef) -> Self {
+        self.images.push(image);
+        self
+    }
+
+    /// Attach multiple image refs to this spec.
+    #[cfg(feature = "vision")]
+    pub fn with_images(mut self, images: Vec<crate::vision::ImageRef>) -> Self {
+        self.images.extend(images);
+        self
+    }
 }
 
 /// Outcome returned by a [`SubAgentRunner`].
@@ -210,6 +232,10 @@ pub struct SubAgentResult {
     pub artifacts: Vec<String>,
     /// Wall-clock duration of the run, in milliseconds. `0` on `Deferred`.
     pub duration_ms: u64,
+    /// Image artifacts (screenshots, diagrams, generated images) produced by
+    /// the sub-agent. Stored as content-addressed [`crate::vision::ImageRef`]s.
+    #[cfg(feature = "vision")]
+    pub image_artifacts: Vec<crate::vision::ImageRef>,
 }
 
 impl SubAgentResult {
@@ -221,6 +247,8 @@ impl SubAgentResult {
             summary: reason.into(),
             artifacts: Vec::new(),
             duration_ms: 0,
+            #[cfg(feature = "vision")]
+            image_artifacts: Vec::new(),
         }
     }
 }
@@ -331,6 +359,8 @@ impl SubAgentRunner for InProcessSubAgentRunner {
                 summary,
                 artifacts: Vec::new(),
                 duration_ms: started.elapsed().as_millis().min(u64::MAX as u128) as u64,
+                #[cfg(feature = "vision")]
+                image_artifacts: Vec::new(),
             }
         };
 

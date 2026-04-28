@@ -35,6 +35,12 @@ pub struct DistributedTask {
     pub started_at: Option<u64>,
     pub completed_at: Option<u64>,
     pub result: Option<String>,
+    /// Optional vision inputs carried by the task. Stored as content-addressed
+    /// [`crate::vision::ImageRef`]s — never raw bytes — so the cluster doesn't
+    /// move multi-megabyte payloads through the task queue. Workers resolve
+    /// refs through their local `ImageStore` (CAS-backed across the cluster).
+    #[cfg(feature = "vision")]
+    pub image_inputs: Vec<crate::vision::ImageRef>,
 }
 
 /// Status of a distributed task.
@@ -61,6 +67,10 @@ pub struct MapReduceAgentJob {
     pub status: MapReduceStatus,
     pub map_results: HashMap<String, String>,
     pub reduce_result: Option<String>,
+    /// Vision inputs broadcast to every map task (e.g. a chart that all
+    /// mappers must analyse). Refs only — bytes live in an `ImageStore`.
+    #[cfg(feature = "vision")]
+    pub image_inputs: Vec<crate::vision::ImageRef>,
 }
 
 /// Status of a map-reduce agent job.
@@ -138,6 +148,8 @@ impl DistributedAgentManager {
             started_at: None,
             completed_at: None,
             result: None,
+            #[cfg(feature = "vision")]
+            image_inputs: Vec::new(),
         };
         self.tasks.insert(id.clone(), task);
         id
@@ -309,6 +321,8 @@ impl DistributedAgentManager {
             status: MapReduceStatus::Pending,
             map_results: HashMap::new(),
             reduce_result: None,
+            #[cfg(feature = "vision")]
+            image_inputs: Vec::new(),
         };
         self.mr_jobs.insert(id.clone(), job);
         id

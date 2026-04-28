@@ -733,6 +733,16 @@ impl BrowserSession {
             .to_string())
     }
 
+    /// Take a screenshot and return it as a vision [`crate::vision::ImageInput`]
+    /// ready to be attached to a `ToolResult.images` or fed directly to a
+    /// vision-capable model. Bridges browser_tools to the vision pipeline so
+    /// that an agentic loop can "see" the current page.
+    #[cfg(feature = "vision")]
+    pub fn screenshot_as_image(&mut self) -> Result<crate::vision::ImageInput, BrowserError> {
+        let b64 = self.screenshot()?;
+        Ok(crate::vision::ImageInput::from_base64(&b64, "image/png"))
+    }
+
     /// Wait for an element matching the selector to appear in the DOM.
     pub fn wait_for(&mut self, selector: &str, timeout_ms: u64) -> Result<(), BrowserError> {
         let start = std::time::Instant::now();

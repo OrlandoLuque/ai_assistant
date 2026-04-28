@@ -645,6 +645,11 @@ pub use cloud_providers::{
     generate_gemini_cloud_with_images, generate_openai_cloud_with_images,
 };
 
+#[cfg(feature = "vision")]
+pub use providers::{
+    generate_ollama_response_with_images, generate_openai_compat_response_with_images,
+};
+
 pub use request_queue::{
     QueueStats as RequestQueueStats, QueuedRequest, RequestPriority, RequestQueue,
 };
@@ -1198,7 +1203,9 @@ pub mod vision;
 
 #[cfg(feature = "vision")]
 pub use vision::{
-    ImageBatch, ImageData, ImageDetail, ImageInput, ImagePreprocessor, VisionCapabilities,
+    detect_image_media_type, generate_vision_response, image_sha256, is_animated_image,
+    parse_image_dimensions, FilesystemImageStore, ImageBatch, ImageData, ImageDetail, ImageInput,
+    ImagePreprocessor, ImageRef, ImageStore, InMemoryImageStore, VisionCapabilities, VisionLimits,
     VisionMessage,
 };
 
@@ -1263,6 +1270,11 @@ pub use hnsw::{HnswConfig, HnswIndex, HnswVectorDb};
 pub use embedding_providers::{
     create_embedding_provider, EmbeddingProvider, HuggingFaceEmbeddings, LocalTfIdfEmbedding,
     OllamaEmbeddings, OpenAIEmbeddings,
+};
+
+#[cfg(all(feature = "embeddings", feature = "vision"))]
+pub use embedding_providers::{
+    create_vision_embedding_provider, LocalHashImageEmbedding, VisionEmbeddingProvider,
 };
 
 // =============================================================================
@@ -2364,7 +2376,7 @@ pub mod stall_detection;
 pub use stall_detection::{
     hash_tool_call, KeywordStallDetector, RateThresholds, StallDecision, StallHeuristic,
     StallKeywordLexicon, StallLanguage, StallSignal, DEFAULT_RATE_MAX_CALLS, DEFAULT_RATE_WINDOW,
-    RING_BUFFER_SIZE as STALL_RING_BUFFER_SIZE, SPAN_NAME as STALL_SPAN_NAME,
+    REPEAT_THRESHOLD, RING_BUFFER_SIZE as STALL_RING_BUFFER_SIZE, SPAN_NAME as STALL_SPAN_NAME,
 };
 
 #[cfg(feature = "stall-detection-llm")]

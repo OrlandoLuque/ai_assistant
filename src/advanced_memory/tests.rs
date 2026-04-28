@@ -18,6 +18,8 @@ fn make_episode(id: &str, content: &str, tags: &[&str], embedding: &[f32], ts: u
         embedding: embedding.to_vec(),
         access_count: 0,
         last_accessed: ts,
+        #[cfg(feature = "vision")]
+        images: Vec::new(),
     }
 }
 
@@ -1700,6 +1702,8 @@ fn test_temporal_graph_auto_detect_causal() {
             embedding: vec![],
             access_count: 0,
             last_accessed: 100,
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         },
         Episode {
             id: "e2".to_string(),
@@ -1711,6 +1715,8 @@ fn test_temporal_graph_auto_detect_causal() {
             embedding: vec![],
             access_count: 0,
             last_accessed: 200,
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         },
     ];
     graph.auto_detect_causal(&episodes);
@@ -2619,6 +2625,8 @@ fn test_memory_filter_matches_episode() {
         embedding: Vec::new(),
         access_count: 0,
         last_accessed: 0,
+        #[cfg(feature = "vision")]
+        images: Vec::new(),
     };
     let filter = MemoryFilter::new();
     assert!(filter.matches_episode(&recent_episode));

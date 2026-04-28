@@ -35,6 +35,14 @@ pub struct MemoryEntry {
     /// Embedding vector for semantic search (optional)
     #[serde(skip)]
     pub embedding: Option<Vec<f32>>,
+    /// Image attachments referenced by this memory entry. Carries
+    /// content-addressed [`crate::vision::ImageRef`]s rather than raw bytes
+    /// — the bytes themselves live in an `ImageStore`. Default empty;
+    /// omitted from serialised form when absent for wire-format compat with
+    /// non-vision peers.
+    #[cfg(feature = "vision")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<crate::vision::ImageRef>,
 }
 
 impl MemoryEntry {
@@ -53,7 +61,24 @@ impl MemoryEntry {
             source_session: None,
             related: vec![],
             embedding: None,
+            #[cfg(feature = "vision")]
+            attachments: Vec::new(),
         }
+    }
+
+    /// Attach an image reference to this memory entry. Builder-style; the
+    /// raw bytes are expected to live in an `ImageStore` that downstream
+    /// readers can consult via `image_ref.key`.
+    #[cfg(feature = "vision")]
+    pub fn with_attachment(mut self, image_ref: crate::vision::ImageRef) -> Self {
+        self.attachments.push(image_ref);
+        self
+    }
+
+    /// Add an image reference to this memory entry in place.
+    #[cfg(feature = "vision")]
+    pub fn add_attachment(&mut self, image_ref: crate::vision::ImageRef) {
+        self.attachments.push(image_ref);
     }
 
     /// Set importance

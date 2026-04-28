@@ -83,6 +83,11 @@ pub struct AgentMessage {
     pub message_type: MessageType,
     pub timestamp: Instant,
     pub correlation_id: Option<String>,
+    /// Image attachments routed alongside the text content. Carries
+    /// content-addressed [`crate::vision::ImageRef`]s so the bus does not
+    /// re-broadcast raw bytes — bytes live in an `ImageStore`.
+    #[cfg(feature = "vision")]
+    pub images: Vec<crate::vision::ImageRef>,
 }
 
 /// Message types
@@ -107,11 +112,21 @@ impl AgentMessage {
             message_type,
             timestamp: Instant::now(),
             correlation_id: None,
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         }
     }
 
     pub fn with_correlation(mut self, correlation_id: &str) -> Self {
         self.correlation_id = Some(correlation_id.to_string());
+        self
+    }
+
+    /// Attach a vision [`ImageRef`] to this message. The bytes themselves are
+    /// expected to live in an `ImageStore`; only the ref travels on the bus.
+    #[cfg(feature = "vision")]
+    pub fn with_image(mut self, image: crate::vision::ImageRef) -> Self {
+        self.images.push(image);
         self
     }
 }
@@ -802,6 +817,11 @@ pub struct BusMessage {
     pub sender: String,
     pub payload: serde_json::Value,
     pub timestamp_ms: u64,
+    /// Optional vision attachments routed alongside the JSON payload.
+    /// Carries [`crate::vision::ImageRef`]s (sha256-keyed); the bus does not
+    /// duplicate raw bytes — they live in an `ImageStore`.
+    #[cfg(feature = "vision")]
+    pub images: Vec<crate::vision::ImageRef>,
 }
 
 /// A pub/sub message bus for inter-agent communication.
@@ -853,6 +873,8 @@ impl MessageBus {
             sender: sender.to_string(),
             payload,
             timestamp_ms: self.next_id, // simplified monotonic timestamp
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         };
 
         self.messages.push(message);
@@ -862,6 +884,35 @@ impl MessageBus {
             self.messages.remove(0);
         }
 
+        msg_id
+    }
+
+    /// Publish a message with attached image refs. Same as `publish` but
+    /// routes [`crate::vision::ImageRef`]s alongside the payload.
+    #[cfg(feature = "vision")]
+    pub fn publish_with_images(
+        &mut self,
+        sender: &str,
+        topic: &str,
+        payload: serde_json::Value,
+        images: Vec<crate::vision::ImageRef>,
+    ) -> String {
+        let msg_id = format!("msg-{}", self.next_id);
+        self.next_id += 1;
+
+        let message = BusMessage {
+            id: msg_id.clone(),
+            topic: topic.to_string(),
+            sender: sender.to_string(),
+            payload,
+            timestamp_ms: self.next_id,
+            images,
+        };
+
+        self.messages.push(message);
+        while self.messages.len() > self.history_limit {
+            self.messages.remove(0);
+        }
         msg_id
     }
 
@@ -1379,6 +1430,11 @@ pub struct PatternMessage {
     pub round: usize,
     /// Timestamp of when the message was created.
     pub timestamp: chrono::DateTime<chrono::Utc>,
+    /// Optional vision attachments associated with this turn.
+    /// To bound transcript size, runners MAY replace older entries with the
+    /// `[image:sha8]` placeholder once `PendingImages.cap` is exceeded.
+    #[cfg(feature = "vision")]
+    pub images: Vec<crate::vision::ImageRef>,
 }
 
 impl PatternMessage {
@@ -1389,7 +1445,16 @@ impl PatternMessage {
             content: content.to_string(),
             round,
             timestamp: chrono::Utc::now(),
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         }
+    }
+
+    /// Attach an image ref to this pattern message.
+    #[cfg(feature = "vision")]
+    pub fn with_image(mut self, image: crate::vision::ImageRef) -> Self {
+        self.images.push(image);
+        self
     }
 }
 

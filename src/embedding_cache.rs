@@ -137,6 +137,49 @@ impl EmbeddingCache {
         hasher.finish()
     }
 
+    /// Compute cache key for an image embedding (sha256 + media_type + model).
+    ///
+    /// Used by callers that embed images instead of text. The key folds in the
+    /// content-addressed image hash so duplicate images share cache entries
+    /// regardless of how they were sourced (file/URL/bytes).
+    #[cfg(feature = "vision")]
+    pub fn embed_key_image(image: &crate::vision::ImageInput, model: &str) -> u64 {
+        let sha = crate::vision::image_sha256(image);
+        let mut hasher = DefaultHasher::new();
+        "image:".hash(&mut hasher);
+        sha.hash(&mut hasher);
+        image.media_type.hash(&mut hasher);
+        model.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// Get a cached embedding by raw key (for image-keyed entries).
+    pub fn get_by_key(&mut self, key: u64) -> Option<Vec<f32>> {
+        if let Some(entry) = self.entries.get_mut(&key) {
+            if entry.is_expired(self.config.ttl) {
+                self.entries.remove(&key);
+                self.stats.misses += 1;
+                self.stats.entries = self.entries.len();
+                return None;
+            }
+            entry.touch();
+            self.stats.hits += 1;
+            Some(entry.embedding.clone())
+        } else {
+            self.stats.misses += 1;
+            None
+        }
+    }
+
+    /// Insert an embedding under a raw key (for image-keyed entries).
+    pub fn put_by_key(&mut self, key: u64, embedding: Vec<f32>, model: String) {
+        if self.entries.len() >= self.config.max_entries && !self.entries.contains_key(&key) {
+            self.evict_one();
+        }
+        self.entries.insert(key, CacheEntry::new(embedding, model));
+        self.stats.entries = self.entries.len();
+    }
+
     /// Get an embedding from cache
     pub fn get(&mut self, text: &str, model: &str) -> Option<Vec<f32>> {
         let key = Self::compute_key(text, model);
@@ -676,5 +719,41 @@ mod tests {
 
         let stats = cache.stats();
         assert_eq!(stats.memory_bytes, 20); // 12 + 8
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_embed_key_image_dedup_and_model_split() {
+        use crate::vision::ImageInput;
+
+        let img_a = ImageInput::from_bytes(&[0xCA, 0xFE, 0xBA, 0xBE], "image/png");
+        let img_a_copy = ImageInput::from_bytes(&[0xCA, 0xFE, 0xBA, 0xBE], "image/png");
+        let img_b = ImageInput::from_bytes(&[0xDE, 0xAD, 0xBE, 0xEF], "image/png");
+
+        let k_a = EmbeddingCache::embed_key_image(&img_a, "clip-vit-b32");
+        let k_a2 = EmbeddingCache::embed_key_image(&img_a_copy, "clip-vit-b32");
+        let k_b = EmbeddingCache::embed_key_image(&img_b, "clip-vit-b32");
+        let k_a_other_model = EmbeddingCache::embed_key_image(&img_a, "siglip");
+
+        assert_eq!(k_a, k_a2, "identical bytes + model must share cache key");
+        assert_ne!(k_a, k_b, "different bytes must not collide");
+        assert_ne!(k_a, k_a_other_model, "model must split the key");
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_embed_key_image_roundtrip_via_get_put() {
+        use crate::vision::ImageInput;
+
+        let mut cache = EmbeddingCache::with_defaults();
+        let img = ImageInput::from_bytes(&[1, 2, 3, 4], "image/jpeg");
+        let key = EmbeddingCache::embed_key_image(&img, "clip");
+
+        assert!(cache.get_by_key(key).is_none());
+        cache.put_by_key(key, vec![0.1, 0.2, 0.3], "clip".to_string());
+        let got = cache
+            .get_by_key(key)
+            .expect("inserted entry must round-trip");
+        assert_eq!(got, vec![0.1, 0.2, 0.3]);
     }
 }
