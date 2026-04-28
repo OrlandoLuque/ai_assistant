@@ -151,7 +151,7 @@ jobs:
       - name: Build kpkg_tool
         run: cargo build --bin kpkg_tool --features "rag"
       - name: Build ai_test_harness
-        run: cargo build --bin ai_test_harness --features "full"
+        run: cargo build --bin ai_test_harness --features "full,browser"
 
   coverage:
     name: Coverage
