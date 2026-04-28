@@ -5,7 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] - v63 (2026-04-28) — V90.19: vision wiring across persistence, agents, FFI, plugins, embeddings (0.2.49)
+## [Unreleased] - v64 (2026-04-28) — V90.20–V90.25: vision wiring closure — carriers, surfaces, integration (0.2.50)
+
+### Added
+- **Outer-ring carriers** — image fields/builders added to
+  `batch::BatchRequest`, `prompt_chaining::ChainStep`,
+  `regeneration::RegenerationRequest`,
+  `agent_methodology::TaskStep`, `file_references::FileReference`.
+- **`model_ensemble::ModelEnsemble::execute_with_images()`** — extends
+  the ensemble closure shape to take an image slice without breaking
+  existing text-only callers.
+- **`messages::AiResponse::Image(ImageData)`** — image-out from Gemini /
+  GPT-4o-image now arrives through the canonical response channel;
+  `image()` / `images()` accessors mirror the `ChatMessage` shape.
+- **Token / budget**: `token_counter::estimate_image_tokens` (OpenAI
+  per-tile math), `estimate_messages_with_images` aggregator;
+  `context_budget::ContextSource::image_token_estimate()` trait method
+  (default 0) — allocator reserves image budget *before* text packing.
+- **`a2a_protocol`**: `A2AMessage::image()` constructor +
+  `extract_image_parts()` close the silent-discard bug where vision
+  content was lost through agent hops.
+- **`faithfulness::VisualGroundednessReport`** + `score_visual_groundedness()`
+  — fixed visual-vocab heuristic for response/text alignment with
+  attached images.
+- **`sse_streaming::SseEvent::image_chunk(media_type, base64)`** + 
+  `is_image()` / `decode_image()` for `event: image` envelopes.
+- **`websocket_streaming::WsFrame::image_binary` / `as_image_binary` /
+  `as_image_input`** — v1 self-describing binary envelope (1 byte ver
+  + 2 byte mt-len + UTF-8 mt + bytes); plus `WsAiMessage::Image` text
+  variant for SSE-parity.
+- **`widgets::drain_dropped_images` + `chat_input_with_attachments`** —
+  egui chat input absorbs drag-drop image files into a staged
+  `Vec<ImageInput>` (validated against `VisionLimits`) and emits a
+  `ChatInputSubmission { text, images }` on submit.
+- **SQLite migration V6** — `session_message_attachments` table with
+  `ON DELETE CASCADE` from `session_messages`.
+  `SqliteSessionStore::attach_image()` / `attachments_for_message()` /
+  `message_ids_for_session()` round-trip vision references.
+- **`tests/vision_integration.rs`** — 10 cross-module tests covering
+  ChatMessage → A2A → context_budget → SQLite → AiResponse flow.
+- **`benches/vision_benchmarks.rs`** — `from_bytes` / `sha256` /
+  `detect_media_type` / `store_round_trip` benchmark groups
+  (`required-features = ["vision"]`).
+
+### Tests
+- 25 new vision-gated tests added across this series; full lib suite
+  remains green under `--features "vision rag a2a egui-widgets"`.
+
+## [v63] (2026-04-28) — V90.19: vision wiring across persistence, agents, FFI, plugins, embeddings (0.2.49)
 
 ### Added
 - **`messages::ChatMessage.images`** (cfg-gated `vision`) — canonical
