@@ -135,6 +135,79 @@ impl WsFrame {
             None
         }
     }
+
+    /// Build a binary frame carrying an image, with a self-describing
+    /// envelope so the receiver can reconstruct the media type without an
+    /// out-of-band channel.
+    ///
+    /// Wire format (inside [`WsOpcode::Binary`]):
+    /// * 1 byte — envelope version (currently `0x01`)
+    /// * 2 bytes BE — media-type length `n` (must fit in `u16`)
+    /// * `n` bytes — media-type as UTF-8 (`image/png`, `image/jpeg`, …)
+    /// * remaining — raw image bytes
+    ///
+    /// Returns an `Err` if `media_type` is longer than 65 535 bytes — that
+    /// is well above any real MIME (`image/png` is 9 bytes), so the cap
+    /// only ever trips when the caller is misusing the helper.
+    #[cfg(feature = "vision")]
+    pub fn image_binary(media_type: &str, bytes: &[u8]) -> Result<Self, String> {
+        let mt = media_type.as_bytes();
+        if mt.len() > u16::MAX as usize {
+            return Err(format!(
+                "media type too long ({} bytes; max {})",
+                mt.len(),
+                u16::MAX
+            ));
+        }
+        let mut payload = Vec::with_capacity(3 + mt.len() + bytes.len());
+        payload.push(0x01); // envelope version
+        payload.extend_from_slice(&(mt.len() as u16).to_be_bytes());
+        payload.extend_from_slice(mt);
+        payload.extend_from_slice(bytes);
+        Ok(Self {
+            fin: true,
+            opcode: WsOpcode::Binary,
+            masked: true,
+            payload,
+        })
+    }
+
+    /// Decode an image frame produced by [`Self::image_binary`].
+    ///
+    /// Returns `None` if this frame is not a binary frame, the envelope
+    /// version is unknown, or the buffer is truncated. Callers can wrap
+    /// the returned `(media_type, bytes)` into a [`crate::vision::ImageInput`]
+    /// via [`Self::as_image_input`].
+    #[cfg(feature = "vision")]
+    pub fn as_image_binary(&self) -> Option<(String, &[u8])> {
+        if self.opcode != WsOpcode::Binary {
+            return None;
+        }
+        let p = self.payload.as_slice();
+        if p.len() < 3 || p[0] != 0x01 {
+            return None;
+        }
+        let mt_len = u16::from_be_bytes([p[1], p[2]]) as usize;
+        let mt_end = 3usize.checked_add(mt_len)?;
+        if p.len() < mt_end {
+            return None;
+        }
+        let mt = std::str::from_utf8(&p[3..mt_end]).ok()?;
+        Some((mt.to_string(), &p[mt_end..]))
+    }
+
+    /// Convenience wrapper around [`Self::as_image_binary`]: returns a
+    /// fully-formed [`crate::vision::ImageInput`] (base64-encoded), so this
+    /// frame can be plugged straight into the rest of the vision pipeline.
+    #[cfg(feature = "vision")]
+    pub fn as_image_input(&self) -> Option<crate::vision::ImageInput> {
+        let (media_type, bytes) = self.as_image_binary()?;
+        Some(crate::vision::ImageInput {
+            data: crate::vision::ImageData::Base64(crate::vision::base64_encode(bytes)),
+            media_type,
+            detail: crate::vision::ImageDetail::Auto,
+        })
+    }
 }
 
 fn rand_mask() -> [u8; 4] {
@@ -222,6 +295,18 @@ pub enum WsAiMessage {
     Ping,
     #[serde(rename = "pong")]
     Pong,
+    /// Image-out emitted over a text WebSocket frame. Mirrors the SSE
+    /// `event: image` envelope so callers that prefer a JSON pipe over
+    /// raw binary frames have parity with the streaming-text channel.
+    /// Use [`WsFrame::image_binary`] when raw bytes are preferable.
+    #[cfg(feature = "vision")]
+    #[serde(rename = "image")]
+    Image {
+        id: String,
+        media_type: String,
+        /// Base64-encoded image bytes.
+        base64: String,
+    },
 }
 
 /// Token usage in WebSocket response
@@ -1249,5 +1334,81 @@ mod tests {
             "Disconnected"
         );
         assert_eq!(WsConnectionState::GaveUp { attempts: 5 }.name(), "GaveUp");
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_ws_image_binary_round_trip() {
+        let bytes = b"\x89PNG\r\n\x1a\n\x00\x01\x02\x03";
+        let frame = WsFrame::image_binary("image/png", bytes).expect("build image frame");
+        assert_eq!(frame.opcode, WsOpcode::Binary);
+
+        let (mt, payload) = frame.as_image_binary().expect("decode envelope");
+        assert_eq!(mt, "image/png");
+        assert_eq!(payload, bytes);
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_ws_image_binary_round_trip_via_image_input() {
+        let bytes = b"\xFF\xD8\xFF\xE0jpeg-bytes";
+        let frame = WsFrame::image_binary("image/jpeg", bytes).expect("build");
+        let img = frame.as_image_input().expect("as image input");
+        assert_eq!(img.media_type, "image/jpeg");
+        match img.data {
+            crate::vision::ImageData::Base64(b64) => assert!(!b64.is_empty()),
+            other => panic!("expected base64 variant, got {:?}", other),
+        }
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_ws_image_binary_text_frame_returns_none() {
+        let frame = WsFrame::text("not an image");
+        assert!(frame.as_image_binary().is_none());
+        assert!(frame.as_image_input().is_none());
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_ws_image_binary_truncated_returns_none() {
+        // Manually construct a binary frame with a truncated envelope:
+        // version byte present but length field announces 50 bytes that
+        // are not actually there.
+        let mut payload = vec![0x01];
+        payload.extend_from_slice(&50u16.to_be_bytes());
+        payload.extend_from_slice(b"image"); // only 5 bytes, not 50
+        let frame = WsFrame {
+            fin: true,
+            opcode: WsOpcode::Binary,
+            masked: false,
+            payload,
+        };
+        assert!(frame.as_image_binary().is_none());
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_ws_ai_message_image_round_trip() {
+        let msg = WsAiMessage::Image {
+            id: "img-1".to_string(),
+            media_type: "image/png".to_string(),
+            base64: "AAAA".to_string(),
+        };
+        let json = serde_json::to_string(&msg).expect("serialize");
+        assert!(json.contains("\"type\":\"image\""));
+        let parsed: WsAiMessage = serde_json::from_str(&json).expect("parse");
+        match parsed {
+            WsAiMessage::Image {
+                id,
+                media_type,
+                base64,
+            } => {
+                assert_eq!(id, "img-1");
+                assert_eq!(media_type, "image/png");
+                assert_eq!(base64, "AAAA");
+            }
+            _ => panic!("expected Image variant"),
+        }
     }
 }
