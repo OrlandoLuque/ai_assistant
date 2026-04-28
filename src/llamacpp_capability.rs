@@ -25,6 +25,14 @@ pub struct LlamaCppCapability {
     pub supports_ternary: bool,
     /// Default context window reported by the server, if any.
     pub default_ctx: Option<u32>,
+    /// Whether the server reports a multimodal projector (mmproj) loaded.
+    /// `Some(true)` if `/props` advertised any of `multimodal`, `has_clip`,
+    /// `mmproj_loaded`, `mmproj`, or `clip_model`. `Some(false)` if the
+    /// endpoint replied without any of those fields. `None` if no probe
+    /// has run yet (different from "probe says no projector"). The field
+    /// names vary across forks, so detection is best-effort.
+    #[serde(default)]
+    pub multimodal: Option<bool>,
 }
 
 impl LlamaCppCapability {
@@ -112,13 +120,40 @@ pub fn parse_props(body: &serde_json::Value) -> LlamaCppCapability {
         || supports_q1_0
         || supports_ternary;
 
+    let multimodal = detect_multimodal(body);
+
     LlamaCppCapability {
         build_info,
         is_prismml_fork,
         supports_q1_0,
         supports_ternary,
         default_ctx,
+        multimodal,
     }
+}
+
+/// Heuristic detection of mmproj-loaded state from a `/props` body.
+/// Different `llama.cpp` forks advertise the same fact under different
+/// keys, so we accept any of: `multimodal` (bool), `has_clip` (bool),
+/// `mmproj_loaded` (bool), or a non-empty string in `mmproj` /
+/// `clip_model`. Returns `Some(false)` if none of those fields are
+/// present — the server is reachable, just not reporting vision.
+fn detect_multimodal(body: &serde_json::Value) -> Option<bool> {
+    for key in ["multimodal", "has_clip", "mmproj_loaded"] {
+        if let Some(b) = body.get(key).and_then(|v| v.as_bool()) {
+            if b {
+                return Some(true);
+            }
+        }
+    }
+    for key in ["mmproj", "clip_model", "clip_model_path"] {
+        if let Some(s) = body.get(key).and_then(|v| v.as_str()) {
+            if !s.trim().is_empty() {
+                return Some(true);
+            }
+        }
+    }
+    Some(false)
 }
 
 #[cfg(test)]
@@ -181,6 +216,7 @@ mod tests {
             supports_q1_0: false,
             supports_ternary: false,
             default_ctx: None,
+            multimodal: None,
         };
         assert!(cap.can_run_quantization("Q4_K_M"));
         assert!(cap.can_run_quantization("F16"));
@@ -196,6 +232,7 @@ mod tests {
             supports_q1_0: true,
             supports_ternary: true,
             default_ctx: None,
+            multimodal: None,
         };
         assert!(cap.can_run_quantization("Q1_0"));
         assert!(cap.can_run_quantization("Ternary"));
@@ -208,5 +245,40 @@ mod tests {
         let cap = parse_props(&body);
         assert_eq!(cap.build_info.as_deref(), Some("prism-ml build xyz"));
         assert!(cap.is_prismml_fork);
+    }
+
+    #[test]
+    fn detects_multimodal_via_explicit_bool() {
+        let body = json!({ "build_info": "b1", "multimodal": true });
+        let cap = parse_props(&body);
+        assert_eq!(cap.multimodal, Some(true));
+    }
+
+    #[test]
+    fn detects_multimodal_via_clip_path() {
+        let body = json!({
+            "build_info": "b1",
+            "clip_model_path": "/models/llava/mmproj.gguf"
+        });
+        let cap = parse_props(&body);
+        assert_eq!(cap.multimodal, Some(true));
+    }
+
+    #[test]
+    fn no_multimodal_fields_yields_some_false() {
+        let body = json!({ "build_info": "b1" });
+        let cap = parse_props(&body);
+        assert_eq!(
+            cap.multimodal,
+            Some(false),
+            "reachable server with no mmproj fields means probe answered, no projector"
+        );
+    }
+
+    #[test]
+    fn empty_clip_path_does_not_count() {
+        let body = json!({ "build_info": "b1", "mmproj": "" });
+        let cap = parse_props(&body);
+        assert_eq!(cap.multimodal, Some(false));
     }
 }

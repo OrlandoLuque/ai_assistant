@@ -1136,6 +1136,62 @@ let openai_format = message.to_openai_format();
 - `ImagePreprocessor` resizes large images to fit model limits
 - `VisionCapabilities` checks if current model supports images
 
+### Multimodal projectors (mmproj) — `llama.cpp` / `llama-server` / `koboldcpp`
+
+Local runtimes built on `llama.cpp` enable vision by loading a separate
+**multimodal projector** (`mmproj-*.gguf`) at server startup, paired
+with a vision-capable base model:
+
+```bash
+# llama.cpp / llama-server
+./llama-server -m models/llava-7b.Q4_K_M.gguf \
+               --mmproj models/llava/mmproj-model-f16.gguf \
+               --port 8080
+```
+
+LM Studio loads the same pair through its UI (Settings → "Vision
+Adapter"). Ollama bundles the projector inside its modelfile, so no
+explicit configuration is needed for `ollama run llava`.
+
+**The library does not start the server itself.** It does:
+
+* Persist the operator's projector path in `AiConfig.mmproj_path`.
+* Validate it (`MultimodalProjector::from_path`): GGUF magic, size sanity
+  (`>= 1 MiB`), `..`-rejection, canonicalization.
+* Probe `/props` on `llama-server` and report whether a projector is
+  loaded (`LlamaCppCapability.multimodal`).
+* Refuse vision requests with an actionable message when the probe
+  confirms no projector is loaded:
+
+```text
+llama-server reports no multimodal projector loaded — start it with
+`--mmproj <projector.gguf>` (matching the base model) or load a
+multimodal preset in LM Studio
+```
+
+**Pre-flight from the CLI**:
+
+```bash
+ai_cli vision-check --provider llamacpp --model llava \
+       --url http://localhost:8080 \
+       --mmproj /models/llava/mmproj-model-f16.gguf
+```
+
+Exit code `0` means every gate passed; `2` means at least one failed
+(transport, model, mmproj validation, or `/props` projector status).
+`--json` emits structured output for scripting.
+
+**Caveats**:
+
+* Projector and base model must be a matched pair (same architecture,
+  same embedding dimensions). The library only validates the magic and
+  size; the runtime does the real compatibility check at load time.
+* `KoboldCpp` is currently excluded from `vision_supported_for`. If you
+  need vision via Kobold, that path is not yet wired (separate batch).
+* `mmproj_path` is a **hint**: the library never injects it into HTTP
+  request bodies (the OpenAI-compat schema has no field for it). The
+  server must be started with the projector before requests arrive.
+
 ---
 
 ## 20. Structured Output

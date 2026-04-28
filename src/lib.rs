@@ -1209,6 +1209,12 @@ pub use vision::{
     VisionMessage,
 };
 
+#[cfg(feature = "vision")]
+pub mod mmproj;
+
+#[cfg(feature = "vision")]
+pub use mmproj::{MmprojValidationError, MultimodalProjector, GGUF_MAGIC, MIN_PROJECTOR_BYTES};
+
 // =============================================================================
 // EMBEDDINGS FEATURE
 // =============================================================================

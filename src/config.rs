@@ -215,6 +215,16 @@ pub struct AiConfig {
     /// Skipped during serialization; defaults to `RetryConfig::default()` on deserialization.
     #[serde(skip)]
     pub retry_config: RetryConfig,
+    /// Optional path to a multimodal projector (`mmproj.gguf`) that pairs
+    /// with the selected base model when running `llama-server` /
+    /// `koboldcpp`. The library does not load it itself — the server
+    /// must be started with `--mmproj <path>`. The field exists so the
+    /// CLI / GUI can persist the user's choice and so future embedded
+    /// launchers know which projector to pass through. Validated via
+    /// [`crate::mmproj::MultimodalProjector::from_path`] at config load
+    /// time when the `vision` feature is enabled.
+    #[serde(default)]
+    pub mmproj_path: Option<std::path::PathBuf>,
 }
 
 impl std::fmt::Debug for AiConfig {
@@ -240,6 +250,14 @@ impl std::fmt::Debug for AiConfig {
             )
             .field("max_history_messages", &self.max_history_messages)
             .field("temperature", &self.temperature)
+            .field(
+                "mmproj_path",
+                &self
+                    .mmproj_path
+                    .as_ref()
+                    .and_then(|p| p.file_name())
+                    .map(|s| s.to_string_lossy().into_owned()),
+            )
             .finish()
     }
 }
@@ -261,6 +279,7 @@ impl Default for AiConfig {
             max_history_messages: 20,
             temperature: 0.7,
             retry_config: RetryConfig::default(),
+            mmproj_path: None,
         }
     }
 }
@@ -269,6 +288,27 @@ impl AiConfig {
     /// Get the base URL for the current provider
     pub fn get_base_url(&self) -> String {
         self.get_provider_url(&self.provider)
+    }
+
+    /// Validate the configured `mmproj_path`, if any. Returns:
+    ///
+    /// * `None` — no path configured.
+    /// * `Some(Ok(_))` — path validated successfully.
+    /// * `Some(Err(_))` — path was set but failed validation. Caller
+    ///   decides whether to warn-log, surface to UI, or refuse to start.
+    ///
+    /// Validation is intentionally non-fatal at config load: a stale
+    /// path in a config file should not stop the assistant from running
+    /// text-only requests. See [`crate::mmproj::MultimodalProjector::from_path`]
+    /// for the full check pipeline.
+    #[cfg(feature = "vision")]
+    pub fn validated_mmproj(
+        &self,
+    ) -> Option<Result<crate::mmproj::MultimodalProjector, crate::mmproj::MmprojValidationError>>
+    {
+        self.mmproj_path
+            .as_ref()
+            .map(crate::mmproj::MultimodalProjector::from_path)
     }
 
     /// Get URL for a specific provider

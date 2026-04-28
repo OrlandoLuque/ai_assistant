@@ -1854,6 +1854,38 @@ pub mod agent_bridge {
         Ok(())
     }
 
+    /// Runtime-aware extension of [`ensure_vision_capable`]. In addition
+    /// to the transport + model check, this consults a previously
+    /// captured [`crate::llamacpp_capability::LlamaCppCapability`] (if
+    /// any) and refuses the call when the server explicitly reports no
+    /// projector loaded.
+    ///
+    /// Error message includes the actionable hint
+    /// `start llama-server with --mmproj <path>` so the operator knows
+    /// what to do.
+    ///
+    /// `capability` is `None` when no probe has been run yet — in that
+    /// case we fall through to the static check, since silently failing
+    /// when probes are unavailable would be worse than a server-side
+    /// error message later.
+    pub fn vision_runtime_ready_for(
+        config: &AiConfig,
+        capability: Option<&crate::llamacpp_capability::LlamaCppCapability>,
+    ) -> Result<()> {
+        ensure_vision_capable(config)?;
+
+        if let Some(cap) = capability {
+            if matches!(cap.multimodal, Some(false)) {
+                return Err(anyhow!(
+                    "llama-server reports no multimodal projector loaded — \
+                     start it with `--mmproj <projector.gguf>` (matching the \
+                     base model) or load a multimodal preset in LM Studio"
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Convert canonical `messages::ChatMessage` history into
     /// `VisionMessage`. Carries any images attached to each chat message.
     pub fn chat_messages_to_vision(
@@ -2096,6 +2128,68 @@ pub mod agent_bridge {
         fn test_ensure_vision_capable_accepts_gpt4o() {
             let c = cfg(AiProvider::OpenAI, "gpt-4o");
             assert!(ensure_vision_capable(&c).is_ok());
+        }
+
+        #[test]
+        fn test_vision_runtime_ready_passes_without_probe() {
+            // No capability probe — fall through to the static gate. Should
+            // succeed for a known-good provider+model pair.
+            let c = cfg(AiProvider::OpenAI, "gpt-4o");
+            assert!(vision_runtime_ready_for(&c, None).is_ok());
+        }
+
+        #[test]
+        fn test_vision_runtime_ready_rejects_when_mmproj_missing() {
+            use crate::llamacpp_capability::LlamaCppCapability;
+            let c = cfg(AiProvider::LlamaCpp, "llava");
+            let cap = LlamaCppCapability {
+                build_info: Some("b1".into()),
+                is_prismml_fork: false,
+                supports_q1_0: false,
+                supports_ternary: false,
+                default_ctx: Some(4096),
+                multimodal: Some(false),
+            };
+            let err = vision_runtime_ready_for(&c, Some(&cap)).unwrap_err();
+            let msg = err.to_string();
+            assert!(
+                msg.contains("--mmproj"),
+                "msg should hint --mmproj: {}",
+                msg
+            );
+        }
+
+        #[test]
+        fn test_vision_runtime_ready_passes_when_mmproj_loaded() {
+            use crate::llamacpp_capability::LlamaCppCapability;
+            let c = cfg(AiProvider::LlamaCpp, "llava");
+            let cap = LlamaCppCapability {
+                build_info: Some("b1".into()),
+                is_prismml_fork: false,
+                supports_q1_0: false,
+                supports_ternary: false,
+                default_ctx: Some(4096),
+                multimodal: Some(true),
+            };
+            assert!(vision_runtime_ready_for(&c, Some(&cap)).is_ok());
+        }
+
+        #[test]
+        fn test_vision_runtime_ready_unknown_multimodal_falls_through() {
+            use crate::llamacpp_capability::LlamaCppCapability;
+            let c = cfg(AiProvider::LlamaCpp, "llava");
+            let cap = LlamaCppCapability {
+                build_info: Some("b1".into()),
+                is_prismml_fork: false,
+                supports_q1_0: false,
+                supports_ternary: false,
+                default_ctx: Some(4096),
+                multimodal: None, // probe didn't run
+            };
+            assert!(
+                vision_runtime_ready_for(&c, Some(&cap)).is_ok(),
+                "None multimodal must not block — fall through to static gate"
+            );
         }
 
         #[test]

@@ -635,7 +635,21 @@ pub fn generate_openai_compat_response_with_images(
             .send_json(&request_body)?;
         Ok(resp)
     })
-    .context("Failed to send vision request to OpenAI-compatible API")?;
+    .map_err(|e: anyhow::Error| {
+        let msg = e.to_string();
+        if looks_like_mmproj_error(&msg) {
+            anyhow::anyhow!(
+                "vision request rejected by server (`{}`): looks like the multimodal projector \
+                 is not loaded. Start `llama-server` / `llama.cpp` with \
+                 `--mmproj <projector.gguf>` matching the base model, or load a multimodal \
+                 preset in LM Studio. Original: {}",
+                base_url,
+                msg
+            )
+        } else {
+            e.context("Failed to send vision request to OpenAI-compatible API")
+        }
+    })?;
 
     let body: serde_json::Value = response.into_json()?;
     let content = body
@@ -647,6 +661,58 @@ pub fn generate_openai_compat_response_with_images(
         .unwrap_or("")
         .to_string();
     Ok(content)
+}
+
+/// Return `true` if a server error string looks like a "no multimodal
+/// projector loaded" failure. Substring match is case-insensitive across
+/// the keywords various forks use; it is intentionally permissive
+/// because false positives only soften the error message — they don't
+/// hide real failures.
+fn looks_like_mmproj_error(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    let triggers = [
+        "mmproj",
+        "multimodal",
+        "no clip",
+        "clip model",
+        "clip not loaded",
+        "vision model not loaded",
+        "no vision",
+        "image input not supported",
+    ];
+    triggers.iter().any(|needle| lower.contains(needle))
+}
+
+#[cfg(all(test, feature = "vision"))]
+mod mmproj_error_tests {
+    use super::looks_like_mmproj_error;
+
+    #[test]
+    fn detects_mmproj_substring() {
+        assert!(looks_like_mmproj_error("error: mmproj not loaded"));
+    }
+
+    #[test]
+    fn detects_clip_substring() {
+        assert!(looks_like_mmproj_error("CLIP model not loaded"));
+    }
+
+    #[test]
+    fn detects_multimodal_substring() {
+        assert!(looks_like_mmproj_error("the model is not multimodal"));
+    }
+
+    #[test]
+    fn rejects_unrelated_error() {
+        assert!(!looks_like_mmproj_error("connection refused"));
+    }
+
+    #[test]
+    fn rejects_500_without_keywords() {
+        assert!(!looks_like_mmproj_error(
+            "HTTP 500 Internal Server Error: out of memory"
+        ));
+    }
 }
 
 /// Generate response using Kobold.cpp API (non-streaming only)

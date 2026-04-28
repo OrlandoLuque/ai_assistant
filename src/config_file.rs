@@ -815,6 +815,7 @@ impl ConfigFile {
             max_history_messages: self.generation.max_history,
             temperature: self.generation.temperature,
             retry_config: crate::retry::RetryConfig::default(),
+            mmproj_path: None,
         }
     }
 

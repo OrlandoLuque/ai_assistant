@@ -5,7 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] - v64 (2026-04-28) — V90.20–V90.25: vision wiring closure — carriers, surfaces, integration (0.2.50)
+## [Unreleased] - v65 (2026-04-28) — V90.26: multimodal projector (mmproj) support (0.2.51)
+
+### Added
+- **`mmproj` module** (cfg-gated `vision`) — `MultimodalProjector` handle
+  validated against GGUF magic bytes, file size sanity check
+  (`MIN_PROJECTOR_BYTES = 1 MiB`), `..` rejection, and canonicalized
+  absolute path. Logs emit `filename()` only — never the full path —
+  to avoid leaking machine layout.
+- **`AiConfig::mmproj_path: Option<PathBuf>`** — persists the user's
+  selected projector. Validated lazily via `AiConfig::validated_mmproj()`
+  so a stale path in a config file never blocks text-only requests.
+- **`LlamaCppCapability.multimodal: Option<bool>`** — `/props` parser
+  now reports projector status, accepting `multimodal` / `has_clip` /
+  `mmproj_loaded` / `mmproj` / `clip_model` / `clip_model_path` keys
+  (forks vary). `Some(false)` means probe answered without those
+  fields; `None` means no probe ran.
+- **`vision::agent_bridge::vision_runtime_ready_for(config, capability)`**
+  — runtime-aware extension of `ensure_vision_capable` that consults a
+  `LlamaCppCapability` (when available) and refuses with the actionable
+  hint `start llama-server with --mmproj <path>` when the server reports
+  no projector loaded.
+- **Provider error mapping** — `providers::generate_openai_compat_response_with_images`
+  detects mmproj-related strings (`mmproj`, `multimodal`, `clip`,
+  `vision not loaded`, ...) in upstream errors and rewrites the message
+  with an actionable hint.
+- **CLI `vision-check`** — pre-flight subcommand that reports
+  transport / model / mmproj / `/props` probe status. `--mmproj <path>`
+  validates the file; `--json` emits structured output. Exit code 2 on
+  any failed gate.
+- **`tests/mmproj_integration.rs`** — 11 cross-module tests covering
+  AiConfig persistence, traversal/size rejection, runtime-ready matrix,
+  and `/props`-driven decisions.
+
+### Tests
+- 13 new vision-gated tests (8 unit in `mmproj.rs`, 4 in `vision::agent_bridge::tests`,
+  4 in `llamacpp_capability::tests`, 5 in `providers::mmproj_error_tests`,
+  11 integration in `tests/mmproj_integration.rs`).
+
+### Out of scope (documented, not implemented)
+- Spawning `llama-server --mmproj ...` ourselves (no embedded launcher).
+- KoboldCpp vision dispatch (separate batch — `vision_supported_for`
+  still excludes it).
+- Auto-download of projectors from HuggingFace.
+- GGUF tensor-table parsing for dimension-mismatch detection (the
+  runtime does the real check; v1 only validates magic + size).
+
+## [v64] (2026-04-28) — V90.20–V90.25: vision wiring closure — carriers, surfaces, integration (0.2.50)
 
 ### Added
 - **Outer-ring carriers** — image fields/builders added to

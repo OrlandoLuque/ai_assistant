@@ -126,6 +126,8 @@ fn main() -> ExitCode {
         "test" => cmd_test(&command_args[1..]),
         "cost" => cmd_cost(&command_args[1..]),
         "verify" => cmd_verify(&command_args[1..]),
+        #[cfg(feature = "vision")]
+        "vision-check" => cmd_vision_check(&command_args[1..]),
         #[cfg(feature = "research")]
         "research" => cmd_research(&command_args[1..]),
         "quality" => cmd_quality(&command_args[1..]),
@@ -206,6 +208,14 @@ fn print_usage() {
     println!("    --faithfulness                 Enable faithfulness scoring");
     println!("    --cove                         Enable Chain-of-Verification");
     println!("    --quality-gates                Run quality gates on output");
+    println!(
+        "  vision-check [options]         Pre-flight vision pipeline (transport+model+mmproj)"
+    );
+    println!("    --provider <name>              Provider (llamacpp, lmstudio, ollama, ...)");
+    println!("    --model <name>                 Model name");
+    println!("    --url <url>                    Provider URL");
+    println!("    --mmproj <path>                Path to mmproj.gguf (validates magic+size)");
+    println!("    --json                         Output JSON status");
     println!("  research <query>               Search academic papers (requires research feature)");
     println!(
         "    --providers <list>             Providers: arxiv, scholar, pubmed (comma-separated)"
@@ -1742,6 +1752,11 @@ fn provider_from_name(name: &str) -> ai_assistant::AiProvider {
         "mistral" => ai_assistant::AiProvider::Mistral,
         "perplexity" => ai_assistant::AiProvider::Perplexity,
         "openrouter" => ai_assistant::AiProvider::OpenRouter,
+        "llamacpp" | "llama-cpp" | "llama_cpp" | "llama.cpp" => ai_assistant::AiProvider::LlamaCpp,
+        "vllm" => ai_assistant::AiProvider::VLLM,
+        "kobold" | "koboldcpp" | "kobold-cpp" | "kobold_cpp" => ai_assistant::AiProvider::KoboldCpp,
+        "localai" | "local-ai" | "local_ai" => ai_assistant::AiProvider::LocalAI,
+        "textgen" | "textgen-webui" | "text-gen-webui" => ai_assistant::AiProvider::TextGenWebUI,
         other => {
             eprintln!(
                 "Warning: unknown provider '{}', defaulting to Ollama",
@@ -1749,6 +1764,156 @@ fn provider_from_name(name: &str) -> ai_assistant::AiProvider {
             );
             ai_assistant::AiProvider::Ollama
         }
+    }
+}
+
+// =============================================================================
+// vision-check — pre-flight for the vision pipeline (V90.26)
+// =============================================================================
+
+#[cfg(feature = "vision")]
+fn cmd_vision_check(args: &[String]) -> ExitCode {
+    let mut provider_name: Option<String> = None;
+    let mut model_name: Option<String> = None;
+    let mut url_override: Option<String> = None;
+    let mut mmproj: Option<String> = None;
+    let mut as_json = false;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--provider" if i + 1 < args.len() => {
+                i += 1;
+                provider_name = Some(args[i].clone());
+            }
+            "--model" if i + 1 < args.len() => {
+                i += 1;
+                model_name = Some(args[i].clone());
+            }
+            "--url" if i + 1 < args.len() => {
+                i += 1;
+                url_override = Some(args[i].clone());
+            }
+            "--mmproj" if i + 1 < args.len() => {
+                i += 1;
+                mmproj = Some(args[i].clone());
+            }
+            "--json" => as_json = true,
+            other => {
+                eprintln!("Error: unknown vision-check option '{}'", other);
+                return ExitCode::from(1);
+            }
+        }
+        i += 1;
+    }
+
+    let mut config = ai_assistant::AiConfig::default();
+    if let Some(name) = &provider_name {
+        config.provider = provider_from_name(name);
+    }
+    if let Some(model) = &model_name {
+        config.selected_model = model.clone();
+    }
+    if let Some(url) = &url_override {
+        match config.provider {
+            ai_assistant::AiProvider::LlamaCpp => config.llamacpp_url = url.clone(),
+            ai_assistant::AiProvider::LMStudio => config.lm_studio_url = url.clone(),
+            ai_assistant::AiProvider::Ollama => config.ollama_url = url.clone(),
+            ai_assistant::AiProvider::KoboldCpp => config.kobold_url = url.clone(),
+            ai_assistant::AiProvider::LocalAI => config.local_ai_url = url.clone(),
+            ai_assistant::AiProvider::VLLM => config.vllm_url = url.clone(),
+            ai_assistant::AiProvider::TextGenWebUI => config.text_gen_webui_url = url.clone(),
+            _ => {}
+        }
+    }
+    if let Some(p) = &mmproj {
+        config.mmproj_path = Some(std::path::PathBuf::from(p));
+    }
+
+    // 1. Static transport check.
+    let transport_ok = ai_assistant::vision::agent_bridge::vision_supported_for(&config);
+
+    // 2. Static model-capability check.
+    let caps = ai_assistant::VisionCapabilities::default();
+    let model_ok = caps.supports_vision(&config.selected_model);
+
+    // 3. mmproj validation, if a path was provided.
+    let mmproj_status = config.validated_mmproj().map(|res| match res {
+        Ok(p) => Ok(p.filename().into_owned()),
+        Err(e) => Err(e.to_string()),
+    });
+
+    // 4. llama.cpp /props probe (best effort, only when applicable).
+    let probe = if matches!(config.provider, ai_assistant::AiProvider::LlamaCpp) {
+        Some(ai_assistant::llamacpp_capability::probe_llamacpp(
+            &config.llamacpp_url,
+        ))
+    } else {
+        None
+    };
+    let multimodal_reported = probe
+        .as_ref()
+        .and_then(|r| r.as_ref().ok())
+        .and_then(|c| c.multimodal);
+
+    if as_json {
+        let mmproj_validation_json = mmproj_status.as_ref().map(|r| match r {
+            Ok(name) => serde_json::json!({"ok": true, "filename": name}),
+            Err(msg) => serde_json::json!({"ok": false, "error": msg}),
+        });
+        let json = serde_json::json!({
+            "provider": format!("{:?}", config.provider),
+            "model": config.selected_model,
+            "transport_ok": transport_ok,
+            "model_in_known_set": model_ok,
+            "mmproj_configured": mmproj_status.is_some(),
+            "mmproj_validation": mmproj_validation_json,
+            "llamacpp_probe_ran": probe.is_some(),
+            "llamacpp_multimodal_loaded": multimodal_reported,
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json).unwrap_or_default()
+        );
+    } else {
+        println!("vision-check");
+        println!("  provider              : {:?}", config.provider);
+        println!("  model                 : {}", config.selected_model);
+        println!(
+            "  transport supported   : {}",
+            if transport_ok { "yes" } else { "NO" }
+        );
+        println!(
+            "  model in known set    : {}",
+            if model_ok { "yes" } else { "NO" }
+        );
+        match &mmproj_status {
+            None => println!("  mmproj                : (not configured)"),
+            Some(Ok(name)) => println!("  mmproj                : OK ({})", name),
+            Some(Err(msg)) => println!("  mmproj                : INVALID — {}", msg),
+        }
+        if let Some(probe_res) = probe.as_ref() {
+            match probe_res {
+                Ok(cap) => match cap.multimodal {
+                    Some(true) => println!("  llama-server projector: loaded"),
+                    Some(false) => println!(
+                        "  llama-server projector: NOT loaded — start with --mmproj <path>"
+                    ),
+                    None => println!("  llama-server projector: unknown (probe inconclusive)"),
+                },
+                Err(e) => println!("  llama-server probe    : failed ({})", e),
+            }
+        }
+    }
+
+    let any_error = !transport_ok
+        || !model_ok
+        || matches!(&mmproj_status, Some(Err(_)))
+        || matches!(multimodal_reported, Some(false));
+    if any_error {
+        ExitCode::from(2)
+    } else {
+        ExitCode::SUCCESS
     }
 }
 
