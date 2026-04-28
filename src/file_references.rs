@@ -124,6 +124,17 @@ pub struct FileRefExpansion {
     pub skipped: Vec<(FileRef, FileRefError)>,
     /// True if expansion stopped early due to total-size or count caps.
     pub truncated: bool,
+    /// Image attachments produced when an `@path` reference resolves to a
+    /// file whose magic bytes match a supported image format. The original
+    /// `@path` token is replaced with an `<image …/>` placeholder in
+    /// `expanded_text` and the corresponding [`crate::vision::ImageInput`]
+    /// is appended here, so the caller can forward it to a vision-capable
+    /// provider via `send_message_with_images` / `generate_sync_with_images`.
+    ///
+    /// Empty unless the `vision` feature is enabled and at least one
+    /// reference resolved to an image-typed file.
+    #[cfg(feature = "vision")]
+    pub images: Vec<crate::vision::ImageInput>,
 }
 
 /// Reasons a reference may fail to expand.
@@ -402,9 +413,14 @@ pub fn expand_file_refs(text: &str, config: &FileRefConfig) -> FileRefExpansion 
                 refs: expanded,
                 skipped,
                 truncated,
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             };
         }
     };
+
+    #[cfg(feature = "vision")]
+    let mut images: Vec<crate::vision::ImageInput> = Vec::new();
 
     // Decide outcome for each reference.
     let mut outcomes: Vec<(usize, usize, Option<String>)> = Vec::new();
@@ -418,7 +434,7 @@ pub fn expand_file_refs(text: &str, config: &FileRefConfig) -> FileRefExpansion 
             continue;
         }
         match try_expand_one(r, config, &root_canonical) {
-            Ok((block, used)) => {
+            Ok(ExpandOutcome::Text { block, used }) => {
                 if total_bytes.saturating_add(used) > config.max_total_expanded {
                     truncated = true;
                     skipped.push((r.clone(), FileRefError::QuotaExceeded));
@@ -433,6 +449,29 @@ pub fn expand_file_refs(text: &str, config: &FileRefConfig) -> FileRefExpansion 
                         line_end: r.line_end,
                         block,
                     });
+                }
+            }
+            #[cfg(feature = "vision")]
+            Ok(ExpandOutcome::Image {
+                placeholder,
+                used,
+                image,
+            }) => {
+                if total_bytes.saturating_add(used) > config.max_total_expanded {
+                    truncated = true;
+                    skipped.push((r.clone(), FileRefError::QuotaExceeded));
+                    outcomes.push((r.byte_offset, r.byte_length, None));
+                } else {
+                    total_bytes += used;
+                    outcomes.push((r.byte_offset, r.byte_length, Some(placeholder.clone())));
+                    expanded.push(ExpandedRef {
+                        raw: r.raw.clone(),
+                        path: r.path.clone(),
+                        line_start: r.line_start,
+                        line_end: r.line_end,
+                        block: placeholder,
+                    });
+                    images.push(image);
                 }
             }
             Err(e) => {
@@ -464,14 +503,31 @@ pub fn expand_file_refs(text: &str, config: &FileRefConfig) -> FileRefExpansion 
         refs: expanded,
         skipped,
         truncated,
+        #[cfg(feature = "vision")]
+        images,
     }
+}
+
+/// Output of expanding a single `@path` reference.
+enum ExpandOutcome {
+    /// Standard UTF-8 text expansion.
+    Text { block: String, used: u64 },
+    /// Image attachment — the original token is replaced with a small
+    /// placeholder block and the decoded `ImageInput` flows out separately
+    /// for the caller to forward to a vision-capable provider.
+    #[cfg(feature = "vision")]
+    Image {
+        placeholder: String,
+        used: u64,
+        image: crate::vision::ImageInput,
+    },
 }
 
 fn try_expand_one(
     r: &FileRef,
     config: &FileRefConfig,
     root_canonical: &Path,
-) -> Result<(String, u64), FileRefError> {
+) -> Result<ExpandOutcome, FileRefError> {
     // Reject absolute paths up front. Note: on Windows `Path::is_absolute()`
     // returns false for `/etc/passwd`-style paths (no drive letter), but we
     // still want to reject those for security: a leading `/` or `\` is a
@@ -527,6 +583,36 @@ fn try_expand_one(
     }
 
     let bytes = fs::read(&real).map_err(|e| FileRefError::Io(e.to_string()))?;
+
+    // Vision detour: when the on-disk file looks like a supported image
+    // format (magic-byte detection), surface it as an `ImageInput`
+    // attachment instead of failing with `InvalidUtf8`. The `@path` token
+    // is replaced in `expanded_text` with a small `<image …/>` placeholder
+    // so the prompt remains a valid string for non-vision providers /
+    // logs / audit, while the actual binary flows out via
+    // [`FileRefExpansion::images`].
+    #[cfg(feature = "vision")]
+    if let Some(media_type) = crate::vision::detect_image_media_type(&bytes) {
+        let path_str = r.path.to_string_lossy().replace('\\', "/");
+        let placeholder = format!(
+            "<image path=\"{}\" mime=\"{}\" bytes=\"{}\"/>",
+            path_str,
+            media_type,
+            bytes.len()
+        );
+        let used = placeholder.len() as u64;
+        let image = crate::vision::ImageInput {
+            data: crate::vision::ImageData::Base64(crate::vision::base64_encode(&bytes)),
+            media_type: media_type.to_string(),
+            detail: crate::vision::ImageDetail::Auto,
+        };
+        return Ok(ExpandOutcome::Image {
+            placeholder,
+            used,
+            image,
+        });
+    }
+
     let content = match std::str::from_utf8(&bytes) {
         Ok(s) => s.to_string(),
         Err(_) => return Err(FileRefError::InvalidUtf8(r.path.clone())),
@@ -581,7 +667,7 @@ fn try_expand_one(
     block.push_str("</file>");
 
     let used = block.len() as u64;
-    Ok((block, used))
+    Ok(ExpandOutcome::Text { block, used })
 }
 
 /// `std::fs::canonicalize` returns UNC paths on Windows (`\\?\C:\foo`),
@@ -863,5 +949,87 @@ mod tests {
         let res = expand_file_refs("@a.txt", &cfg);
         assert!(res.refs.is_empty());
         assert_eq!(res.skipped.len(), 1);
+    }
+
+    // Minimal 1×1 PNG (89-byte fixture: signature + IHDR + IDAT + IEND).
+    #[cfg(feature = "vision")]
+    fn tiny_png() -> Vec<u8> {
+        vec![
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // signature
+            0x00, 0x00, 0x00, 0x0D, // IHDR length
+            b'I', b'H', b'D', b'R', 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06,
+            0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, // IHDR data + CRC
+            0x00, 0x00, 0x00, 0x0A, b'I', b'D', b'A', b'T', 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00,
+            0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, // IDAT
+            0x00, 0x00, 0x00, 0x00, b'I', b'E', b'N', b'D', 0xAE, 0x42, 0x60, 0x82, // IEND
+        ]
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn expand_image_emits_image_input() {
+        let dir = tmpdir("img_png");
+        let png_path = dir.join("logo.png");
+        fs::write(&png_path, tiny_png()).unwrap();
+        let res = expand_file_refs("see @logo.png", &cfg_for(&dir));
+        assert_eq!(res.skipped.len(), 0, "skipped: {:?}", res.skipped);
+        assert_eq!(res.refs.len(), 1);
+        assert_eq!(res.images.len(), 1);
+        assert_eq!(res.images[0].media_type, "image/png");
+        // Original token replaced with placeholder, NOT inlined as text.
+        assert!(res.expanded_text.contains("<image"));
+        assert!(res.expanded_text.contains("path=\"logo.png\""));
+        assert!(res.expanded_text.contains("mime=\"image/png\""));
+        assert!(!res.expanded_text.contains("@logo.png"));
+        // Base64 payload is non-empty.
+        match &res.images[0].data {
+            crate::vision::ImageData::Base64(b) => assert!(!b.is_empty()),
+            other => panic!("expected Base64, got {:?}", other),
+        }
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn expand_mixed_image_and_text() {
+        let dir = tmpdir("img_mixed");
+        write(&dir.join("notes.txt"), "hello\n");
+        fs::write(&dir.join("pic.png"), tiny_png()).unwrap();
+        let res = expand_file_refs("@notes.txt and @pic.png", &cfg_for(&dir));
+        assert_eq!(res.refs.len(), 2);
+        assert_eq!(res.images.len(), 1);
+        assert!(res.expanded_text.contains("hello"));
+        assert!(res.expanded_text.contains("<image"));
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn expand_image_respects_size_cap() {
+        let dir = tmpdir("img_size");
+        let path = dir.join("big.png");
+        fs::write(&path, tiny_png()).unwrap();
+        let mut cfg = cfg_for(&dir);
+        cfg.max_file_size = 10; // tiny PNG is ~70 bytes
+        let res = expand_file_refs("@big.png", &cfg);
+        assert!(res.refs.is_empty());
+        assert_eq!(res.images.len(), 0);
+        match &res.skipped[0].1 {
+            FileRefError::TooLarge { .. } => {}
+            other => panic!("expected TooLarge, got {:?}", other),
+        }
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn expand_non_image_binary_still_invalid_utf8() {
+        let dir = tmpdir("img_notimg");
+        // Bytes that are neither valid UTF-8 nor a known image header.
+        fs::write(dir.join("blob.bin"), &[0xFFu8, 0xFE, 0xFD, 0x00, 0xCC]).unwrap();
+        let res = expand_file_refs("@blob.bin", &cfg_for(&dir));
+        assert!(res.refs.is_empty());
+        assert_eq!(res.images.len(), 0);
+        match &res.skipped[0].1 {
+            FileRefError::InvalidUtf8(_) => {}
+            other => panic!("expected InvalidUtf8, got {:?}", other),
+        }
     }
 }

@@ -24,6 +24,87 @@ pub trait TokenCounter: Send + Sync {
     ///
     /// Implementations should include per-message overhead (formatting tokens).
     fn count_messages(&self, messages: &[(&str, &str)]) -> usize;
+
+    /// Estimate tokens consumed by a single image attachment of dimensions
+    /// `(width, height)` for `model_family` (e.g. `"openai"`, `"anthropic"`,
+    /// `"gemini"`).
+    ///
+    /// Default implementation forwards to [`estimate_image_tokens`], which
+    /// applies provider-specific formulas:
+    /// - **OpenAI tiled**: 85 base + 170 tokens per 512×512 tile.
+    /// - **Anthropic**: `ceil(w*h / 750)` tokens (per Anthropic docs).
+    /// - **Gemini / generic**: 258 tokens per image (Gemini flat rate) or
+    ///   256 tokens per megapixel as a portable approximation.
+    ///
+    /// Override this if your tokenizer has tighter knowledge of the model.
+    fn count_image_tokens(&self, model_family: &str, width: u32, height: u32) -> usize {
+        estimate_image_tokens(model_family, width, height)
+    }
+
+    /// Sum text + image tokens for a sequence of multimodal messages.
+    ///
+    /// Each message contributes `count_messages` text tokens plus, for every
+    /// attached image, [`Self::count_image_tokens`]. `images` is a slice of
+    /// `(width, height, model_family)` triples per attachment; pass an empty
+    /// slice for any text-only message.
+    fn count_messages_with_images(
+        &self,
+        messages: &[(&str, &str)],
+        per_message_images: &[&[(u32, u32, &str)]],
+    ) -> usize {
+        let mut total = self.count_messages(messages);
+        for imgs in per_message_images {
+            for (w, h, family) in imgs.iter() {
+                total += self.count_image_tokens(family, *w, *h);
+            }
+        }
+        total
+    }
+}
+
+/// Provider-aware image-token estimator used by the default
+/// `TokenCounter::count_image_tokens` implementation.
+///
+/// Recognised `model_family` keys (case-insensitive substring match):
+/// - `"openai"` / `"gpt"` / `"o1"`/`"o3"`/`"o4"`: 85 base + 170 per 512×512
+///   tile (matches OpenAI's published formula for GPT-4o vision).
+/// - `"anthropic"` / `"claude"`: `ceil((w*h) / 750)` tokens, the Anthropic
+///   published per-image formula. Capped at 1600 tokens (Anthropic's hard
+///   limit for very large images).
+/// - `"gemini"` / `"google"`: 258 tokens per image (Gemini flat rate).
+/// - Anything else: 256 tokens per megapixel, minimum 256.
+pub fn estimate_image_tokens(model_family: &str, width: u32, height: u32) -> usize {
+    let w = width as u64;
+    let h = height as u64;
+    let pixels = w.saturating_mul(h);
+    let f = model_family.to_ascii_lowercase();
+
+    if f.contains("anthropic") || f.contains("claude") {
+        let raw = ((pixels as f64) / 750.0).ceil() as usize;
+        return raw.min(1600).max(1);
+    }
+
+    if f.contains("openai")
+        || f.contains("gpt")
+        || f.starts_with("o1")
+        || f.starts_with("o3")
+        || f.starts_with("o4")
+    {
+        // OpenAI tiled: 85 base + 170 tokens per 512×512 tile in "high" detail.
+        // Tile count = ceil(w/512) * ceil(h/512), bounded to a sensible cap.
+        let tiles_w = (w + 511) / 512;
+        let tiles_h = (h + 511) / 512;
+        let tiles = tiles_w.saturating_mul(tiles_h).min(64) as usize;
+        return 85 + 170 * tiles;
+    }
+
+    if f.contains("gemini") || f.contains("google") {
+        return 258;
+    }
+
+    // Generic fallback: 256 tokens / megapixel.
+    let mp = (pixels as f64) / 1_000_000.0;
+    ((mp * 256.0).ceil() as usize).max(256)
 }
 
 // =============================================================================
@@ -940,5 +1021,80 @@ mod tests {
         }
         let bpe = BpeTokenCounter::new();
         assert_eq!(got, bpe.count(text));
+    }
+
+    // ----- Image-token estimation (Batch 73) -----
+
+    #[test]
+    fn test_estimate_image_tokens_anthropic_formula() {
+        // Anthropic: ceil(w*h / 750). 1024×1024 → 1398.1.. → 1399, capped to 1600.
+        let tokens = estimate_image_tokens("anthropic", 1024, 1024);
+        assert_eq!(tokens, 1399);
+        // Above-cap input still bounded by 1600.
+        let huge = estimate_image_tokens("claude-3-opus", 4000, 4000);
+        assert_eq!(huge, 1600);
+    }
+
+    #[test]
+    fn test_estimate_image_tokens_openai_tiles() {
+        // 512×512 single tile + 85 base = 255.
+        assert_eq!(estimate_image_tokens("openai", 512, 512), 85 + 170);
+        // 1024×1024 = 4 tiles → 85 + 4*170 = 765.
+        assert_eq!(estimate_image_tokens("gpt-4o", 1024, 1024), 85 + 4 * 170);
+        // o4-mini family triggers same path.
+        assert_eq!(estimate_image_tokens("o4-mini", 256, 256), 85 + 170);
+    }
+
+    #[test]
+    fn test_estimate_image_tokens_gemini_flat() {
+        assert_eq!(estimate_image_tokens("gemini-pro-vision", 1, 1), 258);
+        assert_eq!(estimate_image_tokens("google", 4096, 4096), 258);
+    }
+
+    #[test]
+    fn test_estimate_image_tokens_generic_fallback() {
+        // 1 megapixel ≈ 256 tokens floor.
+        let small = estimate_image_tokens("local-llava", 100, 100);
+        assert_eq!(small, 256);
+        // 4 megapixel ≈ ~1024.
+        let big = estimate_image_tokens("local-llava", 2000, 2000);
+        assert!(big >= 1024, "got {big}");
+    }
+
+    #[test]
+    fn test_count_messages_with_images_aggregates_text_and_image() {
+        let counter = ApproximateCounter::new();
+        let messages: &[(&str, &str)] = &[("user", "Describe this picture")];
+        let images: Vec<&[(u32, u32, &str)]> = vec![&[(512, 512, "openai")]];
+        let total = counter.count_messages_with_images(messages, &images);
+        let text_only = counter.count_messages(messages);
+        let image_only = estimate_image_tokens("openai", 512, 512);
+        assert_eq!(total, text_only + image_only);
+    }
+
+    #[test]
+    fn test_count_messages_with_images_no_images_matches_text() {
+        let counter = ApproximateCounter::new();
+        let messages: &[(&str, &str)] = &[("user", "hi"), ("assistant", "hello")];
+        let images: Vec<&[(u32, u32, &str)]> = vec![&[], &[]];
+        assert_eq!(
+            counter.count_messages_with_images(messages, &images),
+            counter.count_messages(messages)
+        );
+    }
+
+    #[test]
+    fn test_count_messages_with_images_multi_attachment() {
+        let counter = BpeTokenCounter::new();
+        let messages: &[(&str, &str)] = &[("user", "two pics")];
+        let attached: &[(u32, u32, &str)] = &[(1024, 1024, "anthropic"), (256, 256, "anthropic")];
+        let images: Vec<&[(u32, u32, &str)]> = vec![attached];
+        let total = counter.count_messages_with_images(messages, &images);
+        let expected_image_part = estimate_image_tokens("anthropic", 1024, 1024)
+            + estimate_image_tokens("anthropic", 256, 256);
+        assert_eq!(
+            total,
+            counter.count_messages(messages) + expected_image_part
+        );
     }
 }

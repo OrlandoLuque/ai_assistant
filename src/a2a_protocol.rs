@@ -300,6 +300,73 @@ impl A2AMessage {
             metadata: HashMap::new(),
         }
     }
+
+    /// Create an image-bearing message in one shot.
+    ///
+    /// Wraps the given [`crate::vision::ImageInput`] as an A2A
+    /// [`A2APart::File`] with the image's media type and a base64 inline
+    /// payload (or URL pass-through). Use this when constructing an A2A
+    /// message that will travel through agents so you don't have to assemble
+    /// `FilePart` fields by hand.
+    #[cfg(feature = "vision")]
+    pub fn image(role: MessageRole, image: crate::vision::ImageInput) -> Self {
+        let mime_type = image.media_type.clone();
+        let (data, uri) = match image.data {
+            crate::vision::ImageData::Base64(s) => (Some(s), None),
+            crate::vision::ImageData::Url(u) => (None, Some(u)),
+        };
+        Self {
+            role,
+            parts: vec![A2APart::File(FilePart {
+                name: format!("image.{}", mime_subtype(&mime_type)),
+                mime_type,
+                data,
+                uri,
+            })],
+            metadata: HashMap::new(),
+        }
+    }
+
+    /// Extract every image part from this message as
+    /// [`crate::vision::ImageInput`] values.
+    ///
+    /// Walks `parts` and reconstructs `ImageInput`s from any
+    /// [`A2APart::File`] whose `mime_type` starts with `image/`. Both inline
+    /// (`data: Some(_)`) and URL-referenced (`uri: Some(_)`) variants are
+    /// emitted, in declared order. This closes a long-standing gap where
+    /// vision content was being silently discarded by callers that only
+    /// looked at `Text` parts.
+    #[cfg(feature = "vision")]
+    pub fn extract_image_parts(&self) -> Vec<crate::vision::ImageInput> {
+        let mut out = Vec::new();
+        for p in &self.parts {
+            if let A2APart::File(fp) = p {
+                if !fp.mime_type.starts_with("image/") {
+                    continue;
+                }
+                let data = if let Some(b64) = &fp.data {
+                    crate::vision::ImageData::Base64(b64.clone())
+                } else if let Some(uri) = &fp.uri {
+                    crate::vision::ImageData::Url(uri.clone())
+                } else {
+                    continue;
+                };
+                out.push(crate::vision::ImageInput {
+                    data,
+                    media_type: fp.mime_type.clone(),
+                    detail: crate::vision::ImageDetail::Auto,
+                });
+            }
+        }
+        out
+    }
+}
+
+/// Best-effort subtype extraction from `image/png` → `png`. Falls back to
+/// `bin` when the mime is malformed.
+#[cfg(feature = "vision")]
+fn mime_subtype(mime: &str) -> &str {
+    mime.split_once('/').map(|(_, s)| s).unwrap_or("bin")
 }
 
 // =============================================================================
@@ -1704,6 +1771,108 @@ mod tests {
             A2APart::Text(tp) => assert_eq!(tp.text, "Hello world"),
             _ => panic!("Expected text part"),
         }
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_message_image_constructor_inline() {
+        let img = crate::vision::ImageInput {
+            data: crate::vision::ImageData::Base64("AAAA".to_string()),
+            media_type: "image/png".to_string(),
+            detail: crate::vision::ImageDetail::Auto,
+        };
+        let msg = A2AMessage::image(MessageRole::User, img);
+        assert_eq!(msg.role, MessageRole::User);
+        assert_eq!(msg.parts.len(), 1);
+        match &msg.parts[0] {
+            A2APart::File(fp) => {
+                assert_eq!(fp.mime_type, "image/png");
+                assert_eq!(fp.data.as_deref(), Some("AAAA"));
+                assert!(fp.uri.is_none());
+            }
+            _ => panic!("expected File part"),
+        }
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_message_image_constructor_url() {
+        let img = crate::vision::ImageInput {
+            data: crate::vision::ImageData::Url("https://example.com/x.png".to_string()),
+            media_type: "image/png".to_string(),
+            detail: crate::vision::ImageDetail::Auto,
+        };
+        let msg = A2AMessage::image(MessageRole::Agent, img);
+        match &msg.parts[0] {
+            A2APart::File(fp) => {
+                assert!(fp.data.is_none());
+                assert_eq!(fp.uri.as_deref(), Some("https://example.com/x.png"));
+            }
+            _ => panic!("expected File part"),
+        }
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_extract_image_parts_mixed() {
+        let msg = A2AMessage::with_parts(
+            MessageRole::User,
+            vec![
+                A2APart::Text(TextPart {
+                    text: "before".to_string(),
+                }),
+                A2APart::File(FilePart {
+                    name: "a.png".to_string(),
+                    mime_type: "image/png".to_string(),
+                    data: Some("AAAA".to_string()),
+                    uri: None,
+                }),
+                A2APart::File(FilePart {
+                    name: "doc.pdf".to_string(),
+                    mime_type: "application/pdf".to_string(),
+                    data: None,
+                    uri: Some("https://example.com/doc.pdf".to_string()),
+                }),
+                A2APart::File(FilePart {
+                    name: "b.jpg".to_string(),
+                    mime_type: "image/jpeg".to_string(),
+                    data: None,
+                    uri: Some("https://example.com/b.jpg".to_string()),
+                }),
+                A2APart::Text(TextPart {
+                    text: "after".to_string(),
+                }),
+            ],
+        );
+        let imgs = msg.extract_image_parts();
+        assert_eq!(imgs.len(), 2);
+        assert_eq!(imgs[0].media_type, "image/png");
+        assert!(matches!(imgs[0].data, crate::vision::ImageData::Base64(_)));
+        assert_eq!(imgs[1].media_type, "image/jpeg");
+        assert!(matches!(imgs[1].data, crate::vision::ImageData::Url(_)));
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_extract_image_parts_empty_when_text_only() {
+        let msg = A2AMessage::text(MessageRole::User, "no images here");
+        assert!(msg.extract_image_parts().is_empty());
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_extract_image_parts_skips_orphan_file() {
+        // FilePart with neither data nor uri is silently skipped (not panic).
+        let msg = A2AMessage::with_parts(
+            MessageRole::User,
+            vec![A2APart::File(FilePart {
+                name: "ghost.png".to_string(),
+                mime_type: "image/png".to_string(),
+                data: None,
+                uri: None,
+            })],
+        );
+        assert!(msg.extract_image_parts().is_empty());
     }
 
     #[test]

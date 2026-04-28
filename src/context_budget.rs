@@ -390,6 +390,20 @@ pub trait ContextSource: Send + Sync {
 
     /// Source type.
     fn source_type(&self) -> ContextSourceType;
+
+    /// Estimated number of tokens this source would consume from the
+    /// budget for image attachments alone (independent of `query_items`'s
+    /// text). Returns 0 by default so non-vision sources are unchanged.
+    ///
+    /// Vision-aware sources should override this to return the sum of
+    /// per-image token estimates produced by
+    /// [`crate::token_counter::estimate_image_tokens`] for the model
+    /// family they are about to be sent to. The
+    /// [`ContextBudgetAllocator`] reserves this many tokens up-front so
+    /// images don't push text retrieval over the budget mid-allocation.
+    fn image_token_estimate(&self, _user_message: &str) -> usize {
+        0
+    }
 }
 
 /// Strategy for handling context overflow.
@@ -533,14 +547,31 @@ impl ContextBudgetAllocator {
         model_context_window.saturating_sub(used)
     }
 
+    /// Sum of [`ContextSource::image_token_estimate`] across every
+    /// registered source for the given user message. Useful when the
+    /// caller wants to size `budget` for `build` such that text retrieval
+    /// is reduced by exactly the image-token cost.
+    pub fn estimated_image_tokens(&self, user_message: &str) -> usize {
+        self.sources
+            .iter()
+            .map(|s| s.image_token_estimate(user_message))
+            .sum()
+    }
+
     /// Build the optimal context for the given user message within the budget.
     ///
     /// 1. Query all sources for relevant items
-    /// 2. Merge and sort by score (descending)
-    /// 3. Pack greedily until budget is filled
-    /// 4. Apply overflow strategy if needed
+    /// 2. Reserve budget for image attachments declared by sources via
+    ///    [`ContextSource::image_token_estimate`]
+    /// 3. Merge and sort by score (descending)
+    /// 4. Pack greedily until budget is filled
+    /// 5. Apply overflow strategy if needed
     pub fn build(&self, user_message: &str, budget: usize) -> AllocationResult {
-        // 1. Collect items from all sources
+        // 1. Reserve budget for image attachments BEFORE text packing.
+        let image_tokens_reserved = self.estimated_image_tokens(user_message);
+        let budget = budget.saturating_sub(image_tokens_reserved);
+
+        // 2. Collect items from all sources
         let mut all_items: Vec<ContextItem> = Vec::new();
         for source in &self.sources {
             let items = source.query_items(user_message);
@@ -1249,6 +1280,27 @@ mod tests {
         }
     }
 
+    /// Vision-aware test source that declares a fixed image-token cost.
+    struct VisionSource {
+        image_tokens: usize,
+        items: Vec<ContextItem>,
+    }
+
+    impl ContextSource for VisionSource {
+        fn query_items(&self, _msg: &str) -> Vec<ContextItem> {
+            self.items.clone()
+        }
+        fn source_name(&self) -> &str {
+            "vision"
+        }
+        fn source_type(&self) -> ContextSourceType {
+            ContextSourceType::Custom
+        }
+        fn image_token_estimate(&self, _msg: &str) -> usize {
+            self.image_tokens
+        }
+    }
+
     #[test]
     fn test_allocator_basic_packing() {
         let mut allocator = ContextBudgetAllocator::default();
@@ -1922,5 +1974,54 @@ mod tests {
         assert_eq!(result.included.len(), 2);
         assert!(result.context.contains("Graph entities here"));
         assert!(result.context.contains("RAG results here"));
+    }
+
+    #[test]
+    fn test_estimated_image_tokens_aggregates_sources() {
+        let mut allocator = ContextBudgetAllocator::default();
+        allocator.add_source(Box::new(VisionSource {
+            image_tokens: 200,
+            items: vec![],
+        }));
+        allocator.add_source(Box::new(VisionSource {
+            image_tokens: 300,
+            items: vec![],
+        }));
+        // Plain text source contributes 0.
+        allocator.add_source(Box::new(StaticSource {
+            items: vec![make_item("text", 0.5, ContextSourceType::Rag)],
+            name: "rag".into(),
+            stype: ContextSourceType::Rag,
+        }));
+        assert_eq!(allocator.estimated_image_tokens("any"), 500);
+    }
+
+    #[test]
+    fn test_build_reserves_image_budget() {
+        let mut allocator = ContextBudgetAllocator::default();
+        allocator.add_source(Box::new(StaticSource {
+            items: vec![
+                make_item(&"x".repeat(350), 0.9, ContextSourceType::Rag), // ~100 tok
+                make_item(&"y".repeat(350), 0.8, ContextSourceType::Rag),
+                make_item(&"z".repeat(350), 0.7, ContextSourceType::Rag),
+                make_item(&"w".repeat(350), 0.6, ContextSourceType::Rag),
+            ],
+            name: "rag".into(),
+            stype: ContextSourceType::Rag,
+        }));
+        allocator.add_source(Box::new(VisionSource {
+            image_tokens: 600,
+            items: vec![],
+        }));
+
+        // Total budget = 1000, images reserve 600, so text packing has 400.
+        let result = allocator.build("query", 1000);
+        assert!(
+            result.tokens_used <= 400,
+            "tokens_used={} should not exceed text budget of 400",
+            result.tokens_used
+        );
+        // The resulting `budget` field reflects the reduced text budget.
+        assert_eq!(result.budget, 400);
     }
 }

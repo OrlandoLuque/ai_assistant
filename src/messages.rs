@@ -106,6 +106,12 @@ pub enum AiResponse {
     Error(String),
     /// List of available models (from model discovery)
     ModelsLoaded(Vec<ModelInfo>),
+    /// An image emitted by the model — surfaces image-out from providers
+    /// such as Gemini image generation and OpenAI image-out variants
+    /// through the canonical response channel. Carries the same
+    /// `ImageData` representation used elsewhere in the vision pipeline.
+    #[cfg(feature = "vision")]
+    Image(crate::vision::ImageData),
 }
 
 impl AiResponse {
@@ -148,6 +154,30 @@ impl AiResponse {
         match self {
             AiResponse::Cancelled(s) => Some(s),
             _ => None,
+        }
+    }
+
+    /// Borrow the contained [`crate::vision::ImageData`] when this is an
+    /// [`AiResponse::Image`] (image-out from providers like Gemini /
+    /// GPT-4o image variants). Returns `None` for any other variant.
+    #[cfg(feature = "vision")]
+    pub fn image(&self) -> Option<&crate::vision::ImageData> {
+        match self {
+            AiResponse::Image(img) => Some(img),
+            _ => None,
+        }
+    }
+
+    /// Convenience: return all images carried by this response. Currently
+    /// returns 0 or 1 image (the variant carries a single payload), but
+    /// the slice-shape mirrors the multi-image fields used elsewhere
+    /// (e.g. [`ChatMessage::images`]) so future multi-image variants are
+    /// non-breaking.
+    #[cfg(feature = "vision")]
+    pub fn images(&self) -> &[crate::vision::ImageData] {
+        match self {
+            AiResponse::Image(img) => std::slice::from_ref(img),
+            _ => &[],
         }
     }
 }
@@ -238,5 +268,38 @@ mod tests {
         assert!(sys.is_system());
         assert!(!sys.is_user());
         assert!(!sys.is_assistant());
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_ai_response_image_variant_accessors() {
+        let img = crate::vision::ImageData::Base64("AAAA".to_string());
+        let resp = AiResponse::Image(img);
+        // Not text-typed, not terminal-typed text-bearing.
+        assert!(resp.text().is_none());
+        // image() / images() expose the payload.
+        assert!(resp.image().is_some());
+        assert_eq!(resp.images().len(), 1);
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_ai_response_image_url_variant() {
+        let img = crate::vision::ImageData::Url("https://example.com/x.png".to_string());
+        let resp = AiResponse::Image(img);
+        match resp.image() {
+            Some(crate::vision::ImageData::Url(u)) => {
+                assert_eq!(u, "https://example.com/x.png");
+            }
+            other => panic!("expected Url, got {:?}", other),
+        }
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_ai_response_non_image_returns_no_images() {
+        let resp = AiResponse::Complete("text only".to_string());
+        assert!(resp.image().is_none());
+        assert!(resp.images().is_empty());
     }
 }
