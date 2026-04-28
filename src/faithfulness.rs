@@ -515,6 +515,116 @@ fn words_set(text: &str) -> std::collections::HashSet<String> {
 }
 
 // ============================================================================
+// Visual groundedness (Batch 20)
+// ============================================================================
+
+/// Visual groundedness assessment for a response generated with image
+/// attachments. Captures whether the response actually engages with the
+/// supplied visual evidence (vs. text-only hallucination).
+///
+/// This is a *cheap heuristic* — it counts visual-vocabulary mentions
+/// in the response. Higher precision requires VLM-side feature
+/// alignment which is out of scope for a free Rust-pure metric.
+#[cfg(feature = "vision")]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct VisualGroundednessReport {
+    /// Number of image attachments the response was generated against.
+    pub image_count: usize,
+    /// Total tokens (whitespace-split words) in the response.
+    pub total_tokens: usize,
+    /// Tokens matching the built-in visual vocabulary (color, shape,
+    /// spatial-relation terms, "image", "photo", "picture", etc.).
+    pub visual_terms: usize,
+    /// `visual_terms / total_tokens`, clamped to `[0, 1]`. 0 when there
+    /// are no tokens.
+    pub visual_density: f64,
+    /// Whether the response mentions images at all when at least one
+    /// image was supplied. False = strong signal of visual ungrounding.
+    pub has_visual_grounding: bool,
+}
+
+#[cfg(feature = "vision")]
+impl VisualGroundednessReport {
+    /// Whether the response meets the minimum visual-density threshold.
+    pub fn meets_threshold(&self, threshold: f64) -> bool {
+        self.visual_density >= threshold
+    }
+}
+
+/// The fixed visual vocabulary used by [`score_visual_groundedness`].
+/// Kept small and language-en biased on purpose — callers wanting i18n
+/// vocabularies should fork the function rather than contend over a
+/// shared list.
+#[cfg(feature = "vision")]
+const VISUAL_VOCAB: &[&str] = &[
+    "image",
+    "photo",
+    "picture",
+    "screenshot",
+    "figure",
+    "diagram",
+    "shows",
+    "depicts",
+    "displays",
+    "visible",
+    "shown",
+    "see",
+    "color",
+    "colour",
+    "red",
+    "blue",
+    "green",
+    "yellow",
+    "black",
+    "white",
+    "left",
+    "right",
+    "above",
+    "below",
+    "top",
+    "bottom",
+    "center",
+    "background",
+    "foreground",
+    "object",
+    "scene",
+];
+
+/// Score how visually grounded a response is, given it was generated
+/// with `image_count` images attached. Pure heuristic: counts visual
+/// vocabulary tokens.
+#[cfg(feature = "vision")]
+pub fn score_visual_groundedness(response: &str, image_count: usize) -> VisualGroundednessReport {
+    let tokens: Vec<String> = response
+        .split_whitespace()
+        .map(|w| {
+            w.trim_matches(|c: char| !c.is_alphanumeric())
+                .to_lowercase()
+        })
+        .filter(|w| !w.is_empty())
+        .collect();
+    let total = tokens.len();
+    let mut visual = 0usize;
+    for tok in &tokens {
+        if VISUAL_VOCAB.iter().any(|v| *v == tok) {
+            visual += 1;
+        }
+    }
+    let density = if total == 0 {
+        0.0
+    } else {
+        (visual as f64 / total as f64).clamp(0.0, 1.0)
+    };
+    VisualGroundednessReport {
+        image_count,
+        total_tokens: total,
+        visual_terms: visual,
+        visual_density: density,
+        has_visual_grounding: image_count == 0 || visual > 0,
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -803,5 +913,50 @@ mod tests {
         let scorer = FaithfulnessScorer::default();
         let debug = format!("{:?}", scorer);
         assert!(debug.contains("FaithfulnessScorer"));
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_visual_groundedness_no_images_passes_through() {
+        let r = score_visual_groundedness("This is a text-only response.", 0);
+        assert_eq!(r.image_count, 0);
+        // No images attached means grounding is vacuously satisfied.
+        assert!(r.has_visual_grounding);
+        assert_eq!(r.visual_terms, 0);
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_visual_groundedness_image_with_visual_text() {
+        let r = score_visual_groundedness(
+            "The image shows a red car on the left of a blue building.",
+            1,
+        );
+        assert_eq!(r.image_count, 1);
+        // "image", "shows", "red", "left", "blue" → 5 hits.
+        assert!(r.visual_terms >= 4, "got {}", r.visual_terms);
+        assert!(r.has_visual_grounding);
+        assert!(r.visual_density > 0.0);
+        assert!(r.meets_threshold(0.1));
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_visual_groundedness_image_with_no_visual_text() {
+        let r =
+            score_visual_groundedness("The historical context dates back to medieval Europe.", 1);
+        assert_eq!(r.image_count, 1);
+        assert_eq!(r.visual_terms, 0);
+        // Image attached but zero visual mentions: ungrounded.
+        assert!(!r.has_visual_grounding);
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_visual_groundedness_empty_response() {
+        let r = score_visual_groundedness("", 1);
+        assert_eq!(r.total_tokens, 0);
+        assert_eq!(r.visual_density, 0.0);
+        assert!(!r.has_visual_grounding);
     }
 }

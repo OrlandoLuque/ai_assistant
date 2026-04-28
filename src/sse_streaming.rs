@@ -40,6 +40,45 @@ impl SseEvent {
         self
     }
 
+    /// Construct an `image` event carrying base64 + media_type metadata.
+    /// Provides a single canonical wire shape so both server emitters
+    /// and client parsers agree on how vision payloads cross SSE.
+    /// `data` becomes a JSON object: `{"media_type":"...","base64":"..."}`.
+    /// The `event:` field is set to `image`.
+    #[cfg(feature = "vision")]
+    pub fn image_chunk(media_type: &str, base64: &str) -> Self {
+        // Manual JSON build avoids dragging in serde here.
+        let data = format!(
+            "{{\"media_type\":\"{}\",\"base64\":\"{}\"}}",
+            media_type.replace('"', "\\\""),
+            base64.replace('"', "\\\""),
+        );
+        Self {
+            event: Some("image".to_string()),
+            data,
+            id: None,
+            retry: None,
+        }
+    }
+
+    /// Whether this event is an image chunk emitted by [`Self::image_chunk`].
+    #[cfg(feature = "vision")]
+    pub fn is_image(&self) -> bool {
+        self.event.as_deref() == Some("image")
+    }
+
+    /// Decode an `image` event into (media_type, base64). Returns `None`
+    /// if `event` is not `image` or the payload doesn't carry both fields.
+    #[cfg(feature = "vision")]
+    pub fn decode_image(&self) -> Option<(String, String)> {
+        if !self.is_image() {
+            return None;
+        }
+        let mt = extract_json_string(&self.data, "media_type")?;
+        let b64 = extract_json_string(&self.data, "base64")?;
+        Some((mt, b64))
+    }
+
     /// Serialize to SSE wire format
     pub fn to_wire_format(&self) -> String {
         let mut output = String::new();
@@ -95,6 +134,30 @@ impl SseEvent {
             retry,
         })
     }
+}
+
+/// Minimal extractor for `"key":"value"` from a flat JSON object string.
+/// Used by the vision-aware [`SseEvent::decode_image`] path to avoid
+/// pulling serde_json into this module's dependency surface.
+#[cfg(feature = "vision")]
+fn extract_json_string(s: &str, key: &str) -> Option<String> {
+    let needle = format!("\"{}\":\"", key);
+    let start = s.find(&needle)? + needle.len();
+    let rest = &s[start..];
+    let mut out = String::new();
+    let mut chars = rest.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            if let Some(n) = chars.next() {
+                out.push(n);
+            }
+        } else if c == '"' {
+            return Some(out);
+        } else {
+            out.push(c);
+        }
+    }
+    None
 }
 
 /// SSE Stream reader
@@ -596,5 +659,26 @@ mod tests {
         let err = SseError::ConnectionClosed;
         let msg = format!("{}", err);
         assert!(!msg.is_empty());
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_image_chunk_round_trip() {
+        let ev = SseEvent::image_chunk("image/png", "QUFBQQ==");
+        assert!(ev.is_image());
+        let wire = ev.to_wire_format();
+        assert!(wire.contains("event: image"));
+        let parsed = SseEvent::from_wire_format(&wire).expect("should parse");
+        let (mt, b64) = parsed.decode_image().expect("should decode");
+        assert_eq!(mt, "image/png");
+        assert_eq!(b64, "QUFBQQ==");
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_decode_image_rejects_non_image_event() {
+        let ev = SseEvent::new("plain text");
+        assert!(!ev.is_image());
+        assert!(ev.decode_image().is_none());
     }
 }
