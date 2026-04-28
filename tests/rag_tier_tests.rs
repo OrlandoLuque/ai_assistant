@@ -22,7 +22,7 @@ mod rag_tiers_tests {
     #[test]
     fn test_rag_features_all() {
         let features = RagFeatures::all();
-        assert_eq!(features.enabled_count(), 20);
+        assert_eq!(features.enabled_count(), 45);
         assert!(features.fts_search);
         assert!(features.semantic_search);
         assert!(features.hybrid_search);
@@ -143,7 +143,7 @@ mod rag_tiers_tests {
     #[test]
     fn test_tier_to_features_full() {
         let features = RagTier::Full.to_features();
-        assert_eq!(features.enabled_count(), 20);
+        assert_eq!(features.enabled_count(), 45);
         assert!(features.graph_rag);
         assert!(features.raptor);
         assert!(features.multimodal);
