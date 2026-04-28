@@ -83,6 +83,13 @@ pub struct RegenerationRequest {
     pub feedback: RegenerationFeedback,
     pub attempt: u32,
     pub created_at: Instant,
+    /// Image attachments preserved across regeneration attempts. Empty
+    /// by default. When the original prompt was multimodal, callers
+    /// must populate this so retries see the same visual evidence —
+    /// otherwise the regenerated response would silently drop image
+    /// grounding.
+    #[cfg(feature = "vision")]
+    pub images: Vec<crate::vision::ImageInput>,
 }
 
 impl RegenerationRequest {
@@ -93,7 +100,18 @@ impl RegenerationRequest {
             feedback,
             attempt: 1,
             created_at: Instant::now(),
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         }
+    }
+
+    /// Builder-style helper to attach images to the regeneration request.
+    /// Use this when the original prompt was multimodal to preserve
+    /// image grounding across retries.
+    #[cfg(feature = "vision")]
+    pub fn with_images(mut self, images: Vec<crate::vision::ImageInput>) -> Self {
+        self.images = images;
+        self
     }
 
     /// Build improved prompt incorporating feedback
@@ -384,5 +402,44 @@ mod tests {
 
         let r2 = manager.request_regeneration("conv1", "Q", "A", feedback.clone());
         assert_eq!(r2.unwrap().attempt, 2);
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_request_default_no_images() {
+        let req = RegenerationRequest::new(
+            "describe this",
+            "i see a dog",
+            RegenerationFeedback {
+                issue: RegenerationIssue::Incorrect,
+                instructions: None,
+                style: None,
+                length: None,
+            },
+        );
+        assert!(req.images.is_empty());
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_with_images_preserves_payload() {
+        let img = crate::vision::ImageInput {
+            data: crate::vision::ImageData::Base64("AA".to_string()),
+            media_type: "image/jpeg".to_string(),
+            detail: crate::vision::ImageDetail::High,
+        };
+        let req = RegenerationRequest::new(
+            "describe this",
+            "wrong answer",
+            RegenerationFeedback {
+                issue: RegenerationIssue::Incorrect,
+                instructions: None,
+                style: None,
+                length: None,
+            },
+        )
+        .with_images(vec![img]);
+        assert_eq!(req.images.len(), 1);
+        assert_eq!(req.images[0].media_type, "image/jpeg");
     }
 }

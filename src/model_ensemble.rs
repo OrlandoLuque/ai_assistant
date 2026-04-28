@@ -172,6 +172,26 @@ impl Ensemble {
         self.config.models.push(model);
     }
 
+    /// Execute ensemble on a prompt + image attachments. Vision-aware
+    /// equivalent of [`Self::execute`]: the supplied closure receives
+    /// the same prompt/model/provider triple plus an image slice that
+    /// every model in the ensemble sees identically. Use this when
+    /// running a vision ensemble (e.g. multiple VLMs voting on an
+    /// image classification or description).
+    #[cfg(feature = "vision")]
+    pub fn execute_with_images<F>(
+        &self,
+        prompt: &str,
+        images: &[crate::vision::ImageInput],
+        generate: F,
+    ) -> EnsembleResult
+    where
+        F: Fn(&str, &str, &str, &[crate::vision::ImageInput]) -> Result<String, String>,
+    {
+        // Reuse the text execute path by passing a closure that captures the images.
+        self.execute(prompt, |p, id, provider| generate(p, id, provider, images))
+    }
+
     /// Execute ensemble on a prompt
     pub fn execute<F>(&self, prompt: &str, generate: F) -> EnsembleResult
     where
@@ -729,5 +749,38 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_execute_with_images_passes_payload() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let mut ensemble = Ensemble::new(EnsembleConfig {
+            strategy: EnsembleStrategy::Voting,
+            ..EnsembleConfig::default()
+        });
+        ensemble.add_model(EnsembleModel::new("m1", "p"));
+        ensemble.add_model(EnsembleModel::new("m2", "p"));
+
+        let img = crate::vision::ImageInput {
+            data: crate::vision::ImageData::Base64("AAAA".to_string()),
+            media_type: "image/png".to_string(),
+            detail: crate::vision::ImageDetail::Auto,
+        };
+        let images_seen = Arc::new(AtomicUsize::new(0));
+        let counter = images_seen.clone();
+        let result = ensemble.execute_with_images(
+            "describe",
+            std::slice::from_ref(&img),
+            move |_p, id, _prov, imgs| {
+                counter.fetch_add(imgs.len(), Ordering::Relaxed);
+                Ok(format!("ok-{}", id))
+            },
+        );
+        // Both models received the single image.
+        assert_eq!(images_seen.load(Ordering::Relaxed), 2);
+        assert_eq!(result.model_responses.len(), 2);
     }
 }

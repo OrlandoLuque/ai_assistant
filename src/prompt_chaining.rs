@@ -58,6 +58,12 @@ pub struct ChainStep {
     pub next_on_success: Option<String>,
     /// Next step on failure (None = abort)
     pub next_on_failure: Option<String>,
+    /// Image attachments injected with this step's prompt. Empty by
+    /// default. Vision-aware callers populate this so that image-capable
+    /// models receive the same image payload structure used elsewhere
+    /// (e.g. [`crate::messages::ChatMessage::images`]).
+    #[cfg(feature = "vision")]
+    pub images: Vec<crate::vision::ImageInput>,
 }
 
 /// How to extract a variable from a response
@@ -467,6 +473,8 @@ impl ChainBuilder {
             condition: None,
             next_on_success: None,
             next_on_failure: None,
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         });
         self
     }
@@ -490,6 +498,8 @@ impl ChainBuilder {
             condition: None,
             next_on_success: None,
             next_on_failure: None,
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         });
         self
     }
@@ -509,7 +519,23 @@ impl ChainBuilder {
             condition: Some(condition),
             next_on_success: None,
             next_on_failure: None,
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         });
+        self
+    }
+
+    /// Attach images to the most recently added step. Builder-style
+    /// helper so vision-aware chains can pass image evidence at a
+    /// specific step (e.g. an "analyze screenshot" step). Panics in
+    /// debug builds if no steps have been added yet.
+    #[cfg(feature = "vision")]
+    pub fn with_step_images(mut self, images: Vec<crate::vision::ImageInput>) -> Self {
+        if let Some(last) = self.chain.steps.last_mut() {
+            last.images.extend(images);
+        } else {
+            debug_assert!(false, "with_step_images called before any step");
+        }
         self
     }
 
@@ -715,5 +741,32 @@ mod tests {
             .step("step1", "Summarize: {{input}}")
             .build();
         assert_eq!(chain.steps.len(), 1);
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_chain_step_images_default_empty() {
+        let chain = ChainBuilder::new("c", "gpt-4")
+            .step("s1", "describe")
+            .build();
+        assert!(chain.steps[0].images.is_empty());
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_chain_with_step_images_attaches_to_last_step() {
+        let img = crate::vision::ImageInput {
+            data: crate::vision::ImageData::Base64("AAAA".to_string()),
+            media_type: "image/png".to_string(),
+            detail: crate::vision::ImageDetail::Auto,
+        };
+        let chain = ChainBuilder::new("c", "gpt-4")
+            .step("s1", "no image step")
+            .step("s2", "describe screenshot")
+            .with_step_images(vec![img])
+            .build();
+        assert!(chain.steps[0].images.is_empty());
+        assert_eq!(chain.steps[1].images.len(), 1);
+        assert_eq!(chain.steps[1].images[0].media_type, "image/png");
     }
 }

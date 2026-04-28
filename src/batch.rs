@@ -85,6 +85,11 @@ pub struct BatchRequest {
     pub model: Option<String>,
     /// Optional metadata
     pub metadata: HashMap<String, String>,
+    /// Image attachments to send with this batch request. Empty by
+    /// default, populated by vision-aware callers (CLI bulk image
+    /// description, async screenshot pipelines, etc.).
+    #[cfg(feature = "vision")]
+    pub images: Vec<crate::vision::ImageInput>,
 }
 
 impl BatchRequest {
@@ -96,6 +101,8 @@ impl BatchRequest {
             system_prompt: None,
             model: None,
             metadata: HashMap::new(),
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         }
     }
 
@@ -114,6 +121,20 @@ impl BatchRequest {
     /// Add metadata
     pub fn with_metadata(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.metadata.insert(key.into(), value.into());
+        self
+    }
+
+    /// Attach an image to this batch request.
+    #[cfg(feature = "vision")]
+    pub fn with_image(mut self, image: crate::vision::ImageInput) -> Self {
+        self.images.push(image);
+        self
+    }
+
+    /// Replace all image attachments with the given list.
+    #[cfg(feature = "vision")]
+    pub fn with_images(mut self, images: Vec<crate::vision::ImageInput>) -> Self {
+        self.images = images;
         self
     }
 }
@@ -708,5 +729,28 @@ mod tests {
         assert!(!processor.is_cancelled());
         processor.cancel();
         assert!(processor.is_cancelled());
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_batch_request_default_no_images() {
+        let req = BatchRequest::new("r1", "describe");
+        assert!(req.images.is_empty());
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_batch_request_with_image_and_with_images() {
+        let img = crate::vision::ImageInput {
+            data: crate::vision::ImageData::Url("https://x/y.png".to_string()),
+            media_type: "image/png".to_string(),
+            detail: crate::vision::ImageDetail::Low,
+        };
+        let req = BatchRequest::new("r1", "what is this").with_image(img.clone());
+        assert_eq!(req.images.len(), 1);
+
+        // with_images replaces (not appends).
+        let req2 = req.with_images(vec![img.clone(), img]);
+        assert_eq!(req2.images.len(), 2);
     }
 }
