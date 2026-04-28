@@ -524,9 +524,9 @@ futures-core = { version = "0.3", optional = true }
 
 # === V96: Self-Learning deps ===
 # Wasmtime runtime for Skill Forge WASM execution (fuel + ResourceLimiter)
-wasmtime = { version = "25", optional = true, default-features = false, features = ["cranelift", "runtime"] }
-wasmtime-wasi = { version = "25", optional = true }
-wasi-common = { version = "25", optional = true }
+wasmtime = { version = "36", optional = true, default-features = false, features = ["cranelift", "runtime"] }
+wasmtime-wasi = { version = "36", optional = true }
+wasi-common = { version = "36", optional = true }
 # Ed25519 signatures for skill integrity and ledger event attestation
 ed25519-dalek = { version = "2", optional = true, default-features = false, features = ["std", "rand_core"] }
 # Blake3 for hash-chained ledger prev_hash and content hashing
