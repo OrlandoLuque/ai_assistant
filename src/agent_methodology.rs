@@ -521,6 +521,13 @@ pub struct TaskStep {
     pub description: String,
     /// Estimated complexity.
     pub estimated_complexity: String,
+    /// Image references attached to this step (e.g. "describe figure 3"
+    /// where the figure is provided as an image input). Empty by
+    /// default; populated by vision-aware methodology drivers when the
+    /// originating task carries image evidence.
+    #[cfg(feature = "vision")]
+    #[serde(default)]
+    pub images: Vec<crate::vision::ImageRef>,
 }
 
 /// Result of task decomposition.
@@ -590,6 +597,8 @@ impl TaskDecomposer {
                             Some(TaskStep {
                                 description: desc.to_string(),
                                 estimated_complexity: complexity.to_string(),
+                                #[cfg(feature = "vision")]
+                                images: Vec::new(),
                             })
                         })
                         .collect();
@@ -622,6 +631,8 @@ impl TaskDecomposer {
             vec![TaskStep {
                 description: task.to_string(),
                 estimated_complexity: "medium".to_string(),
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
             }]
         } else {
             sentences
@@ -635,6 +646,8 @@ impl TaskDecomposer {
                     } else {
                         "low".to_string()
                     },
+                    #[cfg(feature = "vision")]
+                    images: Vec::new(),
                 })
                 .collect()
         };
@@ -819,5 +832,36 @@ mod tests {
         // Should fall back to heuristic (not crash)
         assert!(!result.steps.is_empty());
         assert!(result.steps[0].description.contains("Do something complex"));
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_task_step_default_no_images() {
+        let config = TaskDecompositionConfig {
+            llm_enhanced: false,
+        };
+        let decomposer = TaskDecomposer::new(config);
+        let result = decomposer.decompose_task_with_llm("first. second. third.", None);
+        assert!(!result.steps.is_empty());
+        for step in &result.steps {
+            assert!(step.images.is_empty());
+        }
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_task_step_can_carry_images() {
+        // The struct field is public — vision-aware drivers can attach refs.
+        let mut step = TaskStep {
+            description: "describe screenshot".to_string(),
+            estimated_complexity: "medium".to_string(),
+            images: Vec::new(),
+        };
+        step.images.push(crate::vision::ImageRef {
+            key: "s1".to_string(),
+            media_type: "image/png".to_string(),
+            sha256: "0".repeat(64),
+        });
+        assert_eq!(step.images.len(), 1);
     }
 }

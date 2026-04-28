@@ -298,6 +298,23 @@ impl UnifiedDb {
                     VALUES (new.rowid, new.title, new.description);
                 END;",
             ),
+            (
+                6,
+                "Per-message image attachments table",
+                "CREATE TABLE IF NOT EXISTS session_message_attachments (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    message_id INTEGER NOT NULL REFERENCES session_messages(id) ON DELETE CASCADE,
+                    image_key TEXT NOT NULL,
+                    media_type TEXT NOT NULL,
+                    sha256 TEXT NOT NULL,
+                    sort_order INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_session_msg_attachments_msg
+                    ON session_message_attachments(message_id, sort_order);
+                CREATE INDEX IF NOT EXISTS idx_session_msg_attachments_sha
+                    ON session_message_attachments(sha256);",
+            ),
         ];
 
         for &(version, description, sql) in migrations {
@@ -532,6 +549,66 @@ impl<'a> SqliteSessionStore<'a> {
             .collect();
 
         Ok(summaries)
+    }
+
+    /// Attach an image reference to a specific message id (the auto-
+    /// increment id from `session_messages`). Caller is responsible for
+    /// having stored the image bytes elsewhere — this only persists the
+    /// content-addressed reference.
+    #[cfg(feature = "vision")]
+    pub fn attach_image(
+        &self,
+        message_id: i64,
+        image_ref: &crate::vision::ImageRef,
+    ) -> Result<i64> {
+        // Determine the next sort_order for this message.
+        let next_order: i64 = self
+            .db
+            .conn
+            .query_row(
+                "SELECT COALESCE(MAX(sort_order), -1) + 1
+                 FROM session_message_attachments WHERE message_id = ?1",
+                rusqlite::params![message_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        self.db.conn.execute(
+            "INSERT INTO session_message_attachments
+                 (message_id, image_key, media_type, sha256, sort_order, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![
+                message_id,
+                image_ref.key,
+                image_ref.media_type,
+                image_ref.sha256,
+                next_order,
+                chrono::Utc::now().to_rfc3339(),
+            ],
+        )?;
+        Ok(self.db.conn.last_insert_rowid())
+    }
+
+    /// Load every attachment for a given message id, ordered as inserted.
+    #[cfg(feature = "vision")]
+    pub fn attachments_for_message(&self, message_id: i64) -> Result<Vec<crate::vision::ImageRef>> {
+        let mut stmt = self.db.conn.prepare(
+            "SELECT image_key, media_type, sha256
+             FROM session_message_attachments
+             WHERE message_id = ?1
+             ORDER BY sort_order ASC",
+        )?;
+        let refs = stmt
+            .query_map(rusqlite::params![message_id], |row| {
+                Ok(crate::vision::ImageRef {
+                    key: row.get(0)?,
+                    media_type: row.get(1)?,
+                    sha256: row.get(2)?,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(refs)
     }
 
     /// Delete a session and all its messages.
@@ -1201,12 +1278,12 @@ mod tests {
         let (db, _tmp) = temp_db();
 
         let version = db.current_version().expect("get version");
-        assert_eq!(version, 5, "all 5 migrations should have run");
+        assert_eq!(version, 6, "all 6 migrations should have run");
 
         let versions = db.applied_versions().expect("list versions");
-        assert_eq!(versions.len(), 5);
+        assert_eq!(versions.len(), 6);
         assert_eq!(versions[0].version, 1);
-        assert_eq!(versions[4].version, 5);
+        assert_eq!(versions[5].version, 6);
     }
 
     #[test]
@@ -1221,7 +1298,7 @@ mod tests {
         assert_eq!(v1, v2);
 
         let versions = db2.applied_versions().expect("versions");
-        assert_eq!(versions.len(), 5, "still 5 — no duplicates");
+        assert_eq!(versions.len(), 6, "still 6 — no duplicates");
     }
 
     #[test]
@@ -1566,5 +1643,82 @@ mod tests {
         // Unknown user returns empty
         let unknown = store.list_sessions_for_user("charlie").expect("charlie");
         assert!(unknown.is_empty());
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_attach_image_round_trip() {
+        let (db, _tmp) = temp_db();
+        let store = SqliteSessionStore::new(&db);
+
+        let mut session = ChatSession::new("vision");
+        session.messages.push(ChatMessage::user("describe"));
+        store.save_session(&session).expect("save");
+
+        // Look up the message id via raw SQL.
+        let message_id: i64 = db
+            .conn
+            .query_row(
+                "SELECT id FROM session_messages WHERE session_id = ?1 LIMIT 1",
+                rusqlite::params![session.id],
+                |r| r.get(0),
+            )
+            .expect("message id");
+
+        let img_a = crate::vision::ImageRef {
+            key: "k_a".to_string(),
+            media_type: "image/png".to_string(),
+            sha256: "a".repeat(64),
+        };
+        let img_b = crate::vision::ImageRef {
+            key: "k_b".to_string(),
+            media_type: "image/jpeg".to_string(),
+            sha256: "b".repeat(64),
+        };
+        store.attach_image(message_id, &img_a).expect("attach a");
+        store.attach_image(message_id, &img_b).expect("attach b");
+
+        let loaded = store
+            .attachments_for_message(message_id)
+            .expect("load attachments");
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].key, "k_a");
+        assert_eq!(loaded[1].media_type, "image/jpeg");
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn test_attachments_cascade_delete() {
+        let (db, _tmp) = temp_db();
+        let store = SqliteSessionStore::new(&db);
+
+        let mut session = ChatSession::new("vision-cascade");
+        session.messages.push(ChatMessage::user("describe"));
+        store.save_session(&session).expect("save");
+        let message_id: i64 = db
+            .conn
+            .query_row(
+                "SELECT id FROM session_messages WHERE session_id = ?1 LIMIT 1",
+                rusqlite::params![session.id],
+                |r| r.get(0),
+            )
+            .expect("message id");
+        store
+            .attach_image(
+                message_id,
+                &crate::vision::ImageRef {
+                    key: "k".to_string(),
+                    media_type: "image/png".to_string(),
+                    sha256: "0".repeat(64),
+                },
+            )
+            .expect("attach");
+
+        // Delete session — attachments should cascade-drop with messages.
+        store.delete_session(&session.id).expect("delete");
+        let after = store
+            .attachments_for_message(message_id)
+            .expect("query empty");
+        assert!(after.is_empty());
     }
 }
