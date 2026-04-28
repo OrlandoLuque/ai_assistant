@@ -551,6 +551,24 @@ impl<'a> SqliteSessionStore<'a> {
         Ok(summaries)
     }
 
+    /// Return the auto-increment message ids for a session, ordered by
+    /// `sort_order` (i.e. insertion order). Pairs with [`Self::attach_image`]
+    /// / [`Self::attachments_for_message`] which key on those ids — without
+    /// this helper, integration callers have no public route from a
+    /// `ChatSession` back to the row ids they need to attach images to.
+    pub fn message_ids_for_session(&self, session_id: &str) -> Result<Vec<i64>> {
+        let mut stmt = self.db.conn.prepare(
+            "SELECT id FROM session_messages
+             WHERE session_id = ?1
+             ORDER BY sort_order ASC",
+        )?;
+        let ids = stmt
+            .query_map(rusqlite::params![session_id], |row| row.get::<_, i64>(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(ids)
+    }
+
     /// Attach an image reference to a specific message id (the auto-
     /// increment id from `session_messages`). Caller is responsible for
     /// having stored the image bytes elsewhere — this only persists the
