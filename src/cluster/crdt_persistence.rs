@@ -289,39 +289,45 @@ mod tests {
     use super::*;
     use std::thread;
 
-    fn temp_dir() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("crdt_test_{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        dir
+    /// Returns a unique-per-call temp directory.
+    ///
+    /// IMPORTANT: previous version wiped a shared `crdt_test_{pid}` dir on
+    /// every call, which races on Linux CI when tests run in parallel — one
+    /// test's `temp_dir()` call could `remove_dir_all` another test's
+    /// snapshot/WAL state mid-execution. Use `tempfile::TempDir` for
+    /// isolated, auto-cleaned-up directories per test.
+    fn temp_dir() -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .prefix("crdt_test_")
+            .tempdir()
+            .expect("create temp dir for crdt test")
     }
 
     #[test]
     fn test_persistence_new_creates_dirs() {
-        let dir = temp_dir().join("persist_new");
+        let tmp = temp_dir();
+        let dir = tmp.path().to_path_buf();
         let _p = CrdtPersistence::new(dir.clone());
         assert!(dir.join("snapshots").exists());
         assert!(dir.join("wal").exists());
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn test_write_and_load_snapshot() {
-        let dir = temp_dir().join("snap_test");
-        let p = CrdtPersistence::new(dir.clone());
+        let tmp = temp_dir();
+        let p = CrdtPersistence::new(tmp.path().to_path_buf());
 
         let data = b"test snapshot data";
         p.write_snapshot("counter", data).unwrap();
 
         let loaded = p.load_latest_snapshot("counter").unwrap();
         assert_eq!(loaded, Some(data.to_vec()));
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn test_load_latest_snapshot_returns_newest() {
-        let dir = temp_dir().join("snap_latest");
-        let p = CrdtPersistence::new(dir.clone());
+        let tmp = temp_dir();
+        let p = CrdtPersistence::new(tmp.path().to_path_buf());
 
         p.write_snapshot("counter", b"old").unwrap();
         thread::sleep(Duration::from_millis(5));
@@ -329,25 +335,21 @@ mod tests {
 
         let loaded = p.load_latest_snapshot("counter").unwrap();
         assert_eq!(loaded, Some(b"new".to_vec()));
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn test_load_snapshot_none_when_empty() {
-        let dir = temp_dir().join("snap_empty");
-        let p = CrdtPersistence::new(dir.clone());
+        let tmp = temp_dir();
+        let p = CrdtPersistence::new(tmp.path().to_path_buf());
 
         let loaded = p.load_latest_snapshot("nonexistent").unwrap();
         assert!(loaded.is_none());
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn test_wal_append_and_read() {
-        let dir = temp_dir().join("wal_test");
-        let p = CrdtPersistence::new(dir.clone());
+        let tmp = temp_dir();
+        let p = CrdtPersistence::new(tmp.path().to_path_buf());
 
         let entry = WalEntry {
             timestamp_ms: 1000,
@@ -365,25 +367,21 @@ mod tests {
         let entries = p.read_wal("counter").unwrap();
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].node_id, "node1");
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn test_wal_read_empty() {
-        let dir = temp_dir().join("wal_empty");
-        let p = CrdtPersistence::new(dir.clone());
+        let tmp = temp_dir();
+        let p = CrdtPersistence::new(tmp.path().to_path_buf());
 
         let entries = p.read_wal("nonexistent").unwrap();
         assert!(entries.is_empty());
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn test_compact_wal() {
-        let dir = temp_dir().join("wal_compact");
-        let p = CrdtPersistence::new(dir.clone());
+        let tmp = temp_dir();
+        let p = CrdtPersistence::new(tmp.path().to_path_buf());
 
         let entry = WalEntry {
             timestamp_ms: 1000,
@@ -400,14 +398,12 @@ mod tests {
 
         p.compact_wal("counter").unwrap();
         assert!(p.read_wal("counter").unwrap().is_empty());
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn test_prune_snapshots() {
-        let dir = temp_dir().join("snap_prune");
-        let p = CrdtPersistence::new(dir.clone());
+        let tmp = temp_dir();
+        let p = CrdtPersistence::new(tmp.path().to_path_buf());
 
         for i in 0..5 {
             p.write_snapshot("counter", format!("data{}", i).as_bytes())
@@ -421,8 +417,6 @@ mod tests {
         // Verify latest is still accessible
         let loaded = p.load_latest_snapshot("counter").unwrap();
         assert!(loaded.is_some());
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
