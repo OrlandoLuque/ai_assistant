@@ -195,21 +195,41 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.90.0
       - uses: Swatinem/rust-cache@v2
       - name: Run benchmarks
-        # Criterion benches (harness = false) emit bencher-format lines
-        # to stderr alongside progress messages. Merge streams and grep
-        # for the bencher pattern so github-action-benchmark sees only
-        # the rows it understands.
+        id: bench
+        # Criterion benches (harness = false). Capture full output to
+        # bench_full.log, then filter for the bencher-format rows the
+        # github-action-benchmark step expects.
         run: |
           set -o pipefail
           cargo bench --features full -- --output-format bencher 2>&1 \
             | tee bench_full.log \
             | grep -E '^test .* \.\.\. bench:' > output.txt || true
-          echo "--- bench output (filtered) ---"
+          echo "===== bench_full.log: first 80 lines ====="
+          head -80 bench_full.log || true
+          echo "===== bench_full.log: last 80 lines ====="
+          tail -80 bench_full.log || true
+          echo "===== bench_full.log: any line matching 'bench:' ====="
+          grep -n 'bench:' bench_full.log | head -20 || true
+          echo "===== bench_full.log: any line starting with 'test ' ====="
+          grep -nE '^test ' bench_full.log | head -20 || true
+          echo "===== output.txt (filtered) ====="
           cat output.txt
-          if [ ! -s output.txt ]; then
-            echo "::warning::No bencher-format lines captured; skipping upload step is harmless."
+          if [ -s output.txt ]; then
+            echo "have_output=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "have_output=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::No bencher-format lines captured; upload step will skip."
           fi
+      - name: Upload bench log artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench_full_log
+          path: bench_full.log
+          if-no-files-found: warn
+          retention-days: 7
       - name: Store benchmark results
+        if: steps.bench.outputs.have_output == 'true'
         uses: benchmark-action/github-action-benchmark@v1
         with:
           tool: 'cargo'
