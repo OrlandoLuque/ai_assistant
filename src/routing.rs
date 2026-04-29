@@ -285,11 +285,18 @@ impl ModelRouter {
 
         // Gemma. More specific patterns first so `find()` prefers them.
         // gemma3 (4B/12B/27B) is multimodal with 128K context.
+        // Vision score is intentionally below the Qwen2.5-VL profiles: in
+        // OCR / document / chart / grounding benchmarks Qwen2.5-VL leads
+        // by ~10–15 points. Gemma 3 still earns a vision profile because
+        // its 4B variant is one of the few decent edge / on-device VLMs
+        // (better latency than Qwen2.5-VL-3B on CPU/iGPU). See
+        // `curated_models.rs` for the matching "edge tier" entries.
         self.profiles.push(
             ModelCapabilityProfile::new("gemma3", 128_000, 84)
                 .with_task_score(TaskType::Chat, 86)
                 .with_task_score(TaskType::Technical, 82)
-                .with_task_score(TaskType::Vision, 80)
+                .with_task_score(TaskType::Vision, 75)
+                .with_task_score(TaskType::FastResponse, 84)
                 .with_task_score(TaskType::LongContext, 85)
                 .with_vision(),
         );
@@ -427,11 +434,29 @@ impl ModelRouter {
                 .with_vision(),
         );
 
-        // Qwen2-VL / Qwen-VL family
+        // Qwen2.5-VL / Qwen2-VL / Qwen-VL family. Most specific first so
+        // `find()` resolves to the strongest match (qwen2.5-vl ⊂ qwen2-vl
+        // ⊂ qwen-vl as substrings).
+        //
+        // Qwen2.5-VL is the current open-weight SOTA for vision: leads
+        // OCRBench / DocVQA / ChartQA / MMMU vs. all other open VLMs and
+        // matches GPT-4o on several. Native visual grounding (bbox /
+        // referring expressions) and video. Apache-2.0 license. The
+        // Vision score (90) deliberately exceeds gemma3 (75) and the
+        // older qwen2-vl entry (86) so `select_best(Vision)` prefers it
+        // when both are registered.
         self.profiles.push(
-            ModelCapabilityProfile::new("qwen2-vl", 32_000, 82)
-                .with_task_score(TaskType::Vision, 84)
-                .with_task_score(TaskType::Chat, 80)
+            ModelCapabilityProfile::new("qwen2.5-vl", 128_000, 88)
+                .with_task_score(TaskType::Vision, 90)
+                .with_task_score(TaskType::Chat, 84)
+                .with_task_score(TaskType::Analysis, 86)
+                .with_task_score(TaskType::LongContext, 85)
+                .with_vision(),
+        );
+        self.profiles.push(
+            ModelCapabilityProfile::new("qwen2-vl", 32_000, 84)
+                .with_task_score(TaskType::Vision, 86)
+                .with_task_score(TaskType::Chat, 82)
                 .with_vision(),
         );
         self.profiles.push(
@@ -1076,5 +1101,42 @@ mod tests {
             "expected gpt-4o or claude-3.5-sonnet, got {}",
             best.name
         );
+    }
+
+    #[test]
+    fn test_qwen2_5_vl_beats_gemma3_for_vision() {
+        // Locking the policy decision: among open-weight VLMs, Qwen2.5-VL
+        // is preferred over Gemma 3 for vision (OCR / docs / grounding).
+        // Gemma 3 stays better only for text Chat tasks. Update the
+        // profiles in `register_default_profiles` carefully if this
+        // ordering ever changes.
+        let router = ModelRouter::new();
+        let models = vec![
+            ModelInfo::new("gemma3:12b", AiProvider::Ollama),
+            ModelInfo::new("qwen2.5-vl:7b", AiProvider::Ollama),
+        ];
+        let req = ModelRequirements::for_task(TaskType::Vision);
+        let best = router
+            .select_best(&models, &req)
+            .expect("vision-capable pick");
+        assert_eq!(
+            best.name, "qwen2.5-vl:7b",
+            "Qwen2.5-VL must outrank Gemma 3 on Vision"
+        );
+    }
+
+    #[test]
+    fn test_qwen2_5_vl_profile_resolves_to_specific_match() {
+        // qwen2.5-vl as a substring is also matched by qwen2-vl and
+        // qwen-vl. Confirm that a model id containing "qwen2.5-vl"
+        // resolves to the most specific profile (Vision: 90), not the
+        // older qwen2-vl one (Vision: 86).
+        let router = ModelRouter::new();
+        let p = router
+            .get_profile("qwen2.5-vl-7b-instruct")
+            .expect("qwen2.5-vl profile");
+        assert!(p.supports_vision);
+        assert_eq!(p.get_task_score(TaskType::Vision), 90);
+        assert!(p.context_size >= 128_000);
     }
 }

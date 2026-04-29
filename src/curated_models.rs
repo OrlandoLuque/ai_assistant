@@ -176,6 +176,41 @@ const CURATED_MODELS: &[CuratedModel] = &[
         requirements: None,
     },
     // ------------------------------------------------------------------
+    // Vision (multimodal) — llama.cpp GGUF + mmproj projector files.
+    // Order matters in pickers: Qwen2.5-VL is the current open-weight
+    // SOTA (OCR / docs / grounding) and should be the default; Gemma 3
+    // 4B is the edge tier — slower-but-decent VLM that fits on iGPU /
+    // CPU-only laptops where Qwen would not.
+    // ------------------------------------------------------------------
+    CuratedModel {
+        provider: AiProvider::LlamaCpp,
+        id: "Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf",
+        display_name: "Qwen2.5-VL 7B Instruct (Q4_K_M)",
+        description:
+            "SOTA open-weight vision-language model. Strong OCR, document, chart, and visual grounding. Apache-2.0. Pair with the matching mmproj.",
+        parameters: "7B",
+        approx_size: "~4.7 GB + ~1.4 GB mmproj",
+        quantization: "Q4_K_M",
+        source_url: Some("https://huggingface.co/bartowski/Qwen2.5-VL-7B-Instruct-GGUF"),
+        requirements: Some(
+            "Launch with --mmproj <projector.gguf> from the same repo; pass images as base64.",
+        ),
+    },
+    CuratedModel {
+        provider: AiProvider::LlamaCpp,
+        id: "gemma-3-4b-it-Q4_K_M.gguf",
+        display_name: "Gemma 3 4B Instruct (Q4_K_M, vision)",
+        description:
+            "Edge-tier multimodal — runs on iGPU / CPU-only laptops where Qwen2.5-VL is too heavy. Lower OCR/doc accuracy than Qwen.",
+        parameters: "4B",
+        approx_size: "~2.6 GB + ~0.8 GB mmproj",
+        quantization: "Q4_K_M",
+        source_url: Some("https://huggingface.co/bartowski/google_gemma-3-4b-it-GGUF"),
+        requirements: Some(
+            "Launch with --mmproj <projector.gguf>. Use only when 7B+ models do not fit; otherwise prefer Qwen2.5-VL.",
+        ),
+    },
+    // ------------------------------------------------------------------
     // Ollama — by name (matches `ollama pull <name>`)
     // ------------------------------------------------------------------
     CuratedModel {
@@ -221,6 +256,36 @@ const CURATED_MODELS: &[CuratedModel] = &[
         quantization: "Q4_0",
         source_url: Some("https://ollama.com/library/deepseek-coder"),
         requirements: None,
+    },
+    // ------------------------------------------------------------------
+    // Ollama — vision (multimodal) models. Same tiering as the LlamaCpp
+    // entries above: Qwen2.5-VL is the recommended default, Gemma 3 is
+    // the edge fallback. Ollama bundles the projector automatically so
+    // there is no separate `--mmproj` step.
+    // ------------------------------------------------------------------
+    CuratedModel {
+        provider: AiProvider::Ollama,
+        id: "qwen2.5vl:7b",
+        display_name: "Qwen2.5-VL 7B (vision)",
+        description:
+            "Recommended local vision model. SOTA on OCR / docs / charts / grounding among open weights.",
+        parameters: "7B",
+        approx_size: "~6 GB",
+        quantization: "Q4_K_M",
+        source_url: Some("https://ollama.com/library/qwen2.5vl"),
+        requirements: Some("Pull with `ollama pull qwen2.5vl:7b`. Pass images via the multimodal API."),
+    },
+    CuratedModel {
+        provider: AiProvider::Ollama,
+        id: "gemma3:4b",
+        display_name: "Gemma 3 4B (vision, edge tier)",
+        description:
+            "Smaller multimodal — fits on integrated GPU / CPU-only laptops. Use when Qwen2.5-VL is too heavy.",
+        parameters: "4B",
+        approx_size: "~3.3 GB",
+        quantization: "Q4_K_M",
+        source_url: Some("https://ollama.com/library/gemma3"),
+        requirements: Some("Pull with `ollama pull gemma3:4b`. Lower OCR accuracy than qwen2.5vl."),
     },
     // ------------------------------------------------------------------
     // vLLM — HuggingFace repo IDs (GPU-backed, OpenAI-compatible)

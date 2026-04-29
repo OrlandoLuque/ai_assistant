@@ -650,9 +650,16 @@ impl VisionCapabilities {
                 "llava-phi3",
                 "moondream",
                 "minicpm-v",
+                // Qwen2.5-VL — current open-weight SOTA, preferred over
+                // gemma3 vision for OCR / docs / grounding. Substrings:
+                // qwen2.5-vl ⊂ qwen2-vl ⊂ qwen-vl.
+                "qwen2.5-vl",
+                "qwen2-vl",
+                "qwen-vl",
+                // Gemma 3 multimodal — edge / on-device tier.
+                "gemma3",
                 // Others
                 "cogvlm",
-                "qwen-vl",
                 "yi-vl",
             ],
         }
@@ -1847,7 +1854,7 @@ pub mod agent_bridge {
         if !caps.supports_vision(&config.selected_model) {
             return Err(anyhow!(
                 "model '{}' is not in the known vision-capable set; \
-                 select a vision model (gpt-4o, claude-3-*, llava, gemini, qwen-vl, ...)",
+                 select a vision model (gpt-4o, claude-3-*, qwen2.5-vl, gemma3, llava, gemini, ...)",
                 config.selected_model
             ));
         }
