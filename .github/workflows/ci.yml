@@ -196,12 +196,15 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Run benchmarks
         id: bench
-        # Criterion benches (harness = false). Capture full output to
-        # bench_full.log, then filter for the bencher-format rows the
-        # github-action-benchmark step expects.
+        # Criterion benches (harness = false). The `--benches` flag is
+        # essential: without it, `cargo bench` also runs the lib unit
+        # tests (libtest harness), which reject `--output-format` and
+        # abort before any criterion bench gets to run.
+        # Capture full output to bench_full.log, then filter for the
+        # bencher-format rows the github-action-benchmark step expects.
         run: |
           set -o pipefail
-          cargo bench --features full -- --output-format bencher 2>&1 \
+          cargo bench --features full --benches -- --output-format bencher 2>&1 \
             | tee bench_full.log \
             | grep -E '^test .* \.\.\. bench:' > output.txt || true
           echo "===== bench_full.log: first 80 lines ====="
