@@ -13,9 +13,20 @@
 #![cfg(feature = "vision")]
 
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use ai_assistant::embedded_server::{EmbeddedLlamaServer, LlamaServerConfig};
+
+/// Tests that read or mutate `MOCK_LLAMA_DELAY_MS` (a process-wide
+/// env var inherited by spawned mock children) must serialize with
+/// each other. Without this, parallel test execution can pick up the
+/// 60 s warm-up delay set by the timeout test and starve unrelated
+/// spawns of `wait_until_ready`.
+fn env_serial_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
 
 /// Path to the test mock binary built by Cargo.
 fn mock_binary() -> PathBuf {
@@ -47,6 +58,7 @@ fn rand_suffix() -> String {
 
 #[test]
 fn spawns_mock_server_and_health_returns_ok() {
+    let _guard = env_serial_lock().lock().unwrap_or_else(|e| e.into_inner());
     let cfg = LlamaServerConfig::builder(mock_binary(), dummy_model_file())
         .host("127.0.0.1")
         .port(0)
@@ -63,6 +75,7 @@ fn spawns_mock_server_and_health_returns_ok() {
 
 #[test]
 fn drop_kills_child_process() {
+    let _guard = env_serial_lock().lock().unwrap_or_else(|e| e.into_inner());
     let cfg = LlamaServerConfig::builder(mock_binary(), dummy_model_file())
         .port(0)
         .ready_timeout(Duration::from_secs(10))
@@ -98,6 +111,7 @@ fn wait_until_ready_returns_timeout_when_health_never_replies() {
     // Point at a real binary that exits immediately so /health never
     // answers. We use the mock with MOCK_LLAMA_DELAY_MS huge to force
     // /health to return 503 forever within the test window.
+    let _guard = env_serial_lock().lock().unwrap_or_else(|e| e.into_inner());
     std::env::set_var("MOCK_LLAMA_DELAY_MS", "60000");
     let cfg = LlamaServerConfig::builder(mock_binary(), dummy_model_file())
         .port(0)
@@ -124,6 +138,7 @@ fn wait_until_ready_returns_timeout_when_health_never_replies() {
 
 #[test]
 fn auto_picked_port_is_unique_per_call() {
+    let _guard = env_serial_lock().lock().unwrap_or_else(|e| e.into_inner());
     let cfg1 = LlamaServerConfig::builder(mock_binary(), dummy_model_file())
         .port(0)
         .build();
@@ -141,6 +156,7 @@ fn auto_picked_port_is_unique_per_call() {
 
 #[test]
 fn binary_filename_is_safe_for_logs() {
+    let _guard = env_serial_lock().lock().unwrap_or_else(|e| e.into_inner());
     let cfg = LlamaServerConfig::builder(mock_binary(), dummy_model_file())
         .port(0)
         .build();
@@ -163,6 +179,7 @@ fn explicit_port_is_honoured_when_above_threshold() {
     // Find a free port via the OS, then ask the launcher to use that
     // exact value. Confirms that explicit `port(N)` is not silently
     // replaced.
+    let _guard = env_serial_lock().lock().unwrap_or_else(|e| e.into_inner());
     let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("probe bind");
     let chosen = probe.local_addr().expect("local_addr").port();
     drop(probe);
