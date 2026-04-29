@@ -195,8 +195,20 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.90.0
       - uses: Swatinem/rust-cache@v2
       - name: Run benchmarks
-        # Criterion benches (harness = false) compile on stable.
-        run: cargo bench --features full -- --output-format bencher | tee output.txt
+        # Criterion benches (harness = false) emit bencher-format lines
+        # to stderr alongside progress messages. Merge streams and grep
+        # for the bencher pattern so github-action-benchmark sees only
+        # the rows it understands.
+        run: |
+          set -o pipefail
+          cargo bench --features full -- --output-format bencher 2>&1 \
+            | tee bench_full.log \
+            | grep -E '^test .* \.\.\. bench:' > output.txt || true
+          echo "--- bench output (filtered) ---"
+          cat output.txt
+          if [ ! -s output.txt ]; then
+            echo "::warning::No bencher-format lines captured; skipping upload step is harmless."
+          fi
       - name: Store benchmark results
         uses: benchmark-action/github-action-benchmark@v1
         with:
