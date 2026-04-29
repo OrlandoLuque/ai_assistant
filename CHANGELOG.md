@@ -5,7 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] - v65 (2026-04-28) — V90.26: multimodal projector (mmproj) support (0.2.51)
+## [Unreleased] - v66 (2026-04-29) — V90.27: embedded llama-server launcher + CI fixes (0.2.52)
+
+### Added
+- **`embedded_server` module** (cfg-gated `vision`) — `EmbeddedLlamaServer`
+  spawns and supervises a local `llama-server` (or compatible binary),
+  waits for `/health`, and kills the child on `Drop`. Pairs with
+  `mmproj`: `LlamaServerConfigBuilder::mmproj(path)` is validated through
+  `MultimodalProjector::from_path`. Auto-picks a free port when
+  `port(0)` is requested.
+- **`LlamaServerConfig` + `LlamaServerConfigBuilder`** — fluent builder
+  for binary path, model path, optional mmproj, host, port, ctx-size,
+  GPU layers, extra args, ready-timeout, capture-output toggle.
+- **`build_command_args(&config, port)`** — pure function exposing the
+  argv that would be passed to `Command::args`. Useful for callers that
+  want to log the planned spawn before committing.
+- **`LaunchError`** — typed error variants: `BinaryNotFound`,
+  `ModelNotFound`, `MmprojValidation` (wraps `MmprojValidationError`),
+  `PathTraversal { field }`, `ArgContainsNul`, `InvalidHost`,
+  `PortTooLow`, `SpawnFailed`, `ChildExitedEarly`, `Timeout`. Each
+  `Display` impl renders an actionable message; no full paths leaked.
+- **`mock_llama_server` test binary** — declared as `[[bin]]` with
+  `required-features = ["vision"]`, exposed to integration tests via
+  `env!("CARGO_BIN_EXE_mock_llama_server")`.
+- **`tests/embedded_server_integration.rs`** — 6 real-process tests
+  (spawn / health / Drop kill / timeout / unique auto-port / explicit
+  port honoured / safe filename for logs).
+- **10 unit tests** in `embedded_server::tests` covering argv
+  construction, all rejection paths, and `LaunchError::Display`.
+
+### Changed
+- **`Cargo.toml`** — added `[profile.bench]` inheriting `release-fast`
+  so criterion benches compile (default release uses `panic = "abort"`
+  which is incompatible with the criterion harness).
+- **CI Security Audit** — replaced `rustsec/audit-check@v2` with manual
+  `cargo install cargo-audit` + explicit `--ignore` flags for four
+  advisories living in transitive deps we cannot bump:
+  `RUSTSEC-2025-0141` (bincode unmaintained), `RUSTSEC-2024-0436`
+  (paste unmaintained), `RUSTSEC-2025-0134` (rustls-pemfile
+  unmaintained), `RUSTSEC-2026-0002` (lru unsound IterMut, transitive
+  via tantivy).
+
+### Test counts
+- `embedded_server::tests`: 10 unit tests.
+- `tests/embedded_server_integration.rs`: 6 integration tests.
+- **Total new vision-gated tests in V90.27: 16**.
+
+## [v65] - 2026-04-28 — V90.26: multimodal projector (mmproj) support (0.2.51)
 
 ### Added
 - **`mmproj` module** (cfg-gated `vision`) — `MultimodalProjector` handle

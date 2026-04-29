@@ -1192,6 +1192,45 @@ Exit code `0` means every gate passed; `2` means at least one failed
   request bodies (the OpenAI-compat schema has no field for it). The
   server must be started with the projector before requests arrive.
 
+### Embedded launcher — `EmbeddedLlamaServer` (V90.27)
+
+If you want the library itself to spawn and supervise `llama-server`
+(rather than starting it externally), use `embedded_server`:
+
+```rust
+use std::time::Duration;
+use ai_assistant::{EmbeddedLlamaServer, LlamaServerConfig};
+
+let config = LlamaServerConfig::builder(
+        "/usr/local/bin/llama-server",
+        "/models/llava-7b.Q4_K_M.gguf",
+    )
+    .mmproj("/models/llava/mmproj-model-f16.gguf")
+    .host("127.0.0.1")
+    .port(0)                     // 0 → auto-pick a free port
+    .ctx_size(4096)
+    .n_gpu_layers(35)
+    .ready_timeout(Duration::from_secs(30))
+    .build();
+
+let mut server = EmbeddedLlamaServer::start(config)?;
+server.wait_until_ready(None)?;  // polls /health
+let base_url = server.base_url(); // e.g. "http://127.0.0.1:42171"
+// ... point your AiConfig at base_url and run inference ...
+// `server` killed automatically on Drop, even if a panic unwinds.
+```
+
+Validation enforced before spawn:
+- Path traversal (`..`) rejected for binary, model, and mmproj paths.
+- NUL bytes rejected in `extra_args` and `host`.
+- File existence + regular-file checks for binary and model.
+- mmproj validated through `MultimodalProjector::from_path`.
+- Explicit ports below 1024 rejected (use `0` to auto-pick).
+
+`EmbeddedLlamaServer::Drop` kills the child and waits — no zombies.
+The launcher does not retry on crash; check `is_running()` and
+restart explicitly if you need supervision.
+
 ---
 
 ## 20. Structured Output

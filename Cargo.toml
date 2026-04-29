@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.51"
+version = "0.2.52"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -588,6 +588,14 @@ name = "ai_proxy"
 path = "src/bin/ai_proxy.rs"
 required-features = ["server-axum"]
 
+# Tiny in-process stand-in for `llama-server`. Used exclusively by
+# tests/embedded_server_integration.rs via env!("CARGO_BIN_EXE_mock_llama_server").
+# Vision-gated so it only compiles when EmbeddedLlamaServer compiles.
+[[bin]]
+name = "mock_llama_server"
+path = "src/bin/mock_llama_server.rs"
+required-features = ["vision"]
+
 [[bin]]
 name = "ai_gui"
 path = "src/bin/ai_gui.rs"
@@ -925,6 +933,13 @@ inherits = "release"
 opt-level = 3
 # Keep panic unwinding for better debugging
 panic = "unwind"
+
+# Criterion benches require panic = "unwind" because the harness catches
+# panics across iterations. Inheriting from release would break with
+# panic = "abort"; inherit from release-fast (opt-level 3 + unwind) so
+# bench numbers remain representative of optimized release-fast code.
+[profile.bench]
+inherits = "release-fast"
 
 # === Protected release profile (anti-reverse engineering) ===
 [profile.release-protected]

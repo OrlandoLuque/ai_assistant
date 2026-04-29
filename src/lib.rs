@@ -1215,6 +1215,15 @@ pub mod mmproj;
 #[cfg(feature = "vision")]
 pub use mmproj::{MmprojValidationError, MultimodalProjector, GGUF_MAGIC, MIN_PROJECTOR_BYTES};
 
+#[cfg(feature = "vision")]
+pub mod embedded_server;
+
+#[cfg(feature = "vision")]
+pub use embedded_server::{
+    build_command_args, EmbeddedLlamaServer, LaunchError, LlamaServerConfig,
+    LlamaServerConfigBuilder,
+};
+
 // =============================================================================
 // EMBEDDINGS FEATURE
 // =============================================================================
