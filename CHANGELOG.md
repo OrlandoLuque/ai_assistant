@@ -51,6 +51,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tests/embedded_server_integration.rs`: 6 integration tests.
 - **Total new vision-gated tests in V90.27: 16**.
 
+### Follow-ups (2026-04-29) — CI greening + routing realignment
+
+#### Fixed
+- **Flaky `drop_kills_child_process`** — `tests/embedded_server_integration.rs`
+  serialized via a file-scoped `Mutex<()>` behind `OnceLock`. Sibling
+  tests were inheriting `MOCK_LLAMA_DELAY_MS` set by
+  `wait_until_ready_returns_timeout_when_health_never_replies` because
+  cargo's default parallel runner does not isolate process env vars.
+- **CI Benchmarks job: empty `output.txt`** — root cause was that
+  `cargo bench` runs every target with `bench = true` by default
+  (lib + bins + benches). Lib + bin libtest harnesses reject criterion's
+  `--output-format bencher` flag and abort the run before any criterion
+  bench executes. Fix: `bench = false` on the `[lib]` block and on every
+  `[[bin]]` target in `Cargo.toml` (29 bins). `cargo bench` now invokes
+  only the criterion benches and produces bencher-format rows
+  consistently in CI.
+- **CI Benchmarks job: stderr lost** — `cargo bench` output is captured
+  into `bench_full.log` via `2>&1 | tee` and uploaded as an artifact
+  (`bench_full_log`) regardless of outcome; the bencher-format rows are
+  filtered into `output.txt` and a `have_output` step output guards the
+  `github-action-benchmark` upload so an empty result file logs a
+  `::warning::` instead of failing the job.
+
+#### Changed
+- **Routing / VLM preference: Qwen2.5-VL > Gemma 3** — open-weight VLM
+  landscape (early 2026) puts Qwen2.5-VL at the top for OCRBench /
+  DocVQA / ChartQA / MMMU / grounding; Gemma 3 is competitive only at
+  the edge tier. The library now reflects that:
+  - `src/routing.rs`: new `qwen2.5-vl` profile (ctx 128 000, baseline 88,
+    Vision 90, Chat 84, Analysis 86, LongContext 85). `qwen2-vl` baseline
+    bumped 82 → 84, Vision 84 → 86. `gemma3` reframed as edge tier
+    (Vision 80 → 75, `FastResponse: 84` added). Substring resolution is
+    most-specific-first: `qwen2.5-vl ⊂ qwen2-vl ⊂ qwen-vl`.
+  - `src/vision.rs`: `VisionCapabilities` recognizes `qwen2.5-vl`,
+    `qwen2-vl`, `qwen-vl`, and `gemma3`. Error message updated.
+  - `src/curated_models.rs`: 4 new entries —
+    `Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf` (recommended, ~4.7 GB +
+    ~1.4 GB mmproj) and `gemma-3-4b-it-Q4_K_M.gguf` (edge tier) for
+    `LlamaCpp`; `qwen2.5vl:7b` (recommended) and `gemma3:4b` (edge tier)
+    for `Ollama`.
+  - 2 new routing tests pin the choice:
+    `test_qwen2_5_vl_beats_gemma3_for_vision`,
+    `test_qwen2_5_vl_profile_resolves_to_specific_match`.
+
 ## [v65] - 2026-04-28 — V90.26: multimodal projector (mmproj) support (0.2.51)
 
 ### Added
