@@ -44,6 +44,11 @@ exclude = [
 # staticlib outputs are essentially empty unless --features ffi is on.
 [lib]
 crate-type = ["rlib", "cdylib", "staticlib"]
+# Skip the libtest harness during `cargo bench`. Without this, cargo
+# also tries to run the lib as a benchmark target; libtest does not
+# accept `--output-format bencher` and aborts the whole job before
+# our criterion benches under benches/*.rs ever run.
+bench = false
 
 [features]
 # Default: full functionality (code has interdependencies)
@@ -544,44 +549,53 @@ libc = "0.2"
 name = "ai_assistant_server"
 path = "src/bin/ai_assistant_server.rs"
 required-features = ["full"]
+bench = false
 
 [[bin]]
 name = "ai_test_harness"
 path = "src/bin/ai_test_harness.rs"
 required-features = ["full", "browser"]
+bench = false
 
 [[bin]]
 name = "kpkg_tool"
 path = "src/bin/kpkg_tool.rs"
 required-features = ["rag"]
+bench = false
 
 [[bin]]
 name = "ai_logs"
 path = "src/bin/ai_logs.rs"
 required-features = ["distributed-network"]
+bench = false
 
 [[bin]]
 name = "ai_logs_gui"
 path = "src/bin/ai_logs_gui.rs"
 required-features = ["gui-logs"]
+bench = false
 
 [[bin]]
 name = "ai_cli"
 path = "src/bin/ai_cli.rs"
+bench = false
 
 [[bin]]
 name = "ai_assistant_cli"
 path = "src/bin/ai_assistant_cli.rs"
+bench = false
 
 [[bin]]
 name = "ai_assistant_standalone"
 path = "src/bin/ai_assistant_standalone.rs"
 required-features = ["full", "server-axum"]
+bench = false
 
 [[bin]]
 name = "ai_cluster_node"
 path = "src/bin/ai_cluster_node.rs"
 required-features = ["full", "server-cluster"]
+bench = false
 
 [[bin]]
 name = "ai_proxy"
@@ -591,55 +605,66 @@ required-features = ["server-axum"]
 # Tiny in-process stand-in for `llama-server`. Used exclusively by
 # tests/embedded_server_integration.rs via env!("CARGO_BIN_EXE_mock_llama_server").
 # Vision-gated so it only compiles when EmbeddedLlamaServer compiles.
+bench = false
 [[bin]]
 name = "mock_llama_server"
 path = "src/bin/mock_llama_server.rs"
 required-features = ["vision"]
+bench = false
 
 [[bin]]
 name = "ai_gui"
 path = "src/bin/ai_gui.rs"
 required-features = ["gui"]
+bench = false
 
 [[bin]]
 name = "ai_gui-pro"
 path = "src/bin/ai_gui-pro.rs"
 required-features = ["gui-pro"]
+bench = false
 
 [[bin]]
 name = "ai_virtual_mic"
 path = "src/bin/ai_virtual_mic.rs"
 required-features = ["audio-io"]
+bench = false
 
 [[bin]]
 name = "ai_virtual_mic_host"
 path = "src/bin/ai_virtual_mic_host.rs"
 required-features = ["audio"]
+bench = false
 
 [[bin]]
 name = "ai_virtual_cam"
 path = "src/bin/ai_virtual_cam.rs"
 required-features = ["video-io"]
+bench = false
 
 [[bin]]
 name = "ai_setup"
 path = "src/bin/ai_setup.rs"
 required-features = ["full"]
+bench = false
 
 [[bin]]
 name = "ai_optimize"
 path = "src/bin/ai_optimize.rs"
 required-features = ["full"]
+bench = false
 
 [[bin]]
 name = "ai_gpu_share"
 path = "src/bin/ai_gpu_share.rs"
 required-features = ["full", "gpu-sharing"]
+bench = false
 
 [[bin]]
 name = "ai_setup_gui"
 path = "src/bin/ai_setup_gui.rs"
 required-features = ["gui"]
+bench = false
 
 [[bin]]
 name = "ai_jobs"
@@ -647,31 +672,37 @@ path = "src/bin/ai_jobs.rs"
 required-features = ["scheduler"]
 
 # === V96: Self-Learning auditor binaries ===
+bench = false
 
 [[bin]]
 name = "ai_skills"
 path = "src/bin/ai_skills.rs"
 required-features = ["skill-forge"]
+bench = false
 
 [[bin]]
 name = "ai_skills_gui"
 path = "src/bin/ai_skills_gui.rs"
 required-features = ["skill-forge", "gui-pro"]
+bench = false
 
 [[bin]]
 name = "ai_prompt_synth"
 path = "src/bin/ai_prompt_synth.rs"
 required-features = ["prompt-synthesis"]
+bench = false
 
 [[bin]]
 name = "ai_prompt_synth_gui"
 path = "src/bin/ai_prompt_synth_gui.rs"
 required-features = ["prompt-synthesis", "gui-pro"]
+bench = false
 
 [[bin]]
 name = "ai_feedback"
 path = "src/bin/ai_feedback.rs"
 required-features = ["feedback-loop"]
+bench = false
 
 [[bin]]
 name = "ai_feedback_gui"
@@ -679,16 +710,19 @@ path = "src/bin/ai_feedback_gui.rs"
 required-features = ["feedback-loop", "gui-pro"]
 
 # === V97: PromptBreeder auditor binaries ===
+bench = false
 
 [[bin]]
 name = "ai_breeder"
 path = "src/bin/ai_breeder.rs"
 required-features = ["prompt-breeder"]
+bench = false
 
 [[bin]]
 name = "ai_breeder_gui"
 path = "src/bin/ai_breeder_gui.rs"
 required-features = ["prompt-breeder", "gui-pro"]
+bench = false
 
 [[example]]
 name = "autonomous_agent"
