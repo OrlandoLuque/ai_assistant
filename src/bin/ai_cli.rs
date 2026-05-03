@@ -134,6 +134,7 @@ fn main() -> ExitCode {
         "tool" => cmd_tool(&command_args[1..]),
         "workflow" => cmd_workflow(&command_args[1..]),
         "benchmark" => cmd_benchmark(&command_args[1..]),
+        "recipes" => cmd_recipes(&command_args[1..]),
         other => {
             eprintln!("Error: unknown command '{}'\n", other);
             print_usage();
@@ -249,6 +250,16 @@ fn print_usage() {
     println!(
         "                                     Run the benchmark and sweep correctness threshold"
     );
+    println!("  recipes <subcommand>           Recipes — declarative YAML workflows (Phase A.1)");
+    println!("    list [--dir <path>]              List discovered recipes");
+    println!("    show <name>                      Show recipe definition");
+    println!("    validate <name|path>             Validate schema (recipes/v1)");
+    println!("    init <name> [--out <path>]       Scaffold a new recipe template");
+    println!("    run <name> [--var k=v ...] [--provider X] [--model Y]");
+    println!("                                     Execute a recipe end-to-end");
+    println!("    share <name> [--out <path>]      Produce a portable single-file bundle");
+    println!("    --user-dir <path>                Override user-global recipe dir");
+    println!("    --project-dir <path>             Override project recipe dir");
     println!("  test [options]                 Run tests (lib or harness), save results");
     println!("    --all                          Run test harness (all categories)");
     println!("    --category <name>              Run specific harness category");
@@ -3571,6 +3582,375 @@ fn cmd_benchmark_calibrate(args: &[String]) -> ExitCode {
             ai_assistant::eval_benchmarks::report::calibration_to_text(&calibration)
         );
     }
+    ExitCode::SUCCESS
+}
+
+// =============================================================================
+// Recipes (Phase A.1) — declarative YAML workflows
+// =============================================================================
+
+fn cmd_recipes(args: &[String]) -> ExitCode {
+    if args.is_empty() || args[0] == "--help" || args[0] == "-h" {
+        eprintln!("Usage: ai_cli recipes <list|show|validate|init|run|share> [options]");
+        eprintln!();
+        eprintln!("Subcommands:");
+        eprintln!("  list                          List discovered recipes");
+        eprintln!("  show <name>                   Show recipe definition");
+        eprintln!("  validate <name|path>          Validate schema");
+        eprintln!("  init <name> [--out <path>]    Scaffold a new recipe template");
+        eprintln!("  run <name> [--var k=v ...]    Execute a recipe end-to-end");
+        eprintln!("  share <name> [--out <path>]   Produce a portable bundle");
+        eprintln!();
+        eprintln!("Options:");
+        eprintln!("  --user-dir <path>             Override user-global recipes dir");
+        eprintln!("  --project-dir <path>          Override project recipes dir");
+        eprintln!("  --provider <name>             Provider for prompt steps (default: ollama)");
+        eprintln!("  --model <name>                Model name");
+        eprintln!("  --url <url>                   Provider URL");
+        return ExitCode::from(2);
+    }
+    match args[0].as_str() {
+        "list" => cmd_recipes_list(&args[1..]),
+        "show" => cmd_recipes_show(&args[1..]),
+        "validate" => cmd_recipes_validate(&args[1..]),
+        "init" => cmd_recipes_init(&args[1..]),
+        "run" => cmd_recipes_run(&args[1..]),
+        "share" => cmd_recipes_share(&args[1..]),
+        other => {
+            eprintln!("Unknown recipes subcommand: '{}'", other);
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn recipe_roots(args: &[String]) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Some(p) = get_arg(args, "--user-dir") {
+        roots.push(PathBuf::from(p));
+    } else if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))
+    {
+        let mut p = PathBuf::from(home);
+        p.push(".config");
+        p.push("ai_assistant");
+        p.push("recipes");
+        roots.push(p);
+    }
+    if let Some(p) = get_arg(args, "--project-dir") {
+        roots.push(PathBuf::from(p));
+    } else {
+        let mut p = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        p.push(".ai_assistant");
+        p.push("recipes");
+        roots.push(p);
+    }
+    roots
+}
+
+fn get_arg(args: &[String], flag: &str) -> Option<String> {
+    let mut iter = args.iter();
+    while let Some(a) = iter.next() {
+        if a == flag {
+            return iter.next().cloned();
+        }
+    }
+    None
+}
+
+fn cmd_recipes_list(args: &[String]) -> ExitCode {
+    let roots = recipe_roots(args);
+    let cfg = ai_assistant::RecipeConfig::default();
+    let reg = ai_assistant::discover_recipes(&roots, &cfg);
+    if reg.is_empty() {
+        println!("No recipes found in:");
+        for r in &roots {
+            println!("  {}", r.display());
+        }
+        if !reg.load_errors.is_empty() {
+            println!("\nLoad errors:");
+            for (p, e) in &reg.load_errors {
+                println!("  {} — {}", p.display(), e);
+            }
+        }
+        return ExitCode::SUCCESS;
+    }
+    println!("{:<24} {:<10} {}", "NAME", "VERSION", "DESCRIPTION");
+    for (name, r) in reg.iter() {
+        println!(
+            "{:<24} {:<10} {}",
+            name,
+            r.version.as_deref().unwrap_or("-"),
+            r.description.as_deref().unwrap_or("")
+        );
+    }
+    if !reg.load_errors.is_empty() {
+        eprintln!(
+            "\n  {} recipe(s) failed to load (use --debug)",
+            reg.load_errors.len()
+        );
+    }
+    ExitCode::SUCCESS
+}
+
+fn cmd_recipes_show(args: &[String]) -> ExitCode {
+    let Some(name) = args.first() else {
+        eprintln!("Usage: ai_cli recipes show <name>");
+        return ExitCode::from(2);
+    };
+    let roots = recipe_roots(args);
+    let cfg = ai_assistant::RecipeConfig::default();
+    let reg = ai_assistant::discover_recipes(&roots, &cfg);
+    let Some(r) = reg.get(name) else {
+        eprintln!("Recipe not found: '{}'", name);
+        return ExitCode::from(1);
+    };
+    println!("Name:        {}", r.name);
+    println!("Version:     {}", r.version.as_deref().unwrap_or("-"));
+    println!("API:         {}", r.api_version);
+    if let Some(d) = &r.description {
+        println!("Description: {}", d);
+    }
+    if let Some(a) = &r.author {
+        println!("Author:      {}", a);
+    }
+    if !r.tags.is_empty() {
+        println!("Tags:        {}", r.tags.join(", "));
+    }
+    if let Some(m) = &r.model {
+        println!("Model:       {}", m);
+    }
+    println!("Source:      {}", r.source_path.display());
+    println!();
+    if !r.variables.is_empty() {
+        println!("Variables:");
+        for v in &r.variables {
+            println!(
+                "  {} (required={}, default={})",
+                v.name,
+                v.required,
+                v.default.as_deref().unwrap_or("-")
+            );
+            if let Some(d) = &v.description {
+                println!("    {}", d);
+            }
+        }
+        println!();
+    }
+    println!("Steps ({}):", r.steps.len());
+    for s in &r.steps {
+        let kind = match &s.kind {
+            ai_assistant::StepKind::Prompt { .. } => "prompt",
+            ai_assistant::StepKind::Tool { tool, .. } => &format!("tool:{}", tool)[..],
+            ai_assistant::StepKind::Recipe { recipe, .. } => &format!("recipe:{}", recipe)[..],
+            ai_assistant::StepKind::Shell { .. } => "shell",
+        };
+        println!("  - {} ({})", s.id, kind);
+    }
+    ExitCode::SUCCESS
+}
+
+fn cmd_recipes_validate(args: &[String]) -> ExitCode {
+    let Some(target) = args.first() else {
+        eprintln!("Usage: ai_cli recipes validate <name|path>");
+        return ExitCode::from(2);
+    };
+    let cfg = ai_assistant::RecipeConfig::default();
+    let r = if target.ends_with(".yaml") || target.ends_with(".yml") {
+        let p = PathBuf::from(target);
+        let text = match std::fs::read_to_string(&p) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("read error: {}", e);
+                return ExitCode::from(1);
+            }
+        };
+        match ai_assistant::parse_recipe(&text, &p) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("parse error: {}", e);
+                return ExitCode::from(1);
+            }
+        }
+    } else {
+        let roots = recipe_roots(args);
+        let reg = ai_assistant::discover_recipes(&roots, &cfg);
+        match reg.get(target) {
+            Some(r) => r.clone(),
+            None => {
+                eprintln!("Recipe not found: '{}'", target);
+                return ExitCode::from(1);
+            }
+        }
+    };
+    match ai_assistant::validate_recipe(&r, &cfg) {
+        Ok(()) => {
+            println!(
+                "OK: '{}' (apiVersion={}, steps={})",
+                r.name,
+                r.api_version,
+                r.steps.len()
+            );
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("INVALID: {}", e);
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn cmd_recipes_init(args: &[String]) -> ExitCode {
+    let Some(name) = args.first() else {
+        eprintln!("Usage: ai_cli recipes init <name> [--out <path>]");
+        return ExitCode::from(2);
+    };
+    let body = ai_assistant::scaffold_recipe(name);
+    let out = get_arg(args, "--out").unwrap_or_else(|| format!("{}.yaml", name.to_lowercase()));
+    if std::path::Path::new(&out).exists() {
+        eprintln!("Refusing to overwrite existing file: {}", out);
+        return ExitCode::from(1);
+    }
+    if let Err(e) = std::fs::write(&out, body) {
+        eprintln!("write error: {}", e);
+        return ExitCode::from(1);
+    }
+    println!("Scaffolded: {}", out);
+    ExitCode::SUCCESS
+}
+
+fn cmd_recipes_run(args: &[String]) -> ExitCode {
+    let Some(name) = args.first() else {
+        eprintln!("Usage: ai_cli recipes run <name> [--var k=v ...]");
+        return ExitCode::from(2);
+    };
+    let roots = recipe_roots(args);
+    let cfg = ai_assistant::RecipeConfig::default();
+    let reg = ai_assistant::discover_recipes(&roots, &cfg);
+    let Some(r) = reg.get(name) else {
+        eprintln!("Recipe not found: '{}'", name);
+        return ExitCode::from(1);
+    };
+
+    // Collect --var k=v
+    let mut bindings: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
+    let mut i = 1usize;
+    while i < args.len() {
+        if args[i] == "--var" && i + 1 < args.len() {
+            if let Some((k, v)) = args[i + 1].split_once('=') {
+                bindings.insert(k.trim().to_string(), v.trim().to_string());
+            }
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+
+    // Build LLM callback
+    let provider_name = get_arg(args, "--provider")
+        .or_else(|| r.provider.clone())
+        .unwrap_or_else(|| "ollama".into());
+    let model_name = get_arg(args, "--model")
+        .or_else(|| r.model.clone())
+        .unwrap_or_default();
+    let url_override = get_arg(args, "--url");
+
+    let llm_provider = provider_name.clone();
+    let llm_model = model_name.clone();
+    let llm_url = url_override.clone();
+
+    let engine = ai_assistant::RecipeEngine::default()
+        .with_llm(move |prompt| {
+            let mut a = AiAssistant::new();
+            a.config.provider = provider_from_name(&llm_provider);
+            if !llm_model.is_empty() {
+                a.config.selected_model = llm_model.clone();
+            }
+            if let Some(u) = &llm_url {
+                a.config.ollama_url = u.clone();
+                a.config.lm_studio_url = u.clone();
+                a.config.custom_url = u.clone();
+            }
+            a.config.temperature = 0.2;
+            a.send_message(prompt.to_string(), "");
+            let mut full = String::new();
+            let deadline = Instant::now() + Duration::from_secs(120);
+            loop {
+                if Instant::now() > deadline {
+                    return None;
+                }
+                if let Some(resp) = a.poll_response() {
+                    match resp {
+                        AiResponse::Chunk(t) => full.push_str(&t),
+                        AiResponse::Complete(t) => {
+                            if full.is_empty() {
+                                full = t;
+                            }
+                            return Some(full);
+                        }
+                        AiResponse::Error(_) => return None,
+                        AiResponse::Cancelled(t) => return Some(t),
+                        _ => {}
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(15));
+            }
+        })
+        .with_tool(|tool, args_map| {
+            // Built-in minimal tool registry: file_read, echo
+            match tool {
+                "echo" => Some(args_map.get("msg").cloned().unwrap_or_default()),
+                "file_read" => {
+                    let p = args_map.get("path")?;
+                    std::fs::read_to_string(p).ok()
+                }
+                _ => None,
+            }
+        });
+
+    match engine.run(r, &bindings, &reg) {
+        Ok(result) => {
+            println!("--- Recipe '{}' ---", result.recipe_name);
+            for s in &result.steps {
+                println!("[{}]", s.step_id);
+                println!("{}", s.output.trim_end());
+                println!();
+            }
+            println!("--- Output ---");
+            println!("{}", result.final_output);
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("Recipe failed: {}", e);
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn cmd_recipes_share(args: &[String]) -> ExitCode {
+    let Some(name) = args.first() else {
+        eprintln!("Usage: ai_cli recipes share <name> [--out <path>]");
+        return ExitCode::from(2);
+    };
+    let roots = recipe_roots(args);
+    let cfg = ai_assistant::RecipeConfig::default();
+    let reg = ai_assistant::discover_recipes(&roots, &cfg);
+    let Some(r) = reg.get(name) else {
+        eprintln!("Recipe not found: '{}'", name);
+        return ExitCode::from(1);
+    };
+    let body = match std::fs::read_to_string(&r.source_path) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("read error: {}", e);
+            return ExitCode::from(1);
+        }
+    };
+    let out = get_arg(args, "--out").unwrap_or_else(|| format!("{}.shared.yaml", name));
+    if let Err(e) = std::fs::write(&out, body) {
+        eprintln!("write error: {}", e);
+        return ExitCode::from(1);
+    }
+    println!("Shared bundle: {}", out);
     ExitCode::SUCCESS
 }
 

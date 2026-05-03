@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.52"
+version = "0.2.55"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -322,6 +322,25 @@ gui = ["dep:eframe", "dep:rfd", "dep:petgraph", "egui-widgets", "rag", "butler"]
 # Run: cargo run --bin ai_logs_gui --features gui-logs
 gui-logs = ["dep:eframe", "distributed-network"]
 
+# Recipes auditor GUI (Phase A.1) — visual audit of YAML recipes
+# Run: cargo run --bin ai_recipes_gui --features gui-recipes
+gui-recipes = ["dep:eframe"]
+
+# Agent Client Protocol (ACP) server — JSON-RPC 2.0 over stdio.
+# Lets editors (Zed, VS Code, JetBrains) drive ai_assistant as an embedded
+# coding agent. Core protocol only; no extra deps. Run: cargo run --bin ai_acp.
+acp = []
+
+# ACP auditor GUI — visual audit of session SLO logs.
+# Run: cargo run --bin ai_acp_audit_gui --features gui-acp
+gui-acp = ["acp", "dep:eframe"]
+
+# In-process local inference (V108 / Phase A.3) — base scaffolding only.
+# Surfaces backend trait, config builder, VRAM detection, GPU-layer auto-clamp.
+# Backend implementations live behind sub-features (local-inference-candle,
+# local-inference-llama-cpp) so users opting in pay only for what they use.
+local-inference = []
+
 # Run: cargo run --bin ai_gui-pro --features gui-pro
 gui-pro = [
     "gui", "full",
@@ -573,6 +592,39 @@ bench = false
 name = "ai_logs_gui"
 path = "src/bin/ai_logs_gui.rs"
 required-features = ["gui-logs"]
+bench = false
+
+# Recipes auditor (Phase A.1). No required features — recipes module is
+# always compiled (similar to slash_commands).
+[[bin]]
+name = "ai_recipes"
+path = "src/bin/ai_recipes.rs"
+bench = false
+
+[[bin]]
+name = "ai_recipes_gui"
+path = "src/bin/ai_recipes_gui.rs"
+required-features = ["gui-recipes"]
+bench = false
+
+# ACP server (Phase A.2). Editor-side coding agent over JSON-RPC/stdio.
+[[bin]]
+name = "ai_acp"
+path = "src/bin/ai_acp.rs"
+required-features = ["acp"]
+bench = false
+
+# ACP auditor — read SLO log files, exit non-zero on SLO breach.
+[[bin]]
+name = "ai_acp_audit"
+path = "src/bin/ai_acp_audit.rs"
+required-features = ["acp"]
+bench = false
+
+[[bin]]
+name = "ai_acp_audit_gui"
+path = "src/bin/ai_acp_audit_gui.rs"
+required-features = ["gui-acp"]
 bench = false
 
 [[bin]]

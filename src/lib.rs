@@ -210,6 +210,8 @@ pub mod file_references;
 // V79: C FFI bindings — 20 extern "C" entry points behind the `ffi`
 // feature. Consumed by C/C++/C#/Unity/Unreal/Bevy via the generated
 // header at `include/ai_assistant.h`.
+#[cfg(feature = "acp")]
+pub mod acp;
 #[cfg(feature = "ffi")]
 pub mod ffi;
 pub mod formatting;
@@ -228,6 +230,8 @@ pub mod llamacpp_capability;
 pub mod llm_enhance;
 pub mod llm_judge;
 pub mod load_shedding;
+#[cfg(feature = "local-inference")]
+pub mod local_inference;
 pub mod log_redaction;
 #[cfg(all(feature = "tools", feature = "audio"))]
 pub mod mcp_voice_tools;
@@ -246,6 +250,7 @@ pub mod progress;
 pub mod prompt_breeder;
 #[cfg(feature = "prompt-synthesis")]
 pub mod prompt_synthesis;
+pub mod recipes;
 #[cfg(feature = "redis-backend")]
 pub mod redis_backend;
 pub mod request_queue;
@@ -954,6 +959,12 @@ pub use config_layered::{
 pub use slash_commands::{
     discover_slash_commands, render_slash_command, RenderedCommand, SlashCommand,
     SlashCommandConfig, SlashCommandError, SlashCommandRegistry,
+};
+
+pub use recipes::{
+    discover_recipes, parse_recipe, scaffold_recipe, substitute as recipe_substitute,
+    validate_recipe, Recipe, RecipeConfig, RecipeEngine, RecipeError, RecipeRegistry,
+    RecipeRunResult, RecipeStep, RecipeVariable, StepKind, StepOutput, SUPPORTED_API_VERSION,
 };
 
 pub use unified_audit::{

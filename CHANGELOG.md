@@ -5,6 +5,163 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v69 (2026-05-03) — V108 Phase A.3 (iter 1): in-process local inference scaffolding (0.2.55)
+
+### Added
+- **`local_inference` module** (feature `local-inference`) — base scaffolding
+  for in-process LLM execution. Defines `Backend` trait, `BackendKind`
+  (Candle / LlamaCpp / Stub), `LocalInferenceConfig` builder (ctx_size,
+  n_gpu_layers, allow_gpu_clamp, model_size_mib), `GenParams`, `GenStats`,
+  `BackendError`, and `SloRecord` (load_ms / first_chunk_ms / total_ms /
+  tokens_per_sec / n_gpu_layers_requested vs used / peak_vram_mib).
+- **`local_inference::vram` sub-module** — VRAM detection (best-effort
+  `nvidia-smi` query, `None` on non-NVIDIA / missing tool) and a pure
+  `clamp_gpu_layers(model_size_mib, requested, total, available)` policy.
+  The clamp halves layer offload rather than letting the backend OOM,
+  with edge cases (zero requested, zero VRAM, request > total layers)
+  fully covered by unit tests.
+- **`StubBackend`** — echoes prompts. Lets tests + downstream callers
+  exercise the trait surface without pulling Candle / llama-cpp-2 deps.
+
+### Architectural decision
+- `local_inference` is **not** a new `AiProvider` variant. It's a direct
+  in-process API parallel to `embedded_server`. `AiProvider` dispatches
+  HTTP to external LLM endpoints (Ollama, llama-server, OpenAI…); this
+  module runs the model in-process. Keeps `config.rs` / `providers.rs`
+  untouched and the provider enum stable.
+
+### Tests
+- 14 unit tests cover the builder defaults + chaining, stub backend
+  generation + streaming, the load() error paths (stub OK, Candle/llama-cpp
+  return `NotImplemented`, missing model returns `ModelNotFound`),
+  every clamp edge case, and `SloRecord` serde round-trip.
+- Build + tests pass with and without the `local-inference` feature.
+
+### Deferred (follow-up tasks)
+- Real Candle CPU backend behind sub-feature `local-inference-candle`
+  (task #319).
+- llama-cpp-2 GGUF backend with pinned exact version (task #314).
+- `ai_local_infer` + auditor pair (task #316). Smoke test gated by
+  tiny-model env var (task #317).
+- CUDA opt-in, end-to-end auto-clamp under real load.
+
+### Version
+0.2.54 → 0.2.55
+
+---
+
+## [Unreleased] - v68 (2026-05-03) — V107 ACP Phase A.2: Agent Client Protocol server (0.2.54)
+
+### Added
+- **`acp` module** (feature `acp`) — Agent Client Protocol v1 server.
+  JSON-RPC 2.0 over newline-delimited JSON on stdio. Lets editors
+  (Zed, VS Code, JetBrains) drive `ai_assistant` as an embedded
+  coding agent the same way they drive Goose, OpenHands, or Hermes.
+  Implements `initialize` (with version negotiation), `session/new`,
+  `session/prompt` (streams `agent_message_chunk` notifications via
+  `session/update`, then returns `stopReason`), and the
+  `session/cancel` notification. Pluggable LLM execution via
+  `AcpServer::with_llm` callback — same decoupling pattern as the
+  V106 `RecipeEngine` and the V89 CoVe verifier.
+- **Hand-rolled JSON-RPC envelope** — no `agent-client-protocol` crate
+  dependency, ~120 lines total. Strict validation of `jsonrpc`
+  string, NDJSON framing (rejects embedded newlines), `max_frame_bytes`
+  cap (default 4 MiB), and the `-32000..-32099` ACP-specific error range.
+- **Capabilities advertised**: `embeddedContext` (we accept embedded
+  resources in prompts). `image`, `audio`, MCP HTTP/SSE, and
+  `loadSession` default off until each is wired through.
+- **SLO instrumentation** — every `initialize`, `session/prompt`, and
+  first-chunk emission is recorded with elapsed ms / chunks /
+  chunks-per-sec. In-memory ring exposed via `slo_records()`. Optional
+  `with_slo_sink` fires per record so `ai_acp serve` can persist JSONL.
+- **`ai_acp` bin** (`--features acp`) — `serve` (JSON-RPC over stdio
+  with `AiAssistant`-backed LLM, persists SLO records to
+  `./.ai_assistant/acp_logs/`) and `probe <cmd> [args...]` (spawns
+  another ACP server, drives a handshake + one prompt, prints
+  timings — diagnostic only).
+- **`ai_acp_audit` bin** + **`ai_acp_audit_gui` bin** (feature
+  `gui-acp = ["acp", "dep:eframe"]`) — read-only auditors for SLO log
+  files. CLI: `list`, `show`, `audit [--strict]`. GUI: per-file records
+  table with red-coded breaches and a summary panel. Per memory rule
+  `feedback_auditable_subsystems` — every artifact-emitting subsystem
+  now ships a CLI + GUI auditor pair.
+- **Cancellation correctness** — when the LLM channel disconnects we
+  now check the cancel flag before defaulting to `EndTurn`, so a late
+  `session/cancel` whose flag arrives just as the LLM thread exits is
+  still surfaced as `stopReason: "cancelled"`.
+
+### Tests
+- 17 unit tests in `src/acp.rs` covering: parse/reject malformed frames,
+  handshake completes, version negotiation echo, `session/new` ordering
+  + cwd validation, prompt streaming returns `end_turn`, prompt without
+  session returns `-32002 resource_not_found`, unknown method returns
+  `-32601`, mid-flight `session/cancel` surfaces `stopReason: "cancelled"`,
+  ContentBlock / SessionUpdate serde discriminator wire-format checks.
+  Two SLO budget tests (`handshake_meets_slo_target`,
+  `streaming_meets_chunks_per_sec_target`) assert handshake <200 ms and
+  ≥30 chunks/s on stub generators.
+- End-to-end smoke: `ai_acp probe ./target/debug/ai_acp serve --model dummy`
+  → handshake 6 ms, well under SLO; `ai_acp_audit audit` reads the
+  resulting JSONL and exits 0.
+
+### Wiring
+- `src/lib.rs` — `#[cfg(feature = "acp")] pub mod acp;`
+- `Cargo.toml` — `acp = []`, `gui-acp = ["acp", "dep:eframe"]`, three
+  `[[bin]]` entries with matching `required-features`.
+- `src/bin/ai_cli.rs` — intentionally NOT modified. ACP runs on stdio
+  with strict NDJSON framing; mixing it with `ai_cli`'s banners would
+  corrupt the frame stream.
+
+### Version
+0.2.53 → 0.2.54 (patch bump per memory rule `feedback_versioning`).
+
+## [Unreleased] - v67 (2026-05-03) — V106 Recipes Phase A.1: declarative YAML workflows (0.2.53)
+
+### Added
+- **`recipes` module** — declarative YAML workflow runner. Schema
+  `apiVersion: recipes/v1`, four step kinds (`prompt`, `tool`, `recipe`
+  for sub-recipes, `shell` disabled by default), variable schema
+  with `required` / `default`, `{{var}}` and `{{steps.<id>.output}}`
+  substitution. Hand-rolled YAML *subset* parser (no anchors / refs /
+  flow mappings) so the trust surface stays narrow.
+- **Discovery + registry** mirroring `slash_commands`: ordered roots
+  (`<config>/ai_assistant/recipes/` then `<project>/.ai_assistant/recipes/`),
+  later roots override earlier on duplicate names, per-file errors
+  surfaced via `RecipeRegistry::load_errors` rather than aborting.
+- **`RecipeEngine`** — builder-style engine with `with_llm` and
+  `with_tool` callbacks (same decoupling pattern as CoVe LLM
+  verification in V89). Sub-recipe resolution from registry with
+  recursion limit (default 8). Captures every step output for chaining.
+- **`ai_cli recipes` subcommand** — verbs `list`, `show`, `validate`,
+  `init`, `run`, `share`. `--var k=v` for variable bindings;
+  `--user-dir` / `--project-dir` for root overrides; `--provider` /
+  `--model` / `--url` for LLM overrides.
+- **`ai_recipes` auditor CLI** (no required features) — read-only
+  inspect, validate, sub-recipe `graph`, aggregate `audit`. Per memory
+  rule `feedback_auditable_subsystems`.
+- **`ai_recipes_gui` auditor** (`gui-recipes = ["dep:eframe"]`) —
+  egui visual auditor with list, metadata grid, per-recipe validation
+  status, sub-recipe call-graph view, summary panel. Read-only.
+- **25 unit tests** in `recipes::tests` covering parser, validator,
+  substitution, discovery, engine (prompt / tool / sub-recipe), error
+  paths (missing vars, unknown sub-recipe, recursion limit), scaffold.
+
+### Security defenses (recipes)
+- File size cap (256 KiB), symlinks rejected, UTF-8 enforced,
+  `.yaml`/`.yml` only, sub-recipe depth ≤ 8, ≤ 64 steps per recipe,
+  `shell` step disabled unless `RecipeConfig::allow_shell`, no anchor
+  / reference / flow-mapping YAML constructs (`{...}` rejected),
+  variables are pure substitution (never `eval`).
+
+### Wiring
+- `pub mod recipes;` + re-exports in `src/lib.rs`.
+- `recipes` dispatch + help in `ai_cli::print_usage`.
+- Two new `[[bin]]` entries (`ai_recipes`, `ai_recipes_gui`).
+- One new feature flag (`gui-recipes`).
+- Smoke-tested with `.ai_assistant/recipes/hello.yaml` end-to-end:
+  `ai_cli recipes list`/`show`/`validate` and `ai_recipes audit` all
+  pass.
+
 ## [Unreleased] - v66 (2026-04-29) — V90.27: embedded llama-server launcher + CI fixes (0.2.52)
 
 ### Added
