@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.55"
+version = "0.2.56"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -341,6 +341,10 @@ gui-acp = ["acp", "dep:eframe"]
 # local-inference-llama-cpp) so users opting in pay only for what they use.
 local-inference = []
 
+# Local-inference auditor GUI — visual audit of generation SLO logs.
+# Run: cargo run --bin ai_local_infer_audit_gui --features gui-local-inference
+gui-local-inference = ["local-inference", "dep:eframe"]
+
 # Run: cargo run --bin ai_gui-pro --features gui-pro
 gui-pro = [
     "gui", "full",
@@ -625,6 +629,27 @@ bench = false
 name = "ai_acp_audit_gui"
 path = "src/bin/ai_acp_audit_gui.rs"
 required-features = ["gui-acp"]
+bench = false
+
+# Local-inference driver (Phase A.3 iter 2). Runs the in-process Backend,
+# streams chunks to stdout, and persists per-generation SloRecord JSONL.
+[[bin]]
+name = "ai_local_infer"
+path = "src/bin/ai_local_infer.rs"
+required-features = ["local-inference"]
+bench = false
+
+# Local-inference auditor — read SloRecord JSONL files, exit non-zero on SLO breach.
+[[bin]]
+name = "ai_local_infer_audit"
+path = "src/bin/ai_local_infer_audit.rs"
+required-features = ["local-inference"]
+bench = false
+
+[[bin]]
+name = "ai_local_infer_audit_gui"
+path = "src/bin/ai_local_infer_audit_gui.rs"
+required-features = ["gui-local-inference"]
 bench = false
 
 [[bin]]

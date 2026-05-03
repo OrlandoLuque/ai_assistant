@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v70 (2026-05-03) — V109 Phase A.3 (iter 2): local-inference CLI bin + auditor pair + smoke test (0.2.56)
+
+### Added
+- **`ai_local_infer` bin** (`--features local-inference`) — three verbs:
+  `info` (backend availability + best-effort `nvidia-smi` VRAM detection),
+  `generate` (single-prompt streaming, persists `SloRecord` JSONL under
+  `.ai_assistant/local_infer_logs/`), `bench` (repeat N iters with
+  per-iter + aggregate summary). Honors all `LocalInferenceConfig`
+  options via flags (`--ctx-size`, `--n-gpu-layers`, `--no-clamp`, …).
+- **`ai_local_infer_audit` bin** + **`ai_local_infer_audit_gui` bin**
+  (feature `gui-local-inference = ["local-inference", "dep:eframe"]`) —
+  read-only auditors mirroring `ai_acp_audit` / `ai_acp_audit_gui`.
+  CLI: `list`, `show`, `audit [--strict]`. GUI: file list + per-record
+  table with red-coded breaches + summary panel. SLO budgets: `load_ms`
+  < 30 s, `first_chunk_ms` < 1 s, `tokens_per_sec` ≥ 5. Per memory rule
+  `feedback_auditable_subsystems`.
+- **`tests/local_inference_smoke.rs`** integration test — four cases:
+  `stub_backend_full_roundtrip` (drives the always-available StubBackend
+  through the public trait, validates SloRecord serializes),
+  `vram_detection_returns_consistent_shape` (best-effort, asserts
+  `free <= total` if any GPU reported), `vram_clamp_policy_under_realistic_inputs`
+  (Llama-shaped numbers), and `tiny_model_smoke` (gated by
+  `AI_LOCAL_INFER_TINY_MODEL` env var; selects backend via
+  `AI_LOCAL_INFER_BACKEND`, defaults to `candle`; skips silently when
+  unset, so CI stays hermetic). The gated case becomes meaningful the
+  moment #319 / #314 land — no test-side change required.
+
+### Smoke
+- `ai_local_infer info` correctly reports stub available + Candle/LlamaCpp
+  not compiled in + 16 GiB VRAM detected.
+- `ai_local_infer generate --backend stub` streams the chunk to stdout
+  and persists a JSONL record. `bench --iters 3` emits 3 records.
+- `ai_local_infer_audit audit --strict` over the resulting log dir exits
+  0 (no breaches against stub).
+
+### Wiring
+- `Cargo.toml` — three new `[[bin]]` entries (all `bench = false`),
+  one new feature flag (`gui-local-inference`).
+- `src/lib.rs` — no changes (bins consume the existing public API).
+
+### Version
+0.2.55 → 0.2.56.
+
+---
+
 ## [Unreleased] - v69 (2026-05-03) — V108 Phase A.3 (iter 1): in-process local inference scaffolding (0.2.55)
 
 ### Added
