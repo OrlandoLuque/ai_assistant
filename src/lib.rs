@@ -232,6 +232,8 @@ pub mod llm_judge;
 pub mod load_shedding;
 #[cfg(feature = "local-inference")]
 pub mod local_inference;
+#[cfg(feature = "local-inference-candle")]
+mod local_inference_candle;
 pub mod log_redaction;
 #[cfg(all(feature = "tools", feature = "audio"))]
 pub mod mcp_voice_tools;

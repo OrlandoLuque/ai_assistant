@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.56"
+version = "0.2.57"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -345,6 +345,17 @@ local-inference = []
 # Run: cargo run --bin ai_local_infer_audit_gui --features gui-local-inference
 gui-local-inference = ["local-inference", "dep:eframe"]
 
+# Real Candle CPU backend (V110). Adds ~50 MB of native deps and ~10 min
+# to a clean build, so it's strictly opt-in. No CUDA/Metal/Accelerate
+# yet — those follow once the CPU baseline is verified end-to-end.
+local-inference-candle = [
+    "local-inference",
+    "dep:candle-core",
+    "dep:candle-nn",
+    "dep:candle-transformers",
+    "dep:tokenizers",
+]
+
 # Run: cargo run --bin ai_gui-pro --features gui-pro
 gui-pro = [
     "gui", "full",
@@ -561,6 +572,18 @@ ed25519-dalek = { version = "2", optional = true, default-features = false, feat
 blake3 = { version = "1", optional = true }
 # HKDF per-tenant key derivation from master Ed25519 key
 hkdf = { version = "0.12", optional = true }
+
+# === V110: Candle CPU backend for in-process local inference ===
+# Pure-Rust transformer runtime. CPU-only by default (no CUDA / Metal /
+# Accelerate features) to keep build times sane and the dep graph portable.
+# Pinned to 0.10 — the candle siblings (-core / -nn / -transformers) must
+# share the same minor version or symbol resolution breaks at link time.
+candle-core = { version = "0.10", optional = true, default-features = false }
+candle-nn = { version = "0.10", optional = true, default-features = false }
+candle-transformers = { version = "0.10", optional = true, default-features = false }
+# HuggingFace tokenizers (tokenizer.json format). esaxx-fast avoids the
+# native onig dependency; http feature off — we never download remotely.
+tokenizers = { version = "0.23", optional = true, default-features = false, features = ["esaxx_fast", "fancy-regex"] }
 
 # V78: libc is only needed by ai_proxy on Unix for O_NOFOLLOW when opening the
 # audit log (symlink-safe append). Already transitive via other deps; declared

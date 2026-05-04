@@ -186,7 +186,16 @@ pub fn load(config: &LocalInferenceConfig) -> Result<Box<dyn Backend>, BackendEr
     }
     match config.kind {
         BackendKind::Stub => Ok(Box::new(StubBackend::new())),
-        BackendKind::Candle => Err(BackendError::NotImplemented("candle")),
+        BackendKind::Candle => {
+            #[cfg(feature = "local-inference-candle")]
+            {
+                crate::local_inference_candle::load_candle(config)
+            }
+            #[cfg(not(feature = "local-inference-candle"))]
+            {
+                Err(BackendError::NotImplemented("candle"))
+            }
+        }
         BackendKind::LlamaCpp => Err(BackendError::NotImplemented("llama-cpp-2")),
     }
 }

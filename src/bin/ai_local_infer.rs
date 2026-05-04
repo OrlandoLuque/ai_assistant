@@ -84,7 +84,16 @@ fn cmd_info() -> ExitCode {
     ] {
         let status = match kind {
             BackendKind::Stub => "available (always)",
-            BackendKind::Candle => "not compiled in (#319 — local-inference-candle)",
+            BackendKind::Candle => {
+                #[cfg(feature = "local-inference-candle")]
+                {
+                    "available (local-inference-candle)"
+                }
+                #[cfg(not(feature = "local-inference-candle"))]
+                {
+                    "not compiled in (#319 — local-inference-candle)"
+                }
+            }
             BackendKind::LlamaCpp => "not compiled in (#314 — local-inference-llama-cpp)",
         };
         println!("  {:<12} {}", kind.name(), status);

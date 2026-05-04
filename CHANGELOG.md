@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v71 (2026-05-03) — V110 Phase A.3 (iter 3): Candle CPU backend (real impl) (0.2.57)
+
+### Added
+- **`local-inference-candle` sub-feature** — pulls in `candle-core 0.10`,
+  `candle-nn 0.10`, `candle-transformers 0.10` (all `default-features = false` →
+  CPU only, no CUDA/Metal), and `tokenizers 0.23` with `["esaxx_fast",
+  "fancy-regex"]` (pure-Rust regex backend, no native `onig`). Default-features
+  build remains free of native deps.
+- **`src/local_inference_candle.rs`** — real CPU Llama backend gated by the new
+  sub-feature. Exports `load_candle(&LocalInferenceConfig) -> Result<Box<dyn
+  Backend>, BackendError>`. Loader requires a HuggingFace Llama-format directory
+  containing `config.json` + `tokenizer.json` + `model.safetensors` (sharded
+  loaders TBD). Memory-maps weights via `VarBuilder::from_mmaped_safetensors`,
+  forces `DType::F32` on CPU (candle 0.10 CPU kernels are f32-only). Builds
+  KV `Cache` + `Llama` model, extracts EOS id from
+  `LlamaEosToks::Single`/`Multiple`.
+- **`CandleBackend::generate()`** — streaming Llama forward pass:
+  `LogitsProcessor::new(seed=42, Some(temperature), top_p)`, full prompt at
+  step 0 then single-token via KV cache, `model.forward(&input, index_pos,
+  &mut cache)`, EOS + `params.stop` early-exit. Incremental decoding (decode
+  cumulative buffer, emit suffix diff) avoids broken UTF-8 on Llama BPE
+  multi-byte glyphs.
+
+### Wiring
+- `src/lib.rs` — declare `#[cfg(feature = "local-inference-candle")] mod
+  local_inference_candle;`.
+- `src/local_inference.rs` — `load()` factory dispatches `BackendKind::Candle`
+  to `crate::local_inference_candle::load_candle(config)` when the sub-feature
+  is enabled; surfaces `BackendError::NotImplemented("candle")` otherwise.
+- `tests/local_inference_smoke.rs::tiny_model_smoke` — already gated by
+  `AI_LOCAL_INFER_TINY_MODEL` env var, becomes meaningful with no test-side
+  change. Asserts `load_ms < 30000`, `first_chunk_ms < 5000` (CPU dev budget),
+  `tokens_per_sec >= 1.0`.
+- `tests/local_inference.rs::load_candle_unimplemented` — already accepts
+  `NotImplemented` OR `ModelNotFound`, stays green under both feature configs.
+
+### Smoke
+- `cargo check --features local-inference-candle --lib` — clean
+  (only pre-existing warnings in unrelated modules).
+
+### Version
+0.2.56 → 0.2.57.
+
+---
+
 ## [Unreleased] - v70 (2026-05-03) — V109 Phase A.3 (iter 2): local-inference CLI bin + auditor pair + smoke test (0.2.56)
 
 ### Added
