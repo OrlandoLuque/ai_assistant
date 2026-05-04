@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v72 (2026-05-05) — V111 Phase A.3 (iter 4): Candle GGUF support (0.2.58)
+
+### Added
+- **GGUF support inside `local-inference-candle`** — same sub-feature, same
+  `BackendKind::Candle`, no new deps. `load_candle()` now dispatches by path:
+  `*.gguf` file → `quantized_llama::ModelWeights` via `gguf_file::Content::read`
+  + `QuantizedLlama::from_gguf`; directory → existing safetensors loader (V110).
+  Quantized weights stay in their original format (Q4_K_M, Q5_K_M, IQ2_XS, …)
+  so memory footprint is 2-4x smaller than F32 safetensors.
+- **`LoadedModel` enum** inside `CandleBackend` — papers over the difference
+  between safetensors (`Llama` + external `Cache`) and GGUF (`QuantizedLlama`,
+  internal cache) so `generate()` is identical for both formats.
+- **GGUF tokenizer convention** — `tokenizer.json` must sit next to the
+  `.gguf` file (Ollama / LM Studio do this implicitly; standalone GGUF
+  downloads need it explicit). EOS read best-effort from
+  `tokenizer.ggml.eos_token_id` metadata key.
+
+### Wiring
+- `src/local_inference_candle.rs` — refactored: split `load_safetensors_dir`
+  + `load_gguf`, dispatched by `load_candle`. `generate()` unchanged
+  modulo the `LoadedModel::forward` adapter.
+- `tests/local_inference_smoke.rs::tiny_model_smoke` — already path-agnostic;
+  point `AI_LOCAL_INFER_TINY_MODEL` at a `.gguf` file to run the same SLO
+  assertions against the quantized loader.
+
+### Smoke
+- `cargo check --features local-inference-candle --lib` — clean (only
+  pre-existing warnings in unrelated modules).
+
+### Version
+0.2.57 → 0.2.58.
+
+---
+
 ## [Unreleased] - v71 (2026-05-03) — V110 Phase A.3 (iter 3): Candle CPU backend (real impl) (0.2.57)
 
 ### Added

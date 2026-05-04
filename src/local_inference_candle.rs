@@ -1,25 +1,34 @@
-//! Candle CPU backend for in-process Llama inference (V110 / Phase A.3 iter 3).
+//! Candle CPU backend for in-process Llama inference.
 //!
-//! Activated by the `local-inference-candle` sub-feature. Loads a HuggingFace
-//! Llama-format checkpoint from a directory containing:
-//!   - `config.json`     — Llama config (hidden_size, n_layers, GQA params, …)
-//!   - `tokenizer.json`  — HuggingFace tokenizer
-//!   - `model.safetensors` — model weights (single file; sharded loaders TBD)
+//! Activated by the `local-inference-candle` sub-feature. Two input formats:
 //!
-//! and runs the forward pass on CPU via
-//! [`candle_transformers::models::llama::Llama`]. CPU only — CUDA / Metal /
-//! Accelerate are intentionally deferred until the CPU baseline is verified
-//! end-to-end against TinyLlama 1.1B.
+//! 1. **Safetensors directory** (V110) — HuggingFace-style Llama checkpoint:
+//!      - `config.json`     — Llama config (hidden_size, n_layers, GQA params, …)
+//!      - `tokenizer.json`  — HuggingFace tokenizer
+//!      - `model.safetensors` — model weights (single file)
+//!    Loaded via [`candle_transformers::models::llama::Llama`] in F32.
+//!
+//! 2. **GGUF file** (V111) — single-file quantized format used by llama.cpp,
+//!    Ollama, LM Studio, etc. Path must end in `.gguf`. Tokenizer is read
+//!    from a sibling `tokenizer.json` (the original HF tokenizer); GGUF
+//!    metadata-embedded tokenizers are not yet decoded by candle 0.10.
+//!    Loaded via [`candle_transformers::models::quantized_llama::ModelWeights`]
+//!    which keeps weights in their original quantization (Q4_K_M, Q5_K_M, …).
+//!
+//! CPU only — CUDA / Metal / Accelerate are intentionally deferred until the
+//! CPU baseline is verified end-to-end.
 
 #![cfg(feature = "local-inference-candle")]
 
 use std::path::Path;
 use std::time::Instant;
 
+use candle_core::quantized::gguf_file;
 use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::generation::LogitsProcessor;
 use candle_transformers::models::llama::{Cache, Llama, LlamaConfig, LlamaEosToks};
+use candle_transformers::models::quantized_llama::ModelWeights as QuantizedLlama;
 use tokenizers::Tokenizer;
 
 use crate::local_inference::{
@@ -29,17 +38,34 @@ use crate::local_inference::{
 const SAFETENSORS_FILE: &str = "model.safetensors";
 const CONFIG_FILE: &str = "config.json";
 const TOKENIZER_FILE: &str = "tokenizer.json";
+const GGUF_EXT: &str = "gguf";
 
-/// Load a CandleBackend from a HuggingFace-format Llama directory.
+/// Load a CandleBackend, dispatching by `cfg.model_path`:
+/// - file ending in `.gguf` → quantized loader (V111).
+/// - directory             → safetensors loader (V110).
 pub(crate) fn load_candle(cfg: &LocalInferenceConfig) -> Result<Box<dyn Backend>, BackendError> {
-    let dir: &Path = &cfg.model_path;
-    if !dir.is_dir() {
-        return Err(BackendError::Backend(format!(
-            "candle backend requires a directory containing {CONFIG_FILE}, \
-             {TOKENIZER_FILE}, {SAFETENSORS_FILE}; got: {}",
-            dir.display()
-        )));
+    let path: &Path = &cfg.model_path;
+    let is_gguf = path.is_file()
+        && path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case(GGUF_EXT))
+            .unwrap_or(false);
+
+    if is_gguf {
+        load_gguf(path)
+    } else if path.is_dir() {
+        load_safetensors_dir(path)
+    } else {
+        Err(BackendError::Backend(format!(
+            "candle backend requires either a .gguf file or a directory \
+             containing {CONFIG_FILE}, {TOKENIZER_FILE}, {SAFETENSORS_FILE}; got: {}",
+            path.display()
+        )))
     }
+}
+
+fn load_safetensors_dir(dir: &Path) -> Result<Box<dyn Backend>, BackendError> {
     let config_path = dir.join(CONFIG_FILE);
     let tokenizer_path = dir.join(TOKENIZER_FILE);
     let safetensors_path = dir.join(SAFETENSORS_FILE);
@@ -80,18 +106,75 @@ pub(crate) fn load_candle(cfg: &LocalInferenceConfig) -> Result<Box<dyn Backend>
     };
 
     Ok(Box::new(CandleBackend {
-        model,
+        inner: LoadedModel::Safetensors { model, cache },
         tokenizer,
-        cache,
         device,
         eos_id,
     }))
 }
 
+fn load_gguf(gguf_path: &Path) -> Result<Box<dyn Backend>, BackendError> {
+    // Tokenizer: candle 0.10's quantized_llama doesn't decode the GGUF
+    // metadata tokenizer. Require a sibling tokenizer.json (the standard
+    // HF tokenizer the GGUF was built from — Ollama / LM Studio ship it
+    // alongside their downloads, or it can be copied from the source repo).
+    let tokenizer_path = gguf_path
+        .parent()
+        .map(|p| p.join(TOKENIZER_FILE))
+        .ok_or_else(|| {
+            BackendError::Backend(format!(
+                "cannot resolve parent dir of {} to find tokenizer",
+                gguf_path.display()
+            ))
+        })?;
+    if !tokenizer_path.exists() {
+        return Err(BackendError::ModelNotFound(tokenizer_path));
+    }
+
+    let tokenizer = Tokenizer::from_file(&tokenizer_path)
+        .map_err(|e| BackendError::Backend(format!("load tokenizer: {e}")))?;
+
+    let device = Device::Cpu;
+    let mut file = std::fs::File::open(gguf_path)?;
+    let content = gguf_file::Content::read(&mut file)
+        .map_err(|e| BackendError::Backend(format!("read GGUF metadata: {e}")))?;
+
+    // EOS id is in GGUF metadata as `tokenizer.ggml.eos_token_id` (u32).
+    // Best-effort: missing → no early stop on EOS, generation just runs to
+    // max_tokens or hits a stop string.
+    let eos_id = content
+        .metadata
+        .get("tokenizer.ggml.eos_token_id")
+        .and_then(|v| v.to_u32().ok());
+
+    let model = QuantizedLlama::from_gguf(content, &mut file, &device)
+        .map_err(|e| BackendError::Backend(format!("load quantized llama: {e}")))?;
+
+    Ok(Box::new(CandleBackend {
+        inner: LoadedModel::Gguf { model },
+        tokenizer,
+        device,
+        eos_id,
+    }))
+}
+
+enum LoadedModel {
+    Safetensors { model: Llama, cache: Cache },
+    Gguf { model: QuantizedLlama },
+}
+
+impl LoadedModel {
+    fn forward(&mut self, input: &Tensor, index_pos: usize) -> candle_core::Result<Tensor> {
+        match self {
+            Self::Safetensors { model, cache } => model.forward(input, index_pos, cache),
+            Self::Gguf { model } => model.forward(input, index_pos),
+        }
+    }
+}
+
 struct CandleBackend {
-    model: Llama,
+    inner: LoadedModel,
     tokenizer: Tokenizer,
-    cache: Cache,
     device: Device,
     eos_id: Option<u32>,
 }
@@ -142,8 +225,8 @@ impl Backend for CandleBackend {
                 .unsqueeze(0)
                 .map_err(|e| BackendError::Backend(format!("unsqueeze: {e}")))?;
             let logits = self
-                .model
-                .forward(&input, index_pos, &mut self.cache)
+                .inner
+                .forward(&input, index_pos)
                 .map_err(|e| BackendError::Backend(format!("forward: {e}")))?;
             index_pos += ctx_slice.len();
             let logits = logits
