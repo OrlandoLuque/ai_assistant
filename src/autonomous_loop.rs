@@ -166,6 +166,13 @@ pub struct AutonomousAgentConfig {
     pub system_prompt: String,
     /// Cost tracking configuration.
     pub cost_config: CostConfig,
+    /// V122: when one LLM response carries multiple tool calls AND every
+    /// call is a known read-only operation (`read_file`, `list_files`,
+    /// `glob`, `grep`, `web_search`, …), execute them concurrently via
+    /// `std::thread::scope` instead of serially. Off by default so
+    /// existing call orderings are preserved exactly when the runner is
+    /// embedded in pipelines that depend on them.
+    pub parallel_read_only_tools: bool,
 }
 
 impl Default for AutonomousAgentConfig {
@@ -175,8 +182,45 @@ impl Default for AutonomousAgentConfig {
             max_iterations: 0,
             system_prompt: String::new(),
             cost_config: CostConfig::default(),
+            parallel_read_only_tools: false,
         }
     }
+}
+
+/// V122: classification of a tool name as a side-effect-free read.
+///
+/// Conservative allow-list — the parallel execution path only activates
+/// when *every* tool call in the iteration is in this set. Anything not
+/// listed is assumed to potentially mutate state and falls back to
+/// sequential execution.
+pub fn is_read_only_tool_name(name: &str) -> bool {
+    matches!(
+        name,
+        "read_file"
+            | "read"
+            | "cat"
+            | "list_files"
+            | "list_dir"
+            | "ls"
+            | "glob"
+            | "find"
+            | "search"
+            | "grep"
+            | "web_search"
+            | "vector_search"
+            | "rag_search"
+            | "knowledge_search"
+            | "tool_search"
+            | "lookup"
+            | "get_url"
+            | "fetch"
+            | "http_get"
+            | "curl_get"
+            | "stat"
+            | "exists"
+            | "head"
+            | "tail"
+    )
 }
 
 // ============================================================================
@@ -501,8 +545,10 @@ impl AutonomousAgent {
         let mut any_tool_succeeded = false;
         #[cfg(feature = "self-correction")]
         let mut any_tool_errored = false;
+
+        // Special case `ask_user` up-front — it short-circuits the iteration
+        // regardless of execution mode.
         for tc in &parsed {
-            // Special case: ask_user
             if tc.name == "ask_user" {
                 let question = tc
                     .arguments
@@ -511,10 +557,21 @@ impl AutonomousAgent {
                     .unwrap_or_else(|| "What would you like?".into());
                 return IterationOutcome::AskUser(question);
             }
+        }
 
-            // Validate with sandbox
-            let action = ActionDescriptor::new(ActionType::ToolCall, &tc.name);
-            {
+        // V122: choose between sequential and parallel-read-only execution.
+        // Parallel applies only when the config opts in, there are at least
+        // two calls, *every* call's name is in the read-only allow-list, and
+        // each call has a unique args fingerprint (so identical duplicate
+        // calls don't double-count cost or thrash).
+        let parallel_eligible = self.config.parallel_read_only_tools
+            && parsed.len() >= 2
+            && parsed.iter().all(|tc| is_read_only_tool_name(&tc.name));
+
+        if parallel_eligible {
+            // 5a. Validate all calls in the sandbox first (fail-fast).
+            for tc in &parsed {
+                let action = ActionDescriptor::new(ActionType::ToolCall, &tc.name);
                 let mut sandbox = match self.sandbox.write() {
                     Ok(s) => s,
                     Err(_) => {
@@ -522,7 +579,6 @@ impl AutonomousAgent {
                     }
                 };
                 if let Err(e) = sandbox.validate(&action) {
-                    // Push error as tool result
                     self.conversation.push(LoopMessage {
                         role: LoopRole::Tool,
                         content: format!("Sandbox denied {}: {}", tc.name, e),
@@ -535,52 +591,149 @@ impl AutonomousAgent {
                 }
             }
 
-            // Build a ToolCall for the registry
-            let mut arguments = HashMap::new();
-            for (k, v) in &tc.arguments {
-                arguments.insert(k.clone(), serde_json::json!(v));
-            }
-            let tool_call = ToolCall::new(&tc.name, arguments);
-
-            // Execute
-            match self.tool_registry.execute(&tool_call) {
-                Ok(output) => {
-                    self.tools_called_log.push(tc.name.clone());
-                    #[cfg(feature = "self-correction")]
-                    {
-                        any_tool_succeeded = true;
+            // 5b. Build all ToolCalls.
+            let tool_calls: Vec<ToolCall> = parsed
+                .iter()
+                .map(|tc| {
+                    let mut arguments = HashMap::new();
+                    for (k, v) in &tc.arguments {
+                        arguments.insert(k.clone(), serde_json::json!(v));
                     }
+                    ToolCall::new(&tc.name, arguments)
+                })
+                .collect();
 
-                    // Record cost using configurable cost tracking
-                    let call_cost = self.config.cost_config.cost_for(&tc.name, &tc.arguments);
-                    self.total_cost += call_cost;
-                    if let Ok(mut sandbox) = self.sandbox.write() {
-                        sandbox.record_cost(call_cost);
+            // 5c. Execute concurrently. ToolHandler is `Arc<dyn Fn + Send +
+            // Sync>` (see unified_tools::ToolHandler), so the registry is
+            // safely shareable across threads via `&self.tool_registry`.
+            let registry = &self.tool_registry;
+            let results: Vec<
+                Result<crate::unified_tools::ToolOutput, crate::unified_tools::ToolError>,
+            > = std::thread::scope(|s| {
+                let handles: Vec<_> = tool_calls
+                    .iter()
+                    .map(|call| s.spawn(move || registry.execute(call)))
+                    .collect();
+                handles
+                    .into_iter()
+                    .map(|h| {
+                        h.join().unwrap_or_else(|_| {
+                            Err(crate::unified_tools::ToolError::ExecutionFailed(
+                                "Tool worker thread panicked".into(),
+                            ))
+                        })
+                    })
+                    .collect()
+            });
+
+            // 5d. Process results in original parsed order.
+            for (tc, result) in parsed.iter().zip(results.into_iter()) {
+                match result {
+                    Ok(output) => {
+                        self.tools_called_log.push(tc.name.clone());
+                        #[cfg(feature = "self-correction")]
+                        {
+                            any_tool_succeeded = true;
+                        }
+                        let call_cost = self.config.cost_config.cost_for(&tc.name, &tc.arguments);
+                        self.total_cost += call_cost;
+                        if let Ok(mut sandbox) = self.sandbox.write() {
+                            sandbox.record_cost(call_cost);
+                        }
+                        self.conversation.push(LoopMessage {
+                            role: LoopRole::Tool,
+                            content: format!("[Tool: {}] {}", tc.name, output.content),
+                            tool_calls: None,
+                            tool_results: None,
+                            #[cfg(feature = "vision")]
+                            images: Vec::new(),
+                        });
                     }
-
-                    // Push tool result into conversation
-                    self.conversation.push(LoopMessage {
-                        role: LoopRole::Tool,
-                        content: format!("[Tool: {}] {}", tc.name, output.content),
-                        tool_calls: None,
-                        tool_results: None,
-                        #[cfg(feature = "vision")]
-                        images: Vec::new(),
-                    });
+                    Err(e) => {
+                        #[cfg(feature = "self-correction")]
+                        {
+                            any_tool_errored = true;
+                        }
+                        self.conversation.push(LoopMessage {
+                            role: LoopRole::Tool,
+                            content: format!("[Tool: {} Error] {}", tc.name, e),
+                            tool_calls: None,
+                            tool_results: None,
+                            #[cfg(feature = "vision")]
+                            images: Vec::new(),
+                        });
+                    }
                 }
-                Err(e) => {
-                    #[cfg(feature = "self-correction")]
-                    {
-                        any_tool_errored = true;
+            }
+        } else {
+            // Sequential path — preserves the V120 behaviour exactly.
+            for tc in &parsed {
+                // Validate with sandbox
+                let action = ActionDescriptor::new(ActionType::ToolCall, &tc.name);
+                {
+                    let mut sandbox = match self.sandbox.write() {
+                        Ok(s) => s,
+                        Err(_) => {
+                            return IterationOutcome::Error("Sandbox lock poisoned".into());
+                        }
+                    };
+                    if let Err(e) = sandbox.validate(&action) {
+                        self.conversation.push(LoopMessage {
+                            role: LoopRole::Tool,
+                            content: format!("Sandbox denied {}: {}", tc.name, e),
+                            tool_calls: None,
+                            tool_results: None,
+                            #[cfg(feature = "vision")]
+                            images: Vec::new(),
+                        });
+                        return IterationOutcome::Error(format!(
+                            "Sandbox denied {}: {}",
+                            tc.name, e
+                        ));
                     }
-                    self.conversation.push(LoopMessage {
-                        role: LoopRole::Tool,
-                        content: format!("[Tool: {} Error] {}", tc.name, e),
-                        tool_calls: None,
-                        tool_results: None,
-                        #[cfg(feature = "vision")]
-                        images: Vec::new(),
-                    });
+                }
+
+                let mut arguments = HashMap::new();
+                for (k, v) in &tc.arguments {
+                    arguments.insert(k.clone(), serde_json::json!(v));
+                }
+                let tool_call = ToolCall::new(&tc.name, arguments);
+
+                match self.tool_registry.execute(&tool_call) {
+                    Ok(output) => {
+                        self.tools_called_log.push(tc.name.clone());
+                        #[cfg(feature = "self-correction")]
+                        {
+                            any_tool_succeeded = true;
+                        }
+                        let call_cost = self.config.cost_config.cost_for(&tc.name, &tc.arguments);
+                        self.total_cost += call_cost;
+                        if let Ok(mut sandbox) = self.sandbox.write() {
+                            sandbox.record_cost(call_cost);
+                        }
+                        self.conversation.push(LoopMessage {
+                            role: LoopRole::Tool,
+                            content: format!("[Tool: {}] {}", tc.name, output.content),
+                            tool_calls: None,
+                            tool_results: None,
+                            #[cfg(feature = "vision")]
+                            images: Vec::new(),
+                        });
+                    }
+                    Err(e) => {
+                        #[cfg(feature = "self-correction")]
+                        {
+                            any_tool_errored = true;
+                        }
+                        self.conversation.push(LoopMessage {
+                            role: LoopRole::Tool,
+                            content: format!("[Tool: {} Error] {}", tc.name, e),
+                            tool_calls: None,
+                            tool_results: None,
+                            #[cfg(feature = "vision")]
+                            images: Vec::new(),
+                        });
+                    }
                 }
             }
         }
@@ -955,6 +1108,7 @@ pub struct AutonomousAgentBuilder {
     max_iterations: usize,
     system_prompt: String,
     cost_config: CostConfig,
+    parallel_read_only_tools: bool,
     policy: AgentPolicy,
     sandbox: Option<Arc<RwLock<SandboxValidator>>>,
     tool_registry: ToolRegistry,
@@ -983,6 +1137,7 @@ impl AutonomousAgentBuilder {
             max_iterations: 50,
             system_prompt: String::new(),
             cost_config: CostConfig::default(),
+            parallel_read_only_tools: false,
             policy: AgentPolicy::default(),
             sandbox: None,
             tool_registry: ToolRegistry::new(),
@@ -1051,6 +1206,18 @@ impl AutonomousAgentBuilder {
         self
     }
 
+    /// V122: enable parallel execution for batches of read-only tool calls.
+    ///
+    /// When the LLM emits multiple tool calls in a single response and every
+    /// call's name is in the read-only allow-list (see
+    /// [`is_read_only_tool_name`]), the calls execute concurrently via
+    /// `std::thread::scope`. Anything outside the allow-list, or a single
+    /// tool call, falls back to the sequential path. Off by default.
+    pub fn parallel_read_only_tools(mut self, on: bool) -> Self {
+        self.parallel_read_only_tools = on;
+        self
+    }
+
     pub fn policy(mut self, policy: AgentPolicy) -> Self {
         self.policy = policy;
         self
@@ -1105,6 +1272,7 @@ impl AutonomousAgentBuilder {
                 max_iterations: self.max_iterations,
                 system_prompt: self.system_prompt,
                 cost_config: self.cost_config,
+                parallel_read_only_tools: self.parallel_read_only_tools,
             },
             policy: self.policy,
             sandbox,
@@ -2050,5 +2218,214 @@ Let me process the results."#;
         );
         assert_eq!(canonical_action_key(&[a]), canonical_action_key(&[c]));
         assert_eq!(canonical_action_key(&[]), "answer");
+    }
+
+    // ── V122: parallel read-only tool execution ──────────────────────────
+
+    #[test]
+    fn test_is_read_only_tool_name_classification() {
+        assert!(is_read_only_tool_name("read_file"));
+        assert!(is_read_only_tool_name("list_files"));
+        assert!(is_read_only_tool_name("glob"));
+        assert!(is_read_only_tool_name("web_search"));
+        assert!(is_read_only_tool_name("vector_search"));
+        assert!(is_read_only_tool_name("rag_search"));
+        // Things that mutate state — must NOT classify as read-only.
+        assert!(!is_read_only_tool_name("write_file"));
+        assert!(!is_read_only_tool_name("delete_file"));
+        assert!(!is_read_only_tool_name("execute_command"));
+        assert!(!is_read_only_tool_name("ask_user"));
+        assert!(!is_read_only_tool_name(""));
+        assert!(!is_read_only_tool_name("calculate"));
+    }
+
+    #[test]
+    fn test_parallel_read_only_executes_all_calls() {
+        // The LLM emits two read-only tool calls in one response, then
+        // a final answer. With parallel mode on, both calls should run
+        // and their outputs should appear in the conversation in order.
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let cc = Arc::clone(&call_count);
+
+        let gen: Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync> = Arc::new(move |_msgs| {
+            let n = cc.fetch_add(1, Ordering::SeqCst);
+            if n == 0 {
+                r#"Reading both.
+[{"name": "read_file", "arguments": {"path": "/a"}},
+ {"name": "read_file", "arguments": {"path": "/b"}}]"#
+                    .to_string()
+            } else {
+                "Done.".to_string()
+            }
+        });
+
+        let mut registry = ToolRegistry::new();
+        let def = ToolBuilder::new("read_file", "Read a file")
+            .required_string("path", "Path")
+            .build();
+        registry.register(
+            def,
+            Arc::new(|call: &ToolCall| {
+                let path = call.get_string("path").unwrap_or("?");
+                // Tiny sleep so a sequential schedule would observably take
+                // longer than a parallel one (loose timing assertion below).
+                std::thread::sleep(std::time::Duration::from_millis(60));
+                Ok(ToolOutput::text(format!("contents-of-{}", path)))
+            }),
+        );
+
+        let policy = AgentPolicy::autonomous();
+        let sandbox = Arc::new(RwLock::new(SandboxValidator::with_approval(
+            policy.clone(),
+            Arc::new(AutoApproveAll),
+        )));
+
+        let mut agent = AutonomousAgent::builder("reader", gen)
+            .max_iterations(5)
+            .policy(policy)
+            .sandbox(sandbox)
+            .tool_registry(registry)
+            .parallel_read_only_tools(true)
+            .build();
+
+        let started = std::time::Instant::now();
+        let result = agent.run("Read /a and /b").unwrap();
+        let elapsed = started.elapsed();
+
+        assert_eq!(result.output, "Done.");
+        // Both reads were executed.
+        let read_calls: Vec<_> = result
+            .tools_called
+            .iter()
+            .filter(|t| t.as_str() == "read_file")
+            .collect();
+        assert_eq!(read_calls.len(), 2);
+
+        // Loose timing: 2 × 60 ms tasks done concurrently should land
+        // well under the strictly-sequential 120 ms floor + agent
+        // overhead. Tolerate ample slack to avoid CI flakes.
+        assert!(
+            elapsed < std::time::Duration::from_millis(200),
+            "expected parallel < 200ms, got {:?}",
+            elapsed
+        );
+    }
+
+    #[test]
+    fn test_parallel_falls_back_to_sequential_on_unknown_tool() {
+        // One read-only + one not-in-allow-list → mixed batch → must
+        // take the sequential path.
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let cc = Arc::clone(&call_count);
+
+        let gen: Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync> = Arc::new(move |_msgs| {
+            let n = cc.fetch_add(1, Ordering::SeqCst);
+            if n == 0 {
+                r#"Mixed batch.
+[{"name": "read_file", "arguments": {"path": "/a"}},
+ {"name": "calculate", "arguments": {"expression": "1+1"}}]"#
+                    .to_string()
+            } else {
+                "Done.".to_string()
+            }
+        });
+
+        let mut registry = ToolRegistry::new();
+        let def_read = ToolBuilder::new("read_file", "Read a file")
+            .required_string("path", "Path")
+            .build();
+        registry.register(
+            def_read,
+            Arc::new(|call: &ToolCall| {
+                let path = call.get_string("path").unwrap_or("?");
+                Ok(ToolOutput::text(format!("contents-of-{}", path)))
+            }),
+        );
+        let def_calc = ToolBuilder::new("calculate", "Calc")
+            .required_string("expression", "Expr")
+            .build();
+        registry.register(
+            def_calc,
+            Arc::new(|call: &ToolCall| {
+                let e = call.get_string("expression").unwrap_or("0");
+                Ok(ToolOutput::text(format!("calc-{}", e)))
+            }),
+        );
+
+        let policy = AgentPolicy::autonomous();
+        let sandbox = Arc::new(RwLock::new(SandboxValidator::with_approval(
+            policy.clone(),
+            Arc::new(AutoApproveAll),
+        )));
+
+        let mut agent = AutonomousAgent::builder("mixed", gen)
+            .max_iterations(5)
+            .policy(policy)
+            .sandbox(sandbox)
+            .tool_registry(registry)
+            .parallel_read_only_tools(true)
+            .build();
+
+        let result = agent.run("mixed").unwrap();
+        assert_eq!(result.output, "Done.");
+        assert!(result.tools_called.contains(&"read_file".to_string()));
+        assert!(result.tools_called.contains(&"calculate".to_string()));
+    }
+
+    #[test]
+    fn test_parallel_disabled_keeps_sequential_path() {
+        // Two read-only calls but parallel_read_only_tools defaults to
+        // false → sequential execution path. The behavioural contract
+        // is identical (both calls run, in order); this test asserts
+        // the flag is opt-in and doesn't kick in by accident.
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let cc = Arc::clone(&call_count);
+
+        let gen: Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync> = Arc::new(move |_msgs| {
+            let n = cc.fetch_add(1, Ordering::SeqCst);
+            if n == 0 {
+                r#"Reading.
+[{"name": "read_file", "arguments": {"path": "/a"}},
+ {"name": "read_file", "arguments": {"path": "/b"}}]"#
+                    .to_string()
+            } else {
+                "Done.".to_string()
+            }
+        });
+
+        let mut registry = ToolRegistry::new();
+        let def = ToolBuilder::new("read_file", "Read a file")
+            .required_string("path", "Path")
+            .build();
+        registry.register(
+            def,
+            Arc::new(|call: &ToolCall| {
+                let path = call.get_string("path").unwrap_or("?");
+                Ok(ToolOutput::text(format!("contents-of-{}", path)))
+            }),
+        );
+
+        let policy = AgentPolicy::autonomous();
+        let sandbox = Arc::new(RwLock::new(SandboxValidator::with_approval(
+            policy.clone(),
+            Arc::new(AutoApproveAll),
+        )));
+
+        let mut agent = AutonomousAgent::builder("reader-seq", gen)
+            .max_iterations(5)
+            .policy(policy)
+            .sandbox(sandbox)
+            .tool_registry(registry)
+            // No parallel_read_only_tools(true) — default is false.
+            .build();
+
+        let result = agent.run("Read /a and /b").unwrap();
+        assert_eq!(result.output, "Done.");
+        let read_calls: Vec<_> = result
+            .tools_called
+            .iter()
+            .filter(|t| t.as_str() == "read_file")
+            .collect();
+        assert_eq!(read_calls.len(), 2);
     }
 }

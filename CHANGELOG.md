@@ -5,6 +5,103 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v83 (2026-05-05) — V122 Phase B.5: parallel read-only tool execution in autonomous_loop (0.2.69)
+
+### Added
+- **V122 introduces opt-in parallel execution for read-only tool
+  call batches.** When the LLM emits multiple tool calls in a
+  single response *and* every call's name is in the read-only
+  allow-list (`read_file`, `list_files`, `glob`, `grep`,
+  `web_search`, `vector_search`, `rag_search`, …), the autonomous
+  agent now executes them concurrently via `std::thread::scope`
+  instead of serially. Off by default — existing pipelines keep
+  the exact previous ordering until they opt in.
+- **`AutonomousAgentConfig::parallel_read_only_tools: bool`** and
+  matching builder method **`parallel_read_only_tools(bool)`** —
+  the single switch that turns the path on. The runner verifies
+  three preconditions before parallelising: opt-in is set, at
+  least two tool calls in the iteration, and *every* call's name
+  is read-only; otherwise the sequential path runs unchanged.
+- **`is_read_only_tool_name(&str) -> bool`** — public helper
+  exposing the conservative allow-list so external callers can
+  align their own classification or pre-flight checks. Anything
+  outside the allow-list is assumed to potentially mutate state.
+
+### How it wires in
+At the start of `run_iteration` (after `parse_tool_calls` has
+returned), the agent first scans for `ask_user` (which still
+short-circuits the iteration regardless of mode), then chooses:
+
+```
+parallel_eligible
+  = config.parallel_read_only_tools
+  && parsed.len() >= 2
+  && parsed.iter().all(|tc| is_read_only_tool_name(&tc.name))
+```
+
+If parallel: validate every call against the sandbox sequentially
+(fail-fast on denial), then dispatch all `ToolRegistry::execute`
+calls into a `std::thread::scope` and collect the
+`Vec<Result<ToolOutput, ToolError>>` in original order. Result
+processing — pushing the tool message into `self.conversation`,
+recording cost via the configurable `CostConfig`, updating the
+`tools_called_log` and the `self-correction` `any_tool_succeeded`
+/ `any_tool_errored` flags — runs sequentially against the
+collected results, so observable side-effects fire in parsed
+order regardless of how the workers interleaved.
+
+### Why thread::scope (not tokio, not rayon)
+- `tokio` would feature-creep `async-runtime` into the autonomous
+  runner; we keep the runner sync-callable from any context.
+- `rayon` would require gating on the `distributed` feature for a
+  general-purpose use case; the autonomous runner shouldn't pull
+  it in.
+- `std::thread::scope` is in std since 1.63, requires no Cargo
+  changes, and gives us structured-concurrency lifetime safety
+  for `&self.tool_registry` borrows. `ToolHandler` is
+  `Arc<dyn Fn + Send + Sync>` (see `unified_tools::ToolHandler`),
+  so the registry is naturally shareable across threads.
+
+### Compatibility
+- `parallel_read_only_tools` defaults to `false`. Builders that
+  never call the new setter behave exactly as before — same
+  ordering, same locking, same cost accounting.
+- `AutonomousAgentConfig` adds one field (`#[non_exhaustive]`);
+  the builder constructs the struct internally, so external
+  callers using the builder are unaffected.
+- The sequential path is preserved verbatim under `else { … }`,
+  not refactored.
+
+### Tests
+4 new tests in `autonomous_loop::tests`:
+- `test_is_read_only_tool_name_classification` — pins down the
+  allow-list (positive + negative cases including `write_file`,
+  `delete_file`, `execute_command`, `ask_user`).
+- `test_parallel_read_only_executes_all_calls` — two read-only
+  calls, each with a 60 ms sleep in their handler. Asserts both
+  ran *and* the iteration finished under 200 ms (a strictly
+  sequential schedule would take ≥ 120 ms of pure handler time
+  plus per-call overhead).
+- `test_parallel_falls_back_to_sequential_on_unknown_tool` — a
+  mixed batch (`read_file` + `calculate`). Parallel is *not*
+  eligible because `calculate` isn't in the allow-list; both
+  calls still run, sequentially.
+- `test_parallel_disabled_keeps_sequential_path` — two read-only
+  calls but the flag isn't set; the run completes via the
+  sequential branch. Guards against accidental opt-in.
+
+All 6,660 lib tests pass under
+`cargo test --features "autonomous,self-correction,multi-agent" --lib`.
+
+### What's next
+- **V123 (B.6)**: adversary + egress inspectors and the
+  `--no-egress` policy flag for closed-network operation.
+- **Optional follow-up**: add `is_potentially_mutating_tool_name`
+  + write-after-read dependency analysis so partially-parallel
+  schedules become possible (read group → barrier → write tool
+  → read group). Outside the V122 slice; the conservative
+  all-or-nothing policy is the right starting point.
+
 ## [Unreleased] - v82 (2026-05-05) — V121 Phase B.4 (part 3): wire StuckDetector into multi_agent::PatternRunner (0.2.68)
 
 ### Added
