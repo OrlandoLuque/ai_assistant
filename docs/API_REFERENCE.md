@@ -107,6 +107,33 @@ All errors return a structured JSON body:
 | `INTERNAL_ERROR` | 500 | Unexpected server error |
 | `NOT_FOUND` | 404 | Unknown endpoint |
 
+### Internal Error Taxonomy (`error_taxonomy::ErrorCode`)
+
+The HTTP `error_code` above is the wire-level taxonomy. Internally, every Rust error
+type that crosses a public boundary implements the `ErrorCode` trait and exposes:
+
+- A stable, fine-grained code (e.g. `PROVIDER_RATE_LIMITED`, `ANTHROPIC_API`,
+  `RESILIENT_ALL_PROVIDERS_FAILED`)
+- Structured fields as `(&'static str, String)` pairs (e.g. `("status_code", "429")`,
+  `("provider", "anthropic")`, `("retry_after_ms", "2000")`)
+- An optional category for coarse aggregation
+
+Localized human-readable templates live in `errors/en.json` and `errors/es.json`
+(83 codes each at V116) with `{field}` placeholders substituted at format time.
+The `StructuredError::from_err` adapter collapses any `ErrorCode` implementor into a
+serializable `{ code, fields, category? }` shape suitable for JSON logs and OTel
+span attributes (`error.code`, `error.fields.*`).
+
+As of V116, 16 types implement the trait: the `AiError` umbrella + 8 sub-types
+(`ConfigError`, `ProviderError`, `RagError`, `NetworkError`, `ValidationError`,
+`ResourceLimitError`, `IoError`, `SerializationError`), the RAG / embeddings
+subsystem types (`RagPipelineError`, `EmbeddingError`, `KpkgError`), and the
+provider-call adapters (`AnthropicAdapterError`, `OpenAIAdapterError`, `HfError`,
+`ResilientError`). The migration is additive — the inherent `code()` method on
+`AiError` still returns the coarse string (`"PROVIDER"`, `"CONFIG"`, …) for API
+compatibility; reach for the fine-grained taxonomy via
+`<AiError as ErrorCode>::code(&err)` or `StructuredError::from_err(&err)`.
+
 ---
 
 ## Endpoints
