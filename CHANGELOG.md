@@ -5,6 +5,88 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v81 (2026-05-05) — V120 Phase B.4 (part 2): wire StuckDetector into autonomous_agent (0.2.67)
+
+### Added
+- **V120 wires the V119 stuck-detector into the autonomous-agent runner.**
+  `AutonomousAgentBuilder` gains two opt-in setters
+  (cfg-gated under `self-correction`):
+  - `stuck_detector(StuckDetector)` — install the monitor; without it
+    the agent runs as before and observes nothing about itself.
+  - `critique_refiner(Arc<dyn CritiqueRefiner + Send + Sync>)` —
+    when stuck signals fire, the refiner's directive is folded into
+    the conversation as a `[CRITIC]: …` system message before the
+    next iteration; the detector is reset to give the agent a clean
+    slate after the redirect.
+- **`AutonomousAgent::last_stuck_signals()`** accessor — surfaces
+  the signals from the most recent iteration. Useful for observers
+  / metrics / tests; cleared once a critic directive is folded in
+  or no signals fire.
+- **`canonical_action_key`** helper — builds a stable per-iteration
+  action key from the first parsed tool call: `tool:<name>(k=v,…)`
+  with arguments sorted by key, falling back to `"answer"` for
+  no-tool-call iterations. Distinguishes `read_file(path=/a)` from
+  `read_file(path=/b)` while collapsing repeated identical calls.
+
+### How it wires in
+At the end of every `run_iteration`, after the tool calls are
+processed and the task board is updated, the agent appends an
+`AgentObservation`:
+- `step`           = `self.iteration`
+- `action`         = `canonical_action_key(&parsed)`
+- `output_text`    = the assistant message produced this iteration
+- `error_code`     = `Some("TOOL_FAILED")` when *all* tool calls in
+  the iteration errored (no successes), `None` otherwise — a
+  conservative substitute until tool errors carry V117 codes
+- `progressed`     = `true` if at least one tool call succeeded
+
+If `detector.check()` returns signals and a refiner is installed,
+the refiner is asked for a directive; on `Some(directive)` the
+agent pushes a `[CRITIC]: <directive>` system message and resets
+the detector. When no refiner is installed, signals are still
+captured in `last_stuck_signals` but no automatic recovery occurs —
+the caller can observe and escalate (abort, hand off, bump model
+tier).
+
+### Tests
+- 4 new tests in `autonomous_loop::tests`:
+  - `test_stuck_detector_observes_each_iteration` — detector is
+    fed observations during a normal multi-iteration run; below
+    threshold, no signals fire.
+  - `test_stuck_detector_fires_on_action_loop_no_refiner` — same
+    tool call repeatedly under aggressive thresholds → `ActionLoop`
+    fires and is visible via `last_stuck_signals()`.
+  - `test_critic_directive_injected_when_signals_fire` — same loop
+    with a `CallbackCritic` returning a fixed directive: the agent's
+    conversation gains a `[CRITIC]:` message, signals are cleared
+    after the redirect.
+  - `test_canonical_action_key_distinct_args` — `read_file(/a)` vs
+    `read_file(/b)` get distinct keys, identical args collapse,
+    empty parse → `"answer"`.
+- All 30 `autonomous_loop` tests pass under
+  `cargo test --features self-correction,autonomous`.
+
+### Why this slice (and not multi-agent yet)
+V120 closes the autonomous-runner half of the V119 deferred wire-in.
+Autonomous runs are where stuck detection matters most — the agent
+decides its own steps, has no per-step validator, and the policy /
+sandbox can't tell the difference between "still working hard" and
+"hammering a dead end." Multi-agent (V121) is a different concern
+(cross-turn pathology in handoffs); shipping it separately keeps
+each iteration reviewable.
+
+### No breaking changes
+Both new builder methods are cfg-gated behind `self-correction` and
+default to `None`. Agents built without them behave exactly as
+before — same constructors, same `run()` signature, same
+`AgentResult`. The new struct fields default to `None` / empty in
+`build()`.
+
+### Version
+0.2.66 → 0.2.67.
+
+---
+
 ## [Unreleased] - v80 (2026-05-05) — V119 Phase B.4 (part 1): Stuck Detector + critique-based refinement (0.2.66)
 
 ### Added

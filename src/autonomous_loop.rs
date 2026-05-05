@@ -224,6 +224,22 @@ pub struct AutonomousAgent {
     knowledge_provider: Option<Arc<dyn KnowledgeProvider>>,
     /// Agent methodology — controls workflow phases, reasoning, review triggers, etc.
     methodology: AgentMethodology,
+    /// V120: optional stuck detector watching the agent loop for pathologies.
+    #[cfg(feature = "self-correction")]
+    stuck_detector: Option<crate::stuck_detector::StuckDetector>,
+    /// V120: optional critique refiner. When the detector fires signals, the
+    /// refiner is invoked and any returned directive is folded into the
+    /// conversation as a `[CRITIC]` system message before the next iteration.
+    #[cfg(feature = "self-correction")]
+    critique_refiner: Option<Arc<dyn crate::stuck_detector::CritiqueRefiner + Send + Sync>>,
+    /// V120: cached user intent (the original `task` passed to `run`) — used
+    /// when building critic prompts.
+    #[cfg(feature = "self-correction")]
+    user_intent: String,
+    /// V120: signals from the most recent `check()` (cleared once a directive
+    /// is folded in or no signals fire). Exposed for observers / tests.
+    #[cfg(feature = "self-correction")]
+    last_stuck_signals: Vec<crate::stuck_detector::StuckSignal>,
 }
 
 impl AutonomousAgent {
@@ -260,6 +276,15 @@ impl AutonomousAgent {
         self.total_cost = 0.0;
         self.start_time = now_millis();
         self.tools_called_log.clear();
+
+        #[cfg(feature = "self-correction")]
+        {
+            self.user_intent = task.to_string();
+            self.last_stuck_signals.clear();
+            if let Some(ref mut det) = self.stuck_detector {
+                det.reset();
+            }
+        }
 
         // Inject system prompt
         if !self.config.system_prompt.is_empty() {
@@ -472,6 +497,10 @@ impl AutonomousAgent {
         }
 
         // 5. Process each tool call
+        #[cfg(feature = "self-correction")]
+        let mut any_tool_succeeded = false;
+        #[cfg(feature = "self-correction")]
+        let mut any_tool_errored = false;
         for tc in &parsed {
             // Special case: ask_user
             if tc.name == "ask_user" {
@@ -517,6 +546,10 @@ impl AutonomousAgent {
             match self.tool_registry.execute(&tool_call) {
                 Ok(output) => {
                     self.tools_called_log.push(tc.name.clone());
+                    #[cfg(feature = "self-correction")]
+                    {
+                        any_tool_succeeded = true;
+                    }
 
                     // Record cost using configurable cost tracking
                     let call_cost = self.config.cost_config.cost_for(&tc.name, &tc.arguments);
@@ -536,6 +569,10 @@ impl AutonomousAgent {
                     });
                 }
                 Err(e) => {
+                    #[cfg(feature = "self-correction")]
+                    {
+                        any_tool_errored = true;
+                    }
                     self.conversation.push(LoopMessage {
                         role: LoopRole::Tool,
                         content: format!("[Tool: {} Error] {}", tc.name, e),
@@ -564,7 +601,100 @@ impl AutonomousAgent {
             }
         }
 
+        // 7. V120: feed an observation to the stuck detector and, if it
+        //    fires, ask the critic refiner for a directive that we fold
+        //    into the conversation as a [CRITIC] system message.
+        #[cfg(feature = "self-correction")]
+        {
+            let action_key = canonical_action_key(&parsed);
+            self.observe_and_maybe_critique(
+                action_key,
+                response.clone(),
+                any_tool_succeeded,
+                any_tool_errored && !any_tool_succeeded,
+            );
+        }
+
         IterationOutcome::Continue
+    }
+
+    /// V120: feed an observation to the stuck detector and, if it fires,
+    /// ask the critic refiner for a directive that we fold into the
+    /// conversation as a `[CRITIC]` system message.
+    #[cfg(feature = "self-correction")]
+    fn observe_and_maybe_critique(
+        &mut self,
+        action: String,
+        output_text: String,
+        progressed: bool,
+        all_errored: bool,
+    ) {
+        use crate::stuck_detector::AgentObservation;
+
+        if self.stuck_detector.is_none() {
+            return;
+        }
+
+        let obs = AgentObservation {
+            step: self.iteration,
+            action,
+            output_text,
+            error_code: if all_errored {
+                Some("TOOL_FAILED".to_string())
+            } else {
+                None
+            },
+            progressed,
+        };
+
+        let signals = {
+            let det = self.stuck_detector.as_mut().expect("checked above");
+            det.observe(obs);
+            det.check()
+        };
+
+        if signals.is_empty() {
+            self.last_stuck_signals.clear();
+            return;
+        }
+        self.last_stuck_signals = signals.clone();
+
+        let directive = if let Some(ref refiner) = self.critique_refiner {
+            let history: Vec<AgentObservation> = self
+                .stuck_detector
+                .as_ref()
+                .expect("checked above")
+                .history()
+                .into_iter()
+                .cloned()
+                .collect();
+            refiner.refine(&signals, &history, &self.user_intent)
+        } else {
+            None
+        };
+
+        if let Some(directive) = directive {
+            self.conversation.push(LoopMessage {
+                role: LoopRole::System,
+                content: format!("[CRITIC]: {}", directive),
+                tool_calls: None,
+                tool_results: None,
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
+            });
+            if let Some(det) = self.stuck_detector.as_mut() {
+                det.reset();
+            }
+            self.last_stuck_signals.clear();
+        }
+    }
+
+    /// V120: most recent stuck signals captured in `run_iteration`. Empty
+    /// when the detector did not fire on the last iteration (or no detector
+    /// is installed).
+    #[cfg(feature = "self-correction")]
+    pub fn last_stuck_signals(&self) -> &[crate::stuck_detector::StuckSignal] {
+        &self.last_stuck_signals
     }
 
     /// Pause the agent. The next iteration will return early.
@@ -837,6 +967,10 @@ pub struct AutonomousAgentBuilder {
     mailbox: Option<std::sync::mpsc::Receiver<InterAgentMessage>>,
     knowledge_provider: Option<Arc<dyn KnowledgeProvider>>,
     methodology: AgentMethodology,
+    #[cfg(feature = "self-correction")]
+    stuck_detector: Option<crate::stuck_detector::StuckDetector>,
+    #[cfg(feature = "self-correction")]
+    critique_refiner: Option<Arc<dyn crate::stuck_detector::CritiqueRefiner + Send + Sync>>,
 }
 
 impl AutonomousAgentBuilder {
@@ -861,7 +995,33 @@ impl AutonomousAgentBuilder {
             mailbox: None,
             knowledge_provider: None,
             methodology: AgentMethodology::default(),
+            #[cfg(feature = "self-correction")]
+            stuck_detector: None,
+            #[cfg(feature = "self-correction")]
+            critique_refiner: None,
         }
+    }
+
+    /// V120: install a stuck detector. Without this, the agent runs as
+    /// before and never observes itself.
+    #[cfg(feature = "self-correction")]
+    pub fn stuck_detector(mut self, detector: crate::stuck_detector::StuckDetector) -> Self {
+        self.stuck_detector = Some(detector);
+        self
+    }
+
+    /// V120: install a critique refiner. When stuck signals fire, the
+    /// refiner is asked for a directive that gets folded into the next
+    /// prompt as a `[CRITIC]` system message. With no refiner, signals
+    /// still fire and are visible via [`AutonomousAgent::last_stuck_signals`]
+    /// but no automatic recovery occurs.
+    #[cfg(feature = "self-correction")]
+    pub fn critique_refiner(
+        mut self,
+        refiner: Arc<dyn crate::stuck_detector::CritiqueRefiner + Send + Sync>,
+    ) -> Self {
+        self.critique_refiner = Some(refiner);
+        self
     }
 
     /// Set an optional knowledge provider for context enrichment.
@@ -965,6 +1125,14 @@ impl AutonomousAgentBuilder {
             planning_hint_idx: None,
             knowledge_provider: self.knowledge_provider,
             methodology: self.methodology,
+            #[cfg(feature = "self-correction")]
+            stuck_detector: self.stuck_detector,
+            #[cfg(feature = "self-correction")]
+            critique_refiner: self.critique_refiner,
+            #[cfg(feature = "self-correction")]
+            user_intent: String::new(),
+            #[cfg(feature = "self-correction")]
+            last_stuck_signals: Vec::new(),
         }
     }
 }
@@ -978,6 +1146,27 @@ fn now_millis() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+/// V120: canonical key for an iteration's tool call(s). Encodes the first
+/// tool's name plus its arguments (sorted by key) so that
+/// `read_file(path=/a)` and `read_file(path=/b)` are distinguished — but
+/// repeated identical calls produce the same key. Falls back to `"answer"`
+/// when no tool calls were issued.
+#[cfg(feature = "self-correction")]
+fn canonical_action_key(parsed: &[ParsedToolCall]) -> String {
+    if parsed.is_empty() {
+        return "answer".to_string();
+    }
+    let first = &parsed[0];
+    let mut sorted: Vec<(&String, &String)> = first.arguments.iter().collect();
+    sorted.sort_by(|a, b| a.0.cmp(b.0));
+    let args = sorted
+        .iter()
+        .map(|(k, v)| format!("{}={}", k, v))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("tool:{}({})", first.name, args)
 }
 
 // ============================================================================
@@ -1688,5 +1877,178 @@ Let me process the results."#;
 
         let log = call_log.lock().unwrap();
         assert_eq!(log[0], "has_knowledge=false");
+    }
+
+    // ── V120: stuck detector wire-in ─────────────────────────────────────
+
+    #[cfg(feature = "self-correction")]
+    #[test]
+    fn test_stuck_detector_observes_each_iteration() {
+        use crate::stuck_detector::{StuckDetector, StuckDetectorConfig};
+
+        // Generator: emit two tool calls then a final answer.
+        let n = Arc::new(AtomicUsize::new(0));
+        let nc = Arc::clone(&n);
+        let gen: Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync> = Arc::new(move |_| {
+            let i = nc.fetch_add(1, Ordering::SeqCst);
+            match i {
+                0 => r#"[{"name": "noop", "arguments": {"k": "a"}}]"#.to_string(),
+                1 => r#"[{"name": "noop", "arguments": {"k": "b"}}]"#.to_string(),
+                _ => "Done.".to_string(),
+            }
+        });
+
+        let mut registry = ToolRegistry::new();
+        registry.register(
+            ToolBuilder::new("noop", "Do nothing").build(),
+            Arc::new(|_| Ok(ToolOutput::text("ok"))),
+        );
+
+        let policy = AgentPolicy::autonomous();
+        let sandbox = Arc::new(RwLock::new(SandboxValidator::with_approval(
+            policy.clone(),
+            Arc::new(AutoApproveAll),
+        )));
+
+        let detector = StuckDetector::new(StuckDetectorConfig::default());
+        let mut agent = AutonomousAgent::builder("obs-agent", gen)
+            .max_iterations(10)
+            .policy(policy)
+            .sandbox(sandbox)
+            .tool_registry(registry)
+            .stuck_detector(detector)
+            .build();
+
+        agent.run("test stuck observation").unwrap();
+        // Detector should be empty: no signals fired (only 2 tool iterations
+        // with distinct action keys, well below the threshold of 3).
+        assert!(agent.last_stuck_signals().is_empty());
+    }
+
+    #[cfg(feature = "self-correction")]
+    #[test]
+    fn test_stuck_detector_fires_on_action_loop_no_refiner() {
+        use crate::stuck_detector::{StuckDetector, StuckDetectorConfig, StuckSignal};
+
+        // Generator always emits the *same* tool call with the *same* args
+        // → action_loop should fire after 3 iterations.
+        let gen: Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync> =
+            Arc::new(|_| r#"[{"name": "noop", "arguments": {"k": "v"}}]"#.to_string());
+
+        let mut registry = ToolRegistry::new();
+        registry.register(
+            ToolBuilder::new("noop", "Do nothing").build(),
+            Arc::new(|_| Ok(ToolOutput::text("ok"))),
+        );
+
+        let policy = AgentPolicy::autonomous();
+        let sandbox = Arc::new(RwLock::new(SandboxValidator::with_approval(
+            policy.clone(),
+            Arc::new(AutoApproveAll),
+        )));
+
+        let detector = StuckDetector::new(StuckDetectorConfig::aggressive());
+        let mut agent = AutonomousAgent::builder("loop-agent", gen)
+            .max_iterations(5) // hits Max iterations → returns Err
+            .policy(policy)
+            .sandbox(sandbox)
+            .tool_registry(registry)
+            .stuck_detector(detector)
+            .build();
+
+        let _ = agent.run("loop forever");
+        let signals = agent.last_stuck_signals();
+        // Without a refiner, signals are visible but not auto-cleared.
+        assert!(signals
+            .iter()
+            .any(|s| matches!(s, StuckSignal::ActionLoop { .. })));
+    }
+
+    #[cfg(feature = "self-correction")]
+    #[test]
+    fn test_critic_directive_injected_when_signals_fire() {
+        use crate::stuck_detector::{
+            CallbackCritic, CritiqueRefiner, StuckDetector, StuckDetectorConfig,
+        };
+
+        // Generator always emits the same tool call → ActionLoop fires fast.
+        let gen: Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync> =
+            Arc::new(|_| r#"[{"name": "noop", "arguments": {}}]"#.to_string());
+
+        let mut registry = ToolRegistry::new();
+        registry.register(
+            ToolBuilder::new("noop", "Do nothing").build(),
+            Arc::new(|_| Ok(ToolOutput::text("ok"))),
+        );
+
+        let policy = AgentPolicy::autonomous();
+        let sandbox = Arc::new(RwLock::new(SandboxValidator::with_approval(
+            policy.clone(),
+            Arc::new(AutoApproveAll),
+        )));
+
+        // Critic that returns a fixed directive any time it's called.
+        let critic =
+            CallbackCritic::new(|_prompt: &str| Some("try a totally different angle".to_string()));
+        let refiner: Arc<dyn CritiqueRefiner + Send + Sync> = Arc::new(critic);
+
+        let detector = StuckDetector::new(StuckDetectorConfig::aggressive());
+        let mut agent = AutonomousAgent::builder("crit-agent", gen)
+            .max_iterations(5)
+            .policy(policy)
+            .sandbox(sandbox)
+            .tool_registry(registry)
+            .stuck_detector(detector)
+            .critique_refiner(refiner)
+            .build();
+
+        let _ = agent.run("get unstuck");
+        let critic_msgs: Vec<&LoopMessage> = agent
+            .conversation()
+            .iter()
+            .filter(|m| m.content.starts_with("[CRITIC]:"))
+            .collect();
+        assert!(
+            !critic_msgs.is_empty(),
+            "expected at least one [CRITIC] system message"
+        );
+        assert!(critic_msgs[0].content.contains("totally different angle"));
+        // After firing + injecting, last signals should be cleared.
+        assert!(agent.last_stuck_signals().is_empty());
+    }
+
+    #[cfg(feature = "self-correction")]
+    #[test]
+    fn test_canonical_action_key_distinct_args() {
+        let a = ParsedToolCall {
+            name: "read_file".into(),
+            arguments: {
+                let mut m = HashMap::new();
+                m.insert("path".into(), "/a".into());
+                m
+            },
+        };
+        let b = ParsedToolCall {
+            name: "read_file".into(),
+            arguments: {
+                let mut m = HashMap::new();
+                m.insert("path".into(), "/b".into());
+                m
+            },
+        };
+        let c = ParsedToolCall {
+            name: "read_file".into(),
+            arguments: {
+                let mut m = HashMap::new();
+                m.insert("path".into(), "/a".into());
+                m
+            },
+        };
+        assert_ne!(
+            canonical_action_key(&[a.clone()]),
+            canonical_action_key(&[b])
+        );
+        assert_eq!(canonical_action_key(&[a]), canonical_action_key(&[c]));
+        assert_eq!(canonical_action_key(&[]), "answer");
     }
 }
