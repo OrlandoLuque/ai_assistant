@@ -5,6 +5,74 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v80 (2026-05-05) — V119 Phase B.4 (part 1): Stuck Detector + critique-based refinement (0.2.66)
+
+### Added
+- **`src/stuck_detector.rs`** (new module, ~660 lines incl. tests).
+  Gated under `--features self-correction` alongside the existing
+  `self_correction` module — they're complementary: `self_correction`
+  runs a tight execute-validate-correct loop on a *single* task,
+  `stuck_detector` watches an *open-ended agent run* for higher-level
+  pathologies that can't be expressed as a single validator.
+- **`AgentObservation`** — one step of an agent loop: step number,
+  canonical `action` key (e.g. `"shell:ls /tmp"`), free-text output,
+  optional V117 `error_code`, and a `progressed` boolean. Convenience
+  constructors `success(...)` and `error(...)`.
+- **`StuckSignal`** enum — four pathology types, each with payload:
+  - `OutputRepetition { count, sample }`
+  - `ActionLoop { count, action }`
+  - `RetryWithoutChange { count, code }` — pairs naturally with the
+    V117 error taxonomy (e.g. repeated `PROVIDER_RATE_LIMITED` ⇒
+    "still rate-limited", repeated `WORKFLOW_NODE_NOT_FOUND` ⇒
+    "the node really isn't there — stop retrying").
+  - `NoProgress { steps }`
+- **`StuckDetectorConfig`** with `default()`, `aggressive()`, and
+  `permissive()` presets (window size, four per-heuristic thresholds,
+  similarity threshold for output Jaccard).
+- **`StuckDetector`** — sliding-window monitor with `observe()` /
+  `check()` / `reset()` / `history()` / `len()`. Emits one signal
+  per pathology detected; multiple signals can fire simultaneously.
+- **`CritiqueRefiner`** trait — turns signals + history + user
+  intent into a free-text directive for the next step.
+- **`CallbackCritic<F>`** default impl — wraps any
+  `Fn(&str) -> Option<String> + Send + Sync` callable (typically a
+  thin LLM call). Builds the critique prompt internally — caller
+  only plugs in the LLM invocation, matching the
+  `chain_of_verification::with_llm_verifier` pattern.
+
+### Why this slice
+`self_correction` already handles single-task validate→correct loops
+(V98-V100). What was missing was a higher-level monitor for agents
+that *don't* have a per-step validator: long autonomous runs where
+the agent decides its own steps, or multi-agent loops where pathology
+manifests across multiple turns rather than within one. With V117 in
+place, `RetryWithoutChange` is now sharp: instead of "same error
+message", we match on stable subsystem codes like
+`WORKFLOW_NODE_NOT_FOUND` — which never matches a transient
+`NETWORK_TIMEOUT` against a permanent missing-node failure.
+
+### Tests
+- **18 new** unit tests in `stuck_detector::tests`, covering each
+  heuristic (firing + silent paths), Jaccard edge cases, sliding-window
+  eviction, signal summaries, the three config presets, and the
+  callback-critic prompt construction (intent + signals + history,
+  history-size cap).
+- All 18 tests pass under `cargo test --features self-correction`.
+
+### Wiring (deferred)
+This iteration ships the standalone module + public re-exports.
+Integration into the autonomous agent and multi-agent runners is
+deferred to a follow-up so the detector can be reviewed and tuned
+in isolation first. The wire-in is a localized change at each runner
+(insert `detector.observe(...)` after each step, `detector.check()`
+before scheduling the next, optional `refiner.refine(...)` to inject
+the directive). No public API breakage planned.
+
+### Version
+0.2.65 → 0.2.66.
+
+---
+
 ## [Unreleased] - v79 (2026-05-05) — V118 Phase C.2: wire StructuredError into OTel spans (0.2.65)
 
 ### Added

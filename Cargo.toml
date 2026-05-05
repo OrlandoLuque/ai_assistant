@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.65"
+version = "0.2.66"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"

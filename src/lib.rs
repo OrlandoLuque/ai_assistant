@@ -274,6 +274,8 @@ pub mod slash_commands;
 pub mod storage_context;
 pub mod streaming;
 pub mod structured;
+#[cfg(feature = "self-correction")]
+pub mod stuck_detector;
 pub mod templates;
 pub mod tool_safety;
 pub mod topic_matcher;
@@ -441,6 +443,12 @@ pub use self_correction::{
     SelfCorrectionResult, StopReason as CorrectionStopReason, TaskError as CorrectionTaskError,
     TaskOutcome as CorrectionTaskOutcome, TestFn, TestIssue, TestRunResult, ToolCallIssue,
     ToolCallTask, ToolRegenerateFn, ToolValidateFn, ToolValidationResult,
+};
+
+#[cfg(feature = "self-correction")]
+pub use stuck_detector::{
+    AgentObservation, CallbackCritic, CritiqueRefiner, StuckDetector, StuckDetectorConfig,
+    StuckSignal,
 };
 
 #[cfg(feature = "feedback-loop")]
