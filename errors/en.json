@@ -2,5 +2,53 @@
   "LOCAL_INFER_NOT_IMPLEMENTED": "Backend not compiled in: {backend}",
   "LOCAL_INFER_MODEL_NOT_FOUND": "Model file not found: {path}",
   "LOCAL_INFER_IO": "I/O error during local inference: {io_kind}",
-  "LOCAL_INFER_BACKEND": "Local inference backend error: {detail}"
+  "LOCAL_INFER_BACKEND": "Local inference backend error: {detail}",
+
+  "CONFIG_MISSING_VALUE": "Missing required configuration '{field}': {description}",
+  "CONFIG_INVALID_VALUE": "Invalid value '{value}' for '{field}', expected: {expected}",
+  "CONFIG_LOAD_FAILED": "Failed to load configuration from '{path}': {reason}",
+  "CONFIG_SAVE_FAILED": "Failed to save configuration to '{path}': {reason}",
+  "CONFIG_UNKNOWN_PROVIDER": "Unknown AI provider: '{provider}'",
+
+  "PROVIDER_UNAVAILABLE": "{provider} provider unavailable at '{url}'",
+  "PROVIDER_MODEL_NOT_FOUND": "Model '{model}' not found on {provider} provider",
+  "PROVIDER_AUTH_FAILED": "Authentication failed for {provider}: {reason}",
+  "PROVIDER_RATE_LIMITED": "Rate limited by {provider}",
+  "PROVIDER_CONTEXT_TOO_LONG": "Context length exceeded: {used_tokens} tokens used, {max_tokens} max",
+  "PROVIDER_INVALID_RESPONSE": "Invalid response from {provider}: {reason}",
+  "PROVIDER_API_ERROR": "{provider} API error ({status_code}): {message}",
+  "PROVIDER_CANCELLED": "Generation was cancelled",
+  "PROVIDER_STREAM_ERROR": "Streaming error: {reason}",
+
+  "RAG_DATABASE": "Database error during '{operation}': {reason}",
+  "RAG_DOCUMENT_NOT_FOUND": "Document '{source}' not found",
+  "RAG_INVALID_DOCUMENT": "Invalid document '{source}': {reason}",
+  "RAG_INDEXING_FAILED": "Failed to index '{source}': {reason}",
+  "RAG_SEARCH_FAILED": "Search failed for '{query}': {reason}",
+  "RAG_APPEND_ONLY_VIOLATION": "Cannot {operation} document '{source}': append-only mode is enabled",
+  "RAG_EMBEDDING_ERROR": "Embedding error: {reason}",
+
+  "NETWORK_CONNECTION_FAILED": "Connection to '{url}' failed: {reason}",
+  "NETWORK_TIMEOUT": "Request to '{url}' timed out after {timeout_ms}ms",
+  "NETWORK_DNS_ERROR": "DNS resolution failed for '{host}'",
+  "NETWORK_TLS_ERROR": "TLS error for '{url}': {reason}",
+  "NETWORK_HTTP_ERROR": "HTTP error {status}: {message}",
+
+  "VALIDATION_EMPTY_INPUT": "'{field}' cannot be empty",
+  "VALIDATION_TOO_LONG": "'{field}' is too long ({actual_length} chars, max {max_length})",
+  "VALIDATION_INVALID_FORMAT": "'{field}' has invalid format, expected: {expected}",
+  "VALIDATION_OUT_OF_RANGE": "'{field}' value '{value}' out of range [{min}, {max}]",
+  "VALIDATION_CUSTOM": "'{field}': {message}",
+
+  "RESOURCE_RATE_LIMIT": "Rate limit exceeded ({limit} requests per {window_secs}s)",
+  "RESOURCE_MEMORY_LIMIT": "Memory limit exceeded: {used_mb}MB used of {limit_mb}MB limit",
+  "RESOURCE_TOKEN_LIMIT": "Token limit exceeded: {used} used of {limit} limit",
+  "RESOURCE_STORAGE_LIMIT": "Storage limit exceeded: {used_mb}MB used of {limit_mb}MB limit",
+  "RESOURCE_CONCURRENT_LIMIT": "Concurrent request limit exceeded: {limit} max",
+  "RESOURCE_BUDGET_EXCEEDED": "Budget exceeded: {used} {currency} used of {budget} {currency} budget",
+
+  "IO_GENERIC": "I/O error during '{operation}': {reason}",
+  "SERIALIZATION_ERROR": "{format} {operation} error: {reason}",
+
+  "OTHER": "{detail}"
 }

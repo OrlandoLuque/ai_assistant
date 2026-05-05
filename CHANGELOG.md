@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v75 (2026-05-04) — V114 Phase C.2: ErrorCode rollout to AiError umbrella (0.2.61)
+
+### Added
+- **`impl ErrorCode`** for the umbrella `AiError` and its 8 most-used sub-types: `ConfigError`, `ProviderError`, `RagError`, `NetworkError`, `ValidationError`, `ResourceLimitError`, `IoError`, `SerializationError`. Fine-grained per-variant codes (e.g. `PROVIDER_RATE_LIMITED`, `RAG_APPEND_ONLY_VIOLATION`, `VALIDATION_OUT_OF_RANGE`) plus structured `fields()` extracting the variant payload (provider, model, retry_after, status_code, …).
+- **`AiError`'s trait `code()`** delegates to the inner enum's fine-grained code; `Other(detail)` emits `OTHER` with the detail in fields. Long-tail subsystems (`Workflow`, `AdvancedMemory`, `A2A`, `VoiceAgent`, `MediaGeneration`, `Distillation`, `ConstrainedDecoding`, `Hitl`, `McpClient`, `AgentEval`, `RedTeam`, `Mcts`, `DevTools`, `EvalSuite`, `AdvancedRouting`) still surface their coarse category code — they migrate in V115/V117.
+- **`errors/en.json` + `errors/es.json`** expanded from 4 → 42 codes covering everything wired in this iteration.
+
+### Preserved (zero-risk migration)
+- Hand-written `Display`/`Error`/`From` impls untouched. The inherent `pub fn code(&self)` on `AiError` still returns the coarse category (`"PROVIDER"`, `"CONFIG"`, …) — existing callers + the 22 tests asserting against those strings keep passing. The new fine-grained code is reached via `<AiError as ErrorCode>::code(&err)` (or any explicit trait disambiguation).
+- All 41 pre-existing `error::tests` pass, plus 11 new `test_errorcode_*` tests for the trait surface — 52 total.
+
+### Tests (V114)
+- 11 new tests: per-enum fine-grained code+fields, `AiError`-delegates-to-inner, long-tail-keeps-coarse, `Other` carries `detail`, `IoError`/`SerializationError`, full localize roundtrip via `StructuredError` (en + es).
+
+### What's next (V115+)
+- V115: RAG deep modules (`Self-RAG`, `CRAG`, `Graph RAG`, `RAPTOR`) — error paths inside the RAG implementations themselves, beyond the umbrella `RagError`.
+- V116: 18 providers — provider-specific submodule error types where they exist.
+- V117: long-tail umbrella variants (`WorkflowError`, `A2AError`, `VoiceAgentError`, …) onto `ErrorCode` — flips the `match` arms in `AiError::ErrorCode::code` from coarse to fine-grained.
+- V118: wire `StructuredError::to_json()` into `opentelemetry_integration.rs::AiSpan` (set `error.code` + `error.fields.*` attributes).
+
+### Version
+0.2.60 → 0.2.61.
+
+---
+
 ## [Unreleased] - v74 (2026-05-04) — V113 Phase C.2 (core): structured error taxonomy (0.2.60)
 
 ### Added

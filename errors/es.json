@@ -2,5 +2,53 @@
   "LOCAL_INFER_NOT_IMPLEMENTED": "Backend no compilado: {backend}",
   "LOCAL_INFER_MODEL_NOT_FOUND": "Archivo de modelo no encontrado: {path}",
   "LOCAL_INFER_IO": "Error de E/S en inferencia local: {io_kind}",
-  "LOCAL_INFER_BACKEND": "Error del backend de inferencia local: {detail}"
+  "LOCAL_INFER_BACKEND": "Error del backend de inferencia local: {detail}",
+
+  "CONFIG_MISSING_VALUE": "Falta la configuración requerida '{field}': {description}",
+  "CONFIG_INVALID_VALUE": "Valor inválido '{value}' para '{field}', se esperaba: {expected}",
+  "CONFIG_LOAD_FAILED": "Error al cargar la configuración desde '{path}': {reason}",
+  "CONFIG_SAVE_FAILED": "Error al guardar la configuración en '{path}': {reason}",
+  "CONFIG_UNKNOWN_PROVIDER": "Proveedor de IA desconocido: '{provider}'",
+
+  "PROVIDER_UNAVAILABLE": "El proveedor {provider} no está disponible en '{url}'",
+  "PROVIDER_MODEL_NOT_FOUND": "Modelo '{model}' no encontrado en el proveedor {provider}",
+  "PROVIDER_AUTH_FAILED": "Autenticación fallida para {provider}: {reason}",
+  "PROVIDER_RATE_LIMITED": "Limitado por {provider}",
+  "PROVIDER_CONTEXT_TOO_LONG": "Contexto demasiado largo: {used_tokens} tokens usados, máximo {max_tokens}",
+  "PROVIDER_INVALID_RESPONSE": "Respuesta inválida de {provider}: {reason}",
+  "PROVIDER_API_ERROR": "Error de API de {provider} ({status_code}): {message}",
+  "PROVIDER_CANCELLED": "Generación cancelada",
+  "PROVIDER_STREAM_ERROR": "Error de streaming: {reason}",
+
+  "RAG_DATABASE": "Error de base de datos en '{operation}': {reason}",
+  "RAG_DOCUMENT_NOT_FOUND": "Documento '{source}' no encontrado",
+  "RAG_INVALID_DOCUMENT": "Documento inválido '{source}': {reason}",
+  "RAG_INDEXING_FAILED": "Error al indexar '{source}': {reason}",
+  "RAG_SEARCH_FAILED": "Búsqueda fallida para '{query}': {reason}",
+  "RAG_APPEND_ONLY_VIOLATION": "No se puede {operation} el documento '{source}': modo append-only activo",
+  "RAG_EMBEDDING_ERROR": "Error de embedding: {reason}",
+
+  "NETWORK_CONNECTION_FAILED": "Conexión a '{url}' fallida: {reason}",
+  "NETWORK_TIMEOUT": "La petición a '{url}' agotó el tiempo después de {timeout_ms}ms",
+  "NETWORK_DNS_ERROR": "Resolución DNS fallida para '{host}'",
+  "NETWORK_TLS_ERROR": "Error TLS para '{url}': {reason}",
+  "NETWORK_HTTP_ERROR": "Error HTTP {status}: {message}",
+
+  "VALIDATION_EMPTY_INPUT": "'{field}' no puede estar vacío",
+  "VALIDATION_TOO_LONG": "'{field}' es demasiado largo ({actual_length} caracteres, máximo {max_length})",
+  "VALIDATION_INVALID_FORMAT": "'{field}' tiene formato inválido, se esperaba: {expected}",
+  "VALIDATION_OUT_OF_RANGE": "'{field}' con valor '{value}' fuera de rango [{min}, {max}]",
+  "VALIDATION_CUSTOM": "'{field}': {message}",
+
+  "RESOURCE_RATE_LIMIT": "Límite de tasa excedido ({limit} peticiones por {window_secs}s)",
+  "RESOURCE_MEMORY_LIMIT": "Límite de memoria excedido: {used_mb}MB usados de {limit_mb}MB",
+  "RESOURCE_TOKEN_LIMIT": "Límite de tokens excedido: {used} usados de {limit}",
+  "RESOURCE_STORAGE_LIMIT": "Límite de almacenamiento excedido: {used_mb}MB usados de {limit_mb}MB",
+  "RESOURCE_CONCURRENT_LIMIT": "Límite de peticiones concurrentes excedido: máximo {limit}",
+  "RESOURCE_BUDGET_EXCEEDED": "Presupuesto excedido: {used} {currency} usados de {budget} {currency}",
+
+  "IO_GENERIC": "Error de E/S en '{operation}': {reason}",
+  "SERIALIZATION_ERROR": "Error de {format} en '{operation}': {reason}",
+
+  "OTHER": "{detail}"
 }

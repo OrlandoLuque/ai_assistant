@@ -2612,6 +2612,359 @@ impl AiError {
     }
 }
 
+// === V114 Phase C.2: ErrorCode impls (additive) ===
+//
+// Wires the umbrella + 8 most-used sub-types onto the structured-error
+// taxonomy from V113 (`crate::error_taxonomy::ErrorCode`). Behaviour
+// is unchanged — `Display` + `Error` + `From` + the inherent
+// coarse-category `code()` are all preserved. The new trait method is
+// callable via `<AiError as ErrorCode>::code(&err)` (or any explicit
+// trait disambiguation).
+
+use crate::error_taxonomy::ErrorCode;
+
+impl ErrorCode for AiError {
+    fn code(&self) -> &'static str {
+        match self {
+            AiError::Config(e) => e.code(),
+            AiError::Provider(e) => e.code(),
+            AiError::Rag(e) => e.code(),
+            AiError::Network(e) => e.code(),
+            AiError::Validation(e) => e.code(),
+            AiError::ResourceLimit(e) => e.code(),
+            AiError::Io(e) => e.code(),
+            AiError::Serialization(e) => e.code(),
+            // Long-tail subsystems migrate in V115+. Until then they
+            // surface as their coarse category code.
+            AiError::Workflow(_) => "WORKFLOW",
+            AiError::AdvancedMemory(_) => "MEMORY",
+            AiError::A2A(_) => "A2A",
+            AiError::VoiceAgent(_) => "VOICE_AGENT",
+            AiError::MediaGeneration(_) => "MEDIA_GENERATION",
+            AiError::Distillation(_) => "DISTILLATION",
+            AiError::ConstrainedDecoding(_) => "CONSTRAINED_DECODING",
+            AiError::Hitl(_) => "HITL",
+            AiError::McpClient(_) => "MCP_CLIENT",
+            AiError::AgentEval(_) => "AGENT_EVAL",
+            AiError::RedTeam(_) => "RED_TEAM",
+            AiError::Mcts(_) => "MCTS",
+            AiError::DevTools(_) => "DEVTOOLS",
+            AiError::EvalSuite(_) => "EVAL_SUITE",
+            AiError::AdvancedRouting(_) => "ADVANCED_ROUTING",
+            AiError::Other(_) => "OTHER",
+        }
+    }
+
+    fn fields(&self) -> Vec<(&'static str, String)> {
+        match self {
+            AiError::Config(e) => e.fields(),
+            AiError::Provider(e) => e.fields(),
+            AiError::Rag(e) => e.fields(),
+            AiError::Network(e) => e.fields(),
+            AiError::Validation(e) => e.fields(),
+            AiError::ResourceLimit(e) => e.fields(),
+            AiError::Io(e) => e.fields(),
+            AiError::Serialization(e) => e.fields(),
+            AiError::Other(msg) => vec![("detail", msg.clone())],
+            _ => Vec::new(),
+        }
+    }
+}
+
+impl ErrorCode for ConfigError {
+    fn code(&self) -> &'static str {
+        match self {
+            ConfigError::MissingValue { .. } => "CONFIG_MISSING_VALUE",
+            ConfigError::InvalidValue { .. } => "CONFIG_INVALID_VALUE",
+            ConfigError::LoadFailed { .. } => "CONFIG_LOAD_FAILED",
+            ConfigError::SaveFailed { .. } => "CONFIG_SAVE_FAILED",
+            ConfigError::UnknownProvider(_) => "CONFIG_UNKNOWN_PROVIDER",
+        }
+    }
+
+    fn fields(&self) -> Vec<(&'static str, String)> {
+        match self {
+            ConfigError::MissingValue { field, description } => vec![
+                ("field", field.clone()),
+                ("description", description.clone()),
+            ],
+            ConfigError::InvalidValue {
+                field,
+                value,
+                expected,
+            } => vec![
+                ("field", field.clone()),
+                ("value", value.clone()),
+                ("expected", expected.clone()),
+            ],
+            ConfigError::LoadFailed { path, reason } => {
+                vec![("path", path.clone()), ("reason", reason.clone())]
+            }
+            ConfigError::SaveFailed { path, reason } => {
+                vec![("path", path.clone()), ("reason", reason.clone())]
+            }
+            ConfigError::UnknownProvider(p) => vec![("provider", p.clone())],
+        }
+    }
+}
+
+impl ErrorCode for ProviderError {
+    fn code(&self) -> &'static str {
+        match self {
+            ProviderError::Unavailable { .. } => "PROVIDER_UNAVAILABLE",
+            ProviderError::ModelNotFound { .. } => "PROVIDER_MODEL_NOT_FOUND",
+            ProviderError::AuthenticationFailed { .. } => "PROVIDER_AUTH_FAILED",
+            ProviderError::RateLimited { .. } => "PROVIDER_RATE_LIMITED",
+            ProviderError::ContextLengthExceeded { .. } => "PROVIDER_CONTEXT_TOO_LONG",
+            ProviderError::InvalidResponse { .. } => "PROVIDER_INVALID_RESPONSE",
+            ProviderError::ApiError { .. } => "PROVIDER_API_ERROR",
+            ProviderError::Cancelled => "PROVIDER_CANCELLED",
+            ProviderError::StreamError { .. } => "PROVIDER_STREAM_ERROR",
+        }
+    }
+
+    fn fields(&self) -> Vec<(&'static str, String)> {
+        match self {
+            ProviderError::Unavailable { provider, url } => {
+                vec![("provider", provider.clone()), ("url", url.clone())]
+            }
+            ProviderError::ModelNotFound { provider, model } => {
+                vec![("provider", provider.clone()), ("model", model.clone())]
+            }
+            ProviderError::AuthenticationFailed { provider, reason } => {
+                vec![("provider", provider.clone()), ("reason", reason.clone())]
+            }
+            ProviderError::RateLimited {
+                provider,
+                retry_after,
+            } => {
+                let mut v = vec![("provider", provider.clone())];
+                if let Some(s) = retry_after {
+                    v.push(("retry_after", s.to_string()));
+                }
+                v
+            }
+            ProviderError::ContextLengthExceeded {
+                max_tokens,
+                used_tokens,
+            } => vec![
+                ("max_tokens", max_tokens.to_string()),
+                ("used_tokens", used_tokens.to_string()),
+            ],
+            ProviderError::InvalidResponse { provider, reason } => {
+                vec![("provider", provider.clone()), ("reason", reason.clone())]
+            }
+            ProviderError::ApiError {
+                provider,
+                status_code,
+                message,
+            } => vec![
+                ("provider", provider.clone()),
+                ("status_code", status_code.to_string()),
+                ("message", message.clone()),
+            ],
+            ProviderError::Cancelled => Vec::new(),
+            ProviderError::StreamError { reason } => vec![("reason", reason.clone())],
+        }
+    }
+}
+
+impl ErrorCode for RagError {
+    fn code(&self) -> &'static str {
+        match self {
+            RagError::Database { .. } => "RAG_DATABASE",
+            RagError::DocumentNotFound(_) => "RAG_DOCUMENT_NOT_FOUND",
+            RagError::InvalidDocument { .. } => "RAG_INVALID_DOCUMENT",
+            RagError::IndexingFailed { .. } => "RAG_INDEXING_FAILED",
+            RagError::SearchFailed { .. } => "RAG_SEARCH_FAILED",
+            RagError::AppendOnlyViolation { .. } => "RAG_APPEND_ONLY_VIOLATION",
+            RagError::EmbeddingError(_) => "RAG_EMBEDDING_ERROR",
+        }
+    }
+
+    fn fields(&self) -> Vec<(&'static str, String)> {
+        match self {
+            RagError::Database { operation, reason } => {
+                vec![("operation", operation.clone()), ("reason", reason.clone())]
+            }
+            RagError::DocumentNotFound(s) => vec![("source", s.clone())],
+            RagError::InvalidDocument { source, reason } => {
+                vec![("source", source.clone()), ("reason", reason.clone())]
+            }
+            RagError::IndexingFailed { source, reason } => {
+                vec![("source", source.clone()), ("reason", reason.clone())]
+            }
+            RagError::SearchFailed { query, reason } => {
+                vec![("query", query.clone()), ("reason", reason.clone())]
+            }
+            RagError::AppendOnlyViolation { operation, source } => {
+                vec![("operation", operation.clone()), ("source", source.clone())]
+            }
+            RagError::EmbeddingError(reason) => vec![("reason", reason.clone())],
+        }
+    }
+}
+
+impl ErrorCode for NetworkError {
+    fn code(&self) -> &'static str {
+        match self {
+            NetworkError::ConnectionFailed { .. } => "NETWORK_CONNECTION_FAILED",
+            NetworkError::Timeout { .. } => "NETWORK_TIMEOUT",
+            NetworkError::DnsError { .. } => "NETWORK_DNS_ERROR",
+            NetworkError::TlsError { .. } => "NETWORK_TLS_ERROR",
+            NetworkError::HttpError { .. } => "NETWORK_HTTP_ERROR",
+        }
+    }
+
+    fn fields(&self) -> Vec<(&'static str, String)> {
+        match self {
+            NetworkError::ConnectionFailed { url, reason } => {
+                vec![("url", url.clone()), ("reason", reason.clone())]
+            }
+            NetworkError::Timeout { url, timeout_ms } => {
+                vec![("url", url.clone()), ("timeout_ms", timeout_ms.to_string())]
+            }
+            NetworkError::DnsError { host } => vec![("host", host.clone())],
+            NetworkError::TlsError { url, reason } => {
+                vec![("url", url.clone()), ("reason", reason.clone())]
+            }
+            NetworkError::HttpError { status, message } => {
+                vec![("status", status.to_string()), ("message", message.clone())]
+            }
+        }
+    }
+}
+
+impl ErrorCode for ValidationError {
+    fn code(&self) -> &'static str {
+        match self {
+            ValidationError::EmptyInput { .. } => "VALIDATION_EMPTY_INPUT",
+            ValidationError::TooLong { .. } => "VALIDATION_TOO_LONG",
+            ValidationError::InvalidFormat { .. } => "VALIDATION_INVALID_FORMAT",
+            ValidationError::OutOfRange { .. } => "VALIDATION_OUT_OF_RANGE",
+            ValidationError::Custom { .. } => "VALIDATION_CUSTOM",
+        }
+    }
+
+    fn fields(&self) -> Vec<(&'static str, String)> {
+        match self {
+            ValidationError::EmptyInput { field } => vec![("field", field.clone())],
+            ValidationError::TooLong {
+                field,
+                max_length,
+                actual_length,
+            } => vec![
+                ("field", field.clone()),
+                ("max_length", max_length.to_string()),
+                ("actual_length", actual_length.to_string()),
+            ],
+            ValidationError::InvalidFormat { field, expected } => {
+                vec![("field", field.clone()), ("expected", expected.clone())]
+            }
+            ValidationError::OutOfRange {
+                field,
+                min,
+                max,
+                value,
+            } => vec![
+                ("field", field.clone()),
+                ("min", min.clone()),
+                ("max", max.clone()),
+                ("value", value.clone()),
+            ],
+            ValidationError::Custom { field, message } => {
+                vec![("field", field.clone()), ("message", message.clone())]
+            }
+        }
+    }
+}
+
+impl ErrorCode for ResourceLimitError {
+    fn code(&self) -> &'static str {
+        match self {
+            ResourceLimitError::RateLimitExceeded { .. } => "RESOURCE_RATE_LIMIT",
+            ResourceLimitError::MemoryLimitExceeded { .. } => "RESOURCE_MEMORY_LIMIT",
+            ResourceLimitError::TokenLimitExceeded { .. } => "RESOURCE_TOKEN_LIMIT",
+            ResourceLimitError::StorageLimitExceeded { .. } => "RESOURCE_STORAGE_LIMIT",
+            ResourceLimitError::ConcurrentRequestLimit { .. } => "RESOURCE_CONCURRENT_LIMIT",
+            ResourceLimitError::BudgetExceeded { .. } => "RESOURCE_BUDGET_EXCEEDED",
+        }
+    }
+
+    fn fields(&self) -> Vec<(&'static str, String)> {
+        match self {
+            ResourceLimitError::RateLimitExceeded {
+                limit,
+                window_secs,
+                retry_after_secs,
+            } => {
+                let mut v = vec![
+                    ("limit", limit.to_string()),
+                    ("window_secs", window_secs.to_string()),
+                ];
+                if let Some(s) = retry_after_secs {
+                    v.push(("retry_after_secs", s.to_string()));
+                }
+                v
+            }
+            ResourceLimitError::MemoryLimitExceeded { limit_mb, used_mb } => vec![
+                ("limit_mb", limit_mb.to_string()),
+                ("used_mb", used_mb.to_string()),
+            ],
+            ResourceLimitError::TokenLimitExceeded { limit, used } => {
+                vec![("limit", limit.to_string()), ("used", used.to_string())]
+            }
+            ResourceLimitError::StorageLimitExceeded { limit_mb, used_mb } => vec![
+                ("limit_mb", limit_mb.to_string()),
+                ("used_mb", used_mb.to_string()),
+            ],
+            ResourceLimitError::ConcurrentRequestLimit { limit } => {
+                vec![("limit", limit.to_string())]
+            }
+            ResourceLimitError::BudgetExceeded {
+                budget,
+                used,
+                currency,
+            } => vec![
+                ("budget", format!("{:.2}", budget)),
+                ("used", format!("{:.2}", used)),
+                ("currency", currency.clone()),
+            ],
+        }
+    }
+}
+
+impl ErrorCode for IoError {
+    fn code(&self) -> &'static str {
+        "IO_GENERIC"
+    }
+
+    fn fields(&self) -> Vec<(&'static str, String)> {
+        let mut v = vec![
+            ("operation", self.operation.clone()),
+            ("reason", self.reason.clone()),
+        ];
+        if let Some(ref p) = self.path {
+            v.push(("path", p.clone()));
+        }
+        v
+    }
+}
+
+impl ErrorCode for SerializationError {
+    fn code(&self) -> &'static str {
+        "SERIALIZATION_ERROR"
+    }
+
+    fn fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("format", self.format.clone()),
+            ("operation", self.operation.clone()),
+            ("reason", self.reason.clone()),
+        ]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3828,5 +4181,166 @@ mod tests {
         let debug_str = format!("{:?}", ctx);
         assert!(debug_str.contains("ContextualError"));
         assert!(debug_str.contains("debug check"));
+    }
+
+    // === V114: ErrorCode trait wiring ===
+
+    #[test]
+    fn test_errorcode_config_fine_grained() {
+        let e = ConfigError::MissingValue {
+            field: "api_key".into(),
+            description: "required".into(),
+        };
+        assert_eq!(<ConfigError as ErrorCode>::code(&e), "CONFIG_MISSING_VALUE");
+        let f = e.fields();
+        assert!(f.iter().any(|(k, v)| *k == "field" && v == "api_key"));
+        assert!(f
+            .iter()
+            .any(|(k, v)| *k == "description" && v == "required"));
+    }
+
+    #[test]
+    fn test_errorcode_provider_fine_grained() {
+        let e = ProviderError::ModelNotFound {
+            provider: "ollama".into(),
+            model: "llama3".into(),
+        };
+        assert_eq!(
+            <ProviderError as ErrorCode>::code(&e),
+            "PROVIDER_MODEL_NOT_FOUND"
+        );
+
+        let r = ProviderError::RateLimited {
+            provider: "openai".into(),
+            retry_after: Some(30),
+        };
+        let f = r.fields();
+        assert!(f.iter().any(|(k, v)| *k == "retry_after" && v == "30"));
+
+        let cancelled = ProviderError::Cancelled;
+        assert_eq!(
+            <ProviderError as ErrorCode>::code(&cancelled),
+            "PROVIDER_CANCELLED"
+        );
+        assert!(cancelled.fields().is_empty());
+    }
+
+    #[test]
+    fn test_errorcode_rag_fine_grained() {
+        let e = RagError::AppendOnlyViolation {
+            operation: "delete".into(),
+            source: "doc.txt".into(),
+        };
+        assert_eq!(
+            <RagError as ErrorCode>::code(&e),
+            "RAG_APPEND_ONLY_VIOLATION"
+        );
+        let f = e.fields();
+        assert!(f.iter().any(|(k, v)| *k == "operation" && v == "delete"));
+        assert!(f.iter().any(|(k, v)| *k == "source" && v == "doc.txt"));
+    }
+
+    #[test]
+    fn test_errorcode_network_fine_grained() {
+        let e = NetworkError::Timeout {
+            url: "http://x".into(),
+            timeout_ms: 5000,
+        };
+        assert_eq!(<NetworkError as ErrorCode>::code(&e), "NETWORK_TIMEOUT");
+        let f = e.fields();
+        assert!(f.iter().any(|(k, v)| *k == "timeout_ms" && v == "5000"));
+    }
+
+    #[test]
+    fn test_errorcode_validation_fine_grained() {
+        let e = ValidationError::OutOfRange {
+            field: "temp".into(),
+            min: "0.0".into(),
+            max: "2.0".into(),
+            value: "3.0".into(),
+        };
+        assert_eq!(
+            <ValidationError as ErrorCode>::code(&e),
+            "VALIDATION_OUT_OF_RANGE"
+        );
+        assert_eq!(e.fields().len(), 4);
+    }
+
+    #[test]
+    fn test_errorcode_resource_limit_fine_grained() {
+        let e = ResourceLimitError::BudgetExceeded {
+            budget: 100.0,
+            used: 150.5,
+            currency: "USD".into(),
+        };
+        assert_eq!(
+            <ResourceLimitError as ErrorCode>::code(&e),
+            "RESOURCE_BUDGET_EXCEEDED"
+        );
+        let f = e.fields();
+        assert!(f.iter().any(|(k, v)| *k == "currency" && v == "USD"));
+        assert!(f.iter().any(|(k, v)| *k == "used" && v == "150.50"));
+    }
+
+    #[test]
+    fn test_errorcode_aierror_delegates_to_inner() {
+        let inner = ProviderError::Cancelled;
+        let e: AiError = inner.into();
+        // Trait code() delegates to inner — fine-grained.
+        assert_eq!(<AiError as ErrorCode>::code(&e), "PROVIDER_CANCELLED");
+        // Inherent code() preserved — coarse category.
+        assert_eq!(e.code(), "PROVIDER");
+    }
+
+    #[test]
+    fn test_errorcode_aierror_other_has_detail_field() {
+        let e = AiError::other("something went wrong");
+        assert_eq!(<AiError as ErrorCode>::code(&e), "OTHER");
+        let f = e.fields();
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].0, "detail");
+        assert_eq!(f[0].1, "something went wrong");
+    }
+
+    #[test]
+    fn test_errorcode_aierror_long_tail_keeps_coarse() {
+        // Long-tail subsystems (V115+) still surface coarse codes.
+        let e = AiError::Workflow(WorkflowError::BreakpointHit {
+            node_id: "n".into(),
+        });
+        assert_eq!(<AiError as ErrorCode>::code(&e), "WORKFLOW");
+        assert!(e.fields().is_empty());
+    }
+
+    #[test]
+    fn test_errorcode_io_and_serialization() {
+        let io = IoError::with_path("read", "/tmp/x", "permission denied");
+        assert_eq!(<IoError as ErrorCode>::code(&io), "IO_GENERIC");
+        let f = io.fields();
+        assert!(f.iter().any(|(k, _)| *k == "path"));
+
+        let s = SerializationError::json_serialize("bad");
+        assert_eq!(
+            <SerializationError as ErrorCode>::code(&s),
+            "SERIALIZATION_ERROR"
+        );
+        let f = s.fields();
+        assert_eq!(f.len(), 3);
+    }
+
+    #[test]
+    fn test_errorcode_aierror_localizes_via_taxonomy() {
+        use crate::error_taxonomy::StructuredError;
+
+        let e = AiError::Config(ConfigError::UnknownProvider("foo".into()));
+        let s = StructuredError::from_err(&e);
+        assert_eq!(s.code, "CONFIG_UNKNOWN_PROVIDER");
+
+        let en = s.localize("en");
+        assert!(en.contains("foo"), "got: {}", en);
+
+        let es = s.localize("es");
+        assert!(es.contains("foo"), "got: {}", es);
+        assert!(es.starts_with("Proveedor"), "got: {}", es);
     }
 }
