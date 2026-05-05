@@ -199,6 +199,7 @@ pub mod diff;
 #[cfg(feature = "distributed")]
 pub mod distributed_rag;
 pub mod error;
+pub mod error_taxonomy;
 pub mod event_source;
 pub mod events;
 pub mod fallback;

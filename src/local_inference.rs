@@ -130,30 +130,34 @@ pub struct GenStats {
     pub peak_vram_mib: Option<u64>,
 }
 
-#[derive(Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum BackendError {
+    #[error("backend not compiled in: {0}")]
     NotImplemented(&'static str),
+    #[error("model not found: {0}")]
     ModelNotFound(PathBuf),
-    Io(std::io::Error),
+    #[error("io error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("backend error: {0}")]
     Backend(String),
 }
 
-impl std::fmt::Display for BackendError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl crate::error_taxonomy::ErrorCode for BackendError {
+    fn code(&self) -> &'static str {
         match self {
-            BackendError::NotImplemented(name) => write!(f, "backend not compiled in: {name}"),
-            BackendError::ModelNotFound(p) => write!(f, "model not found: {}", p.display()),
-            BackendError::Io(e) => write!(f, "io error: {e}"),
-            BackendError::Backend(s) => write!(f, "backend error: {s}"),
+            BackendError::NotImplemented(_) => "LOCAL_INFER_NOT_IMPLEMENTED",
+            BackendError::ModelNotFound(_) => "LOCAL_INFER_MODEL_NOT_FOUND",
+            BackendError::Io(_) => "LOCAL_INFER_IO",
+            BackendError::Backend(_) => "LOCAL_INFER_BACKEND",
         }
     }
-}
-
-impl std::error::Error for BackendError {}
-
-impl From<std::io::Error> for BackendError {
-    fn from(e: std::io::Error) -> Self {
-        BackendError::Io(e)
+    fn fields(&self) -> Vec<(&'static str, String)> {
+        match self {
+            BackendError::NotImplemented(name) => vec![("backend", (*name).to_string())],
+            BackendError::ModelNotFound(p) => vec![("path", p.display().to_string())],
+            BackendError::Io(e) => vec![("io_kind", format!("{:?}", e.kind()))],
+            BackendError::Backend(s) => vec![("detail", s.clone())],
+        }
     }
 }
 

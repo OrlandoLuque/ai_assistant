@@ -1,0 +1,6 @@
+{
+  "LOCAL_INFER_NOT_IMPLEMENTED": "Backend no compilado: {backend}",
+  "LOCAL_INFER_MODEL_NOT_FOUND": "Archivo de modelo no encontrado: {path}",
+  "LOCAL_INFER_IO": "Error de E/S en inferencia local: {io_kind}",
+  "LOCAL_INFER_BACKEND": "Error del backend de inferencia local: {detail}"
+}

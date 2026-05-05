@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v74 (2026-05-04) — V113 Phase C.2 (core): structured error taxonomy (0.2.60)
+
+### Added
+- **`thiserror 2`** as a direct dep (always-on, macro-only, zero runtime cost).
+- **`src/error_taxonomy.rs`** — three pieces:
+  - `pub trait ErrorCode { fn code() -> &'static str; fn fields() -> Vec<(&'static str, String)> }` — every subsystem error enum implements this. Codes are stable, screaming-snake-case, prefixed by subsystem (`LOCAL_INFER_*`, `RAG_*`, etc.).
+  - `pub struct StructuredError` — owned, JSON-serializable wire shape: `{ code, message, fields, source_chain }`. Built from any `ErrorCode + std::error::Error` via `from_err`. What OTel spans + structured logs emit.
+  - i18n loader: `errors/<locale>.json` baked in via `include_str!` for `en` + `es`, parsed once into `OnceLock<BTreeMap<&'static str, String>>`. `{field}` placeholders substitute from `StructuredError::fields`. Unknown locales fall through to the underlying `Display`.
+- **`errors/en.json` + `errors/es.json`** — first migration's codes (`LOCAL_INFER_NOT_IMPLEMENTED`, `LOCAL_INFER_MODEL_NOT_FOUND`, `LOCAL_INFER_IO`, `LOCAL_INFER_BACKEND`).
+
+### Migrated (pilot)
+- **`local_inference::BackendError`** — first subsystem onto the new taxonomy. `#[derive(thiserror::Error)]` replaces the manual `Display` + `Error` impls; `#[from]` replaces the explicit `From<std::io::Error>`. `impl ErrorCode` adds the four codes + per-variant `fields()`. Behaviour unchanged — same variants, same Display strings; just structured under the hood.
+
+### Convention (recipe documented in module header)
+```rust
+#[derive(thiserror::Error, Debug)]
+pub enum MyError { #[error("...")] Foo { ... } }
+impl ErrorCode for MyError {
+    fn code(&self) -> &'static str { match self { Self::Foo { .. } => "MY_FOO" } }
+    fn fields(&self) -> Vec<(&'static str, String)> { ... }
+}
+```
+
+### Tests
+- 7 new unit tests in `error_taxonomy::tests` covering `from_err`, source-chain walk (8-deep cap), substitution (known + unknown + malformed templates), JSON roundtrip, locale fallback. All pass.
+- 14 existing `local_inference` tests pass post-migration.
+
+### What's next (V114+)
+- Roll out per subsystem in order of payoff: `error.rs` umbrella `AiError` (22 enums, fine-grained codes), then RAG, providers, network, config, then long-tail subsystems (~70 files in total).
+- Wire `StructuredError::to_json()` into `opentelemetry_integration.rs::AiSpan` (set `error.code` + `error.fields.*` attributes from the structured form).
+- Set up an external locale resolver so callers can drop in extra `errors/<locale>.json` at runtime (today's loader is in-tree only).
+
+### Version
+0.2.59 → 0.2.60.
+
+---
+
 ## [Unreleased] - v73 (2026-05-04) — V112 Phase A.3 (iter 5): llama-cpp-2 backend (0.2.59)
 
 ### Added

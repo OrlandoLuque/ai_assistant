@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.59"
+version = "0.2.60"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -464,6 +464,10 @@ self-correction = []
 
 [dependencies]
 anyhow = "1"
+# V113: thiserror for derive-based error enums with stable codes. Macro-only,
+# zero runtime overhead. Always-on so the `error_taxonomy` module compiles
+# in the default feature set.
+thiserror = "2"
 log = "0.4"
 env_logger = { version = "0.11", optional = true }
 serde = { version = "1", features = ["derive"] }

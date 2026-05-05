@@ -1,0 +1,6 @@
+{
+  "LOCAL_INFER_NOT_IMPLEMENTED": "Backend not compiled in: {backend}",
+  "LOCAL_INFER_MODEL_NOT_FOUND": "Model file not found: {path}",
+  "LOCAL_INFER_IO": "I/O error during local inference: {io_kind}",
+  "LOCAL_INFER_BACKEND": "Local inference backend error: {detail}"
+}
