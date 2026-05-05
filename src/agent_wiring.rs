@@ -302,6 +302,15 @@ pub struct AgentCreateOptions {
     pub cancellation_token: Option<Arc<std::sync::atomic::AtomicBool>>,
     /// Mailbox receiver for inter-agent messages.
     pub mailbox: Option<mpsc::Receiver<crate::autonomous_loop::InterAgentMessage>>,
+    /// V123: install the strict egress inspector — every tool call whose
+    /// name is in `EgressInspector::default_egress_names()` is hard-
+    /// blocked. The building block for a `--no-egress` policy.
+    pub no_egress: bool,
+    /// V123: install the default adversary inspector — flags prompt-
+    /// injection markers, dangerous shell tokens, suspicious URLs, and
+    /// secret-shaped patterns in tool-call arguments before they reach
+    /// the sandbox.
+    pub adversary_inspector: bool,
 }
 
 /// Create an AutonomousAgent from an AgentDefinition.
@@ -419,6 +428,25 @@ pub fn create_agent_from_definition_with_options(
     }
     if let Some(mailbox) = options.mailbox {
         builder = builder.mailbox(mailbox);
+    }
+    // V123: env-var fallbacks. The CLI binary sets `AI_NO_EGRESS=1` /
+    // `AI_ADVERSARY_INSPECTOR=1` when the user passes the matching
+    // global flag; that way every code path that builds an agent
+    // through this function honours them without needing per-call
+    // plumbing. Explicit `AgentCreateOptions` fields take precedence;
+    // env vars only kick in when the caller left the option false.
+    let env_no_egress = std::env::var("AI_NO_EGRESS")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let env_adversary = std::env::var("AI_ADVERSARY_INSPECTOR")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+
+    if options.adversary_inspector || env_adversary {
+        builder = builder.inspector(Arc::new(crate::inspector::AdversaryInspector::new()));
+    }
+    if options.no_egress || env_no_egress {
+        builder = builder.inspector(Arc::new(crate::inspector::EgressInspector::strict()));
     }
 
     Ok(builder.build())
@@ -955,6 +983,8 @@ impl AgentPool {
                 let options = AgentCreateOptions {
                     cancellation_token: Some(cancel_token_clone),
                     mailbox: Some(mailbox_rx),
+                    no_egress: false,
+                    adversary_inspector: false,
                 };
                 match create_agent_from_definition_with_options(&def, gen, &tools, options) {
                     Ok(mut agent) => agent.run(&prompt),
@@ -2386,6 +2416,8 @@ mod tests {
         let options = AgentCreateOptions {
             cancellation_token: Some(token),
             mailbox: Some(rx),
+            no_egress: false,
+            adversary_inspector: false,
         };
 
         let result = create_agent_from_definition_with_options(&def, gen, &registry, options);

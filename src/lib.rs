@@ -224,6 +224,8 @@ pub mod group_queue_host;
 pub mod group_queue_runtime;
 pub mod http_client;
 pub mod huggingface;
+#[cfg(feature = "autonomous")]
+pub mod inspector;
 pub mod internal_storage;
 pub mod knowledge_watcher;
 pub mod learning_control;

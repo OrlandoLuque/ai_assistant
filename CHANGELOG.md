@@ -5,6 +5,127 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v84 (2026-05-05) — V123 Phase B.6: pre-execution inspectors + --no-egress (0.2.70)
+
+### Added
+- **V123 introduces a pre-execution inspector framework** for tool
+  calls in the autonomous runner, plus two built-in inspectors and
+  matching CLI flags. The `Inspector` trait runs over each parsed
+  tool call *before* sandbox validation; the first `Block` verdict
+  aborts the iteration, `Warn` verdicts surface as tool messages so
+  the LLM sees the warning on the next turn.
+- **New module `crate::inspector`** (gated under `autonomous`):
+  - **`Inspector` trait** — `name(&self) -> &str` plus
+    `inspect(&self, &ParsedToolCall) -> InspectorVerdict`.
+    Implementations must be `Send + Sync` and side-effect-free
+    (they run on every tool call).
+  - **`InspectorVerdict`** — `Allow` / `Warn(String)` /
+    `Block(String)`.
+  - **`AdversaryInspector`** — heuristic checks against argument
+    payloads: prompt-injection markers (`ignore previous
+    instructions`, `<|im_start|>`, `system prompt:`), dangerous
+    shell tokens (`rm -rf /`, `mkfs.`, `dd if=/dev/zero`,
+    `wget | sh`, `/etc/shadow`, `/.ssh/`, `/.aws/credentials`),
+    suspicious URL hosts (`webhook.site`, `requestbin`, `ngrok`,
+    `.onion`, `transfer.sh`, `0x0.st`, …), and secret-shaped
+    patterns (`AWS_ACCESS_KEY_ID`, `ghp_`, `sk-ant-`,
+    `-----BEGIN PRIVATE KEY-----`, …). All four lists are
+    public fields so callers can extend without forking.
+  - **`EgressInspector`** — name-based detection of network
+    tools (`web_search`, `fetch`, `http_get`, `curl_get`,
+    `download`, `browser`, `scrape`, `post_webhook`,
+    `send_email`, `send_slack`, …). Two presets:
+    `EgressInspector::warn_only()` (default — flags but
+    proceeds) and `EgressInspector::strict()` (every match is
+    `Block`; the building block for `--no-egress`).
+- **`AutonomousAgentBuilder::inspector(Arc<dyn Inspector>)`** —
+  registers an inspector. Multiple inspectors run in registration
+  order; the first `Block` wins.
+- **`AgentCreateOptions` gains two fields** —
+  `no_egress: bool` and `adversary_inspector: bool`. When set,
+  `agent_wiring::create_agent_from_definition_with_options`
+  installs `EgressInspector::strict()` and / or
+  `AdversaryInspector::default()` automatically.
+- **Global CLI flags `--no-egress` and `--adversary-inspector`**
+  in `ai_cli`. Parsed at the top level (before subcommand
+  dispatch) and surfaced as the env vars `AI_NO_EGRESS=1` /
+  `AI_ADVERSARY_INSPECTOR=1`. `agent_wiring` reads those env vars
+  as defaults so any code path that builds an autonomous agent —
+  CLI subcommands today and tomorrow, library callers, embedded
+  runtimes — honours the user's intent without per-call plumbing.
+  Explicit `AgentCreateOptions` fields take precedence; env vars
+  only kick in when the caller left the option `false`.
+
+### How it wires in
+At the start of `run_iteration` (after `parse_tool_calls`, after
+the `ask_user` short-circuit, before the V122 parallel/sequential
+branch), the runner iterates every parsed tool call through every
+registered inspector:
+
+- `Allow` → continue.
+- `Warn(reason)` → push
+  `[Inspector: <name>] WARN on <tool>: <reason>` into the
+  conversation and continue. The LLM sees the warning on its next
+  turn and can choose to back off.
+- `Block(reason)` → push
+  `[Inspector: <name> BLOCK] <name> on <tool>: <reason>` into the
+  conversation and return `IterationOutcome::Error(...)`. The
+  tool registry never sees the call.
+
+Inspectors run *before* sandbox validation by design — heuristic
+filters that catch the common failure modes (a malicious payload
+echoed through tool args, an LLM that ignores the closed-network
+brief and tries `web_search`) shouldn't even reach the policy
+layer, and the inspector's blocked message is more diagnostic than
+a bare sandbox denial.
+
+### Why two layers (inspector + sandbox)
+- **Sandbox** = policy (paths, commands, internet mode, cost,
+  iterations). Authoritative, audited, structured.
+- **Inspectors** = heuristics (string patterns, name allow-lists).
+  Cheap, extensible, domain-specific.
+
+The two are complementary: a sandbox can't tell that a benign-
+looking `summarize(text=…)` call carries a prompt-injection
+payload in its argument. An inspector can't replace per-path
+policy decisions. V123 ships them as separate gears so they can
+evolve independently.
+
+### Compatibility
+- The inspector field defaults to an empty `Vec`. Builders that
+  never call `.inspector(…)` are unaffected — same loop, same
+  ordering, same behaviour.
+- `AgentCreateOptions` adds two `bool` fields. The struct is
+  `#[derive(Default)]` so callers using `..Default::default()`
+  keep working; explicit field-by-field constructors needed two
+  test-site updates (in `agent_wiring`) which are included.
+- `--no-egress` and `--adversary-inspector` are top-level flags
+  parsed before subcommand dispatch. Subcommands that don't build
+  agents pay zero cost.
+
+### Tests
+- 9 tests in `inspector::tests` — adversary's four block-cases
+  (injection, shell, URL, secret) + clean-call allow + egress
+  warn-only / strict / local-tool-allowed / all-default-names-
+  recognised.
+- 3 tests in `autonomous_loop::tests` — `Block` aborts the run
+  and the tool handler is never invoked, `Warn` surfaces as a
+  warning but the call proceeds, adversary inspector blocks
+  prompt-injection payloads in tool arguments.
+
+All 6,672 lib tests pass under
+`cargo test --features "autonomous,self-correction,multi-agent" --lib`.
+
+### What's next
+- Wire `network_policy::NetworkPolicy` (which exists but is not
+  yet integrated) into the egress inspector for per-host
+  allow-lists alongside the all-or-nothing `--no-egress`.
+- Expose `--inspector custom=<path>` for plugin-style
+  registration of project-specific heuristics.
+- Add a `recipes` integration so prompts like "research X" can
+  declare `requires-egress: true` to the user up-front instead
+  of failing at the first network tool call.
+
 ## [Unreleased] - v83 (2026-05-05) — V122 Phase B.5: parallel read-only tool execution in autonomous_loop (0.2.69)
 
 ### Added

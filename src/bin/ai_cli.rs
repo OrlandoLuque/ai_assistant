@@ -43,6 +43,8 @@ fn main() -> ExitCode {
     let mut log_file: Option<String> = None;
     let mut command_args: Vec<String> = Vec::new();
     let mut found_command = false;
+    let mut no_egress = false;
+    let mut adversary_inspector = false;
 
     let mut i = 0;
     while i < args.len() {
@@ -57,12 +59,33 @@ fn main() -> ExitCode {
                     log_file = Some(args[i].clone());
                 }
             }
+            // V123: closed-network mode. The flag is parsed here at the
+            // global level so any subcommand that builds an autonomous
+            // agent (now or later) can read it via the AI_NO_EGRESS env
+            // var without each command having to re-implement parsing.
+            "--no-egress" if !found_command => {
+                no_egress = true;
+            }
+            "--adversary-inspector" if !found_command => {
+                adversary_inspector = true;
+            }
             _ => {
                 found_command = true;
                 command_args.push(args[i].clone());
             }
         }
         i += 1;
+    }
+
+    // V123: surface global inspector flags via env vars so library code
+    // in `agent_wiring::create_agent_from_definition_with_options` can
+    // honour them as a default when its caller doesn't set the matching
+    // `AgentCreateOptions` field explicitly.
+    if no_egress {
+        std::env::set_var("AI_NO_EGRESS", "1");
+    }
+    if adversary_inspector {
+        std::env::set_var("AI_ADVERSARY_INSPECTOR", "1");
     }
 
     // Initialize log backend (requires diagnostic-logging feature for env_logger)
