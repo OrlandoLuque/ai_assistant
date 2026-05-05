@@ -251,6 +251,37 @@ impl std::fmt::Display for RagPipelineError {
 
 impl std::error::Error for RagPipelineError {}
 
+impl crate::error_taxonomy::ErrorCode for RagPipelineError {
+    fn code(&self) -> &'static str {
+        match self {
+            RagPipelineError::NoSources => "RAG_PIPELINE_NO_SOURCES",
+            RagPipelineError::MissingRequirement(_) => "RAG_PIPELINE_MISSING_REQUIREMENT",
+            RagPipelineError::QueryProcessingError(_) => "RAG_PIPELINE_QUERY_PROCESSING",
+            RagPipelineError::RetrievalError(_) => "RAG_PIPELINE_RETRIEVAL",
+            RagPipelineError::PostProcessingError(_) => "RAG_PIPELINE_POST_PROCESSING",
+            RagPipelineError::LlmError(_) => "RAG_PIPELINE_LLM",
+            RagPipelineError::Timeout => "RAG_PIPELINE_TIMEOUT",
+            RagPipelineError::ConfigError(_) => "RAG_PIPELINE_CONFIG",
+            RagPipelineError::Internal(_) => "RAG_PIPELINE_INTERNAL",
+        }
+    }
+
+    fn fields(&self) -> Vec<(&'static str, String)> {
+        match self {
+            RagPipelineError::NoSources | RagPipelineError::Timeout => Vec::new(),
+            RagPipelineError::MissingRequirement(req) => {
+                vec![("requirement", req.display_name().to_string())]
+            }
+            RagPipelineError::QueryProcessingError(s)
+            | RagPipelineError::RetrievalError(s)
+            | RagPipelineError::PostProcessingError(s)
+            | RagPipelineError::LlmError(s)
+            | RagPipelineError::ConfigError(s)
+            | RagPipelineError::Internal(s) => vec![("reason", s.clone())],
+        }
+    }
+}
+
 // ============================================================================
 // Pipeline Callbacks/Traits
 // ============================================================================
@@ -1725,6 +1756,26 @@ fn count_by_score_type(chunks: &[RetrievedChunk]) -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_errorcode_rag_pipeline() {
+        use crate::error_taxonomy::ErrorCode;
+
+        let e = RagPipelineError::NoSources;
+        assert_eq!(e.code(), "RAG_PIPELINE_NO_SOURCES");
+        assert!(e.fields().is_empty());
+
+        let e = RagPipelineError::Timeout;
+        assert_eq!(e.code(), "RAG_PIPELINE_TIMEOUT");
+        assert!(e.fields().is_empty());
+
+        let e = RagPipelineError::RetrievalError("vector store down".into());
+        assert_eq!(e.code(), "RAG_PIPELINE_RETRIEVAL");
+        let f = e.fields();
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].0, "reason");
+        assert_eq!(f[0].1, "vector store down");
+    }
 
     // Mock implementations for testing
     struct MockLlm;

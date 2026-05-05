@@ -50,5 +50,31 @@
   "IO_GENERIC": "Error de E/S en '{operation}': {reason}",
   "SERIALIZATION_ERROR": "Error de {format} en '{operation}': {reason}",
 
+  "RAG_PIPELINE_NO_SOURCES": "No hay fuentes de recuperación disponibles",
+  "RAG_PIPELINE_MISSING_REQUIREMENT": "Falta el requisito: {requirement}",
+  "RAG_PIPELINE_QUERY_PROCESSING": "Error de procesamiento de consulta: {reason}",
+  "RAG_PIPELINE_RETRIEVAL": "Error de recuperación: {reason}",
+  "RAG_PIPELINE_POST_PROCESSING": "Error de post-procesamiento: {reason}",
+  "RAG_PIPELINE_LLM": "Error de LLM: {reason}",
+  "RAG_PIPELINE_TIMEOUT": "Tiempo de pipeline excedido",
+  "RAG_PIPELINE_CONFIG": "Error de configuración de pipeline: {reason}",
+  "RAG_PIPELINE_INTERNAL": "Error interno de pipeline: {reason}",
+
+  "EMBEDDING_API": "Error de API de embeddings: {reason}",
+  "EMBEDDING_PARSE": "Error de parseo de embeddings: {reason}",
+  "EMBEDDING_CONFIG": "Error de configuración de embeddings: {reason}",
+  "EMBEDDING_EMPTY_RESULT": "El embedding produjo un resultado vacío",
+  "EMBEDDING_DIMENSION_MISMATCH": "Dimensión de embedding incorrecta: se esperaba {expected}, se obtuvo {got}",
+
+  "KPKG_DATA_TOO_SHORT": "Datos demasiado cortos para un paquete .kpkg válido",
+  "KPKG_DECRYPTION_FAILED": "Descifrado fallido: clave incorrecta o datos corruptos",
+  "KPKG_INVALID_ZIP": "Archivo ZIP inválido: {reason}",
+  "KPKG_ZIP_READ": "Error leyendo del ZIP: {reason}",
+  "KPKG_ZIP_WRITE": "Error escribiendo en el ZIP: {reason}",
+  "KPKG_INVALID_UTF8": "UTF-8 inválido en el documento: {path}",
+  "KPKG_MANIFEST": "Error de manifiesto: {reason}",
+  "KPKG_EMPTY_PACKAGE": "El paquete no contiene documentos",
+  "KPKG_IO": "Error de E/S del paquete de conocimiento: {reason}",
+
   "OTHER": "{detail}"
 }

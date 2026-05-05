@@ -50,5 +50,31 @@
   "IO_GENERIC": "I/O error during '{operation}': {reason}",
   "SERIALIZATION_ERROR": "{format} {operation} error: {reason}",
 
+  "RAG_PIPELINE_NO_SOURCES": "No retrieval sources available",
+  "RAG_PIPELINE_MISSING_REQUIREMENT": "Missing requirement: {requirement}",
+  "RAG_PIPELINE_QUERY_PROCESSING": "Query processing error: {reason}",
+  "RAG_PIPELINE_RETRIEVAL": "Retrieval error: {reason}",
+  "RAG_PIPELINE_POST_PROCESSING": "Post-processing error: {reason}",
+  "RAG_PIPELINE_LLM": "LLM error: {reason}",
+  "RAG_PIPELINE_TIMEOUT": "Pipeline timeout exceeded",
+  "RAG_PIPELINE_CONFIG": "Pipeline configuration error: {reason}",
+  "RAG_PIPELINE_INTERNAL": "Pipeline internal error: {reason}",
+
+  "EMBEDDING_API": "Embedding API error: {reason}",
+  "EMBEDDING_PARSE": "Embedding parse error: {reason}",
+  "EMBEDDING_CONFIG": "Embedding configuration error: {reason}",
+  "EMBEDDING_EMPTY_RESULT": "Embedding produced an empty result",
+  "EMBEDDING_DIMENSION_MISMATCH": "Embedding dimension mismatch: expected {expected}, got {got}",
+
+  "KPKG_DATA_TOO_SHORT": "Data too short for valid .kpkg package",
+  "KPKG_DECRYPTION_FAILED": "Decryption failed: wrong key or corrupted data",
+  "KPKG_INVALID_ZIP": "Invalid ZIP archive: {reason}",
+  "KPKG_ZIP_READ": "Error reading from ZIP: {reason}",
+  "KPKG_ZIP_WRITE": "Error writing to ZIP: {reason}",
+  "KPKG_INVALID_UTF8": "Invalid UTF-8 in document: {path}",
+  "KPKG_MANIFEST": "Manifest error: {reason}",
+  "KPKG_EMPTY_PACKAGE": "Package contains no documents",
+  "KPKG_IO": "Knowledge package I/O error: {reason}",
+
   "OTHER": "{detail}"
 }

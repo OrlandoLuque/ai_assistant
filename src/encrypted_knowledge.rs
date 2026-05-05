@@ -106,6 +106,36 @@ impl std::fmt::Display for KpkgError {
 
 impl std::error::Error for KpkgError {}
 
+impl crate::error_taxonomy::ErrorCode for KpkgError {
+    fn code(&self) -> &'static str {
+        match self {
+            KpkgError::DataTooShort => "KPKG_DATA_TOO_SHORT",
+            KpkgError::DecryptionFailed => "KPKG_DECRYPTION_FAILED",
+            KpkgError::InvalidZipArchive(_) => "KPKG_INVALID_ZIP",
+            KpkgError::ZipReadError(_) => "KPKG_ZIP_READ",
+            KpkgError::ZipWriteError(_) => "KPKG_ZIP_WRITE",
+            KpkgError::InvalidUtf8(_) => "KPKG_INVALID_UTF8",
+            KpkgError::ManifestError(_) => "KPKG_MANIFEST",
+            KpkgError::EmptyPackage => "KPKG_EMPTY_PACKAGE",
+            KpkgError::IoError(_) => "KPKG_IO",
+        }
+    }
+
+    fn fields(&self) -> Vec<(&'static str, String)> {
+        match self {
+            KpkgError::DataTooShort | KpkgError::DecryptionFailed | KpkgError::EmptyPackage => {
+                Vec::new()
+            }
+            KpkgError::InvalidUtf8(path) => vec![("path", path.clone())],
+            KpkgError::InvalidZipArchive(s)
+            | KpkgError::ZipReadError(s)
+            | KpkgError::ZipWriteError(s)
+            | KpkgError::ManifestError(s)
+            | KpkgError::IoError(s) => vec![("reason", s.clone())],
+        }
+    }
+}
+
 /// Example pair for few-shot learning
 ///
 /// Used to provide example input/output pairs that help the AI understand
@@ -1171,6 +1201,27 @@ impl RagDbKpkgExt for crate::rag::RagDb {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_errorcode_kpkg() {
+        use crate::error_taxonomy::ErrorCode;
+
+        let e = KpkgError::DecryptionFailed;
+        assert_eq!(e.code(), "KPKG_DECRYPTION_FAILED");
+        assert!(e.fields().is_empty());
+
+        let e = KpkgError::InvalidUtf8("docs/x.md".into());
+        assert_eq!(e.code(), "KPKG_INVALID_UTF8");
+        let f = e.fields();
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].0, "path");
+        assert_eq!(f[0].1, "docs/x.md");
+
+        let e = KpkgError::ManifestError("missing version".into());
+        assert_eq!(e.code(), "KPKG_MANIFEST");
+        let f = e.fields();
+        assert_eq!(f[0].0, "reason");
+    }
 
     #[test]
     fn test_roundtrip_app_key() {

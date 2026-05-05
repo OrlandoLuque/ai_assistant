@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v76 (2026-05-04) — V115 Phase C.2: ErrorCode rollout to RAG dependency triad (0.2.62)
+
+### Added
+- **`impl ErrorCode`** for `RagPipelineError` (`src/rag_pipeline.rs`) — 9 codes (`RAG_PIPELINE_NO_SOURCES`, `RAG_PIPELINE_MISSING_REQUIREMENT`, `RAG_PIPELINE_QUERY_PROCESSING`, `RAG_PIPELINE_RETRIEVAL`, `RAG_PIPELINE_POST_PROCESSING`, `RAG_PIPELINE_LLM`, `RAG_PIPELINE_TIMEOUT`, `RAG_PIPELINE_CONFIG`, `RAG_PIPELINE_INTERNAL`). `MissingRequirement` exposes `requirement` field via `RagRequirement::display_name()`.
+- **`impl ErrorCode`** for `EmbeddingError` (`src/neural_embeddings.rs`) — 5 codes (`EMBEDDING_API`, `EMBEDDING_PARSE`, `EMBEDDING_CONFIG`, `EMBEDDING_EMPTY_RESULT`, `EMBEDDING_DIMENSION_MISMATCH { expected, got }`).
+- **`impl ErrorCode`** for `KpkgError` (`src/encrypted_knowledge.rs`) — 9 codes (`KPKG_DATA_TOO_SHORT`, `KPKG_DECRYPTION_FAILED`, `KPKG_INVALID_ZIP`, `KPKG_ZIP_READ`, `KPKG_ZIP_WRITE`, `KPKG_INVALID_UTF8 { path }`, `KPKG_MANIFEST`, `KPKG_EMPTY_PACKAGE`, `KPKG_IO`).
+- **`errors/{en,es}.json`** expanded from 42 → 65 codes — covers the 23 new variants in en + es.
+
+### Why this slice
+The RAG path crosses three modules: pipeline orchestration, embedding generation, encrypted knowledge packages. Together they form one coherent failure surface — a `RagError` (umbrella, V114) typically wraps a `RagPipelineError` (orchestration), which wraps an `EmbeddingError` (vector ops) or `KpkgError` (storage). With V115, `StructuredError::from_err(&err)` walks that 3-deep chain and emits all three codes via `source_chain`, so a downstream consumer gets the precise leaf code (`KPKG_DECRYPTION_FAILED`) plus the wrapping context (`RAG_PIPELINE_RETRIEVAL`, `RAG_DATABASE`).
+
+### Tests
+- 3 new tests: `rag_pipeline::tests::test_errorcode_rag_pipeline`, `neural_embeddings::tests::test_errorcode_embedding`, `encrypted_knowledge::tests::test_errorcode_kpkg`. All 14 `test_errorcode_*` tests pass.
+
+### What's next (V116+)
+- V116: 18 providers — provider-specific submodule error types (`AnthropicAdapterError`, `OpenAIAdapterError`, `HfError`, `ResilientError` in `providers.rs`, etc.).
+- V117: long-tail umbrella variants (`WorkflowError`, `A2AError`, …) onto `ErrorCode`. Then flip `AiError::ErrorCode::code` long-tail arms to delegate.
+
+### Version
+0.2.61 → 0.2.62.
+
+---
+
 ## [Unreleased] - v75 (2026-05-04) — V114 Phase C.2: ErrorCode rollout to AiError umbrella (0.2.61)
 
 ### Added

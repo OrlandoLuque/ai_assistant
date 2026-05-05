@@ -1044,6 +1044,30 @@ impl std::fmt::Display for EmbeddingError {
 
 impl std::error::Error for EmbeddingError {}
 
+impl crate::error_taxonomy::ErrorCode for EmbeddingError {
+    fn code(&self) -> &'static str {
+        match self {
+            EmbeddingError::ApiError(_) => "EMBEDDING_API",
+            EmbeddingError::ParseError(_) => "EMBEDDING_PARSE",
+            EmbeddingError::ConfigError(_) => "EMBEDDING_CONFIG",
+            EmbeddingError::EmptyResult => "EMBEDDING_EMPTY_RESULT",
+            EmbeddingError::DimensionMismatch { .. } => "EMBEDDING_DIMENSION_MISMATCH",
+        }
+    }
+
+    fn fields(&self) -> Vec<(&'static str, String)> {
+        match self {
+            EmbeddingError::ApiError(s)
+            | EmbeddingError::ParseError(s)
+            | EmbeddingError::ConfigError(s) => vec![("reason", s.clone())],
+            EmbeddingError::EmptyResult => Vec::new(),
+            EmbeddingError::DimensionMismatch { expected, got } => {
+                vec![("expected", expected.to_string()), ("got", got.to_string())]
+            }
+        }
+    }
+}
+
 /// Utility functions
 
 /// Normalize vector to unit length (L2)
@@ -1094,6 +1118,30 @@ pub fn dot_product(a: &[f32], b: &[f32]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_errorcode_embedding() {
+        use crate::error_taxonomy::ErrorCode;
+
+        let e = EmbeddingError::EmptyResult;
+        assert_eq!(e.code(), "EMBEDDING_EMPTY_RESULT");
+        assert!(e.fields().is_empty());
+
+        let e = EmbeddingError::DimensionMismatch {
+            expected: 768,
+            got: 384,
+        };
+        assert_eq!(e.code(), "EMBEDDING_DIMENSION_MISMATCH");
+        let f = e.fields();
+        assert!(f.iter().any(|(k, v)| *k == "expected" && v == "768"));
+        assert!(f.iter().any(|(k, v)| *k == "got" && v == "384"));
+
+        let e = EmbeddingError::ApiError("rate limit".into());
+        assert_eq!(e.code(), "EMBEDDING_API");
+        let f = e.fields();
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].1, "rate limit");
+    }
 
     #[test]
     fn test_normalize_l2() {
