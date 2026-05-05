@@ -5,6 +5,63 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v79 (2026-05-05) — V118 Phase C.2: wire StructuredError into OTel spans (0.2.65)
+
+### Added
+- **`AiSpan::fail_with_structured(&StructuredError)`** in
+  `src/opentelemetry_integration.rs` — sets `status = "error"`,
+  `error_message = structured.message`, and adds the following attributes:
+  - `error.code` — the stable subsystem-prefixed code from the V113-V117
+    taxonomy (e.g. `"PROVIDER_RATE_LIMITED"`, `"WORKFLOW_NODE_NOT_FOUND"`).
+  - `error.fields.<key>` — one flat attribute per structured field
+    (e.g. `error.fields.provider = "openai"`, `error.fields.retry_after = "30"`).
+  - `error.source_chain.<i>` — flattened source-chain entries (i = 0 is
+    the immediate source) for errors that wrap others.
+- **`AiSpan::fail_structured<E>(&E)`** convenience wrapper accepting any
+  `E: ErrorCode + std::error::Error + ?Sized`. Internally builds a
+  `StructuredError::from_err(err)` and delegates.
+- **`OtelTracer::record_structured_error<E>(span, &err)`** parallel to
+  the existing `record_error(span, &str)`. The taxonomy-aware path —
+  preferred for any error that already implements `ErrorCode`.
+
+### Why this slice
+V113-V117 made every `AiError`-rooted error emit a stable code +
+structured fields. V118 is the payoff: those fields finally land on
+spans as flat attributes that any OTel-compatible backend (Jaeger,
+Tempo, Honeycomb, Datadog, …) can index and filter on. Dashboards
+that previously regex-parsed `error_message` to slice by error type
+can now group by `error.code` directly. Per-field attributes
+(`error.fields.provider`, `error.fields.status_code`,
+`error.fields.retry_after`) become first-class facets without changes
+to the collector or backend.
+
+### Tests
+- 4 new tests in `opentelemetry_integration::tests`:
+  - `test_aispan_fail_with_structured_emits_taxonomy_attributes` —
+    asserts `error.code` + every `error.fields.<key>` is present after
+    `fail_with_structured`.
+  - `test_aispan_fail_structured_convenience` — `fail_structured(&err)`
+    end-to-end on a `WorkflowError::NodeNotFound`.
+  - `test_tracer_record_structured_error` — `OtelTracer` round-trip on
+    a `ConfigError::UnknownProvider`.
+  - `test_aispan_fail_with_structured_handles_empty_fields` — no
+    stray `error.fields.*` or `error.source_chain.*` attrs when the
+    structured error has none.
+- All 95 `opentelemetry_integration::tests` pass.
+
+### What's next
+- Phase C.2 (Tier 1 competitive gaps — error taxonomy) is now complete:
+  V113 (core) → V114-V117 (`ErrorCode` everywhere under `AiError`) →
+  V118 (OTel wiring).
+- Next workstream: Tier 1 Phase B — B.4 Stuck Detector +
+  critique-based refinement, B.5 parallel tool execution, B.6
+  adversary + egress inspectors + `--no-egress` flag.
+
+### Version
+0.2.64 → 0.2.65.
+
+---
+
 ## [Unreleased] - v78 (2026-05-05) — V117 Phase C.2: ErrorCode rollout to long-tail subsystems (0.2.64)
 
 ### Added

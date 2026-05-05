@@ -131,6 +131,53 @@ impl AiSpan {
         self.finish();
     }
 
+    /// Mark the span as failed using a [`StructuredError`].
+    ///
+    /// V118: wires the V113-V117 error taxonomy into OTel spans. Sets
+    /// `status = "error"`, `error_message = structured.message`, and adds
+    /// the following attributes (matching OTel GenAI semantic conventions
+    /// where applicable):
+    ///
+    /// - `error.code` — the stable subsystem-prefixed code
+    ///   (`"WORKFLOW_NODE_NOT_FOUND"`, `"PROVIDER_RATE_LIMITED"`, …)
+    /// - `error.fields.<key>` — one attribute per structured field,
+    ///   stringified (e.g. `error.fields.node_id = "step_1"`,
+    ///   `error.fields.retry_after_ms = "1500"`)
+    /// - `error.source_chain.<i>` — flattened source-chain entries when
+    ///   the underlying error wraps another (i = 0 is the immediate
+    ///   source, ascending up to the depth limit of `from_err`)
+    ///
+    /// These are flat string attributes rather than a single JSON blob so
+    /// any OTel-compatible backend can index/filter on them without
+    /// parsing nested structures.
+    pub fn fail_with_structured(&mut self, structured: &crate::error_taxonomy::StructuredError) {
+        self.status = "error".to_string();
+        self.error_message = Some(structured.message.clone());
+        self.attributes
+            .insert("error.code".to_string(), structured.code.to_string());
+        for (k, v) in &structured.fields {
+            self.attributes
+                .insert(format!("error.fields.{}", k), v.clone());
+        }
+        for (i, src) in structured.source_chain.iter().enumerate() {
+            self.attributes
+                .insert(format!("error.source_chain.{}", i), src.clone());
+        }
+        self.finish();
+    }
+
+    /// Convenience wrapper: fail the span using any [`ErrorCode`] +
+    /// [`std::error::Error`] type. Internally builds a [`StructuredError`]
+    /// via [`StructuredError::from_err`] and delegates to
+    /// [`AiSpan::fail_with_structured`].
+    pub fn fail_structured<E>(&mut self, err: &E)
+    where
+        E: crate::error_taxonomy::ErrorCode + std::error::Error + ?Sized,
+    {
+        let s = crate::error_taxonomy::StructuredError::from_err(err);
+        self.fail_with_structured(&s);
+    }
+
     /// Get span duration in milliseconds, or None if not finished.
     pub fn duration_ms(&self) -> Option<u64> {
         self.end_time_ms
@@ -241,6 +288,29 @@ impl OtelTracer {
     /// Record a failed span.
     pub fn record_error(&self, mut span: AiSpan, error: &str) {
         span.fail(error);
+        if let Ok(mut active) = self.active_spans.lock() {
+            active.remove(&span.span_id);
+        }
+        if let Ok(mut completed) = self.spans.lock() {
+            if completed.len() >= self.config.max_buffer_size {
+                completed.remove(0);
+            }
+            completed.push(span);
+        }
+    }
+
+    /// Record a failed span using the [`StructuredError`] taxonomy.
+    ///
+    /// V118: this is the OTel-side counterpart to V113-V117. The span
+    /// gets `error.code` plus per-field `error.fields.<key>` attributes,
+    /// so downstream collectors / dashboards segment by stable subsystem
+    /// codes without parsing the free-text `error_message`. See
+    /// [`AiSpan::fail_with_structured`] for the full attribute schema.
+    pub fn record_structured_error<E>(&self, mut span: AiSpan, err: &E)
+    where
+        E: crate::error_taxonomy::ErrorCode + std::error::Error + ?Sized,
+    {
+        span.fail_structured(err);
         if let Ok(mut active) = self.active_spans.lock() {
             active.remove(&span.span_id);
         }
@@ -2138,6 +2208,134 @@ mod tests {
         assert_eq!(completed.len(), 1);
         assert_eq!(completed[0].status, "error");
         assert_eq!(completed[0].error_message.as_deref(), Some("network error"));
+    }
+
+    // ------------------------------------------------------------------
+    // V118 — StructuredError → AiSpan attribute wiring.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_aispan_fail_with_structured_emits_taxonomy_attributes() {
+        use crate::error::{AiError, ProviderError};
+        use crate::error_taxonomy::{ErrorCode, StructuredError};
+
+        let err = AiError::Provider(ProviderError::RateLimited {
+            provider: "openai".into(),
+            retry_after: Some(30),
+        });
+        let structured = StructuredError::from_err(&err);
+        // Sanity: taxonomy should have produced a fine-grained code + fields.
+        assert_eq!(<AiError as ErrorCode>::code(&err), structured.code);
+
+        let mut span = AiSpan::new("provider.call");
+        span.fail_with_structured(&structured);
+
+        assert_eq!(span.status, "error");
+        assert_eq!(
+            span.error_message.as_deref(),
+            Some(structured.message.as_str())
+        );
+        // error.code is set from the stable taxonomy code.
+        assert_eq!(
+            span.attributes.get("error.code"),
+            Some(&structured.code.to_string())
+        );
+        // Per-field attributes are flattened with the `error.fields.` prefix.
+        for (k, v) in &structured.fields {
+            let attr_key = format!("error.fields.{}", k);
+            assert_eq!(
+                span.attributes.get(&attr_key),
+                Some(v),
+                "missing flattened field attr for {}",
+                k
+            );
+        }
+        // The span is finished.
+        assert!(!span.is_running());
+    }
+
+    #[test]
+    fn test_aispan_fail_structured_convenience() {
+        use crate::error::{AiError, WorkflowError};
+
+        let err = AiError::Workflow(WorkflowError::NodeNotFound {
+            node_id: "step_1".into(),
+        });
+
+        let mut span = AiSpan::new("workflow.run");
+        span.fail_structured(&err);
+
+        assert_eq!(span.status, "error");
+        assert_eq!(
+            span.attributes.get("error.code"),
+            Some(&"WORKFLOW_NODE_NOT_FOUND".to_string())
+        );
+        assert_eq!(
+            span.attributes.get("error.fields.node_id"),
+            Some(&"step_1".to_string())
+        );
+    }
+
+    #[test]
+    fn test_tracer_record_structured_error() {
+        use crate::error::{AiError, ConfigError};
+
+        let tracer = OtelTracer::new(OtelConfig::default());
+        let span = tracer.start_span("config.load");
+
+        let err = AiError::Config(ConfigError::UnknownProvider("foo".into()));
+        tracer.record_structured_error(span, &err);
+
+        let completed = tracer.completed_spans();
+        assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0].status, "error");
+        assert_eq!(
+            completed[0].attributes.get("error.code"),
+            Some(&"CONFIG_UNKNOWN_PROVIDER".to_string())
+        );
+        // ConfigError::UnknownProvider exposes a `provider` field.
+        assert!(
+            completed[0]
+                .attributes
+                .keys()
+                .any(|k| k.starts_with("error.fields.")),
+            "expected at least one error.fields.* attribute; got: {:?}",
+            completed[0].attributes
+        );
+        assert_eq!(tracer.active_span_count(), 0);
+    }
+
+    #[test]
+    fn test_aispan_fail_with_structured_handles_empty_fields() {
+        use crate::error_taxonomy::StructuredError;
+        use std::collections::BTreeMap;
+
+        // Construct a StructuredError directly with no fields and no source chain
+        // — exercises the empty-fields path so we don't emit stray attrs.
+        let s = StructuredError {
+            code: "TEST_NO_FIELDS",
+            message: "boom".to_string(),
+            fields: BTreeMap::new(),
+            source_chain: Vec::new(),
+        };
+
+        let mut span = AiSpan::new("test.op");
+        span.fail_with_structured(&s);
+
+        assert_eq!(
+            span.attributes.get("error.code"),
+            Some(&"TEST_NO_FIELDS".to_string())
+        );
+        // No error.fields.* attrs should appear.
+        assert!(!span
+            .attributes
+            .keys()
+            .any(|k| k.starts_with("error.fields.")));
+        // No source_chain.* attrs should appear.
+        assert!(!span
+            .attributes
+            .keys()
+            .any(|k| k.starts_with("error.source_chain.")));
     }
 
     #[test]
