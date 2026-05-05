@@ -94,7 +94,16 @@ fn cmd_info() -> ExitCode {
                     "not compiled in (#319 — local-inference-candle)"
                 }
             }
-            BackendKind::LlamaCpp => "not compiled in (#314 — local-inference-llama-cpp)",
+            BackendKind::LlamaCpp => {
+                #[cfg(feature = "local-inference-llama-cpp")]
+                {
+                    "available (local-inference-llama-cpp)"
+                }
+                #[cfg(not(feature = "local-inference-llama-cpp"))]
+                {
+                    "not compiled in (#314 — local-inference-llama-cpp)"
+                }
+            }
         };
         println!("  {:<12} {}", kind.name(), status);
     }

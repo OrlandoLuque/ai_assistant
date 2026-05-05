@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.58"
+version = "0.2.59"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -356,6 +356,17 @@ local-inference-candle = [
     "dep:tokenizers",
 ]
 
+# Real llama-cpp-2 backend (V112). Native llama.cpp via bindgen — requires
+# libclang at build time (LIBCLANG_PATH or LLVM\bin on PATH). Brings
+# continuous batching (multi-agent in-process throughput on one GPU) and
+# tensor-split (multi-GPU). CPU baseline only in this iteration; GPU build
+# requires `cuda` / `metal` features on the upstream crate, deferred.
+local-inference-llama-cpp = [
+    "local-inference",
+    "dep:llama-cpp-2",
+    "dep:encoding_rs",
+]
+
 # Run: cargo run --bin ai_gui-pro --features gui-pro
 gui-pro = [
     "gui", "full",
@@ -584,6 +595,15 @@ candle-transformers = { version = "0.10", optional = true, default-features = fa
 # HuggingFace tokenizers (tokenizer.json format). esaxx-fast avoids the
 # native onig dependency; http feature off — we never download remotely.
 tokenizers = { version = "0.23", optional = true, default-features = false, features = ["esaxx_fast", "fancy-regex"] }
+
+# === V112: llama-cpp-2 backend for in-process local inference ===
+# Safe Rust wrapper over llama.cpp via bindgen (`llama-cpp-sys-2`). Requires
+# libclang at build time. CPU-only by default — GPU support is opt-in via
+# upstream features (`cuda`, `metal`) which we don't enable yet.
+llama-cpp-2 = { version = "0.1", optional = true, default-features = false }
+# UTF-8 incremental decoder used by `LlamaModel::token_to_piece` to stitch
+# multi-byte glyphs across tokens.
+encoding_rs = { version = "0.8", optional = true }
 
 # V78: libc is only needed by ai_proxy on Unix for O_NOFOLLOW when opening the
 # audit log (symlink-safe append). Already transitive via other deps; declared

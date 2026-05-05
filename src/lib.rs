@@ -234,6 +234,8 @@ pub mod load_shedding;
 pub mod local_inference;
 #[cfg(feature = "local-inference-candle")]
 mod local_inference_candle;
+#[cfg(feature = "local-inference-llama-cpp")]
+mod local_inference_llama_cpp;
 pub mod log_redaction;
 #[cfg(all(feature = "tools", feature = "audio"))]
 pub mod mcp_voice_tools;

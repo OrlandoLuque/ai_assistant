@@ -5,6 +5,57 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v73 (2026-05-04) — V112 Phase A.3 (iter 5): llama-cpp-2 backend (0.2.59)
+
+### Added
+- **`local-inference-llama-cpp` sub-feature** — pulls in `llama-cpp-2 0.1`
+  (default-features off, CPU only) and `encoding_rs 0.8`. Native llama.cpp
+  via `bindgen`/`llama-cpp-sys-2` — requires libclang at build time
+  (`LIBCLANG_PATH` or `LLVM\bin` on PATH). Strictly opt-in.
+- **`src/local_inference_llama_cpp.rs`** — `LlamaCppBackend` gated by the new
+  sub-feature. Exports `load_llama_cpp(&LocalInferenceConfig) -> Result<Box<
+  dyn Backend>, BackendError>`. Process-wide `LlamaBackend` singleton via
+  `OnceLock` (`LlamaBackend::init()` errors on second call). GGUF metadata is
+  peeked once via `GgufContext::from_file` to read `llama.block_count` so the
+  V108 VRAM clamp policy can size GPU offload end-to-end. Falls back to 32
+  layers when the key is missing (Llama-3 8B shape).
+- **`generate()` incremental loop** — `LlamaContext` per call (KV cache is
+  per-context). Prompt fed in one batch with `logits=true` only on the last
+  token; subsequent single-token batches grow the KV cache by 1 each step.
+  Sampler chain is greedy when `temperature ≤ 0`, else `temp + top_p + dist
+  (seed=42)`. Token decode via `encoding_rs::UTF_8.new_decoder()` (handles
+  multi-byte glyphs split across tokens). EOS *and* `is_eog_token` both
+  honoured; stop-string check on a 64-char tail buffer.
+
+### What this unlocks (vs Candle GGUF in V111)
+- **Continuous batching** — N concurrent sequences sharing one model load on
+  one GPU. Scaffolded (n_seq_max=1 today); the multi-agent throughput
+  iteration just needs to widen the batch and track per-sequence positions.
+- **Tensor-split** across multiple GPUs — wired through `with_n_gpu_layers`
+  + V108 clamp policy. Effective once the upstream crate is built with
+  `cuda` / `metal` features (separate sub-feature, deferred).
+
+### Wiring
+- `Cargo.toml` — feature `local-inference-llama-cpp = ["local-inference",
+  "dep:llama-cpp-2", "dep:encoding_rs"]`. Version 0.2.58 → 0.2.59.
+- `src/lib.rs` — module declared behind the cfg.
+- `src/local_inference.rs::load()` — `BackendKind::LlamaCpp` now dispatches
+  to the new module when the feature is on, `NotImplemented` otherwise.
+- `src/bin/ai_local_infer.rs::cmd_info` — reports
+  `available (local-inference-llama-cpp)` when compiled in.
+- `tests/local_inference_smoke.rs::tiny_model_smoke` — already
+  backend-agnostic; set `AI_LOCAL_INFER_BACKEND=llama-cpp` +
+  `AI_LOCAL_INFER_TINY_MODEL=<path.gguf>` to drive the new backend.
+
+### Smoke
+- `cargo build --release --features local-inference-llama-cpp --bin
+  ai_local_infer` — clean.
+
+### Version
+0.2.58 → 0.2.59.
+
+---
+
 ## [Unreleased] - v72 (2026-05-05) — V111 Phase A.3 (iter 4): Candle GGUF support (0.2.58)
 
 ### Added
