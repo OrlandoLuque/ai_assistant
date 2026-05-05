@@ -461,6 +461,38 @@ impl std::fmt::Display for OpenAIAdapterError {
 
 impl std::error::Error for OpenAIAdapterError {}
 
+impl crate::error_taxonomy::ErrorCode for OpenAIAdapterError {
+    fn code(&self) -> &'static str {
+        match self {
+            OpenAIAdapterError::Network(_) => "OPENAI_NETWORK",
+            OpenAIAdapterError::Serialization(_) => "OPENAI_SERIALIZATION",
+            OpenAIAdapterError::Deserialization(_) => "OPENAI_DESERIALIZATION",
+            OpenAIAdapterError::Api { .. } => "OPENAI_API",
+            OpenAIAdapterError::RateLimit { .. } => "OPENAI_RATE_LIMITED",
+        }
+    }
+
+    fn fields(&self) -> Vec<(&'static str, String)> {
+        match self {
+            OpenAIAdapterError::Network(s)
+            | OpenAIAdapterError::Serialization(s)
+            | OpenAIAdapterError::Deserialization(s) => vec![("reason", s.clone())],
+            OpenAIAdapterError::Api {
+                code,
+                message,
+                error_type,
+            } => vec![
+                ("status_code", code.to_string()),
+                ("error_type", error_type.clone()),
+                ("message", message.clone()),
+            ],
+            OpenAIAdapterError::RateLimit { retry_after } => retry_after
+                .map(|d| vec![("retry_after_ms", d.as_millis().to_string())])
+                .unwrap_or_default(),
+        }
+    }
+}
+
 /// Simple chat helper
 pub fn simple_chat(
     api_key: &str,
@@ -492,6 +524,19 @@ pub fn simple_chat(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_errorcode_openai() {
+        use crate::error_taxonomy::ErrorCode;
+
+        let e = OpenAIAdapterError::Network("timeout".into());
+        assert_eq!(e.code(), "OPENAI_NETWORK");
+        assert_eq!(e.fields()[0], ("reason", "timeout".to_string()));
+
+        let e = OpenAIAdapterError::RateLimit { retry_after: None };
+        assert_eq!(e.code(), "OPENAI_RATE_LIMITED");
+        assert!(e.fields().is_empty());
+    }
 
     #[test]
     fn test_message_creation() {

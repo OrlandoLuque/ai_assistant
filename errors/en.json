@@ -76,5 +76,27 @@
   "KPKG_EMPTY_PACKAGE": "Package contains no documents",
   "KPKG_IO": "Knowledge package I/O error: {reason}",
 
+  "ANTHROPIC_NETWORK": "Anthropic network error: {reason}",
+  "ANTHROPIC_SERIALIZATION": "Anthropic serialization error: {reason}",
+  "ANTHROPIC_DESERIALIZATION": "Anthropic deserialization error: {reason}",
+  "ANTHROPIC_API": "Anthropic API error {status_code} ({error_type}): {message}",
+  "ANTHROPIC_RATE_LIMITED": "Anthropic rate limited",
+
+  "OPENAI_NETWORK": "OpenAI network error: {reason}",
+  "OPENAI_SERIALIZATION": "OpenAI serialization error: {reason}",
+  "OPENAI_DESERIALIZATION": "OpenAI deserialization error: {reason}",
+  "OPENAI_API": "OpenAI API error {status_code} ({error_type}): {message}",
+  "OPENAI_RATE_LIMITED": "OpenAI rate limited",
+
+  "HF_NETWORK": "Hugging Face network error: {reason}",
+  "HF_SERIALIZATION": "Hugging Face serialization error: {reason}",
+  "HF_DESERIALIZATION": "Hugging Face deserialization error: {reason}",
+  "HF_API": "Hugging Face API error {status_code}: {message}",
+  "HF_MODEL_LOADING": "Model is loading, try again",
+  "HF_UNEXPECTED_RESPONSE": "Unexpected response format from Hugging Face",
+
+  "RESILIENT_ALL_PROVIDERS_FAILED": "All {attempted_count} providers failed: {detail}",
+  "RESILIENT_NO_AVAILABLE_PROVIDERS": "No available providers (all circuits open / unhealthy / rate-limited)",
+
   "OTHER": "{detail}"
 }

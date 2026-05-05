@@ -391,6 +391,38 @@ impl std::fmt::Display for AnthropicAdapterError {
 
 impl std::error::Error for AnthropicAdapterError {}
 
+impl crate::error_taxonomy::ErrorCode for AnthropicAdapterError {
+    fn code(&self) -> &'static str {
+        match self {
+            AnthropicAdapterError::Network(_) => "ANTHROPIC_NETWORK",
+            AnthropicAdapterError::Serialization(_) => "ANTHROPIC_SERIALIZATION",
+            AnthropicAdapterError::Deserialization(_) => "ANTHROPIC_DESERIALIZATION",
+            AnthropicAdapterError::Api { .. } => "ANTHROPIC_API",
+            AnthropicAdapterError::RateLimit { .. } => "ANTHROPIC_RATE_LIMITED",
+        }
+    }
+
+    fn fields(&self) -> Vec<(&'static str, String)> {
+        match self {
+            AnthropicAdapterError::Network(s)
+            | AnthropicAdapterError::Serialization(s)
+            | AnthropicAdapterError::Deserialization(s) => vec![("reason", s.clone())],
+            AnthropicAdapterError::Api {
+                code,
+                message,
+                error_type,
+            } => vec![
+                ("status_code", code.to_string()),
+                ("error_type", error_type.clone()),
+                ("message", message.clone()),
+            ],
+            AnthropicAdapterError::RateLimit { retry_after } => retry_after
+                .map(|d| vec![("retry_after_ms", d.as_millis().to_string())])
+                .unwrap_or_default(),
+        }
+    }
+}
+
 /// Simple chat helper
 pub fn simple_chat(
     api_key: &str,
@@ -410,6 +442,32 @@ pub fn simple_chat(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_errorcode_anthropic() {
+        use crate::error_taxonomy::ErrorCode;
+
+        let e = AnthropicAdapterError::Api {
+            code: 429,
+            message: "rate limited".into(),
+            error_type: "rate_limit_error".into(),
+        };
+        assert_eq!(e.code(), "ANTHROPIC_API");
+        let f = e.fields();
+        assert!(f.iter().any(|(k, v)| *k == "status_code" && v == "429"));
+        assert!(f
+            .iter()
+            .any(|(k, v)| *k == "error_type" && v == "rate_limit_error"));
+
+        let e = AnthropicAdapterError::RateLimit {
+            retry_after: Some(Duration::from_secs(30)),
+        };
+        assert_eq!(e.code(), "ANTHROPIC_RATE_LIMITED");
+        let f = e.fields();
+        assert!(f
+            .iter()
+            .any(|(k, v)| *k == "retry_after_ms" && v == "30000"));
+    }
 
     #[test]
     fn test_message_creation() {

@@ -76,5 +76,27 @@
   "KPKG_EMPTY_PACKAGE": "El paquete no contiene documentos",
   "KPKG_IO": "Error de E/S del paquete de conocimiento: {reason}",
 
+  "ANTHROPIC_NETWORK": "Error de red de Anthropic: {reason}",
+  "ANTHROPIC_SERIALIZATION": "Error de serialización de Anthropic: {reason}",
+  "ANTHROPIC_DESERIALIZATION": "Error de deserialización de Anthropic: {reason}",
+  "ANTHROPIC_API": "Error de API de Anthropic {status_code} ({error_type}): {message}",
+  "ANTHROPIC_RATE_LIMITED": "Anthropic ha limitado la tasa",
+
+  "OPENAI_NETWORK": "Error de red de OpenAI: {reason}",
+  "OPENAI_SERIALIZATION": "Error de serialización de OpenAI: {reason}",
+  "OPENAI_DESERIALIZATION": "Error de deserialización de OpenAI: {reason}",
+  "OPENAI_API": "Error de API de OpenAI {status_code} ({error_type}): {message}",
+  "OPENAI_RATE_LIMITED": "OpenAI ha limitado la tasa",
+
+  "HF_NETWORK": "Error de red de Hugging Face: {reason}",
+  "HF_SERIALIZATION": "Error de serialización de Hugging Face: {reason}",
+  "HF_DESERIALIZATION": "Error de deserialización de Hugging Face: {reason}",
+  "HF_API": "Error de API de Hugging Face {status_code}: {message}",
+  "HF_MODEL_LOADING": "El modelo está cargando, intente de nuevo",
+  "HF_UNEXPECTED_RESPONSE": "Formato de respuesta inesperado de Hugging Face",
+
+  "RESILIENT_ALL_PROVIDERS_FAILED": "Los {attempted_count} proveedores fallaron: {detail}",
+  "RESILIENT_NO_AVAILABLE_PROVIDERS": "No hay proveedores disponibles (todos los circuitos abiertos / inestables / con tasa limitada)",
+
   "OTHER": "{detail}"
 }

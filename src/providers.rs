@@ -1959,6 +1959,38 @@ impl std::fmt::Display for ResilientError {
 
 impl std::error::Error for ResilientError {}
 
+impl crate::error_taxonomy::ErrorCode for ResilientError {
+    fn code(&self) -> &'static str {
+        match self {
+            ResilientError::AllProvidersFailed { .. } => "RESILIENT_ALL_PROVIDERS_FAILED",
+            ResilientError::NoAvailableProviders => "RESILIENT_NO_AVAILABLE_PROVIDERS",
+        }
+    }
+
+    fn fields(&self) -> Vec<(&'static str, String)> {
+        match self {
+            ResilientError::AllProvidersFailed { errors } => {
+                let providers = errors
+                    .iter()
+                    .map(|(name, _)| name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let detail = errors
+                    .iter()
+                    .map(|(name, err)| format!("{}={}", name, err))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                vec![
+                    ("attempted_count", errors.len().to_string()),
+                    ("providers", providers),
+                    ("detail", detail),
+                ]
+            }
+            ResilientError::NoAvailableProviders => Vec::new(),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // ConnectionPoolHandle
 // ---------------------------------------------------------------------------
@@ -2837,6 +2869,35 @@ mod context_size_tests {
 mod tests {
     use super::*;
     use crate::session::{ResponseStyle, UserPreferences};
+
+    #[test]
+    fn test_errorcode_resilient() {
+        use crate::error_taxonomy::ErrorCode;
+
+        let e = ResilientError::NoAvailableProviders;
+        assert_eq!(e.code(), "RESILIENT_NO_AVAILABLE_PROVIDERS");
+        assert!(e.fields().is_empty());
+
+        let e = ResilientError::AllProvidersFailed {
+            errors: vec![
+                ("ollama".into(), "connection refused".into()),
+                ("openai".into(), "401 unauthorized".into()),
+            ],
+        };
+        assert_eq!(e.code(), "RESILIENT_ALL_PROVIDERS_FAILED");
+        let f = e.fields();
+        assert!(f.iter().any(|(k, v)| *k == "attempted_count" && v == "2"));
+        assert!(f
+            .iter()
+            .any(|(k, v)| *k == "providers" && v == "ollama,openai"));
+        let detail = f
+            .iter()
+            .find(|(k, _)| *k == "detail")
+            .map(|(_, v)| v.clone())
+            .unwrap();
+        assert!(detail.contains("ollama=connection refused"));
+        assert!(detail.contains("openai=401 unauthorized"));
+    }
 
     #[test]
     fn test_build_system_prompt_empty_knowledge() {

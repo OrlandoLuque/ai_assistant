@@ -452,6 +452,32 @@ impl std::fmt::Display for HfError {
 
 impl std::error::Error for HfError {}
 
+impl crate::error_taxonomy::ErrorCode for HfError {
+    fn code(&self) -> &'static str {
+        match self {
+            HfError::Network(_) => "HF_NETWORK",
+            HfError::Serialization(_) => "HF_SERIALIZATION",
+            HfError::Deserialization(_) => "HF_DESERIALIZATION",
+            HfError::Api { .. } => "HF_API",
+            HfError::ModelLoading => "HF_MODEL_LOADING",
+            HfError::UnexpectedResponse => "HF_UNEXPECTED_RESPONSE",
+        }
+    }
+
+    fn fields(&self) -> Vec<(&'static str, String)> {
+        match self {
+            HfError::Network(s) | HfError::Serialization(s) | HfError::Deserialization(s) => {
+                vec![("reason", s.clone())]
+            }
+            HfError::Api { code, message } => vec![
+                ("status_code", code.to_string()),
+                ("message", message.clone()),
+            ],
+            HfError::ModelLoading | HfError::UnexpectedResponse => Vec::new(),
+        }
+    }
+}
+
 /// Popular models
 pub mod popular_models {
     pub const LLAMA2_7B: &str = "meta-llama/Llama-2-7b-chat-hf";
@@ -468,6 +494,24 @@ pub mod popular_models {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_errorcode_hf() {
+        use crate::error_taxonomy::ErrorCode;
+
+        let e = HfError::ModelLoading;
+        assert_eq!(e.code(), "HF_MODEL_LOADING");
+        assert!(e.fields().is_empty());
+
+        let e = HfError::Api {
+            code: 503,
+            message: "service unavailable".into(),
+        };
+        assert_eq!(e.code(), "HF_API");
+        let f = e.fields();
+        assert!(f.iter().any(|(k, v)| *k == "status_code" && v == "503"));
+        assert!(f.iter().any(|(k, _)| *k == "message"));
+    }
 
     #[test]
     fn test_request_creation() {

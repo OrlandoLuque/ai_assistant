@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v77 (2026-05-04) — V116 Phase C.2: ErrorCode rollout to provider adapters + resilient registry (0.2.63)
+
+### Added
+- **`impl ErrorCode`** for `AnthropicAdapterError` (`src/anthropic_adapter.rs`) — 5 codes (`ANTHROPIC_NETWORK`, `ANTHROPIC_SERIALIZATION`, `ANTHROPIC_DESERIALIZATION`, `ANTHROPIC_API { status_code, error_type, message }`, `ANTHROPIC_RATE_LIMITED { retry_after_ms? }`).
+- **`impl ErrorCode`** for `OpenAIAdapterError` (`src/openai_adapter.rs`) — 5 codes mirror Anthropic shape (`OPENAI_*`).
+- **`impl ErrorCode`** for `HfError` (`src/huggingface_connector.rs`) — 6 codes (`HF_NETWORK`, `HF_SERIALIZATION`, `HF_DESERIALIZATION`, `HF_API { status_code, message }`, `HF_MODEL_LOADING`, `HF_UNEXPECTED_RESPONSE`).
+- **`impl ErrorCode`** for `ResilientError` (`src/providers.rs`) — 2 codes (`RESILIENT_ALL_PROVIDERS_FAILED { attempted_count, providers, detail }` aggregates the per-provider failure list into structured fields; `RESILIENT_NO_AVAILABLE_PROVIDERS`).
+- **`errors/{en,es}.json`** expanded from 65 → 83 codes (+18).
+
+### Why this slice
+Provider/network is the single hottest error surface — every cloud LLM call walks it. Cleanly emitting `ANTHROPIC_RATE_LIMITED` (with `retry_after_ms`) or `OPENAI_API` (with `status_code` + `error_type`) on the wire lets oncall dashboards segment by provider/error-type without regex-parsing free-text. `ResilientError::AllProvidersFailed` now exposes `attempted_count` + `providers` + `detail` as separate fields so retry logic and alerting can branch on count without parsing.
+
+### Tests
+- 4 new tests: `anthropic_adapter::tests::test_errorcode_anthropic`, `openai_adapter::tests::test_errorcode_openai`, `huggingface_connector::tests::test_errorcode_hf`, `providers::tests::test_errorcode_resilient`. All 18 `test_errorcode_*` tests pass.
+
+### What's next (V117+)
+- V117: long-tail umbrella variants — `WorkflowError`, `A2AError`, `VoiceAgentError`, `MediaGenerationError`, `DistillationError`, `ConstrainedDecodingError`, `HitlError`, `McpClientError`, `AgentEvalError`, `RedTeamError`, `MctsError`, `DevToolsError`, `EvalSuiteError`, `AdvancedRoutingError` (in `src/error.rs`). Then flip `AiError::ErrorCode::code` long-tail arms to delegate. Long-tail submodules (`BulkheadError`, `RetryableError`, `BrowserError`, …) optional follow-up.
+- V118: OTel wiring — `opentelemetry_integration.rs::AiSpan` sets `error.code` + `error.fields.*` from `StructuredError`.
+
+### Version
+0.2.62 → 0.2.63.
+
+---
+
 ## [Unreleased] - v76 (2026-05-04) — V115 Phase C.2: ErrorCode rollout to RAG dependency triad (0.2.62)
 
 ### Added
