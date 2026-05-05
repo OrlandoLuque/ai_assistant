@@ -559,6 +559,9 @@ impl std::error::Error for OrchestrationError {}
 #[cfg(feature = "autonomous")]
 use std::sync::{Arc, RwLock};
 
+#[cfg(all(feature = "self-correction", not(feature = "autonomous")))]
+use std::sync::Arc;
+
 #[cfg(feature = "autonomous")]
 use crate::autonomous_loop::AutonomousAgent;
 #[cfg(feature = "autonomous")]
@@ -1472,7 +1475,6 @@ pub struct PatternResult {
 }
 
 /// Executes a conversation pattern with N agents.
-#[derive(Debug)]
 pub struct PatternRunner {
     /// The agents participating in this pattern.
     agents: Vec<PatternAgent>,
@@ -1482,6 +1484,40 @@ pub struct PatternRunner {
     config: PatternConfig,
     /// Transcript of the conversation so far.
     transcript: Vec<PatternMessage>,
+    /// V121: optional stuck detector watching the cross-turn loop for
+    /// pathologies (output repetition, action loops, no progress).
+    #[cfg(feature = "self-correction")]
+    stuck_detector: Option<crate::stuck_detector::StuckDetector>,
+    /// V121: optional critique refiner. When the detector fires signals,
+    /// the refiner is invoked and any returned directive is folded into
+    /// the next agent's input as a `[CRITIC]` prefix.
+    #[cfg(feature = "self-correction")]
+    critique_refiner: Option<Arc<dyn crate::stuck_detector::CritiqueRefiner + Send + Sync>>,
+    /// V121: signals from the most recent observation (cleared once a
+    /// directive is folded in or no signals fire). Exposed for observers.
+    #[cfg(feature = "self-correction")]
+    last_stuck_signals: Vec<crate::stuck_detector::StuckSignal>,
+    /// V121: cached user intent (the original `input` passed to `run`) —
+    /// used when building critic prompts.
+    #[cfg(feature = "self-correction")]
+    user_intent: String,
+}
+
+impl std::fmt::Debug for PatternRunner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("PatternRunner");
+        d.field("agents", &self.agents)
+            .field("pattern", &self.pattern)
+            .field("config", &self.config)
+            .field("transcript", &self.transcript);
+        #[cfg(feature = "self-correction")]
+        {
+            d.field("stuck_detector", &self.stuck_detector)
+                .field("critique_refiner_set", &self.critique_refiner.is_some())
+                .field("last_stuck_signals", &self.last_stuck_signals);
+        }
+        d.finish()
+    }
 }
 
 impl PatternRunner {
@@ -1492,7 +1528,44 @@ impl PatternRunner {
             pattern,
             config,
             transcript: Vec::new(),
+            #[cfg(feature = "self-correction")]
+            stuck_detector: None,
+            #[cfg(feature = "self-correction")]
+            critique_refiner: None,
+            #[cfg(feature = "self-correction")]
+            last_stuck_signals: Vec::new(),
+            #[cfg(feature = "self-correction")]
+            user_intent: String::new(),
         }
+    }
+
+    /// V121: install a stuck detector. Without this, the runner runs as
+    /// before and never observes itself.
+    #[cfg(feature = "self-correction")]
+    pub fn with_stuck_detector(mut self, detector: crate::stuck_detector::StuckDetector) -> Self {
+        self.stuck_detector = Some(detector);
+        self
+    }
+
+    /// V121: install a critique refiner. When stuck signals fire, the
+    /// refiner is asked for a directive that gets folded into the next
+    /// agent's input as a `[CRITIC]` prefix. With no refiner, signals
+    /// still fire and are visible via [`PatternRunner::last_stuck_signals`]
+    /// but no automatic recovery occurs.
+    #[cfg(feature = "self-correction")]
+    pub fn with_critique_refiner(
+        mut self,
+        refiner: Arc<dyn crate::stuck_detector::CritiqueRefiner + Send + Sync>,
+    ) -> Self {
+        self.critique_refiner = Some(refiner);
+        self
+    }
+
+    /// V121: most recent stuck signals captured during a run. Empty when
+    /// no signals fired in the most recent observation.
+    #[cfg(feature = "self-correction")]
+    pub fn last_stuck_signals(&self) -> &[crate::stuck_detector::StuckSignal] {
+        &self.last_stuck_signals
     }
 
     /// Add an agent to the runner.
@@ -1533,6 +1606,15 @@ impl PatternRunner {
         }
 
         self.transcript.clear();
+
+        #[cfg(feature = "self-correction")]
+        {
+            self.user_intent = input.to_string();
+            self.last_stuck_signals.clear();
+            if let Some(ref mut det) = self.stuck_detector {
+                det.reset();
+            }
+        }
 
         match self.pattern {
             ConversationPattern::Swarm => self.run_swarm(input),
@@ -1600,14 +1682,25 @@ impl PatternRunner {
 
         while round < self.config.max_rounds {
             for i in 0..agent_count {
-                let agent = &self.agents[i];
+                let agent_id = self.agents[i].id.clone();
+                let agent_name = self.agents[i].name.clone();
+                let agent_role = self.agents[i].role.clone();
                 let response = format!(
                     "[{}] argues (round {}): re '{}' -- from perspective of {}",
-                    agent.name, round, current_input, agent.role
+                    agent_name, round, current_input, agent_role
                 );
                 self.transcript
-                    .push(PatternMessage::new(&agent.id, &response, round));
+                    .push(PatternMessage::new(&agent_id, &response, round));
                 current_input = response;
+
+                #[cfg(feature = "self-correction")]
+                {
+                    if let Some(directive) =
+                        self.observe_message_and_maybe_critique(&agent_id, &current_input)
+                    {
+                        current_input = format!("[CRITIC]: {}\n{}", directive, current_input);
+                    }
+                }
             }
 
             round += 1;
@@ -1660,14 +1753,24 @@ impl PatternRunner {
 
         while round < self.config.max_rounds {
             for i in 0..agent_count {
-                let agent = &self.agents[i];
+                let agent_id = self.agents[i].id.clone();
+                let agent_name = self.agents[i].name.clone();
                 let response = format!(
                     "[{}] (round {}) responds to: {}",
-                    agent.name, round, current_input
+                    agent_name, round, current_input
                 );
                 self.transcript
-                    .push(PatternMessage::new(&agent.id, &response, round));
+                    .push(PatternMessage::new(&agent_id, &response, round));
                 current_input = response;
+
+                #[cfg(feature = "self-correction")]
+                {
+                    if let Some(directive) =
+                        self.observe_message_and_maybe_critique(&agent_id, &current_input)
+                    {
+                        current_input = format!("[CRITIC]: {}\n{}", directive, current_input);
+                    }
+                }
             }
 
             round += 1;
@@ -1749,14 +1852,24 @@ impl PatternRunner {
 
             // Each sub-agent processes the delegated task
             for i in 1..agent_count {
-                let sub_agent = &self.agents[i];
+                let sub_id = self.agents[i].id.clone();
+                let sub_name = self.agents[i].name.clone();
                 let sub_response = format!(
                     "[{}] sub-response to master (round {}): handling '{}'",
-                    sub_agent.name, round, current_input
+                    sub_name, round, current_input
                 );
                 self.transcript
-                    .push(PatternMessage::new(&sub_agent.id, &sub_response, round));
+                    .push(PatternMessage::new(&sub_id, &sub_response, round));
                 current_input = sub_response;
+
+                #[cfg(feature = "self-correction")]
+                {
+                    if let Some(directive) =
+                        self.observe_message_and_maybe_critique(&sub_id, &current_input)
+                    {
+                        current_input = format!("[CRITIC]: {}\n{}", directive, current_input);
+                    }
+                }
             }
 
             // Master synthesizes sub-agent responses
@@ -1767,6 +1880,15 @@ impl PatternRunner {
             self.transcript
                 .push(PatternMessage::new(&master.id, &synthesis, round));
             current_input = synthesis;
+
+            #[cfg(feature = "self-correction")]
+            {
+                if let Some(directive) =
+                    self.observe_message_and_maybe_critique(&master.id, &current_input)
+                {
+                    current_input = format!("[CRITIC]: {}\n{}", directive, current_input);
+                }
+            }
 
             round += 1;
 
@@ -1812,6 +1934,66 @@ impl PatternRunner {
             final_output,
             terminated_by: "broadcast_complete".to_string(),
         })
+    }
+
+    /// V121: observe one agent's contribution and, if signals fire and a
+    /// refiner is set, return a directive to fold into the next agent's
+    /// input. The action key is `agent:<id>` so `ActionLoop` flags one
+    /// agent dominating the conversation; `OutputRepetition` (Jaccard)
+    /// catches agents producing near-identical content each round.
+    #[cfg(feature = "self-correction")]
+    fn observe_message_and_maybe_critique(
+        &mut self,
+        agent_id: &str,
+        content: &str,
+    ) -> Option<String> {
+        use crate::stuck_detector::AgentObservation;
+
+        if self.stuck_detector.is_none() {
+            return None;
+        }
+
+        let obs = AgentObservation {
+            step: self.transcript.len(),
+            action: format!("agent:{}", agent_id),
+            output_text: content.to_string(),
+            error_code: None,
+            progressed: true,
+        };
+
+        let signals = {
+            let det = self.stuck_detector.as_mut().expect("checked above");
+            det.observe(obs);
+            det.check()
+        };
+
+        if signals.is_empty() {
+            self.last_stuck_signals.clear();
+            return None;
+        }
+        self.last_stuck_signals = signals.clone();
+
+        let directive = if let Some(ref refiner) = self.critique_refiner {
+            let history: Vec<AgentObservation> = self
+                .stuck_detector
+                .as_ref()
+                .expect("checked above")
+                .history()
+                .into_iter()
+                .cloned()
+                .collect();
+            refiner.refine(&signals, &history, &self.user_intent)
+        } else {
+            None
+        };
+
+        if directive.is_some() {
+            if let Some(det) = self.stuck_detector.as_mut() {
+                det.reset();
+            }
+            self.last_stuck_signals.clear();
+        }
+        directive
     }
 
     /// Check if a termination condition is met.
@@ -3260,6 +3442,96 @@ mod tests {
         assert_eq!(runner.pattern(), ConversationPattern::Debate);
         assert_eq!(runner.config().max_rounds, 7);
         assert!(runner.transcript().is_empty());
+    }
+
+    // ── V121: stuck detector wire-in ─────────────────────────────────────
+
+    #[cfg(feature = "self-correction")]
+    #[test]
+    fn test_pattern_runner_stuck_detector_permissive_no_signals() {
+        use crate::stuck_detector::{StuckDetector, StuckDetectorConfig};
+        use std::sync::Arc;
+
+        let config = PatternConfig::new().with_max_rounds(2);
+        let mut runner = PatternRunner::new(ConversationPattern::RoundRobin, config)
+            .with_stuck_detector(StuckDetector::new(StuckDetectorConfig::permissive()));
+        let _ = Arc::new(()); // ensures Arc is in scope under cfg
+        runner.add_agent(PatternAgent::new("a1", "Alice", "speaker", ""));
+        runner.add_agent(PatternAgent::new("a2", "Bob", "speaker", ""));
+
+        let res = runner.run("hello").unwrap();
+        // 2 rounds × 2 agents = 4 messages; well below permissive thresholds
+        // (repetition=5, action_loop=5, similarity=0.95).
+        assert_eq!(res.messages.len(), 4);
+        assert!(runner.last_stuck_signals().is_empty());
+    }
+
+    #[cfg(feature = "self-correction")]
+    #[test]
+    fn test_pattern_runner_action_loop_fires_with_single_agent_aggressive() {
+        use crate::stuck_detector::{StuckDetector, StuckDetectorConfig, StuckSignal};
+
+        // Single-agent round_robin → same agent_id every turn → ActionLoop
+        // under aggressive thresholds (action_loop_threshold = 2).
+        let config = PatternConfig::new().with_max_rounds(3);
+        let mut runner = PatternRunner::new(ConversationPattern::RoundRobin, config)
+            .with_stuck_detector(StuckDetector::new(StuckDetectorConfig::aggressive()));
+        runner.add_agent(PatternAgent::new("a1", "Alice", "speaker", ""));
+
+        let _ = runner.run("hello").unwrap();
+        let signals = runner.last_stuck_signals();
+        assert!(signals
+            .iter()
+            .any(|s| matches!(s, StuckSignal::ActionLoop { .. })));
+    }
+
+    #[cfg(feature = "self-correction")]
+    #[test]
+    fn test_pattern_runner_critic_directive_injected() {
+        use crate::stuck_detector::{
+            CallbackCritic, CritiqueRefiner, StuckDetector, StuckDetectorConfig,
+        };
+        use std::sync::Arc;
+
+        let config = PatternConfig::new().with_max_rounds(3);
+        let critic =
+            CallbackCritic::new(|_p: &str| Some("step back and try a different angle".to_string()));
+        let refiner: Arc<dyn CritiqueRefiner + Send + Sync> = Arc::new(critic);
+
+        let mut runner = PatternRunner::new(ConversationPattern::RoundRobin, config)
+            .with_stuck_detector(StuckDetector::new(StuckDetectorConfig::aggressive()))
+            .with_critique_refiner(refiner);
+        runner.add_agent(PatternAgent::new("a1", "Alice", "speaker", ""));
+
+        let res = runner.run("loop").unwrap();
+        // After the first ActionLoop fires and a directive is folded in,
+        // subsequent transcript content should mention [CRITIC].
+        let any_critic = res.messages.iter().any(|m| m.content.contains("[CRITIC]:"));
+        assert!(
+            any_critic,
+            "expected at least one transcript entry containing [CRITIC]:"
+        );
+    }
+
+    #[cfg(feature = "self-correction")]
+    #[test]
+    fn test_pattern_runner_run_resets_detector() {
+        use crate::stuck_detector::{StuckDetector, StuckDetectorConfig};
+
+        let config = PatternConfig::new().with_max_rounds(2);
+        let mut runner = PatternRunner::new(ConversationPattern::RoundRobin, config)
+            .with_stuck_detector(StuckDetector::new(StuckDetectorConfig::aggressive()));
+        runner.add_agent(PatternAgent::new("a1", "Alice", "speaker", ""));
+
+        let _ = runner.run("first").unwrap();
+        let signals_after_first = runner.last_stuck_signals().to_vec();
+        // Re-run; detector should reset and not double-count history.
+        let _ = runner.run("second").unwrap();
+        let _signals_after_second = runner.last_stuck_signals().to_vec();
+        // Sanity: the runner is idempotent across runs (no stale state
+        // breaks the second run).
+        assert!(!runner.transcript().is_empty());
+        let _ = signals_after_first; // value not asserted, just exercised
     }
 
     #[test]

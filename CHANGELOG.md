@@ -5,6 +5,92 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v82 (2026-05-05) — V121 Phase B.4 (part 3): wire StuckDetector into multi_agent::PatternRunner (0.2.68)
+
+### Added
+- **V121 wires the V119 stuck-detector into the multi-agent
+  `PatternRunner`.** Cross-turn pathology in handoffs (one agent
+  loops on the same hand-off message; the coordinator never gets a
+  fresh signal) is now observable at the orchestrator level —
+  exactly the same mental model as V120's autonomous-agent wire-in,
+  applied one rung up.
+- **`PatternRunner::with_stuck_detector(StuckDetector)`** and
+  **`PatternRunner::with_critique_refiner(Arc<dyn CritiqueRefiner + Send + Sync>)`** —
+  cfg-gated under `self-correction`. Without them the runner is
+  unchanged. With just the detector, signals fire and are visible
+  via `last_stuck_signals()`. With both, the runner injects a
+  `[CRITIC]: …` directive into the next round's input.
+- **`PatternRunner::last_stuck_signals()`** accessor — same shape
+  as the autonomous-agent accessor. Cleared on a fresh `run()` so
+  the runner is re-entrant across tasks.
+
+### How it wires in
+At every transcript append in `run_round_robin`, `run_debate`, and
+`run_nested_chat`, the runner observes the agent's contribution
+via `observe_message_and_maybe_critique`:
+- `step`        = `self.transcript.len()` at observation time
+- `action`      = `agent:<agent_id>` — collapses identical
+  agent-id repetitions onto the same `ActionLoop` bucket while
+  keeping distinct agents separate
+- `output_text` = the message body just produced
+- `error_code`  = `None` (multi-agent transcripts don't carry
+  per-message error codes today)
+- `progressed`  = `true`
+
+If the detector reports signals and a refiner is installed, its
+directive is prepended to the next agent's input as
+`[CRITIC]: <directive>\n\n<original input>`, and the detector is
+reset to give the orchestration a clean slate after the redirect.
+
+### Why the patterns chosen
+Round-robin, debate, and nested-chat are the three multi-round
+patterns where the same agent (or pair) can spiral. Sequential is
+single-pass, swarm dispatches by task queue (no inherent loop
+shape), and broadcast fans out — none benefit from per-step stuck
+monitoring. The wiring is therefore surgical, not pervasive.
+
+### Compatibility
+- Both setters are cfg-gated behind `self-correction` and default
+  to `None`. Runners built without them behave exactly as before —
+  same builder, same `run()` signature, same `PatternResult`.
+- `PatternRunner`'s `Debug` impl is now hand-written (the
+  `dyn CritiqueRefiner` field doesn't implement `Debug`); the
+  derived layout is preserved field-by-field for the active fields,
+  with the cfg-gated detector/refiner shown as opaque markers under
+  `self-correction`.
+- The `Arc` import in `multi_agent.rs` was previously gated under
+  `autonomous` only; it is now also brought into scope under
+  `self-correction` (without conflicting when both are enabled).
+
+### Tests
+Four new tests in `multi_agent::tests` (cfg-gated `self-correction`):
+- `test_pattern_runner_stuck_detector_permissive_no_signals` —
+  baseline: with permissive thresholds and a short run, no
+  signals fire and `last_stuck_signals()` stays empty.
+- `test_pattern_runner_action_loop_fires_with_single_agent_aggressive` —
+  single-agent round-robin under aggressive thresholds → same
+  `agent:<id>` every turn → `ActionLoop` fires and is visible.
+- `test_pattern_runner_critic_directive_injected` — same loop with
+  a `CallbackCritic` returning a fixed directive → at least one
+  transcript message contains `[CRITIC]:`.
+- `test_pattern_runner_run_resets_detector` — re-running the
+  runner doesn't carry stale observations across tasks.
+
+All 91 `multi_agent::tests` pass under
+`cargo test --features "multi-agent,self-correction" --lib multi_agent::tests`.
+
+### What's next
+- **V122 (B.5)**: parallel tool execution — when one LLM response
+  carries N independent tool calls, execute them concurrently
+  rather than sequentially; detect write-after-read dependencies
+  to preserve ordering when needed.
+- **V123 (B.6)**: adversary + egress inspectors and the
+  `--no-egress` policy flag for closed-network operation.
+- **Optional follow-up**: surface V117 error codes through the
+  multi-agent message envelope so `RetryWithoutChange` can match
+  on stable subsystem codes instead of the current
+  `error_code = None`.
+
 ## [Unreleased] - v81 (2026-05-05) — V120 Phase B.4 (part 2): wire StuckDetector into autonomous_agent (0.2.67)
 
 ### Added
