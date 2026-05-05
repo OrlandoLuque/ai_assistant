@@ -2634,23 +2634,25 @@ impl ErrorCode for AiError {
             AiError::ResourceLimit(e) => e.code(),
             AiError::Io(e) => e.code(),
             AiError::Serialization(e) => e.code(),
-            // Long-tail subsystems migrate in V115+. Until then they
-            // surface as their coarse category code.
-            AiError::Workflow(_) => "WORKFLOW",
-            AiError::AdvancedMemory(_) => "MEMORY",
-            AiError::A2A(_) => "A2A",
-            AiError::VoiceAgent(_) => "VOICE_AGENT",
-            AiError::MediaGeneration(_) => "MEDIA_GENERATION",
-            AiError::Distillation(_) => "DISTILLATION",
-            AiError::ConstrainedDecoding(_) => "CONSTRAINED_DECODING",
-            AiError::Hitl(_) => "HITL",
-            AiError::McpClient(_) => "MCP_CLIENT",
-            AiError::AgentEval(_) => "AGENT_EVAL",
-            AiError::RedTeam(_) => "RED_TEAM",
-            AiError::Mcts(_) => "MCTS",
-            AiError::DevTools(_) => "DEVTOOLS",
-            AiError::EvalSuite(_) => "EVAL_SUITE",
-            AiError::AdvancedRouting(_) => "ADVANCED_ROUTING",
+            // V117: long-tail subsystems now delegate to their fine-grained
+            // ErrorCode impls. Inherent `AiError::code()` still returns the
+            // coarse string for API compatibility — only the trait method
+            // delegates.
+            AiError::Workflow(e) => e.code(),
+            AiError::AdvancedMemory(e) => e.code(),
+            AiError::A2A(e) => e.code(),
+            AiError::VoiceAgent(e) => e.code(),
+            AiError::MediaGeneration(e) => e.code(),
+            AiError::Distillation(e) => e.code(),
+            AiError::ConstrainedDecoding(e) => e.code(),
+            AiError::Hitl(e) => e.code(),
+            AiError::McpClient(e) => e.code(),
+            AiError::AgentEval(e) => e.code(),
+            AiError::RedTeam(e) => e.code(),
+            AiError::Mcts(e) => e.code(),
+            AiError::DevTools(e) => e.code(),
+            AiError::EvalSuite(e) => e.code(),
+            AiError::AdvancedRouting(e) => e.code(),
             AiError::Other(_) => "OTHER",
         }
     }
@@ -2665,8 +2667,22 @@ impl ErrorCode for AiError {
             AiError::ResourceLimit(e) => e.fields(),
             AiError::Io(e) => e.fields(),
             AiError::Serialization(e) => e.fields(),
+            AiError::Workflow(e) => e.fields(),
+            AiError::AdvancedMemory(e) => e.fields(),
+            AiError::A2A(e) => e.fields(),
+            AiError::VoiceAgent(e) => e.fields(),
+            AiError::MediaGeneration(e) => e.fields(),
+            AiError::Distillation(e) => e.fields(),
+            AiError::ConstrainedDecoding(e) => e.fields(),
+            AiError::Hitl(e) => e.fields(),
+            AiError::McpClient(e) => e.fields(),
+            AiError::AgentEval(e) => e.fields(),
+            AiError::RedTeam(e) => e.fields(),
+            AiError::Mcts(e) => e.fields(),
+            AiError::DevTools(e) => e.fields(),
+            AiError::EvalSuite(e) => e.fields(),
+            AiError::AdvancedRouting(e) => e.fields(),
             AiError::Other(msg) => vec![("detail", msg.clone())],
-            _ => Vec::new(),
         }
     }
 }
@@ -2962,6 +2978,616 @@ impl ErrorCode for SerializationError {
             ("operation", self.operation.clone()),
             ("reason", self.reason.clone()),
         ]
+    }
+}
+
+// === V117 Phase C.2: ErrorCode for long-tail subsystems (additive) ===
+//
+// Same pattern as V114-V116: layered alongside the existing Display/Error
+// impls; nothing about the public surface (Display, Error, From conversions,
+// suggestion(), is_recoverable()) changes. The AiError ErrorCode `code()`
+// arms for these types are flipped from coarse-fallback to delegation in
+// this same iteration, so `<AiError as ErrorCode>::code(&err)` returns the
+// fine-grained code for every variant while the inherent `AiError::code()`
+// continues to return the coarse string for API compatibility.
+
+impl ErrorCode for WorkflowError {
+    fn code(&self) -> &'static str {
+        match self {
+            WorkflowError::NodeNotFound { .. } => "WORKFLOW_NODE_NOT_FOUND",
+            WorkflowError::CycleDetected { .. } => "WORKFLOW_CYCLE_DETECTED",
+            WorkflowError::EventTypeMismatch { .. } => "WORKFLOW_EVENT_TYPE_MISMATCH",
+            WorkflowError::CheckpointFailed { .. } => "WORKFLOW_CHECKPOINT_FAILED",
+            WorkflowError::TimeoutExceeded { .. } => "WORKFLOW_TIMEOUT_EXCEEDED",
+            WorkflowError::BreakpointHit { .. } => "WORKFLOW_BREAKPOINT_HIT",
+            WorkflowError::SerializationFailed { .. } => "WORKFLOW_SERIALIZATION_FAILED",
+            WorkflowError::InvalidState { .. } => "WORKFLOW_INVALID_STATE",
+        }
+    }
+
+    fn fields(&self) -> Vec<(&'static str, String)> {
+        match self {
+            WorkflowError::NodeNotFound { node_id } => vec![("node_id", node_id.clone())],
+            WorkflowError::CycleDetected { path } => vec![("path", path.join(" -> "))],
+            WorkflowError::EventTypeMismatch { expected, got } => {
+                vec![("expected", expected.clone()), ("got", got.clone())]
+            }
+            WorkflowError::CheckpointFailed {
+                workflow_id,
+                reason,
+            } => vec![
+                ("workflow_id", workflow_id.clone()),
+                ("reason", reason.clone()),
+            ],
+            WorkflowError::TimeoutExceeded {
+                node_id,
+                timeout_ms,
+            } => vec![
+                ("node_id", node_id.clone()),
+                ("timeout_ms", timeout_ms.to_string()),
+            ],
+            WorkflowError::BreakpointHit { node_id } => vec![("node_id", node_id.clone())],
+            WorkflowError::SerializationFailed { reason } => vec![("reason", reason.clone())],
+            WorkflowError::InvalidState {
+                workflow_id,
+                current_state,
+                attempted_action,
+            } => vec![
+                ("workflow_id", workflow_id.clone()),
+                ("current_state", current_state.clone()),
+                ("attempted_action", attempted_action.clone()),
+            ],
+        }
+    }
+}
+
+impl ErrorCode for AdvancedMemoryError {
+    fn code(&self) -> &'static str {
+        match self {
+            AdvancedMemoryError::StoreFailed { .. } => "MEMORY_STORE_FAILED",
+            AdvancedMemoryError::RecallFailed { .. } => "MEMORY_RECALL_FAILED",
+            AdvancedMemoryError::ConsolidationFailed { .. } => "MEMORY_CONSOLIDATION_FAILED",
+            AdvancedMemoryError::EntityNotFound { .. } => "MEMORY_ENTITY_NOT_FOUND",
+            AdvancedMemoryError::DuplicateEntity { .. } => "MEMORY_DUPLICATE_ENTITY",
+            AdvancedMemoryError::CapacityExceeded { .. } => "MEMORY_CAPACITY_EXCEEDED",
+        }
+    }
+
+    fn fields(&self) -> Vec<(&'static str, String)> {
+        match self {
+            AdvancedMemoryError::StoreFailed {
+                memory_type,
+                reason,
+            } => vec![
+                ("memory_type", memory_type.clone()),
+                ("reason", reason.clone()),
+            ],
+            AdvancedMemoryError::RecallFailed { query, reason } => {
+                vec![("query", query.clone()), ("reason", reason.clone())]
+            }
+            AdvancedMemoryError::ConsolidationFailed { reason } => {
+                vec![("reason", reason.clone())]
+            }
+            AdvancedMemoryError::EntityNotFound { name } => vec![("name", name.clone())],
+            AdvancedMemoryError::DuplicateEntity { name, existing_id } => {
+                vec![("name", name.clone()), ("existing_id", existing_id.clone())]
+            }
+            AdvancedMemoryError::CapacityExceeded {
+                memory_type,
+                limit,
+                current,
+            } => vec![
+                ("memory_type", memory_type.clone()),
+                ("limit", limit.to_string()),
+                ("current", current.to_string()),
+            ],
+        }
+    }
+}
+
+impl ErrorCode for A2AError {
+    fn code(&self) -> &'static str {
+        match self {
+            A2AError::TaskNotFound { .. } => "A2A_TASK_NOT_FOUND",
+            A2AError::InvalidState { .. } => "A2A_INVALID_STATE",
+            A2AError::AgentNotFound { .. } => "A2A_AGENT_NOT_FOUND",
+            A2AError::ProtocolError { .. } => "A2A_PROTOCOL_ERROR",
+            A2AError::DiscoveryFailed { .. } => "A2A_DISCOVERY_FAILED",
+            A2AError::AuthenticationFailed { .. } => "A2A_AUTH_FAILED",
+            A2AError::TaskCancelled { .. } => "A2A_TASK_CANCELLED",
+        }
+    }
+
+    fn fields(&self) -> Vec<(&'static str, String)> {
+        match self {
+            A2AError::TaskNotFound { task_id } => vec![("task_id", task_id.clone())],
+            A2AError::InvalidState {
+                task_id,
+                current,
+                attempted,
+            } => vec![
+                ("task_id", task_id.clone()),
+                ("current", current.clone()),
+                ("attempted", attempted.clone()),
+            ],
+            A2AError::AgentNotFound { agent_id } => vec![("agent_id", agent_id.clone())],
+            A2AError::ProtocolError { method, reason } => {
+                vec![("method", method.clone()), ("reason", reason.clone())]
+            }
+            A2AError::DiscoveryFailed { url, reason } => {
+                vec![("url", url.clone()), ("reason", reason.clone())]
+            }
+            A2AError::AuthenticationFailed { agent_id, reason } => {
+                vec![("agent_id", agent_id.clone()), ("reason", reason.clone())]
+            }
+            A2AError::TaskCancelled { task_id } => vec![("task_id", task_id.clone())],
+        }
+    }
+}
+
+impl ErrorCode for VoiceAgentError {
+    fn code(&self) -> &'static str {
+        match self {
+            VoiceAgentError::StreamFailed { .. } => "VOICE_STREAM_FAILED",
+            VoiceAgentError::VadError { .. } => "VOICE_VAD_ERROR",
+            VoiceAgentError::TranscriptionFailed { .. } => "VOICE_TRANSCRIPTION_FAILED",
+            VoiceAgentError::SynthesisFailed { .. } => "VOICE_SYNTHESIS_FAILED",
+            VoiceAgentError::InvalidSessionState { .. } => "VOICE_INVALID_SESSION_STATE",
+            VoiceAgentError::UnsupportedFormat { .. } => "VOICE_UNSUPPORTED_FORMAT",
+        }
+    }
+
+    fn fields(&self) -> Vec<(&'static str, String)> {
+        match self {
+            VoiceAgentError::StreamFailed { reason } => vec![("reason", reason.clone())],
+            VoiceAgentError::VadError { reason } => vec![("reason", reason.clone())],
+            VoiceAgentError::TranscriptionFailed { reason } => vec![("reason", reason.clone())],
+            VoiceAgentError::SynthesisFailed { reason } => vec![("reason", reason.clone())],
+            VoiceAgentError::InvalidSessionState { current, attempted } => vec![
+                ("current", current.clone()),
+                ("attempted", attempted.clone()),
+            ],
+            VoiceAgentError::UnsupportedFormat { format } => vec![("format", format.clone())],
+        }
+    }
+}
+
+impl ErrorCode for MediaGenerationError {
+    fn code(&self) -> &'static str {
+        match self {
+            MediaGenerationError::ProviderUnavailable { .. } => "MEDIA_PROVIDER_UNAVAILABLE",
+            MediaGenerationError::GenerationFailed { .. } => "MEDIA_GENERATION_FAILED",
+            MediaGenerationError::JobTimeout { .. } => "MEDIA_JOB_TIMEOUT",
+            MediaGenerationError::InvalidParams { .. } => "MEDIA_INVALID_PARAMS",
+            MediaGenerationError::UnsupportedFormat { .. } => "MEDIA_UNSUPPORTED_FORMAT",
+            MediaGenerationError::ContentPolicyViolation { .. } => "MEDIA_CONTENT_POLICY_VIOLATION",
+        }
+    }
+
+    fn fields(&self) -> Vec<(&'static str, String)> {
+        match self {
+            MediaGenerationError::ProviderUnavailable { provider, reason } => {
+                vec![("provider", provider.clone()), ("reason", reason.clone())]
+            }
+            MediaGenerationError::GenerationFailed { provider, reason } => {
+                vec![("provider", provider.clone()), ("reason", reason.clone())]
+            }
+            MediaGenerationError::JobTimeout {
+                job_id,
+                timeout_secs,
+            } => vec![
+                ("job_id", job_id.clone()),
+                ("timeout_secs", timeout_secs.to_string()),
+            ],
+            MediaGenerationError::InvalidParams { param, reason } => {
+                vec![("param", param.clone()), ("reason", reason.clone())]
+            }
+            MediaGenerationError::UnsupportedFormat { format } => {
+                vec![("format", format.clone())]
+            }
+            MediaGenerationError::ContentPolicyViolation { reason } => {
+                vec![("reason", reason.clone())]
+            }
+        }
+    }
+}
+
+impl ErrorCode for DistillationError {
+    fn code(&self) -> &'static str {
+        match self {
+            DistillationError::CollectionFailed { .. } => "DISTILL_COLLECTION_FAILED",
+            DistillationError::ScoringFailed { .. } => "DISTILL_SCORING_FAILED",
+            DistillationError::DatasetBuildFailed { .. } => "DISTILL_DATASET_BUILD_FAILED",
+            DistillationError::NoValidTrajectories { .. } => "DISTILL_NO_VALID_TRAJECTORIES",
+            DistillationError::FlywheelFailed { .. } => "DISTILL_FLYWHEEL_FAILED",
+            DistillationError::StorageError { .. } => "DISTILL_STORAGE_ERROR",
+        }
+    }
+
+    fn fields(&self) -> Vec<(&'static str, String)> {
+        match self {
+            DistillationError::CollectionFailed { reason } => vec![("reason", reason.clone())],
+            DistillationError::ScoringFailed { reason } => vec![("reason", reason.clone())],
+            DistillationError::DatasetBuildFailed { format, reason } => {
+                vec![("format", format.clone()), ("reason", reason.clone())]
+            }
+            DistillationError::NoValidTrajectories {
+                min_score,
+                total_checked,
+            } => vec![
+                ("min_score", format!("{:.4}", min_score)),
+                ("total_checked", total_checked.to_string()),
+            ],
+            DistillationError::FlywheelFailed { cycle_id, reason } => {
+                vec![("cycle_id", cycle_id.clone()), ("reason", reason.clone())]
+            }
+            DistillationError::StorageError { operation, reason } => {
+                vec![("operation", operation.clone()), ("reason", reason.clone())]
+            }
+        }
+    }
+}
+
+impl ErrorCode for ConstrainedDecodingError {
+    fn code(&self) -> &'static str {
+        match self {
+            ConstrainedDecodingError::GrammarCompilationFailed { .. } => {
+                "CDEC_GRAMMAR_COMPILE_FAILED"
+            }
+            ConstrainedDecodingError::SchemaConversionFailed { .. } => {
+                "CDEC_SCHEMA_CONVERSION_FAILED"
+            }
+            ConstrainedDecodingError::ValidationFailed { .. } => "CDEC_VALIDATION_FAILED",
+            ConstrainedDecodingError::ProviderUnsupported { .. } => "CDEC_PROVIDER_UNSUPPORTED",
+            ConstrainedDecodingError::GrammarSyntaxError { .. } => "CDEC_GRAMMAR_SYNTAX_ERROR",
+        }
+    }
+
+    fn fields(&self) -> Vec<(&'static str, String)> {
+        match self {
+            ConstrainedDecodingError::GrammarCompilationFailed { reason } => {
+                vec![("reason", reason.clone())]
+            }
+            ConstrainedDecodingError::SchemaConversionFailed { path, reason } => {
+                vec![("path", path.clone()), ("reason", reason.clone())]
+            }
+            ConstrainedDecodingError::ValidationFailed {
+                position,
+                expected,
+                got,
+            } => vec![
+                ("position", position.to_string()),
+                ("expected", expected.clone()),
+                ("got", got.clone()),
+            ],
+            ConstrainedDecodingError::ProviderUnsupported { provider } => {
+                vec![("provider", provider.clone())]
+            }
+            ConstrainedDecodingError::GrammarSyntaxError { line, message } => {
+                vec![("line", line.to_string()), ("message", message.clone())]
+            }
+        }
+    }
+}
+
+impl ErrorCode for HitlError {
+    fn code(&self) -> &'static str {
+        match self {
+            HitlError::ApprovalTimeout { .. } => "HITL_APPROVAL_TIMEOUT",
+            HitlError::PolicyViolation { .. } => "HITL_POLICY_VIOLATION",
+            HitlError::GateNotConfigured { .. } => "HITL_GATE_NOT_CONFIGURED",
+            HitlError::CorrectionRejected { .. } => "HITL_CORRECTION_REJECTED",
+            HitlError::ConfidenceEstimationFailed { .. } => "HITL_CONFIDENCE_FAILED",
+            HitlError::EscalationUnavailable { .. } => "HITL_ESCALATION_UNAVAILABLE",
+        }
+    }
+
+    fn fields(&self) -> Vec<(&'static str, String)> {
+        match self {
+            HitlError::ApprovalTimeout {
+                tool_name,
+                timeout_secs,
+            } => vec![
+                ("tool_name", tool_name.clone()),
+                ("timeout_secs", timeout_secs.to_string()),
+            ],
+            HitlError::PolicyViolation {
+                policy_name,
+                reason,
+            } => vec![
+                ("policy_name", policy_name.clone()),
+                ("reason", reason.clone()),
+            ],
+            HitlError::GateNotConfigured { operation } => {
+                vec![("operation", operation.clone())]
+            }
+            HitlError::CorrectionRejected { step_id, reason } => {
+                vec![("step_id", step_id.clone()), ("reason", reason.clone())]
+            }
+            HitlError::ConfidenceEstimationFailed { reason } => vec![("reason", reason.clone())],
+            HitlError::EscalationUnavailable { target, reason } => {
+                vec![("target", target.clone()), ("reason", reason.clone())]
+            }
+        }
+    }
+}
+
+impl ErrorCode for McpClientError {
+    fn code(&self) -> &'static str {
+        match self {
+            McpClientError::ConnectionFailed { .. } => "MCP_CLIENT_CONNECTION_FAILED",
+            McpClientError::AuthFailed { .. } => "MCP_CLIENT_AUTH_FAILED",
+            McpClientError::ServerError { .. } => "MCP_CLIENT_SERVER_ERROR",
+            McpClientError::Timeout { .. } => "MCP_CLIENT_TIMEOUT",
+            McpClientError::ProtocolMismatch { .. } => "MCP_CLIENT_PROTOCOL_MISMATCH",
+            McpClientError::ToolNotFound { .. } => "MCP_CLIENT_TOOL_NOT_FOUND",
+            McpClientError::SessionExpired { .. } => "MCP_CLIENT_SESSION_EXPIRED",
+        }
+    }
+
+    fn fields(&self) -> Vec<(&'static str, String)> {
+        match self {
+            McpClientError::ConnectionFailed { url, reason } => {
+                vec![("url", url.clone()), ("reason", reason.clone())]
+            }
+            McpClientError::AuthFailed { url, reason } => {
+                vec![("url", url.clone()), ("reason", reason.clone())]
+            }
+            McpClientError::ServerError { url, code, message } => vec![
+                ("url", url.clone()),
+                ("code", code.to_string()),
+                ("message", message.clone()),
+            ],
+            McpClientError::Timeout { url, timeout_ms } => {
+                vec![("url", url.clone()), ("timeout_ms", timeout_ms.to_string())]
+            }
+            McpClientError::ProtocolMismatch { expected, got } => {
+                vec![("expected", expected.clone()), ("got", got.clone())]
+            }
+            McpClientError::ToolNotFound { server, tool_name } => {
+                vec![("server", server.clone()), ("tool_name", tool_name.clone())]
+            }
+            McpClientError::SessionExpired { session_id } => {
+                vec![("session_id", session_id.clone())]
+            }
+        }
+    }
+}
+
+impl ErrorCode for AgentEvalError {
+    fn code(&self) -> &'static str {
+        match self {
+            AgentEvalError::TrajectoryEmpty { .. } => "EVAL_TRAJECTORY_EMPTY",
+            AgentEvalError::MetricFailed { .. } => "EVAL_METRIC_FAILED",
+            AgentEvalError::BaselineNotFound { .. } => "EVAL_BASELINE_NOT_FOUND",
+            AgentEvalError::InvalidConfig { .. } => "EVAL_INVALID_CONFIG",
+            AgentEvalError::ToolCallMatchFailed { .. } => "EVAL_TOOL_CALL_MISMATCH",
+            AgentEvalError::ReportFailed { .. } => "EVAL_REPORT_FAILED",
+        }
+    }
+
+    fn fields(&self) -> Vec<(&'static str, String)> {
+        match self {
+            AgentEvalError::TrajectoryEmpty { agent_id } => vec![("agent_id", agent_id.clone())],
+            AgentEvalError::MetricFailed {
+                metric_name,
+                reason,
+            } => vec![
+                ("metric_name", metric_name.clone()),
+                ("reason", reason.clone()),
+            ],
+            AgentEvalError::BaselineNotFound { eval_id } => vec![("eval_id", eval_id.clone())],
+            AgentEvalError::InvalidConfig { field, reason } => {
+                vec![("field", field.clone()), ("reason", reason.clone())]
+            }
+            AgentEvalError::ToolCallMatchFailed { expected, actual } => {
+                vec![("expected", expected.clone()), ("actual", actual.clone())]
+            }
+            AgentEvalError::ReportFailed { reason } => vec![("reason", reason.clone())],
+        }
+    }
+}
+
+impl ErrorCode for RedTeamError {
+    fn code(&self) -> &'static str {
+        match self {
+            RedTeamError::GenerationFailed { .. } => "REDTEAM_GENERATION_FAILED",
+            RedTeamError::ExecutionFailed { .. } => "REDTEAM_EXECUTION_FAILED",
+            RedTeamError::InvalidCategory { .. } => "REDTEAM_INVALID_CATEGORY",
+            RedTeamError::DefenseEvalFailed { .. } => "REDTEAM_DEFENSE_EVAL_FAILED",
+            RedTeamError::ReportFailed { .. } => "REDTEAM_REPORT_FAILED",
+        }
+    }
+
+    fn fields(&self) -> Vec<(&'static str, String)> {
+        match self {
+            RedTeamError::GenerationFailed { category, reason } => {
+                vec![("category", category.clone()), ("reason", reason.clone())]
+            }
+            RedTeamError::ExecutionFailed { attack_id, reason } => {
+                vec![("attack_id", attack_id.clone()), ("reason", reason.clone())]
+            }
+            RedTeamError::InvalidCategory { category } => vec![("category", category.clone())],
+            RedTeamError::DefenseEvalFailed { guard_name, reason } => vec![
+                ("guard_name", guard_name.clone()),
+                ("reason", reason.clone()),
+            ],
+            RedTeamError::ReportFailed { reason } => vec![("reason", reason.clone())],
+        }
+    }
+}
+
+impl ErrorCode for MctsError {
+    fn code(&self) -> &'static str {
+        match self {
+            MctsError::MaxIterations { .. } => "MCTS_MAX_ITERATIONS",
+            MctsError::NoValidActions { .. } => "MCTS_NO_VALID_ACTIONS",
+            MctsError::SimulationFailed { .. } => "MCTS_SIMULATION_FAILED",
+            MctsError::StateError { .. } => "MCTS_STATE_ERROR",
+            MctsError::RewardModelError { .. } => "MCTS_REWARD_MODEL_ERROR",
+            MctsError::RefinementExhausted { .. } => "MCTS_REFINEMENT_EXHAUSTED",
+        }
+    }
+
+    fn fields(&self) -> Vec<(&'static str, String)> {
+        match self {
+            MctsError::MaxIterations {
+                iterations,
+                best_reward,
+            } => vec![
+                ("iterations", iterations.to_string()),
+                ("best_reward", format!("{:.4}", best_reward)),
+            ],
+            MctsError::NoValidActions { state_description } => {
+                vec![("state_description", state_description.clone())]
+            }
+            MctsError::SimulationFailed { depth, reason } => {
+                vec![("depth", depth.to_string()), ("reason", reason.clone())]
+            }
+            MctsError::StateError { action, reason } => {
+                vec![("action", action.clone()), ("reason", reason.clone())]
+            }
+            MctsError::RewardModelError { step, reason } => {
+                vec![("step", step.to_string()), ("reason", reason.clone())]
+            }
+            MctsError::RefinementExhausted {
+                iterations,
+                last_improvement,
+            } => vec![
+                ("iterations", iterations.to_string()),
+                ("last_improvement", format!("{:.4}", last_improvement)),
+            ],
+        }
+    }
+}
+
+impl ErrorCode for DevToolsError {
+    fn code(&self) -> &'static str {
+        match self {
+            DevToolsError::RecordingFailed { .. } => "DEVTOOLS_RECORDING_FAILED",
+            DevToolsError::ReplayFailed { .. } => "DEVTOOLS_REPLAY_FAILED",
+            DevToolsError::BreakpointInvalid { .. } => "DEVTOOLS_BREAKPOINT_INVALID",
+            DevToolsError::InspectionFailed { .. } => "DEVTOOLS_INSPECTION_FAILED",
+            DevToolsError::ProfilingUnavailable { .. } => "DEVTOOLS_PROFILING_UNAVAILABLE",
+        }
+    }
+
+    fn fields(&self) -> Vec<(&'static str, String)> {
+        match self {
+            DevToolsError::RecordingFailed { agent_id, reason } => {
+                vec![("agent_id", agent_id.clone()), ("reason", reason.clone())]
+            }
+            DevToolsError::ReplayFailed {
+                recording_id,
+                reason,
+            } => vec![
+                ("recording_id", recording_id.clone()),
+                ("reason", reason.clone()),
+            ],
+            DevToolsError::BreakpointInvalid { description } => {
+                vec![("description", description.clone())]
+            }
+            DevToolsError::InspectionFailed { agent_id, reason } => {
+                vec![("agent_id", agent_id.clone()), ("reason", reason.clone())]
+            }
+            DevToolsError::ProfilingUnavailable { reason } => vec![("reason", reason.clone())],
+        }
+    }
+}
+
+impl ErrorCode for EvalSuiteError {
+    fn code(&self) -> &'static str {
+        match self {
+            EvalSuiteError::DatasetLoadFailed { .. } => "EVAL_SUITE_DATASET_LOAD_FAILED",
+            EvalSuiteError::InvalidProblem { .. } => "EVAL_SUITE_INVALID_PROBLEM",
+            EvalSuiteError::GenerationFailed { .. } => "EVAL_SUITE_GENERATION_FAILED",
+            EvalSuiteError::ScoringFailed { .. } => "EVAL_SUITE_SCORING_FAILED",
+            EvalSuiteError::NoResults { .. } => "EVAL_SUITE_NO_RESULTS",
+            EvalSuiteError::InsufficientData { .. } => "EVAL_SUITE_INSUFFICIENT_DATA",
+            EvalSuiteError::ReportFailed { .. } => "EVAL_SUITE_REPORT_FAILED",
+            EvalSuiteError::Timeout { .. } => "EVAL_SUITE_TIMEOUT",
+            EvalSuiteError::SearchFailed { .. } => "EVAL_SUITE_SEARCH_FAILED",
+            EvalSuiteError::InvalidAgentConfig { .. } => "EVAL_SUITE_INVALID_AGENT_CONFIG",
+        }
+    }
+
+    fn fields(&self) -> Vec<(&'static str, String)> {
+        match self {
+            EvalSuiteError::DatasetLoadFailed { path, reason } => {
+                vec![("path", path.clone()), ("reason", reason.clone())]
+            }
+            EvalSuiteError::InvalidProblem { problem_id, reason } => vec![
+                ("problem_id", problem_id.clone()),
+                ("reason", reason.clone()),
+            ],
+            EvalSuiteError::GenerationFailed { problem_id, reason } => vec![
+                ("problem_id", problem_id.clone()),
+                ("reason", reason.clone()),
+            ],
+            EvalSuiteError::ScoringFailed { problem_id, reason } => vec![
+                ("problem_id", problem_id.clone()),
+                ("reason", reason.clone()),
+            ],
+            EvalSuiteError::NoResults { reason } => vec![("reason", reason.clone())],
+            EvalSuiteError::InsufficientData { metric, samples } => {
+                vec![("metric", metric.clone()), ("samples", samples.to_string())]
+            }
+            EvalSuiteError::ReportFailed { reason } => vec![("reason", reason.clone())],
+            EvalSuiteError::Timeout {
+                problem_id,
+                timeout_secs,
+            } => vec![
+                ("problem_id", problem_id.clone()),
+                ("timeout_secs", timeout_secs.to_string()),
+            ],
+            EvalSuiteError::SearchFailed { reason } => vec![("reason", reason.clone())],
+            EvalSuiteError::InvalidAgentConfig { field, reason } => {
+                vec![("field", field.clone()), ("reason", reason.clone())]
+            }
+        }
+    }
+}
+
+impl ErrorCode for AdvancedRoutingError {
+    fn code(&self) -> &'static str {
+        match self {
+            AdvancedRoutingError::InvalidConfig { .. } => "ROUTING_INVALID_CONFIG",
+            AdvancedRoutingError::ArmNotFound { .. } => "ROUTING_ARM_NOT_FOUND",
+            AdvancedRoutingError::CompilationError { .. } => "ROUTING_COMPILATION_ERROR",
+            AdvancedRoutingError::CycleDetected => "ROUTING_CYCLE_DETECTED",
+            AdvancedRoutingError::NodeNotFound { .. } => "ROUTING_NODE_NOT_FOUND",
+            AdvancedRoutingError::EmptyEnsemble => "ROUTING_EMPTY_ENSEMBLE",
+            AdvancedRoutingError::SerializationFailed { .. } => "ROUTING_SERIALIZATION_FAILED",
+            AdvancedRoutingError::IncompatibleVersion { .. } => "ROUTING_INCOMPATIBLE_VERSION",
+            AdvancedRoutingError::NoRoutingPath { .. } => "ROUTING_NO_PATH",
+            #[cfg(feature = "distributed")]
+            AdvancedRoutingError::MergeConflict { .. } => "ROUTING_MERGE_CONFLICT",
+        }
+    }
+
+    fn fields(&self) -> Vec<(&'static str, String)> {
+        match self {
+            AdvancedRoutingError::InvalidConfig { field, reason } => {
+                vec![("field", field.clone()), ("reason", reason.clone())]
+            }
+            AdvancedRoutingError::ArmNotFound { arm_id } => vec![("arm_id", arm_id.clone())],
+            AdvancedRoutingError::CompilationError { reason } => vec![("reason", reason.clone())],
+            AdvancedRoutingError::CycleDetected => Vec::new(),
+            AdvancedRoutingError::NodeNotFound { node_id } => vec![("node_id", node_id.clone())],
+            AdvancedRoutingError::EmptyEnsemble => Vec::new(),
+            AdvancedRoutingError::SerializationFailed { format, reason } => {
+                vec![("format", format.clone()), ("reason", reason.clone())]
+            }
+            AdvancedRoutingError::IncompatibleVersion { expected, found } => vec![
+                ("expected", expected.to_string()),
+                ("found", found.to_string()),
+            ],
+            AdvancedRoutingError::NoRoutingPath { query, reason } => {
+                vec![("query", query.clone()), ("reason", reason.clone())]
+            }
+            #[cfg(feature = "distributed")]
+            AdvancedRoutingError::MergeConflict { reason } => vec![("reason", reason.clone())],
+        }
     }
 }
 
@@ -4303,13 +4929,17 @@ mod tests {
     }
 
     #[test]
-    fn test_errorcode_aierror_long_tail_keeps_coarse() {
-        // Long-tail subsystems (V115+) still surface coarse codes.
+    fn test_errorcode_aierror_long_tail_delegates() {
+        // V117: long-tail subsystems now delegate to fine-grained codes via
+        // the trait method. Inherent `code()` still returns coarse strings
+        // for API compatibility.
         let e = AiError::Workflow(WorkflowError::BreakpointHit {
             node_id: "n".into(),
         });
-        assert_eq!(<AiError as ErrorCode>::code(&e), "WORKFLOW");
-        assert!(e.fields().is_empty());
+        assert_eq!(<AiError as ErrorCode>::code(&e), "WORKFLOW_BREAKPOINT_HIT");
+        assert_eq!(e.code(), "WORKFLOW");
+        let f = <AiError as ErrorCode>::fields(&e);
+        assert_eq!(f[0], ("node_id", "n".to_string()));
     }
 
     #[test]
@@ -4342,5 +4972,394 @@ mod tests {
         let es = s.localize("es");
         assert!(es.contains("foo"), "got: {}", es);
         assert!(es.starts_with("Proveedor"), "got: {}", es);
+    }
+
+    // ------------------------------------------------------------------
+    // V117 — fine-grained ErrorCode for the long-tail subsystems.
+    // Each test asserts: trait code is fine-grained, fields surface the
+    // variant payload, and AiError::<wrapper> delegates via the trait
+    // method while inherent code() still returns the coarse string.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_errorcode_workflow() {
+        let e = WorkflowError::NodeNotFound {
+            node_id: "n1".into(),
+        };
+        assert_eq!(
+            <WorkflowError as ErrorCode>::code(&e),
+            "WORKFLOW_NODE_NOT_FOUND"
+        );
+        assert_eq!(e.fields()[0], ("node_id", "n1".to_string()));
+
+        let cycle = WorkflowError::CycleDetected {
+            path: vec!["a".into(), "b".into(), "a".into()],
+        };
+        assert_eq!(
+            <WorkflowError as ErrorCode>::code(&cycle),
+            "WORKFLOW_CYCLE_DETECTED"
+        );
+        assert_eq!(cycle.fields()[0], ("path", "a -> b -> a".to_string()));
+
+        // AiError delegates to fine-grained via trait, keeps coarse via inherent.
+        let wrapped = AiError::Workflow(e);
+        assert_eq!(
+            <AiError as ErrorCode>::code(&wrapped),
+            "WORKFLOW_NODE_NOT_FOUND"
+        );
+        assert_eq!(wrapped.code(), "WORKFLOW");
+    }
+
+    #[test]
+    fn test_errorcode_advanced_memory() {
+        let e = AdvancedMemoryError::CapacityExceeded {
+            memory_type: "episodic".into(),
+            limit: 1000,
+            current: 1024,
+        };
+        assert_eq!(
+            <AdvancedMemoryError as ErrorCode>::code(&e),
+            "MEMORY_CAPACITY_EXCEEDED"
+        );
+        let f = e.fields();
+        assert_eq!(f[0], ("memory_type", "episodic".to_string()));
+        assert_eq!(f[1], ("limit", "1000".to_string()));
+        assert_eq!(f[2], ("current", "1024".to_string()));
+
+        let wrapped = AiError::AdvancedMemory(e);
+        assert_eq!(
+            <AiError as ErrorCode>::code(&wrapped),
+            "MEMORY_CAPACITY_EXCEEDED"
+        );
+        assert_eq!(wrapped.code(), "MEMORY");
+    }
+
+    #[test]
+    fn test_errorcode_a2a() {
+        let e = A2AError::TaskCancelled {
+            task_id: "t-42".into(),
+        };
+        assert_eq!(<A2AError as ErrorCode>::code(&e), "A2A_TASK_CANCELLED");
+        assert_eq!(e.fields()[0], ("task_id", "t-42".to_string()));
+
+        let proto = A2AError::ProtocolError {
+            method: "submit".into(),
+            reason: "missing field".into(),
+        };
+        assert_eq!(<A2AError as ErrorCode>::code(&proto), "A2A_PROTOCOL_ERROR");
+        let f = proto.fields();
+        assert_eq!(f[0], ("method", "submit".to_string()));
+        assert_eq!(f[1], ("reason", "missing field".to_string()));
+    }
+
+    #[test]
+    fn test_errorcode_voice_agent() {
+        let e = VoiceAgentError::StreamFailed {
+            reason: "disconnected".into(),
+        };
+        assert_eq!(
+            <VoiceAgentError as ErrorCode>::code(&e),
+            "VOICE_STREAM_FAILED"
+        );
+        assert_eq!(e.fields()[0], ("reason", "disconnected".to_string()));
+
+        let fmt = VoiceAgentError::UnsupportedFormat {
+            format: "ogg".into(),
+        };
+        assert_eq!(
+            <VoiceAgentError as ErrorCode>::code(&fmt),
+            "VOICE_UNSUPPORTED_FORMAT"
+        );
+        assert_eq!(fmt.fields()[0], ("format", "ogg".to_string()));
+    }
+
+    #[test]
+    fn test_errorcode_media_generation() {
+        let e = MediaGenerationError::JobTimeout {
+            job_id: "job-7".into(),
+            timeout_secs: 60,
+        };
+        assert_eq!(
+            <MediaGenerationError as ErrorCode>::code(&e),
+            "MEDIA_JOB_TIMEOUT"
+        );
+        let f = e.fields();
+        assert_eq!(f[0], ("job_id", "job-7".to_string()));
+        assert_eq!(f[1], ("timeout_secs", "60".to_string()));
+
+        let policy = MediaGenerationError::ContentPolicyViolation {
+            reason: "nsfw".into(),
+        };
+        assert_eq!(
+            <MediaGenerationError as ErrorCode>::code(&policy),
+            "MEDIA_CONTENT_POLICY_VIOLATION"
+        );
+    }
+
+    #[test]
+    fn test_errorcode_distillation() {
+        let e = DistillationError::NoValidTrajectories {
+            min_score: 0.85,
+            total_checked: 100,
+        };
+        assert_eq!(
+            <DistillationError as ErrorCode>::code(&e),
+            "DISTILL_NO_VALID_TRAJECTORIES"
+        );
+        let f = e.fields();
+        assert_eq!(f[0].0, "min_score");
+        assert!(f[0].1.starts_with("0.85"), "got: {}", f[0].1);
+        assert_eq!(f[1], ("total_checked", "100".to_string()));
+    }
+
+    #[test]
+    fn test_errorcode_constrained_decoding() {
+        let e = ConstrainedDecodingError::ProviderUnsupported {
+            provider: "openai".into(),
+        };
+        assert_eq!(
+            <ConstrainedDecodingError as ErrorCode>::code(&e),
+            "CDEC_PROVIDER_UNSUPPORTED"
+        );
+        assert_eq!(e.fields()[0], ("provider", "openai".to_string()));
+
+        let val = ConstrainedDecodingError::ValidationFailed {
+            position: 17,
+            expected: "number".into(),
+            got: "string".into(),
+        };
+        assert_eq!(
+            <ConstrainedDecodingError as ErrorCode>::code(&val),
+            "CDEC_VALIDATION_FAILED"
+        );
+        let f = val.fields();
+        assert_eq!(f[0], ("position", "17".to_string()));
+        assert_eq!(f[1], ("expected", "number".to_string()));
+        assert_eq!(f[2], ("got", "string".to_string()));
+    }
+
+    #[test]
+    fn test_errorcode_hitl() {
+        let e = HitlError::ApprovalTimeout {
+            tool_name: "delete_db".into(),
+            timeout_secs: 30,
+        };
+        assert_eq!(<HitlError as ErrorCode>::code(&e), "HITL_APPROVAL_TIMEOUT");
+        let f = e.fields();
+        assert_eq!(f[0], ("tool_name", "delete_db".to_string()));
+        assert_eq!(f[1], ("timeout_secs", "30".to_string()));
+
+        let pol = HitlError::PolicyViolation {
+            policy_name: "no-prod-writes".into(),
+            reason: "DROP TABLE".into(),
+        };
+        assert_eq!(
+            <HitlError as ErrorCode>::code(&pol),
+            "HITL_POLICY_VIOLATION"
+        );
+    }
+
+    #[test]
+    fn test_errorcode_mcp_client() {
+        let e = McpClientError::ServerError {
+            url: "http://mcp.local".into(),
+            code: 500,
+            message: "internal".into(),
+        };
+        assert_eq!(
+            <McpClientError as ErrorCode>::code(&e),
+            "MCP_CLIENT_SERVER_ERROR"
+        );
+        let f = e.fields();
+        assert_eq!(f[0], ("url", "http://mcp.local".to_string()));
+        assert_eq!(f[1], ("code", "500".to_string()));
+        assert_eq!(f[2], ("message", "internal".to_string()));
+
+        let proto = McpClientError::ProtocolMismatch {
+            expected: "2024-11".into(),
+            got: "2024-09".into(),
+        };
+        assert_eq!(
+            <McpClientError as ErrorCode>::code(&proto),
+            "MCP_CLIENT_PROTOCOL_MISMATCH"
+        );
+    }
+
+    #[test]
+    fn test_errorcode_agent_eval() {
+        let e = AgentEvalError::TrajectoryEmpty {
+            agent_id: "agent-1".into(),
+        };
+        assert_eq!(
+            <AgentEvalError as ErrorCode>::code(&e),
+            "EVAL_TRAJECTORY_EMPTY"
+        );
+        assert_eq!(e.fields()[0], ("agent_id", "agent-1".to_string()));
+
+        let metric = AgentEvalError::MetricFailed {
+            metric_name: "exact_match".into(),
+            reason: "missing reference".into(),
+        };
+        assert_eq!(
+            <AgentEvalError as ErrorCode>::code(&metric),
+            "EVAL_METRIC_FAILED"
+        );
+    }
+
+    #[test]
+    fn test_errorcode_red_team() {
+        let e = RedTeamError::GenerationFailed {
+            category: "prompt_injection".into(),
+            reason: "template parse".into(),
+        };
+        assert_eq!(
+            <RedTeamError as ErrorCode>::code(&e),
+            "REDTEAM_GENERATION_FAILED"
+        );
+        let f = e.fields();
+        assert_eq!(f[0], ("category", "prompt_injection".to_string()));
+        assert_eq!(f[1], ("reason", "template parse".to_string()));
+
+        let cat = RedTeamError::InvalidCategory {
+            category: "unknown".into(),
+        };
+        assert_eq!(
+            <RedTeamError as ErrorCode>::code(&cat),
+            "REDTEAM_INVALID_CATEGORY"
+        );
+    }
+
+    #[test]
+    fn test_errorcode_mcts() {
+        let e = MctsError::MaxIterations {
+            iterations: 1000,
+            best_reward: 0.75,
+        };
+        assert_eq!(<MctsError as ErrorCode>::code(&e), "MCTS_MAX_ITERATIONS");
+        let f = e.fields();
+        assert_eq!(f[0], ("iterations", "1000".to_string()));
+        assert!(f[1].1.starts_with("0.75"), "got: {}", f[1].1);
+
+        let st = MctsError::StateError {
+            action: "expand".into(),
+            reason: "invalid move".into(),
+        };
+        assert_eq!(<MctsError as ErrorCode>::code(&st), "MCTS_STATE_ERROR");
+    }
+
+    #[test]
+    fn test_errorcode_devtools() {
+        let e = DevToolsError::RecordingFailed {
+            agent_id: "a-1".into(),
+            reason: "no recorder".into(),
+        };
+        assert_eq!(
+            <DevToolsError as ErrorCode>::code(&e),
+            "DEVTOOLS_RECORDING_FAILED"
+        );
+        let f = e.fields();
+        assert_eq!(f[0], ("agent_id", "a-1".to_string()));
+        assert_eq!(f[1], ("reason", "no recorder".to_string()));
+
+        let bp = DevToolsError::BreakpointInvalid {
+            description: "after_node(missing)".into(),
+        };
+        assert_eq!(
+            <DevToolsError as ErrorCode>::code(&bp),
+            "DEVTOOLS_BREAKPOINT_INVALID"
+        );
+    }
+
+    #[test]
+    fn test_errorcode_eval_suite() {
+        let e = EvalSuiteError::DatasetLoadFailed {
+            path: "bench.jsonl".into(),
+            reason: "not found".into(),
+        };
+        assert_eq!(
+            <EvalSuiteError as ErrorCode>::code(&e),
+            "EVAL_SUITE_DATASET_LOAD_FAILED"
+        );
+        let f = e.fields();
+        assert_eq!(f[0], ("path", "bench.jsonl".to_string()));
+        assert_eq!(f[1], ("reason", "not found".to_string()));
+
+        let tmo = EvalSuiteError::Timeout {
+            problem_id: "p-3".into(),
+            timeout_secs: 120,
+        };
+        assert_eq!(
+            <EvalSuiteError as ErrorCode>::code(&tmo),
+            "EVAL_SUITE_TIMEOUT"
+        );
+    }
+
+    #[test]
+    fn test_errorcode_advanced_routing() {
+        let e = AdvancedRoutingError::ArmNotFound {
+            arm_id: "arm-7".into(),
+        };
+        assert_eq!(
+            <AdvancedRoutingError as ErrorCode>::code(&e),
+            "ROUTING_ARM_NOT_FOUND"
+        );
+        assert_eq!(e.fields()[0], ("arm_id", "arm-7".to_string()));
+
+        // Empty-field variants surface no fields.
+        let cycle = AdvancedRoutingError::CycleDetected;
+        assert_eq!(
+            <AdvancedRoutingError as ErrorCode>::code(&cycle),
+            "ROUTING_CYCLE_DETECTED"
+        );
+        assert!(cycle.fields().is_empty());
+
+        let empty = AdvancedRoutingError::EmptyEnsemble;
+        assert_eq!(
+            <AdvancedRoutingError as ErrorCode>::code(&empty),
+            "ROUTING_EMPTY_ENSEMBLE"
+        );
+        assert!(empty.fields().is_empty());
+
+        let ver = AdvancedRoutingError::IncompatibleVersion {
+            expected: 3,
+            found: 2,
+        };
+        assert_eq!(
+            <AdvancedRoutingError as ErrorCode>::code(&ver),
+            "ROUTING_INCOMPATIBLE_VERSION"
+        );
+        let f = ver.fields();
+        assert_eq!(f[0], ("expected", "3".to_string()));
+        assert_eq!(f[1], ("found", "2".to_string()));
+    }
+
+    #[test]
+    fn test_errorcode_v117_localizes_via_catalog() {
+        // Spot-check that V117 codes are present in the JSON catalogs by
+        // localizing through StructuredError. If the entry is missing,
+        // localize() falls back to the code itself.
+        use crate::error_taxonomy::StructuredError;
+
+        let e = AiError::Workflow(WorkflowError::NodeNotFound {
+            node_id: "step_1".into(),
+        });
+        let s = StructuredError::from_err(&e);
+        assert_eq!(s.code, "WORKFLOW_NODE_NOT_FOUND");
+        let en = s.localize("en");
+        // If the catalog entry is missing, en == code (no whitespace).
+        assert!(en.contains(' '), "expected localized text, got: {}", en);
+        assert!(
+            en.contains("step_1"),
+            "expected field interpolation, got: {}",
+            en
+        );
+
+        let es = s.localize("es");
+        assert!(es.contains(' '), "expected localized text, got: {}", es);
+        assert!(
+            es.contains("step_1"),
+            "expected field interpolation, got: {}",
+            es
+        );
     }
 }

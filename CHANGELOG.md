@@ -5,6 +5,72 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v78 (2026-05-05) — V117 Phase C.2: ErrorCode rollout to long-tail subsystems (0.2.64)
+
+### Added
+- **`impl ErrorCode`** for 15 long-tail error types in `src/error.rs`:
+  `WorkflowError` (8 codes), `AdvancedMemoryError` (6), `A2AError` (7),
+  `VoiceAgentError` (6), `MediaGenerationError` (6), `DistillationError` (6),
+  `ConstrainedDecodingError` (5), `HitlError` (6), `McpClientError` (7),
+  `AgentEvalError` (6), `RedTeamError` (5), `MctsError` (6), `DevToolsError` (5),
+  `EvalSuiteError` (10), `AdvancedRoutingError` (10 with `#[cfg(distributed)]`
+  arm for `MergeConflict`).
+- **`AiError`'s `<AiError as ErrorCode>::code()`** now delegates to all 15
+  long-tail wrappers — emits `WORKFLOW_BREAKPOINT_HIT`, `MEMORY_CAPACITY_EXCEEDED`,
+  `MCTS_MAX_ITERATIONS`, etc. instead of the coarse fallbacks (`WORKFLOW`,
+  `MEMORY`, `MCTS`, …).
+- **`errors/{en,es}.json`** expanded from 83 → 182 codes (+99). Every new
+  variant has both `en` and `es` entries with `{field}` placeholder
+  interpolation.
+
+### Preserved (zero-risk migration)
+- The inherent `AiError::code()` (called as `err.code()` without trait
+  disambiguation) still returns the coarse category strings (`"WORKFLOW"`,
+  `"MEMORY"`, `"MCTS"`, …) — same shape as V114-V116. The 22 inherent-code
+  assertions in the test suite keep passing.
+- Per-type `Display`, `Error`, and suggestion impls are untouched. New
+  trait impls layer alongside, no rewrites.
+
+### Why this slice
+With V117 the umbrella `AiError` is fully migrated: every variant under
+`<AiError as ErrorCode>::code()` now resolves to a fine-grained
+subsystem code with structured fields. Downstream consumers (OTel,
+dashboards, retry logic) can branch on, e.g., `MCTS_REFINEMENT_EXHAUSTED`
+vs. `MCTS_NO_VALID_ACTIONS` without parsing free-text — both used to flatten
+to `"MCTS"`. This unblocks V118 (wiring `StructuredError` into spans):
+once spans carry `error.code = "WORKFLOW_NODE_NOT_FOUND"` plus
+`error.fields.node_id = "step_1"`, latency/error dashboards can segment
+without regex over messages.
+
+### Tests
+- 16 new tests in `error::tests`:
+  `test_errorcode_workflow`, `test_errorcode_advanced_memory`,
+  `test_errorcode_a2a`, `test_errorcode_voice_agent`,
+  `test_errorcode_media_generation`, `test_errorcode_distillation`,
+  `test_errorcode_constrained_decoding`, `test_errorcode_hitl`,
+  `test_errorcode_mcp_client`, `test_errorcode_agent_eval`,
+  `test_errorcode_red_team`, `test_errorcode_mcts`,
+  `test_errorcode_devtools`, `test_errorcode_eval_suite`,
+  `test_errorcode_advanced_routing`,
+  `test_errorcode_v117_localizes_via_catalog` (catalog interpolation).
+- The pre-existing `test_errorcode_aierror_long_tail_keeps_coarse` was
+  renamed/repurposed to `test_errorcode_aierror_long_tail_delegates` —
+  same intent (long-tail dual access pattern) but the trait now returns
+  fine-grained while inherent stays coarse. All 27 `test_errorcode_*`
+  tests pass.
+
+### What's next (V118+)
+- V118: wire `StructuredError::to_json()` into
+  `opentelemetry_integration.rs::AiSpan` (set `error.code` +
+  `error.fields.*` attributes from `StructuredError::from_err(&err)`).
+- Long-tail submodules (`BulkheadError`, `RetryableError`,
+  `BrowserError`, …) remain optional follow-up.
+
+### Version
+0.2.63 → 0.2.64.
+
+---
+
 ## [Unreleased] - v77 (2026-05-04) — V116 Phase C.2: ErrorCode rollout to provider adapters + resilient registry (0.2.63)
 
 ### Added
