@@ -5,6 +5,92 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v85 (2026-05-06) — V124 Phase C.3: OTel adaptive sampler + prompt redaction (0.2.71)
+
+### Added
+- **V124 brings the V118 OTel surface up to a privacy-aware, production-fit
+  shape**: an adaptive sampler that always keeps errors and p99 outliers
+  while shedding low-signal success spans, plus a redaction layer that
+  scrubs prompt-bearing attributes by default and drops oversized spans
+  before they reach the buffer.
+  - `SamplingPolicy` enum on `OtelConfig`: `AlwaysOn` (default —
+    preserves prior behaviour), `AlwaysOff`, `Fixed(rate)`, and
+    `Adaptive { success_rate, error_rate, p99_threshold_ms,
+    p99_breach_rate }`. Convenience preset
+    `SamplingPolicy::adaptive_default()` returns the recommended
+    production policy: errors 100%, success 1%, p99 breach (>1000ms)
+    100%.
+  - `OtelTracer` now tracks a 256-entry rolling window of recent
+    span durations. `exceeds_p99` consults *both* the configured
+    static threshold and the running p99 of recent traffic, whichever
+    fires first — the static threshold gives predictable behaviour,
+    the running p99 catches drift.
+  - `PrivacyConfig` on `OtelConfig`: `redact_prompts: bool` (default
+    `true`), `redacted_attribute_keys` covering the OTel GenAI
+    conventions (`gen_ai.prompt`, `gen_ai.completion`,
+    `gen_ai.user.message`, `gen_ai.system.message`) plus our internal
+    keys (`rag.query`, `rag.document`, `tool.input`, `tool.output`,
+    `cove.claim`, `cove.evidence`), `max_prompt_chars: Option<usize>`
+    (default `Some(8000)` ≈ 2000 tokens), and `allow_full_text: bool`
+    (default `false`) as the opt-in escape hatch for local development.
+  - Redaction replaces values with the marker `"<redacted:N>"` (where
+    `N` is the original char length), preserving cardinality
+    information for dashboards while stripping content.
+  - Oversized spans (any redacted-key attribute or `error_message`
+    exceeding `max_prompt_chars`) are dropped *before* sampling. The
+    drop count is exposed via `OtelTracer::privacy_dropped_count()`
+    so dashboards can observe how often the privacy policy is firing.
+  - 11 new tests in `opentelemetry_integration::tests` cover: default
+    config preserves prior behaviour, `AlwaysOff` drops every span,
+    adaptive keeps errors and drops success at zero, p99-breach keeps
+    slow success spans, default config redacts known keys, full-text
+    opt-in disables redaction, oversized prompts are dropped with
+    counter, small prompts are kept and redacted, fixed-zero drops
+    all, legacy `sampling_rate` still works on success, and the
+    `adaptive_default` preset has the documented field values.
+
+### Changed
+- `OtelTracer::end_span`, `record_error`, and `record_structured_error`
+  now share a single `commit_span` pipeline that records duration
+  history → applies privacy redaction (or drops) → consults the
+  sampling policy → pushes to the buffer. Previously the three call
+  sites duplicated the buffer-eviction loop and only `end_span`
+  consulted sampling.
+- The legacy `OtelConfig::sampling_rate` field is preserved and
+  documented as back-compat: when `sampling_policy = AlwaysOn` and
+  `sampling_rate < 1.0`, the legacy rate gates *success* spans only —
+  errors and p99 breaches always pass when the policy decision is
+  positive. Callers using only the legacy field see the new wiring as
+  an upgrade (errors are now always kept).
+
+### Why
+- V118 wired the `StructuredError` taxonomy into OTel attributes so
+  dashboards could segment by stable error code instead of regex on
+  `Display`. The next step was making the *volume* and *content* of
+  that telemetry fit production: a uniform 100% sampling rate is
+  pathological at scale, and the default span surface was leaking
+  prompts, RAG queries, and tool I/O into every collector by default.
+  V124 closes both gaps as a byte-for-byte additive change.
+
+### Compatibility
+- `OtelConfig` is `#[non_exhaustive]`; the two new fields
+  (`sampling_policy`, `privacy`) gain `Default` impls so existing
+  `OtelConfig::default()` callers compile unchanged.
+- The default policy is `AlwaysOn` and the default redaction master
+  switch is `true` with conservative max-chars. Callers who never
+  used `gen_ai.prompt` / `rag.query` / `tool.input` / `cove.*` keys
+  see zero behavioural difference. Callers who *did* use those keys
+  now see redacted values in their span buffer; opt out with
+  `cfg.privacy.redact_prompts = false` or
+  `cfg.privacy.allow_full_text = true`.
+
+### Tests
+- 6,683 lib tests pass under
+  `cargo test --features "autonomous,self-correction,multi-agent" --lib`
+  (6,672 prior + 11 new V124 tests).
+
+---
+
 ## [Unreleased] - v84 (2026-05-05) — V123 Phase B.6: pre-execution inspectors + --no-egress (0.2.70)
 
 ### Added

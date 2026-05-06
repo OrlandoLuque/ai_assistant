@@ -17,7 +17,7 @@
 //! records events in-memory. An external OTel collector can be configured via
 //! [`OtelConfig`] for production export.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -194,6 +194,126 @@ impl AiSpan {
 // Tracer Configuration
 // ============================================================================
 
+/// V124: Sampling policy for OTel spans.
+///
+/// Replaces the V<118 single-rate `sampling_rate` field. The legacy
+/// `OtelConfig::sampling_rate` is preserved for back-compat — when callers
+/// build an `OtelConfig` with `sampling_rate != 1.0` and the default
+/// `sampling_policy = AlwaysOn`, the legacy rate is consulted on
+/// success spans only (errors and p99 breaches are not sampled by the
+/// legacy field).
+///
+/// `Adaptive` is the recommended policy for production: errors are
+/// always sampled (so dashboards always have a failure signal), success
+/// spans are sampled at a low rate (so trace storage cost stays
+/// bounded), and any span that exceeds the configured p99 latency
+/// threshold is sampled at full rate (so latency outliers are never
+/// lost).
+#[derive(Debug, Clone)]
+pub enum SamplingPolicy {
+    /// Sample every span (the default — preserves prior behaviour).
+    AlwaysOn,
+    /// Drop every span. Useful in tests that don't need spans.
+    AlwaysOff,
+    /// Fixed rate in `[0.0, 1.0]`. Same as legacy `sampling_rate`.
+    Fixed(f64),
+    /// Adaptive: errors and p99-breach spans at full rate, success
+    /// spans at a low rate. Recommended for production.
+    Adaptive {
+        /// Sample rate for spans with `status = "ok"`. Default `0.01`.
+        success_rate: f64,
+        /// Sample rate for spans with `status = "error"`. Default `1.0`.
+        error_rate: f64,
+        /// Latency threshold in milliseconds. Spans whose duration
+        /// exceeds this are sampled at `p99_breach_rate`.
+        p99_threshold_ms: u64,
+        /// Sample rate for spans exceeding `p99_threshold_ms`.
+        /// Default `1.0`.
+        p99_breach_rate: f64,
+    },
+}
+
+impl SamplingPolicy {
+    /// Recommended production preset: errors 100%, success 1%, p99
+    /// breach (>1000ms) 100%.
+    pub fn adaptive_default() -> Self {
+        SamplingPolicy::Adaptive {
+            success_rate: 0.01,
+            error_rate: 1.0,
+            p99_threshold_ms: 1000,
+            p99_breach_rate: 1.0,
+        }
+    }
+}
+
+/// V124: Privacy controls for span content.
+///
+/// OTel spans routinely carry user prompts, RAG queries, and tool
+/// arguments — high-cardinality, privacy-sensitive strings that should
+/// not leak to a remote collector or shared dashboard by default.
+/// `PrivacyConfig` applies *just before a span lands in the buffer*:
+///
+/// - `redact_attributes` replaces sensitive attribute values with the
+///   marker `"<redacted:N>"` (where N is the original char length).
+/// - `max_prompt_chars` drops the entire span if any redacted-key
+///   attribute exceeds the budget — used to keep oversized prompts
+///   from blowing past collector frame limits.
+/// - `allow_full_text` is the opt-in escape hatch for local development.
+///
+/// The default key list covers OTel GenAI conventions
+/// (`gen_ai.prompt`, `gen_ai.completion`) plus our internal
+/// rag/tool/cove keys, so callers using the standard span builders get
+/// redaction automatically.
+#[derive(Debug, Clone)]
+pub struct PrivacyConfig {
+    /// Master switch. When `false`, no redaction or drop is applied.
+    pub redact_prompts: bool,
+    /// Attribute keys whose values are subject to redaction and the
+    /// `max_prompt_chars` size check.
+    pub redacted_attribute_keys: Vec<String>,
+    /// Drop the entire span if any redacted-key attribute (or
+    /// `error_message`) exceeds this many chars. `None` disables the
+    /// drop. Roughly 4 chars ≈ 1 token, so the default `8000` ≈ 2000
+    /// tokens.
+    pub max_prompt_chars: Option<usize>,
+    /// Opt-in: skip both redaction and the size-drop. Intended for
+    /// local development with `RUST_LOG=debug`.
+    pub allow_full_text: bool,
+}
+
+impl PrivacyConfig {
+    /// Default redaction key set. Covers OTel GenAI conventions plus
+    /// our internal RAG/tool/CoVe surfaces.
+    pub fn default_redaction_keys() -> Vec<String> {
+        [
+            "gen_ai.prompt",
+            "gen_ai.completion",
+            "gen_ai.user.message",
+            "gen_ai.system.message",
+            "rag.query",
+            "rag.document",
+            "tool.input",
+            "tool.output",
+            "cove.claim",
+            "cove.evidence",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+    }
+}
+
+impl Default for PrivacyConfig {
+    fn default() -> Self {
+        Self {
+            redact_prompts: true,
+            redacted_attribute_keys: Self::default_redaction_keys(),
+            max_prompt_chars: Some(8000),
+            allow_full_text: false,
+        }
+    }
+}
+
 /// Configuration for the OTel tracer.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -207,7 +327,16 @@ pub struct OtelConfig {
     /// Maximum spans to keep in local buffer
     pub max_buffer_size: usize,
     /// Sampling rate (0.0 to 1.0)
+    ///
+    /// Legacy field — preserved for back-compat. Prefer `sampling_policy`.
+    /// When `sampling_policy = AlwaysOn` and `sampling_rate < 1.0`, the
+    /// legacy rate is applied on top of the policy.
     pub sampling_rate: f64,
+    /// V124: Sampling policy. Defaults to `AlwaysOn` so that callers
+    /// who don't set a policy keep the prior behaviour byte-for-byte.
+    pub sampling_policy: SamplingPolicy,
+    /// V124: Privacy controls for span content.
+    pub privacy: PrivacyConfig,
     /// Additional resource attributes
     pub resource_attributes: HashMap<String, String>,
 }
@@ -220,6 +349,8 @@ impl Default for OtelConfig {
             export_enabled: false,
             max_buffer_size: 10000,
             sampling_rate: 1.0,
+            sampling_policy: SamplingPolicy::AlwaysOn,
+            privacy: PrivacyConfig::default(),
             resource_attributes: HashMap::new(),
         }
     }
@@ -238,6 +369,13 @@ pub struct OtelTracer {
     config: OtelConfig,
     spans: Arc<Mutex<Vec<AiSpan>>>,
     active_spans: Arc<Mutex<HashMap<String, AiSpan>>>,
+    /// V124: ring buffer of recent finished span durations (in ms),
+    /// capped at 256 entries. Consulted by adaptive sampling so that
+    /// spans exceeding the configured p99 threshold are always kept.
+    duration_history: Arc<Mutex<VecDeque<u64>>>,
+    /// V124: monotonic counter of spans dropped by privacy size policy.
+    /// Exposed via `privacy_dropped_count()` for dashboards.
+    privacy_dropped: Arc<Mutex<u64>>,
 }
 
 impl OtelTracer {
@@ -247,7 +385,116 @@ impl OtelTracer {
             config,
             spans: Arc::new(Mutex::new(Vec::new())),
             active_spans: Arc::new(Mutex::new(HashMap::new())),
+            duration_history: Arc::new(Mutex::new(VecDeque::with_capacity(256))),
+            privacy_dropped: Arc::new(Mutex::new(0)),
         }
+    }
+
+    /// V124: number of spans the privacy policy has dropped because
+    /// they exceeded `PrivacyConfig::max_prompt_chars`. Monotonic for
+    /// the lifetime of the tracer.
+    pub fn privacy_dropped_count(&self) -> u64 {
+        self.privacy_dropped.lock().map(|c| *c).unwrap_or(0)
+    }
+
+    fn record_duration(&self, duration_ms: u64) {
+        if let Ok(mut hist) = self.duration_history.lock() {
+            if hist.len() >= 256 {
+                hist.pop_front();
+            }
+            hist.push_back(duration_ms);
+        }
+    }
+
+    fn exceeds_p99(&self, duration_ms: u64, threshold_ms: u64) -> bool {
+        // Two-condition check: either above the static threshold, or
+        // above the running p99 of recent durations (whichever fires
+        // first). Static threshold gives predictable behaviour; the
+        // running p99 catches drift.
+        if duration_ms > threshold_ms {
+            return true;
+        }
+        if let Ok(hist) = self.duration_history.lock() {
+            if hist.len() >= 20 {
+                let mut v: Vec<u64> = hist.iter().copied().collect();
+                v.sort_unstable();
+                let idx = ((v.len() as f64) * 0.99).floor() as usize;
+                let p99 = v[idx.min(v.len() - 1)];
+                return duration_ms >= p99;
+            }
+        }
+        false
+    }
+
+    /// V124: apply the privacy policy in place on a span. Returns
+    /// `true` if the span should be dropped entirely (size policy),
+    /// `false` if it can proceed (possibly redacted).
+    fn apply_privacy(&self, span: &mut AiSpan) -> bool {
+        let p = &self.config.privacy;
+        if !p.redact_prompts || p.allow_full_text {
+            return false;
+        }
+        // Size-drop check first — running redaction on a giant prompt
+        // and then dropping it is wasteful.
+        if let Some(max) = p.max_prompt_chars {
+            for k in &p.redacted_attribute_keys {
+                if let Some(v) = span.attributes.get(k) {
+                    if v.len() > max {
+                        return true;
+                    }
+                }
+            }
+            if let Some(msg) = &span.error_message {
+                if msg.len() > max {
+                    return true;
+                }
+            }
+        }
+        // Redact remaining attributes that we kept.
+        for k in &p.redacted_attribute_keys {
+            if let Some(v) = span.attributes.get_mut(k) {
+                let n = v.chars().count();
+                *v = format!("<redacted:{}>", n);
+            }
+        }
+        false
+    }
+
+    fn should_sample_span(&self, span: &AiSpan) -> bool {
+        let is_error = span.status == "error";
+        let duration = span.duration_ms().unwrap_or(0);
+        let policy_decision = match &self.config.sampling_policy {
+            SamplingPolicy::AlwaysOn => true,
+            SamplingPolicy::AlwaysOff => false,
+            SamplingPolicy::Fixed(rate) => roll_dice(*rate),
+            SamplingPolicy::Adaptive {
+                success_rate,
+                error_rate,
+                p99_threshold_ms,
+                p99_breach_rate,
+            } => {
+                if is_error {
+                    roll_dice(*error_rate)
+                } else if self.exceeds_p99(duration, *p99_threshold_ms) {
+                    roll_dice(*p99_breach_rate)
+                } else {
+                    roll_dice(*success_rate)
+                }
+            }
+        };
+        // Apply legacy sampling_rate as a final gate on success spans
+        // when policy = AlwaysOn (back-compat for callers who only set
+        // the legacy field).
+        if !policy_decision {
+            return false;
+        }
+        if matches!(self.config.sampling_policy, SamplingPolicy::AlwaysOn)
+            && self.config.sampling_rate < 1.0
+            && !is_error
+        {
+            return roll_dice(self.config.sampling_rate);
+        }
+        true
     }
 
     /// Start a new span.
@@ -274,15 +521,7 @@ impl OtelTracer {
         if let Ok(mut active) = self.active_spans.lock() {
             active.remove(&span.span_id);
         }
-        if let Ok(mut completed) = self.spans.lock() {
-            // Check sampling
-            if self.should_sample() {
-                if completed.len() >= self.config.max_buffer_size {
-                    completed.remove(0); // Evict oldest
-                }
-                completed.push(span);
-            }
-        }
+        self.commit_span(span);
     }
 
     /// Record a failed span.
@@ -291,12 +530,7 @@ impl OtelTracer {
         if let Ok(mut active) = self.active_spans.lock() {
             active.remove(&span.span_id);
         }
-        if let Ok(mut completed) = self.spans.lock() {
-            if completed.len() >= self.config.max_buffer_size {
-                completed.remove(0);
-            }
-            completed.push(span);
-        }
+        self.commit_span(span);
     }
 
     /// Record a failed span using the [`StructuredError`] taxonomy.
@@ -313,6 +547,27 @@ impl OtelTracer {
         span.fail_structured(err);
         if let Ok(mut active) = self.active_spans.lock() {
             active.remove(&span.span_id);
+        }
+        self.commit_span(span);
+    }
+
+    /// V124: shared end-of-span pipeline. Records duration history,
+    /// applies privacy redaction (or drops oversized spans), then
+    /// consults the sampling policy. The duration is recorded *before*
+    /// sampling so the running p99 estimate is not biased by the
+    /// sampler.
+    fn commit_span(&self, mut span: AiSpan) {
+        if let Some(d) = span.duration_ms() {
+            self.record_duration(d);
+        }
+        if self.apply_privacy(&mut span) {
+            if let Ok(mut c) = self.privacy_dropped.lock() {
+                *c = c.saturating_add(1);
+            }
+            return;
+        }
+        if !self.should_sample_span(&span) {
+            return;
         }
         if let Ok(mut completed) = self.spans.lock() {
             if completed.len() >= self.config.max_buffer_size {
@@ -404,21 +659,24 @@ impl OtelTracer {
     pub fn endpoint(&self) -> &str {
         &self.config.endpoint
     }
+}
 
-    fn should_sample(&self) -> bool {
-        if self.config.sampling_rate >= 1.0 {
-            return true;
-        }
-        if self.config.sampling_rate <= 0.0 {
-            return false;
-        }
-        // Simple deterministic sampling based on system time nanos
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .subsec_nanos();
-        (nanos as f64 / u32::MAX as f64) < self.config.sampling_rate
+/// V124: time-nanos-based dice for span sampling. Same algorithm as
+/// the legacy `OtelTracer::should_sample`, lifted to a free function
+/// so the new `should_sample_span` policy logic can call it once per
+/// branch.
+fn roll_dice(rate: f64) -> bool {
+    if rate >= 1.0 {
+        return true;
     }
+    if rate <= 0.0 {
+        return false;
+    }
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos();
+    (nanos as f64 / u32::MAX as f64) < rate
 }
 
 // ============================================================================
@@ -3693,5 +3951,216 @@ mod tests {
             span2.attributes.get("isolation").map(String::as_str),
             Some("ContextIsolated")
         );
+    }
+
+    // ============================================================================
+    // V124 — adaptive sampler + privacy redaction
+    // ============================================================================
+
+    #[test]
+    fn test_v124_default_config_preserves_old_behaviour() {
+        let cfg = OtelConfig::default();
+        assert_eq!(cfg.sampling_rate, 1.0);
+        assert!(matches!(cfg.sampling_policy, SamplingPolicy::AlwaysOn));
+        assert!(cfg.privacy.redact_prompts);
+        assert!(!cfg.privacy.allow_full_text);
+        assert_eq!(cfg.privacy.max_prompt_chars, Some(8000));
+        // Default key list contains the standard GenAI prompt keys.
+        assert!(cfg
+            .privacy
+            .redacted_attribute_keys
+            .iter()
+            .any(|k| k == "gen_ai.prompt"));
+    }
+
+    #[test]
+    fn test_v124_always_off_drops_every_span() {
+        let mut cfg = OtelConfig::default();
+        cfg.sampling_policy = SamplingPolicy::AlwaysOff;
+        let tracer = OtelTracer::new(cfg);
+        for i in 0..5 {
+            let s = tracer.start_span(&format!("op{}", i));
+            tracer.end_span(s);
+        }
+        assert_eq!(tracer.completed_span_count(), 0);
+    }
+
+    #[test]
+    fn test_v124_adaptive_keeps_errors_drops_success_at_zero() {
+        let mut cfg = OtelConfig::default();
+        cfg.sampling_policy = SamplingPolicy::Adaptive {
+            success_rate: 0.0,
+            error_rate: 1.0,
+            p99_threshold_ms: u64::MAX, // never trip
+            p99_breach_rate: 1.0,
+        };
+        // Disable redaction so we don't accidentally drop on size.
+        cfg.privacy.redact_prompts = false;
+        let tracer = OtelTracer::new(cfg);
+        for i in 0..10 {
+            let s = tracer.start_span(&format!("ok{}", i));
+            tracer.end_span(s);
+        }
+        // All success spans dropped at success_rate = 0.
+        assert_eq!(tracer.completed_span_count(), 0);
+
+        for i in 0..3 {
+            let s = tracer.start_span(&format!("err{}", i));
+            tracer.record_error(s, "boom");
+        }
+        // Errors all kept at error_rate = 1.0.
+        assert_eq!(tracer.completed_span_count(), 3);
+    }
+
+    #[test]
+    fn test_v124_adaptive_p99_breach_keeps_slow_success_spans() {
+        let mut cfg = OtelConfig::default();
+        cfg.sampling_policy = SamplingPolicy::Adaptive {
+            success_rate: 0.0,
+            error_rate: 1.0,
+            p99_threshold_ms: 5, // any span >5ms wins the breach lottery
+            p99_breach_rate: 1.0,
+        };
+        cfg.privacy.redact_prompts = false;
+        let tracer = OtelTracer::new(cfg);
+
+        // Forge a slow span by manually setting timestamps before commit.
+        let mut s = AiSpan::new("slow.success");
+        s.end_time_ms = Some(s.start_time_ms + 100);
+        s.status = "ok".to_string();
+        tracer.commit_span(s);
+
+        assert_eq!(
+            tracer.completed_span_count(),
+            1,
+            "slow success span should be kept by p99-breach rule"
+        );
+    }
+
+    #[test]
+    fn test_v124_privacy_redacts_known_prompt_keys() {
+        let cfg = OtelConfig::default(); // redaction on by default
+        let tracer = OtelTracer::new(cfg);
+        let s = tracer
+            .start_span("llm.generate")
+            .with_attribute("gen_ai.prompt", "the quick brown fox")
+            .with_attribute("non.sensitive", "keep me");
+        tracer.end_span(s);
+        let spans = tracer.completed_spans();
+        assert_eq!(spans.len(), 1);
+        let prompt = spans[0].attributes.get("gen_ai.prompt").unwrap();
+        assert!(
+            prompt.starts_with("<redacted:"),
+            "prompt should be redacted, got {}",
+            prompt
+        );
+        assert_eq!(
+            spans[0].attributes.get("non.sensitive").map(String::as_str),
+            Some("keep me"),
+            "non-sensitive attributes survive intact"
+        );
+    }
+
+    #[test]
+    fn test_v124_privacy_allow_full_text_disables_redaction() {
+        let mut cfg = OtelConfig::default();
+        cfg.privacy.allow_full_text = true;
+        let tracer = OtelTracer::new(cfg);
+        let s = tracer
+            .start_span("llm.generate")
+            .with_attribute("gen_ai.prompt", "secret payload");
+        tracer.end_span(s);
+        let spans = tracer.completed_spans();
+        assert_eq!(
+            spans[0].attributes.get("gen_ai.prompt").map(String::as_str),
+            Some("secret payload"),
+            "allow_full_text bypasses redaction"
+        );
+    }
+
+    #[test]
+    fn test_v124_privacy_drops_oversized_prompt_span() {
+        let mut cfg = OtelConfig::default();
+        cfg.privacy.max_prompt_chars = Some(64);
+        let tracer = OtelTracer::new(cfg);
+        let big = "x".repeat(1000);
+        let s = tracer
+            .start_span("llm.generate")
+            .with_attribute("gen_ai.prompt", &big);
+        tracer.end_span(s);
+        assert_eq!(
+            tracer.completed_span_count(),
+            0,
+            "oversized prompt should drop the entire span"
+        );
+        assert_eq!(tracer.privacy_dropped_count(), 1, "drop counter increments");
+    }
+
+    #[test]
+    fn test_v124_privacy_allows_small_prompt_under_budget() {
+        let mut cfg = OtelConfig::default();
+        cfg.privacy.max_prompt_chars = Some(64);
+        let tracer = OtelTracer::new(cfg);
+        let small = "x".repeat(40);
+        let s = tracer
+            .start_span("llm.generate")
+            .with_attribute("gen_ai.prompt", &small);
+        tracer.end_span(s);
+        assert_eq!(tracer.completed_span_count(), 1);
+        // Still redacted (master switch is on by default).
+        let prompt = tracer.completed_spans()[0]
+            .attributes
+            .get("gen_ai.prompt")
+            .cloned()
+            .unwrap();
+        assert!(prompt.starts_with("<redacted:"));
+    }
+
+    #[test]
+    fn test_v124_fixed_policy_zero_drops_all() {
+        let mut cfg = OtelConfig::default();
+        cfg.sampling_policy = SamplingPolicy::Fixed(0.0);
+        let tracer = OtelTracer::new(cfg);
+        for i in 0..5 {
+            let s = tracer.start_span(&format!("op{}", i));
+            tracer.end_span(s);
+        }
+        assert_eq!(tracer.completed_span_count(), 0);
+    }
+
+    #[test]
+    fn test_v124_legacy_sampling_rate_still_works_on_success() {
+        let mut cfg = OtelConfig::default();
+        cfg.sampling_rate = 0.0; // legacy field; policy stays AlwaysOn
+        let tracer = OtelTracer::new(cfg);
+        for i in 0..5 {
+            let s = tracer.start_span(&format!("ok{}", i));
+            tracer.end_span(s);
+        }
+        // success spans dropped by legacy rate
+        assert_eq!(tracer.completed_span_count(), 0);
+        // errors still kept (legacy rate ignored on errors per V124 wiring)
+        let s = tracer.start_span("err");
+        tracer.record_error(s, "boom");
+        assert_eq!(tracer.completed_span_count(), 1);
+    }
+
+    #[test]
+    fn test_v124_adaptive_default_preset() {
+        let p = SamplingPolicy::adaptive_default();
+        match p {
+            SamplingPolicy::Adaptive {
+                success_rate,
+                error_rate,
+                p99_threshold_ms,
+                p99_breach_rate,
+            } => {
+                assert!((success_rate - 0.01).abs() < 1e-9);
+                assert!((error_rate - 1.0).abs() < 1e-9);
+                assert_eq!(p99_threshold_ms, 1000);
+                assert!((p99_breach_rate - 1.0).abs() < 1e-9);
+            }
+            _ => panic!("adaptive_default did not return Adaptive variant"),
+        }
     }
 }
