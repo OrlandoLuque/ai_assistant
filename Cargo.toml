@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.74"
+version = "0.2.75"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -87,7 +87,7 @@ adapters = []
 tools = []
 
 # Document parsing: EPUB, DOCX, HTML, PDF, feeds, tables
-documents = ["zip", "pdf-extract"]
+documents = ["dep:zip", "dep:pdf-extract"]
 
 # Evaluation and benchmarking: fine-tuning, metrics, A/B testing
 eval = []
@@ -113,7 +113,7 @@ gpu-sharing = ["distributed-network"]
 server-tls = ["dep:rustls", "dep:rustls-pemfile"]
 
 # RAG with SQLite FTS5 and encrypted knowledge packages
-rag = ["rusqlite", "aes-gcm"]
+rag = ["rusqlite", "dep:aes-gcm"]
 
 # Research: academic search APIs (arXiv, Semantic Scholar, PubMed), BibTeX, literature review
 research = []
@@ -146,6 +146,7 @@ full = [
     "advanced-memory",
     "research",
     "auto-download",
+    "backup",
 ]
 
 # Binary storage: bincode + gzip for internal data (faster, smaller than JSON)
@@ -462,6 +463,30 @@ prompt-breeder = [
 # --features self-correction
 self-correction = []
 
+# V128 (C.7): explicit feature stubs for optional deps that other code
+# gates on directly via `#[cfg(feature = "<name>")]`. Cargo used to
+# create these implicit features for each optional dependency name;
+# adding explicit `dep:<name>` references elsewhere (e.g. in the new
+# `backup` feature below) disables the implicits, so we keep the
+# names alive as explicit stubs. No behavioural change.
+aes-gcm = ["dep:aes-gcm"]
+zip = ["dep:zip"]
+pdf-extract = ["dep:pdf-extract"]
+
+# === V128 (C.7): backup / restore ===
+#
+# AES-256-GCM-encrypted, Ed25519-signed, content-addressable archive
+# of arbitrary source paths. Ships the `ai_backup` CLI binary and the
+# `backup::{create,verify,restore}_backup` library API. Opt-in to
+# avoid pulling crypto deps for users who only need providers.
+backup = [
+    "dep:zip",
+    "dep:aes-gcm",
+    "dep:sha2",
+    "dep:ed25519-dalek",
+    "dep:hkdf",
+]
+
 [dependencies]
 anyhow = "1"
 # V113: thiserror for derive-based error enums with stable codes. Macro-only,
@@ -637,6 +662,13 @@ bench = false
 name = "ai_logs"
 path = "src/bin/ai_logs.rs"
 required-features = ["distributed-network"]
+bench = false
+
+# V128 (C.7): backup/restore CLI — AES-256-GCM + Ed25519 + SHA-256 sidecar.
+[[bin]]
+name = "ai_backup"
+path = "src/bin/ai_backup.rs"
+required-features = ["backup"]
 bench = false
 
 [[bin]]

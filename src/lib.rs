@@ -208,6 +208,8 @@ pub mod fault_injection;
 #[cfg(feature = "feedback-loop")]
 pub mod feedback_loop;
 pub mod file_references;
+#[cfg(feature = "backup")]
+pub mod secure_backup;
 // V79: C FFI bindings — 20 extern "C" entry points behind the `ffi`
 // feature. Consumed by C/C++/C#/Unity/Unreal/Bevy via the generated
 // header at `include/ai_assistant.h`.

@@ -5,6 +5,75 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v89 (2026-05-06) — V128 Phase C.7: backup/restore CLI (0.2.75)
+
+### Added
+- **`src/secure_backup.rs`** (new module, behind feature `backup`) —
+  sealed, verifiable, optionally-encrypted snapshots of arbitrary
+  source paths. Three public entry points: `create_backup`,
+  `verify_backup`, `restore_backup`. Archive layout is a ZIP
+  carrying `manifest.json` (per-file SHA-256, size, relative path)
+  plus the file payloads. Optional outer envelope:
+  `[1B version | 16B salt | 12B nonce | ciphertext+tag]` using
+  AES-256-GCM with HKDF-SHA256 key derivation. Optional Ed25519
+  signature is computed over the post-encryption (or post-zip when
+  plain) bytes so a verifier can authenticate without decrypting.
+  Module name is `secure_backup` (not `backup`) because the crate
+  already re-exports `setup::backup` at the root.
+- **`EncryptionMaterial`** enum (`Passphrase` | `Key`) — the
+  passphrase variant lets the library generate the per-archive salt
+  and derive the key with that same salt, eliminating a salt-mismatch
+  bug present in any naive "derive-then-pass-key" shape.
+- **`src/bin/ai_backup.rs`** — operator CLI with `create` /
+  `verify` / `restore` subcommands. Passphrase is read from a named
+  environment variable (`--passphrase-env VAR`), never argv, so it
+  never leaks to shell history. Sign/verify keys are 32-byte raw
+  Ed25519 files (`SigningKey::to_bytes` / `VerifyingKey::to_bytes`).
+  Multiple `--source` flags supported; directories walk recursively.
+- **`docs/IMPROVEMENTS_V128.md`** — V128 design notes (format
+  rationale, encryption choices, signing-after-encryption decision,
+  zip-slip hardening, smoke-test transcript).
+
+### Changed
+- **`Cargo.toml`**:
+  - New feature `backup = ["dep:zip", "dep:aes-gcm", "dep:sha2",
+    "dep:ed25519-dalek", "dep:hkdf"]`. Added to the `full` set.
+  - New `[[bin]] ai_backup` with `required-features = ["backup"]`.
+  - Implicit-feature shim: adding `dep:` references to `aes-gcm`,
+    `zip`, and `pdf-extract` from inside the new `backup` feature
+    disabled cargo's implicit-feature creation for the same names.
+    Several pre-existing `#[cfg(feature = "aes-gcm")]` /
+    `#[cfg(feature = "pdf-extract")]` attributes throughout the
+    codebase depended on those implicits. Restored as explicit
+    pass-through stubs (`aes-gcm = ["dep:aes-gcm"]`,
+    `zip = ["dep:zip"]`, `pdf-extract = ["dep:pdf-extract"]`).
+    Pure mechanical compatibility — no behaviour change.
+  - `documents` and `rag` features rewritten to `dep:` form for
+    clarity.
+  - Version bump 0.2.74 → 0.2.75.
+- **`src/lib.rs`** — `#[cfg(feature = "backup")] pub mod
+  secure_backup;` between `audio_priority_protocol` and `batch`.
+
+### Tests
+- **+7 new** in `secure_backup` module: `round_trip_plain`,
+  `round_trip_encrypted` (with wrong-passphrase rejection),
+  `round_trip_signed` (Ed25519 sign + verify + tamper detection),
+  `rejects_zip_slip` (`..`, absolute, drive-prefix paths all
+  rejected), `detects_per_file_corruption` (per-file SHA-256
+  catches a flipped bit inside the zip), `empty_sources_fails`,
+  `key_derivation_deterministic`. `cargo test --lib` reports 6203
+  passing (baseline 6196 + 7).
+
+### Compatibility
+- Pure addition. Callers using `default-features = ["full"]` pick up
+  the binary automatically; callers on a narrower feature set keep
+  their current dep graph. The `aes-gcm` / `zip` / `pdf-extract`
+  explicit feature stubs preserve every existing
+  `#[cfg(feature = "X")]` attribute — no source files changed apart
+  from `lib.rs` (one new `pub mod` line).
+
+---
+
 ## [Unreleased] - v88 (2026-05-06) — V127 Phase C.6: feature & API lifecycle policy (0.2.74)
 
 ### Added
