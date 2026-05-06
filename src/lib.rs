@@ -218,6 +218,8 @@ pub mod acp;
 #[cfg(feature = "ffi")]
 pub mod ffi;
 pub mod formatting;
+#[cfg(feature = "gdpr")]
+pub mod gdpr;
 #[cfg(feature = "auto-download")]
 pub mod gguf_downloader;
 #[cfg(feature = "audio")]

@@ -51,6 +51,14 @@ pub enum AuditEventType {
     /// Vision: a vision-capable tool was invoked. Detail SHOULD include
     /// `tool`, `image_count`, optional `tool_args_hash`.
     VisionToolInvoked,
+    /// V129 (C.8): a GDPR Article 17 right-to-erasure request was honoured
+    /// for a data subject. Emitted by `gdpr::purge_user`. Detail SHOULD
+    /// include `user_id_sha256` (hex SHA-256 of the erased user_id —
+    /// proves the request was honoured without storing the original
+    /// identifier), `subsystem_count`, `total_records_removed`,
+    /// `partial_failures`. The `user_id` field on the event itself is
+    /// intentionally `None` for the same reason.
+    DataErased,
 }
 
 /// An audit log entry
@@ -229,6 +237,44 @@ impl AuditLogger {
     /// Clear all events
     pub fn clear(&mut self) {
         self.events.clear();
+    }
+
+    /// V129 (C.8): redact every reference to `user_id` in the audit log
+    /// in-place (GDPR Article 17 — right to erasure). The audit record
+    /// itself is *kept* — regulators require proof that operations
+    /// occurred even after a subject's data is erased. Only the linkage
+    /// to the data subject is broken.
+    ///
+    /// Each affected event:
+    ///   - `user_id` field is set to `Some("[ERASED]")`.
+    ///   - any `details` entry whose value equals the user_id is
+    ///     overwritten with `"[ERASED]"`.
+    ///   - any `details` entry under a key matching `email`, `username`,
+    ///     `name`, `principal`, `ip`, `phone` is overwritten with
+    ///     `"[ERASED]"` regardless of value (defence-in-depth — these
+    ///     are likely PII even if the value drifted from the canonical
+    ///     `user_id`).
+    ///
+    /// Returns the number of events whose `user_id` was redacted.
+    pub fn redact_user(&mut self, user_id: &str) -> usize {
+        const PII_KEYS: &[&str] = &["email", "username", "name", "principal", "ip", "phone"];
+        let mut redacted = 0usize;
+        for ev in self.events.iter_mut() {
+            let mut hit = false;
+            if ev.user_id.as_deref() == Some(user_id) {
+                ev.user_id = Some("[ERASED]".to_string());
+                hit = true;
+            }
+            for (k, v) in ev.details.iter_mut() {
+                if v == user_id || PII_KEYS.iter().any(|p| p.eq_ignore_ascii_case(k)) {
+                    *v = "[ERASED]".to_string();
+                }
+            }
+            if hit {
+                redacted += 1;
+            }
+        }
+        redacted
     }
 
     /// Export events as JSON

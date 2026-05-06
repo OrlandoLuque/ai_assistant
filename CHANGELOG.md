@@ -5,6 +5,73 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v90 (2026-05-06) — V129 Phase C.8: GDPR right-to-erasure (0.2.76)
+
+### Added
+- **`src/gdpr.rs`** (new module, behind feature `gdpr`) — Article 17
+  ("Right to be Forgotten") orchestration layer. Public surfaces:
+  - `PurgeAdapter` trait (`name()` + `purge_user(&mut self, user_id)`)
+    — small, idempotent integration point each storage subsystem
+    implements.
+  - `purge_user(user_id, adapters, audit) -> Result<PurgeReport,
+    PurgeError>` — sequentially walks every adapter, redacts the
+    audit log in place if one is supplied, appends a single
+    `AuditEventType::DataErased` record carrying only a SHA-256
+    hash of the erased id.
+  - `MapPurgeAdapter<'a, V>` — reference adapter for any in-memory
+    `HashMap<String, V>` keyed by `user_id`.
+  - `hash_user_id(user_id) -> String` — lowercase-hex SHA-256.
+    Stable across processes; safe to persist for compliance audits.
+  - `PurgeReport` (Serialize) carrying per-subsystem counts,
+    durations, partial failures, and the audit-redaction count.
+- **`src/security/audit.rs`** —
+  - New `AuditEventType::DataErased` variant (the enum is
+    `#[non_exhaustive]`, so this is non-breaking).
+  - New `AuditLogger::redact_user(&mut self, user_id: &str) -> usize`
+    method. Walks every event in place: the `user_id` field becomes
+    `"[ERASED]"`, any `details` value matching the user_id becomes
+    `"[ERASED]"`, and any `details` key in the PII keylist (`email`,
+    `username`, `name`, `principal`, `ip`, `phone`) is overwritten
+    with `"[ERASED]"` regardless of value. The audit *trail* is
+    preserved (regulatory accountability under Art. 5(1)(f)); the
+    *linkage to the data subject* is broken.
+- **`docs/DPIA_TEMPLATE.md`** — eleven-section Data Protection Impact
+  Assessment template. Pre-filled where the library can be
+  authoritative (subsystem inventory, applicable controls);
+  `<TODO>`-marked where only the controller can speak (lawful basis,
+  retention periods, recipients). Includes an erasure runbook
+  appendix with the exact `gdpr::purge_user` call shape.
+- **`docs/IMPROVEMENTS_V129.md`** — design notes covering the
+  three load-bearing decisions (adapter pattern, audit-redacted-
+  not-deleted, best-effort with structured failure) and explicit
+  scope-limit notes (does not handle Art. 15/20; does not mutate
+  append-only ledgers; does not enumerate all 17+ in-tree subsystems).
+
+### Changed
+- **`Cargo.toml`**:
+  - New feature `gdpr = ["dep:sha2"]`. Added to `full`.
+  - Version 0.2.75 → 0.2.76.
+- **`src/lib.rs`** — `#[cfg(feature = "gdpr")] pub mod gdpr;`
+  between `formatting` and `gguf_downloader`.
+
+### Tests
+- **+9 new** in `gdpr` module: hash determinism + shape, multi-
+  adapter erasure with isolation, empty user_id rejection,
+  no-adapters rejection, partial-failure collection without abort,
+  end-to-end audit redaction + DataErased event emission,
+  idempotency on a second call, timing-and-hash-shape sanity,
+  reference `MapPurgeAdapter` behaviour. `cargo test --lib
+  --features full` reports 6212 passing (V128 baseline 6203 + 9).
+
+### Compatibility
+- Pure addition. Callers on `default-features = ["full"]` pick up
+  the feature automatically. The new `AuditEventType::DataErased`
+  variant rides on the existing `#[non_exhaustive]` annotation, so
+  pattern-match consumers continue to compile. The new
+  `AuditLogger::redact_user` method is additive.
+
+---
+
 ## [Unreleased] - v89 (2026-05-06) — V128 Phase C.7: backup/restore CLI (0.2.75)
 
 ### Added

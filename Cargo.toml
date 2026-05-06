@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.75"
+version = "0.2.76"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -147,6 +147,7 @@ full = [
     "research",
     "auto-download",
     "backup",
+    "gdpr",
 ]
 
 # Binary storage: bincode + gzip for internal data (faster, smaller than JSON)
@@ -486,6 +487,20 @@ backup = [
     "dep:ed25519-dalek",
     "dep:hkdf",
 ]
+
+# === V129 (C.8): GDPR right-to-erasure ===
+#
+# Article 17 of the EU GDPR ("Right to be Forgotten"). Surfaces a
+# `gdpr::purge_user` orchestrator + `PurgeAdapter` trait so a single
+# call can walk every subsystem that stores user-attributable data,
+# emit a tamper-evident audit record, and redact the data subject's
+# user_id in the central audit log instead of erasing the audit
+# trail itself (regulatory dual obligation: erase the data subject's
+# data, but keep proof the request was honoured).
+#
+# Pulls only `sha2` so audit records can carry a SHA-256 hash of the
+# erased user_id rather than the raw value. No other dep cost.
+gdpr = ["dep:sha2"]
 
 [dependencies]
 anyhow = "1"
