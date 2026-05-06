@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v91 (2026-05-06) — V130 Phase C.9: operational runbooks (0.2.77)
+
+### Added
+- **`docs/runbooks/INDEX.md`** — directory contract. Documents the
+  six-section template every runbook follows (Symptoms → Likely
+  causes → Diagnose → Mitigate → Resolve → Postmortem), lists the
+  available runbooks, carries a *Last reviewed* date.
+- **`docs/runbooks/llama-server-down.md`** — `llama-server` crashes,
+  OOM-kill, model file corrupted, GPU driver hang, port collision,
+  version drift.
+- **`docs/runbooks/vector-db-corruption.md`** — HNSW / SQLite /
+  LanceDB / pgvector. Diagnostic flow, recovery from V128
+  `secure_backup` snapshots or source documents.
+- **`docs/runbooks/scheduler-missed-job.md`** — scheduler not
+  running, clock skew, queue starvation, stale lock file, TZ
+  mismatch.
+- **`docs/runbooks/rbac-token-expired.md`** — TTL expiry, signing-
+  key rotation, clock skew, scope tightening, identity-provider
+  outage. Distinguishes 401 (expired) from 403 (insufficient scope)
+  early to avoid wrong-runbook drift.
+- **`docs/runbooks/backup-verify-failed.md`** — V128 `ai_backup
+  verify` non-zero exit. Sidecar mismatch, crypto failure, format
+  error, signature failure.
+- **`docs/runbooks/rag-empty-results.md`** — RAG opens but returns
+  0 hits. Embedding-model mismatch, threshold too high, filter
+  excludes everything, empty index, reranker stuck, tenant
+  isolation bug.
+- **`docs/IMPROVEMENTS_V130.md`** — design notes (format invariants,
+  scope rationale, what V130 deliberately does not do).
+
+### Changed
+- **`Cargo.toml`** version bump 0.2.76 → 0.2.77.
+
+### Compatibility
+- Pure docs. Zero code change, zero feature change, zero API
+  change, zero test change. Crate behaviour identical to V129.
+
+---
+
 ## [Unreleased] - v90 (2026-05-06) — V129 Phase C.8: GDPR right-to-erasure (0.2.76)
 
 ### Added
