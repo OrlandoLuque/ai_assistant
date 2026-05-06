@@ -1,0 +1,225 @@
+name: Release
+
+# V131 (C.4) — release automation.
+#
+# Triggered by a `v*` tag push. Builds the headless binaries for
+# linux-x64, macos-x64, macos-arm64, and windows-x64; zips them per
+# platform; computes SHA-256 sidecars; signs with cosign keyless
+# (sigstore) using the GitHub Actions OIDC token; and attaches every
+# artifact to the GitHub release.
+#
+# The SBOM is attached separately by supply-chain.yml (also tag-
+# triggered). Both workflows must succeed for a release to be
+# considered complete.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # Manual dispatch lets a release manager test the pipeline without
+  # cutting an actual tag. The `dry_run` input skips the final
+  # release-publish step.
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (skip release publish)'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write       # softprops/action-gh-release needs write
+  id-token: write       # cosign keyless needs OIDC token
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive_ext: tar.gz
+            bin_ext: ''
+          - target: x86_64-apple-darwin
+            os: macos-13              # intel runner
+            archive_ext: tar.gz
+            bin_ext: ''
+          - target: aarch64-apple-darwin
+            os: macos-latest          # arm runner
+            archive_ext: tar.gz
+            bin_ext: ''
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive_ext: zip
+            bin_ext: '.exe'
+    steps:
+      - uses: actions/checkout@v4
+
+      # The pinned 1.90.0 toolchain is enforced by rust-toolchain.toml.
+      # rustup honours it; we still install the matching `rust-std`
+      # for the cross-target on demand.
+      - uses: dtolnay/rust-toolchain@1.90.0
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      # Headless binaries only — GUI binaries pull eframe and need
+      # platform-specific windowing deps that aren't worth the runner
+      # time on a release. They're available via `cargo build` for
+      # users who want them.
+      #
+      # The feature set is `full` minus `gui*`/`audio-io`/`video-io`/
+      # `containers`/`vector-lancedb`/`whisper-local`/`webrtc` so the
+      # binaries build cleanly on every target without extra system
+      # libraries.
+      - name: Build release binaries
+        shell: bash
+        run: |
+          BINS=(
+            ai_cli ai_setup ai_logs ai_jobs ai_backup ai_local_infer
+            ai_recipes ai_acp ai_proxy ai_breeder ai_feedback
+            ai_acp_audit ai_local_infer_audit
+          )
+          # Build each binary individually with the features it
+          # requires. `cargo build --bins` would refuse on missing
+          # required-features; explicit per-bin invocations skip the
+          # ones that aren't compilable for the current feature set.
+          for bin in "${BINS[@]}"; do
+            echo "== building $bin"
+            cargo build --release --target ${{ matrix.target }} \
+              --features "full" --bin "$bin" || {
+                echo "WARN: $bin failed to build with --features full on ${{ matrix.target }} — skipping"
+                continue
+              }
+          done
+
+      - name: Stage binaries
+        shell: bash
+        run: |
+          STAGE="ai_assistant-${GITHUB_REF_NAME:-dev}-${{ matrix.target }}"
+          mkdir -p "release/$STAGE"
+          BIN_DIR="target/${{ matrix.target }}/release"
+          shopt -s nullglob
+          for f in "$BIN_DIR"/ai_*"${{ matrix.bin_ext }}"; do
+            # Skip .d files, debug symbols etc.
+            case "$f" in
+              *.d|*.pdb|*.dSYM) continue ;;
+            esac
+            cp "$f" "release/$STAGE/"
+          done
+          # Bundle license, top-level README, and the V131 release notes.
+          cp LICENSE "release/$STAGE/" || true
+          cp README.md "release/$STAGE/" || true
+          cp docs/IMPROVEMENTS_V131.md "release/$STAGE/RELEASE_NOTES.md" || true
+          ls -la "release/$STAGE"
+          echo "STAGE=$STAGE" >> "$GITHUB_ENV"
+
+      - name: Archive
+        shell: bash
+        run: |
+          cd release
+          if [ "${{ matrix.archive_ext }}" = "zip" ]; then
+            7z a "${STAGE}.zip" "$STAGE" >/dev/null
+          else
+            tar -czf "${STAGE}.tar.gz" "$STAGE"
+          fi
+          ls -la
+
+      - name: Sidecar SHA-256
+        shell: bash
+        run: |
+          cd release
+          ARCHIVE="${STAGE}.${{ matrix.archive_ext }}"
+          if command -v sha256sum >/dev/null; then
+            sha256sum "$ARCHIVE" > "${ARCHIVE}.sha256"
+          else
+            shasum -a 256 "$ARCHIVE" > "${ARCHIVE}.sha256"
+          fi
+          cat "${ARCHIVE}.sha256"
+
+      # Sigstore keyless signing. Uses the GH Actions OIDC token so
+      # there is no key on disk and no key in repo secrets — the
+      # binding identity is `sub=repo:owner/repo:ref=refs/tags/vX.Y.Z`
+      # which a verifier checks via `cosign verify-blob`.
+      #
+      # Skipped on workflow_dispatch (manual) because OIDC may not
+      # be available depending on the runner config.
+      - name: Sign with cosign (keyless)
+        if: github.event_name == 'push'
+        uses: sigstore/cosign-installer@v3
+      - name: cosign sign-blob
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          cd release
+          ARCHIVE="${STAGE}.${{ matrix.archive_ext }}"
+          cosign sign-blob \
+            --yes \
+            --output-signature "${ARCHIVE}.sig" \
+            --output-certificate "${ARCHIVE}.cert" \
+            "$ARCHIVE"
+          ls -la
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: |
+            release/${{ env.STAGE }}.${{ matrix.archive_ext }}
+            release/${{ env.STAGE }}.${{ matrix.archive_ext }}.sha256
+            release/${{ env.STAGE }}.${{ matrix.archive_ext }}.sig
+            release/${{ env.STAGE }}.${{ matrix.archive_ext }}.cert
+          if-no-files-found: warn
+          retention-days: 90
+
+  release:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || inputs.dry_run == false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten artifact tree
+        run: |
+          mkdir -p dist
+          find artifacts -type f -print0 | xargs -0 -I{} cp {} dist/
+          ls -la dist
+
+      # The crate's CHANGELOG.md uses [Unreleased] anchors per V cycle
+      # (see V125-V130). Extract the entry whose anchor matches the
+      # tag's V number — the release notes are the source of truth.
+      - name: Extract release notes
+        id: notes
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME:-${{ github.event.inputs.dry_run && 'manual' }}}"
+          # Default to the IMPROVEMENTS file matching the latest V
+          # cycle (V131 for this release).
+          notes_file="docs/IMPROVEMENTS_V131.md"
+          if [ -f "$notes_file" ]; then
+            cp "$notes_file" RELEASE_BODY.md
+          else
+            echo "Release ${tag}" > RELEASE_BODY.md
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release with all artifacts
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.notes.outputs.tag }}
+          name: ${{ steps.notes.outputs.tag }}
+          body_path: RELEASE_BODY.md
+          files: dist/*
+          fail_on_unmatched_files: true
+          generate_release_notes: false

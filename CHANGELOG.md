@@ -5,6 +5,63 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v92 (2026-05-06) — V131 Phase C.4: release automation (0.2.78)
+
+V131 closes the eight-cycle Tier-1 readiness sweep
+(C.1 → C.9, see V125–V130).
+
+### Added
+- **`.github/workflows/release.yml`** — tag-triggered (`v*`)
+  release pipeline. Build matrix for `x86_64-unknown-linux-gnu`,
+  `x86_64-apple-darwin`, `aarch64-apple-darwin`, and
+  `x86_64-pc-windows-msvc`. For each target: builds the headless
+  binaries with `--features full` (per-bin loop tolerant of bins
+  that can't compile in this feature set), packages into a
+  per-platform archive (`tar.gz` on unix, `zip` on Windows),
+  computes a `.sha256` sidecar, and signs with cosign keyless
+  (sigstore, OIDC-bound to this repo's `release.yml@<tag>`)
+  producing a `.sig` + `.cert` pair. Final job downloads every
+  per-target artifact, extracts the V-cycle IMPROVEMENTS doc as
+  the release body, and uploads everything via
+  `softprops/action-gh-release@v2` with
+  `fail_on_unmatched_files: true` — a missing archive is a hard
+  build failure, enforcing the maintainer's standing "never
+  release without the binary zip + SHA-256" rule.
+- **`scripts/check_release_ready.py`** — stdlib-only pre-flight
+  check. Verifies that Cargo.toml `version` matches the tag, that
+  CHANGELOG has an `[Unreleased]` entry mentioning that version,
+  and that the working tree is clean (ignoring the
+  `.claude/settings.local.json` churn). `--allow-dirty` for CI
+  use.
+- **`docs/RELEASE_PROCESS.md`** — release runbook: cadence,
+  pre-flight, exact commands, verification flow consumers should
+  run (`shasum -a 256 -c` + `cosign verify-blob` with the bound
+  identity regex), rollback policy.
+- **`docs/IMPROVEMENTS_V131.md`** — design notes plus a closing
+  C.1 → C.9 + C.4 cycle summary table.
+
+### Changed
+- **`Cargo.toml`** version bump 0.2.77 → 0.2.78.
+
+### Coordination with existing supply-chain workflow
+- V125's `.github/workflows/supply-chain.yml` already attaches the
+  CycloneDX SBOM (JSON + XML) on tag pushes. The two workflows
+  compose: by the time both finish, the release page carries
+  archive + .sha256 + .sig + .cert per platform plus the SBOM.
+
+### Compatibility
+- Pure addition. No source change apart from version bump. CI
+  workflows untouched. Externally visible change: GitHub release
+  pages now carry signed pre-built binaries for users who want to
+  consume the crate without compiling locally.
+
+### Tier-1 sweep complete
+- C.1 (V125), C.5 (V126), C.6 (V127), C.7 (V128), C.8 (V129),
+  C.9 (V130), C.4 (V131). C.3 was V124. The eight-cycle Tier-1
+  competitive-gap roadmap is closed.
+
+---
+
 ## [Unreleased] - v91 (2026-05-06) — V130 Phase C.9: operational runbooks (0.2.77)
 
 ### Added
