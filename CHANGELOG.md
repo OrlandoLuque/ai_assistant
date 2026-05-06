@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v87 (2026-05-06) — V126 Phase C.5: performance budgets active (0.2.73)
+
+### Added
+- **`bench_budget.toml`** at the repo root — declares per-benchmark
+  `max_ns` ceilings for the criterion benches. 15 budgets cover the
+  hot paths: per-request safety (intent classifier, guardrails,
+  attack detector, PII, rate limiter), per-request context budgeting
+  (BPE token counter, context trim), per-RAG-query (cosine 384/1536d,
+  HNSW search, BM25 fallback, context assembly), plus crypto/compression
+  middleware. Methodology documented inline: `budget = observed_max
+  * 1.5` to absorb runner jitter without letting a 2× regression
+  through. Opt-in: only listed benches are gated.
+- **`scripts/check_bench_budget.py`** — Python 3.11+ checker
+  (stdlib `tomllib`) that parses `bench_budget.toml` plus the
+  bencher-format `output.txt` produced by the CI benchmark step,
+  cross-checks each measured benchmark against its budget, and exits
+  non-zero on any over-budget result. Plain ASCII output (no unicode
+  glyphs) for clean GH Actions log rendering.
+- **`docs/IMPROVEMENTS_V126.md`** — V126 design notes covering scope,
+  methodology, budget categories, and CI wiring.
+
+### Changed
+- **`.github/workflows/ci.yml` benchmark job**:
+  - `continue-on-error: false` (was `true`) — bench regressions now
+    block merges via the new bench-budget step.
+  - New step `Check bench budget (V126 / C.5)` runs `python3
+    scripts/check_bench_budget.py` after the `Run benchmarks` step.
+    Gated on `steps.bench.outputs.have_output == 'true'` so a
+    skipped bench run doesn't false-fail.
+  - `github-action-benchmark` `alert-threshold` tightened from
+    `200%` → `125%`. The alert remains informational
+    (`fail-on-alert: false`); the real gate is the bench-budget
+    Python check.
+- **`Cargo.toml`** version bump 0.2.72 → 0.2.73.
+
+### Compatibility
+- Pure additions plus a CI workflow tweak. No library or test code
+  changed. Test count unchanged.
+- Python 3 is provided by the ubuntu-latest runner (3.12 default
+  since April 2024); no `setup-python` action required.
+
+---
+
 ## [Unreleased] - v86 (2026-05-06) — V125 Phase C.1: supply-chain hardening (0.2.72)
 
 ### Added

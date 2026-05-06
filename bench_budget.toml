@@ -1,0 +1,55 @@
+# Performance budgets — V126 (Phase C.5)
+#
+# Each entry below sets an upper bound on a criterion benchmark's
+# reported `ns/iter` value. A bench listed here that exceeds its
+# budget on a push to master will fail the `bench-budget` CI step.
+#
+# Benches NOT listed here are exempt from the gate — opt-in keeps
+# the gate stable while we collect baseline data and add budgets
+# incrementally as the picture stabilises.
+#
+# Methodology:
+#   - Budgets target the p99 / worst-case of measurements observed
+#     on the benchmark CI runner (ubuntu-latest, GH-hosted, single
+#     vCPU). Local laptop numbers will differ — only CI numbers
+#     gate.
+#   - Headroom: budget = observed_max * 1.5. The 50% slack absorbs
+#     runner-to-runner jitter without letting a real 2x regression
+#     slip through.
+#   - When you intentionally trade speed for a feature, bump the
+#     budget in the same commit that ships the change, with a
+#     `note = ` explaining why. PRs reviewing a budget bump can
+#     question the trade-off explicitly.
+#
+# Budget format:
+#   "<bench_name>" = { max_ns = <integer>, note = "<rationale>" }
+
+[budgets]
+
+# ── Hot path: per-request input validation & safety ────────────────
+# Run on every user message. Latency here directly hits the
+# perceived time-to-first-token.
+"intent_classification"          = { max_ns =    250_000, note = "every-request, classifies user intent" }
+"guardrail_check_input"          = { max_ns =    500_000, note = "every-request, safety pre-filter" }
+"attack_detect_clean_input"      = { max_ns =  1_000_000, note = "every-request, prompt-injection scan (clean path)" }
+"attack_detect_adversarial_input" = { max_ns = 2_000_000, note = "every-request, prompt-injection scan (heavy path)" }
+"pii_detection_1k_chars"         = { max_ns =  2_500_000, note = "every-request when PII guard active" }
+"rate_limiter_check"             = { max_ns =    100_000, note = "every-request" }
+
+# ── Hot path: tokens & context budgeting ───────────────────────────
+# Called per message, plus during compaction.
+"bpe_token_count_200_words"      = { max_ns =    400_000, note = "every-request, prompt sizing" }
+"context_window_trim_50_msgs"    = { max_ns =  2_500_000, note = "per-request when context full" }
+
+# ── RAG retrieval — called per RAG-augmented query ─────────────────
+"cosine_similarity_384d"         = { max_ns =    100_000, note = "per-document during top-k scan" }
+"cosine_similarity_1536d"        = { max_ns =    400_000, note = "per-document, OpenAI-size embeds" }
+"hnsw_search_1k_vectors_128d"    = { max_ns = 10_000_000, note = "per-RAG-query, 1k-doc index" }
+"rag_fts_search_100_docs"        = { max_ns = 10_000_000, note = "per-RAG-query, BM25 fallback" }
+"rag_build_context_20_chunks"    = { max_ns =  5_000_000, note = "per-RAG-query, context assembly" }
+
+# ── Crypto / signing — every authed request ────────────────────────
+"request_signing_hmac_sha256"    = { max_ns =    100_000, note = "per-request with signed-request middleware" }
+
+# ── Compression — per-stream when on ───────────────────────────────
+"gzip_compress_1kb_json"         = { max_ns =    400_000, note = "per-message when compression on" }

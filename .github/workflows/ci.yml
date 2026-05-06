@@ -188,8 +188,11 @@ jobs:
     name: Benchmarks
     runs-on: ubuntu-latest
     if: github.event_name == 'push'
-    # Informational: benchmark regressions don't gate CI.
-    continue-on-error: true
+    # V126 (C.5): the explicit `bench-budget` step below now gates
+    # CI for benchmarks that have a declared budget in
+    # bench_budget.toml. The github-action-benchmark "alert" step
+    # remains informational (continue-on-error via fail-on-alert: false).
+    continue-on-error: false
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.90.0
@@ -231,6 +234,12 @@ jobs:
           path: bench_full.log
           if-no-files-found: warn
           retention-days: 7
+      - name: Check bench budget (V126 / C.5)
+        # Hard gate: any bench listed in bench_budget.toml that
+        # exceeds its `max_ns` ceiling fails the CI job. Benches
+        # without a budget entry are skipped — the gate is opt-in.
+        if: steps.bench.outputs.have_output == 'true'
+        run: python3 scripts/check_bench_budget.py --budget bench_budget.toml --output output.txt
       - name: Store benchmark results
         if: steps.bench.outputs.have_output == 'true'
         uses: benchmark-action/github-action-benchmark@v1
@@ -238,7 +247,12 @@ jobs:
           tool: 'cargo'
           output-file-path: output.txt
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          alert-threshold: '200%'
+          # 125%: still informational (fail-on-alert: false), but
+          # tightened from the previous 200% so a 25% regression
+          # surfaces a comment-on-alert without waiting for a 2x
+          # blow-up. Real gating now lives in the bench-budget step
+          # above.
+          alert-threshold: '125%'
           comment-on-alert: true
           fail-on-alert: false
           auto-push: false
