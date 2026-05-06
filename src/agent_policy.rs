@@ -110,7 +110,8 @@ pub trait ApprovalHandler: Send + Sync {
 /// It should ONLY be used in test code. Using it in production disables
 /// the entire human-in-the-loop safety system.
 #[deprecated(
-    note = "Use an explicit ApprovalHandler in production — AutoApproveAll bypasses all safety checks"
+    since = "0.2.74",
+    note = "Use an explicit ApprovalHandler in production — AutoApproveAll bypasses all safety checks. See docs/FEATURE_LIFECYCLE.md."
 )]
 pub struct AutoApproveAll;
 

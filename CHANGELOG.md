@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v88 (2026-05-06) — V127 Phase C.6: feature & API lifecycle policy (0.2.74)
+
+### Added
+- **`docs/FEATURE_LIFECYCLE.md`** — formal policy document covering
+  three lifecycle states (`experimental_*` canary → stable → deprecated
+  → removed), `#[deprecated]` attribute requirements (`since` + `note`
+  both mandatory), Cargo feature-flag conventions, CHANGELOG conventions,
+  and enforcement.
+- **`scripts/check_deprecation_policy.py`** — stdlib-only Python 3.11+
+  scanner. Walks `src/**/*.rs`, finds every `#[deprecated(...)]`
+  attribute (multi-line syntax handled by paren-depth tracking), and
+  fails CI if any of them is missing `since = "..."` or `note = "..."`.
+- **`docs/IMPROVEMENTS_V127.md`** — V127 design notes.
+
+### Changed
+- **`src/agent_policy.rs`** — the existing `AutoApproveAll` deprecation
+  attribute now carries `since = "0.2.74"` plus a pointer to
+  `docs/FEATURE_LIFECYCLE.md`. This is the reference example for the
+  convention going forward.
+- **`.github/workflows/ci.yml`** — new `deprecation-policy` lint job
+  runs `python3 scripts/check_deprecation_policy.py --root src` on
+  every push and PR. Required (not informational).
+- **`Cargo.toml`** version bump 0.2.73 → 0.2.74.
+
+### Feature lifecycle
+- **Deprecated** (since 0.2.74): `AutoApproveAll` — use
+  `ApprovalHandler` instead. The deprecation has been on the type since
+  before V127; V127 added the missing `since = ` field per the new
+  policy. Removal not earlier than 0.2.76 per the two-patch window.
+- **Graduated**: none in this release.
+- **Removed**: none in this release.
+- **New canary**: none in this release.
+
+### Compatibility
+- Pure additions plus one annotation update on `AutoApproveAll`. No
+  behaviour change. The `since = "0.2.74"` on a previously-undated
+  deprecation reflects "policy applied at V127", not original
+  announcement date — convention applies retroactively as a one-off.
+
+---
+
 ## [Unreleased] - v87 (2026-05-06) — V126 Phase C.5: performance budgets active (0.2.73)
 
 ### Added

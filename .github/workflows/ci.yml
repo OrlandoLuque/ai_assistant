@@ -66,6 +66,17 @@ jobs:
       - name: Check formatting
         run: cargo fmt -- --check
 
+  deprecation-policy:
+    name: Deprecation policy
+    runs-on: ubuntu-latest
+    # V127 (C.6): every #[deprecated(...)] attribute in src/ must
+    # carry both `since = ` and `note = ` per docs/FEATURE_LIFECYCLE.md.
+    # The checker is stdlib-only Python 3.11+ (ubuntu-latest default).
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run deprecation policy checker
+        run: python3 scripts/check_deprecation_policy.py --root src
+
   audit:
     name: Security Audit
     runs-on: ubuntu-latest
