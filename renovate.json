@@ -1,0 +1,51 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":semanticCommits",
+    ":dependencyDashboard"
+  ],
+  "schedule": ["before 06:00 on monday"],
+  "timezone": "UTC",
+  "labels": ["dependencies"],
+  "rangeStrategy": "bump",
+  "rust": {
+    "rangeStrategy": "bump"
+  },
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 06:00 on monday"]
+  },
+  "vulnerabilityAlerts": {
+    "labels": ["security"],
+    "assignees": ["@OrlandoLuque"],
+    "schedule": ["at any time"]
+  },
+  "packageRules": [
+    {
+      "description": "Group rustls/quinn together; they cross-depend.",
+      "matchPackagePatterns": ["^rustls", "^quinn", "^webpki"],
+      "groupName": "rustls + quinn"
+    },
+    {
+      "description": "Group serde stack.",
+      "matchPackagePatterns": ["^serde"],
+      "groupName": "serde"
+    },
+    {
+      "description": "Group tokio + futures.",
+      "matchPackagePatterns": ["^tokio", "^futures"],
+      "groupName": "async runtime"
+    },
+    {
+      "description": "Group dev/test deps separately.",
+      "matchDepTypes": ["devDependencies", "build-dependencies"],
+      "groupName": "dev deps"
+    },
+    {
+      "description": "Pin Rust toolchain version manually — let humans review channel bumps.",
+      "matchPackageNames": ["dtolnay/rust-toolchain"],
+      "enabled": false
+    }
+  ]
+}

@@ -5,6 +5,64 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v86 (2026-05-06) — V125 Phase C.1: supply-chain hardening (0.2.72)
+
+### Added
+- **`rust-toolchain.toml`** pinning the Rust channel to `1.90.0` with
+  `rustfmt` + `clippy` components. `rustup` and `cargo` honour this
+  automatically — every developer and every CI runner now resolves
+  the same toolchain without per-job repetition.
+- **`deny.toml`** — `cargo-deny` configuration covering advisories
+  (mirrors `cargo audit` ignore list), licenses (allowlist of
+  permissive licences only — copyleft denied to keep PolyForm
+  Noncommercial dual-license future open), bans (`wildcards = "deny"`,
+  `multiple-versions = "warn"`), and sources (`unknown-registry`/
+  `unknown-git` denied).
+- **`.github/workflows/supply-chain.yml`** — new workflow with four
+  jobs, separated from `ci.yml` so supply-chain failures don't block
+  the feature-matrix run:
+  - `cargo-deny` runs `check advisories licenses bans sources`.
+  - `cargo-audit` mirrors the existing CI audit (kept self-contained).
+  - `audit-deny-sync` extracts `RUSTSEC-*` IDs from `ci.yml`,
+    `supply-chain.yml`, and `deny.toml` and asserts all three agree
+    — catches drift between silenced advisories.
+  - `sbom` generates CycloneDX 1.4 JSON + XML via `cargo-cyclonedx`,
+    uploads as a 90-day artifact, and attaches to the GitHub release
+    on tag pushes.
+  - Schedule: Monday 06:00 UTC so the advisory DB picks up weekend
+    updates without waiting for the next push.
+- **`renovate.json`** — managed dependency updates. Weekly Monday
+  schedule (matches supply-chain cron), grouping for rustls+quinn,
+  serde, tokio+futures, and dev deps. Vulnerability alerts run "at
+  any time" with the `security` label and direct assignee. The
+  `dtolnay/rust-toolchain` action is explicitly *not* managed — the
+  channel bump is a human review concern.
+
+### Why
+- C.1 in the Tier-1 plan calls for `cargo-audit` (already shipping),
+  `cargo-deny`, an SBOM, a pinned toolchain, and managed updates. The
+  existing CI ran `cargo audit` only — that catches advisories but
+  does nothing about license drift. PolyForm Noncommercial 1.0.0 on
+  the wrapper is incompatible with copyleft, so a single GPL/AGPL/SSPL
+  transitive would block a future commercial dual-license. V125
+  catches that drift at PR time.
+
+### Deferred under C.1
+- Sigstore/cosign binary signing — needs key-pair issuance and a
+  trust-store decision; folded into V131 (release automation).
+- `--locked` enforcement on the release-build job in `ci.yml` — also
+  V131, where it fits the release pipeline naturally.
+
+### Compatibility
+- All four artifacts (`rust-toolchain.toml`, `deny.toml`,
+  `supply-chain.yml`, `renovate.json`) are pure additions. No code
+  paths change, no test counts change.
+- Existing CI jobs that pin `dtolnay/rust-toolchain@1.90.0` continue
+  to work; they simply land on the same version twice (the toolchain
+  file plus the action).
+
+---
+
 ## [Unreleased] - v85 (2026-05-06) — V124 Phase C.3: OTel adaptive sampler + prompt redaction (0.2.71)
 
 ### Added

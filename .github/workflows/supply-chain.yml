@@ -1,0 +1,135 @@
+name: Supply Chain
+
+# V125 (C.1) — supply-chain hardening separated from the main CI
+# pipeline so a supply-chain failure produces an obvious red signal
+# without blocking the full feature-matrix run from completing.
+#
+# Three jobs run on every push/PR plus a weekly schedule:
+#   * cargo-deny — licenses + advisories + bans + sources.
+#   * cargo-audit — RustSec advisory database (kept in sync with
+#     deny.toml ignore list).
+#   * sbom — CycloneDX bill of materials, uploaded as artifact and
+#     attached to release tags.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    # Mondays 06:00 UTC — picks up advisory-db updates landed over
+    # the weekend without waiting for the next push.
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  cargo-deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          # Each check has its own job-style summary so a license
+          # failure stays separate from an advisory failure in the
+          # GitHub PR UI.
+          command: check advisories licenses bans sources
+
+  cargo-audit:
+    name: cargo-audit (mirror of CI audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.90.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cargo-audit-supply-chain
+      - name: Install cargo-audit
+        run: cargo install --locked cargo-audit
+      # NOTE: the ignore list below MUST stay in sync with deny.toml's
+      # [advisories].ignore. The `audit-deny-sync` job below verifies
+      # that.
+      - name: Run cargo audit
+        run: |
+          cargo audit \
+            --ignore RUSTSEC-2025-0141 \
+            --ignore RUSTSEC-2024-0436 \
+            --ignore RUSTSEC-2025-0134 \
+            --ignore RUSTSEC-2026-0002
+
+  audit-deny-sync:
+    name: audit/deny ignore-list sync check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare ignore lists
+        # The ignore lists in .github/workflows/ci.yml (audit job),
+        # .github/workflows/supply-chain.yml (cargo-audit job above),
+        # and deny.toml ([advisories].ignore) must match. Drift between
+        # them means an advisory was silenced in one place but not the
+        # other.
+        run: |
+          set -euo pipefail
+          extract_yaml() {
+            grep -oE 'RUSTSEC-[0-9]+-[0-9]+' "$1" | sort -u
+          }
+          extract_toml() {
+            sed -n '/\[advisories\]/,/^\[/p' "$1" \
+              | grep -oE 'RUSTSEC-[0-9]+-[0-9]+' | sort -u
+          }
+          ci_list=$(extract_yaml .github/workflows/ci.yml)
+          sc_list=$(extract_yaml .github/workflows/supply-chain.yml)
+          dy_list=$(extract_toml deny.toml)
+          if [ "$ci_list" != "$sc_list" ] || [ "$ci_list" != "$dy_list" ]; then
+            echo "::error::ignore lists drift detected"
+            echo "ci.yml:"; echo "$ci_list"
+            echo "supply-chain.yml:"; echo "$sc_list"
+            echo "deny.toml:"; echo "$dy_list"
+            exit 1
+          fi
+          echo "All three ignore lists agree:"
+          echo "$ci_list"
+
+  sbom:
+    name: SBOM (CycloneDX)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.90.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: sbom
+      - name: Install cargo-cyclonedx
+        run: cargo install --locked cargo-cyclonedx
+      - name: Generate CycloneDX SBOM
+        # `--format json` produces a CycloneDX 1.4 JSON document
+        # consumable by Dependency-Track, OWASP CycloneDX tools, and
+        # GitHub's dependency-graph importer. We also generate XML for
+        # tools that prefer the legacy format.
+        run: |
+          cargo cyclonedx --format json --override-filename ai_assistant.cdx
+          cargo cyclonedx --format xml  --override-filename ai_assistant.cdx
+      - name: Upload SBOM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: |
+            ai_assistant.cdx.json
+            ai_assistant.cdx.xml
+          if-no-files-found: error
+          retention-days: 90
+      - name: Attach SBOM to release
+        # On tag pushes (release flow), attach the SBOM so consumers
+        # can verify the published binaries against the dependency
+        # graph at release time.
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ai_assistant.cdx.json
+            ai_assistant.cdx.xml
