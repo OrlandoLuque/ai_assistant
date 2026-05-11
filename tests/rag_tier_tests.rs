@@ -402,9 +402,11 @@ mod rag_tiers_tests {
 
     #[test]
     fn test_rag_stats_calculations() {
-        let mut stats = RagStats::default();
-        stats.cache_hits = 30;
-        stats.cache_misses = 70;
+        let mut stats = RagStats {
+            cache_hits: 30,
+            cache_misses: 70,
+            ..RagStats::default()
+        };
 
         assert!((stats.cache_hit_rate() - 0.3).abs() < 0.001);
 
@@ -415,10 +417,12 @@ mod rag_tiers_tests {
 
     #[test]
     fn test_rag_stats_summary() {
-        let mut stats = RagStats::default();
-        stats.queries_processed = 10;
-        stats.llm_calls = 25;
-        stats.chunks_retrieved = 100;
+        let stats = RagStats {
+            queries_processed: 10,
+            llm_calls: 25,
+            chunks_retrieved: 100,
+            ..RagStats::default()
+        };
 
         let summary = stats.summary();
         assert!(summary.contains("10 queries"));

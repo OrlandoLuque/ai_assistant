@@ -42,8 +42,6 @@
 //! components before canonicalize as defense-in-depth against
 //! symlink-race substitution.
 
-#![cfg(feature = "vision")]
-
 use std::ffi::OsString;
 use std::fmt;
 use std::net::{SocketAddr, TcpListener};

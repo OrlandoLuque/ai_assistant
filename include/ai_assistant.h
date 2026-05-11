@@ -284,6 +284,26 @@ int ai_assistant_send_message_stream(struct AiAssistantHandle *handle,
  */
  int ai_assistant_abi_version(void) ;
 
+/**
+ * Sends a user message together with a single image (raw bytes) and
+ * returns the assistant's reply.
+ *
+ * `image_bytes` / `image_len` describe the encoded image (PNG/JPEG/WebP
+ * supported per `ImagePreprocessor::validate_bytes`). `media_type` is an
+ * optional NUL-terminated string (e.g. "image/png"); pass NULL to let
+ * the library detect from magic bytes.
+ *
+ * Available only when the crate is built with `--features vision`.
+ */
+
+int ai_assistant_send_message_with_image(struct AiAssistantHandle *handle,
+                                         const char *prompt,
+                                         const uint8_t *image_bytes,
+                                         size_t image_len,
+                                         const char *media_type,
+                                         char **out)
+;
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif  // __cplusplus

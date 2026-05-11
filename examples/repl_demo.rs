@@ -32,12 +32,11 @@ fn main() {
     }
 
     // 3. Switch model via /model command
-    match engine.process_input("/model llama3:8b") {
-        ReplAction::ExecuteCommand(ReplCommand::Model(name)) => {
-            engine.set_model(&name);
-            println!("Switched model to: {}", engine.current_model());
-        }
-        _ => {}
+    if let ReplAction::ExecuteCommand(ReplCommand::Model(name)) =
+        engine.process_input("/model llama3:8b")
+    {
+        engine.set_model(&name);
+        println!("Switched model to: {}", engine.current_model());
     }
 
     // 4. Process regular messages (simulating a conversation)

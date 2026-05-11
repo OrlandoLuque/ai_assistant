@@ -178,6 +178,9 @@ impl ContextBudgetConfig {
 
     /// Get the base score for a given source type.
     pub fn base_score_for(&self, source: ContextSourceType) -> f32 {
+        // Wildcard arm covers future `#[non_exhaustive]` variants added by
+        // downstream consumers of the public enum.
+        #[allow(unreachable_patterns)]
         match source {
             ContextSourceType::Rag => self.rag_base_score,
             ContextSourceType::Memory => self.memory_base_score,
@@ -326,6 +329,7 @@ pub enum ContextSourceType {
 
 impl std::fmt::Display for ContextSourceType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        #[allow(unreachable_patterns)]
         match self {
             Self::Rag => write!(f, "RAG"),
             Self::Memory => write!(f, "MEMORY"),

@@ -2861,7 +2861,7 @@ And also:
 
     #[test]
     fn test_provider_names_are_unique() {
-        let names = vec![
+        let names = [
             OllamaProvider::new("http://x").name().to_string(),
             LmStudioProvider::new("http://x").name().to_string(),
             TextGenWebUIProvider::new("http://x").name().to_string(),

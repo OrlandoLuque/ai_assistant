@@ -6058,10 +6058,10 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         };
         let json = serde_json::to_string(&config).unwrap();
         let parsed: EnrichmentConfig = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.enable_rag, true);
-        assert_eq!(parsed.enable_guardrails, true);
-        assert_eq!(parsed.enable_memory, false);
-        assert_eq!(parsed.redact_output_pii, false);
+        assert!(parsed.enable_rag);
+        assert!(parsed.enable_guardrails);
+        assert!(!parsed.enable_memory);
+        assert!(!parsed.redact_output_pii);
         assert!((parsed.guardrail_threshold - 0.6).abs() < 0.01);
     }
 

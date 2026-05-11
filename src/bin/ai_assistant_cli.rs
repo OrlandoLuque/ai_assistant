@@ -33,12 +33,9 @@ use ai_assistant::{AiAssistant, AiResponse};
 #[cfg(feature = "butler")]
 use ai_assistant::butler::{Butler, EnvironmentReport};
 
-// Docker handle type — conditional on feature
+// Docker handle type — only defined when containers feature is enabled.
 #[cfg(feature = "containers")]
 type DockerHandle = Option<std::sync::Arc<std::sync::RwLock<ai_assistant::ContainerExecutor>>>;
-
-#[cfg(not(feature = "containers"))]
-type DockerHandle = ();
 
 /// Parsed CLI arguments.
 struct CliArgs {
@@ -165,10 +162,8 @@ fn main() -> ExitCode {
     };
 
     #[cfg(not(feature = "containers"))]
-    let docker_handle: DockerHandle = {
-        if cli.containers {
-            eprintln!("Warning: --containers requires the 'containers' feature. Ignoring.");
-        }
+    if cli.containers {
+        eprintln!("Warning: --containers requires the 'containers' feature. Ignoring.");
     };
 
     // =========================================================================
@@ -312,7 +307,7 @@ fn main() -> ExitCode {
             }
             #[cfg(not(feature = "containers"))]
             {
-                let _ = &docker_handle;
+                let _ = &();
                 eprintln!("Docker requires --features containers");
             }
             continue;
@@ -392,8 +387,7 @@ fn main() -> ExitCode {
         }
 
         // Switch provider by index
-        if trimmed.starts_with("/use ") {
-            let arg = trimmed[5..].trim();
+        if let Some(arg) = trimmed.strip_prefix("/use ").map(str::trim) {
             #[cfg(feature = "butler")]
             {
                 if let Some(ref report) = scan_report {

@@ -120,9 +120,11 @@ pub fn node_status() -> Result<NodeInfo, String> {
     {
         Ok(resp) => {
             let status_code = resp.status();
-            let body = resp.into_string().unwrap_or_default();
+            // Drain the response body so the connection can be released.
+            let _ = resp.into_string();
+            let response_ms = start.elapsed().as_millis() as u64;
             let health = if status_code == 200 {
-                "ok".to_string()
+                format!("ok ({}ms)", response_ms)
             } else {
                 format!("HTTP {}", status_code)
             };

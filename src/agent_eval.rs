@@ -1501,7 +1501,7 @@ mod tests {
 
     #[test]
     fn test_step_action_type_all_variants() {
-        let variants = vec![
+        let variants = [
             StepActionType::ToolCall,
             StepActionType::LlmQuery,
             StepActionType::Planning,

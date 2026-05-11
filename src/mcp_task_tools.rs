@@ -43,15 +43,6 @@ impl TaskPriority {
             Self::Critical => "critical",
         }
     }
-
-    fn sort_value(&self) -> i32 {
-        match self {
-            Self::Low => 1,
-            Self::Medium => 2,
-            Self::High => 3,
-            Self::Critical => 4,
-        }
-    }
 }
 
 /// Status of a user task.
@@ -350,10 +341,8 @@ impl UserTaskStore {
             .map_err(|e| format!("Query error: {}", e))?;
 
         let mut tasks = Vec::new();
-        for row in rows {
-            if let Ok(task) = row {
-                tasks.push(task);
-            }
+        for task in rows.flatten() {
+            tasks.push(task);
         }
         Ok(tasks)
     }
@@ -503,10 +492,8 @@ impl UserTaskStore {
                 })
                 .map_err(|e| format!("FTS query error: {}", e))?;
             let mut tasks = Vec::new();
-            for row in rows {
-                if let Ok(task) = row {
-                    tasks.push(task);
-                }
+            for task in rows.flatten() {
+                tasks.push(task);
             }
             Ok(tasks)
         } else {
@@ -526,10 +513,8 @@ impl UserTaskStore {
                 })
                 .map_err(|e| format!("Search error: {}", e))?;
             let mut tasks = Vec::new();
-            for row in rows {
-                if let Ok(task) = row {
-                    tasks.push(task);
-                }
+            for task in rows.flatten() {
+                tasks.push(task);
             }
             Ok(tasks)
         }
@@ -852,7 +837,7 @@ pub fn register_task_tools(server: &mut McpServer, store: Arc<Mutex<UserTaskStor
                 };
                 let guard = store.lock().map_err(|e| format!("Lock error: {}", e))?;
                 let task = guard.update(id, &updates)?;
-                Ok(serde_json::to_value(&task).map_err(|e| e.to_string())?)
+                serde_json::to_value(&task).map_err(|e| e.to_string())
             },
         );
     }

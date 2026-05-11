@@ -2202,7 +2202,7 @@ mod tests {
 
     #[test]
     fn test_diversity_metric_all_variants() {
-        let variants = vec![
+        let variants = [
             DiversityMetric::Cosine,
             DiversityMetric::Jaccard,
             DiversityMetric::Overlap,
@@ -2216,7 +2216,7 @@ mod tests {
 
     #[test]
     fn test_router_query_complexity_all_variants() {
-        let variants = vec![
+        let variants = [
             RouterQueryComplexity::Simple,
             RouterQueryComplexity::Factual,
             RouterQueryComplexity::MultiHop,

@@ -23,11 +23,11 @@ use super::types::BenchmarkLoader;
 /// available benchmarks.
 pub fn all_loaders() -> Vec<Box<dyn BenchmarkLoader>> {
     vec![
-        Box::new(TruthfulQaLoader::default()),
-        Box::new(HaluEvalLoader::default()),
-        Box::new(FactScoreLoader::default()),
-        Box::new(RagasLoader::default()),
-        Box::new(FeverLoader::default()),
+        Box::new(TruthfulQaLoader),
+        Box::new(HaluEvalLoader),
+        Box::new(FactScoreLoader),
+        Box::new(RagasLoader),
+        Box::new(FeverLoader),
     ]
 }
 

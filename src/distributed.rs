@@ -700,10 +700,10 @@ impl Dht {
 
         // Evict until under limits
         let mut to_evict = Vec::new();
-        let mut freed_entries = 0;
         let mut freed_bytes = 0usize;
 
-        for (key, _, _, size) in &candidates {
+        for (idx, (key, _, _, size)) in candidates.iter().enumerate() {
+            let freed_entries = idx;
             let still_over_entries =
                 max_entries > 0 && (current_entries - freed_entries) >= max_entries;
             let still_over_bytes = max_bytes > 0 && (current_bytes - freed_bytes) > max_bytes;
@@ -713,7 +713,6 @@ impl Dht {
             }
 
             to_evict.push(*key);
-            freed_entries += 1;
             freed_bytes += size;
         }
 

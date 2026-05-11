@@ -160,6 +160,7 @@ mod config;
 mod context;
 mod messages;
 mod models;
+pub mod models_dev;
 mod providers;
 mod session;
 

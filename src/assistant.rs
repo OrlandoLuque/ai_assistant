@@ -6487,7 +6487,7 @@ mod tests {
             "No API key manager by default"
         );
         assert!(
-            ai.adaptive_thinking.enabled == false,
+            !ai.adaptive_thinking.enabled,
             "Adaptive thinking disabled by default"
         );
         assert!(
@@ -7121,7 +7121,7 @@ mod tests {
         ai2.load_sessions_from_file(&path).unwrap();
         assert_eq!(ai2.session_store.sessions.len(), expected_count);
         // At least one session should exist
-        assert!(ai2.session_store.sessions.len() >= 1);
+        assert!(!ai2.session_store.sessions.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -7520,7 +7520,7 @@ ws ::= " "*"#;
         let content = "Knowledge about Rust programming language features";
         ai.set_knowledge_context(content);
         assert_eq!(ai.knowledge_context_size(), content.len());
-        assert_eq!(ai.knowledge_context_size(), content.as_bytes().len());
+        assert_eq!(ai.knowledge_context_size(), content.len());
     }
 
     #[test]
@@ -8070,7 +8070,7 @@ ws ::= " "*"#;
         ai.conversation.push(ChatMessage::assistant("Reply"));
         ai.conversation.push(ChatMessage::user("Current"));
         // Simulate the FreshContext filtering logic
-        let filtered = vec![ai
+        let filtered = [ai
             .conversation
             .last()
             .expect("message was just pushed")

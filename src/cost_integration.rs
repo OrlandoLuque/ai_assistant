@@ -360,7 +360,7 @@ impl CostDashboard {
                 e.input_tokens,
                 e.output_tokens,
                 e.cost_usd,
-                sanitize_csv_field(&e.request_type.as_str())
+                sanitize_csv_field(e.request_type.as_str())
             ));
         }
         csv

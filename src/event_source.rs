@@ -208,7 +208,9 @@ pub struct EventRule {
 const MAX_RULES: usize = 100;
 /// Min poll interval in seconds (#44).
 const MIN_POLL_INTERVAL_SECS: u64 = 30;
-/// Max concurrent polling tasks (#50).
+/// Max concurrent polling tasks (#50). Enforced once concurrent
+/// scheduler is wired (post-V133); kept as authoritative policy value.
+#[allow(dead_code)]
 const MAX_CONCURRENT_POLLS: usize = 20;
 /// Max notifications in queue (#34).
 const MAX_NOTIFICATION_QUEUE: usize = 500;
@@ -218,11 +220,15 @@ const MAX_PROMPTS_PER_MINUTE: u32 = 10;
 const MAX_RSS_ENTRIES: usize = 50;
 /// Max scraper response body (#18).
 const MAX_SCRAPE_BODY_BYTES: usize = 5_000_000;
-/// Max email body size (#48).
+/// Max email body size (#48). Enforced once IMAP poll path lands
+/// (post-V133); kept as authoritative policy value.
+#[allow(dead_code)]
 const MAX_EMAIL_BODY_BYTES: usize = 100_000;
 /// Max iCal events (#22).
 const MAX_ICAL_EVENTS: usize = 1000;
-/// Max WebSocket frame size (#21).
+/// Max WebSocket frame size (#21). Enforced once WS poll path lands
+/// (post-V133); kept as authoritative policy value.
+#[allow(dead_code)]
 const MAX_WS_FRAME_BYTES: usize = 1_000_000;
 /// Max redirects for scraper (#17).
 const MAX_REDIRECTS: usize = 5;
@@ -423,7 +429,7 @@ fn render_prompt_template(template: &str, event: &IncomingEvent) -> String {
     // Simple mustache-like replacement
     result = result.replace("{{title}}", &sanitize_for_prompt(&event.title));
     result = result.replace("{{body}}", &sanitize_for_prompt(&event.body));
-    result = result.replace("{{url}}", &event.url.as_deref().unwrap_or(""));
+    result = result.replace("{{url}}", event.url.as_deref().unwrap_or(""));
     result = result.replace("{{source}}", &event.source_name);
     result = result.replace("{{timestamp}}", &event.timestamp);
 

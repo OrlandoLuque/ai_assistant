@@ -934,7 +934,7 @@ fn test_manager_consolidate_adds_procedures() {
     let result = mgr.consolidate();
     assert!(!result.procedures_created.is_empty());
     assert!(
-        mgr.procedural.len() > 0,
+        !mgr.procedural.is_empty(),
         "Consolidation should add procedures to the store"
     );
 }

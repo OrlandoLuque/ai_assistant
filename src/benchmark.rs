@@ -620,7 +620,7 @@ mod tests {
 
         let suite = run_all_benchmarks(config);
 
-        assert!(suite.results.len() > 0);
+        assert!(!suite.results.is_empty());
         assert!(suite.completed_at.is_some());
     }
 

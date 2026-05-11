@@ -1239,12 +1239,21 @@ mod tests {
         let img_b = ImageInput::from_bytes(&[9, 9, 9], "image/png");
 
         let fp_text = cache.compute_fingerprint("describe this", "gpt-4o");
-        let fp_a =
-            cache.compute_fingerprint_with_images("describe this", "gpt-4o", &[img_a.clone()]);
-        let fp_b =
-            cache.compute_fingerprint_with_images("describe this", "gpt-4o", &[img_b.clone()]);
-        let fp_a_again =
-            cache.compute_fingerprint_with_images("describe this", "gpt-4o", &[img_a.clone()]);
+        let fp_a = cache.compute_fingerprint_with_images(
+            "describe this",
+            "gpt-4o",
+            std::slice::from_ref(&img_a),
+        );
+        let fp_b = cache.compute_fingerprint_with_images(
+            "describe this",
+            "gpt-4o",
+            std::slice::from_ref(&img_b),
+        );
+        let fp_a_again = cache.compute_fingerprint_with_images(
+            "describe this",
+            "gpt-4o",
+            std::slice::from_ref(&img_a),
+        );
 
         assert_ne!(
             fp_text, fp_a,

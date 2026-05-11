@@ -2382,7 +2382,7 @@ mod tests {
         assert_eq!(span.status, "ok");
         assert!(span.is_running());
         assert!(span.end_time_ms.is_none());
-        assert!(span.span_id.len() > 0);
+        assert!(!span.span_id.is_empty());
     }
 
     #[test]

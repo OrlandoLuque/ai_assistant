@@ -38,8 +38,6 @@
 //! Logging deliberately emits only the file *name*, never the absolute
 //! path, to avoid leaking machine layout when logs are shared.
 
-#![cfg(feature = "vision")]
-
 use std::fmt;
 use std::io::Read;
 use std::path::{Path, PathBuf};

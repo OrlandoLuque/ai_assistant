@@ -3463,7 +3463,7 @@ Total gastado: $175
             .any(|c| c.metadata.boundary_type == BoundaryType::HeadingBreak);
         // Either heading breaks or the chunks are structured around headings
         assert!(
-            has_heading_break || chunks.len() >= 1,
+            has_heading_break || !chunks.is_empty(),
             "Should respect heading boundaries"
         );
     }
@@ -3514,7 +3514,7 @@ Total gastado: $175
 
     #[test]
     fn test_discourse_type_all_variants() {
-        let variants = vec![
+        let variants = [
             DiscourseType::Heading,
             DiscourseType::Paragraph,
             DiscourseType::ListItem,
@@ -3531,7 +3531,7 @@ Total gastado: $175
 
     #[test]
     fn test_boundary_type_all_variants() {
-        let variants = vec![
+        let variants = [
             BoundaryType::HeadingBreak,
             BoundaryType::ParagraphBreak,
             BoundaryType::CoherenceDrop,

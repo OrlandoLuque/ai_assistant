@@ -385,7 +385,7 @@ mod chaos_engineering_tests {
 
             for (task_id, _agent_id) in assignments {
                 // Simulate 20% failure rate
-                if rand_simple() % 5 == 0 {
+                if rand_simple().is_multiple_of(5) {
                     orchestrator.fail_task(&task_id, "Random failure").ok();
                     failed += 1;
                     failure_count.fetch_add(1, Ordering::SeqCst);

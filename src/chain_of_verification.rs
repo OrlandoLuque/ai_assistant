@@ -1091,6 +1091,6 @@ mod tests {
         let result = cove.verify(response, &context);
 
         // Should have verified both claims
-        assert!(result.verified_claims.len() >= 1);
+        assert!(!result.verified_claims.is_empty());
     }
 }

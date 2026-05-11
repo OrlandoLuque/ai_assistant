@@ -694,7 +694,7 @@ mod tests {
             .filter(|d| d.hallucination_type == HallucinationType::FabricatedQuote)
             .count();
 
-        assert!(quote_detections > 0 || result.claims.len() > 0);
+        assert!(quote_detections > 0 || !result.claims.is_empty());
     }
 
     #[test]

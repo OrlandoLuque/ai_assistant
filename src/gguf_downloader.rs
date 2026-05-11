@@ -153,9 +153,10 @@ pub fn download(
     let content_length: Option<u64> = resp.header("Content-Length").and_then(|v| v.parse().ok());
     let total_expected: Option<u64> = content_length.map(|cl| cl + existing_bytes);
 
-    // Open .part in append-or-create mode.
+    // Open .part in append-or-create mode (do not truncate — we may be resuming).
     let mut out = OpenOptions::new()
         .create(true)
+        .truncate(false)
         .write(true)
         .read(true)
         .open(&part)

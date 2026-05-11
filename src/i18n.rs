@@ -625,7 +625,7 @@ mod tests {
         strings.add("custom_key", "en", "Hello");
         strings.add("custom_key", "es", "Hola");
         let en_val = strings.get("custom_key", "en");
-        assert_eq!(en_val.as_deref(), Some("Hello"));
+        assert_eq!(en_val, Some("Hello"));
     }
 
     #[test]

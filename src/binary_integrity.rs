@@ -518,11 +518,11 @@ mod tests {
     #[test]
     fn test_checker_verify_skipped_in_debug() {
         let checker = IntegrityChecker::with_defaults();
-        let result = checker.verify();
+        let _result = checker.verify();
 
         // In debug builds, verification is skipped
         #[cfg(debug_assertions)]
-        assert_eq!(result, IntegrityResult::Skipped);
+        assert_eq!(_result, IntegrityResult::Skipped);
     }
 
     #[test]

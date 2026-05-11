@@ -855,7 +855,7 @@ mod tests {
 
         let list = vec![make_doc("A", 1.0, 0), make_doc("B", 0.5, 1)];
 
-        let fused_small = rrf_small_k.fuse(&[list.clone()]);
+        let fused_small = rrf_small_k.fuse(std::slice::from_ref(&list));
         let fused_large = rrf_large_k.fuse(&[list]);
 
         // With k=1: A gets 1/(1+1) = 0.5, B gets 1/(1+2) = 0.333

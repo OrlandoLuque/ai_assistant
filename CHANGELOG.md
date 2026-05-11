@@ -5,6 +5,71 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v94 (2026-05-11) — V133: repo hygiene (0.2.80)
+
+Maintenance cycle. Three drifts had accumulated between V124
+and V132: an unreferenced module (`src/models_dev.rs`, the
+models.dev catalog parser), a live RUSTSEC advisory on
+`wasmtime 36.0.7` (RUSTSEC-2026-0114), and 75 strict-clippy
+errors in the `--release --all-targets` path. V133 closes all
+three and drops three on-disk scratch files (`new_code.txt`,
+`new_tests.txt`, `_server_orig.json`) that had already been
+integrated into `src/context_composer.rs`.
+
+### Added
+- **`pub mod models_dev` in `lib.rs`.** The V104.9 models.dev
+  catalog parser is now reachable from `ai_assistant::models_dev::*`.
+  Was unwired (565 lines of dead code) since the module landed.
+- **`models_dev` ↔ in-crate bridge.** New helpers:
+  `provider_from_key(&str) -> AiProvider`,
+  `ModelMetadata::to_model_info() -> models::ModelInfo`,
+  `models_dev::ModelRegistry::to_model_infos() -> Vec<ModelInfo>`,
+  and `models::ModelRegistry::extend_from_models_dev(&src)`.
+  Five new tests cover the bridge.
+
+### Changed
+- **`ModelResolution::Virtual(VirtualModel)` →
+  `Virtual(Box<VirtualModel>)`.** `VirtualModel` is ~10× the
+  size of the other variants, so every `ModelResolution` was
+  allocated for the worst case. `Box<T>` autoderefs for field
+  access, so every call site continues to compile unchanged.
+- **`wasmtime 36.0.7 → 36.0.9`** in `Cargo.lock` (clears
+  RUSTSEC-2026-0114). Stayed in the `36.x` major to avoid the
+  API churn between 36 and 44.
+
+### Fixed
+- **`cargo clippy --all-targets --release -- -D warnings` is
+  green again.** 75 strict-clippy errors closed: removed
+  duplicated `#![cfg(feature = "vision")]` in `mmproj.rs` /
+  `embedded_server.rs`, replaced `reader.lines().flatten()`
+  with `.map_while(Result::ok)` (avoids the
+  `lines_filter_map_ok` infinite-loop trap),
+  `&[x.clone()]` → `std::slice::from_ref(&x)` across tests,
+  `.create(true)` in `gguf_downloader.rs` gained an explicit
+  `.truncate(false)` (resumable downloads must keep the partial
+  file), `enumerate()` replaced manual `freed_entries += 1`
+  loop counter in `distributed.rs`, plus the usual sweep of
+  unused vars, manual prefix stripping, `format!` inside
+  `println!`, doc list indentation, `field_reassign_with_default`
+  in `rag_tier_tests.rs`, and an unused `()` type alias.
+
+### Removed
+- **`src/new_code.txt`, `src/new_tests.txt`, `src/_server_orig.json`.**
+  All three were drafts that had already been integrated into
+  `src/context_composer.rs` (the `ContextCompiler`,
+  `SegmentType`, `ConversationCompactor`, `ToolSearchIndex`
+  types and their tests). Verified every `pub`/`pub(crate)`
+  symbol in the drafts was reachable from the live module
+  before deletion.
+
+### Compatibility
+Pure housekeeping. No CLI flag surface changes. No public API
+changes other than the `ModelResolution::Virtual` payload
+becoming `Box`-wrapped — pattern matching works unchanged via
+`Box<T>` autoderef. Every existing test passes.
+
+See `docs/IMPROVEMENTS_V133.md` for the full reasoning.
+
 ## [Unreleased] - v93 (2026-05-08) — V132: anti-hallucination quality fixes (0.2.79)
 
 End-to-end testing of `ai_cli verify --faithfulness --cove

@@ -96,8 +96,9 @@ pub enum ModelResolution {
         name: String,
         provider: Option<AiProvider>,
     },
-    /// Virtual model — apply enrichment pipeline.
-    Virtual(VirtualModel),
+    /// Virtual model — apply enrichment pipeline. Boxed because
+    /// `VirtualModel` is significantly larger than the other variants.
+    Virtual(Box<VirtualModel>),
     /// Not found in registry — fall back to default behavior.
     PassThrough { name: String },
 }
@@ -269,7 +270,7 @@ impl ModelRegistry {
     pub fn resolve(&self, model_name: &str) -> ModelResolution {
         // 1. Check virtual models first
         if let Some(vmodel) = self.virtual_models.get(model_name) {
-            return ModelResolution::Virtual(vmodel.clone());
+            return ModelResolution::Virtual(Box::new(vmodel.clone()));
         }
 
         // 2. Check published physical models

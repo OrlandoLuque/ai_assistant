@@ -1372,7 +1372,7 @@ mod tests {
     #[test]
     fn test_issue_type_variants() {
         // Verify all 8 TranslationIssueType variants exist and can be compared
-        let variants = vec![
+        let variants = [
             TranslationIssueType::MissingContent,
             TranslationIssueType::AddedContent,
             TranslationIssueType::InconsistentTerminology,

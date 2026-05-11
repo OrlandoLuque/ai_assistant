@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::config_file::{ConfigFile, ConfigFormat, ConfigValidationError};
+use crate::config_file::{ConfigFile, ConfigFormat};
 
 /// Result of setting a config value.
 #[derive(Debug, Clone)]
@@ -89,7 +89,7 @@ pub fn set_config_value(path: &Path, key: &str, value: &str) -> Result<SetResult
     pairs.insert(key.to_string(), value.to_string());
 
     // Rebuild a minimal TOML-like file
-    let new_content = rebuild_config(&pairs, &content, key, value);
+    let new_content = rebuild_config(&content, key, value);
     std::fs::write(path, &new_content)
         .map_err(|e| format!("Failed to write {}: {}", path.display(), e))?;
 
@@ -236,12 +236,7 @@ fn parse_flat_pairs(content: &str) -> BTreeMap<String, String> {
 }
 
 /// Rebuild config content after setting a key.
-fn rebuild_config(
-    pairs: &BTreeMap<String, String>,
-    original: &str,
-    changed_key: &str,
-    new_value: &str,
-) -> String {
+fn rebuild_config(original: &str, changed_key: &str, new_value: &str) -> String {
     let (section, bare_key) = split_key(changed_key);
 
     let mut result = String::new();
@@ -433,7 +428,7 @@ mod tests {
             p.push(format!("ai_setup_reimport_{}.json", uuid::Uuid::new_v4()));
             p
         };
-        let warnings = import_config(&json_out, &reimport).unwrap();
+        let _warnings = import_config(&json_out, &reimport).unwrap();
         // Warnings may or may not be empty depending on defaults — just check it succeeded
 
         let _ = std::fs::remove_file(&cfg);

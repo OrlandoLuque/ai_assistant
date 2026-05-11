@@ -122,8 +122,8 @@ fn cmd_list(dir: &Path) -> ExitCode {
         return ExitCode::SUCCESS;
     }
     println!(
-        "{:<24} {:<10} {:<6} {}",
-        "NAME", "VERSION", "STEPS", "DESCRIPTION"
+        "{:<24} {:<10} {:<6} DESCRIPTION",
+        "NAME", "VERSION", "STEPS"
     );
     for (name, r) in reg.iter() {
         println!(

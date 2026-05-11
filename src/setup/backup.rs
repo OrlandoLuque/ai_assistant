@@ -233,7 +233,6 @@ fn collect_files(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
     #[test]
     fn test_backup_and_restore_roundtrip() {

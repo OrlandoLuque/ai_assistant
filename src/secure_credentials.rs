@@ -611,7 +611,7 @@ mod tests {
         {
             let mut f = std::fs::File::create(&file_path).expect("create temp file");
             writeln!(f, "# comment line").expect("write");
-            writeln!(f, "").expect("write");
+            writeln!(f).expect("write");
             writeln!(f, "MY_API_KEY=file_secret_123").expect("write");
             writeln!(f, "OTHER_KEY=other_value").expect("write");
         }

@@ -393,7 +393,7 @@ fn bench_smart_chunker(c: &mut Criterion) {
 
     c.bench_function("smart_chunker_1k_chars", |b| {
         b.iter(|| {
-            let _ = chunker.chunk(&document);
+            let _ = chunker.chunk(document);
         });
     });
 }
@@ -819,9 +819,9 @@ fn bench_persistence_roundtrip(c: &mut Criterion) {
             let mut session = ChatSession::new(&format!("Benchmark Session {}", i));
             for j in 0..20 {
                 let msg = if j % 2 == 0 {
-                    ChatMessage::user(&format!("User message {} in session {}", j, i))
+                    ChatMessage::user(format!("User message {} in session {}", j, i))
                 } else {
-                    ChatMessage::assistant(&format!(
+                    ChatMessage::assistant(format!(
                         "Assistant response {} in session {} with enough content to be realistic.",
                         j, i
                     ))

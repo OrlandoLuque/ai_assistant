@@ -560,8 +560,8 @@ mod tests {
         // Temporal decomposition produces 4 phases with sequential dependencies
         assert_eq!(root.subtasks.len(), 4);
         // Phases 2-4 should each depend on the previous phase
-        assert!(root.subtasks[1].dependencies.len() >= 1);
-        assert!(root.subtasks[2].dependencies.len() >= 1);
-        assert!(root.subtasks[3].dependencies.len() >= 1);
+        assert!(!root.subtasks[1].dependencies.is_empty());
+        assert!(!root.subtasks[2].dependencies.is_empty());
+        assert!(!root.subtasks[3].dependencies.is_empty());
     }
 }

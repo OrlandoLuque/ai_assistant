@@ -506,6 +506,7 @@ impl RecipeEngine {
     /// Variable bindings are resolved in this order:
     /// 1. Caller-supplied `bindings`
     /// 2. Recipe-declared `default` values
+    ///
     /// Missing required variables → `MissingRequiredVariable` error.
     pub fn run(
         &self,
@@ -710,12 +711,7 @@ fn find_subseq(hay: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() || needle.len() > hay.len() {
         return None;
     }
-    for i in 0..=hay.len() - needle.len() {
-        if &hay[i..i + needle.len()] == needle {
-            return Some(i);
-        }
-    }
-    None
+    (0..=hay.len() - needle.len()).find(|&i| &hay[i..i + needle.len()] == needle)
 }
 
 // ============================================================================

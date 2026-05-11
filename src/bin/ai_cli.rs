@@ -1122,6 +1122,25 @@ fn cmd_query(args: &[String]) -> ExitCode {
         }
     }
 
+    // Validate RAG tier selection (if any). The tier definition controls
+    // which RAG strategies are active for this session; full plumbing into
+    // the assistant pipeline lives in cmd_verify / RagTierConfig callers.
+    if let Some(ref name) = rag_tier_name {
+        let store = ai_assistant::RagTierStore::new();
+        match store.get(name) {
+            Some(def) => {
+                eprintln!("RAG tier: {} — {}", def.name, def.description);
+            }
+            None => {
+                eprintln!(
+                    "Error: unknown RAG tier '{}'. Run with --list-tiers to see available tiers.",
+                    name
+                );
+                return ExitCode::from(1);
+            }
+        }
+    }
+
     // Load knowledge context
     let knowledge = if let Some(ref path) = knowledge_path {
         match std::fs::read_to_string(path) {
@@ -1644,11 +1663,9 @@ fn run_and_capture(
         let mut lines = Vec::new();
         if let Some(out) = stdout {
             let reader = BufReader::new(out);
-            for line in reader.lines() {
-                if let Ok(l) = line {
-                    println!("{}", l);
-                    lines.push(l);
-                }
+            for l in reader.lines().map_while(Result::ok) {
+                println!("{}", l);
+                lines.push(l);
             }
         }
         lines
@@ -1658,11 +1675,9 @@ fn run_and_capture(
         let mut lines = Vec::new();
         if let Some(err) = stderr {
             let reader = BufReader::new(err);
-            for line in reader.lines() {
-                if let Ok(l) = line {
-                    eprintln!("{}", l);
-                    lines.push(l);
-                }
+            for l in reader.lines().map_while(Result::ok) {
+                eprintln!("{}", l);
+                lines.push(l);
             }
         }
         lines
@@ -1765,7 +1780,7 @@ fn epoch_days_to_date(mut days: u64) -> (u64, u64, u64) {
 }
 
 fn is_leap(year: u64) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+    (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400)
 }
 
 // =============================================================================
@@ -2753,7 +2768,7 @@ fn cmd_verify(args: &[String]) -> ExitCode {
                 &user_prompt
             };
             let context_sentences: Vec<&str> = source
-                .split(|c: char| c == '.' || c == '\n')
+                .split(['.', '\n'])
                 .map(|s| s.trim())
                 .filter(|s| s.len() > 5)
                 .collect();
@@ -2789,7 +2804,7 @@ fn cmd_verify(args: &[String]) -> ExitCode {
                 "user_query"
             };
             let cove_contexts: Vec<VerificationContext> = cove_source
-                .split(|c: char| c == '.' || c == '\n')
+                .split(['.', '\n'])
                 .map(|s| s.trim())
                 .filter(|s| s.len() > 5)
                 .enumerate()
@@ -3227,9 +3242,9 @@ fn cmd_benchmark_list() -> ExitCode {
     for l in &loaders {
         let opt = if l.requires_opt_in() { " [opt-in]" } else { "" };
         println!(
-            "  {:<12} {} — {}{}",
+            "  {:<12} [{:?}] — {}{}",
             l.name(),
-            format!("[{:?}]", l.sample_type()),
+            l.sample_type(),
             l.description(),
             opt
         );
@@ -3696,7 +3711,7 @@ fn cmd_recipes_list(args: &[String]) -> ExitCode {
         }
         return ExitCode::SUCCESS;
     }
-    println!("{:<24} {:<10} {}", "NAME", "VERSION", "DESCRIPTION");
+    println!("{:<24} {:<10} DESCRIPTION", "NAME", "VERSION");
     for (name, r) in reg.iter() {
         println!(
             "{:<24} {:<10} {}",

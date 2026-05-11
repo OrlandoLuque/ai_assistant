@@ -38,19 +38,16 @@ pub struct InstallInstructions {
 /// It does NOT use Butler (which requires the `butler` feature) — instead
 /// it performs simple direct checks so the setup module is always available.
 pub fn check_prerequisites() -> Vec<PrereqStatus> {
-    let mut results = Vec::new();
-
-    // 1. Ollama
-    results.push(check_ollama());
-
-    // 2. Docker
-    results.push(check_docker());
-
-    // 3. GPU
-    results.push(check_gpu());
-
-    // 4. llama.cpp (`llama-server`)
-    results.push(check_llamacpp());
+    let mut results = vec![
+        // 1. Ollama
+        check_ollama(),
+        // 2. Docker
+        check_docker(),
+        // 3. GPU
+        check_gpu(),
+        // 4. llama.cpp (`llama-server`)
+        check_llamacpp(),
+    ];
 
     // 5. vLLM
     results.push(check_vllm());

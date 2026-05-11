@@ -87,15 +87,15 @@ const DIM: &str = "\x1b[2m";
 const RESET: &str = "\x1b[0m";
 
 fn ok(msg: &str) {
-    println!("  {} {} {}{}", GREEN, "\u{2713}", RESET, msg);
+    println!("  {} \u{2713} {}{}", GREEN, RESET, msg);
 }
 
 fn fail(msg: &str) {
-    println!("  {} {} {}{}", RED, "\u{2717}", RESET, msg);
+    println!("  {} \u{2717} {}{}", RED, RESET, msg);
 }
 
 fn warn(msg: &str) {
-    println!("  {} {} {}{}", YELLOW, "\u{26A0}", RESET, msg);
+    println!("  {} \u{26A0} {}{}", YELLOW, RESET, msg);
 }
 
 // =============================================================================
@@ -578,8 +578,8 @@ fn cmd_config(args: &[String]) -> ExitCode {
             } else {
                 println!();
                 println!(
-                    "  {}{:<20} {:<15} {:<20} {}{}",
-                    BOLD, "Section.Key", "File A", "File B", RESET, ""
+                    "  {}{:<20} {:<15} {:<20} {}",
+                    BOLD, "Section.Key", "File A", "File B", RESET
                 );
                 println!("  {}{}", DIM, "-".repeat(55));
                 for d in &diffs {
@@ -821,8 +821,8 @@ fn cmd_docker(args: &[String]) -> ExitCode {
                     } else {
                         println!();
                         println!(
-                            "  {}{:<25} {:<20} {:<12} {}{}",
-                            BOLD, "Name", "Status", "Health", RESET, ""
+                            "  {}{:<25} {:<20} {:<12} {}",
+                            BOLD, "Name", "Status", "Health", RESET
                         );
                         println!("  {}{}{}", DIM, "-".repeat(57), RESET);
                         for c in &containers {

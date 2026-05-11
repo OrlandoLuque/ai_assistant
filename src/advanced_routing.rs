@@ -7304,7 +7304,7 @@ mod tests {
 
             let state = BanditStateMerger::extract_state(&r, "n1");
             // Merging single state = itself (with prior correction = no change)
-            let merged = BanditStateMerger::merge(&[state.clone()], 1.0, 1.0).unwrap();
+            let merged = BanditStateMerger::merge(std::slice::from_ref(&state), 1.0, 1.0).unwrap();
             assert_eq!(
                 merged.global_arms[0].pull_count,
                 state.global_arms[0].pull_count
@@ -7856,7 +7856,7 @@ mod tests {
             .unwrap();
         let json = nfa.to_json().unwrap();
         assert!(json.contains("\"version\": 1"));
-        assert!(json.contains("merged") == false); // not a merged NFA
+        assert!(!json.contains("merged")); // not a merged NFA
     }
 
     #[test]

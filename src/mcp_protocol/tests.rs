@@ -99,7 +99,7 @@ fn test_tool_with_annotations() {
     assert!(tool.annotations.is_some());
     let ann = tool.annotations.unwrap();
     assert_eq!(ann.title.unwrap(), "Web Search");
-    assert_eq!(ann.read_only_hint.unwrap(), true);
+    assert!(ann.read_only_hint.unwrap());
 }
 
 #[test]

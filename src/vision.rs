@@ -1324,7 +1324,7 @@ mod tests {
         assert_eq!(v["type"], "image");
         assert_eq!(v["source"]["type"], "base64");
         assert_eq!(v["source"]["media_type"], "image/jpeg");
-        assert!(v["source"]["data"].as_str().unwrap().len() > 0);
+        assert!(!v["source"]["data"].as_str().unwrap().is_empty());
     }
 
     #[test]
@@ -1341,7 +1341,7 @@ mod tests {
         let image = ImageInput::from_bytes(&[0x89, 0x50, 0x4E, 0x47], "image/png");
         let v = image.to_gemini_format();
         assert_eq!(v["inlineData"]["mimeType"], "image/png");
-        assert!(v["inlineData"]["data"].as_str().unwrap().len() > 0);
+        assert!(!v["inlineData"]["data"].as_str().unwrap().is_empty());
     }
 
     #[test]

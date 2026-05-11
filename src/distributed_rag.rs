@@ -23,6 +23,7 @@ impl Default for DocumentScope {
 
 impl std::fmt::Display for DocumentScope {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        #[allow(unreachable_patterns)]
         match self {
             Self::Private => write!(f, "private"),
             Self::Shared => write!(f, "shared"),

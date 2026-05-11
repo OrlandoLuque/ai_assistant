@@ -393,7 +393,7 @@ fn split_frontmatter(text: &str) -> (Option<&str>, &str) {
             let after = idx + 3;
             let ok = after >= bytes.len()
                 || bytes[after] == b'\n'
-                || (after + 1 <= bytes.len() && bytes[after] == b'\r');
+                || (after < bytes.len() && bytes[after] == b'\r');
             if ok {
                 let fm = &after_first[..idx];
                 let mut body_start = after;
@@ -471,12 +471,7 @@ fn find_subseq(hay: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() || needle.len() > hay.len() {
         return None;
     }
-    for i in 0..=hay.len() - needle.len() {
-        if &hay[i..i + needle.len()] == needle {
-            return Some(i);
-        }
-    }
-    None
+    (0..=hay.len() - needle.len()).find(|&i| &hay[i..i + needle.len()] == needle)
 }
 
 // ============================================================================

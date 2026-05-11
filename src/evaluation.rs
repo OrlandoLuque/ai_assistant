@@ -1408,7 +1408,7 @@ mod tests {
         .with_reference("Cats are popular pets worldwide.");
 
         let results = evaluator.evaluate(&sample);
-        assert!(results.len() >= 1);
+        assert!(!results.is_empty());
     }
 
     #[test]
