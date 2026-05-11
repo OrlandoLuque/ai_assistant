@@ -237,6 +237,13 @@ pub fn context_size_cache_len() -> usize {
 mod tests {
     use super::*;
 
+    // Serialises tests that read/clear the global CONTEXT_SIZE_CACHE.
+    // Without this, parallel test execution can let one test call
+    // clear_context_size_cache() between another test's two cache
+    // lookups, evicting the value under inspection.
+    static CACHE_TEST_LOCK: std::sync::LazyLock<std::sync::Mutex<()>> =
+        std::sync::LazyLock::new(|| std::sync::Mutex::new(()));
+
     #[test]
     fn test_estimate_tokens() {
         // Roughly 3.5 chars per token
@@ -284,6 +291,7 @@ mod tests {
 
     #[test]
     fn test_cached_uses_static_table_when_fetcher_returns_none() {
+        let _guard = CACHE_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         clear_context_size_cache();
 
         let size = get_model_context_size_cached("llama3.2:7b", |_| None);
@@ -293,6 +301,7 @@ mod tests {
 
     #[test]
     fn test_cached_uses_fetcher_when_available() {
+        let _guard = CACHE_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         clear_context_size_cache();
 
         let size = get_model_context_size_cached("custom-model-xyz", |_| Some(65_536));
@@ -301,9 +310,7 @@ mod tests {
 
     #[test]
     fn test_cached_returns_cached_value_on_second_call() {
-        // Use a unique key unlikely to collide with other parallel tests.
-        // Do NOT clear the global cache here — another test could re-clear
-        // it between our two calls, evicting the entry we just inserted.
+        let _guard = CACHE_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let unique_key = "cache-second-call-test-xyzzy-42";
 
         // First call — fetcher is invoked, value is cached
@@ -319,6 +326,7 @@ mod tests {
 
     #[test]
     fn test_clear_context_size_cache() {
+        let _guard = CACHE_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         clear_context_size_cache();
 
         get_model_context_size_cached("clear-test", |_| Some(42_000));
@@ -334,6 +342,7 @@ mod tests {
 
     #[test]
     fn test_cached_case_insensitive_key() {
+        let _guard = CACHE_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         clear_context_size_cache();
 
         get_model_context_size_cached("MyModel:7B", |_| Some(50_000));

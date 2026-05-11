@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v96 (2026-05-11) — V135: context-cache test flake (0.2.82)
+
+Closes the one job that stayed red after V134:
+`Feature Matrix (precise-tokens) → context::tests::test_cached_returns_cached_value_on_second_call`
+panicking with `"fetcher should not be called on cache hit"` at
+`src/context.rs:315:13`. 6230 of 6231 tests passed; the one
+failure was timing-dependent, so it didn't repro on every run.
+
+### Fixed
+- **`CONTEXT_SIZE_CACHE` test interleaving.** The cache is a
+  global `LazyLock<Mutex<HashMap<...>>>` shared across the test
+  binary. `test_cached_returns_cached_value_on_second_call`
+  inserted a unique key, then expected the next lookup to be a
+  cache hit. But four sibling tests
+  (`test_cached_uses_static_table_when_fetcher_returns_none`,
+  `test_cached_uses_fetcher_when_available`,
+  `test_clear_context_size_cache`,
+  `test_cached_case_insensitive_key`) call
+  `clear_context_size_cache()` at their start. Under `cargo
+  test`'s default parallel runner, one of those could evict
+  the just-inserted entry between the first and second lookup,
+  driving the second call to a cache miss and tripping the
+  `panic!("fetcher should not be called on cache hit")` guard.
+  Added a test-only `LazyLock<Mutex<()>>` (`CACHE_TEST_LOCK`)
+  that every cache-touching test acquires before doing anything,
+  serialising the five tests that mutate the global cache. Each
+  test uses `unwrap_or_else(|p| p.into_inner())` so a panicked
+  test poisoning the mutex doesn't cascade-fail the rest.
+
+### Compatibility
+- Test-only change. No production code, no API surface, no
+  runtime behaviour changes.
+
 ## [Unreleased] - v95 (2026-05-11) — V134: CI gate calibration (0.2.81)
 
 Follow-up to V133. When V133 pushed V124–V133 to origin, two CI
