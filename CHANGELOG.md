@@ -5,6 +5,69 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v93 (2026-05-08) — V132: anti-hallucination quality fixes (0.2.79)
+
+End-to-end testing of `ai_cli verify --faithfulness --cove
+--quality-gates` surfaced three regressions that made the
+anti-hallucination output decorative rather than useful: CoVe
+accuracy was always 0.00 (context filter dropped every entry,
+and the LLM was never consulted), grounding ratio was always
+1.00 (`claim.supported || confidence >= 0.3` was true for every
+claim, and the supplied reference context was never consulted),
+and no `--knowledge` corpus shipped with the repo. V132 fixes
+all three at the source.
+
+### Added
+- **`HallucinationDetector::detect()` reads context.** After
+  `extract_claims()`, when a `context` is supplied, unsupported
+  claims are reconciled via sentence-level Jaccard ≥ 0.3 against
+  context sentences; matches flip `claim.supported = true`. The
+  no-context path is unchanged — every existing test passes.
+- **`ChainOfVerification::with_llm_verifier(F)` builder.** Attaches
+  an `Fn(&str) -> Option<String>` callback. When set,
+  `verify_claim()` consults the LLM with a *Supported /
+  Contradicted / Unsupported* prompt before falling back to
+  word-overlap. Engines without the callback retain the legacy
+  word-overlap path verbatim.
+- **`examples/knowledge_earth.txt`, `examples/knowledge_rust.txt`** —
+  19 verifiable facts each, usable directly as
+  `--knowledge` arguments to `ai_cli verify`. Double as
+  regression fixtures: faithful response → grounding ≥ 0.7,
+  off-topic → grounding ≤ 0.4.
+
+### Changed
+- **`AntiHallucinationPipeline` grounding decision.** When a
+  reference context is supplied, `grounded` falls through to
+  `claim.supported`; without a reference, the prior
+  `claim.supported || confidence >= min_confidence_for_output`
+  fallback stays. The reference-supplied path now actually
+  reflects whether the response is grounded in the reference.
+- **`ai_cli verify --cove`.** Sets
+  `verification_source = VerificationSource::Both` so that
+  contexts tagged `source_type = "file"` (from `--knowledge`)
+  are no longer filtered out. Wires an `llm_verify` closure
+  built from the user's selected provider/model with
+  `temperature = 0.1` and a 30-second per-claim deadline.
+  Output now prints the ternary breakdown
+  (`Supported | Contradicted | Unverifiable`) alongside accuracy.
+
+### Compatibility
+Pure additions on top of existing surfaces. No feature flag
+added. `HallucinationDetector::detect(text, None)`,
+`ChainOfVerification::new(cfg)` without `with_llm_verifier`,
+and `AntiHallucinationPipeline::process(text, None)` all retain
+their pre-V132 behaviour, so all existing tests pass unchanged.
+
+### Files
+- `src/hallucination_detection.rs`
+- `src/anti_hallucination.rs`
+- `src/chain_of_verification.rs`
+- `src/bin/ai_cli.rs`
+- `examples/knowledge_earth.txt` (new)
+- `examples/knowledge_rust.txt` (new)
+- `docs/IMPROVEMENTS_V132.md` (new)
+- `Cargo.toml` (0.2.78 → 0.2.79)
+
 ## [Unreleased] - v92 (2026-05-06) — V131 Phase C.4: release automation (0.2.78)
 
 V131 closes the eight-cycle Tier-1 readiness sweep

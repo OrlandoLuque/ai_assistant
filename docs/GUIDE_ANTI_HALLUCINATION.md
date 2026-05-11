@@ -485,6 +485,39 @@ Step 4 - Compare:
   the language was first released in 1991.
 ```
 
+### LLM-backed verification (V132+)
+
+By default `verify_claim()` falls back to word-overlap (Jaccard)
+between the claim and the verification context — fast and
+deterministic but blind to paraphrase. Attach an LLM callback
+via `with_llm_verifier` to get the full CoVe behaviour: the
+engine sends a *Supported / Contradicted / Unsupported* prompt
+to the model and uses its verdict.
+
+```rust
+let cove_engine = ChainOfVerification::new(cove_config)
+    .with_llm_verifier(|prompt: &str| -> Option<String> {
+        // Call your LLM here. Return the response, or None on timeout.
+        my_llm_client.complete(prompt).ok()
+    });
+```
+
+`ai_cli verify --cove --knowledge <file>` wires this for you and
+sets `verification_source = VerificationSource::Both` so that
+file-sourced contexts are not filtered out by the source-type
+gate.
+
+The two demo knowledge files
+(`examples/knowledge_earth.txt`, `examples/knowledge_rust.txt`)
+let you try this end-to-end:
+
+```bash
+ai_cli verify --provider ollama --model "mistral:7b-instruct" \
+  --knowledge examples/knowledge_earth.txt \
+  --cove --quality-gates \
+  "Tell me about Earth"
+```
+
 ---
 
 ## 8. Quality Gates
