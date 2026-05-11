@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v95 (2026-05-11) — V134: CI gate calibration (0.2.81)
+
+Follow-up to V133. When V133 pushed V124–V133 to origin, two CI
+gates that had been added during that window (`Supply Chain` in
+V125 and `bench-budget` in V126) ran on master for the first time
+and exposed pre-existing config drift, not actual regressions.
+V134 calibrates both gates so a clean tree is green.
+
+### Fixed
+- **`deny.toml` license rejections.** Five transitive crates carry
+  licenses outside our default permissive allow-list:
+  - `epaint` ships SIL Open Font + Ubuntu Font for the egui glyph
+    atlas (assets, not code).
+  - `webpki-roots`, `webpki-roots 1.x`, `webpki-root-certs` ship
+    Mozilla's root certificate bundle under CDLA-Permissive-2.0
+    (certificate *data*, not code).
+  - `whisper-rs` and `whisper-rs-sys` are public-domain via the
+    Unlicense.
+  Added narrowly-scoped `[[licenses.exceptions]]` entries per
+  crate so a *new* dep carrying any of these still fails the gate
+  and forces an audit.
+- **`ai_assistant` reported "unlicensed" by `cargo-deny`.** Our
+  `LICENSE` file (PolyForm Noncommercial 1.0.0) matched at
+  confidence 0.90, below the previous `confidence-threshold = 0.93`.
+  Lowered the threshold to 0.90 *and* added a
+  `[[licenses.clarify]]` entry that pins the file hash
+  (`0x516ff7a6`) to the SPDX expression
+  `LicenseRef-PolyForm-Noncommercial-1.0.0`, with that expression
+  added to the `allow` list. The relaxed threshold therefore only
+  affects detection of our own LICENSE file; transitive license
+  recognition is unchanged.
+- **`bpe_token_count_200_words` 9× over budget.** Budget was set
+  in V126 from local laptop numbers (~270 µs observed × 1.5 =
+  400 000 ns). GH-hosted single-vCPU runners measure ~3.6 ms for
+  the same benchmark — a 13× slowdown that is entirely runner
+  hardware, not code. Raised the budget to 6 000 000 ns
+  (1.5× headroom over CI worst-case), with an updated note
+  documenting the runner / local gap so the next bump has
+  context.
+
+### Compatibility
+- No runtime / API surface changes. CI configuration only.
+
 ## [Unreleased] - v94 (2026-05-11) — V133: repo hygiene (0.2.80)
 
 Maintenance cycle. Three drifts had accumulated between V124

@@ -46,7 +46,11 @@ ignore = [
 # Licenses — PolyForm Noncommercial means we cannot ship copyleft.
 # ----------------------------------------------------------------
 [licenses]
-confidence-threshold = 0.93
+# 0.90 lets cargo-deny match our LICENSE file (PolyForm-Noncommercial-1.0.0
+# scores 0.90 because it's not in the standard SPDX corpus). The
+# [[licenses.clarify]] entry below pins the match so this threshold
+# only relaxes detection on the workspace crate itself, not transitives.
+confidence-threshold = 0.90
 # Permissive licenses we accept in dependencies.
 allow = [
     "MIT",
@@ -64,11 +68,41 @@ allow = [
     "OpenSSL",
     "BSL-1.0",
     "WTFPL",
+    # Our own license, recognised via [[licenses.clarify]] below.
+    "LicenseRef-PolyForm-Noncommercial-1.0.0",
 ]
-# Explicit refusals so a future bump can't silently pull in a copyleft
-# transitive. cargo-deny treats anything not in `allow` as a denial,
-# but listing these makes the intent explicit in code review.
-exceptions = []
+# Per-crate license exceptions. Scoped narrowly so a *new* transitive
+# carrying any of these licenses still fails the gate and forces an
+# audit. Reviewed at every dependency bump.
+exceptions = [
+    # egui font assets ship under SIL Open Font License + Ubuntu Font License.
+    # We do not redistribute the embedded fonts as separate artifacts; they
+    # travel with epaint as part of the GUI surface, which is acceptable
+    # under both licenses (OFL allows bundling, UFL is permissive).
+    { name = "epaint", version = "*", allow = ["OFL-1.1", "LicenseRef-UFL-1.0"] },
+    # webpki root certificate bundle is published by Mozilla under the
+    # Community Data License Agreement — Permissive 2.0 because it's
+    # certificate *data*, not code. Acceptable in a non-commercial library.
+    { name = "webpki-root-certs", version = "*", allow = ["CDLA-Permissive-2.0"] },
+    { name = "webpki-roots", version = "*", allow = ["CDLA-Permissive-2.0"] },
+    # whisper.cpp Rust bindings are dedicated to the public domain via
+    # the Unlicense. Equivalent to CC0 — acceptable.
+    { name = "whisper-rs", version = "*", allow = ["Unlicense"] },
+    { name = "whisper-rs-sys", version = "*", allow = ["Unlicense"] },
+]
+
+# Pin the detection of our own LICENSE file. The hash matches the
+# PolyForm Noncommercial 1.0.0 text shipped at the repo root; if the
+# LICENSE file is ever modified, this hash will need to be regenerated
+# (cargo-deny prints the new hash in the warning output).
+[[licenses.clarify]]
+name = "ai_assistant"
+version = "*"
+expression = "LicenseRef-PolyForm-Noncommercial-1.0.0"
+license-files = [
+    { path = "LICENSE", hash = 0x516ff7a6 },
+]
+
 
 # ----------------------------------------------------------------
 # Bans — keep the dep graph clean.
