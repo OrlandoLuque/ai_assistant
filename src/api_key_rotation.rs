@@ -71,7 +71,7 @@ impl ApiKey {
         }
 
         if let Some(expires) = self.expires_at {
-            if Instant::now() > expires {
+            if Instant::now() >= expires {
                 return false;
             }
         }

@@ -11,7 +11,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -26,17 +26,26 @@ pub struct NodeId(pub(crate) [u8; 20]);
 impl NodeId {
     /// Create a new random node ID
     pub fn random() -> Self {
-        let mut bytes = [0u8; 20];
+        // Mix a process-monotonic counter into the seed so consecutive calls
+        // never collide even when SystemTime::now() returns the same value
+        // (~15 ms granularity on Windows can otherwise produce duplicates).
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
+
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
 
-        // Simple pseudo-random generation using wrapping shifts
+        let seed = (now as u64) ^ counter.wrapping_mul(0x9E3779B97F4A7C15);
+        let seed_hi = (now >> 64) as u64 ^ counter.wrapping_mul(0xBF58476D1CE4E5B9);
+
+        let mut bytes = [0u8; 20];
         for (i, byte) in bytes.iter_mut().enumerate() {
-            let shift1 = (i * 8) % 128;
-            let shift2 = ((i + 7) * 3) % 128;
-            *byte = ((now >> shift1) ^ (now >> shift2)) as u8;
+            let shift1 = ((i * 8) % 64) as u32;
+            let shift2 = (((i + 7) * 3) % 64) as u32;
+            let s = if i < 10 { seed } else { seed_hi };
+            *byte = ((s >> shift1) ^ (s >> shift2)) as u8;
         }
 
         Self(bytes)
@@ -2129,10 +2138,14 @@ mod tests {
 
     #[test]
     fn test_node_id_random() {
-        let id1 = NodeId::random();
-        let id2 = NodeId::random();
-        // Should be different (with very high probability)
-        assert_ne!(id1, id2);
+        // 100 consecutive ids must all be distinct: SystemTime::now()
+        // resolution can be ~15 ms on Windows, so the counter mix-in is
+        // what guarantees uniqueness inside the same tick.
+        let mut ids = std::collections::HashSet::new();
+        for _ in 0..100 {
+            ids.insert(NodeId::random());
+        }
+        assert_eq!(ids.len(), 100, "NodeId::random() produced duplicates");
     }
 
     #[test]

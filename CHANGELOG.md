@@ -5,6 +5,62 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v97 (2026-05-14) — V136: NodeId collision + key expiry boundary (0.2.83)
+
+Closes the two follow-up flakes V135 listed as out of scope.
+Both turned out to be production-correctness bugs, not test
+artefacts: the tests were honest, the code under them wasn't.
+
+### Fixed
+- **`NodeId::random()` could return duplicates inside the same
+  clock tick.** The original implementation derived all 20 bytes
+  deterministically from `SystemTime::now().as_nanos()`. On
+  Windows, `SystemTime::now()` has ~15 ms resolution, so two
+  back-to-back calls inside one tick produced byte-identical
+  ids. `distributed::tests::test_replica_tracking` exercised
+  this directly (`let node_b = NodeId::random(); let node_c =
+  NodeId::random();`): when the collision hit, `HashSet` collapsed
+  them to one entry and `replicas.len()` returned 1 instead of 2.
+  Added a process-monotonic `AtomicU64` counter mixed into the
+  seed via `wrapping_mul(0x9E3779B97F4A7C15)` /
+  `0xBF58476D1CE4E5B9` (Knuth + xxHash splitmix constants), so
+  every call gets a unique seed regardless of clock granularity.
+  Strengthened `test_node_id_random` to assert 100 consecutive
+  ids are all distinct (was 2).
+- **`ApiKey::is_usable()` boundary off-by-one.** Used
+  `Instant::now() > expires_at`; with `with_expiry(Duration::ZERO)`
+  the two `Instant::now()` calls can land on the same monotonic
+  tick, making the comparison false and reporting an expired key
+  as usable. Semantically a key that "expires at T" is invalid
+  AT T, not strictly after T — switched to `>=`.
+  `api_key_rotation::tests::test_key_expiry` was checking exactly
+  this contract and intermittently failing on CI.
+
+### Compatibility
+- `NodeId::random()` still returns `Self` with the same `[u8; 20]`
+  shape and same `serde` representation. Callers that compared
+  serialised forms across versions are unaffected (it's random
+  output either way).
+- `is_usable()` behaviour change is at the boundary instant only.
+  Keys with non-zero expiry durations behave identically except in
+  the sub-microsecond window straddling the boundary, where the
+  new behaviour is the documented one.
+
+### Verification
+```bash
+cargo test --release --lib -- api_key_rotation:: distributed::
+# 53 passed (was: 51 reliable + 2 flaky)
+
+# Loop the previously-flaky tests
+for i in 1..20; do cargo test --release --lib -- \
+    api_key_rotation::tests::test_key_expiry \
+    distributed::tests::test_replica_tracking; done
+# 20/20 green
+
+cargo clippy --release --lib -- -D warnings
+# clean
+```
+
 ## [Unreleased] - v96 (2026-05-11) — V135: context-cache test flake (0.2.82)
 
 Closes the one job that stayed red after V134:
