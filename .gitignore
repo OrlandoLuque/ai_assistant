@@ -3,6 +3,7 @@
 *.swo
 .idea/
 .vscode/
+.run/
 *.log
 tmpclaude-*
 nul
@@ -17,3 +18,14 @@ ACKNOWLEDGMENTS.html
 _*.py
 _*.tmp
 _*.txt
+
+# Runtime data emitted by the binaries themselves
+/.ai_assistant/
+
+# Local-only files that are not part of the published crate
+/extras/
+/Informe_Viabilidad_ai_assistant.docx
+/ai_assistant_*.zip
+/extracted_lines.txt
+/insert_code.py
+/prompt_safe_creative.md
