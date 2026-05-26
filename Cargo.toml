@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.85"
+version = "0.2.86"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -149,6 +149,8 @@ full = [
     "backup",
     "gdpr",
     "models-dev-fetcher",
+    "hardware-detection",
+    "hardware-nvml",
 ]
 
 # Binary storage: bincode + gzip for internal data (faster, smaller than JSON)
@@ -162,6 +164,19 @@ async-runtime = ["dep:tokio", "dep:reqwest"]
 # parser/cache (V137) usable without dragging in the async runtime.
 # V138: turns the docstring "left to the caller" into a real client.
 models-dev-fetcher = ["async-runtime", "dep:futures"]
+
+# V139: host hardware probe (CPU, RAM, GPUs, OS). Foundation for V140
+# (Butler recommender) so the recommender knows what fits in VRAM.
+#
+# Base feature is sysinfo-only (cross-platform, gratis). NVIDIA probe
+# is opt-in via `hardware-nvml` because nvml-wrapper links to the
+# proprietary driver and is meaningless without one installed. ROCm
+# and Metal shell out to vendor CLIs (`rocm-smi` / `system_profiler`)
+# so they need no extra Rust deps — the sub-feature is just a cfg gate.
+hardware-detection = ["dep:sysinfo"]
+hardware-nvml = ["hardware-detection", "dep:nvml-wrapper"]
+hardware-rocm = ["hardware-detection"]
+hardware-metal = ["hardware-detection"]
 
 # LanceDB embedded vector database (Tier 2 — recommended upgrade from in-memory)
 # Not in 'full' by default due to heavy deps. Opt-in: --features vector-lancedb
@@ -655,6 +670,15 @@ llama-cpp-2 = { version = "0.1", optional = true, default-features = false }
 # UTF-8 incremental decoder used by `LlamaModel::token_to_piece` to stitch
 # multi-byte glyphs across tokens.
 encoding_rs = { version = "0.8", optional = true }
+
+# === V139: host hardware probe ===
+# Cross-platform CPU/RAM/OS info. Default features turn off the
+# `multithread` flag we don't need — we only call sysinfo from a
+# spawn_blocking thread, never from the async runtime.
+sysinfo = { version = "0.32", optional = true, default-features = false, features = ["system"] }
+# NVIDIA Management Library wrapper. Loads `nvml.dll` / `libnvidia-ml.so`
+# at runtime; absence of the driver is a recoverable error, not a panic.
+nvml-wrapper = { version = "0.12", optional = true }
 
 # V78: libc is only needed by ai_proxy on Unix for O_NOFOLLOW when opening the
 # audit log (symlink-safe append). Already transitive via other deps; declared

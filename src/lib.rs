@@ -158,6 +158,8 @@
 mod assistant;
 mod config;
 mod context;
+#[cfg(feature = "hardware-detection")]
+pub mod hardware_info;
 mod messages;
 mod models;
 pub mod models_dev;

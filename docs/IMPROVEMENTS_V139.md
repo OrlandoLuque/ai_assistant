@@ -1,6 +1,7 @@
 # V139 — Hardware detection (0.2.86)
 
-**Status**: DRAFT — pending V138 close (puede ir en paralelo)
+**Status**: SHIPPED 2026-05-26 (0.2.86) — `hardware_info` module +
+4 feature flags + `ai_setup hardware` CLI.
 **Scope**: módulo nuevo `src/hardware_info.rs` que detecta CPU, RAM,
 GPUs y aceleradores del host. Foundation para V140 (Butler recommender).
 **No-goals**: usar los datos (eso es V140), tuning runtime (out of project).
@@ -123,3 +124,52 @@ GPU 0: NVIDIA GeForce RTX 4090 — 24 GB VRAM (22 GB free)
 - Tuning runtime (cambiar `n_gpu_layers` en vivo según VRAM libre).
 - Monitorización continua (eso es gpu_monitor, futuro módulo).
 - Recomendaciones (V140).
+
+## Verification (shipped 2026-05-26)
+
+- `cargo build --lib` (default = full incl. `hardware-detection` +
+  `hardware-nvml`): clean.
+- `cargo build --lib --features "hardware-detection hardware-nvml
+  hardware-rocm hardware-metal"`: clean.
+- `cargo clippy --lib -- -D warnings`: clean.
+- `cargo clippy --bin ai_setup --features full -- -D warnings`: clean.
+- `cargo test --lib`: **6268 passed** (6262 → 6268, +6 in
+  `hardware_info::tests::`). Pre-existing flaky
+  `opentelemetry_integration::test_otlp_exporter_flush_with_mock`
+  passed on isolated re-run — unrelated to V139.
+
+## Decisiones de implementación (no en el plan original)
+
+- **`backend_support` as `Vec<String>` (not `Vec<models_dev::Backend>`)**:
+  decoupling the hardware module from the catalog taxonomy means V137
+  can evolve its `Backend` enum (e.g. adding `Mlx`, `Tgi`) without
+  forcing a hardware-probe rebuild. The recommender in V140 owns the
+  mapping.
+- **NVML isolation via `std::thread::spawn` + `mpsc::recv_timeout`**:
+  the plan suggested `tokio::spawn_blocking`. Using plain `std::thread`
+  keeps `hardware-detection` from pulling in `async-runtime` — a
+  hard requirement so that consumers who only want hardware data
+  don't have to take tokio.
+- **No `detect_async` variant**: the synchronous probe is fast enough
+  for the cached pattern (one-time ~500 ms hit). Wrapping it for
+  callers who happen to be in an async context belongs in those
+  callers, not here.
+- **`set_declared` returns `bool`, not `Result`**: the only failure
+  mode is "cache already populated", which is rarely actionable —
+  callers either set early or they don't. The previous `Result<(),
+  HardwareInfo>` returned a 248-byte error variant that clippy
+  flagged.
+- **Sysinfo pinned to 0.32**: 0.39 requires rustc 1.95; the project
+  targets 1.90. Re-evaluate on next toolchain bump.
+- **CPU features detected via `is_x86_feature_detected!` /
+  `is_aarch64_feature_detected!`**: compile-time `cfg(target_arch)`
+  branches plus runtime detection. RISC-V and other arches return
+  `CpuFeatures::default()` — honest "we don't know" rather than a
+  panic.
+- **Apple Silicon VRAM**: `system_profiler` does not expose VRAM on
+  unified-memory Macs. We record `0` with the documented caveat that
+  the recommender should fall back to RAM-based capacity.
+- **`HardwareInfo::pretty_summary()` is part of the public API**:
+  small string formatter, but elevated to a method so callers (the
+  CLI here, future GUI tabs) can call it directly without
+  duplicating the format.

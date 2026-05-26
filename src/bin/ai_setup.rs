@@ -60,6 +60,7 @@ fn main() -> ExitCode {
         Some("restore") => cmd_restore(&args[2..]),
         Some("install") => cmd_install(&args[2..]),
         Some("recommend") => cmd_recommend(&args[2..]),
+        Some("hardware") => cmd_hardware(&args[2..]),
         Some("--help") | Some("-h") | None => {
             print_help();
             ExitCode::SUCCESS
@@ -194,6 +195,10 @@ fn print_help() -> ExitCode {
     println!("  {}install{}  <target>                Install a prerequisite (ollama, docker, vllm, llamacpp, model <name>)", CYAN, RESET);
     println!(
         "  {}recommend{} [--workload <kind>]       Recommend a local inference runtime (Ollama / vLLM / llama.cpp / LM Studio)",
+        CYAN, RESET
+    );
+    println!(
+        "  {}hardware{}  [--json]                  Probe and print host hardware (CPU/RAM/GPU/OS)",
         CYAN, RESET
     );
     println!();
@@ -1158,4 +1163,53 @@ fn textwrap_simple(text: &str, width: usize) -> Vec<String> {
         out.push(current);
     }
     out
+}
+
+// =============================================================================
+// hardware — V139 host hardware probe
+// =============================================================================
+
+fn cmd_hardware(args: &[String]) -> ExitCode {
+    let mut as_json = false;
+    for a in args {
+        match a.as_str() {
+            "--json" | "-j" => as_json = true,
+            "--help" | "-h" => {
+                println!(
+                    "{}ai_setup hardware{} — Probe host CPU, RAM, GPUs, OS",
+                    BOLD, RESET
+                );
+                println!();
+                println!("{}Usage:{} ai_setup hardware [--json]", BOLD, RESET);
+                println!();
+                println!("  --json    Emit machine-readable JSON instead of the table.");
+                return ExitCode::SUCCESS;
+            }
+            other => {
+                eprintln!("Unknown argument: {}", other);
+                return ExitCode::from(1);
+            }
+        }
+    }
+
+    let info = match ai_assistant::hardware_info::detect() {
+        Ok(info) => info,
+        Err(e) => {
+            eprintln!("{}hardware probe failed: {}{}", RED, e, RESET);
+            return ExitCode::from(1);
+        }
+    };
+    if as_json {
+        match serde_json::to_string_pretty(&info) {
+            Ok(s) => println!("{}", s),
+            Err(e) => {
+                eprintln!("{}JSON encode failed: {}{}", RED, e, RESET);
+                return ExitCode::from(1);
+            }
+        }
+    } else {
+        println!("{}Host hardware{}", BOLD, RESET);
+        println!("{}", info.pretty_summary());
+    }
+    ExitCode::SUCCESS
 }

@@ -5,6 +5,61 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v100 (2026-05-26) — V139: Host hardware probe (0.2.86)
+
+Foundation for the V140 Butler recommender: a `hardware_info` module
+that reports CPU, RAM, GPU and OS so the recommender knows whether
+the sweet-spot model variant actually fits in VRAM. Independent of
+V137/V138 — the fetcher tells you *what exists*; this tells you
+*what your box can run*.
+
+### Added
+- **`hardware-detection`** feature flag (in `full`). Pulls only
+  `sysinfo` for cross-platform CPU/RAM/OS data.
+- **`hardware-nvml`** sub-feature (in `full`). Adds `nvml-wrapper`
+  for NVIDIA VRAM/compute-capability/driver-version. Driver-absent
+  hosts log a warning and report no GPUs — never an error.
+- **`hardware-rocm`** sub-feature (opt-in). Shells out to `rocm-smi
+  --showmeminfo vram --json`; needs no extra Rust deps.
+- **`hardware-metal`** sub-feature (opt-in, macOS). Shells out to
+  `system_profiler SPDisplaysDataType -json`.
+- **`hardware_info::HardwareInfo`** — top-level snapshot
+  (`source`, `cpu`, `ram`, `gpus`, `os`). `source` distinguishes a
+  real probe from a config-supplied `Declared` override.
+- **`hardware_info::detect()`** — probes the host now, returns
+  `Result<HardwareInfo, HardwareError>`. Sub-probe failures are
+  folded into empty subsections, not errors.
+- **`hardware_info::detect_cached()`** — `OnceLock<Arc<HardwareInfo>>`
+  so callers can call it freely. Falls back to a `Declared`
+  empty snapshot if the underlying probe ever fails.
+- **`hardware_info::set_declared()`** — inject a manually-declared
+  snapshot for tests / locked-down hosts. Returns `false` if the
+  cache is already populated.
+- **`HardwareInfo::pretty_summary()`** — stable human-readable
+  table; used by the CLI and by `tracing` log output.
+- **`ai_setup hardware [--json]`** subcommand — probe and print the
+  table or emit JSON for tooling.
+- **NVML safety** — probe runs on a `std::thread` with a 3 s
+  channel timeout. A wedged driver cannot block the rest of
+  `detect()`.
+
+### Decisions
+- `GpuInfo::backend_support: Vec<String>` not `Vec<models_dev::Backend>`.
+  Keeps the hardware module decoupled from the catalog taxonomy
+  (which can evolve independently). The recommender will map.
+- `HardwareError` is intentionally small; the public API returns
+  `Result` mostly for the rare "sysinfo init failed" case. Almost
+  every other probe failure is logged and silently produces an
+  empty subsection — a half-detected host is still useful.
+
+### Tests
+- 6 new tests in `hardware_info::tests` (round-trip serde, format
+  helpers, CPU-feature defaults, pretty summary, `detect()`
+  smoke test that asserts a populated snapshot on the build host).
+- 2 unit tests inside the gated `rocm_probe` module (JSON parsing).
+- 1 unit test inside the gated `metal_probe` module (VRAM string).
+- Lib test count: **6268** (6262 → 6268, +6 hardware_info).
+
 ## [Unreleased] - v99 (2026-05-26) — V138: HTTP fetcher in-crate + RefreshPolicy (0.2.85)
 
 Closes the docstring contradiction left over from V104.9: the file
