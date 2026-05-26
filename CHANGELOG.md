@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v103 (2026-05-26) — V142: RUSTSEC review automation (0.2.89)
+
+Operational pass to keep the `deny.toml#advisories.ignore` list
+from rotting. Every entry now carries a re-check trigger (a date or
+an upstream event), a monthly GitHub workflow nags by opening a
+tracking issue, and a runbook codifies the handling policy.
+
+### Added
+- **`.github/workflows/rustsec-review-monthly.yml`** — runs on the
+  1st of every month. `cargo audit --json` (unsuppressed) plus a
+  cross-reference against the `deny.toml` ignore list, then opens
+  (or updates, if it already exists for the month) an issue with
+  labels `supply-chain` + `monthly-review` listing every ignore +
+  its current status (still active vs. no longer reported) and any
+  new advisories that need triage.
+- **`docs/runbooks/rustsec-handling.md`** — operator-facing runbook
+  covering: how to add a new ignore (with the required justification
+  + re-check trigger), how to process the monthly review issue
+  (keep / fix / remove per entry), and what to do if a RUSTSEC
+  actually bit us in production.
+
+### Changed
+- **`deny.toml`** — every existing ignore (4 entries: bincode 1.x,
+  paste, rustls-pemfile, lru-via-tantivy) now includes a re-check
+  trigger comment. Format documented in the new runbook.
+- **`docs/runbooks/INDEX.md`** — registered the new runbook, bumped
+  "Last reviewed" to 2026-05-26 (V142).
+
+### Unchanged
+- PR gating: `cargo deny check` + `cargo audit` on PRs still
+  respect the ignores. This pass only adds nagging, not blocking.
+- The pre-existing `audit-deny-sync` job in `supply-chain.yml`
+  continues to verify that ci.yml + supply-chain.yml + deny.toml
+  reference the same ignore IDs.
+
 ## [Unreleased] - v102 (2026-05-26) — V141: wasmtime 36 → 41 (0.2.88)
 
 Routine dep refresh on the WASM backend used by `skill-forge`. Five

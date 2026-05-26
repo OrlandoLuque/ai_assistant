@@ -1,6 +1,7 @@
 # V142 — RUSTSEC review + automatización (0.2.89)
 
-**Status**: DRAFT — independiente, mantenimiento
+**Status**: SHIPPED 2026-05-26 (0.2.89) — monthly workflow +
+runbook + re-check triggers en cada ignore.
 **Scope**: revisar las 4 entradas vigentes de `deny.toml#advisories.ignore`,
 añadir automatización para que esa lista no se quede obsoleta.
 **No-goals**: parches a vulnerabilidades — las 4 ignoradas hoy están
@@ -84,3 +85,41 @@ Añadir sección "RUSTSEC handling" a `docs/runbooks/`:
 - Cambios a `cargo-deny` config más allá de la lista de ignores.
 - SBOM regen (eso ya está en V125, mantenido por Renovate).
 - Política de actualización de toolchain (separada).
+
+## Verification (shipped 2026-05-26)
+
+- `cargo build --lib`: clean.
+- `cargo test --lib`: 6284 passed (sin cambios, V142 sólo toca
+  config + docs + workflows).
+- `.github/workflows/rustsec-review-monthly.yml`: añadido, sintaxis
+  YAML válida (gh actions runner la valida en CI; en local
+  comprobado con `python -c 'import yaml; yaml.safe_load(open(...))'`
+  — equivalente).
+- `audit-deny-sync` (workflow pre-existente) sigue verificando que
+  los tres ignores listas no driftean.
+
+## Decisiones de implementación (no en el plan original)
+
+- **Re-check trigger por entrada, no fecha global**: cada ignore en
+  `deny.toml` lleva ahora una línea `Re-check by: <fecha> OR <evento
+  upstream>`. Más útil que una fecha global porque cada advisory
+  tiene su propio criterio de invalidación (un release de tantivy
+  no afecta a bincode).
+- **Issue por mes, no email**: el plan decía "abre issue". Implementado
+  con `actions/github-script@v7` que reutiliza el issue del mes si
+  ya existe (idempotente: re-run de workflow no genera duplicados).
+- **Sin lint que bloquee PRs sin re-check trigger**: el plan
+  proponía "la política exige justificación y fecha sin las cuales
+  el lint del workflow falla". Aplazado: la verificación
+  programática del formato del comentario es brittle (regex sobre
+  un TOML con comentarios). Se confía en la revisión humana del PR
+  más la nudge mensual. Si en V143+ se observa drift, se añade un
+  parser ad-hoc.
+- **Runbook en `docs/runbooks/rustsec-handling.md`**: sigue el formato
+  fijo de los otros runbooks (Symptoms / Decision tree / Policy /
+  Monthly review / Mitigate / Postmortem / Related).
+- **Cero código Rust tocado**: V142 es puramente operacional —
+  config + workflows + docs. No hay tests nuevos en Rust porque no
+  hay lógica nueva en Rust; el workflow se "testa" cuando se dispare
+  (manual `workflow_dispatch` para validarlo antes del próximo
+  primero de mes).

@@ -24,6 +24,7 @@ next operator can tell whether the playbook is fresh.
 | [rbac-token-expired](rbac-token-expired.md) | API requests get 401/403 immediately after deploy or rotation |
 | [backup-verify-failed](backup-verify-failed.md) | `ai_backup verify` returns non-zero |
 | [rag-empty-results](rag-empty-results.md) | RAG retrieves zero chunks for queries that should hit |
+| [rustsec-handling](rustsec-handling.md) | `cargo audit`/`cargo deny` red, or monthly review issue open |
 
 ## When in doubt
 
@@ -42,4 +43,4 @@ next operator can tell whether the playbook is fresh.
 * `docs/FEATURE_LIFECYCLE.md` — feature flag policy.
 * `docs/DPIA_TEMPLATE.md` — GDPR / data-subject erasure flow.
 
-*Last reviewed: 2026-05-06 (V130).*
+*Last reviewed: 2026-05-26 (V142).*
