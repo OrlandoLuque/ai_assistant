@@ -1,6 +1,9 @@
-# V141 — wasmtime 36 → 44 (0.2.88)
+# V141 — wasmtime 36 → 41 (0.2.88)
 
-**Status**: DRAFT — independiente, no bloquea ni se bloquea por otras fases
+**Status**: SHIPPED 2026-05-26 (0.2.88) — wasmtime 36 → 41 (NO 44 —
+ver "Decisiones"). API de `src/skill_forge/wasm.rs` no requirió
+cambios. Bonus: fixed long-standing `StepKind` collision in lib.rs
+that broke `--features skill-forge` builds.
 **Scope**: migrar el backend WASM de skill_forge de wasmtime 36 a 44.
 **No-goals**: añadir nuevas capabilities WASI, cambiar el modelo de
 fuel/epoch.
@@ -75,3 +78,50 @@ Si el bench `skill_forge_wasm_*` (si existe) se desvía, recalibrar.
 - Cambiar el modelo de seguridad de skill-forge.
 - Soporte para WASM components (component-model GA en 22+ pero
   introducir = scope nuevo).
+
+## Verification (shipped 2026-05-26)
+
+- `cargo build --lib`: clean (default features, sin skill-forge).
+- `cargo build --lib --features skill-forge`: clean.
+- `cargo build --bin ai_setup --features full`: clean.
+- `cargo build --bin ai_cli --features full`: clean.
+- `cargo clippy --lib --features skill-forge -- -D warnings`: clean.
+- `cargo test --lib`: **6284 passed, 0 failed** (default features).
+- `cargo test --lib --features skill-forge skill_forge::wasm::`:
+  **4 passed, 0 failed**.
+- `cargo deny check`: skipped (cargo-deny no instalado localmente —
+  cubierto por V142).
+
+## Decisiones de implementación (no en el plan original)
+
+- **41, no 44**: wasmtime 44 requiere rustc 1.92; el proyecto está
+  pinned a 1.90.0 via `rust-toolchain.toml`. wasmtime 42 requiere
+  1.91. wasmtime 41 es el último compatible con 1.90. La razón del
+  bump original (alejarse de 36.x para que la próxima RUSTSEC sea
+  menos dolorosa) se cumple igual con 41: 5 mayors de margen vs 0.
+  El salto a 44 se hará cuando el toolchain suba (decisión separada,
+  no en V141).
+- **No hubo cambios de API en `wasm.rs`**: `Engine`, `Config`,
+  `Module`, `Store`, `Linker`, `ResourceLimiter`, `set_fuel`,
+  `set_epoch_deadline`, `increment_epoch`, `Store::limiter`,
+  `consume_fuel`, `epoch_interruption`, `wasm_bulk_memory` siguen con
+  la misma signature en 41. El plan listaba cambios "posibles" y
+  ninguno se materializó en este rango de versiones.
+- **`wasi-common` pinned a 36**: el crate `wasi-common` está
+  deprecated upstream (no hay versiones 41+ en crates.io para él
+  como crate independiente — está absorbido por `wasmtime-wasi`).
+  Como no se importa en ningún archivo `.rs` del proyecto, se deja
+  en 36 sin tocar. Limpieza completa (drop de la dep + del feature
+  `dep:wasi-common`) se difiere para no inflar este PR.
+- **Fix colateral: `StepKind` collision en `src/lib.rs`**: el build
+  con `--features skill-forge` estaba roto en master (colisión entre
+  `skill_forge::StepKind` y `recipes::StepKind`). Se renombra el
+  re-export de `skill_forge` a `SkillStepKind`. Pre-existente; sólo
+  salió a la luz al verificar V141. `recipes::StepKind` (usado por
+  `ai_cli`) queda intacto.
+
+## Out of scope (post-V141)
+
+- Bump final a wasmtime 44+ (depende de subir rust-toolchain a 1.92).
+- Drop completo de `wasi-common` del Cargo.toml + feature
+  `skill-forge`.

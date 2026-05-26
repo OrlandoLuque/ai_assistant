@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v102 (2026-05-26) — V141: wasmtime 36 → 41 (0.2.88)
+
+Routine dep refresh on the WASM backend used by `skill-forge`. Five
+mayors of headroom away from the 36.x line, so the next RUSTSEC
+advisory against 36.x doesn't land on this codebase. No API surface
+changed in `src/skill_forge/wasm.rs` — `Engine`, `Config`, `Store`,
+`Linker`, `ResourceLimiter`, fuel/epoch APIs are stable across 36–41.
+
+### Changed
+- **`wasmtime` 36 → 41**, **`wasmtime-wasi` 36 → 41**. wasmtime 44
+  (the original V141 target) requires rustc 1.92; project toolchain
+  is pinned to 1.90, so 41 is the latest reachable. The jump to 44
+  will land alongside a toolchain bump.
+
+### Fixed
+- **`StepKind` collision in `src/lib.rs`** (pre-existing, surfaced
+  while verifying V141): builds with `--features skill-forge` were
+  broken because `skill_forge::StepKind` and `recipes::StepKind`
+  both re-exported under the same name. Renamed the skill_forge one
+  to `SkillStepKind`; `recipes::StepKind` (used by `ai_cli`) is
+  unchanged.
+
+### Unchanged
+- `wasi-common` stays at 36 — unused in source, deprecated upstream.
+  A separate cleanup PR will drop the dep entirely.
+
 ## [Unreleased] - v101 (2026-05-26) — V140: Model recommender (0.2.87)
 
 Closes the V137/V138/V139 chain. The catalog says *what exists*,

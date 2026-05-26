@@ -408,8 +408,8 @@ pub use skill_forge::{
     GateOutcome, GateVerdict, LedgerEvent, LedgerEventKind, LedgerVerifyError, NetAllowList,
     PathGlob, PromotionDecision, PromotionGate, PromotionPipeline, PromotionReason,
     SkillDefinition, SkillError, SkillId, SkillInputs, SkillLedger, SkillMode, SkillOutput,
-    SkillRegistry, SkillRegistryError, SkillStatus, SkillStep, SkillVersion, StepKind,
-    WasmArtifact,
+    SkillRegistry, SkillRegistryError, SkillStatus, SkillStep, SkillVersion,
+    StepKind as SkillStepKind, WasmArtifact,
 };
 
 #[cfg(feature = "prompt-synthesis")]
