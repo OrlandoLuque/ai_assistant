@@ -1091,9 +1091,15 @@ mod fetcher {
     }
 
     /// `reqwest`-backed implementation of `CatalogFetchClient`.
+    ///
+    /// Refuses to GET URLs whose host is a loopback/private/link-local
+    /// IP literal or the bare hostname `localhost` (V143 SSRF defense).
+    /// Tests that need to hit a local mock server should call
+    /// [`Self::with_allow_private_endpoints(true)`].
     #[derive(Clone, Default)]
     pub struct ReqwestCatalogClient {
         client: reqwest::Client,
+        allow_private_endpoints: bool,
     }
 
     impl ReqwestCatalogClient {
@@ -1102,7 +1108,106 @@ mod fetcher {
         }
 
         pub fn with_client(client: reqwest::Client) -> Self {
-            Self { client }
+            Self {
+                client,
+                allow_private_endpoints: false,
+            }
+        }
+
+        /// Enable GETs to loopback/private/link-local addresses. The
+        /// default (`false`) blocks AWS metadata
+        /// (169.254.169.254), localhost, RFC 1918, and IPv6
+        /// equivalents. Set this to `true` only for tests against an
+        /// in-process mock or for explicitly-trusted intranet endpoints.
+        pub fn with_allow_private_endpoints(mut self, allow: bool) -> Self {
+            self.allow_private_endpoints = allow;
+            self
+        }
+    }
+
+    /// Reject URLs that would let an attacker who controls the endpoint
+    /// string aim the fetcher at internal infrastructure (SSRF).
+    ///
+    /// Pure: no DNS lookup. Only literal IPs + the `localhost` hostname
+    /// are blocked. Domain names that resolve to private IPs are NOT
+    /// caught here — a DNS-rebinding-aware resolver would, but that's a
+    /// bigger change. Callers can layer their own resolver if needed;
+    /// this function closes the cheap foot-guns.
+    pub(super) fn validate_endpoint_url(
+        url: &str,
+        allow_private: bool,
+    ) -> Result<(), ModelsDevError> {
+        let parsed = reqwest::Url::parse(url)
+            .map_err(|e| ModelsDevError::Io(format!("invalid url {}: {}", url, e)))?;
+        let scheme = parsed.scheme();
+        if scheme != "http" && scheme != "https" {
+            return Err(ModelsDevError::Io(format!(
+                "scheme {} not allowed (http/https only)",
+                scheme
+            )));
+        }
+        if allow_private {
+            return Ok(());
+        }
+        let host_str = parsed
+            .host_str()
+            .ok_or_else(|| ModelsDevError::Io(format!("url {} has no host", url)))?;
+        if host_str.eq_ignore_ascii_case("localhost") {
+            return Err(ModelsDevError::Io(format!(
+                "endpoint {} points at localhost; opt in via with_allow_private_endpoints(true)",
+                url
+            )));
+        }
+        // `Url::host_str()` returns IPv6 with the surrounding brackets
+        // (`"[::1]"`), which `IpAddr::from_str` doesn't accept. Strip them
+        // before parsing.
+        let host_for_ip = host_str
+            .strip_prefix('[')
+            .and_then(|s| s.strip_suffix(']'))
+            .unwrap_or(host_str);
+        if let Ok(ip) = host_for_ip.parse::<std::net::IpAddr>() {
+            if is_private_ip(&ip) {
+                return Err(ModelsDevError::Io(format!(
+                    "endpoint {} points at a private/loopback/link-local address ({}); \
+                    opt in via with_allow_private_endpoints(true)",
+                    url, ip
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn is_private_ip(ip: &std::net::IpAddr) -> bool {
+        match ip {
+            std::net::IpAddr::V4(v4) => {
+                v4.is_loopback()
+                    || v4.is_private()
+                    || v4.is_link_local()
+                    || v4.is_broadcast()
+                    || v4.is_unspecified()
+                    || v4.is_documentation()
+                    // 100.64.0.0/10 — carrier-grade NAT
+                    || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 0x40)
+            }
+            std::net::IpAddr::V6(v6) => {
+                if v6.is_loopback() || v6.is_unspecified() {
+                    return true;
+                }
+                let segs = v6.segments();
+                // fc00::/7 unique-local
+                if (segs[0] & 0xfe00) == 0xfc00 {
+                    return true;
+                }
+                // fe80::/10 link-local
+                if (segs[0] & 0xffc0) == 0xfe80 {
+                    return true;
+                }
+                // ::ffff:0:0/96 IPv4-mapped → recurse
+                if let Some(v4) = v6.to_ipv4_mapped() {
+                    return is_private_ip(&std::net::IpAddr::V4(v4));
+                }
+                false
+            }
         }
     }
 
@@ -1115,6 +1220,7 @@ mod fetcher {
         ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, ModelsDevError>> + Send + 'a>> {
             Box::pin(async move {
                 use futures::StreamExt;
+                validate_endpoint_url(url, self.allow_private_endpoints)?;
                 let resp = self
                     .client
                     .get(url)
@@ -2278,6 +2384,136 @@ mod tests {
             assert_eq!(fetcher.endpoint(), "https://example.test/api.json");
             let reg = fetcher.registry().await.unwrap();
             assert_eq!(reg.source.as_deref(), Some("https://example.test/api.json"));
+        }
+
+        // ---------------------------------------------------------------
+        // V143 — SSRF defense in `ReqwestCatalogClient::validate_endpoint_url`
+        // ---------------------------------------------------------------
+
+        #[test]
+        fn ssrf_blocks_aws_metadata_ip() {
+            let err = crate::models_dev::fetcher::validate_endpoint_url(
+                "http://169.254.169.254/latest/meta-data",
+                false,
+            )
+            .unwrap_err();
+            let msg = format!("{}", err);
+            assert!(msg.contains("private/loopback/link-local"), "{}", msg);
+        }
+
+        #[test]
+        fn ssrf_blocks_loopback_v4() {
+            for url in [
+                "http://127.0.0.1/api.json",
+                "http://127.99.0.1/api.json",
+                "https://0.0.0.0/api.json",
+            ] {
+                let err =
+                    crate::models_dev::fetcher::validate_endpoint_url(url, false).unwrap_err();
+                let msg = format!("{}", err);
+                assert!(
+                    msg.contains("private/loopback/link-local"),
+                    "expected SSRF block for {}, got {}",
+                    url,
+                    msg
+                );
+            }
+        }
+
+        #[test]
+        fn ssrf_blocks_localhost_hostname() {
+            let err = crate::models_dev::fetcher::validate_endpoint_url(
+                "http://localhost:8080/api.json",
+                false,
+            )
+            .unwrap_err();
+            let msg = format!("{}", err);
+            assert!(msg.contains("localhost"), "{}", msg);
+        }
+
+        #[test]
+        fn ssrf_blocks_rfc1918_ranges() {
+            for url in [
+                "http://10.0.0.1/api.json",
+                "http://172.16.0.1/api.json",
+                "http://172.31.255.255/api.json",
+                "http://192.168.1.1/api.json",
+            ] {
+                assert!(
+                    crate::models_dev::fetcher::validate_endpoint_url(url, false).is_err(),
+                    "expected SSRF block for {}",
+                    url
+                );
+            }
+        }
+
+        #[test]
+        fn ssrf_blocks_loopback_v6_and_ula() {
+            for url in [
+                "http://[::1]/api.json",
+                "http://[fc00::1]/api.json",
+                "http://[fe80::1]/api.json",
+                "http://[::ffff:127.0.0.1]/api.json",
+            ] {
+                assert!(
+                    crate::models_dev::fetcher::validate_endpoint_url(url, false).is_err(),
+                    "expected SSRF block for {}",
+                    url
+                );
+            }
+        }
+
+        #[test]
+        fn ssrf_blocks_non_http_schemes() {
+            for url in [
+                "file:///etc/passwd",
+                "ftp://example.com/api.json",
+                "gopher://example.com/",
+            ] {
+                let err =
+                    crate::models_dev::fetcher::validate_endpoint_url(url, false).unwrap_err();
+                let msg = format!("{}", err);
+                assert!(msg.contains("scheme"), "{}", msg);
+            }
+        }
+
+        #[test]
+        fn ssrf_allows_public_endpoints() {
+            for url in [
+                "https://models.dev/api.json",
+                "https://huggingface.co/api/models",
+                "http://8.8.8.8/api.json",
+            ] {
+                assert!(
+                    crate::models_dev::fetcher::validate_endpoint_url(url, false).is_ok(),
+                    "expected {} to pass SSRF gate",
+                    url
+                );
+            }
+        }
+
+        #[test]
+        fn ssrf_opt_out_allows_localhost() {
+            // `with_allow_private_endpoints(true)` lifts the gate for
+            // tests / explicitly trusted intranet endpoints.
+            assert!(crate::models_dev::fetcher::validate_endpoint_url(
+                "http://127.0.0.1:1234/api.json",
+                true
+            )
+            .is_ok());
+            assert!(crate::models_dev::fetcher::validate_endpoint_url(
+                "http://localhost/api.json",
+                true
+            )
+            .is_ok());
+        }
+
+        #[test]
+        fn ssrf_rejects_malformed_url() {
+            let err =
+                crate::models_dev::fetcher::validate_endpoint_url("not-a-url", false).unwrap_err();
+            let msg = format!("{}", err);
+            assert!(msg.contains("invalid url"), "{}", msg);
         }
     }
 }

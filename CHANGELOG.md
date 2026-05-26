@@ -5,6 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v104 (2026-05-26) — V143: Security audit V137-V142 (0.2.90)
+
+Closes the V137-V143 chain with a focused audit of every code path
+introduced since V137. Ten findings analysed; two graduated into
+shipped code-level fixes, two are documented as accepted with a
+deferred remediation path, six are confirmed non-exploitable.
+Audit report: [`docs/SECURITY_AUDIT_V143.md`](docs/SECURITY_AUDIT_V143.md).
+
+### Security
+- **V143-001 SSRF in `ModelsDevFetcher`** (Medium): the fetcher
+  would happily GET `http://169.254.169.254/...` (cloud metadata) or
+  any RFC 1918 host if pointed there. `ReqwestCatalogClient` now
+  validates the endpoint URL before issuing the request — rejects
+  non-`http(s)` schemes, IPv4/IPv6 loopback/private/link-local
+  literals, and the bare hostname `localhost`. Opt-out
+  (`with_allow_private_endpoints(true)`) for tests + trusted
+  intranet endpoints. 9 new tests
+  (`models_dev::tests::fetcher_tests::ssrf_*`).
+- **V143-002 prompt-injection wrapper escape in advisor**
+  (Medium): an attacker who controlled `RecommendationRequest.user_hint`
+  could break out of the `<<<...>>>` block by embedding `>>>` and
+  inject pseudo-system instructions for the LLM advisor.
+  `sanitize_user_hint()` now replaces both delimiters with
+  visually-similar Unicode angle quotes, strips control chars
+  (except `\n`/`\t`), and caps length at 2 KiB on a UTF-8 boundary.
+  4 new tests (`model_recommender::tests::sanitize_*` and
+  `build_prompt_wraps_sanitised_hint_only`).
+
+### Documented as accepted
+- **V143-003 catalog tampering**: cryptographic signing of catalog
+  responses deferred to V144+ (needs publisher identity). TLS +
+  payload cap + post-filter by `HardwareInfo` mitigate today.
+- **V143-008 `/hardware` endpoint privacy**: no endpoint exposes
+  `HardwareInfo` today (V140 deferred wiring). Recorded as a contract
+  for V140.1: must land behind auth/RBAC.
+
+### Confirmed non-exploitable
+- **V143-004** JSON unknown-fields — bounded by 4 MiB payload cap.
+- **V143-005** auth tokens in errors — fetcher path never carries
+  credentials.
+- **V143-006** hardware probe shell injection — `Command::new` with
+  literal args only.
+- **V143-007** NVML driver hang — already mitigated by 3 s mpsc
+  timeout in V139.
+- **V143-009** wasmtime sandbox — fuel + memory + epoch all bounded.
+- **V143-010** background refresh DOS — bounded by `BackoffPolicy`
+  default (max 60 min, 5 consecutive failures).
+
+### Tests
+- 13 new (9 SSRF + 4 sanitiser). Total: 6297 (was 6284). Default
+  feature `cargo test --lib` clean; clippy clean with
+  `--features model-recommender,models-dev-fetcher`.
+
 ## [Unreleased] - v103 (2026-05-26) — V142: RUSTSEC review automation (0.2.89)
 
 Operational pass to keep the `deny.toml#advisories.ignore` list
