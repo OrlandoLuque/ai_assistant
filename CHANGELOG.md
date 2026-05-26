@@ -5,6 +5,61 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v98 (2026-05-26) — V137: extended catalog schema for open-weights universe (0.2.84)
+
+First milestone of the V137-V143 roadmap. Extends `models_dev` from a
+cloud-catalog mirror into a schema that can also describe the
+open-weights universe: families with multiple quantizations, modifier
+variants (abliterated/uncensored), sweet-spot tags, hardware
+requirements and LoRA adapters. Pure schema work — no fetcher yet
+(V138), no recommender yet (V140). The schema is the foundation the
+rest of the phases build on.
+
+### Added
+- **`models_dev::ModelFamily`** — base weights + N variants + LoRA
+  adapters, tagged by `Modality` and `FamilyTag`. Carries
+  `context_window`, `training_cutoff`, `creator`, `description`.
+- **`ModelVariant`** — concrete weight file with `VariantKind`
+  (base / MoE / distilled / fine-tune / merge), `Quantization`,
+  `VariantModifier` (abliterated / uncensored / community quant),
+  `HardwareRequirements`, `SweetSpot` tags, `Provenance`, `license`.
+- **`LoraAdapter`** — low-rank patch with `AdapterPurpose` (coding,
+  writing, reasoning, math, translation, roleplay, medical, legal,
+  other) and base family pointer.
+- **`Quantization`** open enum covering FP32/FP16/BF16, Q8_0, Q6_K,
+  Q5_K_{M,S}, Q5_{0,1}, Q4_K_{M,S}, Q4_{0,1}, Q3_K_{L,M,S}, Q2_K,
+  IQ4_NL, IQ3_S, IQ2_XS, plus `Other(String)` for forward-compat.
+  Methods: `parse`, `as_str`, `quality_rank`, `Display`,
+  `From<&str>` / `From<String>`, custom Serialize/Deserialize
+  round-tripping through the canonical GGUF string form.
+- **`ModelSource`** — `HuggingFace { repo, file }`, `Ollama { tag }`,
+  `Url { url }`, `Curated { key }`; `key()` for stable dedup ids.
+- **`HardwareRequirements`** — `min_vram_bytes`, `min_ram_bytes`,
+  `gpu_archs` (CUDA compute / ROCm / Metal / Vulkan / CPU),
+  `backends` (llama.cpp mainline + PrismML, Ollama, vLLM, LM Studio,
+  text-gen-webui, koboldcpp, Candle, MLX). `is_cpu_viable()` helper.
+- **`ModelRegistry`** family API: `family_count`, `lookup_family`,
+  `find_variant` (returns owning family), `find_adapter`,
+  `families_by_tag`, `families_by_modality`. `ModelFamily`
+  helpers: `lookup_variant`, `lookup_adapter`, `has_tag`,
+  `variants_fitting_vram` (the VRAM-aware fallback primitive
+  V140's recommender will use).
+- **JSON schema** — `ModelRegistry::from_json` now accepts an
+  optional `families: [...]` field alongside `models`. Legacy
+  payloads continue to parse with an empty families list.
+- **20 new tests** including a Llama-3.1-8B fixture with four
+  quantizations + one LoRA adapter, exercising parse round-trip,
+  case-insensitive lookups, VRAM-fit filtering across quants,
+  cross-cache round-trip, empty-id rejection for families/variants,
+  Quantization parse/Serialize/quality_rank ordering.
+
+### Compatibility
+- All new types are `#[non_exhaustive]` (V39 convention).
+- `Quantization::Other(String)` keeps unknown GGUF tags round-tripping
+  through Serialize/Deserialize without lossy parsing.
+- Legacy `models: [...]`-only payloads parse unchanged and surface
+  `family_count() == 0`.
+
 ## [Unreleased] - v97 (2026-05-14) — V136: NodeId collision + key expiry boundary (0.2.83)
 
 Closes the two follow-up flakes V135 listed as out of scope.

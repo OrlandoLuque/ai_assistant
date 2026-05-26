@@ -125,10 +125,541 @@ pub struct ModelMetadata {
     pub aliases: Vec<String>,
 }
 
+// ============================================================================
+// Extended schema (V137) — open-weights universe
+// ============================================================================
+//
+// `ModelMetadata` above models the cloud catalog (one row per
+// addressable model). Open-weights modelling needs richer structure:
+// a family (e.g. Llama-3.1-8B) ships in many quantizations (Q4_K_M,
+// Q5_K_S, Q8_0…) and may be paired with LoRA adapters that specialise
+// the base for a task. Each variant has its own VRAM/RAM footprint
+// and backend support matrix.
+//
+// The new types live alongside `ModelMetadata`. `ModelRegistry` gains
+// an optional `families` field; callers that only consume the legacy
+// cloud schema (the only consumers as of V136) keep working unchanged.
+
+/// Modality the family operates on. Default `Text`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum Modality {
+    /// Plain text in/out.
+    Text,
+    /// Accepts image + text input, produces text.
+    VisionText,
+    /// Audio in, text out (ASR-like) or text in, audio out (TTS).
+    TextAudio,
+    /// Audio only (e.g. speech recogniser).
+    AudioOnly,
+    /// Any-to-any multimodal.
+    Multimodal,
+    /// Vector embeddings only.
+    Embedding,
+}
+
+impl Default for Modality {
+    fn default() -> Self {
+        Self::Text
+    }
+}
+
+/// Coarse family tag for routing/recommendation. Orthogonal to
+/// `ModelCapability` which lists individual feature flags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum FamilyTag {
+    GeneralChat,
+    Reasoning,
+    Coding,
+    Math,
+    Multilingual,
+    Roleplay,
+    Vision,
+    LongContext,
+    Embedding,
+    Instruct,
+    Base,
+}
+
+/// Quantization scheme. Open enum: unknown schemes round-trip through
+/// `Other(String)` so new GGUF variants don't break parsing.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Quantization {
+    Fp32,
+    Fp16,
+    Bf16,
+    Q8_0,
+    Q6K,
+    Q5KM,
+    Q5KS,
+    Q5_0,
+    Q5_1,
+    Q4KM,
+    Q4KS,
+    Q4_0,
+    Q4_1,
+    Q3KL,
+    Q3KM,
+    Q3KS,
+    Q2K,
+    /// PrismML fork only.
+    Q1_0,
+    Iq4NL,
+    Iq3S,
+    Iq2XS,
+    Other(String),
+}
+
+impl Quantization {
+    /// Parse a quantization tag. Case-insensitive; trims surrounding
+    /// whitespace. Unknown schemes round-trip through `Other`.
+    pub fn parse(s: &str) -> Self {
+        let upper = s.trim().to_ascii_uppercase();
+        match upper.as_str() {
+            "FP32" | "F32" => Self::Fp32,
+            "FP16" | "F16" => Self::Fp16,
+            "BF16" => Self::Bf16,
+            "Q8_0" => Self::Q8_0,
+            "Q6_K" => Self::Q6K,
+            "Q5_K_M" => Self::Q5KM,
+            "Q5_K_S" => Self::Q5KS,
+            "Q5_0" => Self::Q5_0,
+            "Q5_1" => Self::Q5_1,
+            "Q4_K_M" => Self::Q4KM,
+            "Q4_K_S" => Self::Q4KS,
+            "Q4_0" => Self::Q4_0,
+            "Q4_1" => Self::Q4_1,
+            "Q3_K_L" => Self::Q3KL,
+            "Q3_K_M" => Self::Q3KM,
+            "Q3_K_S" => Self::Q3KS,
+            "Q2_K" => Self::Q2K,
+            "Q1_0" => Self::Q1_0,
+            "IQ4_NL" => Self::Iq4NL,
+            "IQ3_S" => Self::Iq3S,
+            "IQ2_XS" => Self::Iq2XS,
+            _ => Self::Other(s.trim().to_string()),
+        }
+    }
+
+    /// Canonical string form (GGUF naming, uppercase).
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Fp32 => "FP32",
+            Self::Fp16 => "FP16",
+            Self::Bf16 => "BF16",
+            Self::Q8_0 => "Q8_0",
+            Self::Q6K => "Q6_K",
+            Self::Q5KM => "Q5_K_M",
+            Self::Q5KS => "Q5_K_S",
+            Self::Q5_0 => "Q5_0",
+            Self::Q5_1 => "Q5_1",
+            Self::Q4KM => "Q4_K_M",
+            Self::Q4KS => "Q4_K_S",
+            Self::Q4_0 => "Q4_0",
+            Self::Q4_1 => "Q4_1",
+            Self::Q3KL => "Q3_K_L",
+            Self::Q3KM => "Q3_K_M",
+            Self::Q3KS => "Q3_K_S",
+            Self::Q2K => "Q2_K",
+            Self::Q1_0 => "Q1_0",
+            Self::Iq4NL => "IQ4_NL",
+            Self::Iq3S => "IQ3_S",
+            Self::Iq2XS => "IQ2_XS",
+            Self::Other(s) => s.as_str(),
+        }
+    }
+
+    /// Coarse quality tier — used by the recommender to pick a
+    /// fallback when the sweet-spot quantization doesn't fit VRAM.
+    pub fn quality_rank(&self) -> u8 {
+        match self {
+            Self::Fp32 | Self::Fp16 | Self::Bf16 => 100,
+            Self::Q8_0 => 90,
+            Self::Q6K => 80,
+            Self::Q5KM => 72,
+            Self::Q5KS | Self::Q5_0 | Self::Q5_1 => 68,
+            Self::Q4KM => 60,
+            Self::Q4KS | Self::Q4_0 | Self::Q4_1 | Self::Iq4NL => 55,
+            Self::Q3KL => 45,
+            Self::Q3KM => 40,
+            Self::Q3KS | Self::Iq3S => 35,
+            Self::Q2K | Self::Iq2XS => 25,
+            Self::Q1_0 => 15,
+            Self::Other(_) => 50,
+        }
+    }
+}
+
+impl std::fmt::Display for Quantization {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for Quantization {
+    fn from(s: &str) -> Self {
+        Self::parse(s)
+    }
+}
+
+impl From<String> for Quantization {
+    fn from(s: String) -> Self {
+        Self::parse(&s)
+    }
+}
+
+impl From<Quantization> for String {
+    fn from(q: Quantization) -> Self {
+        q.as_str().to_string()
+    }
+}
+
+impl Serialize for Quantization {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for Quantization {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        Ok(Self::parse(&s))
+    }
+}
+
+/// Variant kind — what the file is, structurally.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum VariantKind {
+    /// Full weights (the base model).
+    Base,
+    /// Mixture-of-experts variant (e.g. Mixtral).
+    MoE,
+    /// Distilled smaller version of a larger family.
+    Distilled,
+    /// Fine-tuned variant (instruct, code, etc.).
+    FineTune,
+    /// Merge of several fine-tunes.
+    Merge,
+}
+
+impl Default for VariantKind {
+    fn default() -> Self {
+        Self::Base
+    }
+}
+
+/// Optional content/behaviour modifier independent of `VariantKind`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum VariantModifier {
+    /// Refusal layers removed via orthogonalisation. Safety guardrails
+    /// largely gone — caller responsibility to enforce policy.
+    Abliterated,
+    /// Trained without alignment / fine-tuned past it.
+    Uncensored,
+    /// Quantised by a community member (not the original creator).
+    CommunityQuant,
+}
+
+/// Where a variant lives.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ModelSource {
+    HuggingFace {
+        repo: String,
+        file: Option<String>,
+    },
+    Ollama {
+        tag: String,
+    },
+    Url {
+        url: String,
+    },
+    /// Curated entry shipped in-crate (`curated_models.rs`).
+    Curated {
+        key: String,
+    },
+}
+
+impl ModelSource {
+    /// Stable identifier for dedup / caching.
+    pub fn key(&self) -> String {
+        match self {
+            Self::HuggingFace { repo, file } => match file {
+                Some(f) => format!("hf:{}#{}", repo, f),
+                None => format!("hf:{}", repo),
+            },
+            Self::Ollama { tag } => format!("ollama:{}", tag),
+            Self::Url { url } => format!("url:{}", url),
+            Self::Curated { key } => format!("curated:{}", key),
+        }
+    }
+}
+
+/// Provenance / publisher classification.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum Provenance {
+    /// Published by the model's creator (Meta, Mistral, etc.).
+    Official,
+    /// Community fork or fine-tune.
+    CommunityFork {
+        author: String,
+    },
+    /// Mainstream community quant (TheBloke, bartowski, …).
+    CommunityQuant {
+        author: String,
+    },
+    /// Curated entry — vetted manually in-crate.
+    Curated,
+    Unknown,
+}
+
+impl Default for Provenance {
+    fn default() -> Self {
+        Self::Unknown
+    }
+}
+
+/// GPU architecture / API target.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum GpuArch {
+    /// NVIDIA CUDA compute capability (e.g. `"7.5"`, `"8.9"`).
+    Cuda { compute: String },
+    /// AMD ROCm / HIP.
+    Rocm,
+    /// Apple Metal.
+    Metal,
+    /// Vulkan compute (cross-vendor fallback).
+    Vulkan,
+    /// CPU-only — no GPU required.
+    Cpu,
+}
+
+/// Backend known to be able to load this variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum Backend {
+    LlamaCppMainline,
+    LlamaCppPrismML,
+    Ollama,
+    Vllm,
+    LmStudio,
+    TextGenWebUi,
+    KoboldCpp,
+    Candle,
+    Mlx,
+}
+
+/// Sweet-spot tag — multiple may apply to the same variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SweetSpot {
+    /// Best output quality for this family.
+    Quality,
+    /// Best quality / VRAM tradeoff.
+    VramEfficiency,
+    /// Fastest tok/s on consumer GPU.
+    Speed,
+    /// Smallest viable for the family.
+    Lowest,
+}
+
+/// LoRA adapter purpose.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum AdapterPurpose {
+    Coding,
+    Writing,
+    Reasoning,
+    Math,
+    Translation,
+    Roleplay,
+    Medical,
+    Legal,
+    /// Anything not covered by the closed list — keep the original
+    /// label for surface in UI.
+    Other(String),
+}
+
+/// Hardware required to run a specific variant.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct HardwareRequirements {
+    /// Minimum VRAM in bytes; `None` means CPU-only is viable.
+    #[serde(default)]
+    pub min_vram_bytes: Option<u64>,
+    /// Minimum system RAM in bytes (off-GPU residency).
+    #[serde(default)]
+    pub min_ram_bytes: u64,
+    /// GPU architectures known to work (empty = unknown / any).
+    #[serde(default)]
+    pub gpu_archs: Vec<GpuArch>,
+    /// Backends known to load this variant.
+    #[serde(default)]
+    pub backends: Vec<Backend>,
+}
+
+impl HardwareRequirements {
+    /// True if the variant has no GPU requirement and a runnable RAM
+    /// figure.
+    pub fn is_cpu_viable(&self) -> bool {
+        self.min_vram_bytes.is_none() || self.gpu_archs.iter().any(|a| matches!(a, GpuArch::Cpu))
+    }
+}
+
+/// A single weight file / variant of a family.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct ModelVariant {
+    /// Stable id, e.g. `"llama-3.1-8b-Q4_K_M"`.
+    pub id: String,
+    /// Optional display label override.
+    #[serde(default)]
+    pub display_name: Option<String>,
+    /// Structural kind.
+    #[serde(default)]
+    pub variant_kind: VariantKind,
+    /// Quantization scheme (if applicable).
+    #[serde(default)]
+    pub quantization: Option<Quantization>,
+    /// Optional content/behaviour modifier.
+    #[serde(default)]
+    pub modifier: Option<VariantModifier>,
+    /// On-disk size in bytes.
+    #[serde(default)]
+    pub size_bytes: u64,
+    /// Hardware constraints.
+    #[serde(default)]
+    pub requirements: HardwareRequirements,
+    /// Where the file lives.
+    pub source: ModelSource,
+    /// Sweet-spot tags (may be empty).
+    #[serde(default)]
+    pub sweet_spot_for: Vec<SweetSpot>,
+    /// Who published it.
+    #[serde(default)]
+    pub provenance: Provenance,
+    /// SPDX-ish license string. Free-form because the open-weights
+    /// world is full of bespoke licenses (Llama Community, Gemma…).
+    #[serde(default)]
+    pub license: String,
+}
+
+/// A LoRA adapter — a low-rank patch applied on top of a base model.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct LoraAdapter {
+    /// Stable id of the adapter.
+    pub id: String,
+    /// Optional display label.
+    #[serde(default)]
+    pub display_name: Option<String>,
+    /// `ModelFamily::id` this adapter targets.
+    pub base_family: String,
+    /// What the adapter specialises the base for.
+    pub purpose: AdapterPurpose,
+    /// On-disk size in bytes.
+    #[serde(default)]
+    pub size_bytes: u64,
+    /// Where the file lives.
+    pub source: ModelSource,
+    /// Adapter license.
+    #[serde(default)]
+    pub license: String,
+}
+
+/// A model family — base weights + N variants (quantizations / fine-tunes)
+/// + optional LoRA adapters.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct ModelFamily {
+    /// Stable family id, e.g. `"llama-3.1-8b"`.
+    pub id: String,
+    /// Display name.
+    pub display_name: String,
+    /// Who created the base model.
+    #[serde(default)]
+    pub creator: String,
+    /// One-line summary.
+    #[serde(default)]
+    pub description: String,
+    /// Primary modality.
+    #[serde(default)]
+    pub modality: Modality,
+    /// Max context window in tokens (None = unknown / varies).
+    #[serde(default)]
+    pub context_window: Option<u32>,
+    /// Knowledge cutoff as ISO-8601 string.
+    #[serde(default)]
+    pub training_cutoff: Option<String>,
+    /// Coarse family tags for routing/recommendation.
+    #[serde(default)]
+    pub family_tags: Vec<FamilyTag>,
+    /// Concrete variants (quantizations, fine-tunes…).
+    #[serde(default)]
+    pub variants: Vec<ModelVariant>,
+    /// LoRA adapters known for this family.
+    #[serde(default)]
+    pub lora_adapters: Vec<LoraAdapter>,
+}
+
+impl ModelFamily {
+    /// Lookup a variant by id within this family.
+    pub fn lookup_variant(&self, id: &str) -> Option<&ModelVariant> {
+        let lower = id.to_lowercase();
+        self.variants.iter().find(|v| v.id.to_lowercase() == lower)
+    }
+
+    /// Lookup a LoRA adapter by id within this family.
+    pub fn lookup_adapter(&self, id: &str) -> Option<&LoraAdapter> {
+        let lower = id.to_lowercase();
+        self.lora_adapters
+            .iter()
+            .find(|a| a.id.to_lowercase() == lower)
+    }
+
+    /// True if any of the family's tags match the requested tag.
+    pub fn has_tag(&self, tag: FamilyTag) -> bool {
+        self.family_tags.contains(&tag)
+    }
+
+    /// Variants that fit inside `available_vram_bytes` of GPU memory.
+    /// CPU-viable variants are always included (since they don't need
+    /// VRAM).
+    pub fn variants_fitting_vram(&self, available_vram_bytes: u64) -> Vec<&ModelVariant> {
+        self.variants
+            .iter()
+            .filter(|v| match v.requirements.min_vram_bytes {
+                None => true,
+                Some(need) => need <= available_vram_bytes,
+            })
+            .collect()
+    }
+}
+
 /// In-memory registry.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ModelRegistry {
     pub models: Vec<ModelMetadata>,
+    /// Open-weights families (V137+). Empty for legacy models.dev
+    /// payloads.
+    #[serde(default)]
+    pub families: Vec<ModelFamily>,
     /// When this snapshot was fetched (monotonic across cache reloads).
     #[serde(default)]
     pub fetched_at: Option<SystemTime>,
@@ -139,19 +670,27 @@ pub struct ModelRegistry {
 
 impl ModelRegistry {
     /// Parse from a JSON document. Accepts both `{"models": [...]}` and a
-    /// bare array `[...]`. Sets `fetched_at` to `now`.
+    /// bare array `[...]`. The object form may also carry a `families: [...]`
+    /// array (V137+) holding open-weights families with their variants and
+    /// LoRA adapters; the field is optional and falls back to empty for
+    /// legacy payloads. Sets `fetched_at` to `now`.
     pub fn from_json(text: &str) -> Result<Self, ModelsDevError> {
         // Bare-array tolerance.
         let trimmed = text.trim_start();
         let value: serde_json::Value =
             serde_json::from_str(trimmed).map_err(|e| ModelsDevError::Parse(e.to_string()))?;
 
-        let models_val = match value {
-            serde_json::Value::Array(_) => value,
-            serde_json::Value::Object(ref obj) => obj
-                .get("models")
-                .cloned()
-                .unwrap_or(serde_json::Value::Array(Vec::new())),
+        let (models_val, families_val) = match value {
+            serde_json::Value::Array(_) => (value, serde_json::Value::Array(Vec::new())),
+            serde_json::Value::Object(mut obj) => {
+                let models_val = obj
+                    .remove("models")
+                    .unwrap_or(serde_json::Value::Array(Vec::new()));
+                let families_val = obj
+                    .remove("families")
+                    .unwrap_or(serde_json::Value::Array(Vec::new()));
+                (models_val, families_val)
+            }
             other => {
                 return Err(ModelsDevError::Parse(format!(
                     "unexpected top-level JSON kind: {}",
@@ -162,15 +701,39 @@ impl ModelRegistry {
 
         let models: Vec<ModelMetadata> =
             serde_json::from_value(models_val).map_err(|e| ModelsDevError::Parse(e.to_string()))?;
-        // Reject empty id.
+        let families: Vec<ModelFamily> = serde_json::from_value(families_val)
+            .map_err(|e| ModelsDevError::Parse(e.to_string()))?;
+        // Reject empty ids in either section.
         for m in &models {
             if m.id.trim().is_empty() {
                 return Err(ModelsDevError::Parse("model with empty id".into()));
             }
         }
+        for f in &families {
+            if f.id.trim().is_empty() {
+                return Err(ModelsDevError::Parse("family with empty id".into()));
+            }
+            for v in &f.variants {
+                if v.id.trim().is_empty() {
+                    return Err(ModelsDevError::Parse(format!(
+                        "variant with empty id in family {}",
+                        f.id
+                    )));
+                }
+            }
+            for a in &f.lora_adapters {
+                if a.id.trim().is_empty() {
+                    return Err(ModelsDevError::Parse(format!(
+                        "adapter with empty id in family {}",
+                        f.id
+                    )));
+                }
+            }
+        }
 
         Ok(Self {
             models,
+            families,
             fetched_at: Some(SystemTime::now()),
             source: None,
         })
@@ -219,6 +782,60 @@ impl ModelRegistry {
 
     pub fn is_empty(&self) -> bool {
         self.models.is_empty()
+    }
+
+    // ---------- open-weights families (V137) ----------
+
+    /// Number of families loaded.
+    pub fn family_count(&self) -> usize {
+        self.families.len()
+    }
+
+    /// Look up a family by id (case-insensitive).
+    pub fn lookup_family(&self, id: &str) -> Option<&ModelFamily> {
+        let lower = id.to_lowercase();
+        self.families.iter().find(|f| f.id.to_lowercase() == lower)
+    }
+
+    /// Find a variant across all families by variant id (case-insensitive).
+    /// Returns the owning family alongside the variant.
+    pub fn find_variant(&self, id: &str) -> Option<(&ModelFamily, &ModelVariant)> {
+        let lower = id.to_lowercase();
+        for fam in &self.families {
+            if let Some(v) = fam.variants.iter().find(|v| v.id.to_lowercase() == lower) {
+                return Some((fam, v));
+            }
+        }
+        None
+    }
+
+    /// Find a LoRA adapter across all families by adapter id
+    /// (case-insensitive). Returns the owning family alongside the adapter.
+    pub fn find_adapter(&self, id: &str) -> Option<(&ModelFamily, &LoraAdapter)> {
+        let lower = id.to_lowercase();
+        for fam in &self.families {
+            if let Some(a) = fam
+                .lora_adapters
+                .iter()
+                .find(|a| a.id.to_lowercase() == lower)
+            {
+                return Some((fam, a));
+            }
+        }
+        None
+    }
+
+    /// All families carrying `tag`.
+    pub fn families_by_tag(&self, tag: FamilyTag) -> Vec<&ModelFamily> {
+        self.families.iter().filter(|f| f.has_tag(tag)).collect()
+    }
+
+    /// All families whose primary modality matches.
+    pub fn families_by_modality(&self, modality: Modality) -> Vec<&ModelFamily> {
+        self.families
+            .iter()
+            .filter(|f| f.modality == modality)
+            .collect()
     }
 }
 
@@ -618,8 +1235,7 @@ mod tests {
         }
         let reg = ModelRegistry {
             models,
-            fetched_at: None,
-            source: None,
+            ..Default::default()
         };
         let err = save_cache(&reg, &cfg).unwrap_err();
         match err {
@@ -708,5 +1324,312 @@ mod tests {
         assert_eq!(infos[0].name, "claude-opus-4-7");
         assert_eq!(infos[1].name, "gpt-4o");
         assert_eq!(infos[2].name, "llama3.3:70b");
+    }
+
+    // ---------- open-weights families (V137) ----------
+    //
+    // Inline fixture for Llama-3.1-8B with four GGUF quantizations and one
+    // LoRA adapter. Mirrors the shape we expect a real catalog payload to
+    // take: variants carry sweet-spot tags, hardware requirements, source
+    // pointers and a provenance.
+
+    fn families_json() -> &'static str {
+        r#"{
+          "models": [],
+          "families": [
+            {
+              "id": "llama-3.1-8b",
+              "display_name": "Llama 3.1 8B",
+              "creator": "Meta",
+              "description": "Open-weights 8B base from Meta.",
+              "modality": "text",
+              "context_window": 131072,
+              "training_cutoff": "2024-12-01",
+              "family_tags": ["general_chat", "instruct", "long_context"],
+              "variants": [
+                {
+                  "id": "llama-3.1-8b-Q8_0",
+                  "variant_kind": "base",
+                  "quantization": "Q8_0",
+                  "size_bytes": 8500000000,
+                  "requirements": {
+                    "min_vram_bytes": 10000000000,
+                    "min_ram_bytes": 4000000000,
+                    "backends": ["llama_cpp_mainline", "ollama"]
+                  },
+                  "source": {"hugging_face": {"repo": "bartowski/Llama-3.1-8B-GGUF",
+                                              "file": "Llama-3.1-8B-Q8_0.gguf"}},
+                  "sweet_spot_for": ["quality"],
+                  "provenance": {"community_quant": {"author": "bartowski"}},
+                  "license": "Llama-3.1-Community"
+                },
+                {
+                  "id": "llama-3.1-8b-Q5_K_M",
+                  "variant_kind": "base",
+                  "quantization": "Q5_K_M",
+                  "size_bytes": 5700000000,
+                  "requirements": {
+                    "min_vram_bytes": 7000000000,
+                    "min_ram_bytes": 3000000000,
+                    "backends": ["llama_cpp_mainline", "ollama"]
+                  },
+                  "source": {"hugging_face": {"repo": "bartowski/Llama-3.1-8B-GGUF",
+                                              "file": "Llama-3.1-8B-Q5_K_M.gguf"}},
+                  "sweet_spot_for": [],
+                  "provenance": {"community_quant": {"author": "bartowski"}},
+                  "license": "Llama-3.1-Community"
+                },
+                {
+                  "id": "llama-3.1-8b-Q4_K_M",
+                  "variant_kind": "base",
+                  "quantization": "Q4_K_M",
+                  "size_bytes": 4900000000,
+                  "requirements": {
+                    "min_vram_bytes": 6000000000,
+                    "min_ram_bytes": 3000000000,
+                    "backends": ["llama_cpp_mainline", "ollama", "lm_studio"]
+                  },
+                  "source": {"hugging_face": {"repo": "bartowski/Llama-3.1-8B-GGUF",
+                                              "file": "Llama-3.1-8B-Q4_K_M.gguf"}},
+                  "sweet_spot_for": ["vram_efficiency"],
+                  "provenance": {"community_quant": {"author": "bartowski"}},
+                  "license": "Llama-3.1-Community"
+                },
+                {
+                  "id": "llama-3.1-8b-Q3_K_M",
+                  "variant_kind": "base",
+                  "quantization": "Q3_K_M",
+                  "size_bytes": 4000000000,
+                  "requirements": {
+                    "min_vram_bytes": 5000000000,
+                    "min_ram_bytes": 3000000000,
+                    "backends": ["llama_cpp_mainline"]
+                  },
+                  "source": {"hugging_face": {"repo": "bartowski/Llama-3.1-8B-GGUF",
+                                              "file": "Llama-3.1-8B-Q3_K_M.gguf"}},
+                  "sweet_spot_for": ["lowest"],
+                  "provenance": {"community_quant": {"author": "bartowski"}},
+                  "license": "Llama-3.1-Community"
+                }
+              ],
+              "lora_adapters": [
+                {
+                  "id": "llama-3.1-8b-coding-lora",
+                  "display_name": "Llama-3.1-8B Coding LoRA",
+                  "base_family": "llama-3.1-8b",
+                  "purpose": "coding",
+                  "size_bytes": 150000000,
+                  "source": {"hugging_face": {"repo": "example/coding-lora", "file": null}},
+                  "license": "Apache-2.0"
+                }
+              ]
+            }
+          ]
+        }"#
+    }
+
+    #[test]
+    fn family_parse_round_trip() {
+        let reg = ModelRegistry::from_json(families_json()).unwrap();
+        assert_eq!(reg.family_count(), 1);
+        let fam = reg.lookup_family("llama-3.1-8b").expect("family");
+        assert_eq!(fam.display_name, "Llama 3.1 8B");
+        assert_eq!(fam.modality, Modality::Text);
+        assert_eq!(fam.context_window, Some(131_072));
+        assert_eq!(fam.variants.len(), 4);
+        assert_eq!(fam.lora_adapters.len(), 1);
+    }
+
+    #[test]
+    fn family_lookup_variant_finds_owning_family() {
+        let reg = ModelRegistry::from_json(families_json()).unwrap();
+        let (fam, var) = reg.find_variant("llama-3.1-8b-Q4_K_M").expect("variant");
+        assert_eq!(fam.id, "llama-3.1-8b");
+        assert_eq!(var.quantization, Some(Quantization::Q4KM));
+        assert!(var.sweet_spot_for.contains(&SweetSpot::VramEfficiency));
+    }
+
+    #[test]
+    fn family_lookup_variant_case_insensitive() {
+        let reg = ModelRegistry::from_json(families_json()).unwrap();
+        assert!(reg.find_variant("LLAMA-3.1-8B-q4_k_m").is_some());
+    }
+
+    #[test]
+    fn family_lookup_adapter_returns_owning_family() {
+        let reg = ModelRegistry::from_json(families_json()).unwrap();
+        let (fam, ad) = reg
+            .find_adapter("llama-3.1-8b-coding-lora")
+            .expect("adapter");
+        assert_eq!(fam.id, "llama-3.1-8b");
+        assert_eq!(ad.purpose, AdapterPurpose::Coding);
+        assert_eq!(ad.base_family, "llama-3.1-8b");
+    }
+
+    #[test]
+    fn family_filter_by_tag() {
+        let reg = ModelRegistry::from_json(families_json()).unwrap();
+        assert_eq!(reg.families_by_tag(FamilyTag::Instruct).len(), 1);
+        assert_eq!(reg.families_by_tag(FamilyTag::Coding).len(), 0);
+    }
+
+    #[test]
+    fn family_filter_by_modality() {
+        let reg = ModelRegistry::from_json(families_json()).unwrap();
+        assert_eq!(reg.families_by_modality(Modality::Text).len(), 1);
+        assert_eq!(reg.families_by_modality(Modality::VisionText).len(), 0);
+    }
+
+    #[test]
+    fn variants_fitting_vram_falls_back_to_smaller_quants() {
+        let reg = ModelRegistry::from_json(families_json()).unwrap();
+        let fam = reg.lookup_family("llama-3.1-8b").unwrap();
+        // 8 GiB: drops Q8_0 (needs 10 GB), keeps Q5_K_M, Q4_K_M, Q3_K_M.
+        let fits_8gb = fam.variants_fitting_vram(8_000_000_000);
+        assert_eq!(fits_8gb.len(), 3);
+        // 5.5 GiB: only Q3_K_M (5 GB) fits.
+        let fits_5_5gb = fam.variants_fitting_vram(5_500_000_000);
+        assert_eq!(fits_5_5gb.len(), 1);
+        assert_eq!(fits_5_5gb[0].id, "llama-3.1-8b-Q3_K_M");
+        // 12 GiB: everything fits.
+        assert_eq!(fam.variants_fitting_vram(12_000_000_000).len(), 4);
+    }
+
+    #[test]
+    fn quantization_parse_round_trip() {
+        for raw in [
+            "Q4_K_M", "Q8_0", "Q5_K_M", "Q3_K_S", "FP16", "BF16", "IQ4_NL", "Q2_K",
+        ] {
+            let q = Quantization::parse(raw);
+            assert_eq!(q.as_str(), raw, "round-trip failed for {}", raw);
+        }
+    }
+
+    #[test]
+    fn quantization_parse_unknown_keeps_original_label() {
+        let q = Quantization::parse("Q4_K_M_NEW");
+        match q {
+            Quantization::Other(ref s) => assert_eq!(s, "Q4_K_M_NEW"),
+            _ => panic!("expected Other"),
+        }
+        assert_eq!(q.as_str(), "Q4_K_M_NEW");
+    }
+
+    #[test]
+    fn quantization_parse_is_case_insensitive() {
+        assert_eq!(Quantization::parse("q4_k_m"), Quantization::Q4KM);
+        assert_eq!(Quantization::parse(" Q8_0 "), Quantization::Q8_0);
+    }
+
+    #[test]
+    fn quantization_quality_rank_orders_correctly() {
+        assert!(Quantization::Fp16.quality_rank() > Quantization::Q8_0.quality_rank());
+        assert!(Quantization::Q8_0.quality_rank() > Quantization::Q5KM.quality_rank());
+        assert!(Quantization::Q5KM.quality_rank() > Quantization::Q4KM.quality_rank());
+        assert!(Quantization::Q4KM.quality_rank() > Quantization::Q3KM.quality_rank());
+        assert!(Quantization::Q3KM.quality_rank() > Quantization::Q2K.quality_rank());
+    }
+
+    #[test]
+    fn quantization_serde_round_trip() {
+        let q = Quantization::Q4KM;
+        let s = serde_json::to_string(&q).unwrap();
+        assert_eq!(s, "\"Q4_K_M\"");
+        let back: Quantization = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, Quantization::Q4KM);
+        // Unknown round-trips through Other.
+        let parsed: Quantization = serde_json::from_str("\"ZZZ_4\"").unwrap();
+        assert_eq!(parsed.as_str(), "ZZZ_4");
+    }
+
+    #[test]
+    fn model_source_key_is_stable() {
+        let s1 = ModelSource::HuggingFace {
+            repo: "a/b".into(),
+            file: Some("c.gguf".into()),
+        };
+        let s2 = ModelSource::HuggingFace {
+            repo: "a/b".into(),
+            file: None,
+        };
+        assert_eq!(s1.key(), "hf:a/b#c.gguf");
+        assert_eq!(s2.key(), "hf:a/b");
+        assert_eq!(
+            ModelSource::Ollama {
+                tag: "llama3".into()
+            }
+            .key(),
+            "ollama:llama3"
+        );
+        assert_eq!(
+            ModelSource::Curated { key: "k1".into() }.key(),
+            "curated:k1"
+        );
+    }
+
+    #[test]
+    fn hardware_requirements_is_cpu_viable() {
+        let cpu = HardwareRequirements {
+            min_vram_bytes: None,
+            ..Default::default()
+        };
+        assert!(cpu.is_cpu_viable());
+
+        let gpu_only = HardwareRequirements {
+            min_vram_bytes: Some(8_000_000_000),
+            gpu_archs: vec![GpuArch::Cuda {
+                compute: "8.9".into(),
+            }],
+            ..Default::default()
+        };
+        assert!(!gpu_only.is_cpu_viable());
+
+        let mixed = HardwareRequirements {
+            min_vram_bytes: Some(8_000_000_000),
+            gpu_archs: vec![
+                GpuArch::Cuda {
+                    compute: "8.9".into(),
+                },
+                GpuArch::Cpu,
+            ],
+            ..Default::default()
+        };
+        assert!(mixed.is_cpu_viable());
+    }
+
+    #[test]
+    fn family_round_trip_via_save_and_load() {
+        let reg = ModelRegistry::from_json(families_json()).unwrap();
+        let (cfg, path) = cache_cfg("families");
+        save_cache(&reg, &cfg).unwrap();
+        let loaded = load_cache(&cfg).unwrap().unwrap();
+        assert_eq!(loaded.family_count(), 1);
+        let (_, v) = loaded.find_variant("llama-3.1-8b-Q4_K_M").expect("variant");
+        assert_eq!(v.quantization, Some(Quantization::Q4KM));
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn parse_rejects_family_with_empty_id() {
+        let bad = r#"{"families":[{"id":"","display_name":"X"}]}"#;
+        let err = ModelRegistry::from_json(bad).unwrap_err();
+        assert!(matches!(err, ModelsDevError::Parse(_)));
+    }
+
+    #[test]
+    fn parse_rejects_variant_with_empty_id() {
+        let bad = r#"{"families":[{
+            "id":"f","display_name":"F",
+            "variants":[{"id":"","source":{"ollama":{"tag":"x"}}}]
+        }]}"#;
+        let err = ModelRegistry::from_json(bad).unwrap_err();
+        assert!(matches!(err, ModelsDevError::Parse(_)));
+    }
+
+    #[test]
+    fn legacy_models_only_payload_still_parses_with_empty_families() {
+        let reg = ModelRegistry::from_json(sample_json()).unwrap();
+        assert_eq!(reg.family_count(), 0);
+        assert_eq!(reg.len(), 3);
     }
 }

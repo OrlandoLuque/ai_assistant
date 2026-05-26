@@ -1,6 +1,6 @@
 # V137 — Catálogo extendido: schema + parsers + fixtures (0.2.84)
 
-**Status**: DRAFT — plan agreed 2026-05-26, implementation not started
+**Status**: SHIPPED 2026-05-26 (0.2.84) — schema + parsers + fixture all in.
 **Scope**: ampliar `src/models_dev.rs` para soportar el universo real de
 modelos LLM (cloud + open-weights + variantes), sin tocar HTTP todavía.
 **No-goals**: HTTP fetcher (eso es V138), wiring a consumers (V140).
@@ -173,3 +173,24 @@ cuantizaciones + 1 LoRA + sweet spot tagging) parseada round-trip.
 - Decisiones de recomendación (V140).
 - Persistencia en SQLite vs JSON (decisión diferida; el módulo expone
   serde — el storage es del caller).
+
+## Verification (shipped 2026-05-26)
+
+- `cargo build --lib` — clean (default = full).
+- `cargo clippy --lib -- -D warnings` — clean.
+- `cargo test --lib --no-fail-fast` — **6249 passed, 0 failed**.
+- `cargo test --lib -- models_dev::` — 37 passed (17 legacy + 20 new
+  V137 tests covering Quantization parse/serde/quality_rank,
+  family/variant/adapter lookup, VRAM-fit, family-cache round-trip,
+  empty-id rejection on families and variants).
+
+## Decisiones de implementación (no en el plan original)
+
+- `ModelVariant` y `LoraAdapter` **no** derivan `Default` — su campo
+  `source: ModelSource` no tiene un Default natural (no hay un
+  "source vacío" sensato). Los tests construyen instancias completas;
+  los callers no deberían necesitar `..Default::default()` aquí.
+- `from_json` valida ids no-vacíos también en `variants[]` y
+  `lora_adapters[]`, no sólo en `families[]` y `models[]`.
+- Se exporta `families_by_modality` además del `families_by_tag` del
+  plan original — es trivial y útil para el recommender de V140.
