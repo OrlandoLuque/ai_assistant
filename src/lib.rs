@@ -161,6 +161,8 @@ mod context;
 #[cfg(feature = "hardware-detection")]
 pub mod hardware_info;
 mod messages;
+#[cfg(feature = "model-recommender")]
+pub mod model_recommender;
 mod models;
 pub mod models_dev;
 mod providers;

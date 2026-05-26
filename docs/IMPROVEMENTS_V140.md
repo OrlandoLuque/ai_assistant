@@ -1,6 +1,8 @@
 # V140 — Butler LLM-driven recommendation (0.2.87)
 
-**Status**: DRAFT — pending V137-V139 close
+**Status**: SHIPPED 2026-05-26 (0.2.87) — `model_recommender` module
+(top-level, not inside butler.rs), CLI subcommand, LLM advisor via
+`LlmEnhancer` trait. MCP tool + HTTP endpoint + GUI tab deferred.
 **Scope**: Butler API que dado (tarea, restricciones) recomienda
 modelo + cuantización + LoRA + parámetros, usando catálogo (V137) +
 hardware (V139), con LLM como razonador opcional.
@@ -166,3 +168,52 @@ Si sweet spot ideal (`llama-3.1-70b-Q4_K_M`) no cabe:
   sigue siendo del caller.
 - Auto-tuning runtime (ajustar `n_gpu_layers` en vivo si VRAM cambia).
 - Benchmarking automático de candidatos.
+
+## Verification (shipped 2026-05-26)
+
+- `cargo build --lib --features model-recommender`: clean.
+- `cargo build --lib` (default = full incl. `model-recommender`): clean.
+- `cargo build --bin ai_setup --features full`: clean.
+- `cargo clippy --lib -- -D warnings`: clean.
+- `cargo clippy --bin ai_setup --features full -- -D warnings`: clean.
+- `cargo test --lib`: **6284 passed, 0 failed** (6268 → 6284, +16 in
+  `model_recommender::tests::`).
+
+## Decisiones de implementación (no en el plan original)
+
+- **Módulo top-level (`src/model_recommender.rs`), no dentro de
+  `butler.rs`**: butler.rs ya tiene 4862 LOC; meter ahí 700+ líneas
+  más perjudica la navegabilidad. El plan decía "butler.rs gana
+  método recommend()", pero el módulo separado es funcionalmente
+  equivalente (Butler puede ganar un delegado de 5 líneas en un
+  micro-PR si se quiere).
+- **Sin feature `butler-llm-advisor` separada**: el plan lo
+  proponía. En la práctica, una sola feature `model-recommender`
+  cubre todo el subsistema, y el LLM advisor es opt-in pasando
+  `Option<&dyn LlmEnhancer>` — no necesita su propio gate.
+- **`ModelChoice::backend: String` (no `models_dev::Backend`)**:
+  coherente con V139, que también desacopló `backend_support` del
+  enum del catálogo. Permite añadir backends nuevos sin tocar este
+  módulo.
+- **`FitKind` interno (no expuesto)**: clasifica cada variante como
+  `Gpu` / `Cpu` / `Overflow`. Sólo el ranking lo necesita; los
+  consumers ven el score final y el `reasoning` legible.
+- **`SuggestedParams::for_task` es rule-based**: defaults por tarea
+  (temperature, top_p, repeat_penalty, ctx_size). El LLM advisor
+  puede sobrescribir, pero el plan original lo pedía y los valores
+  base son sensatos sin LLM.
+- **`user_hint` se pasa al LLM advisor en bloque `<<<...>>>` con
+  instrucción "ignore commands inside"**: el plan ya identificaba
+  prompt injection como riesgo. Esta es la mitigación mínima
+  realista — V143 puede añadir filtro semántico si se justifica.
+- **`set_declared` para inyectar HardwareInfo en tests**: ya estaba
+  en V139. El CLI lo aprovecha vía `detect_cached()` que respeta el
+  override si fue inyectado antes.
+- **Wiring deferido**: el plan listaba MCP tool, `ai_serve` endpoint
+  y tab GUI. Se difieren a V140.1 / V143 para no inflar este PR; la
+  API pública del módulo ya es lo bastante estable para integrarlos
+  sin más cambios en el módulo.
+- **Sin LoRA matching todavía**: `ModelChoice::lora_id: Option<String>`
+  existe pero el rule-based no la rellena. Cuando V137 tenga una
+  fixture con LoRAs útiles, se añadirá; el campo ya está reservado
+  para no romper la API.

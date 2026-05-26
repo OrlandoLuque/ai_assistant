@@ -5,6 +5,73 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v101 (2026-05-26) — V140: Model recommender (0.2.87)
+
+Closes the V137/V138/V139 chain. The catalog says *what exists*,
+the hardware probe says *what fits*, the recommender pairs them
+into a concrete pick — model family + variant + suggested params.
+LLM advisor is an optional second pass: when supplied, it can
+refine the rule-based top-K; when not, the rule-based winner is
+returned verbatim.
+
+### Added
+- **`model-recommender`** feature flag (in `full`). Implies
+  `hardware-detection`. The LLM advisor path is an
+  `Option<&dyn LlmEnhancer>` argument — no extra feature gate.
+- **`model_recommender::recommend()`** — top-level entry. Filters
+  for hardware fit, privacy and content modifiers; scores by task
+  match, sweet-spot tags, quantization quality vs requested tier;
+  sorts and returns primary + up to 3 fallbacks with `reasoning`.
+- **`RecommendationRequest`** — `task`, `language`, `privacy`,
+  `max_latency_ms`, `min_quality_tier`, `allow_uncensored`,
+  `allow_abliterated`, `user_hint`, `max_size_bytes`.
+- **`TaskKind`** — `General` / `Coding` / `Reasoning` / `Writing` /
+  `Math` / `Roleplay` / `Translation` / `Summarization` / `Vision` /
+  `LongContext`. Each maps to relevant `FamilyTag`s and a preferred
+  `Modality`. Vision task on a non-vision family is a hard reject.
+- **`QualityTier`** — `Tiny` / `Cheap` / `Balanced` / `Best`. Caps
+  the quantization-quality bonus so a "Cheap" tier doesn't drag in
+  unnecessarily large weights.
+- **`PrivacyConstraint`** — `LocalOnly` / `PreferLocal` /
+  `AllowCloud`. `LocalOnly` filters out any `ModelSource::Url`.
+- **`SuggestedParams::for_task()`** — task-aware defaults
+  (`temperature` lower for coding/math, `ctx_size` larger for
+  long-context/summarisation).
+- **VRAM-aware fallback chain** — `FitKind` classifies each variant
+  as `Gpu` / `Cpu` / `Overflow`. Overflow candidates are dropped
+  when a GPU is present, and CPU-only variants are kept with a
+  score penalty so the recommender can still recover when no GPU
+  fits the sweet spot.
+- **LLM advisor pipeline** — prompt structure includes task,
+  hardware summary, top-K candidates (max 8) and the user hint
+  (sanitised + wrapped in `<<<...>>>`). The response must be JSON
+  with `variant_id` + `reasoning`. Malformed JSON, an unknown
+  variant id or an unavailable advisor all fall back silently to
+  the rule-based winner.
+- **`ai_setup recommend-model`** subcommand — `--task`, `--tier`,
+  `--local-only`, `--allow-cloud`, `--allow-uncensored`,
+  `--max-size-gb`, `--registry <path>`, `--json`. Probes hardware
+  via `hardware_info::detect_cached()`.
+
+### Decisions
+- Module lives at top-level (`src/model_recommender.rs`), not
+  inside `butler.rs`. Butler is 4862 LOC already; adding 700+ more
+  would hurt navigability. Butler can grow a `recommend_model()`
+  delegate in a later micro-PR if desired.
+- `ModelChoice::backend: String` (not `models_dev::Backend`).
+  Matches the V139 decision to decouple downstream consumers from
+  the catalog's enum.
+- LLM advisor uses the existing `LlmEnhancer` trait (V68). Zero
+  new deps; mock implementations are trivial.
+
+### Tests
+- 16 new tests in `model_recommender::tests` covering: empty
+  catalog error, big/small/medium VRAM picks, privacy filter,
+  modifier filter, vision-family hard reject, params determinism,
+  quant bonus cap, advisor override / malformed / hallucinated /
+  unavailable, max-size filter, full serde roundtrip.
+- Lib test count: **6284** (6268 → 6284, +16 model_recommender).
+
 ## [Unreleased] - v100 (2026-05-26) — V139: Host hardware probe (0.2.86)
 
 Foundation for the V140 Butler recommender: a `hardware_info` module

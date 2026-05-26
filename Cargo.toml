@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.86"
+version = "0.2.87"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -151,6 +151,7 @@ full = [
     "models-dev-fetcher",
     "hardware-detection",
     "hardware-nvml",
+    "model-recommender",
 ]
 
 # Binary storage: bincode + gzip for internal data (faster, smaller than JSON)
@@ -177,6 +178,12 @@ hardware-detection = ["dep:sysinfo"]
 hardware-nvml = ["hardware-detection", "dep:nvml-wrapper"]
 hardware-rocm = ["hardware-detection"]
 hardware-metal = ["hardware-detection"]
+
+# V140: Model recommender. Pairs the V137 catalog with the V139 hardware
+# probe to pick a sweet-spot variant for a given task. The LLM advisor is
+# an optional `Option<&dyn LlmEnhancer>` argument, no extra feature gate —
+# rule-based pipeline is always usable on its own.
+model-recommender = ["hardware-detection"]
 
 # LanceDB embedded vector database (Tier 2 — recommended upgrade from in-memory)
 # Not in 'full' by default due to heavy deps. Opt-in: --features vector-lancedb

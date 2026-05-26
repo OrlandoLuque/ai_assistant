@@ -61,6 +61,7 @@ fn main() -> ExitCode {
         Some("install") => cmd_install(&args[2..]),
         Some("recommend") => cmd_recommend(&args[2..]),
         Some("hardware") => cmd_hardware(&args[2..]),
+        Some("recommend-model") => cmd_recommend_model(&args[2..]),
         Some("--help") | Some("-h") | None => {
             print_help();
             ExitCode::SUCCESS
@@ -199,6 +200,10 @@ fn print_help() -> ExitCode {
     );
     println!(
         "  {}hardware{}  [--json]                  Probe and print host hardware (CPU/RAM/GPU/OS)",
+        CYAN, RESET
+    );
+    println!(
+        "  {}recommend-model{} [--task <kind>] [--tier <tier>] [--local-only] [--json]\n                                  Recommend a model variant for a task (V140)",
         CYAN, RESET
     );
     println!();
@@ -1210,6 +1215,221 @@ fn cmd_hardware(args: &[String]) -> ExitCode {
     } else {
         println!("{}Host hardware{}", BOLD, RESET);
         println!("{}", info.pretty_summary());
+    }
+    ExitCode::SUCCESS
+}
+
+// =============================================================================
+// recommend-model — V140 model picker
+// =============================================================================
+
+fn cmd_recommend_model(args: &[String]) -> ExitCode {
+    use ai_assistant::model_recommender::{
+        recommend, PrivacyConstraint, QualityTier, RecommendationRequest, TaskKind,
+    };
+    use ai_assistant::models_dev::ModelRegistry;
+
+    let mut task = TaskKind::General;
+    let mut tier = QualityTier::Balanced;
+    let mut privacy = PrivacyConstraint::PreferLocal;
+    let mut as_json = false;
+    let mut registry_path: Option<PathBuf> = None;
+    let mut max_size_gb: Option<u64> = None;
+    let mut allow_uncensored = false;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--task" | "-t" => {
+                let v = match args.get(i + 1) {
+                    Some(v) => v.as_str(),
+                    None => {
+                        eprintln!("--task requires a value");
+                        return ExitCode::from(1);
+                    }
+                };
+                task = match v {
+                    "general" => TaskKind::General,
+                    "coding" => TaskKind::Coding,
+                    "reasoning" => TaskKind::Reasoning,
+                    "writing" => TaskKind::Writing,
+                    "math" => TaskKind::Math,
+                    "roleplay" => TaskKind::Roleplay,
+                    "translation" => TaskKind::Translation,
+                    "summarization" => TaskKind::Summarization,
+                    "vision" => TaskKind::Vision,
+                    "long-context" | "longcontext" => TaskKind::LongContext,
+                    other => {
+                        eprintln!("Unknown task: {other}");
+                        return ExitCode::from(1);
+                    }
+                };
+                i += 2;
+            }
+            "--tier" => {
+                let v = match args.get(i + 1) {
+                    Some(v) => v.as_str(),
+                    None => {
+                        eprintln!("--tier requires a value");
+                        return ExitCode::from(1);
+                    }
+                };
+                tier = match v {
+                    "tiny" => QualityTier::Tiny,
+                    "cheap" => QualityTier::Cheap,
+                    "balanced" => QualityTier::Balanced,
+                    "best" => QualityTier::Best,
+                    other => {
+                        eprintln!("Unknown tier: {other}");
+                        return ExitCode::from(1);
+                    }
+                };
+                i += 2;
+            }
+            "--local-only" => {
+                privacy = PrivacyConstraint::LocalOnly;
+                i += 1;
+            }
+            "--allow-cloud" => {
+                privacy = PrivacyConstraint::AllowCloud;
+                i += 1;
+            }
+            "--allow-uncensored" => {
+                allow_uncensored = true;
+                i += 1;
+            }
+            "--max-size-gb" => {
+                max_size_gb = match args.get(i + 1).and_then(|s| s.parse::<u64>().ok()) {
+                    Some(v) => Some(v),
+                    None => {
+                        eprintln!("--max-size-gb requires a positive integer");
+                        return ExitCode::from(1);
+                    }
+                };
+                i += 2;
+            }
+            "--registry" => {
+                registry_path = args.get(i + 1).map(PathBuf::from);
+                if registry_path.is_none() {
+                    eprintln!("--registry requires a path");
+                    return ExitCode::from(1);
+                }
+                i += 2;
+            }
+            "--json" | "-j" => {
+                as_json = true;
+                i += 1;
+            }
+            "--help" | "-h" => {
+                println!(
+                    "{}ai_setup recommend-model{} — Pick a model variant for a task",
+                    BOLD, RESET
+                );
+                println!();
+                println!("{}Usage:{} ai_setup recommend-model [flags]", BOLD, RESET);
+                println!();
+                println!("  --task <kind>         general|coding|reasoning|writing|math|roleplay|");
+                println!("                        translation|summarization|vision|long-context");
+                println!("  --tier <tier>         tiny|cheap|balanced|best (default: balanced)");
+                println!("  --local-only          Reject any remote/cloud-sourced variant");
+                println!("  --allow-cloud         No privacy constraint");
+                println!("  --allow-uncensored    Permit Uncensored-modifier variants");
+                println!("  --max-size-gb <n>     Cap variant size on disk");
+                println!("  --registry <path>     Load a ModelRegistry JSON file (else: empty)");
+                println!("  --json                Emit JSON instead of the table");
+                return ExitCode::SUCCESS;
+            }
+            other => {
+                eprintln!("Unknown argument: {other}");
+                return ExitCode::from(1);
+            }
+        }
+    }
+
+    let registry = match registry_path {
+        Some(p) => match std::fs::read_to_string(&p) {
+            Ok(text) => match ModelRegistry::from_json(&text) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("{}registry parse failed: {}{}", RED, e, RESET);
+                    return ExitCode::from(1);
+                }
+            },
+            Err(e) => {
+                eprintln!("{}registry read failed: {}{}", RED, e, RESET);
+                return ExitCode::from(1);
+            }
+        },
+        None => ModelRegistry::default(),
+    };
+
+    let hw = ai_assistant::hardware_info::detect_cached();
+    let mut req = RecommendationRequest::default();
+    req.task = task;
+    req.min_quality_tier = tier;
+    req.privacy = privacy;
+    req.allow_uncensored = allow_uncensored;
+    req.max_size_bytes = max_size_gb.map(|gb| gb * 1_000_000_000);
+
+    let rec = match recommend(&req, &registry, &hw, None) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("{}recommend failed: {}{}", RED, e, RESET);
+            return ExitCode::from(1);
+        }
+    };
+
+    if as_json {
+        match serde_json::to_string_pretty(&rec) {
+            Ok(s) => println!("{}", s),
+            Err(e) => {
+                eprintln!("{}JSON encode failed: {}{}", RED, e, RESET);
+                return ExitCode::from(1);
+            }
+        }
+    } else {
+        println!("{}Recommended model{}", BOLD, RESET);
+        println!(
+            "  {}primary:{} {} ({})",
+            BOLD, RESET, rec.primary.variant_id, rec.primary.family_id
+        );
+        println!(
+            "  {}source:{}  {}    {}backend:{} {}",
+            DIM, RESET, rec.primary.source_key, DIM, RESET, rec.primary.backend
+        );
+        println!(
+            "  {}size:{}    {:.1} GB    {}vram:{} {:.1} GB",
+            DIM,
+            RESET,
+            rec.primary.size_bytes as f64 / 1_000_000_000.0,
+            DIM,
+            RESET,
+            rec.estimated_vram_bytes as f64 / 1_000_000_000.0,
+        );
+        println!(
+            "  {}params:{}  temp={} top_p={} top_k={} ctx={}",
+            DIM,
+            RESET,
+            rec.primary.params.temperature,
+            rec.primary.params.top_p,
+            rec.primary.params.top_k,
+            rec.primary.params.ctx_size,
+        );
+        if !rec.fallbacks.is_empty() {
+            println!("  {}fallbacks:{}", DIM, RESET);
+            for f in &rec.fallbacks {
+                println!("    - {} ({})", f.variant_id, f.family_id);
+            }
+        }
+        println!();
+        println!("  {}reasoning:{}", BOLD, RESET);
+        for line in rec.reasoning.lines() {
+            println!("    {}", line);
+        }
+        if rec.via_advisor {
+            println!();
+            println!("  {}(refined by LLM advisor){}", DIM, RESET);
+        }
     }
     ExitCode::SUCCESS
 }
