@@ -1119,6 +1119,21 @@ name = "vision_benchmarks"
 harness = false
 required-features = ["vision"]
 
+# === Dev / test profiles ===
+# Defaults explode on Windows for a crate this size: full debug info
+# generates multi-GB PDBs (hits MSVC's LNK1318 PDB-stream limit on
+# linking the full-feature lib) and incremental sessions can pile up
+# to hundreds of GB across many rebuilds. `line-tables-only` keeps
+# file:line in backtraces — the only debug info we actually use day
+# to day — while cutting PDB size ~5x.
+[profile.dev]
+debug = "line-tables-only"
+incremental = true
+
+[profile.test]
+debug = "line-tables-only"
+incremental = true
+
 # === Release profile optimizations ===
 [profile.release]
 # Enable Link-Time Optimization for better dead code elimination
