@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.84"
+version = "0.2.85"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -148,6 +148,7 @@ full = [
     "auto-download",
     "backup",
     "gdpr",
+    "models-dev-fetcher",
 ]
 
 # Binary storage: bincode + gzip for internal data (faster, smaller than JSON)
@@ -155,6 +156,12 @@ binary-storage = ["dep:bincode"]
 
 # Async runtime: tokio + reqwest for async HTTP operations
 async-runtime = ["dep:tokio", "dep:reqwest"]
+
+# Models.dev / open-weights catalog fetcher: async HTTP download into
+# the existing `models_dev::ModelRegistry`. Off by default — keeps the
+# parser/cache (V137) usable without dragging in the async runtime.
+# V138: turns the docstring "left to the caller" into a real client.
+models-dev-fetcher = ["async-runtime", "dep:futures"]
 
 # LanceDB embedded vector database (Tier 2 — recommended upgrade from in-memory)
 # Not in 'full' by default due to heavy deps. Opt-in: --features vector-lancedb

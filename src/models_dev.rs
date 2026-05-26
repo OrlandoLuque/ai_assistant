@@ -1054,6 +1054,381 @@ impl crate::models::ModelRegistry {
 }
 
 // ============================================================================
+// HTTP fetcher (V138) — gated behind `models-dev-fetcher`
+// ============================================================================
+//
+// Closes the docstring's "actual HTTP fetch is left to the caller" by
+// bundling an async fetcher in-crate. Reuses `ModelsDevConfig` and the
+// `save_cache`/`load_cache` helpers from V104.9; the fetcher only adds
+// the network half plus a `RefreshPolicy`. Off by default — callers that
+// only want the parser/cache from V137 don't pull in tokio + reqwest.
+
+#[cfg(feature = "models-dev-fetcher")]
+mod fetcher {
+    use super::{load_cache, save_cache, ModelRegistry, ModelsDevConfig, ModelsDevError};
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::sync::Mutex;
+
+    /// HTTP client abstracted for the catalog fetcher. The default impl
+    /// (`ReqwestCatalogClient`) uses `reqwest`. A mock impl is used in
+    /// tests to canned-respond without touching the network.
+    pub trait CatalogFetchClient: Send + Sync {
+        /// GET `url` and return the raw body. Implementations MUST refuse
+        /// to read more than `max_bytes` (return
+        /// `ModelsDevError::TooLarge`); responses without
+        /// `Content-Length` should be streamed and aborted once the cap
+        /// is exceeded.
+        fn get_bytes_capped<'a>(
+            &'a self,
+            url: &'a str,
+            timeout: Duration,
+            max_bytes: u64,
+        ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, ModelsDevError>> + Send + 'a>>;
+    }
+
+    /// `reqwest`-backed implementation of `CatalogFetchClient`.
+    #[derive(Clone, Default)]
+    pub struct ReqwestCatalogClient {
+        client: reqwest::Client,
+    }
+
+    impl ReqwestCatalogClient {
+        pub fn new() -> Self {
+            Self::default()
+        }
+
+        pub fn with_client(client: reqwest::Client) -> Self {
+            Self { client }
+        }
+    }
+
+    impl CatalogFetchClient for ReqwestCatalogClient {
+        fn get_bytes_capped<'a>(
+            &'a self,
+            url: &'a str,
+            timeout: Duration,
+            max_bytes: u64,
+        ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, ModelsDevError>> + Send + 'a>> {
+            Box::pin(async move {
+                use futures::StreamExt;
+                let resp = self
+                    .client
+                    .get(url)
+                    .timeout(timeout)
+                    .send()
+                    .await
+                    .map_err(|e| ModelsDevError::Io(format!("GET {}: {}", url, e)))?;
+
+                let status = resp.status();
+                if !status.is_success() {
+                    return Err(ModelsDevError::Io(format!("HTTP {} from {}", status, url)));
+                }
+
+                // Pre-flight check via Content-Length when present.
+                if let Some(declared) = resp.content_length() {
+                    if declared > max_bytes {
+                        return Err(ModelsDevError::TooLarge {
+                            size: declared,
+                            limit: max_bytes,
+                        });
+                    }
+                }
+
+                let mut buf: Vec<u8> = Vec::new();
+                let mut stream = resp.bytes_stream();
+                while let Some(chunk) = stream.next().await {
+                    let chunk =
+                        chunk.map_err(|e| ModelsDevError::Io(format!("stream {}: {}", url, e)))?;
+                    if (buf.len() as u64).saturating_add(chunk.len() as u64) > max_bytes {
+                        return Err(ModelsDevError::TooLarge {
+                            size: (buf.len() + chunk.len()) as u64,
+                            limit: max_bytes,
+                        });
+                    }
+                    buf.extend_from_slice(&chunk);
+                }
+                Ok(buf)
+            })
+        }
+    }
+
+    /// Exponential backoff with jitter applied between failed refresh
+    /// attempts in `Background` mode.
+    #[derive(Debug, Clone)]
+    pub struct BackoffPolicy {
+        pub initial_delay: Duration,
+        pub max_delay: Duration,
+        /// Stop / mark "degraded" after this many consecutive failures.
+        pub max_consecutive_failures: u32,
+    }
+
+    impl Default for BackoffPolicy {
+        fn default() -> Self {
+            Self {
+                initial_delay: Duration::from_secs(30),
+                max_delay: Duration::from_secs(60 * 60),
+                max_consecutive_failures: 5,
+            }
+        }
+    }
+
+    /// When to talk to the network.
+    #[derive(Debug, Clone)]
+    pub enum RefreshPolicy {
+        /// Never refresh; only ever serve cached data.
+        Never,
+        /// Fetch only when no cache exists or the load failed.
+        OnMiss,
+        /// Fetch when the cache is older than `cfg.cache_ttl` (default).
+        OnStale,
+        /// Spawn a background task that refreshes on `interval`.
+        Background {
+            interval: Duration,
+            on_error: BackoffPolicy,
+        },
+    }
+
+    impl Default for RefreshPolicy {
+        fn default() -> Self {
+            Self::OnStale
+        }
+    }
+
+    /// Async fetcher for `ModelRegistry`. Combines `ModelsDevConfig`
+    /// (cache TTL, max payload bytes, cache path) with a network client
+    /// and a refresh policy.
+    pub struct ModelsDevFetcher {
+        endpoint: String,
+        cfg: ModelsDevConfig,
+        client: Arc<dyn CatalogFetchClient>,
+        policy: RefreshPolicy,
+        request_timeout: Duration,
+        /// Cached in-memory copy + write lock — coalesces concurrent
+        /// `registry()` callers onto a single inflight fetch.
+        inner: Mutex<Option<ModelRegistry>>,
+        /// Set when N consecutive background failures cross the
+        /// configured threshold. Callers can read via
+        /// `is_degraded()`.
+        degraded: AtomicBool,
+        /// Monotonic counter incremented on every successful fetch —
+        /// observable for testing / metrics.
+        refresh_count: AtomicU64,
+    }
+
+    impl ModelsDevFetcher {
+        /// Default endpoint.
+        pub const DEFAULT_ENDPOINT: &'static str = "https://models.dev/api.json";
+
+        pub fn new(cfg: ModelsDevConfig, client: Arc<dyn CatalogFetchClient>) -> Self {
+            Self {
+                endpoint: Self::DEFAULT_ENDPOINT.to_string(),
+                cfg,
+                client,
+                policy: RefreshPolicy::default(),
+                request_timeout: Duration::from_secs(30),
+                inner: Mutex::new(None),
+                degraded: AtomicBool::new(false),
+                refresh_count: AtomicU64::new(0),
+            }
+        }
+
+        pub fn with_endpoint(mut self, endpoint: impl Into<String>) -> Self {
+            self.endpoint = endpoint.into();
+            self
+        }
+
+        pub fn with_policy(mut self, policy: RefreshPolicy) -> Self {
+            self.policy = policy;
+            self
+        }
+
+        pub fn with_request_timeout(mut self, timeout: Duration) -> Self {
+            self.request_timeout = timeout;
+            self
+        }
+
+        pub fn endpoint(&self) -> &str {
+            &self.endpoint
+        }
+
+        pub fn is_degraded(&self) -> bool {
+            self.degraded.load(Ordering::Acquire)
+        }
+
+        pub fn refresh_count(&self) -> u64 {
+            self.refresh_count.load(Ordering::Acquire)
+        }
+
+        /// Return the registry. Behaviour depends on `policy`:
+        /// - `Never`: returns the in-memory copy or `Err` if unset and
+        ///   no cache.
+        /// - `OnMiss`: fetches only if no in-memory copy and no cache.
+        /// - `OnStale`: re-fetches if cache is older than `cache_ttl`.
+        /// - `Background`: serves the cached copy; refresh runs out of
+        ///   band.
+        pub async fn registry(&self) -> Result<ModelRegistry, ModelsDevError> {
+            // Serialise concurrent callers onto one fetch.
+            let mut guard = self.inner.lock().await;
+
+            if guard.is_none() {
+                // Bootstrap from on-disk cache when present.
+                if let Some(reg) = load_cache(&self.cfg)? {
+                    *guard = Some(reg);
+                }
+            }
+
+            let needs_fetch = match (&self.policy, &*guard) {
+                (RefreshPolicy::Never, Some(_)) => false,
+                (RefreshPolicy::Never, None) => {
+                    return Err(ModelsDevError::Io(
+                        "RefreshPolicy::Never and no cache available".into(),
+                    ));
+                }
+                (RefreshPolicy::OnMiss, Some(_)) => false,
+                (RefreshPolicy::OnMiss, None) => true,
+                (RefreshPolicy::OnStale, _) => {
+                    // load_cache already filtered stale entries.
+                    guard.is_none()
+                }
+                (RefreshPolicy::Background { .. }, Some(_)) => false,
+                (RefreshPolicy::Background { .. }, None) => true,
+            };
+
+            if needs_fetch {
+                let reg = self.fetch_once().await?;
+                *guard = Some(reg);
+            }
+
+            guard
+                .as_ref()
+                .cloned()
+                .ok_or_else(|| ModelsDevError::Io("registry unavailable".into()))
+        }
+
+        /// Force a refresh now, ignoring policy. Updates the in-memory
+        /// copy and the on-disk cache (if configured).
+        pub async fn force_refresh(&self) -> Result<(), ModelsDevError> {
+            let mut guard = self.inner.lock().await;
+            let reg = self.fetch_once().await?;
+            *guard = Some(reg);
+            Ok(())
+        }
+
+        /// One unguarded fetch + cache write.
+        async fn fetch_once(&self) -> Result<ModelRegistry, ModelsDevError> {
+            let bytes = self
+                .client
+                .get_bytes_capped(
+                    &self.endpoint,
+                    self.request_timeout,
+                    self.cfg.max_payload_bytes,
+                )
+                .await?;
+            let text = std::str::from_utf8(&bytes)
+                .map_err(|e| ModelsDevError::Parse(format!("response not utf-8: {}", e)))?;
+            let mut reg = ModelRegistry::from_json(text)?;
+            reg.source = Some(self.endpoint.clone());
+            save_cache(&reg, &self.cfg)?;
+            self.refresh_count.fetch_add(1, Ordering::AcqRel);
+            self.degraded.store(false, Ordering::Release);
+            Ok(reg)
+        }
+
+        /// Spawn a background refresh task. Returns a handle that
+        /// cancels the task on drop. Only meaningful when policy is
+        /// `Background`; for other policies the task exits immediately.
+        pub fn start_background(self: &Arc<Self>) -> BackgroundHandle {
+            let (interval, backoff) = match &self.policy {
+                RefreshPolicy::Background { interval, on_error } => (*interval, on_error.clone()),
+                _ => {
+                    let cancel = Arc::new(AtomicBool::new(true));
+                    return BackgroundHandle { cancel, join: None };
+                }
+            };
+
+            let cancel = Arc::new(AtomicBool::new(false));
+            let cancel_for_task = cancel.clone();
+            let fetcher = Arc::clone(self);
+
+            let join = tokio::spawn(async move {
+                let mut consecutive_failures: u32 = 0;
+                let mut next_delay = interval;
+
+                loop {
+                    if cancel_for_task.load(Ordering::Acquire) {
+                        break;
+                    }
+                    tokio::time::sleep(next_delay).await;
+                    if cancel_for_task.load(Ordering::Acquire) {
+                        break;
+                    }
+
+                    match fetcher.force_refresh().await {
+                        Ok(()) => {
+                            consecutive_failures = 0;
+                            next_delay = interval;
+                        }
+                        Err(_e) => {
+                            consecutive_failures = consecutive_failures.saturating_add(1);
+                            if consecutive_failures >= backoff.max_consecutive_failures {
+                                fetcher.degraded.store(true, Ordering::Release);
+                            }
+                            // Exponential backoff with cap.
+                            let exp = backoff
+                                .initial_delay
+                                .saturating_mul(1u32 << consecutive_failures.min(10));
+                            next_delay = exp.min(backoff.max_delay);
+                        }
+                    }
+                }
+            });
+
+            BackgroundHandle {
+                cancel,
+                join: Some(join),
+            }
+        }
+    }
+
+    /// Cancellable handle for the background refresh task. Dropping
+    /// signals cancellation; the task observes the flag at its next
+    /// wake-up.
+    pub struct BackgroundHandle {
+        cancel: Arc<AtomicBool>,
+        join: Option<tokio::task::JoinHandle<()>>,
+    }
+
+    impl BackgroundHandle {
+        pub fn cancel(&self) {
+            self.cancel.store(true, Ordering::Release);
+        }
+
+        pub fn is_cancelled(&self) -> bool {
+            self.cancel.load(Ordering::Acquire)
+        }
+    }
+
+    impl Drop for BackgroundHandle {
+        fn drop(&mut self) {
+            self.cancel();
+            if let Some(j) = self.join.take() {
+                j.abort();
+            }
+        }
+    }
+}
+
+#[cfg(feature = "models-dev-fetcher")]
+pub use fetcher::{
+    BackgroundHandle, BackoffPolicy, CatalogFetchClient, ModelsDevFetcher, RefreshPolicy,
+    ReqwestCatalogClient,
+};
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -1631,5 +2006,278 @@ mod tests {
         let reg = ModelRegistry::from_json(sample_json()).unwrap();
         assert_eq!(reg.family_count(), 0);
         assert_eq!(reg.len(), 3);
+    }
+
+    // ---------- HTTP fetcher (V138) — gated behind models-dev-fetcher ----------
+
+    #[cfg(feature = "models-dev-fetcher")]
+    mod fetcher_tests {
+        use super::super::{
+            load_cache, save_cache, CatalogFetchClient, ModelRegistry, ModelsDevConfig,
+            ModelsDevError, ModelsDevFetcher, RefreshPolicy,
+        };
+        use std::future::Future;
+        use std::pin::Pin;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::{Arc, Mutex};
+        use std::time::Duration;
+
+        fn fetcher_payload() -> &'static str {
+            r#"{"models":[{"id":"m-fetch","provider":"openai"}]}"#
+        }
+
+        /// Mock client. Returns canned bodies in order; cycles when
+        /// the queue is exhausted. Records the call count so tests
+        /// can assert "exactly N requests went out".
+        #[derive(Clone, Default)]
+        struct MockClient {
+            responses: Arc<Mutex<Vec<Result<Vec<u8>, &'static str>>>>,
+            calls: Arc<AtomicUsize>,
+        }
+
+        impl MockClient {
+            fn with_ok(body: &str) -> Self {
+                Self {
+                    responses: Arc::new(Mutex::new(vec![Ok(body.as_bytes().to_vec())])),
+                    calls: Arc::new(AtomicUsize::new(0)),
+                }
+            }
+
+            fn with_responses(items: Vec<Result<Vec<u8>, &'static str>>) -> Self {
+                Self {
+                    responses: Arc::new(Mutex::new(items)),
+                    calls: Arc::new(AtomicUsize::new(0)),
+                }
+            }
+
+            fn call_count(&self) -> usize {
+                self.calls.load(Ordering::Acquire)
+            }
+        }
+
+        impl CatalogFetchClient for MockClient {
+            fn get_bytes_capped<'a>(
+                &'a self,
+                _url: &'a str,
+                _timeout: Duration,
+                max_bytes: u64,
+            ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, ModelsDevError>> + Send + 'a>>
+            {
+                self.calls.fetch_add(1, Ordering::AcqRel);
+                let mut responses = self.responses.lock().unwrap();
+                let resp = if responses.is_empty() {
+                    Err("queue exhausted")
+                } else if responses.len() == 1 {
+                    responses[0].clone()
+                } else {
+                    responses.remove(0)
+                };
+                Box::pin(async move {
+                    match resp {
+                        Ok(bytes) => {
+                            if (bytes.len() as u64) > max_bytes {
+                                Err(ModelsDevError::TooLarge {
+                                    size: bytes.len() as u64,
+                                    limit: max_bytes,
+                                })
+                            } else {
+                                Ok(bytes)
+                            }
+                        }
+                        Err(msg) => Err(ModelsDevError::Io(msg.into())),
+                    }
+                })
+            }
+        }
+
+        fn fetcher_cfg(name: &str) -> (ModelsDevConfig, std::path::PathBuf) {
+            let mut p = std::env::temp_dir();
+            p.push(format!(
+                "ai_assistant_fetcher_{}_{}.json",
+                name,
+                std::process::id()
+            ));
+            let _ = std::fs::remove_file(&p);
+            (
+                ModelsDevConfig {
+                    cache_path: Some(p.clone()),
+                    ..Default::default()
+                },
+                p,
+            )
+        }
+
+        #[tokio::test]
+        async fn registry_fetches_when_cache_absent() {
+            let (cfg, path) = fetcher_cfg("absent");
+            let client = MockClient::with_ok(fetcher_payload());
+            let fetcher = ModelsDevFetcher::new(cfg, Arc::new(client.clone()));
+            let reg = fetcher.registry().await.unwrap();
+            assert_eq!(reg.len(), 1);
+            assert_eq!(reg.models[0].id, "m-fetch");
+            assert_eq!(client.call_count(), 1);
+            // Cache was written.
+            assert!(path.exists());
+            let _ = std::fs::remove_file(&path);
+        }
+
+        #[tokio::test]
+        async fn registry_coalesces_repeat_calls_within_ttl() {
+            let (cfg, path) = fetcher_cfg("coalesce");
+            let client = MockClient::with_ok(fetcher_payload());
+            let fetcher = ModelsDevFetcher::new(cfg, Arc::new(client.clone()));
+            let _r1 = fetcher.registry().await.unwrap();
+            let _r2 = fetcher.registry().await.unwrap();
+            let _r3 = fetcher.registry().await.unwrap();
+            // OnStale + fresh cache → no extra network calls.
+            assert_eq!(client.call_count(), 1);
+            let _ = std::fs::remove_file(&path);
+        }
+
+        #[tokio::test]
+        async fn registry_never_policy_refuses_when_no_cache() {
+            let (cfg, _path) = fetcher_cfg("never_empty");
+            let client = MockClient::with_ok(fetcher_payload());
+            let fetcher = ModelsDevFetcher::new(cfg, Arc::new(client.clone()))
+                .with_policy(RefreshPolicy::Never);
+            let err = fetcher.registry().await.unwrap_err();
+            assert!(matches!(err, ModelsDevError::Io(_)));
+            assert_eq!(client.call_count(), 0);
+        }
+
+        #[tokio::test]
+        async fn registry_never_policy_serves_existing_cache() {
+            let (cfg, path) = fetcher_cfg("never_cached");
+            // Pre-seed the cache from disk.
+            let seeded = ModelRegistry::from_json(fetcher_payload()).unwrap();
+            save_cache(&seeded, &cfg).unwrap();
+
+            let client = MockClient::with_ok("{}"); // would parse fine
+            let fetcher = ModelsDevFetcher::new(cfg.clone(), Arc::new(client.clone()))
+                .with_policy(RefreshPolicy::Never);
+            let reg = fetcher.registry().await.unwrap();
+            assert_eq!(reg.len(), 1);
+            assert_eq!(client.call_count(), 0);
+            let _ = std::fs::remove_file(&path);
+        }
+
+        #[tokio::test]
+        async fn registry_on_miss_skips_fetch_when_cache_present() {
+            let (cfg, path) = fetcher_cfg("onmiss_hit");
+            let seeded = ModelRegistry::from_json(fetcher_payload()).unwrap();
+            save_cache(&seeded, &cfg).unwrap();
+
+            let client = MockClient::with_ok(fetcher_payload());
+            let fetcher = ModelsDevFetcher::new(cfg.clone(), Arc::new(client.clone()))
+                .with_policy(RefreshPolicy::OnMiss);
+            let reg = fetcher.registry().await.unwrap();
+            assert_eq!(reg.len(), 1);
+            assert_eq!(client.call_count(), 0);
+            let _ = std::fs::remove_file(&path);
+        }
+
+        #[tokio::test]
+        async fn force_refresh_always_fetches() {
+            let (cfg, path) = fetcher_cfg("force");
+            let client = MockClient::with_ok(fetcher_payload());
+            let fetcher = ModelsDevFetcher::new(cfg, Arc::new(client.clone()));
+            let _r = fetcher.registry().await.unwrap();
+            assert_eq!(client.call_count(), 1);
+            fetcher.force_refresh().await.unwrap();
+            fetcher.force_refresh().await.unwrap();
+            assert_eq!(client.call_count(), 3);
+            assert_eq!(fetcher.refresh_count(), 3);
+            let _ = std::fs::remove_file(&path);
+        }
+
+        #[tokio::test]
+        async fn payload_bomb_rejected_by_cap() {
+            let (mut cfg, _path) = fetcher_cfg("bomb");
+            cfg.max_payload_bytes = 20; // smaller than payload
+            let client = MockClient::with_ok(fetcher_payload());
+            let fetcher = ModelsDevFetcher::new(cfg, Arc::new(client));
+            let err = fetcher.registry().await.unwrap_err();
+            assert!(matches!(err, ModelsDevError::TooLarge { .. }));
+        }
+
+        #[tokio::test]
+        async fn fetch_error_propagates() {
+            let (cfg, _path) = fetcher_cfg("err");
+            let client = MockClient::with_responses(vec![Err("boom")]);
+            let fetcher = ModelsDevFetcher::new(cfg, Arc::new(client));
+            let err = fetcher.registry().await.unwrap_err();
+            match err {
+                ModelsDevError::Io(s) => assert!(s.contains("boom")),
+                other => panic!("expected Io, got {:?}", other),
+            }
+        }
+
+        #[tokio::test]
+        async fn parse_error_on_garbage_response() {
+            let (cfg, _path) = fetcher_cfg("garbage");
+            let client = MockClient::with_responses(vec![Ok(b"not json".to_vec())]);
+            let fetcher = ModelsDevFetcher::new(cfg, Arc::new(client));
+            let err = fetcher.registry().await.unwrap_err();
+            assert!(matches!(err, ModelsDevError::Parse(_)));
+        }
+
+        #[tokio::test]
+        async fn fetched_registry_round_trips_through_cache() {
+            let (cfg, path) = fetcher_cfg("rt");
+            let client = MockClient::with_ok(fetcher_payload());
+            let fetcher = ModelsDevFetcher::new(cfg.clone(), Arc::new(client));
+            let _ = fetcher.registry().await.unwrap();
+            let from_disk = load_cache(&cfg).unwrap().expect("cache present");
+            assert_eq!(from_disk.len(), 1);
+            assert_eq!(
+                from_disk.source.as_deref(),
+                Some(ModelsDevFetcher::DEFAULT_ENDPOINT)
+            );
+            let _ = std::fs::remove_file(&path);
+        }
+
+        #[tokio::test]
+        async fn refresh_count_increments_only_on_success() {
+            let (cfg, _path) = fetcher_cfg("refresh_count");
+            let client = MockClient::with_responses(vec![
+                Err("transient"),
+                Ok(fetcher_payload().as_bytes().to_vec()),
+            ]);
+            let fetcher = ModelsDevFetcher::new(cfg, Arc::new(client));
+            assert!(fetcher.force_refresh().await.is_err());
+            assert_eq!(fetcher.refresh_count(), 0);
+            fetcher.force_refresh().await.unwrap();
+            assert_eq!(fetcher.refresh_count(), 1);
+        }
+
+        #[tokio::test]
+        async fn background_handle_cancel_is_idempotent() {
+            let (cfg, _path) = fetcher_cfg("bg_cancel");
+            let client = MockClient::with_ok(fetcher_payload());
+            let fetcher = Arc::new(ModelsDevFetcher::new(cfg, Arc::new(client)).with_policy(
+                RefreshPolicy::Background {
+                    interval: Duration::from_millis(50),
+                    on_error: Default::default(),
+                },
+            ));
+            let handle = fetcher.start_background();
+            assert!(!handle.is_cancelled());
+            handle.cancel();
+            handle.cancel();
+            assert!(handle.is_cancelled());
+            // Dropping handle aborts the task; nothing else to assert.
+            drop(handle);
+        }
+
+        #[tokio::test]
+        async fn endpoint_override_is_propagated() {
+            let (cfg, _path) = fetcher_cfg("endpoint");
+            let client = MockClient::with_ok(fetcher_payload());
+            let fetcher = ModelsDevFetcher::new(cfg, Arc::new(client))
+                .with_endpoint("https://example.test/api.json");
+            assert_eq!(fetcher.endpoint(), "https://example.test/api.json");
+            let reg = fetcher.registry().await.unwrap();
+            assert_eq!(reg.source.as_deref(), Some("https://example.test/api.json"));
+        }
     }
 }

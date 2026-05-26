@@ -5,6 +5,62 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v99 (2026-05-26) — V138: HTTP fetcher in-crate + RefreshPolicy (0.2.85)
+
+Closes the docstring contradiction left over from V104.9: the file
+literally said *"the actual HTTP fetch is left to the caller"* —
+which violated the library framing rule that the caller should only
+configure, not complete. V138 bundles the network half in-crate
+behind a feature flag, so V137's parser/cache pair becomes a
+self-contained subsystem.
+
+### Added
+- **`models-dev-fetcher`** feature flag (in `full`). Implies
+  `async-runtime` + `dep:futures` (already in deps).
+- **`CatalogFetchClient`** trait — minimal async surface for the
+  fetcher (`get_bytes_capped(url, timeout, max_bytes)`). Returns raw
+  bytes so the cap is enforced **before** JSON parsing.
+- **`ReqwestCatalogClient`** — default impl. Streams the response
+  body and aborts as soon as the running total exceeds
+  `max_payload_bytes`; also pre-flights the `Content-Length` header
+  when present. Non-2xx responses fail with a `ModelsDevError::Io`
+  carrying the status code.
+- **`RefreshPolicy`** — `Never` / `OnMiss` / `OnStale` (default) /
+  `Background { interval, on_error: BackoffPolicy }`.
+- **`BackoffPolicy`** — `initial_delay` (30 s), `max_delay` (1 h),
+  `max_consecutive_failures` (5) after which the fetcher is marked
+  `is_degraded()` (continues serving stale cache).
+- **`ModelsDevFetcher`** — `new`, `with_endpoint`, `with_policy`,
+  `with_request_timeout`, `endpoint`, `is_degraded`,
+  `refresh_count`, `registry()`, `force_refresh()`,
+  `start_background()`. Concurrent `registry()` callers are
+  serialised on an internal `tokio::sync::Mutex` so a thundering
+  herd collapses into one fetch.
+- **`BackgroundHandle`** — cancellable handle returned by
+  `start_background`; drops abort the spawned task. Idempotent
+  `cancel()`.
+- **13 new tests** under `fetcher_tests` covering: fetch-when-absent,
+  coalescing within TTL, `Never` policy refusing without cache vs
+  serving existing cache, `OnMiss` skipping when cached,
+  `force_refresh` always fetching, payload-bomb rejection,
+  network-error propagation, parse-error on garbage, cache
+  round-trip, `refresh_count` only incrementing on success,
+  background-handle cancellation idempotence, endpoint override.
+
+### Compatibility
+- All new types are `#[non_exhaustive]` where it makes sense.
+- Module gated behind `models-dev-fetcher` — callers that only want
+  V137's parser/cache don't pull in tokio + reqwest.
+- `ModelsDevError` unchanged — fetcher reuses `Io` / `Parse` /
+  `TooLarge` variants.
+
+### Out of scope (deferred to later phases)
+- ETag / `If-Modified-Since` (V138 always fetches the full body
+  when refreshing).
+- HuggingFace / Ollama / curated sources as fetcher backends
+  (planned in V138 doc, deferred — current impl is single-endpoint).
+- SSRF allowlist, catalog signing, TLS pinning — explicitly V143.
+
 ## [Unreleased] - v98 (2026-05-26) — V137: extended catalog schema for open-weights universe (0.2.84)
 
 First milestone of the V137-V143 roadmap. Extends `models_dev` from a

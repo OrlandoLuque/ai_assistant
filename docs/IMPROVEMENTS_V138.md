@@ -1,6 +1,7 @@
 # V138 — HTTP fetcher in-crate + RefreshPolicy (0.2.85)
 
-**Status**: DRAFT — pending V137 close
+**Status**: SHIPPED 2026-05-26 (0.2.85) — fetcher + RefreshPolicy
+in-crate, single endpoint (models.dev). HF/Ollama backends deferred.
 **Scope**: añadir descargador HTTP dentro del crate, eliminando el
 "left to the caller" actual. Política de refresh configurable.
 **No-goals**: extender el schema (eso es V137), recommender (V140).
@@ -129,3 +130,34 @@ fetch.
 - Hardware detection (V139).
 - Cualquier wiring a Butler u otros consumers (V140).
 - Catálogo firmado / TLS pinning (V143).
+
+## Verification (shipped 2026-05-26)
+
+- `cargo build --lib` (default = full incl. `models-dev-fetcher`):
+  clean.
+- `cargo clippy --lib -- -D warnings`: clean.
+- `cargo test --lib`: **6262 passed, 0 failed** (was 6249; +13 in
+  `models_dev::tests::fetcher_tests::`).
+
+## Decisiones de implementación (no en el plan original)
+
+- **No se añadió un `AsyncHttpClient` general nuevo** — ya existe en
+  `src/async_providers.rs` para los providers. El fetcher define un
+  trait local pequeño (`CatalogFetchClient`) con un único método
+  (`get_bytes_capped`) porque su necesidad es distinta: necesita raw
+  bytes para hacer cap pre-parse, no JSON ya deserializado. Mantener
+  ambos traits separados evita acoplar el subsistema de catálogo al
+  trait de providers (que podría evolucionar por razones distintas).
+- **Background refresh**: se implementó vía `tokio::spawn` +
+  `Arc<AtomicBool>` para cancelación, sin añadir
+  `tokio_util::sync::CancellationToken` como nueva dependencia.
+  `BackgroundHandle::drop` aborta la task — semánticas
+  "fire-and-forget" para callers que no guarden el handle.
+- **Sources beyond models.dev (HF, Ollama)**: deferido. El plan
+  original las incluía; en la práctica añadirlas multiplicaría la
+  superficie sin beneficio claro hasta que V140 las consuma. El
+  `endpoint` configurable + el trait abierto dejan la puerta abierta
+  a meterlas en V138.1 sin tocar API.
+- **ETag / If-Modified-Since**: deferido. Requiere extender el
+  trait con `get_bytes_capped_conditional` (in/out headers). Punto
+  natural cuando aterricen las HF/Ollama backends.
