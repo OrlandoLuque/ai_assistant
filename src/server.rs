@@ -2475,10 +2475,102 @@ fn route_request_with_config(
             let id = &path[17..];
             handle_get_session(id, assistant)
         }
+        // V140.1 — hardware probe and model recommender.
+        // V143-008 contract: /hardware is NOT in exempt_paths, so auth applies
+        // automatically when ServerAuthConfig requires it. We still allow the
+        // operator to opt out by leaving auth disabled in dev.
+        #[cfg(feature = "hardware-detection")]
+        ("GET", "/hardware") | ("GET", "/api/v1/hardware") => handle_hardware(),
+        #[cfg(feature = "model-recommender")]
+        ("POST", "/recommend-model") | ("POST", "/api/v1/recommend-model") => {
+            handle_recommend_model(request)
+        }
         _ => (
             "404 Not Found".to_string(),
             serde_json::to_string(&ErrorResponse {
                 error: format!("Unknown endpoint: {} {}", request.method, request.path),
+            })
+            .unwrap_or_default(),
+        ),
+    }
+}
+
+// =============================================================================
+// V140.1 — hardware + recommender handlers
+// =============================================================================
+
+#[cfg(feature = "hardware-detection")]
+fn handle_hardware() -> (String, String) {
+    let info = crate::hardware_info::detect_cached();
+    (
+        "200 OK".to_string(),
+        serde_json::to_string(&*info).unwrap_or_default(),
+    )
+}
+
+#[cfg(feature = "model-recommender")]
+fn handle_recommend_model(request: &HttpRequest) -> (String, String) {
+    use crate::model_recommender::{recommend, RecommendationRequest};
+    use crate::models_dev::ModelRegistry;
+
+    #[derive(serde::Deserialize)]
+    struct Body {
+        #[serde(default)]
+        request: RecommendationRequest,
+        #[serde(default)]
+        registry_path: Option<String>,
+    }
+
+    let body: Body = match serde_json::from_str(&request.body) {
+        Ok(b) => b,
+        Err(e) => {
+            return (
+                "400 Bad Request".to_string(),
+                serde_json::to_string(&ErrorResponse {
+                    error: format!("invalid JSON body: {}", e),
+                })
+                .unwrap_or_default(),
+            );
+        }
+    };
+
+    let registry = match body.registry_path {
+        Some(p) => match std::fs::read_to_string(&p) {
+            Ok(text) => match ModelRegistry::from_json(&text) {
+                Ok(r) => r,
+                Err(e) => {
+                    return (
+                        "400 Bad Request".to_string(),
+                        serde_json::to_string(&ErrorResponse {
+                            error: format!("registry parse failed: {}", e),
+                        })
+                        .unwrap_or_default(),
+                    );
+                }
+            },
+            Err(e) => {
+                return (
+                    "400 Bad Request".to_string(),
+                    serde_json::to_string(&ErrorResponse {
+                        error: format!("failed to read registry at {}: {}", p, e),
+                    })
+                    .unwrap_or_default(),
+                );
+            }
+        },
+        None => ModelRegistry::default(),
+    };
+
+    let hw = crate::hardware_info::detect_cached();
+    match recommend(&body.request, &registry, &hw, None) {
+        Ok(rec) => (
+            "200 OK".to_string(),
+            serde_json::to_string(&rec).unwrap_or_default(),
+        ),
+        Err(e) => (
+            "422 Unprocessable Entity".to_string(),
+            serde_json::to_string(&ErrorResponse {
+                error: e.to_string(),
             })
             .unwrap_or_default(),
         ),
@@ -6654,5 +6746,73 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         assert!(!config.enrichment.cost.enabled);
         assert!(!config.enrichment.thinking.enabled);
         assert!(config.budget_manager.is_none());
+    }
+
+    // =========================================================================
+    // V140.1 — hardware + recommender route smoke tests
+    // =========================================================================
+
+    #[cfg(feature = "hardware-detection")]
+    #[test]
+    fn test_hardware_route_returns_json() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let metrics = Arc::new(ServerMetrics::new());
+        let req = HttpRequest {
+            method: "GET".to_string(),
+            path: "/hardware".to_string(),
+            headers: vec![],
+            body: String::new(),
+        };
+        let (status, body) = route_request(&req, &assistant, &metrics);
+        assert_eq!(status, "200 OK");
+        let v: serde_json::Value = serde_json::from_str(&body).expect("json body");
+        // HardwareInfo serialises with at minimum a `cpu` field (V139 schema).
+        assert!(v.is_object(), "expected JSON object, got {body}");
+
+        // Versioned alias must work too.
+        let req_v1 = HttpRequest {
+            method: "GET".to_string(),
+            path: "/api/v1/hardware".to_string(),
+            headers: vec![],
+            body: String::new(),
+        };
+        let (status_v1, _) = route_request(&req_v1, &assistant, &metrics);
+        assert_eq!(status_v1, "200 OK");
+    }
+
+    #[cfg(feature = "model-recommender")]
+    #[test]
+    fn test_recommend_model_route_empty_registry_rejects() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let metrics = Arc::new(ServerMetrics::new());
+        // Default registry has no families → EmptyCatalog → 422.
+        let req = HttpRequest {
+            method: "POST".to_string(),
+            path: "/recommend-model".to_string(),
+            headers: vec![],
+            body: "{}".to_string(),
+        };
+        let (status, body) = route_request(&req, &assistant, &metrics);
+        assert_eq!(status, "422 Unprocessable Entity");
+        assert!(
+            body.contains("no families") || body.contains("empty"),
+            "expected EmptyCatalog message, got: {body}"
+        );
+    }
+
+    #[cfg(feature = "model-recommender")]
+    #[test]
+    fn test_recommend_model_route_malformed_json_rejects() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let metrics = Arc::new(ServerMetrics::new());
+        let req = HttpRequest {
+            method: "POST".to_string(),
+            path: "/recommend-model".to_string(),
+            headers: vec![],
+            body: "{not-json".to_string(),
+        };
+        let (status, body) = route_request(&req, &assistant, &metrics);
+        assert_eq!(status, "400 Bad Request");
+        assert!(body.contains("invalid JSON"), "got: {body}");
     }
 }

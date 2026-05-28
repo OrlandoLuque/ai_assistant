@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.90"
+version = "0.2.91"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -872,7 +872,7 @@ bench = false
 [[bin]]
 name = "ai_setup_gui"
 path = "src/bin/ai_setup_gui.rs"
-required-features = ["gui"]
+required-features = ["gui", "hardware-detection", "model-recommender"]
 bench = false
 
 [[bin]]

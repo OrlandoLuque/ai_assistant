@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v105 (2026-05-27) — V144: model recommender wiring (0.2.91)
+
+Closes the wiring contract from V140 (`ai_assistant` library entry
+point landed; integrations next) and the V143-008 follow-up
+(`/hardware` endpoint must live behind authentication). Surfaces the
+V139 hardware probe and V140 model recommender on three new caller
+boundaries — `Butler` facade, HTTP server, setup GUI — without
+inflating the public API. CLI was already covered in V140.
+
+### Added
+- `Butler::recommend_model(...)` — thin delegate over
+  `model_recommender::recommend(...)`. Gated on
+  `#[cfg(feature = "model-recommender")]`. Stateless: does not touch
+  `self.detectors`/`self.cache`; mirrors the
+  `recommend_runtime` / `recommend_prompt_fragments` pattern.
+- HTTP endpoints in `src/server.rs`:
+  - `GET /hardware` and `GET /api/v1/hardware` (cfg:
+    `hardware-detection`) — returns `HardwareInfo` JSON via
+    `detect_cached()`. **Auth-gated by default**: not added to
+    `ServerAuthConfig::exempt_paths`, so when API-key auth is
+    enabled the endpoint requires it. Closes V143-008.
+  - `POST /recommend-model` and `POST /api/v1/recommend-model`
+    (cfg: `model-recommender`) — accepts JSON body
+    `{ "request": <RecommendationRequest>, "registry_path": ? }`.
+    Returns the same `Recommendation` shape the CLI emits.
+- `ai_setup_gui` `Tab::Hardware` — between Models and Backup. Probe
+  host + recommend-model controls (task / tier / privacy combo boxes,
+  output rendered in a monospace group). Required-features bumped
+  to `gui, hardware-detection, model-recommender` — already in
+  `full`, so no new dependency surface.
+
+### Tests
+- `server::tests::test_hardware_route_returns_json`
+- `server::tests::test_recommend_model_route_empty_registry_rejects`
+- `server::tests::test_recommend_model_route_malformed_json_rejects`
+
+Total: **6300 passed, 0 failed** (was 6297 → +3 new).
+
+See [`docs/IMPROVEMENTS_V144.md`](docs/IMPROVEMENTS_V144.md) for the
+full design notes.
+
 ## [Unreleased] - v104 (2026-05-26) — V143: Security audit V137-V142 (0.2.90)
 
 Closes the V137-V143 chain with a focused audit of every code path

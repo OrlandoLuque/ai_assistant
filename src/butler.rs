@@ -3454,6 +3454,31 @@ impl Butler {
 }
 
 // =============================================================================
+// V140.1 — model recommender delegate
+// =============================================================================
+
+#[cfg(feature = "model-recommender")]
+impl Butler {
+    /// Recommend a model + variant for the request, using the in-crate
+    /// rule-based scorer (with optional LLM advisor refinement).
+    ///
+    /// Thin delegate over [`crate::model_recommender::recommend`] — kept on
+    /// `Butler` so callers that already have a `Butler` instance don't need
+    /// to know about the lower-level module. Stateless: does not consult
+    /// `self.detectors` or `self.cache`.
+    pub fn recommend_model(
+        &self,
+        req: &crate::model_recommender::RecommendationRequest,
+        registry: &crate::models_dev::ModelRegistry,
+        hw: &crate::hardware_info::HardwareInfo,
+        advisor: Option<&dyn crate::llm_enhance::LlmEnhancer>,
+    ) -> Result<crate::model_recommender::Recommendation, crate::model_recommender::RecommendError>
+    {
+        crate::model_recommender::recommend(req, registry, hw, advisor)
+    }
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 

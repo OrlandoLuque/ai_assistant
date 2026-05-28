@@ -33,6 +33,7 @@ enum Tab {
     Nodes,
     Docker,
     Models,
+    Hardware,
     Backup,
 }
 
@@ -44,18 +45,20 @@ impl Tab {
             Self::Nodes => "Nodes",
             Self::Docker => "Docker",
             Self::Models => "Models",
+            Self::Hardware => "Hardware",
             Self::Backup => "Backup",
         }
     }
 
     fn icon(&self) -> &'static str {
         match self {
-            Self::Setup => "\u{2699}",   // gear
-            Self::Config => "\u{1f4dd}", // memo
-            Self::Nodes => "\u{1f5a5}",  // desktop computer
-            Self::Docker => "\u{1f4e6}", // package
-            Self::Models => "\u{1f9e0}", // brain
-            Self::Backup => "\u{1f4be}", // floppy disk
+            Self::Setup => "\u{2699}",     // gear
+            Self::Config => "\u{1f4dd}",   // memo
+            Self::Nodes => "\u{1f5a5}",    // desktop computer
+            Self::Docker => "\u{1f4e6}",   // package
+            Self::Models => "\u{1f9e0}",   // brain
+            Self::Hardware => "\u{1f9ee}", // abacus — host probe + recommender
+            Self::Backup => "\u{1f4be}",   // floppy disk
         }
     }
 
@@ -66,6 +69,7 @@ impl Tab {
             Tab::Nodes,
             Tab::Docker,
             Tab::Models,
+            Tab::Hardware,
             Tab::Backup,
         ]
     }
@@ -166,6 +170,13 @@ struct SetupGuiApp {
     backup_output_path: String,
     restore_archive_path: String,
 
+    // Hardware tab (V140.1)
+    hw_summary: Option<String>,
+    hw_recommend_output: Option<String>,
+    hw_task: String,
+    hw_tier: String,
+    hw_privacy: String,
+
     // General
     status_message: String,
     status_is_error: bool,
@@ -238,6 +249,13 @@ impl SetupGuiApp {
             backup_include_models: false,
             backup_output_path: String::new(),
             restore_archive_path: String::new(),
+
+            // Hardware (V140.1)
+            hw_summary: None,
+            hw_recommend_output: None,
+            hw_task: "general".to_string(),
+            hw_tier: "balanced".to_string(),
+            hw_privacy: "prefer-local".to_string(),
 
             // General
             status_message: String::new(),
@@ -1765,6 +1783,155 @@ max_entries = {}
             self.restore_backup_bg();
         }
     }
+
+    // =========================================================================
+    // Hardware + model recommender tab (V140.1)
+    // =========================================================================
+
+    fn render_hardware_tab(&mut self, ui: &mut Ui) {
+        ui.heading("Hardware probe + Model recommender");
+        ui.add_space(4.0);
+
+        ui.label(RichText::new("Host hardware").strong());
+        ui.add_space(4.0);
+        if ui.button("Probe host").clicked() {
+            match ai_assistant::hardware_info::detect() {
+                Ok(info) => {
+                    self.hw_summary = Some(info.pretty_summary());
+                    self.set_status("Hardware probe complete", false);
+                }
+                Err(e) => {
+                    self.hw_summary = None;
+                    self.set_status(&format!("Probe failed: {}", e), true);
+                }
+            }
+        }
+        if let Some(ref s) = self.hw_summary {
+            ui.add_space(4.0);
+            ui.group(|ui| {
+                ui.label(RichText::new(s).monospace());
+            });
+        }
+
+        ui.add_space(16.0);
+        ui.separator();
+        ui.add_space(8.0);
+
+        ui.label(RichText::new("Recommend a model").strong());
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.label("Task:");
+            egui::ComboBox::from_id_source("hw_task")
+                .selected_text(&self.hw_task)
+                .show_ui(ui, |ui| {
+                    for v in [
+                        "general",
+                        "coding",
+                        "reasoning",
+                        "writing",
+                        "math",
+                        "roleplay",
+                        "translation",
+                        "summarization",
+                        "vision",
+                        "long-context",
+                    ] {
+                        ui.selectable_value(&mut self.hw_task, v.to_string(), v);
+                    }
+                });
+            ui.label("Tier:");
+            egui::ComboBox::from_id_source("hw_tier")
+                .selected_text(&self.hw_tier)
+                .show_ui(ui, |ui| {
+                    for v in ["tiny", "cheap", "balanced", "best"] {
+                        ui.selectable_value(&mut self.hw_tier, v.to_string(), v);
+                    }
+                });
+            ui.label("Privacy:");
+            egui::ComboBox::from_id_source("hw_privacy")
+                .selected_text(&self.hw_privacy)
+                .show_ui(ui, |ui| {
+                    for v in ["local-only", "prefer-local", "allow-cloud"] {
+                        ui.selectable_value(&mut self.hw_privacy, v.to_string(), v);
+                    }
+                });
+        });
+
+        ui.add_space(4.0);
+        if ui.button("Recommend").clicked() {
+            self.run_recommend();
+        }
+
+        if let Some(ref s) = self.hw_recommend_output {
+            ui.add_space(8.0);
+            ui.group(|ui| {
+                ui.label(RichText::new(s).monospace());
+            });
+        }
+    }
+
+    fn run_recommend(&mut self) {
+        use ai_assistant::model_recommender::{
+            recommend, PrivacyConstraint, QualityTier, RecommendationRequest, TaskKind,
+        };
+        use ai_assistant::models_dev::ModelRegistry;
+
+        let task = match self.hw_task.as_str() {
+            "coding" => TaskKind::Coding,
+            "reasoning" => TaskKind::Reasoning,
+            "writing" => TaskKind::Writing,
+            "math" => TaskKind::Math,
+            "roleplay" => TaskKind::Roleplay,
+            "translation" => TaskKind::Translation,
+            "summarization" => TaskKind::Summarization,
+            "vision" => TaskKind::Vision,
+            "long-context" => TaskKind::LongContext,
+            _ => TaskKind::General,
+        };
+        let tier = match self.hw_tier.as_str() {
+            "tiny" => QualityTier::Tiny,
+            "cheap" => QualityTier::Cheap,
+            "best" => QualityTier::Best,
+            _ => QualityTier::Balanced,
+        };
+        let privacy = match self.hw_privacy.as_str() {
+            "local-only" => PrivacyConstraint::LocalOnly,
+            "allow-cloud" => PrivacyConstraint::AllowCloud,
+            _ => PrivacyConstraint::PreferLocal,
+        };
+
+        let mut req = RecommendationRequest::default();
+        req.task = task;
+        req.min_quality_tier = tier;
+        req.privacy = privacy;
+
+        let registry = ModelRegistry::default();
+        let hw = ai_assistant::hardware_info::detect_cached();
+
+        match recommend(&req, &registry, &hw, None) {
+            Ok(rec) => {
+                self.hw_recommend_output = Some(format!(
+                    "primary: {} ({})\nsource: {}    backend: {}\nsize: {:.1} GB    vram: {:.1} GB\nparams: temp={} top_p={} top_k={} ctx={}\nreasoning: {}",
+                    rec.primary.variant_id,
+                    rec.primary.family_id,
+                    rec.primary.source_key,
+                    rec.primary.backend,
+                    rec.primary.size_bytes as f64 / 1_000_000_000.0,
+                    rec.estimated_vram_bytes as f64 / 1_000_000_000.0,
+                    rec.primary.params.temperature,
+                    rec.primary.params.top_p,
+                    rec.primary.params.top_k,
+                    rec.primary.params.ctx_size,
+                    rec.reasoning,
+                ));
+                self.set_status("Recommendation ready", false);
+            }
+            Err(e) => {
+                self.hw_recommend_output = Some(format!("recommend failed: {}", e));
+                self.set_status(&format!("Recommend failed: {}", e), true);
+            }
+        }
+    }
 }
 
 // =============================================================================
@@ -1811,6 +1978,7 @@ impl eframe::App for SetupGuiApp {
             Tab::Nodes => self.render_nodes_tab(ui),
             Tab::Docker => self.render_docker_tab(ui),
             Tab::Models => self.render_models_tab(ui),
+            Tab::Hardware => self.render_hardware_tab(ui),
             Tab::Backup => self.render_backup_tab(ui),
         });
     }
