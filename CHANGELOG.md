@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v106 (2026-05-27) — V141.1: drop unused wasi-common (0.2.92)
+
+Closes the "out of scope (post-V141)" item flagged in
+`docs/IMPROVEMENTS_V141.md`: full removal of the `wasi-common = "36"`
+crate from `Cargo.toml` + the `dep:wasi-common` reference in the
+`skill-forge` feature. The crate has been deprecated upstream — the
+project never imported any symbol from it (verified by grep) and
+the V141 wasmtime-41 bump made it strictly transitive-or-missing.
+
+### Removed
+- `wasi-common = { version = "36", optional = true }` from
+  `[dependencies]`.
+- `dep:wasi-common` from `skill-forge` feature.
+
+### Verified
+- `cargo build --lib --features skill-forge`: clean.
+- `cargo test --lib --features skill-forge skill_forge`: 60 passed.
+- `Cargo.lock`: `wasi-common` entry gone (was pulled in only by
+  `wasmtime-wasi` indirectly; that crate no longer needs it in 41+).
+
 ## [Unreleased] - v105 (2026-05-27) — V144: model recommender wiring (0.2.91)
 
 Closes the wiring contract from V140 (`ai_assistant` library entry
