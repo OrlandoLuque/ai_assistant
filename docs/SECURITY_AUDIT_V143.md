@@ -62,6 +62,15 @@ properly means a custom `reqwest` connector with post-resolution
 checks; out of scope for V143 — flagged for V144+ if it becomes
 load-bearing.
 
+**V143.1 follow-up (2026-05-27, 0.2.93)**: `check_resolved_addrs_safe`
+added — runs `tokio::net::lookup_host` before the request and
+rejects when any resolved IP is private/loopback/link-local.
+Catches the casual case where someone owns `attacker.com` and
+points it at 169.254.169.254. Still a TOCTOU window between this
+pre-resolve and the connector's own resolution; truly closing that
+requires a custom `reqwest::dns::Resolve` impl handing the
+pre-resolved IP to the connector — separate refactor.
+
 **Test**: 9 new tests in `models_dev::tests::fetcher_tests::ssrf_*`
 covering AWS metadata, loopback, RFC 1918, localhost, IPv6
 loopback/ULA/link-local/mapped, non-http schemes, public endpoints,

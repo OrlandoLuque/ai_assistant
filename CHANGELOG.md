@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v107 (2026-05-27) — V143.1: DNS-rebinding SSRF defense (0.2.93)
+
+Closes the "known gap" V143-001 flagged: literal-IP SSRF is blocked
+since V143 (0.2.90), but a hostname that *resolves* to a private IP
+slipped through (e.g. `attacker.com → 169.254.169.254`). V143.1
+adds `check_resolved_addrs_safe` — `tokio::net::lookup_host` before
+the request, reject when any resolved IP is private / loopback /
+link-local. Layered on top of the existing pure check.
+
+### Security
+- `models_dev::fetcher::check_resolved_addrs_safe` runs after
+  `validate_endpoint_url` inside
+  `ReqwestCatalogClient::get_bytes_capped`. Short-circuits on
+  literal-IP hosts (already validated) and on
+  `allow_private_endpoints = true` (test/intranet opt-out).
+- TOCTOU window between the pre-resolve and the connector's own
+  resolution remains — documented as a separate refactor in the
+  audit doc. The 99% case (attacker DNS pointing at a private IP)
+  is closed.
+
+### Tests
+- `models_dev::tests::fetcher_tests::ssrf_resolve_check_skips_literal_ip`
+- `models_dev::tests::fetcher_tests::ssrf_resolve_check_allows_when_opt_in`
+- `models_dev::tests::fetcher_tests::ssrf_resolve_check_blocks_localhost_resolution`
+
+Total lib tests: **6303 passed, 0 failed** (was 6300 → +3 new).
+
 ## [Unreleased] - v106 (2026-05-27) — V141.1: drop unused wasi-common (0.2.92)
 
 Closes the "out of scope (post-V141)" item flagged in

@@ -1211,6 +1211,57 @@ mod fetcher {
         }
     }
 
+    /// DNS-rebinding-aware second pass. V143-001 closed the literal-IP
+    /// foot-guns; this catches the case where an attacker-controlled
+    /// domain *resolves* to a private/loopback/link-local IP.
+    ///
+    /// The lookup itself is racy (TOCTOU: the resolver could return a
+    /// different IP on the actual connect), but this still kills the
+    /// 99% case where someone simply points `attacker.com` →
+    /// 169.254.169.254. Truly closing the TOCTOU window requires a
+    /// custom `reqwest::dns::Resolve` that hands the pre-resolved IP
+    /// back to the connector — a separate refactor.
+    pub(super) async fn check_resolved_addrs_safe(
+        url: &str,
+        allow_private: bool,
+    ) -> Result<(), ModelsDevError> {
+        if allow_private {
+            return Ok(());
+        }
+        let parsed = reqwest::Url::parse(url)
+            .map_err(|e| ModelsDevError::Io(format!("invalid url {}: {}", url, e)))?;
+        let host = match parsed.host_str() {
+            Some(h) => h,
+            None => return Ok(()), // validate_endpoint_url already rejected
+        };
+        // Literal-IP hosts were already verified by validate_endpoint_url
+        // — skip resolution to avoid a needless DNS hit.
+        let host_for_ip = host
+            .strip_prefix('[')
+            .and_then(|s| s.strip_suffix(']'))
+            .unwrap_or(host);
+        if host_for_ip.parse::<std::net::IpAddr>().is_ok() {
+            return Ok(());
+        }
+        let port = parsed
+            .port_or_known_default()
+            .unwrap_or(if parsed.scheme() == "https" { 443 } else { 80 });
+        let addrs = tokio::net::lookup_host((host, port))
+            .await
+            .map_err(|e| ModelsDevError::Io(format!("dns lookup for {}: {}", host, e)))?;
+        for sa in addrs {
+            let ip = sa.ip();
+            if is_private_ip(&ip) {
+                return Err(ModelsDevError::Io(format!(
+                    "endpoint {} resolves to a private/loopback/link-local address ({}); \
+                    opt in via with_allow_private_endpoints(true)",
+                    url, ip
+                )));
+            }
+        }
+        Ok(())
+    }
+
     impl CatalogFetchClient for ReqwestCatalogClient {
         fn get_bytes_capped<'a>(
             &'a self,
@@ -1221,6 +1272,7 @@ mod fetcher {
             Box::pin(async move {
                 use futures::StreamExt;
                 validate_endpoint_url(url, self.allow_private_endpoints)?;
+                check_resolved_addrs_safe(url, self.allow_private_endpoints).await?;
                 let resp = self
                     .client
                     .get(url)
@@ -2514,6 +2566,59 @@ mod tests {
                 crate::models_dev::fetcher::validate_endpoint_url("not-a-url", false).unwrap_err();
             let msg = format!("{}", err);
             assert!(msg.contains("invalid url"), "{}", msg);
+        }
+
+        // V143.1 — DNS-rebinding-aware second pass
+
+        #[tokio::test]
+        async fn ssrf_resolve_check_skips_literal_ip() {
+            // Literal IPs are validated by the pure check; the resolver
+            // pass must short-circuit (no DNS lookup, no spurious failure).
+            let res = crate::models_dev::fetcher::check_resolved_addrs_safe(
+                "http://8.8.8.8/api.json",
+                false,
+            )
+            .await;
+            assert!(
+                res.is_ok(),
+                "literal-IP path should skip resolution: {:?}",
+                res
+            );
+        }
+
+        #[tokio::test]
+        async fn ssrf_resolve_check_allows_when_opt_in() {
+            // allow_private = true must bypass the resolver pass entirely
+            // (otherwise tests pointing at mock servers via hostnames hang
+            // on the resolver). Use a clearly-private name; opt-in lifts
+            // the gate.
+            let res = crate::models_dev::fetcher::check_resolved_addrs_safe(
+                "http://localhost.localdomain/api.json",
+                true,
+            )
+            .await;
+            assert!(res.is_ok(), "opt-in must bypass resolver: {:?}", res);
+        }
+
+        #[tokio::test]
+        async fn ssrf_resolve_check_blocks_localhost_resolution() {
+            // "localhost" resolves to 127.0.0.1 / ::1 on every standard
+            // libc resolver; the rebinding-aware pass must reject it.
+            // (The literal `localhost` is already caught by the pure pass
+            // upstream, but here we test the resolver path directly with
+            // a name that the OS knows resolves to a loopback IP.)
+            let res = crate::models_dev::fetcher::check_resolved_addrs_safe(
+                "http://localhost/api.json",
+                false,
+            )
+            .await;
+            assert!(res.is_err(), "localhost resolution must be blocked");
+            let msg = format!("{}", res.unwrap_err());
+            assert!(
+                msg.contains("resolves to") || msg.contains("private"),
+                "expected resolver-block message, got: {}",
+                msg
+            );
         }
     }
 }
