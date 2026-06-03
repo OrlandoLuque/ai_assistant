@@ -47,12 +47,6 @@ ignore = [
     # Re-check by: 2026-08-01 OR when reqwest publishes a version that
     # drops the rustls-pemfile dep.
     "RUSTSEC-2025-0134",
-    # tantivy → lru IterMut unsoundness. The affected codepath
-    # (mutating an entry obtained from IterMut while the iterator is
-    # alive) is not used by tantivy's query/indexing paths we exercise.
-    # Re-check by: when tantivy 0.25+ ships (expected to drop lru in
-    # favour of an internal LRU) OR 2026-08-01.
-    "RUSTSEC-2026-0002",
 ]
 
 # ----------------------------------------------------------------

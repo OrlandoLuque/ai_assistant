@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v108 (2026-05-28) — V144.1: CI Benchmarks fix + drop stale RUSTSEC-2026-0002 (0.2.94)
+
+Two small follow-ups after the V144 push surfaced CI regressions:
+
+### Fixed
+- **Benchmarks job**: `cargo bench` mutates `Cargo.lock`, which broke
+  `benchmark-action/github-action-benchmark@v1`'s subsequent
+  `git switch gh-pages`. Added a `Restore Cargo.lock before branch
+  switch` step (`git checkout -- Cargo.lock`) ahead of the action.
+
+### Security
+- Dropped `RUSTSEC-2026-0002` (tantivy → lru `IterMut` unsoundness)
+  from the audit ignore list in all three places (`ci.yml`,
+  `supply-chain.yml`, `deny.toml`). cargo-deny flagged it
+  `advisory-not-detected` — the transitive dep is gone, so the
+  silencer is dead weight.
+
+### Known issues (deferred)
+- 13 wasmtime/cranelift/wiggle advisories (RUSTSEC-2026-0085 through
+  -0149) hit cargo-audit and cargo-deny on the same V143.1 push.
+  Fix requires wasmtime ≥36.0.10 (LTS) or ≥44.0.2 (rustc 1.92).
+  V141 explicitly deferred the 1.90→1.92 toolchain bump to a separate
+  decision; that decision is still pending. CI Security Audit + Supply
+  Chain remain red until it lands.
+
 ## [Unreleased] - v107 (2026-05-27) — V143.1: DNS-rebinding SSRF defense (0.2.93)
 
 Closes the "known gap" V143-001 flagged: literal-IP SSRF is blocked
