@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.94"
+version = "0.2.95"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -646,8 +646,8 @@ futures-core = { version = "0.3", optional = true }
 
 # === V96: Self-Learning deps ===
 # Wasmtime runtime for Skill Forge WASM execution (fuel + ResourceLimiter)
-wasmtime = { version = "41", optional = true, default-features = false, features = ["cranelift", "runtime"] }
-wasmtime-wasi = { version = "41", optional = true }
+wasmtime = { version = "45", optional = true, default-features = false, features = ["cranelift", "runtime"] }
+wasmtime-wasi = { version = "45", optional = true }
 # Ed25519 signatures for skill integrity and ledger event attestation
 ed25519-dalek = { version = "2", optional = true, default-features = false, features = ["std", "rand_core"] }
 # Blake3 for hash-chained ledger prev_hash and content hashing

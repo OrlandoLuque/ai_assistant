@@ -242,7 +242,7 @@ impl wasmtime::ResourceLimiter for MemoryLimits {
         _current: usize,
         desired: usize,
         maximum: Option<usize>,
-    ) -> anyhow::Result<bool> {
+    ) -> wasmtime::Result<bool> {
         if desired > self.max_memory_bytes {
             return Ok(false);
         }
@@ -259,13 +259,13 @@ impl wasmtime::ResourceLimiter for MemoryLimits {
         _current: usize,
         _desired: usize,
         _maximum: Option<usize>,
-    ) -> anyhow::Result<bool> {
+    ) -> wasmtime::Result<bool> {
         Ok(true)
     }
 }
 
 #[cfg(feature = "skill-forge")]
-fn map_trap(skill_id: &SkillId, err: anyhow::Error) -> SkillError {
+fn map_trap(skill_id: &SkillId, err: wasmtime::Error) -> SkillError {
     let msg = format!("{err}");
     if msg.contains("fuel") || msg.contains("consumed all fuel") {
         SkillError::ResourceExhausted {

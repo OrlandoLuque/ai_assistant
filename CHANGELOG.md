@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v109 (2026-06-06) — V145: rust 1.90→1.93 + wasmtime 41→45 (0.2.95)
+
+Closes the 13 wasmtime/cranelift/wiggle advisories
+(RUSTSEC-2026-0085 through -0149) that V144/V143.1's push surfaced.
+The cluster shared one root — wasmtime 41 — and the lowest fix line
+needed rustc 1.93+. V141 had explicitly deferred the toolchain bump
+as "a separate decision"; this is that decision.
+
+### Changed
+- `rust-toolchain.toml`: pin `1.90.0` → `1.93.0`.
+- All 5 GitHub workflows: `dtolnay/rust-toolchain@1.90.0` →
+  `@1.93.0` (15 occurrences across ci/release/supply-chain/
+  rustsec-review-monthly).
+- `Cargo.toml`: `wasmtime` and `wasmtime-wasi` `"41"` → `"45"`.
+- `Cargo.lock` regenerated — wasmtime 41.0.4 → 45.0.1, cranelift
+  0.128.4 → 0.132.1, wiggle 41.0.4 → 45.0.1.
+
+### Fixed
+- `src/skill_forge/wasm.rs`: wasmtime 45 moved its error type out
+  of `anyhow::Error`. Updated:
+  - `MemoryLimits::memory_growing` / `table_growing` return type
+    `anyhow::Result<bool>` → `wasmtime::Result<bool>`.
+  - `map_trap` parameter `anyhow::Error` → `wasmtime::Error`.
+  No behaviour change — `wasmtime::Error: Display` so the existing
+  fuel / epoch / trap string sniffing still works.
+
+### Security
+- 13 RUSTSEC advisories resolved by the wasmtime bump:
+  -0085, -0086, -0087, -0088, -0089, -0091, -0092, -0093, -0094,
+  -0095, -0096, -0114, -0149.
+- `RUSTSEC-2026-0149` (`wasi path_open(TRUNCATE)` bypass) was
+  never exploitable in our build: V143-009 confirmed
+  `wasmtime-wasi` is imported but never wired into the `Linker`.
+  The bump still resolves it on principle.
+
+### Verified
+- `cargo check --features skill-forge` ✓
+- `cargo check --features full` ✓
+- `cargo test --features skill-forge --lib skill_forge` — 60/60 pass.
+- `cargo test --features "full,…,skill-forge" --lib` — 8504 pass,
+  0 fail, 1 ignored.
+- `cargo fmt --check` clean.
+
 ## [Unreleased] - v108 (2026-05-28) — V144.1: CI Benchmarks fix + drop stale RUSTSEC-2026-0002 (0.2.94)
 
 Two small follow-ups after the V144 push surfaced CI regressions:
