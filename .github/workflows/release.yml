@@ -55,7 +55,7 @@ jobs:
             archive_ext: zip
             bin_ext: '.exe'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # The pinned 1.93.0 toolchain is enforced by rust-toolchain.toml.
       # rustup honours it; we still install the matching `rust-std`
@@ -166,7 +166,7 @@ jobs:
           ls -la
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: release-${{ matrix.target }}
           path: |
@@ -183,10 +183,10 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || inputs.dry_run == false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: artifacts
 
@@ -215,7 +215,7 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
       - name: Publish release with all artifacts
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.notes.outputs.tag }}
           name: ${{ steps.notes.outputs.tag }}

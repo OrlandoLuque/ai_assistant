@@ -37,7 +37,7 @@ jobs:
     name: Monthly RUSTSEC ignore review
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@1.93.0
 
@@ -119,7 +119,7 @@ jobs:
           IGNORES: ${{ steps.ignores.outputs.ids }}
 
       - name: Upload report artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: rustsec-monthly-report
           path: |
@@ -129,7 +129,7 @@ jobs:
           retention-days: 365
 
       - name: Open or update tracking issue
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const fs = require('fs');

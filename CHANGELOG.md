@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v110 (2026-06-03) — V146: Node 20→24 action sweep (0.2.96)
+
+GitHub Actions runner deprecation: Node 20 forced off on 2026-06-16
+(13 days from now). The latest CI run surfaced the deprecation
+warning for `actions/checkout@v4`. Sweeping every Node 20 action
+that has a Node 24-capable successor so the cutover passes silently.
+
+### Changed
+- `actions/checkout@v4` → `@v5` (Node 24). 16 occurrences across
+  ci/release/supply-chain/rustsec-review-monthly workflows.
+- `actions/upload-artifact@v4` → `@v6`. v5 is still Node 20; v6 is
+  the first Node 24 line. 4 occurrences.
+- `actions/download-artifact@v4` → `@v7`. v5 and v6 are still
+  Node 20; v7 is the first Node 24 line. 1 occurrence in release.yml.
+- `actions/github-script@v7` → `@v8` (Node 24). 1 occurrence in
+  rustsec-review-monthly.yml.
+- `softprops/action-gh-release@v2` → `@v3`. v3.0.0 is a pure
+  runtime bump (Node 20 → Node 24); no API changes per the v3.0.0
+  release notes. 3 occurrences across ci/release/supply-chain.
+
+### Not Changed
+- `contributor-assistant/github-action@v2.6.1` — still Node 20 and
+  no Node 24 release exists upstream (latest tag is the same v2.6.1
+  from 2024-09). Will be picked up automatically when the vendor
+  ships a Node 24 line; tracked as a V146 follow-up.
+- `Swatinem/rust-cache@v2` — already Node 24, no change needed.
+- `sigstore/cosign-installer@v3`, `EmbarkStudios/cargo-deny-action@v2`,
+  `codecov/codecov-action@v4` — not Node-based (composite/docker),
+  not flagged by the deprecation.
+
+### Verification
+- `gh api repos/<action>/contents/action.yml?ref=<tag>` confirmed
+  the `using: 'node24'` line for every bumped target. No guesswork.
+- No code changes — workflow YAML only. No CHANGELOG to the lib.
+
 ## [Unreleased] - v109 (2026-06-06) — V145: rust 1.90→1.93 + wasmtime 41→45 (0.2.95)
 
 Closes the 13 wasmtime/cranelift/wiggle advisories
