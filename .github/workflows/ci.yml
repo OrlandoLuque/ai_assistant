@@ -188,7 +188,7 @@ jobs:
       - name: Generate coverage
         run: cargo llvm-cov --features "$FEATURES_STD" --lib --lcov --output-path lcov.info
       - name: Upload coverage
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v6
         with:
           files: lcov.info
           fail_ci_if_error: false

@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v112 (2026-06-08) — V148: codecov-action v4→v6 (0.2.98)
+
+V146 follow-up + correction. V146 classified
+`codecov/codecov-action@v4` as a composite action and left it
+untouched. Re-reading the action manifest: v4 is `using: 'node20'`,
+so it was a Node 20 action that survived the V146 sweep. v6 is
+`using: 'composite'` — bumping closes the Node 20 hole *and*
+restores currency in one patch.
+
+### Changed
+- `.github/workflows/ci.yml`: `codecov/codecov-action@v4` → `@v6`.
+
+### Why v6 and not v7
+- v7.0.0 was published 2026-06-07 (<24h old). v6.0.2 shipped 1h
+  after v7.0.0, signaling parallel maintenance of the v6 line.
+  Sticking to v6 for stability; v7 can come in a later patch once
+  it has soak time.
+
 ## [Unreleased] - v111 (2026-06-08) — V147: flakes-are-bugs discipline doc (0.2.97)
 
 Captured an existing project-wide discipline as a standalone doc so
