@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v111 (2026-06-08) — V147: flakes-are-bugs discipline doc (0.2.97)
+
+Captured an existing project-wide discipline as a standalone doc so
+new contributors (and future-me) can find it without spelunking commit
+history. Three V135-V136 incidents (context cache race, NodeId
+collision under churn, ApiKey boundary-second expiry) are written up
+as the concrete teaching examples behind the rule
+*"assume the test is right and the code is wrong."*
+
+### Added
+- `docs/discipline/flakes-are-bugs.md` — protocol for handling test
+  flakes (reproduce → understand → deterministic repro → fix
+  production → keep flake as regression guard). `#[ignore]` reserved
+  for genuinely environmental failures.
+
+### Not Changed
+- No code or test changes. Doc-only commit.
+
 ## [Unreleased] - v110 (2026-06-03) — V146: Node 20→24 action sweep (0.2.96)
 
 GitHub Actions runner deprecation: Node 20 forced off on 2026-06-16
