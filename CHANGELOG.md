@@ -5,6 +5,81 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v113 (2026-06-08) — V149: routing hygiene + model-aware routing (0.2.99)
+
+Hardens the `ai_proxy` forwarding path and turns its multi-backend
+fanout into a real federation primitive. Five subphases shipped
+together: F1 (served-by header + OpenAI error envelope on every
+4xx/5xx), F3 (request-id replay dedupe + multi-hop loop guard via
+`x-forward-hops`), F4 (per-backend model registry, three routing
+policies, Prometheus `/metrics`), F5 (aggregated `/v1/models`).
+
+V150 (streaming passthrough) is a separate patch — the buffering
+behavior on the hot path is unchanged here so this can ship without
+hot-path risk.
+
+### Added — F1 (header + envelope)
+- `x-mesh-served-by` header injected on every response, including
+  early-rejection paths (auth, rate limit, body parse, guards,
+  budget). Configurable via `[mesh.routing]`:
+  - `expose_served_by_addr: bool` (default `true`)
+  - `served_by_salt: String` (optional; random per-process otherwise)
+- OpenAI canonical error envelope:
+  `{"error": {"message", "type", "code", "param"}}` with five canonical
+  types (`invalid_request_error`, `authentication_error`,
+  `rate_limit_error`, `not_found_error`, `service_unavailable_error`,
+  `server_error`). All `ai_proxy` errors migrated.
+
+### Added — F3 (dedupe + loop guard)
+- Request-id dedupe (LRU 10k entries, 5min sliding TTL) on
+  non-idempotent methods only. Key: `(api_key_hash, request_id_hash)`
+  so cross-tenant collisions are impossible. `len(x-request-id) > 128`
+  → 400 envelope. Replay → 409 envelope.
+- `x-forward-hops` loop guard. Configurable
+  `routing.max_forward_hops` (default 8). Exceeded → 508 envelope.
+  Strict parse: negative / non-numeric → 0. External inbound resets
+  hops to 0 (foundation for future trusted multi-hop chains).
+
+### Added — F4 (model-aware routing)
+- `Backend.static_models` (TOML `[[backends]].models`) +
+  `Backend.advertised_models` (populated by piggyback `/v1/models`
+  polling from the health check loop). Permissive parser supports
+  OpenAI (`{"data":[{"id":...}]}`) and Ollama
+  (`{"models":[{"name":...}]}`) shapes.
+- `RoutingPolicy { RoundRobin | LocalFirst | ModelAware }`.
+  CLI flag `--routing-policy`. TOML `[mesh.routing] policy = "..."`.
+  `model_aware` auto-enables polling and emits a startup warning if no
+  static models are declared. ModelAware overrides session affinity.
+- Backend selection without an advertising backend under
+  `model_aware` → 404 envelope with `code: model_not_in_mesh`.
+- Exponential backoff on `/v1/models` polling errors (cap 30 ticks).
+  Non-2xx from `/v1/models` does NOT mark the backend unhealthy.
+- Prometheus `/metrics` endpoint (text/plain, scrape-ready):
+  `proxy_requests_by_policy{policy=...}`,
+  `proxy_loop_detected_total`, `proxy_dedupe_hit_total`,
+  `proxy_model_aware_no_match_total`.
+- `/health` extended with `models_advertised: Vec<String>` per
+  backend.
+
+### Added — F5 (aggregated `/v1/models`)
+- New `GET /v1/models` endpoint serves the union of all backend
+  models with shape:
+  ```json
+  {"id":"llama3","object":"model","created":0,
+   "served_by":["addr1:port","addr2:port"]}
+  ```
+- 60s TTL cache, invalidated on health transitions AND on any change
+  to a backend's advertised-model list. Respects the `api_key` auth
+  gate. GET only (others → 405 envelope with `Allow: GET`).
+  `served_by` honors `expose_served_by_addr` (opaque mode hides
+  addrs).
+
+### Backwards compatibility
+- All defaults preserve V78 behavior: `round_robin` policy, no
+  routing config required, `x-mesh-served-by` injected automatically.
+- 116 tests in `ai_proxy` (up from 73 at V78). All previous behavior
+  covered as regressions.
+
 ## [Unreleased] - v112 (2026-06-08) — V148: codecov-action v4→v6 (0.2.98)
 
 V146 follow-up + correction. V146 classified

@@ -601,6 +601,37 @@ async fn rate_limit_middleware(
 }
 
 /// Metrics recording middleware.
+/// V149 F1: per-process opaque node identity for `x-mesh-served-by`.
+/// Generated once at first call, stable for the lifetime of the
+/// process. Single-node servers don't have a configurable backend
+/// address — the value is purely a node label for mesh debugging.
+fn mesh_node_id() -> &'static str {
+    use std::sync::OnceLock;
+    static ID: OnceLock<String> = OnceLock::new();
+    ID.get_or_init(|| {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let pid = std::process::id() as u128;
+        let mix = (now ^ pid.rotate_left(17)) as u64;
+        format!("node-{:012x}", mix & 0x0000_FFFF_FFFF_FFFF)
+    })
+}
+
+/// V149 F1: append `x-mesh-served-by` on every response if not already
+/// set by a downstream handler. Preserves any value set by federation
+/// hops so multi-hop trails remain intact.
+async fn mesh_served_by_middleware(req: axum::http::Request<Body>, next: Next) -> Response {
+    let mut resp = next.run(req).await;
+    if !resp.headers().contains_key("x-mesh-served-by") {
+        if let Ok(v) = axum::http::HeaderValue::from_str(mesh_node_id()) {
+            resp.headers_mut().insert("x-mesh-served-by", v);
+        }
+    }
+    resp
+}
+
 async fn metrics_middleware(
     State(state): State<AppState>,
     req: axum::http::Request<Body>,
@@ -862,6 +893,7 @@ pub fn build_router(state: AppState, config: &ServerConfig) -> Router {
 
     let app = app
         .fallback(fallback_handler)
+        .layer(middleware::from_fn(mesh_served_by_middleware))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             metrics_middleware,

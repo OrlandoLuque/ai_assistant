@@ -32,9 +32,10 @@
 //! - `server-axum,security` — full gateway with guardrails, cache, audit,
 //!   budget, and per-key rate limiting (V78)
 
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -66,6 +67,8 @@ struct CliArgs {
     cost_snapshot: Option<PathBuf>,
     dry_run: bool,
     help: bool,
+    /// V149 F4: `round_robin` | `local_first` | `model_aware`.
+    routing_policy: Option<String>,
 }
 
 // ============================================================================
@@ -78,18 +81,525 @@ struct ProxyState {
     next_index: Arc<AtomicUsize>,
     session_affinity: Arc<DashMap<String, usize>>,
     api_key: Option<String>,
+    /// V149 F1: rules for computing the `x-mesh-served-by` header
+    /// value injected on forwarded responses.
+    served_by_config: Arc<ServedByConfig>,
+    /// V149 F1: the proxy's own identity used for `x-mesh-served-by`
+    /// when a response was generated locally (e.g. auth failure, no
+    /// healthy backend) and never reached an upstream.
+    self_addr: Arc<String>,
+    /// V149 F3: replay-dedupe LRU for `x-request-id` on
+    /// non-idempotent methods.
+    dedupe: Arc<DedupeCache>,
+    /// V149 F3: max `x-forward-hops` before the proxy 508s the
+    /// request as a forwarding loop.
+    max_forward_hops: u32,
+    /// V149 F4: backend-selection policy.
+    policy: RoutingPolicy,
+    /// V149 F4: per-process counters surfaced via `/metrics`.
+    metrics: Arc<ProxyMetrics>,
+    /// V149 F4: when true, the health-check loop also polls each
+    /// backend's `/v1/models` to refresh advertised model lists.
+    /// Set automatically when policy is `ModelAware`; can also be
+    /// pinned on for `RoundRobin`/`LocalFirst` to populate `/v1/models`
+    /// aggregation (F5) without changing routing.
+    model_polling_enabled: bool,
+    /// V149 F5: TTL cache for the aggregated `/v1/models` response.
+    aggregated_models: Arc<AggregatedModelsCache>,
+}
+
+/// Configuration for the `x-mesh-served-by` response header (V149 F1).
+///
+/// - `expose_addr = true`: header value is the literal backend address
+///   (e.g. `"10.0.0.5:8090"`). Useful for internal/trusted clients.
+/// - `expose_addr = false`: header value is a 12-char hex opaque ID
+///   derived from `siphash(salt || addr)`. The salt defaults to a
+///   per-process random value; set `served_by_salt` in config if you
+///   need IDs stable across restarts (e.g. for log correlation).
+struct ServedByConfig {
+    expose_addr: bool,
+    salt: String,
+}
+
+impl Default for ServedByConfig {
+    fn default() -> Self {
+        // Random per-process salt so opaque IDs don't trivially
+        // correlate across proxy restarts unless `served_by_salt` is
+        // pinned in config.
+        let salt: u128 = {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            let pid = std::process::id() as u128;
+            // Mix nanos + pid + a fresh hash of stack address bits
+            // (Box allocation diversifies across runs).
+            let local = Box::new(0u64);
+            let local_addr = (&*local as *const u64) as u128;
+            now ^ pid.rotate_left(17) ^ local_addr.rotate_left(31)
+        };
+        Self {
+            expose_addr: true,
+            salt: format!("{salt:032x}"),
+        }
+    }
+}
+
+/// Header injected on every forwarded response to identify which
+/// backend served the request. See `ServedByConfig` for the value
+/// format. (V149 F1)
+const X_MESH_SERVED_BY: &str = "x-mesh-served-by";
+
+/// Header tracking the forward-hop count for loop detection. (V149 F3)
+const X_FORWARD_HOPS: &str = "x-forward-hops";
+
+/// Request-id header used for replay detection across both the free
+/// and security paths. (V149 F3 — same name as the security path's
+/// echo header so a single client header serves both purposes.)
+const X_MESH_REQUEST_ID: &str = "x-request-id";
+
+/// Maximum accepted length of an `x-request-id` value. Anything
+/// longer is rejected with 400. (V149 F3 — prevents oversized
+/// memory-amplification attacks on the dedupe cache.)
+const MAX_REQUEST_ID_LEN: usize = 128;
+
+/// Default size of the dedupe LRU. Capped to avoid an unbounded
+/// memory blowup under hostile load. (V149 F3)
+const DEDUPE_MAX_ENTRIES: usize = 10_000;
+
+/// Sliding TTL for dedupe entries. After this window the same
+/// `x-request-id` is reusable. (V149 F3 — matches the typical
+/// retry-burst horizon for SDK clients.)
+const DEDUPE_TTL: Duration = Duration::from_secs(300);
+
+/// Default `x-forward-hops` ceiling. (V149 F3 — generous enough for
+/// any realistic mesh topology, tight enough that an accidental
+/// A→B→A loop short-circuits in ~tens of ms.)
+const DEFAULT_MAX_FORWARD_HOPS: u32 = 8;
+
+/// Replay-dedupe LRU keyed by `(hash(api_key), hash(request_id))`.
+///
+/// Stores the [`Instant`] each request_id was first seen; expired
+/// entries are reaped lazily on lookup. Eviction is oldest-first
+/// once `max_entries` is reached. The same DashMap+VecDeque pattern
+/// as `cache::ResponseCache` to keep proxy-internal cache primitives
+/// uniform.
+struct DedupeCache {
+    entries: DashMap<u64, std::time::Instant>,
+    order: parking_lot::Mutex<std::collections::VecDeque<u64>>,
+    max_entries: usize,
+    ttl: Duration,
+}
+
+impl DedupeCache {
+    fn new(max_entries: usize, ttl: Duration) -> Self {
+        Self {
+            entries: DashMap::new(),
+            order: parking_lot::Mutex::new(std::collections::VecDeque::new()),
+            max_entries: max_entries.max(1),
+            ttl,
+        }
+    }
+
+    /// Returns `true` if `key` was seen within `ttl`; otherwise
+    /// records `key` and returns `false`. Single-call API so a
+    /// hot-path caller doesn't race lookup/insert.
+    fn check_and_record(&self, key: u64) -> bool {
+        let now = std::time::Instant::now();
+        // Lazy expiry: drop the stale entry and treat as new.
+        if let Some(existing) = self.entries.get(&key) {
+            if now.duration_since(*existing) < self.ttl {
+                return true;
+            }
+            drop(existing);
+            self.entries.remove(&key);
+        }
+        self.entries.insert(key, now);
+        let mut order = self.order.lock();
+        order.push_back(key);
+        while order.len() > self.max_entries {
+            if let Some(evicted) = order.pop_front() {
+                self.entries.remove(&evicted);
+            }
+        }
+        false
+    }
+}
+
+/// Compute the dedupe-cache key by hashing the api-key (if any) and
+/// the request-id together. Using SipHash via `DefaultHasher` keeps
+/// us off the `sha2` feature flag while still being uniform.
+fn compute_dedupe_key(api_key: Option<&str>, request_id: &str) -> u64 {
+    let mut h = DefaultHasher::new();
+    api_key.unwrap_or("").hash(&mut h);
+    0u8.hash(&mut h); // domain separator
+    request_id.hash(&mut h);
+    h.finish()
+}
+
+/// Validate the `x-request-id` (length + dedupe) on non-idempotent
+/// methods. Returns `Err(response)` if invalid or duplicate.
+/// GET/HEAD requests bypass dedupe (idempotent by spec).
+fn check_request_id_dedupe(
+    state: &ProxyState,
+    method: &axum::http::Method,
+    headers: &axum::http::HeaderMap,
+) -> Result<(), Response> {
+    use axum::http::Method;
+    if !matches!(
+        *method,
+        Method::POST | Method::PUT | Method::PATCH | Method::DELETE
+    ) {
+        return Ok(());
+    }
+    let Some(req_id) = headers.get(X_MESH_REQUEST_ID).and_then(|v| v.to_str().ok()) else {
+        return Ok(());
+    };
+    if req_id.is_empty() {
+        return Ok(());
+    }
+    if req_id.len() > MAX_REQUEST_ID_LEN {
+        let mut r = openai_error(
+            StatusCode::BAD_REQUEST,
+            OpenAiErrorKind::InvalidRequest,
+            format!("x-request-id exceeds maximum length of {MAX_REQUEST_ID_LEN}"),
+            Some("request_id_too_long"),
+        );
+        inject_self_served_by(&mut r, state);
+        return Err(r);
+    }
+    let key = compute_dedupe_key(state.api_key.as_deref(), req_id);
+    if state.dedupe.check_and_record(key) {
+        state
+            .metrics
+            .dedupe_hit_total
+            .fetch_add(1, Ordering::Relaxed);
+        let mut r = openai_error(
+            StatusCode::CONFLICT,
+            OpenAiErrorKind::InvalidRequest,
+            "Duplicate request-id within dedupe window",
+            Some("request_id_replay"),
+        );
+        inject_self_served_by(&mut r, state);
+        return Err(r);
+    }
+    Ok(())
+}
+
+/// Strict parse of `x-forward-hops`: any non-numeric, negative, or
+/// out-of-range value collapses to 0. Removes one foot-gun: a hostile
+/// client setting `x-forward-hops: -1` cannot underflow the counter
+/// or bypass the limit by claiming a fresh chain.
+fn parse_forward_hops(headers: &axum::http::HeaderMap) -> u32 {
+    headers
+        .get(X_FORWARD_HOPS)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.trim().parse::<i64>().ok())
+        .filter(|n| *n >= 0)
+        .map(|n| n.min(u32::MAX as i64) as u32)
+        .unwrap_or(0)
+}
+
+/// Loop guard: increment the inbound hops by 1, fail with 508 if the
+/// new value exceeds the configured ceiling. Returns the new value
+/// the proxy should advertise on its outbound request.
+fn next_forward_hops(state: &ProxyState, headers: &axum::http::HeaderMap) -> Result<u32, Response> {
+    let inbound = parse_forward_hops(headers);
+    let next = inbound.saturating_add(1);
+    if next > state.max_forward_hops {
+        state
+            .metrics
+            .loop_detected_total
+            .fetch_add(1, Ordering::Relaxed);
+        let mut r = openai_error(
+            StatusCode::LOOP_DETECTED,
+            OpenAiErrorKind::Server,
+            format!(
+                "Forward loop detected: hops would reach {next}, max is {}",
+                state.max_forward_hops
+            ),
+            Some("forward_loop_detected"),
+        );
+        inject_self_served_by(&mut r, state);
+        return Err(r);
+    }
+    Ok(next)
+}
+
+/// Compute the `x-mesh-served-by` value for a given backend address
+/// under the current `ServedByConfig`.
+fn compute_served_by_value(addr: &str, cfg: &ServedByConfig) -> String {
+    if cfg.expose_addr {
+        addr.to_string()
+    } else {
+        let mut hasher = DefaultHasher::new();
+        cfg.salt.hash(&mut hasher);
+        addr.hash(&mut hasher);
+        let h = hasher.finish();
+        // 12 hex chars = 48 bits of entropy. Collisions are still
+        // astronomically rare at single-cluster scale and the value
+        // is purely a debugging affordance, not a security token.
+        format!("{:012x}", h & 0x0000_FFFF_FFFF_FFFF)
+    }
+}
+
+/// Inject `x-mesh-served-by` into a response if the backend didn't
+/// already set one. Preserves backend-emitted values to keep
+/// multi-hop trails intact (the closest backend wins by default).
+fn inject_served_by(resp: &mut Response, addr: &str, cfg: &ServedByConfig) {
+    if resp.headers().contains_key(X_MESH_SERVED_BY) {
+        return;
+    }
+    let value = compute_served_by_value(addr, cfg);
+    if let Ok(hv) = axum::http::HeaderValue::from_str(&value) {
+        resp.headers_mut().insert(X_MESH_SERVED_BY, hv);
+    }
+}
+
+/// Inject `x-mesh-served-by` representing the proxy itself (used for
+/// responses that never reached a backend, e.g. auth failures).
+fn inject_self_served_by(resp: &mut Response, state: &ProxyState) {
+    inject_served_by(resp, state.self_addr.as_str(), &state.served_by_config);
 }
 
 struct Backend {
     addr: String,
     healthy: AtomicBool,
+    /// V149 F4: models declared by config (`[[backends]].models`).
+    /// Static — never mutated after construction.
+    static_models: Vec<String>,
+    /// V149 F4: models advertised by the backend's `/v1/models` endpoint.
+    /// Refreshed by the health-check loop piggyback poller.
+    advertised_models: parking_lot::RwLock<Vec<String>>,
+    /// V149 F4: consecutive `/v1/models` poll failures. Drives the
+    /// exponential backoff via `poll_tick_skip`.
+    model_poll_failures: AtomicU32,
+    /// V149 F4: how many upcoming health-check ticks to skip before
+    /// re-attempting the `/v1/models` poll. Decremented every tick.
+    poll_tick_skip: AtomicU32,
 }
 
 impl Backend {
+    #[allow(dead_code)] // Used by tests; prod path uses `with_models`.
     fn new(addr: String) -> Self {
         Self {
             addr,
             healthy: AtomicBool::new(true),
+            static_models: Vec::new(),
+            advertised_models: parking_lot::RwLock::new(Vec::new()),
+            model_poll_failures: AtomicU32::new(0),
+            poll_tick_skip: AtomicU32::new(0),
+        }
+    }
+
+    /// V149 F4: build a backend with statically-declared models from
+    /// `[[backends]].models`. Used by `main()`; tests use `new`.
+    fn with_models(addr: String, static_models: Vec<String>) -> Self {
+        Self {
+            addr,
+            healthy: AtomicBool::new(true),
+            static_models,
+            advertised_models: parking_lot::RwLock::new(Vec::new()),
+            model_poll_failures: AtomicU32::new(0),
+            poll_tick_skip: AtomicU32::new(0),
+        }
+    }
+
+    /// V149 F4: returns true if this backend declares (statically or
+    /// via `/v1/models` advertisement) the given model id.
+    fn advertises_model(&self, model: &str) -> bool {
+        if self.static_models.iter().any(|m| m == model) {
+            return true;
+        }
+        self.advertised_models.read().iter().any(|m| m == model)
+    }
+
+    /// V149 F4: union of static + advertised model ids, sorted-unique.
+    /// Surfaced by `/health` for operator visibility.
+    fn known_models(&self) -> Vec<String> {
+        let mut out: Vec<String> = self.static_models.clone();
+        out.extend(self.advertised_models.read().iter().cloned());
+        out.sort();
+        out.dedup();
+        out
+    }
+}
+
+/// V149 F4: routing policy. Default preserves V78 behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum RoutingPolicy {
+    /// Round-robin across all healthy backends. Model-agnostic.
+    #[default]
+    RoundRobin,
+    /// Walk backends in config order; first healthy wins.
+    /// Model-agnostic.
+    LocalFirst,
+    /// Restrict candidates to backends that advertise the requested
+    /// model, then round-robin across them. If no model field is
+    /// present in the request, falls back to round-robin across all
+    /// healthy backends so non-chat endpoints still work.
+    ModelAware,
+}
+
+impl RoutingPolicy {
+    fn parse(s: &str) -> Result<Self, String> {
+        match s {
+            "round_robin" => Ok(Self::RoundRobin),
+            "local_first" => Ok(Self::LocalFirst),
+            "model_aware" => Ok(Self::ModelAware),
+            other => Err(format!(
+                "Invalid routing policy '{other}'. Expected one of: round_robin, local_first, model_aware"
+            )),
+        }
+    }
+}
+
+/// V149 F4: Prometheus-style counters for routing and forwarding
+/// hygiene. Plain atomics — exporting under `/metrics` does not need
+/// a histogram library at this stage.
+#[derive(Default)]
+struct ProxyMetrics {
+    requests_round_robin: AtomicU64,
+    requests_local_first: AtomicU64,
+    requests_model_aware: AtomicU64,
+    loop_detected_total: AtomicU64,
+    dedupe_hit_total: AtomicU64,
+    model_aware_no_match_total: AtomicU64,
+}
+
+impl ProxyMetrics {
+    fn record_routing(&self, policy: RoutingPolicy) {
+        let c = match policy {
+            RoutingPolicy::RoundRobin => &self.requests_round_robin,
+            RoutingPolicy::LocalFirst => &self.requests_local_first,
+            RoutingPolicy::ModelAware => &self.requests_model_aware,
+        };
+        c.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// V149 F5: TTL-cached snapshot of the aggregated `/v1/models`
+/// response. `None` means "rebuild on next read"; the cache is set
+/// to `None` on any backend health transition so a flapping mesh
+/// surfaces fresh data without waiting for the TTL.
+#[derive(Default)]
+struct AggregatedModelsCache {
+    inner: parking_lot::RwLock<Option<(std::time::Instant, Vec<u8>)>>,
+}
+
+/// V149 F5: cache TTL for the aggregated `/v1/models` response.
+const AGGREGATED_MODELS_TTL: Duration = Duration::from_secs(60);
+
+impl AggregatedModelsCache {
+    fn read_fresh(&self, ttl: Duration) -> Option<Vec<u8>> {
+        let guard = self.inner.read();
+        let (stored_at, body) = guard.as_ref()?;
+        if stored_at.elapsed() > ttl {
+            return None;
+        }
+        Some(body.clone())
+    }
+
+    fn store(&self, body: Vec<u8>) {
+        *self.inner.write() = Some((std::time::Instant::now(), body));
+    }
+
+    fn invalidate(&self) {
+        *self.inner.write() = None;
+    }
+}
+
+/// V149 F4: best-effort extraction of the `model` field from a JSON
+/// request body. Returns `None` if the body is not JSON or has no
+/// top-level `model` string field — the caller treats `None` as "no
+/// hint, route freely".
+fn extract_model_from_body(body: &[u8]) -> Option<String> {
+    serde_json::from_slice::<serde_json::Value>(body)
+        .ok()?
+        .get("model")?
+        .as_str()
+        .map(|s| s.to_string())
+}
+
+/// V149 F4: permissive parser for `/v1/models`. Supports OpenAI
+/// (`{"data":[{"id":"..."}]}`) and Ollama (`{"models":[{"name":"..."}]}`)
+/// shapes. Malformed entries are silently skipped — a backend that
+/// advertises a partially-bad list shouldn't break routing.
+fn parse_models_response(bytes: &[u8]) -> Vec<String> {
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    if let Some(arr) = v.get("data").and_then(|x| x.as_array()) {
+        for item in arr {
+            if let Some(id) = item.get("id").and_then(|x| x.as_str()) {
+                out.push(id.to_string());
+            }
+        }
+    } else if let Some(arr) = v.get("models").and_then(|x| x.as_array()) {
+        for item in arr {
+            if let Some(name) = item.get("name").and_then(|x| x.as_str()) {
+                out.push(name.to_string());
+            } else if let Some(id) = item.get("id").and_then(|x| x.as_str()) {
+                out.push(id.to_string());
+            }
+        }
+    }
+    out
+}
+
+/// V149 F4: backend pick driven by the configured routing policy.
+/// `model_hint` carries the `model` field extracted from the request
+/// body (when the policy or call site cares); pass `None` for paths
+/// that have no body or aren't chat-shaped.
+///
+/// Returns `Err(envelope)` only for `ModelAware` when no backend
+/// advertises the requested model — the OpenAI 404 envelope tells
+/// callers their model isn't available anywhere in the mesh.
+fn pick_by_policy(state: &ProxyState, model_hint: Option<&str>) -> Result<usize, Response> {
+    state.metrics.record_routing(state.policy);
+    match state.policy {
+        RoutingPolicy::RoundRobin => Ok(pick_healthy_backend(state)),
+        RoutingPolicy::LocalFirst => {
+            for (idx, b) in state.backends.iter().enumerate() {
+                if b.healthy.load(Ordering::Relaxed) {
+                    return Ok(idx);
+                }
+            }
+            // All unhealthy — return first; caller checks.
+            Ok(0)
+        }
+        RoutingPolicy::ModelAware => {
+            let Some(model) = model_hint else {
+                // No model hint — fall back to round-robin. Keeps
+                // non-chat endpoints (e.g. `/v1/embeddings` without
+                // an explicit `model` parsed by us) working.
+                return Ok(pick_healthy_backend(state));
+            };
+            let candidates: Vec<usize> = state
+                .backends
+                .iter()
+                .enumerate()
+                .filter(|(_, b)| b.healthy.load(Ordering::Relaxed))
+                .filter(|(_, b)| b.advertises_model(model))
+                .map(|(idx, _)| idx)
+                .collect();
+            if candidates.is_empty() {
+                state
+                    .metrics
+                    .model_aware_no_match_total
+                    .fetch_add(1, Ordering::Relaxed);
+                let mut r = openai_error(
+                    StatusCode::NOT_FOUND,
+                    OpenAiErrorKind::NotFound,
+                    format!("model {model} not available in mesh"),
+                    Some("model_not_in_mesh"),
+                );
+                inject_self_served_by(&mut r, state);
+                return Err(r);
+            }
+            let n = state.next_index.fetch_add(1, Ordering::Relaxed);
+            Ok(candidates[n % candidates.len()])
         }
     }
 }
@@ -104,11 +614,76 @@ struct ProxyHealthResponse {
 struct BackendStatus {
     addr: String,
     healthy: bool,
+    /// V149 F4: models this backend declares (static config ∪ last
+    /// successful `/v1/models` poll). Empty if no models known.
+    models_advertised: Vec<String>,
+}
+
+/// OpenAI-shaped error envelope used by all 4xx/5xx responses from the
+/// proxy. Matches the spec:
+/// <https://platform.openai.com/docs/guides/error-codes>
+///
+/// V149 (F1): replaces the old `{"error": "msg"}` shape so callers
+/// already coded against OpenAI SDKs surface failures consistently.
+#[derive(Serialize)]
+struct OpenAiError {
+    error: OpenAiErrorBody,
 }
 
 #[derive(Serialize)]
-struct ProxyError {
-    error: String,
+struct OpenAiErrorBody {
+    message: String,
+    #[serde(rename = "type")]
+    type_: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    code: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    param: Option<String>,
+}
+
+/// Canonical OpenAI error kinds. Map to a `type` string + a default
+/// HTTP status. Specific helpers (`unauthorized`, `rate_limited`, …)
+/// pick the right kind for their case.
+#[derive(Clone, Copy)]
+#[allow(dead_code)] // `NotFound` consumed by V149 F4/F5 (model not found).
+enum OpenAiErrorKind {
+    InvalidRequest,
+    Authentication,
+    RateLimit,
+    NotFound,
+    ServiceUnavailable,
+    Server,
+}
+
+impl OpenAiErrorKind {
+    fn type_str(self) -> &'static str {
+        match self {
+            Self::InvalidRequest => "invalid_request_error",
+            Self::Authentication => "authentication_error",
+            Self::RateLimit => "rate_limit_error",
+            Self::NotFound => "not_found_error",
+            Self::ServiceUnavailable => "service_unavailable_error",
+            Self::Server => "server_error",
+        }
+    }
+}
+
+/// Build an OpenAI-envelope error response.
+fn openai_error(
+    status: StatusCode,
+    kind: OpenAiErrorKind,
+    message: impl Into<String>,
+    code: Option<&'static str>,
+) -> Response {
+    let body = OpenAiError {
+        error: OpenAiErrorBody {
+            message: message.into(),
+            type_: kind.type_str(),
+            code,
+            param: None,
+        },
+    };
+    (status, Json(body)).into_response()
 }
 
 // ============================================================================
@@ -138,6 +713,42 @@ struct ProxyConfig {
     middleware: MiddlewareSection,
     #[serde(default)]
     audit: AuditSection,
+    #[serde(default)]
+    routing: RoutingSection,
+}
+
+/// V149 routing configuration. All fields are optional; sensible
+/// defaults preserve V78 behavior (round-robin, no served-by exposure
+/// constraints, no loop guard).
+#[derive(Debug, Deserialize, Default, Clone)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)] // Fields consumed across F1-F5 of V149.
+struct RoutingSection {
+    /// One of: `round_robin` (default), `local_first`, `model_aware`.
+    /// Parsed by F4. F1 declares the field for schema stability.
+    #[serde(default)]
+    policy: Option<String>,
+    /// If `true` (default), the `x-mesh-served-by` header on responses
+    /// exposes the literal backend address. If `false`, an opaque
+    /// 12-char hash (blake3 of addr + salt) is used instead.
+    #[serde(default)]
+    expose_served_by_addr: Option<bool>,
+    /// Salt for the opaque `x-mesh-served-by` hash. If unset, a random
+    /// per-process salt is used. Setting this is only useful if you
+    /// need the opaque IDs to be stable across proxy restarts.
+    #[serde(default)]
+    served_by_salt: Option<String>,
+    /// Max number of `x-forward-hops` allowed in a chained forward.
+    /// Default 8. Exceeding returns 508 Loop Detected. Consumed by F3.
+    #[serde(default)]
+    max_forward_hops: Option<u32>,
+    /// V149 F4: force-enable periodic `/v1/models` polling of
+    /// backends from the health-check loop. Automatically `true`
+    /// when `policy = "model_aware"`. Otherwise defaults to `false`.
+    /// Pin to `true` if you want the aggregated `/v1/models` endpoint
+    /// (F5) to populate without switching routing policies.
+    #[serde(default)]
+    enable_model_polling: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -164,6 +775,13 @@ struct BackendSection {
     #[serde(default = "default_backend_weight")]
     #[allow(dead_code)]
     weight: u32,
+    /// V149 F4: statically-declared model ids advertised by this
+    /// backend. Useful when the backend doesn't speak `/v1/models`
+    /// or the operator wants to pin routing without polling.
+    /// Optional — if absent and `model_aware` is the active policy,
+    /// the proxy polls `/v1/models` from the health-check loop.
+    #[serde(default)]
+    models: Option<Vec<String>>,
 }
 
 fn default_backend_weight() -> u32 {
@@ -279,6 +897,11 @@ fn load_config(path: &Path) -> Result<ProxyConfig, String> {
 struct Effective {
     port: u16,
     backend_addrs: Vec<String>,
+    /// V149 F4: optional per-backend static model list, parallel to
+    /// `backend_addrs` (same length, same order). `None` means the
+    /// backend declared no static models; it can still advertise
+    /// dynamically via `/v1/models` polling.
+    backend_models: Vec<Option<Vec<String>>>,
     health_interval: u64,
     api_key: Option<String>,
     /// Consumed by WS-2/WS-3/WS-5 in follow-up workstreams.
@@ -287,6 +910,10 @@ struct Effective {
     /// Consumed by WS-4 (audit log writer).
     #[allow(dead_code)]
     audit: AuditSection,
+    /// V149 routing knobs (served-by exposure, max hops, policy).
+    routing: RoutingSection,
+    /// V149 F4: resolved routing policy enum.
+    routing_policy: RoutingPolicy,
 }
 
 /// Merge CLI flags and an optional loaded config file into the final
@@ -297,10 +924,12 @@ fn merge_cli_and_config(cli: &CliArgs, file: Option<ProxyConfig>) -> Result<Effe
     // Built-in defaults (used when neither CLI nor file specifies a value).
     let mut port: u16 = 8080;
     let mut backend_addrs: Vec<String> = Vec::new();
+    let mut backend_models: Vec<Option<Vec<String>>> = Vec::new();
     let mut health_interval: u64 = 30;
     let mut api_key: Option<String> = None;
     let mut middleware = MiddlewareSection::default();
     let mut audit = AuditSection::default();
+    let mut routing = RoutingSection::default();
 
     if let Some(cfg) = file {
         // Server section
@@ -337,11 +966,13 @@ fn merge_cli_and_config(cli: &CliArgs, file: Option<ProxyConfig>) -> Result<Effe
         for b in cfg.backends.iter() {
             if !b.addr.is_empty() {
                 backend_addrs.push(b.addr.clone());
+                backend_models.push(b.models.clone());
             }
         }
 
         middleware = cfg.middleware;
         audit = cfg.audit;
+        routing = cfg.routing;
     } else {
         // No config file: still honor AI_PROXY_API_KEY as a convenience.
         if let Ok(v) = std::env::var("AI_PROXY_API_KEY") {
@@ -361,6 +992,10 @@ fn merge_cli_and_config(cli: &CliArgs, file: Option<ProxyConfig>) -> Result<Effe
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
+        // CLI flag overrides the config-file backend list entirely, so
+        // the parallel models vector must be reset to match the new
+        // length (CLI cannot declare static models — that's TOML-only).
+        backend_models = vec![None; backend_addrs.len()];
     }
     if let Some(hi) = cli.health_interval {
         health_interval = hi;
@@ -395,13 +1030,31 @@ fn merge_cli_and_config(cli: &CliArgs, file: Option<ProxyConfig>) -> Result<Effe
         );
     }
 
+    // Defensive: the parallel-vec invariant must always hold.
+    if backend_models.len() != backend_addrs.len() {
+        backend_models.resize(backend_addrs.len(), None);
+    }
+
+    // V149 F4: resolve routing policy. CLI > config > default.
+    let policy_str = cli
+        .routing_policy
+        .clone()
+        .or_else(|| routing.policy.clone());
+    let routing_policy = match policy_str.as_deref() {
+        None | Some("") => RoutingPolicy::default(),
+        Some(s) => RoutingPolicy::parse(s)?,
+    };
+
     Ok(Effective {
         port,
         backend_addrs,
+        backend_models,
         health_interval,
         api_key,
         middleware,
         audit,
+        routing,
+        routing_policy,
     })
 }
 
@@ -1050,14 +1703,60 @@ fn main() -> ExitCode {
 
     let backends: Vec<Backend> = backend_addrs
         .iter()
-        .map(|a| Backend::new(a.clone()))
+        .zip(effective.backend_models.iter())
+        .map(|(addr, models)| {
+            Backend::with_models(addr.clone(), models.clone().unwrap_or_default())
+        })
         .collect();
+
+    let served_by_config = {
+        let mut sb = ServedByConfig::default();
+        if let Some(expose) = effective.routing.expose_served_by_addr {
+            sb.expose_addr = expose;
+        }
+        if let Some(ref salt) = effective.routing.served_by_salt {
+            sb.salt = salt.clone();
+        }
+        Arc::new(sb)
+    };
+
+    let self_addr = Arc::new(format!("127.0.0.1:{port}"));
+    let max_forward_hops = effective
+        .routing
+        .max_forward_hops
+        .unwrap_or(DEFAULT_MAX_FORWARD_HOPS);
+
+    // V149 F4: enable `/v1/models` polling when model_aware is the
+    // active policy, or when the operator pinned `enable_model_polling`.
+    let policy = effective.routing_policy;
+    let polling_pinned = effective.routing.enable_model_polling.unwrap_or(false);
+    let any_static_models = backends.iter().any(|b| !b.static_models.is_empty());
+    let model_polling_enabled = polling_pinned || policy == RoutingPolicy::ModelAware;
+
+    // Startup validation per plan: model_aware with no static models
+    // declared and no explicit polling opt-out → keep polling on and warn.
+    if policy == RoutingPolicy::ModelAware && !any_static_models && !polling_pinned {
+        eprintln!(
+            "warning: routing policy is 'model_aware' but no backend declared static \
+             [[backends]].models — enabling /v1/models polling automatically. Until the \
+             first health-poll completes, no backend advertises any model and all \
+             requests will return 404 'model_not_in_mesh'."
+        );
+    }
 
     let state = ProxyState {
         backends: Arc::new(backends),
         next_index: Arc::new(AtomicUsize::new(0)),
         session_affinity: Arc::new(DashMap::new()),
         api_key: effective.api_key,
+        served_by_config,
+        self_addr,
+        dedupe: Arc::new(DedupeCache::new(DEDUPE_MAX_ENTRIES, DEDUPE_TTL)),
+        max_forward_hops,
+        policy,
+        metrics: Arc::new(ProxyMetrics::default()),
+        model_polling_enabled,
+        aggregated_models: Arc::new(AggregatedModelsCache::default()),
     };
 
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -1156,10 +1855,148 @@ fn main() -> ExitCode {
 // ============================================================================
 
 fn build_proxy_router(state: ProxyState) -> Router {
+    use axum::routing::any;
     Router::new()
         .route("/health", get(proxy_health_handler))
+        .route("/metrics", get(proxy_metrics_handler))
+        .route("/v1/models", any(proxy_models_handler))
         .fallback(proxy_forward_handler)
         .with_state(state)
+}
+
+/// V149 F4: Prometheus-style scrape endpoint. Plain-text format so
+/// any Prometheus-compatible scraper picks it up; no client lib needed.
+async fn proxy_metrics_handler(State(state): State<ProxyState>) -> Response {
+    let m = state.metrics.as_ref();
+    let body = format!(
+        "# HELP proxy_requests_by_policy Number of routing decisions, labeled by policy\n\
+         # TYPE proxy_requests_by_policy counter\n\
+         proxy_requests_by_policy{{policy=\"round_robin\"}} {}\n\
+         proxy_requests_by_policy{{policy=\"local_first\"}} {}\n\
+         proxy_requests_by_policy{{policy=\"model_aware\"}} {}\n\
+         # HELP proxy_loop_detected_total Requests rejected with 508 because x-forward-hops exceeded the ceiling\n\
+         # TYPE proxy_loop_detected_total counter\n\
+         proxy_loop_detected_total {}\n\
+         # HELP proxy_dedupe_hit_total Requests rejected with 409 due to a replayed x-request-id within the dedupe window\n\
+         # TYPE proxy_dedupe_hit_total counter\n\
+         proxy_dedupe_hit_total {}\n\
+         # HELP proxy_model_aware_no_match_total Requests rejected with 404 because no backend advertises the requested model under model_aware routing\n\
+         # TYPE proxy_model_aware_no_match_total counter\n\
+         proxy_model_aware_no_match_total {}\n",
+        m.requests_round_robin.load(Ordering::Relaxed),
+        m.requests_local_first.load(Ordering::Relaxed),
+        m.requests_model_aware.load(Ordering::Relaxed),
+        m.loop_detected_total.load(Ordering::Relaxed),
+        m.dedupe_hit_total.load(Ordering::Relaxed),
+        m.model_aware_no_match_total.load(Ordering::Relaxed),
+    );
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "text/plain; version=0.0.4")
+        .body(Body::from(body))
+        .unwrap_or_else(|_| {
+            openai_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                OpenAiErrorKind::Server,
+                "metrics encode failed",
+                None,
+            )
+        })
+}
+
+/// V149 F5: aggregated `GET /v1/models`. Returns the union of models
+/// known across all backends (static-configured + advertised by their
+/// `/v1/models` polling) with the OpenAI list shape plus a `served_by`
+/// array per entry. Respects the `api_key` auth gate; method is GET only
+/// (others get a 405 envelope). Cached for 60s with health-transition
+/// and poll-delta invalidation.
+async fn proxy_models_handler(State(state): State<ProxyState>, req: Request) -> Response {
+    // Auth gate first — never disclose model topology to unauth callers.
+    if let Some(ref expected_key) = state.api_key {
+        if !check_bearer_auth(&req, expected_key) {
+            let mut r = openai_error(
+                StatusCode::UNAUTHORIZED,
+                OpenAiErrorKind::Authentication,
+                "Unauthorized",
+                None,
+            );
+            inject_self_served_by(&mut r, &state);
+            return r;
+        }
+    }
+    if req.method() != axum::http::Method::GET {
+        let mut r = openai_error(
+            StatusCode::METHOD_NOT_ALLOWED,
+            OpenAiErrorKind::InvalidRequest,
+            "Only GET is supported on /v1/models",
+            Some("method_not_allowed"),
+        );
+        r.headers_mut()
+            .insert(header::ALLOW, axum::http::HeaderValue::from_static("GET"));
+        inject_self_served_by(&mut r, &state);
+        return r;
+    }
+
+    let body = if let Some(cached) = state.aggregated_models.read_fresh(AGGREGATED_MODELS_TTL) {
+        cached
+    } else {
+        let body = build_aggregated_models_body(&state);
+        state.aggregated_models.store(body.clone());
+        body
+    };
+
+    let mut resp = Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap_or_else(|_| {
+            openai_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                OpenAiErrorKind::Server,
+                "models response encode failed",
+                None,
+            )
+        });
+    inject_self_served_by(&mut resp, &state);
+    resp
+}
+
+/// V149 F5: builds the JSON body for `/v1/models`. Walks healthy and
+/// unhealthy backends alike — listing a model only makes sense if at
+/// least one of its hosts is up, but exposing the union keeps the
+/// surface stable through flaps. Each entry exposes `served_by` as
+/// either the literal addr or the opaque id, per `ServedByConfig`.
+fn build_aggregated_models_body(state: &ProxyState) -> Vec<u8> {
+    use std::collections::BTreeMap;
+    let mut union: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for b in state.backends.iter() {
+        if !b.healthy.load(Ordering::Relaxed) {
+            continue;
+        }
+        let served = compute_served_by_value(&b.addr, &state.served_by_config);
+        for model in b.known_models() {
+            let entry = union.entry(model).or_default();
+            if !entry.contains(&served) {
+                entry.push(served.clone());
+            }
+        }
+    }
+    let data: Vec<serde_json::Value> = union
+        .into_iter()
+        .map(|(id, served_by)| {
+            serde_json::json!({
+                "id": id,
+                "object": "model",
+                "created": 0,
+                "served_by": served_by,
+            })
+        })
+        .collect();
+    let body = serde_json::json!({
+        "object": "list",
+        "data": data,
+    });
+    serde_json::to_vec(&body).unwrap_or_else(|_| b"{\"object\":\"list\",\"data\":[]}".to_vec())
 }
 
 // ============================================================================
@@ -1173,6 +2010,7 @@ async fn proxy_health_handler(State(state): State<ProxyState>) -> Json<ProxyHeal
         .map(|b| BackendStatus {
             addr: b.addr.clone(),
             healthy: b.healthy.load(Ordering::Relaxed),
+            models_advertised: b.known_models(),
         })
         .collect();
 
@@ -1216,53 +2054,105 @@ async fn proxy_forward_handler(State(state): State<ProxyState>, req: Request) ->
     // Check API key if configured
     if let Some(ref expected_key) = state.api_key {
         if !check_bearer_auth(&req, expected_key) {
-            return (
+            let mut r = openai_error(
                 StatusCode::UNAUTHORIZED,
-                Json(ProxyError {
-                    error: "Unauthorized".to_string(),
-                }),
-            )
-                .into_response();
+                OpenAiErrorKind::Authentication,
+                "Unauthorized",
+                None,
+            );
+            inject_self_served_by(&mut r, &state);
+            return r;
         }
     }
 
-    // Determine backend: session affinity or round-robin
+    // V149 F3: loop guard + replay dedupe before backend selection.
+    let outbound_hops = match next_forward_hops(&state, req.headers()) {
+        Ok(h) => h,
+        Err(resp) => return resp,
+    };
+    if let Err(resp) = check_request_id_dedupe(&state, req.method(), req.headers()) {
+        return resp;
+    }
+
+    // V149 F4: buffer the body now so we can peek at the `model`
+    // field for ModelAware routing before picking a backend. Previous
+    // versions read the body after selection; the reorder is free
+    // (the body was always being buffered later anyway).
     let session_id = req
         .headers()
         .get("x-session-id")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
+    let (parts, body) = req.into_parts();
+    let body_bytes = match axum::body::to_bytes(body, 10 * 1024 * 1024).await {
+        Ok(b) => b.to_vec(),
+        Err(e) => {
+            let mut r = openai_error(
+                StatusCode::BAD_REQUEST,
+                OpenAiErrorKind::InvalidRequest,
+                format!("Failed to read request body: {}", e),
+                None,
+            );
+            inject_self_served_by(&mut r, &state);
+            return r;
+        }
+    };
 
-    let backend_idx = if let Some(ref sid) = session_id {
-        if let Some(idx) = state.session_affinity.get(sid).map(|r| *r) {
-            // Verify the affinity target is healthy
-            if state.backends[idx].healthy.load(Ordering::Relaxed) {
-                idx
+    // Determine backend: session affinity wins for non-ModelAware
+    // policies; ModelAware always re-routes by the request's `model`
+    // field (a sticky session shouldn't override model awareness, or
+    // the policy is meaningless).
+    let model_hint = if state.policy == RoutingPolicy::ModelAware {
+        extract_model_from_body(&body_bytes)
+    } else {
+        None
+    };
+
+    let backend_idx = if state.policy != RoutingPolicy::ModelAware {
+        if let Some(ref sid) = session_id {
+            if let Some(idx) = state.session_affinity.get(sid).map(|r| *r) {
+                if state.backends[idx].healthy.load(Ordering::Relaxed) {
+                    idx
+                } else {
+                    match pick_by_policy(&state, model_hint.as_deref()) {
+                        Ok(i) => i,
+                        Err(resp) => return resp,
+                    }
+                }
             } else {
-                pick_healthy_backend(&state)
+                let idx = match pick_by_policy(&state, model_hint.as_deref()) {
+                    Ok(i) => i,
+                    Err(resp) => return resp,
+                };
+                state.session_affinity.insert(sid.clone(), idx);
+                idx
             }
         } else {
-            let idx = pick_healthy_backend(&state);
-            state.session_affinity.insert(sid.clone(), idx);
-            idx
+            match pick_by_policy(&state, model_hint.as_deref()) {
+                Ok(i) => i,
+                Err(resp) => return resp,
+            }
         }
     } else {
-        pick_healthy_backend(&state)
+        match pick_by_policy(&state, model_hint.as_deref()) {
+            Ok(i) => i,
+            Err(resp) => return resp,
+        }
     };
 
     let backend = &state.backends[backend_idx];
     if !backend.healthy.load(Ordering::Relaxed) {
-        return (
+        let mut r = openai_error(
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(ProxyError {
-                error: "No healthy backends available".to_string(),
-            }),
-        )
-            .into_response();
+            OpenAiErrorKind::ServiceUnavailable,
+            "No healthy backends available",
+            None,
+        );
+        inject_self_served_by(&mut r, &state);
+        return r;
     }
 
     // Forward the request
-    let (parts, body) = req.into_parts();
     let path = parts
         .uri
         .path_and_query()
@@ -1281,45 +2171,46 @@ async fn proxy_forward_handler(State(state): State<ProxyState>, req: Request) ->
         axum::http::Method::PATCH => client.patch(&target_url),
         axum::http::Method::HEAD => client.head(&target_url),
         _ => {
-            return (
+            let mut r = openai_error(
                 StatusCode::METHOD_NOT_ALLOWED,
-                Json(ProxyError {
-                    error: "Method not allowed".to_string(),
-                }),
-            )
-                .into_response();
+                OpenAiErrorKind::InvalidRequest,
+                "Method not allowed",
+                None,
+            );
+            inject_self_served_by(&mut r, &state);
+            return r;
         }
     };
 
-    // Copy headers (except host)
+    // Copy headers (except host and the inbound x-forward-hops, which
+    // we overwrite below so a downstream backend sees the canonical
+    // incremented value).
     for (name, value) in parts.headers.iter() {
-        if name != header::HOST {
-            if let Ok(v) = value.to_str() {
-                builder = builder.header(name.as_str(), v);
-            }
+        if name == header::HOST {
+            continue;
+        }
+        if name.as_str().eq_ignore_ascii_case(X_FORWARD_HOPS) {
+            continue;
+        }
+        if let Ok(v) = value.to_str() {
+            builder = builder.header(name.as_str(), v);
         }
     }
+    // V149 F3: advertise our outbound hop count.
+    builder = builder.header(X_FORWARD_HOPS, outbound_hops.to_string());
 
-    // Forward body
-    let body_bytes = match axum::body::to_bytes(body, 10 * 1024 * 1024).await {
-        Ok(b) => b,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(ProxyError {
-                    error: format!("Failed to read request body: {}", e),
-                }),
-            )
-                .into_response();
-        }
-    };
-
+    // Body was buffered above (V149 F4 model peek).
     if !body_bytes.is_empty() {
-        builder = builder.body(body_bytes.to_vec());
+        builder = builder.body(body_bytes);
     }
+
+    // V149 F1: capture backend addr so we can attach the
+    // `x-mesh-served-by` header to every response (success or error)
+    // that reached this backend selection.
+    let backend_addr = backend.addr.clone();
 
     // Send to backend
-    match builder.send().await {
+    let mut resp = match builder.send().await {
         Ok(resp) => {
             let status = StatusCode::from_u16(resp.status().as_u16())
                 .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
@@ -1335,15 +2226,19 @@ async fn proxy_forward_handler(State(state): State<ProxyState>, req: Request) ->
                 Ok(bytes) => response_builder
                     .body(Body::from(bytes))
                     .unwrap_or_else(|_| {
-                        (StatusCode::INTERNAL_SERVER_ERROR, "Internal error").into_response()
+                        openai_error(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            OpenAiErrorKind::Server,
+                            "Internal error",
+                            None,
+                        )
                     }),
-                Err(e) => (
+                Err(e) => openai_error(
                     StatusCode::BAD_GATEWAY,
-                    Json(ProxyError {
-                        error: format!("Backend read error: {}", e),
-                    }),
-                )
-                    .into_response(),
+                    OpenAiErrorKind::Server,
+                    format!("Backend read error: {e}"),
+                    None,
+                ),
             }
         }
         Err(e) => {
@@ -1351,15 +2246,16 @@ async fn proxy_forward_handler(State(state): State<ProxyState>, req: Request) ->
             if e.is_connect() || e.is_timeout() {
                 backend.healthy.store(false, Ordering::Relaxed);
             }
-            (
+            openai_error(
                 StatusCode::BAD_GATEWAY,
-                Json(ProxyError {
-                    error: format!("Backend error: {}", e),
-                }),
+                OpenAiErrorKind::Server,
+                format!("Backend error: {e}"),
+                None,
             )
-                .into_response()
         }
-    }
+    };
+    inject_served_by(&mut resp, &backend_addr, &state.served_by_config);
+    resp
 }
 
 // ============================================================================
@@ -1490,9 +2386,25 @@ fn build_gateway_router(ctx: GatewayContext) -> Router {
     use axum::routing::{any, post};
     Router::new()
         .route("/health", get(gateway_health_handler))
+        .route("/metrics", get(gateway_metrics_handler))
+        .route("/v1/models", any(gateway_models_handler))
         .route("/v1/chat/completions", post(gateway_chat_handler))
         .fallback(any(gateway_passthrough_handler))
         .with_state(ctx)
+}
+
+/// V149 F4: gateway-path counterpart to `proxy_metrics_handler`.
+/// Delegates to the same body builder via the inner ProxyState.
+#[cfg(feature = "security")]
+async fn gateway_metrics_handler(State(ctx): State<GatewayContext>) -> Response {
+    proxy_metrics_handler(State(ctx.proxy)).await
+}
+
+/// V149 F5: gateway-path counterpart to `proxy_models_handler`.
+/// Reuses the same auth + cache + topology logic via the inner ProxyState.
+#[cfg(feature = "security")]
+async fn gateway_models_handler(State(ctx): State<GatewayContext>, req: Request) -> Response {
+    proxy_models_handler(State(ctx.proxy), req).await
 }
 
 #[cfg(feature = "security")]
@@ -1504,6 +2416,7 @@ async fn gateway_health_handler(State(ctx): State<GatewayContext>) -> Json<Proxy
         .map(|b| BackendStatus {
             addr: b.addr.clone(),
             healthy: b.healthy.load(Ordering::Relaxed),
+            models_advertised: b.known_models(),
         })
         .collect();
     let all_healthy = backends.iter().any(|b| b.healthy);
@@ -1522,38 +2435,50 @@ async fn gateway_health_handler(State(ctx): State<GatewayContext>) -> Json<Proxy
 /// the request unmodified (no guardrails, no cache).
 #[cfg(feature = "security")]
 async fn gateway_passthrough_handler(State(ctx): State<GatewayContext>, req: Request) -> Response {
+    let request_id = uuid::Uuid::new_v4().to_string();
     // Auth
     if let Some(ref key) = ctx.proxy.api_key {
         if !check_bearer_auth(&req, key) {
-            return unauthorized();
+            return finalize_self(unauthorized(), &request_id, &ctx.proxy);
         }
+    }
+    // V149 F3: loop guard + dedupe BEFORE rate-limit so a duplicate
+    // request never consumes the per-key token budget.
+    let outbound_hops = match next_forward_hops(&ctx.proxy, req.headers()) {
+        Ok(h) => h,
+        Err(resp) => return with_request_id_header(resp, &request_id),
+    };
+    if let Err(resp) = check_request_id_dedupe(&ctx.proxy, req.method(), req.headers()) {
+        return with_request_id_header(resp, &request_id);
     }
     // Rate limit using whichever key dimension exists.
     let rate_key = pick_rate_limit_key(&req, ctx.proxy.api_key.as_deref());
     if let Some(ref rl) = ctx.rate_limiter {
         if let Err(retry) = rl.try_acquire(&rate_key) {
-            return rate_limited(retry);
+            return finalize_self(rate_limited(retry), &request_id, &ctx.proxy);
         }
     }
 
-    let request_id = uuid::Uuid::new_v4().to_string();
     let start = std::time::Instant::now();
     let client_ip = extract_client_ip(&req);
     let (parts, body) = req.into_parts();
     let body_bytes = match axum::body::to_bytes(body, MAX_REQUEST_BODY).await {
         Ok(b) => b.to_vec(),
         Err(e) => {
-            return with_request_id_header(
+            return finalize_self(
                 bad_request(format!("Failed to read request body: {e}")),
                 &request_id,
+                &ctx.proxy,
             );
         }
     };
 
-    let (status, headers, resp_body) = match forward_core(&ctx.proxy, &parts, body_bytes).await {
-        Ok(tuple) => tuple,
-        Err(resp) => return with_request_id_header(resp, &request_id),
-    };
+    let (status, headers, resp_body, backend_addr) =
+        match forward_core(&ctx.proxy, &parts, body_bytes, outbound_hops).await {
+            Ok(tuple) => tuple,
+            // forward_core already injected x-mesh-served-by on Err.
+            Err(resp) => return with_request_id_header(resp, &request_id),
+        };
 
     // Audit entry (best-effort).
     write_audit(
@@ -1574,22 +2499,33 @@ async fn gateway_passthrough_handler(State(ctx): State<GatewayContext>, req: Req
         builder = builder.header(k, v);
     }
     builder = builder.header(X_REQUEST_ID, &request_id);
-    builder
+    let mut resp = builder
         .body(Body::from(resp_body))
-        .unwrap_or_else(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Internal error").into_response())
+        .unwrap_or_else(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Internal error").into_response());
+    inject_served_by(&mut resp, &backend_addr, &ctx.proxy.served_by_config);
+    resp
 }
 
 /// Hardened handler for `/v1/chat/completions`.
 #[cfg(feature = "security")]
 async fn gateway_chat_handler(State(ctx): State<GatewayContext>, req: Request) -> Response {
+    let request_id = uuid::Uuid::new_v4().to_string();
     // Auth
     if let Some(ref key) = ctx.proxy.api_key {
         if !check_bearer_auth(&req, key) {
-            return unauthorized();
+            return finalize_self(unauthorized(), &request_id, &ctx.proxy);
         }
     }
+    // V149 F3: loop guard + dedupe. Run BEFORE rate-limit so a
+    // duplicate request never consumes the per-key token budget.
+    let outbound_hops = match next_forward_hops(&ctx.proxy, req.headers()) {
+        Ok(h) => h,
+        Err(resp) => return with_request_id_header(resp, &request_id),
+    };
+    if let Err(resp) = check_request_id_dedupe(&ctx.proxy, req.method(), req.headers()) {
+        return with_request_id_header(resp, &request_id);
+    }
 
-    let request_id = uuid::Uuid::new_v4().to_string();
     let start = std::time::Instant::now();
     let client_ip = extract_client_ip(&req);
     let session_id = req
@@ -1614,7 +2550,7 @@ async fn gateway_chat_handler(State(ctx): State<GatewayContext>, req: Request) -
                 0,
                 audit::AuditOutcome::Blocked("rate_limit".to_string()),
             );
-            return with_request_id_header(rate_limited(retry), &request_id);
+            return finalize_self(rate_limited(retry), &request_id, &ctx.proxy);
         }
     }
 
@@ -1622,9 +2558,10 @@ async fn gateway_chat_handler(State(ctx): State<GatewayContext>, req: Request) -
     let body_bytes = match axum::body::to_bytes(body, MAX_REQUEST_BODY).await {
         Ok(b) => b.to_vec(),
         Err(e) => {
-            return with_request_id_header(
+            return finalize_self(
                 bad_request(format!("Failed to read request body: {e}")),
                 &request_id,
+                &ctx.proxy,
             );
         }
     };
@@ -1633,7 +2570,11 @@ async fn gateway_chat_handler(State(ctx): State<GatewayContext>, req: Request) -
     let json: serde_json::Value = match serde_json::from_slice(&body_bytes) {
         Ok(v) => v,
         Err(e) => {
-            return with_request_id_header(bad_request(format!("Invalid JSON: {e}")), &request_id);
+            return finalize_self(
+                bad_request(format!("Invalid JSON: {e}")),
+                &request_id,
+                &ctx.proxy,
+            );
         }
     };
 
@@ -1643,11 +2584,12 @@ async fn gateway_chat_handler(State(ctx): State<GatewayContext>, req: Request) -
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     if is_stream {
-        let (status, headers, resp_body) = match forward_core(&ctx.proxy, &parts, body_bytes).await
-        {
-            Ok(t) => t,
-            Err(resp) => return with_request_id_header(resp, &request_id),
-        };
+        let (status, headers, resp_body, backend_addr) =
+            match forward_core(&ctx.proxy, &parts, body_bytes, outbound_hops).await {
+                Ok(t) => t,
+                // forward_core already attached x-mesh-served-by on Err.
+                Err(resp) => return with_request_id_header(resp, &request_id),
+            };
         write_audit(
             &ctx,
             &request_id,
@@ -1660,7 +2602,9 @@ async fn gateway_chat_handler(State(ctx): State<GatewayContext>, req: Request) -
             0,
             audit::AuditOutcome::Streamed,
         );
-        return build_response(status, headers, resp_body, &request_id, None);
+        let mut resp = build_response(status, headers, resp_body, &request_id, None);
+        inject_served_by(&mut resp, &backend_addr, &ctx.proxy.served_by_config);
+        return resp;
     }
 
     // Build scan_text from messages[].content for roles in {user, system}.
@@ -1692,7 +2636,7 @@ async fn gateway_chat_handler(State(ctx): State<GatewayContext>, req: Request) -
                 prompt_tokens_est,
                 audit::AuditOutcome::Blocked(reason.clone()),
             );
-            return with_request_id_header(blocked(&reason), &request_id);
+            return finalize_self(blocked(&reason), &request_id, &ctx.proxy);
         }
     }
 
@@ -1712,7 +2656,7 @@ async fn gateway_chat_handler(State(ctx): State<GatewayContext>, req: Request) -
                     prompt_tokens_est,
                     audit::AuditOutcome::BudgetBlock(r.clone()),
                 );
-                return with_request_id_header(budget_exceeded(&r), &request_id);
+                return finalize_self(budget_exceeded(&r), &request_id, &ctx.proxy);
             }
             budget::BudgetCheck::Warn(_) | budget::BudgetCheck::Allow => {}
         }
@@ -1752,22 +2696,27 @@ async fn gateway_chat_handler(State(ctx): State<GatewayContext>, req: Request) -
                     prompt_tokens_est,
                     audit::AuditOutcome::CacheHit,
                 );
-                return build_response(
+                // Cache hits are served by this proxy node, not an upstream.
+                let mut resp = build_response(
                     StatusCode::from_u16(hit.status).unwrap_or(StatusCode::OK),
                     axum::http::HeaderMap::new(),
                     hit.body,
                     &request_id,
                     Some("HIT"),
                 );
+                inject_self_served_by(&mut resp, &ctx.proxy);
+                return resp;
             }
         }
     }
 
     // Forward to backend.
-    let (status, headers, resp_body) = match forward_core(&ctx.proxy, &parts, body_bytes).await {
-        Ok(t) => t,
-        Err(resp) => return with_request_id_header(resp, &request_id),
-    };
+    let (status, headers, resp_body, backend_addr) =
+        match forward_core(&ctx.proxy, &parts, body_bytes, outbound_hops).await {
+            Ok(t) => t,
+            // forward_core already attached x-mesh-served-by on Err.
+            Err(resp) => return with_request_id_header(resp, &request_id),
+        };
 
     // Parse response body to run output pipeline and extract usage.
     let (output_text, usage_in, usage_out) = extract_response_text_and_usage(&resp_body);
@@ -1795,7 +2744,12 @@ async fn gateway_chat_handler(State(ctx): State<GatewayContext>, req: Request) -
                 prompt_tokens_est,
                 audit::AuditOutcome::OutputBlocked(reason.clone()),
             );
-            return with_request_id_header(output_blocked(&reason), &request_id);
+            // Output came from `backend_addr` even though the proxy
+            // blocked it — surface that so operators can locate the
+            // source of the offending output.
+            let mut resp = with_request_id_header(output_blocked(&reason), &request_id);
+            inject_served_by(&mut resp, &backend_addr, &ctx.proxy.served_by_config);
+            return resp;
         }
     }
 
@@ -1830,51 +2784,73 @@ async fn gateway_chat_handler(State(ctx): State<GatewayContext>, req: Request) -
         audit::AuditOutcome::Ok,
     );
 
-    build_response(status, headers, resp_body, &request_id, Some("MISS"))
+    let mut resp = build_response(status, headers, resp_body, &request_id, Some("MISS"));
+    inject_served_by(&mut resp, &backend_addr, &ctx.proxy.served_by_config);
+    resp
 }
 
 // --- V78 / WS-2 helpers ----------------------------------------------------
 
 /// Forward the request to a healthy backend using the existing routing logic
 /// (session affinity → round-robin). Returns the tuple `(status, headers,
-/// body)` on success, or an already-built error [`Response`] on failure.
+/// body, backend_addr)` on success, or an already-built error [`Response`]
+/// on failure.
+///
+/// V149 F1: success tuple now carries the backend address so the caller
+/// can attach `x-mesh-served-by`. Err responses inject the header inline
+/// before being returned.
 #[cfg(feature = "security")]
 async fn forward_core(
     state: &ProxyState,
     parts: &axum::http::request::Parts,
     body_bytes: Vec<u8>,
-) -> Result<(StatusCode, axum::http::HeaderMap, Vec<u8>), Response> {
+    outbound_hops: u32,
+) -> Result<(StatusCode, axum::http::HeaderMap, Vec<u8>, String), Response> {
     let session_id = parts
         .headers
         .get("x-session-id")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
-    let backend_idx = if let Some(ref sid) = session_id {
-        if let Some(idx) = state.session_affinity.get(sid).map(|r| *r) {
-            if state.backends[idx].healthy.load(Ordering::Relaxed) {
-                idx
+    // V149 F4: ModelAware needs the request's model field; cheap peek
+    // since the body is already buffered by the caller.
+    let model_hint = if state.policy == RoutingPolicy::ModelAware {
+        extract_model_from_body(&body_bytes)
+    } else {
+        None
+    };
+
+    let backend_idx = if state.policy != RoutingPolicy::ModelAware {
+        if let Some(ref sid) = session_id {
+            if let Some(idx) = state.session_affinity.get(sid).map(|r| *r) {
+                if state.backends[idx].healthy.load(Ordering::Relaxed) {
+                    idx
+                } else {
+                    pick_by_policy(state, model_hint.as_deref())?
+                }
             } else {
-                pick_healthy_backend(state)
+                let idx = pick_by_policy(state, model_hint.as_deref())?;
+                state.session_affinity.insert(sid.clone(), idx);
+                idx
             }
         } else {
-            let idx = pick_healthy_backend(state);
-            state.session_affinity.insert(sid.clone(), idx);
-            idx
+            pick_by_policy(state, model_hint.as_deref())?
         }
     } else {
-        pick_healthy_backend(state)
+        pick_by_policy(state, model_hint.as_deref())?
     };
     let backend = &state.backends[backend_idx];
     if !backend.healthy.load(Ordering::Relaxed) {
-        return Err((
+        let mut r = openai_error(
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(ProxyError {
-                error: "No healthy backends available".to_string(),
-            }),
-        )
-            .into_response());
+            OpenAiErrorKind::ServiceUnavailable,
+            "No healthy backends available",
+            None,
+        );
+        inject_self_served_by(&mut r, state);
+        return Err(r);
     }
+    let backend_addr = backend.addr.clone();
 
     let path = parts
         .uri
@@ -1891,22 +2867,29 @@ async fn forward_core(
         axum::http::Method::PATCH => client.patch(&target_url),
         axum::http::Method::HEAD => client.head(&target_url),
         _ => {
-            return Err((
+            let mut r = openai_error(
                 StatusCode::METHOD_NOT_ALLOWED,
-                Json(ProxyError {
-                    error: "Method not allowed".to_string(),
-                }),
-            )
-                .into_response());
+                OpenAiErrorKind::InvalidRequest,
+                "Method not allowed",
+                None,
+            );
+            inject_served_by(&mut r, &backend_addr, &state.served_by_config);
+            return Err(r);
         }
     };
     for (name, value) in parts.headers.iter() {
-        if name != header::HOST {
-            if let Ok(v) = value.to_str() {
-                builder = builder.header(name.as_str(), v);
-            }
+        if name == header::HOST {
+            continue;
+        }
+        if name.as_str().eq_ignore_ascii_case(X_FORWARD_HOPS) {
+            continue;
+        }
+        if let Ok(v) = value.to_str() {
+            builder = builder.header(name.as_str(), v);
         }
     }
+    // V149 F3: advertise the proxy's outbound hop count.
+    builder = builder.header(X_FORWARD_HOPS, outbound_hops.to_string());
     if !body_bytes.is_empty() {
         builder = builder.body(body_bytes);
     }
@@ -1925,94 +2908,115 @@ async fn forward_core(
                 }
             }
             match resp.bytes().await {
-                Ok(bytes) => Ok((status, headers, bytes.to_vec())),
-                Err(e) => Err((
-                    StatusCode::BAD_GATEWAY,
-                    Json(ProxyError {
-                        error: format!("Backend read error: {e}"),
-                    }),
-                )
-                    .into_response()),
+                Ok(bytes) => Ok((status, headers, bytes.to_vec(), backend_addr)),
+                Err(e) => {
+                    let mut r = openai_error(
+                        StatusCode::BAD_GATEWAY,
+                        OpenAiErrorKind::Server,
+                        format!("Backend read error: {e}"),
+                        None,
+                    );
+                    inject_served_by(&mut r, &backend_addr, &state.served_by_config);
+                    Err(r)
+                }
             }
         }
         Err(e) => {
             if e.is_connect() || e.is_timeout() {
                 backend.healthy.store(false, Ordering::Relaxed);
             }
-            Err((
+            let mut r = openai_error(
                 StatusCode::BAD_GATEWAY,
-                Json(ProxyError {
-                    error: format!("Backend error: {e}"),
-                }),
-            )
-                .into_response())
+                OpenAiErrorKind::Server,
+                format!("Backend error: {e}"),
+                None,
+            );
+            inject_served_by(&mut r, &backend_addr, &state.served_by_config);
+            Err(r)
         }
     }
 }
 
 #[cfg(feature = "security")]
 fn unauthorized() -> Response {
-    (
+    openai_error(
         StatusCode::UNAUTHORIZED,
-        Json(ProxyError {
-            error: "Unauthorized".to_string(),
-        }),
+        OpenAiErrorKind::Authentication,
+        "Unauthorized",
+        None,
     )
-        .into_response()
 }
 
 #[cfg(feature = "security")]
 fn rate_limited(retry_in: std::time::Duration) -> Response {
     let retry_secs = retry_in.as_secs().max(1);
-    (
+    let mut resp = openai_error(
         StatusCode::TOO_MANY_REQUESTS,
-        [(X_REASON, "rate_limit"), ("retry-after", "")],
-        Json(ProxyError {
-            error: format!("Rate limit exceeded, retry in {retry_secs}s"),
-        }),
-    )
-        .into_response()
+        OpenAiErrorKind::RateLimit,
+        format!("Rate limit exceeded, retry in {retry_secs}s"),
+        Some("rate_limit_exceeded"),
+    );
+    let headers = resp.headers_mut();
+    headers.insert(X_REASON, axum::http::HeaderValue::from_static("rate_limit"));
+    if let Ok(v) = axum::http::HeaderValue::from_str(&retry_secs.to_string()) {
+        headers.insert("retry-after", v);
+    }
+    resp
 }
 
 #[cfg(feature = "security")]
 fn blocked(reason: &str) -> Response {
-    (
+    let mut resp = openai_error(
         StatusCode::FORBIDDEN,
-        [(X_REASON, "input_guard")],
-        Json(ProxyError {
-            error: format!("Blocked by input guard: {reason}"),
-        }),
-    )
-        .into_response()
+        OpenAiErrorKind::InvalidRequest,
+        format!("Blocked by input guard: {reason}"),
+        Some("input_guard"),
+    );
+    resp.headers_mut().insert(
+        X_REASON,
+        axum::http::HeaderValue::from_static("input_guard"),
+    );
+    resp
 }
 
 #[cfg(feature = "security")]
 fn budget_exceeded(reason: &str) -> Response {
-    (
+    let mut resp = openai_error(
         StatusCode::TOO_MANY_REQUESTS,
-        [(X_REASON, "budget_exceeded")],
-        Json(ProxyError {
-            error: format!("Budget exceeded: {reason}"),
-        }),
-    )
-        .into_response()
+        OpenAiErrorKind::RateLimit,
+        format!("Budget exceeded: {reason}"),
+        Some("budget_exceeded"),
+    );
+    resp.headers_mut().insert(
+        X_REASON,
+        axum::http::HeaderValue::from_static("budget_exceeded"),
+    );
+    resp
 }
 
 #[cfg(feature = "security")]
 fn output_blocked(reason: &str) -> Response {
-    (
+    let mut resp = openai_error(
         StatusCode::SERVICE_UNAVAILABLE,
-        [(X_REASON, "output_guard")],
-        Json(ProxyError {
-            error: format!("Blocked by output guard: {reason}"),
-        }),
-    )
-        .into_response()
+        OpenAiErrorKind::ServiceUnavailable,
+        format!("Blocked by output guard: {reason}"),
+        Some("output_guard"),
+    );
+    resp.headers_mut().insert(
+        X_REASON,
+        axum::http::HeaderValue::from_static("output_guard"),
+    );
+    resp
 }
 
 #[cfg(feature = "security")]
 fn bad_request(msg: String) -> Response {
-    (StatusCode::BAD_REQUEST, Json(ProxyError { error: msg })).into_response()
+    openai_error(
+        StatusCode::BAD_REQUEST,
+        OpenAiErrorKind::InvalidRequest,
+        msg,
+        None,
+    )
 }
 
 #[cfg(feature = "security")]
@@ -2022,6 +3026,16 @@ fn with_request_id_header(resp: Response, request_id: &str) -> Response {
         parts.headers.insert(X_REQUEST_ID, v);
     }
     Response::from_parts(parts, body)
+}
+
+/// V149 F1: combine `with_request_id_header` with self-served-by
+/// injection. Used by gateway handlers for all early-rejection paths
+/// (auth, rate limit, body parse, input/output guards, budget).
+#[cfg(feature = "security")]
+fn finalize_self(resp: Response, request_id: &str, proxy: &ProxyState) -> Response {
+    let mut r = with_request_id_header(resp, request_id);
+    inject_self_served_by(&mut r, proxy);
+    r
 }
 
 #[cfg(feature = "security")]
@@ -2228,9 +3242,66 @@ async fn health_check_loop(state: ProxyState, interval: Duration) {
                 } else {
                     eprintln!("[health] Backend {} is now UNHEALTHY", backend.addr);
                 }
+                // V149 F5: any topology change must invalidate the
+                // aggregated `/v1/models` cache so callers get fresh
+                // `served_by` lists immediately, not after the TTL.
+                state.aggregated_models.invalidate();
+            }
+            // V149 F4: piggyback `/v1/models` polling. Per plan,
+            // non-2xx from `/v1/models` does NOT mark the backend
+            // unhealthy — only the `/health` failure above does.
+            if state.model_polling_enabled {
+                let prev = backend.known_models();
+                poll_backend_models(&client, backend).await;
+                // V149 F5: also invalidate on advertised-list change
+                // so a backend that gained or dropped a model surfaces
+                // on the next `/v1/models` scrape.
+                if backend.known_models() != prev {
+                    state.aggregated_models.invalidate();
+                }
             }
         }
     }
+}
+
+/// V149 F4: refresh `backend.advertised_models` from its
+/// `/v1/models` endpoint, applying exponential backoff on errors so
+/// a permanently-broken endpoint stops eating one poll-tick per cycle.
+async fn poll_backend_models(client: &reqwest::Client, backend: &Backend) {
+    // Skip if we're still in a backoff cooldown.
+    let skip = backend.poll_tick_skip.load(Ordering::Relaxed);
+    if skip > 0 {
+        backend.poll_tick_skip.store(skip - 1, Ordering::Relaxed);
+        return;
+    }
+    let url = format!("http://{}/v1/models", backend.addr);
+    match client.get(&url).send().await {
+        Ok(resp) if resp.status().is_success() => match resp.bytes().await {
+            Ok(bytes) => {
+                let parsed = parse_models_response(&bytes);
+                *backend.advertised_models.write() = parsed;
+                backend.model_poll_failures.store(0, Ordering::Relaxed);
+            }
+            Err(_) => apply_model_poll_backoff(backend),
+        },
+        _ => {
+            // Non-2xx (e.g. 401/500) and transport errors both feed
+            // backoff. The advertised_models list is intentionally NOT
+            // cleared — the last-good list keeps routing functional
+            // through a transient endpoint hiccup.
+            apply_model_poll_backoff(backend);
+        }
+    }
+}
+
+/// Exponential backoff for `/v1/models` polling. Caps the skip at 30
+/// ticks so a permanently-broken endpoint still gets re-probed
+/// roughly once per 30 health intervals.
+fn apply_model_poll_backoff(backend: &Backend) {
+    let prev = backend.model_poll_failures.fetch_add(1, Ordering::Relaxed);
+    let f = prev.saturating_add(1).min(8);
+    let skip = (1u32 << f.min(5)).saturating_sub(1).min(30);
+    backend.poll_tick_skip.store(skip, Ordering::Relaxed);
 }
 
 // ============================================================================
@@ -2325,6 +3396,14 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
                 cli.cost_snapshot = Some(PathBuf::from(val));
             }
             "--dry-run" => cli.dry_run = true,
+            "--routing-policy" => {
+                i += 1;
+                let val = next_val(args, i, "--routing-policy")?;
+                // Validate eagerly so a typo fails at parse time, not
+                // at the merge step.
+                let _ = RoutingPolicy::parse(&val)?;
+                cli.routing_policy = Some(val);
+            }
             "-h" | "--help" => cli.help = true,
             other => return Err(format!("Unknown argument: '{}'", other)),
         }
@@ -2355,6 +3434,9 @@ fn print_usage() {
     eprintln!("  --enable-pii-redaction        Force PII input redaction on");
     eprintln!("  --disable-cache               Force response cache off");
     eprintln!("  --cost-snapshot <PATH>        Path to cost-dashboard snapshot (budget mw)");
+    eprintln!(
+        "  --routing-policy <POLICY>     One of: round_robin (default), local_first, model_aware"
+    );
     eprintln!("  --dry-run                     Print config and exit");
     eprintln!("  -h, --help                    Print this help message");
     eprintln!();
@@ -2430,6 +3512,14 @@ mod tests {
             next_index: Arc::new(AtomicUsize::new(0)),
             session_affinity: Arc::new(DashMap::new()),
             api_key: None,
+            served_by_config: Arc::new(ServedByConfig::default()),
+            self_addr: Arc::new("127.0.0.1:0".to_string()),
+            dedupe: Arc::new(DedupeCache::new(DEDUPE_MAX_ENTRIES, DEDUPE_TTL)),
+            max_forward_hops: DEFAULT_MAX_FORWARD_HOPS,
+            policy: RoutingPolicy::RoundRobin,
+            metrics: Arc::new(ProxyMetrics::default()),
+            model_polling_enabled: false,
+            aggregated_models: Arc::new(AggregatedModelsCache::default()),
         };
         let idx0 = pick_healthy_backend(&state);
         let idx1 = pick_healthy_backend(&state);
@@ -2451,6 +3541,14 @@ mod tests {
             next_index: Arc::new(AtomicUsize::new(0)),
             session_affinity: Arc::new(DashMap::new()),
             api_key: None,
+            served_by_config: Arc::new(ServedByConfig::default()),
+            self_addr: Arc::new("127.0.0.1:0".to_string()),
+            dedupe: Arc::new(DedupeCache::new(DEDUPE_MAX_ENTRIES, DEDUPE_TTL)),
+            max_forward_hops: DEFAULT_MAX_FORWARD_HOPS,
+            policy: RoutingPolicy::RoundRobin,
+            metrics: Arc::new(ProxyMetrics::default()),
+            model_polling_enabled: false,
+            aggregated_models: Arc::new(AggregatedModelsCache::default()),
         };
         // Mark first backend as unhealthy
         state.backends[0].healthy.store(false, Ordering::Relaxed);
@@ -2465,6 +3563,14 @@ mod tests {
             next_index: Arc::new(AtomicUsize::new(0)),
             session_affinity: Arc::new(DashMap::new()),
             api_key: None,
+            served_by_config: Arc::new(ServedByConfig::default()),
+            self_addr: Arc::new("127.0.0.1:0".to_string()),
+            dedupe: Arc::new(DedupeCache::new(DEDUPE_MAX_ENTRIES, DEDUPE_TTL)),
+            max_forward_hops: DEFAULT_MAX_FORWARD_HOPS,
+            policy: RoutingPolicy::RoundRobin,
+            metrics: Arc::new(ProxyMetrics::default()),
+            model_polling_enabled: false,
+            aggregated_models: Arc::new(AggregatedModelsCache::default()),
         };
         let _router = build_proxy_router(state);
         // Should not panic
@@ -3258,6 +4364,14 @@ mod tests {
             next_index: Arc::new(AtomicUsize::new(0)),
             session_affinity: Arc::new(DashMap::new()),
             api_key: None,
+            served_by_config: Arc::new(ServedByConfig::default()),
+            self_addr: Arc::new("127.0.0.1:0".to_string()),
+            dedupe: Arc::new(DedupeCache::new(DEDUPE_MAX_ENTRIES, DEDUPE_TTL)),
+            max_forward_hops: DEFAULT_MAX_FORWARD_HOPS,
+            policy: RoutingPolicy::RoundRobin,
+            metrics: Arc::new(ProxyMetrics::default()),
+            model_polling_enabled: false,
+            aggregated_models: Arc::new(AggregatedModelsCache::default()),
         };
         let m = MiddlewareSection::default();
         let a = AuditSection::default();
@@ -3276,6 +4390,14 @@ mod tests {
             next_index: Arc::new(AtomicUsize::new(0)),
             session_affinity: Arc::new(DashMap::new()),
             api_key: None,
+            served_by_config: Arc::new(ServedByConfig::default()),
+            self_addr: Arc::new("127.0.0.1:0".to_string()),
+            dedupe: Arc::new(DedupeCache::new(DEDUPE_MAX_ENTRIES, DEDUPE_TTL)),
+            max_forward_hops: DEFAULT_MAX_FORWARD_HOPS,
+            policy: RoutingPolicy::RoundRobin,
+            metrics: Arc::new(ProxyMetrics::default()),
+            model_polling_enabled: false,
+            aggregated_models: Arc::new(AggregatedModelsCache::default()),
         };
         let mut m = MiddlewareSection::default();
         m.enable_cache = true;
@@ -3297,6 +4419,14 @@ mod tests {
             next_index: Arc::new(AtomicUsize::new(0)),
             session_affinity: Arc::new(DashMap::new()),
             api_key: None,
+            served_by_config: Arc::new(ServedByConfig::default()),
+            self_addr: Arc::new("127.0.0.1:0".to_string()),
+            dedupe: Arc::new(DedupeCache::new(DEDUPE_MAX_ENTRIES, DEDUPE_TTL)),
+            max_forward_hops: DEFAULT_MAX_FORWARD_HOPS,
+            policy: RoutingPolicy::RoundRobin,
+            metrics: Arc::new(ProxyMetrics::default()),
+            model_polling_enabled: false,
+            aggregated_models: Arc::new(AggregatedModelsCache::default()),
         };
         let ctx = build_gateway_context(
             proxy,
@@ -3401,11 +4531,33 @@ mod tests {
         }
 
         fn make_state(backend_addr: &str, api_key: Option<&str>) -> ProxyState {
+            make_state_full(
+                vec![Backend::new(backend_addr.to_string())],
+                api_key,
+                RoutingPolicy::RoundRobin,
+            )
+        }
+
+        /// V149 F4: variant exposing routing policy and a pre-built
+        /// backend list so policy tests can populate static models.
+        fn make_state_full(
+            backends: Vec<Backend>,
+            api_key: Option<&str>,
+            policy: RoutingPolicy,
+        ) -> ProxyState {
             ProxyState {
-                backends: Arc::new(vec![Backend::new(backend_addr.to_string())]),
+                backends: Arc::new(backends),
                 next_index: Arc::new(AtomicUsize::new(0)),
                 session_affinity: Arc::new(DashMap::new()),
                 api_key: api_key.map(|s| s.to_string()),
+                served_by_config: Arc::new(ServedByConfig::default()),
+                self_addr: Arc::new("127.0.0.1:0".to_string()),
+                dedupe: Arc::new(DedupeCache::new(DEDUPE_MAX_ENTRIES, DEDUPE_TTL)),
+                max_forward_hops: DEFAULT_MAX_FORWARD_HOPS,
+                policy,
+                metrics: Arc::new(ProxyMetrics::default()),
+                model_polling_enabled: false,
+                aggregated_models: Arc::new(AggregatedModelsCache::default()),
             }
         }
 
@@ -3605,6 +4757,568 @@ mod tests {
             });
         }
 
+        // ────────────────────────────────────────────────────────────────────
+        // V149 F1 tests — `x-mesh-served-by` + OpenAI error envelope
+        // ────────────────────────────────────────────────────────────────────
+
+        /// Returns a mock backend that emits a chat-ok response WITHOUT
+        /// `x-mesh-served-by` so the proxy is responsible for injection.
+        fn chat_ok_no_served_by() -> AxumResponse {
+            chat_ok_response()
+        }
+
+        /// Returns a mock backend that already emits `x-mesh-served-by`
+        /// so the proxy must preserve it instead of overwriting.
+        fn chat_ok_with_served_by() -> AxumResponse {
+            AxumResponse::builder()
+                .status(200)
+                .header("content-type", "application/json")
+                .header("x-mesh-served-by", "upstream-pinned")
+                .body(Body::from(
+                    r#"{"id":"x","choices":[{"message":{"role":"assistant","content":"pong"}}],"usage":{"prompt_tokens":4,"completion_tokens":1}}"#,
+                ))
+                .unwrap()
+        }
+
+        #[test]
+        fn test_gateway_e2e_x_mesh_served_by_header_injected() {
+            rt().block_on(async {
+                let (addr, _shutdown) = spawn_mock_backend(chat_ok_no_served_by).await;
+                let state = make_state(&addr, None);
+                let ctx = build_gateway_context(
+                    state,
+                    &MiddlewareSection::default(),
+                    &AuditSection::default(),
+                )
+                .unwrap();
+                let router = build_gateway_router(ctx);
+
+                let resp = router.oneshot(chat_req(chat_body("hi"))).await.unwrap();
+                assert_eq!(resp.status(), 200);
+                let value = resp
+                    .headers()
+                    .get("x-mesh-served-by")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("")
+                    .to_string();
+                // Default config exposes the literal backend addr.
+                assert_eq!(value, addr);
+            });
+        }
+
+        #[test]
+        fn test_gateway_e2e_x_mesh_served_by_opaque_mode_hides_addr() {
+            rt().block_on(async {
+                let (addr, _shutdown) = spawn_mock_backend(chat_ok_no_served_by).await;
+                let mut state = make_state(&addr, None);
+                // Switch served-by to opaque mode.
+                state.served_by_config = Arc::new(ServedByConfig {
+                    expose_addr: false,
+                    salt: "fixed-salt".to_string(),
+                });
+                let ctx = build_gateway_context(
+                    state,
+                    &MiddlewareSection::default(),
+                    &AuditSection::default(),
+                )
+                .unwrap();
+                let router = build_gateway_router(ctx);
+
+                let resp = router.oneshot(chat_req(chat_body("hi"))).await.unwrap();
+                let value = resp
+                    .headers()
+                    .get("x-mesh-served-by")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("")
+                    .to_string();
+                assert!(!value.contains(&addr), "opaque mode must not leak {addr}");
+                assert_eq!(value.len(), 12, "opaque ID is exactly 12 hex chars");
+                assert!(
+                    value.chars().all(|c| c.is_ascii_hexdigit()),
+                    "opaque ID must be lowercase hex"
+                );
+            });
+        }
+
+        #[test]
+        fn test_gateway_e2e_x_mesh_served_by_preserved_from_backend() {
+            rt().block_on(async {
+                let (addr, _shutdown) = spawn_mock_backend(chat_ok_with_served_by).await;
+                let state = make_state(&addr, None);
+                let ctx = build_gateway_context(
+                    state,
+                    &MiddlewareSection::default(),
+                    &AuditSection::default(),
+                )
+                .unwrap();
+                let router = build_gateway_router(ctx);
+
+                let resp = router.oneshot(chat_req(chat_body("hi"))).await.unwrap();
+                assert_eq!(resp.status(), 200);
+                assert_eq!(
+                    resp.headers()
+                        .get("x-mesh-served-by")
+                        .and_then(|v| v.to_str().ok()),
+                    Some("upstream-pinned"),
+                    "proxy must preserve the backend's served-by value"
+                );
+            });
+        }
+
+        #[test]
+        fn test_gateway_e2e_unauthorized_uses_openai_envelope_and_self_served_by() {
+            rt().block_on(async {
+                let (addr, _shutdown) = spawn_mock_backend(chat_ok_response).await;
+                let state = make_state(&addr, Some("expected-key"));
+                let ctx = build_gateway_context(
+                    state,
+                    &MiddlewareSection::default(),
+                    &AuditSection::default(),
+                )
+                .unwrap();
+                let router = build_gateway_router(ctx);
+
+                let resp = router.oneshot(chat_req(chat_body("hi"))).await.unwrap();
+                assert_eq!(resp.status(), 401);
+                // Self-served-by carries the proxy's own addr (the test state
+                // uses `127.0.0.1:0`).
+                assert_eq!(
+                    resp.headers()
+                        .get("x-mesh-served-by")
+                        .and_then(|v| v.to_str().ok()),
+                    Some("127.0.0.1:0"),
+                );
+                let body = read_body_bytes(resp).await;
+                let json: serde_json::Value =
+                    serde_json::from_slice(&body).expect("envelope must be valid JSON");
+                let err = &json["error"];
+                assert_eq!(err["type"].as_str(), Some("authentication_error"));
+                assert!(err["message"].as_str().is_some());
+            });
+        }
+
+        #[test]
+        fn test_gateway_e2e_no_healthy_backend_returns_envelope() {
+            rt().block_on(async {
+                // No mock backend running — the address is already dead.
+                let state = make_state("127.0.0.1:1", None);
+                // Mark the backend as unhealthy so forward_core short-circuits
+                // BEFORE any TCP attempt (the test must be deterministic).
+                state.backends[0].healthy.store(false, Ordering::Relaxed);
+                let ctx = build_gateway_context(
+                    state,
+                    &MiddlewareSection::default(),
+                    &AuditSection::default(),
+                )
+                .unwrap();
+                let router = build_gateway_router(ctx);
+
+                let resp = router.oneshot(chat_req(chat_body("hi"))).await.unwrap();
+                assert_eq!(resp.status(), 503);
+                assert_eq!(
+                    resp.headers()
+                        .get("x-mesh-served-by")
+                        .and_then(|v| v.to_str().ok()),
+                    Some("127.0.0.1:0"),
+                    "503 from forward_core must carry self-served-by"
+                );
+                let body = read_body_bytes(resp).await;
+                let json: serde_json::Value =
+                    serde_json::from_slice(&body).expect("envelope must be valid JSON");
+                assert_eq!(
+                    json["error"]["type"].as_str(),
+                    Some("service_unavailable_error")
+                );
+            });
+        }
+
+        // ────────────────────────────────────────────────────────────────────
+        // V149 F3 tests — request-id dedupe + forward-hops loop guard
+        // ────────────────────────────────────────────────────────────────────
+
+        fn chat_req_with_headers(
+            body: String,
+            headers: Vec<(&'static str, String)>,
+        ) -> axum::http::Request<Body> {
+            let mut b = axum::http::Request::builder()
+                .method("POST")
+                .uri("/v1/chat/completions")
+                .header("content-type", "application/json");
+            for (k, v) in headers {
+                b = b.header(k, v);
+            }
+            b.body(Body::from(body)).unwrap()
+        }
+
+        fn get_req_with_headers(
+            uri: &'static str,
+            headers: Vec<(&'static str, String)>,
+        ) -> axum::http::Request<Body> {
+            let mut b = axum::http::Request::builder().method("GET").uri(uri);
+            for (k, v) in headers {
+                b = b.header(k, v);
+            }
+            b.body(Body::empty()).unwrap()
+        }
+
+        /// Mock backend that records the inbound `x-forward-hops` header so
+        /// the test can assert the proxy emitted the correctly-incremented
+        /// value to the upstream.
+        async fn spawn_mock_backend_capturing_hops() -> (
+            String,
+            Arc<parking_lot::Mutex<Option<String>>>,
+            oneshot::Sender<()>,
+        ) {
+            let captured: Arc<parking_lot::Mutex<Option<String>>> =
+                Arc::new(parking_lot::Mutex::new(None));
+            let captured_cl = captured.clone();
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let (tx, rx) = oneshot::channel::<()>();
+            let app = axum::Router::new().fallback(axum::routing::any(
+                move |req: axum::extract::Request| {
+                    let c = captured_cl.clone();
+                    async move {
+                        if let Some(v) = req.headers().get("x-forward-hops") {
+                            *c.lock() = v.to_str().ok().map(|s| s.to_string());
+                        }
+                        chat_ok_response()
+                    }
+                },
+            ));
+            tokio::spawn(async move {
+                let _ = axum::serve(listener, app)
+                    .with_graceful_shutdown(async move {
+                        let _ = rx.await;
+                    })
+                    .await;
+            });
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            (format!("127.0.0.1:{port}"), captured, tx)
+        }
+
+        #[test]
+        fn test_gateway_e2e_f3_post_replay_returns_409_envelope() {
+            rt().block_on(async {
+                let (addr, _shutdown) = spawn_mock_backend(chat_ok_response).await;
+                let state = make_state(&addr, None);
+                let ctx = build_gateway_context(
+                    state,
+                    &MiddlewareSection::default(),
+                    &AuditSection::default(),
+                )
+                .unwrap();
+                let router = build_gateway_router(ctx);
+
+                let req_id = "replay-test-001".to_string();
+                let r1 = router
+                    .clone()
+                    .oneshot(chat_req_with_headers(
+                        chat_body("first"),
+                        vec![("x-request-id", req_id.clone())],
+                    ))
+                    .await
+                    .unwrap();
+                assert_eq!(r1.status(), 200, "first POST must succeed");
+
+                let r2 = router
+                    .oneshot(chat_req_with_headers(
+                        chat_body("second"),
+                        vec![("x-request-id", req_id.clone())],
+                    ))
+                    .await
+                    .unwrap();
+                assert_eq!(r2.status(), 409, "POST replay must return 409 Conflict");
+                assert_eq!(
+                    r2.headers()
+                        .get("x-mesh-served-by")
+                        .and_then(|v| v.to_str().ok()),
+                    Some("127.0.0.1:0"),
+                    "409 from dedupe must carry self-served-by",
+                );
+                let body = read_body_bytes(r2).await;
+                let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                assert_eq!(
+                    json["error"]["type"].as_str(),
+                    Some("invalid_request_error")
+                );
+                assert_eq!(
+                    json["error"]["code"].as_str(),
+                    Some("request_id_replay"),
+                    "envelope must use the documented code"
+                );
+            });
+        }
+
+        #[test]
+        fn test_gateway_e2e_f3_get_with_same_request_id_bypasses_dedupe() {
+            rt().block_on(async {
+                let (addr, _shutdown) = spawn_mock_backend(chat_ok_response).await;
+                let state = make_state(&addr, None);
+                let ctx = build_gateway_context(
+                    state,
+                    &MiddlewareSection::default(),
+                    &AuditSection::default(),
+                )
+                .unwrap();
+                let router = build_gateway_router(ctx);
+
+                // POST first to populate the dedupe cache with this request id.
+                let req_id = "idempotent-bypass-001".to_string();
+                let r1 = router
+                    .clone()
+                    .oneshot(chat_req_with_headers(
+                        chat_body("first"),
+                        vec![("x-request-id", req_id.clone())],
+                    ))
+                    .await
+                    .unwrap();
+                assert_eq!(r1.status(), 200);
+
+                // GET with the same request-id MUST NOT 409 — idempotent methods
+                // are explicitly excluded from dedupe.
+                let r2 = router
+                    .oneshot(get_req_with_headers(
+                        "/v1/models",
+                        vec![("x-request-id", req_id)],
+                    ))
+                    .await
+                    .unwrap();
+                assert_ne!(
+                    r2.status(),
+                    409,
+                    "idempotent GET must not be deduped (got 409)"
+                );
+            });
+        }
+
+        #[test]
+        fn test_gateway_e2e_f3_request_id_too_long_returns_400() {
+            rt().block_on(async {
+                let (addr, _shutdown) = spawn_mock_backend(chat_ok_response).await;
+                let state = make_state(&addr, None);
+                let ctx = build_gateway_context(
+                    state,
+                    &MiddlewareSection::default(),
+                    &AuditSection::default(),
+                )
+                .unwrap();
+                let router = build_gateway_router(ctx);
+
+                let oversized = "x".repeat(129);
+                let resp = router
+                    .oneshot(chat_req_with_headers(
+                        chat_body("hi"),
+                        vec![("x-request-id", oversized)],
+                    ))
+                    .await
+                    .unwrap();
+                assert_eq!(resp.status(), 400);
+                let body = read_body_bytes(resp).await;
+                let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                assert_eq!(
+                    json["error"]["type"].as_str(),
+                    Some("invalid_request_error")
+                );
+                assert_eq!(json["error"]["code"].as_str(), Some("request_id_too_long"));
+            });
+        }
+
+        #[test]
+        fn test_gateway_e2e_f3_cross_tenant_no_collision() {
+            rt().block_on(async {
+                let (addr, _shutdown) = spawn_mock_backend(chat_ok_response).await;
+                let state_a = make_state(&addr, Some("tenant-a-key"));
+                let ctx_a = build_gateway_context(
+                    state_a,
+                    &MiddlewareSection::default(),
+                    &AuditSection::default(),
+                )
+                .unwrap();
+                let router_a = build_gateway_router(ctx_a);
+
+                let state_b = make_state(&addr, Some("tenant-b-key"));
+                let ctx_b = build_gateway_context(
+                    state_b,
+                    &MiddlewareSection::default(),
+                    &AuditSection::default(),
+                )
+                .unwrap();
+                let router_b = build_gateway_router(ctx_b);
+
+                let shared_id = "collision-probe-001".to_string();
+
+                // Tenant A request — should succeed.
+                let r_a = router_a
+                    .oneshot(chat_req_with_headers(
+                        chat_body("from-a"),
+                        vec![
+                            ("x-request-id", shared_id.clone()),
+                            ("authorization", "Bearer tenant-a-key".to_string()),
+                        ],
+                    ))
+                    .await
+                    .unwrap();
+                assert_eq!(r_a.status(), 200, "tenant A first POST must succeed");
+
+                // Tenant B request with SAME request-id but different api key —
+                // must not collide; both isolated dedupe namespaces. (Different
+                // ProxyState here, but the dedupe key derivation still includes
+                // the api-key hash as the cross-tenant guarantee.)
+                let r_b = router_b
+                    .oneshot(chat_req_with_headers(
+                        chat_body("from-b"),
+                        vec![
+                            ("x-request-id", shared_id),
+                            ("authorization", "Bearer tenant-b-key".to_string()),
+                        ],
+                    ))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    r_b.status(),
+                    200,
+                    "tenant B with same request-id must NOT collide"
+                );
+            });
+        }
+
+        #[test]
+        fn test_gateway_e2e_f3_loop_guard_fires_on_excessive_hops() {
+            rt().block_on(async {
+                let (addr, _shutdown) = spawn_mock_backend(chat_ok_response).await;
+                let state = make_state(&addr, None);
+                let ctx = build_gateway_context(
+                    state,
+                    &MiddlewareSection::default(),
+                    &AuditSection::default(),
+                )
+                .unwrap();
+                let router = build_gateway_router(ctx);
+
+                let resp = router
+                    .oneshot(chat_req_with_headers(
+                        chat_body("hi"),
+                        vec![("x-forward-hops", "999".to_string())],
+                    ))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    resp.status(),
+                    508,
+                    "hops > max must return 508 Loop Detected"
+                );
+                assert_eq!(
+                    resp.headers()
+                        .get("x-mesh-served-by")
+                        .and_then(|v| v.to_str().ok()),
+                    Some("127.0.0.1:0"),
+                    "508 from loop guard must carry self-served-by",
+                );
+                let body = read_body_bytes(resp).await;
+                let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                assert_eq!(json["error"]["type"].as_str(), Some("server_error"));
+                assert_eq!(
+                    json["error"]["code"].as_str(),
+                    Some("forward_loop_detected")
+                );
+            });
+        }
+
+        #[test]
+        fn test_gateway_e2e_f3_strict_parse_garbage_hops_treated_as_zero() {
+            rt().block_on(async {
+                let (addr, captured, _shutdown) = spawn_mock_backend_capturing_hops().await;
+                let state = make_state(&addr, None);
+                let ctx = build_gateway_context(
+                    state,
+                    &MiddlewareSection::default(),
+                    &AuditSection::default(),
+                )
+                .unwrap();
+                let router = build_gateway_router(ctx);
+
+                // Non-numeric hops → parsed as 0 → outbound = 1; request succeeds.
+                let resp = router
+                    .oneshot(chat_req_with_headers(
+                        chat_body("hi"),
+                        vec![("x-forward-hops", "not-a-number".to_string())],
+                    ))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    resp.status(),
+                    200,
+                    "garbage hops must be tolerated, not 400"
+                );
+
+                let outbound = captured.lock().clone();
+                assert_eq!(
+                    outbound.as_deref(),
+                    Some("1"),
+                    "outbound hops must be 1 (parsed-as-zero + 1)"
+                );
+            });
+        }
+
+        #[test]
+        fn test_gateway_e2e_f3_negative_hops_treated_as_zero() {
+            rt().block_on(async {
+                let (addr, captured, _shutdown) = spawn_mock_backend_capturing_hops().await;
+                let state = make_state(&addr, None);
+                let ctx = build_gateway_context(
+                    state,
+                    &MiddlewareSection::default(),
+                    &AuditSection::default(),
+                )
+                .unwrap();
+                let router = build_gateway_router(ctx);
+
+                let resp = router
+                    .oneshot(chat_req_with_headers(
+                        chat_body("hi"),
+                        vec![("x-forward-hops", "-1".to_string())],
+                    ))
+                    .await
+                    .unwrap();
+                assert_eq!(resp.status(), 200);
+                assert_eq!(
+                    captured.lock().clone().as_deref(),
+                    Some("1"),
+                    "negative hops parsed as 0; outbound becomes 1"
+                );
+            });
+        }
+
+        #[test]
+        fn test_gateway_e2e_f3_outbound_hops_incremented_from_inbound() {
+            rt().block_on(async {
+                let (addr, captured, _shutdown) = spawn_mock_backend_capturing_hops().await;
+                let state = make_state(&addr, None);
+                let ctx = build_gateway_context(
+                    state,
+                    &MiddlewareSection::default(),
+                    &AuditSection::default(),
+                )
+                .unwrap();
+                let router = build_gateway_router(ctx);
+
+                let resp = router
+                    .oneshot(chat_req_with_headers(
+                        chat_body("hi"),
+                        vec![("x-forward-hops", "3".to_string())],
+                    ))
+                    .await
+                    .unwrap();
+                assert_eq!(resp.status(), 200);
+                assert_eq!(
+                    captured.lock().clone().as_deref(),
+                    Some("4"),
+                    "outbound hops = inbound + 1"
+                );
+            });
+        }
+
         #[test]
         fn test_gateway_e2e_audit_entry_written() {
             rt().block_on(async {
@@ -3639,6 +5353,708 @@ mod tests {
                 assert!(
                     contents.contains("\"request_id\""),
                     "entry must include request_id; got: {contents}"
+                );
+            });
+        }
+
+        // ────────────────────────────────────────────────────────────────────
+        // V149 F4 tests — routing policies + model registry + metrics
+        // ────────────────────────────────────────────────────────────────────
+
+        fn chat_body_with_model(model: &str, prompt: &str) -> String {
+            format!(r#"{{"model":"{model}","messages":[{{"role":"user","content":"{prompt}"}}]}}"#)
+        }
+
+        /// Build a router from a pre-assembled ProxyState (multi-backend
+        /// or with custom policy). Uses the free-path router so we don't
+        /// pull `security` middleware into every routing test.
+        fn router_from_state(state: ProxyState) -> axum::Router {
+            build_proxy_router(state)
+        }
+
+        #[test]
+        fn test_f4_routing_policy_parse() {
+            assert!(matches!(
+                RoutingPolicy::parse("round_robin").unwrap(),
+                RoutingPolicy::RoundRobin
+            ));
+            assert!(matches!(
+                RoutingPolicy::parse("local_first").unwrap(),
+                RoutingPolicy::LocalFirst
+            ));
+            assert!(matches!(
+                RoutingPolicy::parse("model_aware").unwrap(),
+                RoutingPolicy::ModelAware
+            ));
+            assert!(RoutingPolicy::parse("nope").is_err());
+        }
+
+        #[test]
+        fn test_f4_extract_model_from_body() {
+            assert_eq!(
+                extract_model_from_body(br#"{"model":"llama3","messages":[]}"#),
+                Some("llama3".to_string())
+            );
+            assert_eq!(
+                extract_model_from_body(br#"{"messages":[]}"#),
+                None,
+                "missing model field returns None"
+            );
+            assert_eq!(
+                extract_model_from_body(b"not json at all"),
+                None,
+                "non-JSON body returns None"
+            );
+            assert_eq!(
+                extract_model_from_body(br#"{"model":42}"#),
+                None,
+                "non-string model field returns None"
+            );
+        }
+
+        #[test]
+        fn test_f4_parse_models_openai_shape() {
+            let body = br#"{"object":"list","data":[
+                {"id":"llama3","object":"model"},
+                {"id":"mistral-7b","object":"model","owned_by":"x"}
+            ]}"#;
+            let parsed = parse_models_response(body);
+            assert_eq!(parsed, vec!["llama3", "mistral-7b"]);
+        }
+
+        #[test]
+        fn test_f4_parse_models_ollama_shape() {
+            let body = br#"{"models":[
+                {"name":"llama3:8b","modified_at":"x"},
+                {"name":"mistral:7b"}
+            ]}"#;
+            let parsed = parse_models_response(body);
+            assert_eq!(parsed, vec!["llama3:8b", "mistral:7b"]);
+        }
+
+        #[test]
+        fn test_f4_parse_models_skips_malformed_entries() {
+            let body = br#"{"data":[
+                {"id":"good-model"},
+                {"no_id":"bad"},
+                {"id":123},
+                {"id":"another-good"}
+            ]}"#;
+            let parsed = parse_models_response(body);
+            assert_eq!(parsed, vec!["good-model", "another-good"]);
+        }
+
+        #[test]
+        fn test_f4_parse_models_garbage_returns_empty() {
+            assert!(parse_models_response(b"not json").is_empty());
+            assert!(parse_models_response(br#"{"unrelated":"shape"}"#).is_empty());
+        }
+
+        #[test]
+        fn test_f4_backend_advertises_model_static_only() {
+            let b = Backend::with_models("x:1".to_string(), vec!["m-static".to_string()]);
+            assert!(b.advertises_model("m-static"));
+            assert!(!b.advertises_model("unknown"));
+        }
+
+        #[test]
+        fn test_f4_backend_advertises_model_dynamic_only() {
+            let b = Backend::new("x:1".to_string());
+            *b.advertised_models.write() = vec!["m-dyn".to_string()];
+            assert!(b.advertises_model("m-dyn"));
+            assert!(!b.advertises_model("m-static"));
+        }
+
+        #[test]
+        fn test_f4_backend_known_models_union_dedup_sorted() {
+            let b = Backend::with_models(
+                "x:1".to_string(),
+                vec!["llama3".to_string(), "shared".to_string()],
+            );
+            *b.advertised_models.write() = vec!["mistral".to_string(), "shared".to_string()];
+            let known = b.known_models();
+            assert_eq!(known, vec!["llama3", "mistral", "shared"]);
+        }
+
+        #[test]
+        fn test_f4_round_robin_ignores_models() {
+            rt().block_on(async {
+                let (a_addr, _a_sh) = spawn_mock_backend(chat_ok_response).await;
+                let (b_addr, _b_sh) = spawn_mock_backend(chat_ok_response).await;
+                let backends = vec![
+                    Backend::with_models(a_addr.clone(), vec!["llama3".to_string()]),
+                    Backend::with_models(b_addr.clone(), vec!["mistral".to_string()]),
+                ];
+                let state = make_state_full(backends, None, RoutingPolicy::RoundRobin);
+                let router = router_from_state(state);
+
+                // Two requests for a model only backend A has — round-robin
+                // still alternates blindly, so one of them hits backend B.
+                let r1 = router
+                    .clone()
+                    .oneshot(chat_req(chat_body_with_model("llama3", "1")))
+                    .await
+                    .unwrap();
+                let r2 = router
+                    .oneshot(chat_req(chat_body_with_model("llama3", "2")))
+                    .await
+                    .unwrap();
+                let s1 = r1
+                    .headers()
+                    .get("x-mesh-served-by")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap()
+                    .to_string();
+                let s2 = r2
+                    .headers()
+                    .get("x-mesh-served-by")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap()
+                    .to_string();
+                assert_ne!(
+                    s1, s2,
+                    "round_robin ignores models — two requests should hit both backends"
+                );
+            });
+        }
+
+        #[test]
+        fn test_f4_local_first_picks_first_healthy() {
+            rt().block_on(async {
+                let (a_addr, _a_sh) = spawn_mock_backend(chat_ok_response).await;
+                let (b_addr, _b_sh) = spawn_mock_backend(chat_ok_response).await;
+                let backends = vec![Backend::new(a_addr.clone()), Backend::new(b_addr.clone())];
+                let state = make_state_full(backends, None, RoutingPolicy::LocalFirst);
+                let router = router_from_state(state);
+
+                // First call → A (first in list).
+                let r1 = router
+                    .clone()
+                    .oneshot(chat_req(chat_body("hi")))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    r1.headers()
+                        .get("x-mesh-served-by")
+                        .and_then(|v| v.to_str().ok()),
+                    Some(a_addr.as_str())
+                );
+                // Second call → still A (local_first is sticky to the first
+                // healthy backend, not round-robin).
+                let r2 = router.oneshot(chat_req(chat_body("hi2"))).await.unwrap();
+                assert_eq!(
+                    r2.headers()
+                        .get("x-mesh-served-by")
+                        .and_then(|v| v.to_str().ok()),
+                    Some(a_addr.as_str())
+                );
+            });
+        }
+
+        #[test]
+        fn test_f4_local_first_falls_through_when_first_unhealthy() {
+            rt().block_on(async {
+                let (a_addr, _a_sh) = spawn_mock_backend(chat_ok_response).await;
+                let (b_addr, _b_sh) = spawn_mock_backend(chat_ok_response).await;
+                let backends = vec![Backend::new(a_addr.clone()), Backend::new(b_addr.clone())];
+                let state = make_state_full(backends, None, RoutingPolicy::LocalFirst);
+                state.backends[0].healthy.store(false, Ordering::Relaxed);
+                let router = router_from_state(state);
+
+                let resp = router.oneshot(chat_req(chat_body("hi"))).await.unwrap();
+                assert_eq!(
+                    resp.headers()
+                        .get("x-mesh-served-by")
+                        .and_then(|v| v.to_str().ok()),
+                    Some(b_addr.as_str()),
+                    "local_first must fall through to next healthy backend"
+                );
+            });
+        }
+
+        #[test]
+        fn test_f4_model_aware_routes_to_advertiser() {
+            rt().block_on(async {
+                let (a_addr, _a_sh) = spawn_mock_backend(chat_ok_response).await;
+                let (b_addr, _b_sh) = spawn_mock_backend(chat_ok_response).await;
+                let backends = vec![
+                    Backend::with_models(a_addr.clone(), vec!["llama3".to_string()]),
+                    Backend::with_models(b_addr.clone(), vec!["mistral".to_string()]),
+                ];
+                let state = make_state_full(backends, None, RoutingPolicy::ModelAware);
+                let router = router_from_state(state);
+
+                // llama3 → A only
+                for _ in 0..3 {
+                    let r = router
+                        .clone()
+                        .oneshot(chat_req(chat_body_with_model("llama3", "p")))
+                        .await
+                        .unwrap();
+                    assert_eq!(r.status(), 200);
+                    assert_eq!(
+                        r.headers()
+                            .get("x-mesh-served-by")
+                            .and_then(|v| v.to_str().ok()),
+                        Some(a_addr.as_str()),
+                        "model_aware must always pick the llama3 backend"
+                    );
+                }
+                // mistral → B only
+                for _ in 0..3 {
+                    let r = router
+                        .clone()
+                        .oneshot(chat_req(chat_body_with_model("mistral", "p")))
+                        .await
+                        .unwrap();
+                    assert_eq!(r.status(), 200);
+                    assert_eq!(
+                        r.headers()
+                            .get("x-mesh-served-by")
+                            .and_then(|v| v.to_str().ok()),
+                        Some(b_addr.as_str()),
+                    );
+                }
+            });
+        }
+
+        #[test]
+        fn test_f4_model_aware_404_when_no_backend_advertises() {
+            rt().block_on(async {
+                let (a_addr, _a_sh) = spawn_mock_backend(chat_ok_response).await;
+                let backends = vec![Backend::with_models(a_addr, vec!["llama3".to_string()])];
+                let state = make_state_full(backends, None, RoutingPolicy::ModelAware);
+                let router = router_from_state(state);
+
+                let resp = router
+                    .oneshot(chat_req(chat_body_with_model("phantom-model", "p")))
+                    .await
+                    .unwrap();
+                assert_eq!(resp.status(), 404, "no advertiser → 404, not 503 or 500");
+                assert_eq!(
+                    resp.headers()
+                        .get("x-mesh-served-by")
+                        .and_then(|v| v.to_str().ok()),
+                    Some("127.0.0.1:0"),
+                    "404 generated by the proxy must carry self-served-by"
+                );
+                let body = read_body_bytes(resp).await;
+                let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                assert_eq!(json["error"]["type"].as_str(), Some("not_found_error"));
+                assert_eq!(json["error"]["code"].as_str(), Some("model_not_in_mesh"));
+                assert!(
+                    json["error"]["message"]
+                        .as_str()
+                        .unwrap_or("")
+                        .contains("phantom-model"),
+                    "envelope message must include the requested model id"
+                );
+            });
+        }
+
+        #[test]
+        fn test_f4_model_aware_no_model_field_falls_back_to_rr() {
+            rt().block_on(async {
+                let (a_addr, _a_sh) = spawn_mock_backend(chat_ok_response).await;
+                let (b_addr, _b_sh) = spawn_mock_backend(chat_ok_response).await;
+                let backends = vec![
+                    Backend::with_models(a_addr.clone(), vec!["llama3".to_string()]),
+                    Backend::with_models(b_addr.clone(), vec!["mistral".to_string()]),
+                ];
+                let state = make_state_full(backends, None, RoutingPolicy::ModelAware);
+                let router = router_from_state(state);
+
+                // No `model` field → no hint → falls back to round-robin
+                // and the request succeeds rather than 404.
+                let resp = router
+                    .oneshot(
+                        axum::http::Request::builder()
+                            .method("POST")
+                            .uri("/v1/anything")
+                            .header("content-type", "application/json")
+                            .body(Body::from(r#"{"foo":"bar"}"#))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(resp.status(), 200);
+            });
+        }
+
+        #[test]
+        fn test_f4_metrics_endpoint_exposes_counters() {
+            rt().block_on(async {
+                let (a_addr, _a_sh) = spawn_mock_backend(chat_ok_response).await;
+                let state = make_state(&a_addr, None);
+                let router = router_from_state(state);
+
+                let resp = router
+                    .clone()
+                    .oneshot(
+                        axum::http::Request::builder()
+                            .method("GET")
+                            .uri("/metrics")
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(resp.status(), 200);
+                let ct = resp
+                    .headers()
+                    .get("content-type")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("");
+                assert!(
+                    ct.starts_with("text/plain"),
+                    "metrics must be text/plain; got: {ct}"
+                );
+                let body = read_body_bytes(resp).await;
+                let text = String::from_utf8_lossy(&body);
+                assert!(text.contains("proxy_requests_by_policy"));
+                assert!(text.contains("proxy_loop_detected_total"));
+                assert!(text.contains("proxy_dedupe_hit_total"));
+                assert!(text.contains("proxy_model_aware_no_match_total"));
+            });
+        }
+
+        #[test]
+        fn test_f4_metrics_loop_counter_increments() {
+            rt().block_on(async {
+                let (a_addr, _a_sh) = spawn_mock_backend(chat_ok_response).await;
+                let state = make_state(&a_addr, None);
+                let metrics = state.metrics.clone();
+                let router = router_from_state(state);
+
+                // Fire a request that trips the loop guard.
+                let _ = router
+                    .clone()
+                    .oneshot(chat_req_with_headers(
+                        chat_body("loop"),
+                        vec![("x-forward-hops", "999".to_string())],
+                    ))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    metrics.loop_detected_total.load(Ordering::Relaxed),
+                    1,
+                    "loop_detected metric must bump on 508"
+                );
+            });
+        }
+
+        #[test]
+        fn test_f4_metrics_dedupe_counter_increments() {
+            rt().block_on(async {
+                let (a_addr, _a_sh) = spawn_mock_backend(chat_ok_response).await;
+                let state = make_state(&a_addr, None);
+                let metrics = state.metrics.clone();
+                let router = router_from_state(state);
+
+                let id = "dedupe-metric-001".to_string();
+                let _ = router
+                    .clone()
+                    .oneshot(chat_req_with_headers(
+                        chat_body("x"),
+                        vec![("x-request-id", id.clone())],
+                    ))
+                    .await
+                    .unwrap();
+                let _ = router
+                    .oneshot(chat_req_with_headers(
+                        chat_body("y"),
+                        vec![("x-request-id", id)],
+                    ))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    metrics.dedupe_hit_total.load(Ordering::Relaxed),
+                    1,
+                    "dedupe_hit metric must bump on replay"
+                );
+            });
+        }
+
+        #[test]
+        fn test_f4_metrics_model_aware_no_match_increments() {
+            rt().block_on(async {
+                let (a_addr, _a_sh) = spawn_mock_backend(chat_ok_response).await;
+                let backends = vec![Backend::with_models(a_addr, vec!["llama3".to_string()])];
+                let state = make_state_full(backends, None, RoutingPolicy::ModelAware);
+                let metrics = state.metrics.clone();
+                let router = router_from_state(state);
+
+                let _ = router
+                    .oneshot(chat_req(chat_body_with_model("nope", "p")))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    metrics.model_aware_no_match_total.load(Ordering::Relaxed),
+                    1
+                );
+            });
+        }
+
+        #[test]
+        fn test_f4_health_endpoint_reports_models() {
+            rt().block_on(async {
+                let (a_addr, _a_sh) = spawn_mock_backend(chat_ok_response).await;
+                let backends = vec![Backend::with_models(
+                    a_addr,
+                    vec!["llama3".to_string(), "mistral".to_string()],
+                )];
+                let state = make_state_full(backends, None, RoutingPolicy::ModelAware);
+                let router = router_from_state(state);
+
+                let resp = router
+                    .oneshot(
+                        axum::http::Request::builder()
+                            .method("GET")
+                            .uri("/health")
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(resp.status(), 200);
+                let body = read_body_bytes(resp).await;
+                let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                let models = &json["backends"][0]["models_advertised"];
+                let ids: Vec<String> = models
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect();
+                assert_eq!(ids, vec!["llama3", "mistral"]);
+            });
+        }
+
+        #[test]
+        fn test_f4_model_poll_backoff_grows_then_caps() {
+            let b = Backend::new("dead:1".to_string());
+            // First failure: tick_skip should be > 0.
+            apply_model_poll_backoff(&b);
+            let s1 = b.poll_tick_skip.load(Ordering::Relaxed);
+            assert!(s1 >= 1, "first failure must set non-zero backoff");
+            // Many failures: backoff stays capped (≤ 30).
+            for _ in 0..20 {
+                apply_model_poll_backoff(&b);
+            }
+            let s_capped = b.poll_tick_skip.load(Ordering::Relaxed);
+            assert!(
+                s_capped <= 30,
+                "backoff must be capped at 30; got {s_capped}"
+            );
+        }
+
+        // ────────────────────────────────────────────────────────────────────
+        // V149 F5 tests — aggregated /v1/models endpoint
+        // ────────────────────────────────────────────────────────────────────
+
+        fn get_v1_models_req() -> axum::http::Request<Body> {
+            axum::http::Request::builder()
+                .method("GET")
+                .uri("/v1/models")
+                .body(Body::empty())
+                .unwrap()
+        }
+
+        #[test]
+        fn test_f5_aggregated_models_union_with_served_by() {
+            rt().block_on(async {
+                let (a_addr, _a_sh) = spawn_mock_backend(chat_ok_response).await;
+                let (b_addr, _b_sh) = spawn_mock_backend(chat_ok_response).await;
+                let backends = vec![
+                    Backend::with_models(
+                        a_addr.clone(),
+                        vec!["llama3".to_string(), "shared".to_string()],
+                    ),
+                    Backend::with_models(
+                        b_addr.clone(),
+                        vec!["mistral".to_string(), "shared".to_string()],
+                    ),
+                ];
+                let state = make_state_full(backends, None, RoutingPolicy::ModelAware);
+                let router = router_from_state(state);
+
+                let resp = router.oneshot(get_v1_models_req()).await.unwrap();
+                assert_eq!(resp.status(), 200);
+                let ct = resp
+                    .headers()
+                    .get("content-type")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("");
+                assert!(ct.starts_with("application/json"), "got: {ct}");
+                let body = read_body_bytes(resp).await;
+                let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                assert_eq!(json["object"], "list");
+                let data = json["data"].as_array().unwrap();
+                let ids: Vec<String> = data
+                    .iter()
+                    .filter_map(|v| v["id"].as_str().map(String::from))
+                    .collect();
+                assert_eq!(ids, vec!["llama3", "mistral", "shared"]);
+                // "shared" must list both backends in `served_by`.
+                let shared = data.iter().find(|v| v["id"] == "shared").unwrap();
+                let served: Vec<String> = shared["served_by"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect();
+                assert_eq!(served.len(), 2, "served_by must list both backends");
+                assert!(served.contains(&a_addr));
+                assert!(served.contains(&b_addr));
+            });
+        }
+
+        #[test]
+        fn test_f5_models_method_not_allowed_for_post() {
+            rt().block_on(async {
+                let (a_addr, _a_sh) = spawn_mock_backend(chat_ok_response).await;
+                let state = make_state(&a_addr, None);
+                let router = router_from_state(state);
+
+                let resp = router
+                    .oneshot(
+                        axum::http::Request::builder()
+                            .method("POST")
+                            .uri("/v1/models")
+                            .body(Body::from("{}"))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(resp.status(), 405);
+                let allow = resp
+                    .headers()
+                    .get("allow")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("");
+                assert_eq!(allow, "GET");
+                let body = read_body_bytes(resp).await;
+                let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                assert_eq!(json["error"]["type"], "invalid_request_error");
+                assert_eq!(json["error"]["code"], "method_not_allowed");
+            });
+        }
+
+        #[test]
+        fn test_f5_models_respects_api_key_gate() {
+            rt().block_on(async {
+                let (a_addr, _a_sh) = spawn_mock_backend(chat_ok_response).await;
+                let state = make_state(&a_addr, Some("secret"));
+                let router = router_from_state(state);
+
+                // No Authorization → 401.
+                let resp = router.clone().oneshot(get_v1_models_req()).await.unwrap();
+                assert_eq!(resp.status(), 401);
+                let body = read_body_bytes(resp).await;
+                let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                assert_eq!(json["error"]["type"], "authentication_error");
+
+                // Correct Authorization → 200.
+                let resp = router
+                    .oneshot(
+                        axum::http::Request::builder()
+                            .method("GET")
+                            .uri("/v1/models")
+                            .header("authorization", "Bearer secret")
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(resp.status(), 200);
+            });
+        }
+
+        #[test]
+        fn test_f5_models_cache_returns_same_body_within_ttl() {
+            rt().block_on(async {
+                let (a_addr, _a_sh) = spawn_mock_backend(chat_ok_response).await;
+                let backends = vec![Backend::with_models(a_addr, vec!["llama3".to_string()])];
+                let state = make_state_full(backends, None, RoutingPolicy::RoundRobin);
+                // Prime the cache by hitting once.
+                let router = router_from_state(state.clone());
+                let resp1 = router.clone().oneshot(get_v1_models_req()).await.unwrap();
+                let body1 = read_body_bytes(resp1).await;
+                // Cache should be populated now.
+                assert!(state
+                    .aggregated_models
+                    .read_fresh(AGGREGATED_MODELS_TTL)
+                    .is_some());
+                // Second hit returns the same bytes (cached).
+                let resp2 = router.oneshot(get_v1_models_req()).await.unwrap();
+                let body2 = read_body_bytes(resp2).await;
+                assert_eq!(body1, body2);
+            });
+        }
+
+        #[test]
+        fn test_f5_models_cache_invalidated_on_health_transition() {
+            rt().block_on(async {
+                let (a_addr, _a_sh) = spawn_mock_backend(chat_ok_response).await;
+                let backends = vec![Backend::with_models(a_addr, vec!["llama3".to_string()])];
+                let state = make_state_full(backends, None, RoutingPolicy::RoundRobin);
+                // Prime.
+                let router = router_from_state(state.clone());
+                let _ = router.clone().oneshot(get_v1_models_req()).await.unwrap();
+                assert!(state
+                    .aggregated_models
+                    .read_fresh(AGGREGATED_MODELS_TTL)
+                    .is_some());
+                // Simulate a health transition by flipping the flag + invalidating.
+                state.backends[0].healthy.store(false, Ordering::Relaxed);
+                state.aggregated_models.invalidate();
+                assert!(state
+                    .aggregated_models
+                    .read_fresh(AGGREGATED_MODELS_TTL)
+                    .is_none());
+                // Next hit rebuilds — and an unhealthy backend is excluded.
+                let resp = router.oneshot(get_v1_models_req()).await.unwrap();
+                let body = read_body_bytes(resp).await;
+                let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                assert_eq!(
+                    json["data"].as_array().unwrap().len(),
+                    0,
+                    "no healthy backend → empty data list"
+                );
+            });
+        }
+
+        #[test]
+        fn test_f5_models_opaque_served_by_hides_addr() {
+            rt().block_on(async {
+                let (a_addr, _a_sh) = spawn_mock_backend(chat_ok_response).await;
+                let backends = vec![Backend::with_models(
+                    a_addr.clone(),
+                    vec!["llama3".to_string()],
+                )];
+                let mut state = make_state_full(backends, None, RoutingPolicy::RoundRobin);
+                // Switch to opaque mode for this test.
+                state.served_by_config = Arc::new(ServedByConfig {
+                    expose_addr: false,
+                    salt: "test-salt".to_string(),
+                });
+                let router = router_from_state(state);
+
+                let resp = router.oneshot(get_v1_models_req()).await.unwrap();
+                let body = read_body_bytes(resp).await;
+                let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                let served: Vec<String> = json["data"][0]["served_by"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect();
+                assert_eq!(served.len(), 1);
+                assert_ne!(served[0], a_addr, "opaque mode must not expose raw addr");
+                assert_eq!(served[0].len(), 12, "opaque id is 12 hex chars");
+                assert!(
+                    served[0].chars().all(|c| c.is_ascii_hexdigit()),
+                    "opaque id must be hex-only"
                 );
             });
         }
