@@ -170,8 +170,9 @@ requested model, the response is `404 Not Found` with
 404 for an unknown model.
 
 Validation: enabling `model_aware` without declaring `models` on any
-backend and without `model_polling = true` emits a startup warning
-and auto-enables polling. Better to log+continue than to fail boot.
+backend and without `enable_model_polling = true` emits a startup
+warning and auto-enables polling. Better to log+continue than to fail
+boot.
 
 **Metrics.** New `GET /metrics` endpoint, Prometheus text format
 (no client lib dep):
@@ -245,7 +246,7 @@ max_forward_hops = 8
 
 # Force-enable /v1/models polling regardless of policy.
 # Auto-enabled if policy = "model_aware".
-# model_polling = true
+# enable_model_polling = true
 ```
 
 CLI:
@@ -359,3 +360,17 @@ different risk than the additive surface in V149.
 - `CHANGELOG.md` — V149 entry.
 - `docs/IMPROVEMENTS_V149.md` — this file.
 - `../ai_assistant-website/concepts.html` — V149 card.
+
+## Known gaps (deferred deliberately)
+
+- **`embedded_server.rs` no emite `x-mesh-served-by` con node identity.**
+  El plan original lo contemplaba pero se aplazó: hoy el backend ya
+  inyecta el header cuando el cliente lo manda en el request — la
+  necesidad de un valor by-default desde el nodo backend es defensiva
+  pero no funcional para V149. Tratado como follow-up V149.2 opcional.
+- **`mock_llama_server.rs` emite un único modelo estático.** Los tests
+  F4/F5 usan harness `gateway_e2e` directo (no mock backend), por lo
+  que extender el mock no es bloqueante. V150 sí lo requerirá para
+  tests SSE.
+- **V150 — streaming passthrough.** Patch separado por riesgo hot-path.
+  Plan en `ai_assistant_plans/V150_streaming_passthrough.md`.

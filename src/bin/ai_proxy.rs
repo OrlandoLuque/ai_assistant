@@ -3742,6 +3742,67 @@ mod tests {
         assert!(toml::from_str::<ProxyConfig>(toml_text).is_err());
     }
 
+    /// V149 regression: the shipped `examples/ai_proxy.toml` must parse
+    /// with every commented-out *config line* uncommented. A config line
+    /// is a line whose comment body looks like `key = value`. Prose
+    /// comments are skipped. `deny_unknown_fields` turns a doc/schema
+    /// drift (e.g. wrong field name in a comment) into a parse error
+    /// here, before users hit it.
+    #[test]
+    fn test_example_config_uncommented_parses() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("examples")
+            .join("ai_proxy.toml");
+        let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
+        let uncommented: String = raw
+            .lines()
+            .map(|l| {
+                let trimmed = l.trim_start();
+                let Some(body) = trimmed
+                    .strip_prefix("# ")
+                    .or_else(|| trimmed.strip_prefix("#"))
+                else {
+                    return l.to_string();
+                };
+                // Only treat as config-to-uncomment if the comment body
+                // matches `<ident> = ...` or is a `[section]` header.
+                let body_trimmed = body.trim_start();
+                let looks_like_kv = body_trimmed
+                    .split_once('=')
+                    .map(|(k, _)| {
+                        let k = k.trim();
+                        !k.is_empty()
+                            && k.chars()
+                                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+                    })
+                    .unwrap_or(false);
+                // Section header: `[name]` with optional whitespace/comment
+                // tail, but nothing else. Rejects `[server] — listener…`
+                // banner lines that live inside `# ---` dividers.
+                let looks_like_section = body_trimmed.starts_with('[')
+                    && body_trimmed
+                        .split_once(']')
+                        .map(|(_, tail)| {
+                            let tail = tail.trim();
+                            tail.is_empty() || tail.starts_with('#')
+                        })
+                        .unwrap_or(false);
+                if looks_like_kv || looks_like_section {
+                    body.to_string()
+                } else {
+                    l.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        toml::from_str::<ProxyConfig>(&uncommented).unwrap_or_else(|e| {
+            panic!(
+                "examples/ai_proxy.toml fails to parse with all commented \
+                 config lines enabled — likely a doc/schema drift: {e}"
+            )
+        });
+    }
+
     #[test]
     fn test_load_config_file_ok() {
         let dir = std::env::temp_dir().join(format!("ai_proxy_cfg_{}", std::process::id()));

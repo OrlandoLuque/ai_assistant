@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v113.1 (2026-06-08) — V149.1: config schema drift fix + regression test (0.2.100)
+
+Post-commit audit of V149 caught a documentation/schema drift: the
+`examples/ai_proxy.toml` example file (commented) and the IMPROVEMENTS
+doc both referenced a field named `model_polling`, but the actual
+serde field on `RoutingConfig` is `enable_model_polling`. Because
+`RoutingConfig` uses `#[serde(deny_unknown_fields)]`, uncommenting
+the example line would have produced a parse error for any user
+following the example verbatim.
+
+### Fixed
+- `examples/ai_proxy.toml`: `# model_polling = false` →
+  `# enable_model_polling = false`. Also rephrased an adjacent prose
+  comment so it no longer looks like a TOML identifier assignment
+  (defensive against the regression heuristic).
+- `docs/IMPROVEMENTS_V149.md`: two occurrences of `model_polling`
+  renamed; "Known gaps" section added clarifying which V149 plan
+  items shipped vs were deliberately deferred.
+
+### Added
+- `test_example_config_uncommented_parses` in `src/bin/ai_proxy.rs`
+  (regression test). Reads `examples/ai_proxy.toml`, programmatically
+  uncomments any `# key = value` or `# [section]` line that looks
+  like real config, and asserts the result parses with
+  `deny_unknown_fields`. Future schema drift in either direction
+  (example or struct) fails CI loudly.
+
 ## [Unreleased] - v113 (2026-06-08) — V149: routing hygiene + model-aware routing (0.2.99)
 
 Hardens the `ai_proxy` forwarding path and turns its multi-backend

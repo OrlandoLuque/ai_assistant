@@ -109,8 +109,8 @@ policy = "round_robin"
 expose_served_by_addr = true
 
 # Salt for the opaque id when expose_served_by_addr = false.
-# Unset = random per-process salt (opaque ids change across restarts).
-# Set this if you need stable opaque ids across restarts.
+# If unset, a random per-process salt is used (opaque ids change
+# across restarts). Set this if you need stable opaque ids.
 # served_by_salt = "pin-this-string"
 
 # Max number of x-forward-hops a request may carry before the proxy
@@ -120,4 +120,4 @@ max_forward_hops = 8
 # Force-enable periodic /v1/models polling regardless of policy.
 # Auto-set to true when policy = "model_aware".
 # Pin to true if you want /v1/models aggregation under another policy.
-# model_polling = false
+# enable_model_polling = false
