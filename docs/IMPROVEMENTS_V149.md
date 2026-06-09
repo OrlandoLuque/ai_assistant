@@ -363,11 +363,14 @@ different risk than the additive surface in V149.
 
 ## Known gaps (deferred deliberately)
 
-- **`embedded_server.rs` no emite `x-mesh-served-by` con node identity.**
-  El plan original lo contemplaba pero se aplazó: hoy el backend ya
-  inyecta el header cuando el cliente lo manda en el request — la
-  necesidad de un valor by-default desde el nodo backend es defensiva
-  pero no funcional para V149. Tratado como follow-up V149.2 opcional.
+- **`embedded_server.rs` served-by** — falsa alarma del audit inicial.
+  El plan original pedía emitir `x-mesh-served-by` "también en
+  `embedded_server.rs`", pero ese módulo es un **launcher** para
+  `llama-server` (proceso hijo externo), no un HTTP server. El backend
+  HTTP real es `server_axum.rs`, que **sí** recibió el middleware
+  `mesh_served_by_middleware` como parte de V149 F1 (línea 622, layer
+  en 896). Por tanto el header se emite donde tiene que emitirse. El
+  plan tenía un misread; corregido en `V149_routing_hygiene.md`.
 - **`mock_llama_server.rs` emite un único modelo estático.** Los tests
   F4/F5 usan harness `gateway_e2e` directo (no mock backend), por lo
   que extender el mock no es bloqueante. V150 sí lo requerirá para

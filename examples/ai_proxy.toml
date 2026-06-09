@@ -121,3 +121,13 @@ max_forward_hops = 8
 # Auto-set to true when policy = "model_aware".
 # Pin to true if you want /v1/models aggregation under another policy.
 # enable_model_polling = false
+
+# ---------------------------------------------------------------------------
+# V150 — streaming passthrough
+# ---------------------------------------------------------------------------
+# Per-chunk inactivity timeout (seconds) for SSE / NDJSON upstream
+# responses. If the upstream stops emitting bytes for this long, the
+# proxy aborts the stream and bumps `proxy_stream_aborts_chunk_timeout`.
+# Default 30s. Lower it to be more aggressive against slow-loris-style
+# backends; raise it for legitimately slow generators.
+# stream_chunk_timeout_secs = 30

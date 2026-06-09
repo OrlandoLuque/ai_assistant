@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.100"
+version = "0.2.101"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -419,7 +419,7 @@ gui-pro = [
 
 # axum-based HTTP server: production-ready async, HTTP/2, native WS/SSE, tower middleware
 # Not in 'full' — opt-in. Replaces std::net::TcpListener server with axum framework.
-server-axum = ["dep:axum", "dep:axum-extra", "dep:tower", "dep:tower-http", "dep:tokio", "dep:async-stream", "dep:futures-core", "dep:reqwest", "dep:toml", "dep:parking_lot"]
+server-axum = ["dep:axum", "dep:axum-extra", "dep:tower", "dep:tower-http", "dep:tokio", "dep:async-stream", "dep:futures-core", "dep:reqwest", "dep:toml", "dep:parking_lot", "dep:bytes"]
 
 # axum TLS (HTTPS via rustls, separate from server-tls which is for the std server)
 server-axum-tls = ["server-axum", "dep:axum-server", "dep:rustls", "dep:rustls-pemfile"]
@@ -643,6 +643,10 @@ redis = { version = "1", optional = true, features = ["tokio-comp", "connection-
 async-stream = { version = "0.3", optional = true }
 # Futures core traits (Stream trait for SSE)
 futures-core = { version = "0.3", optional = true }
+# Byte buffer type used by reqwest::Response::bytes_stream and
+# axum::body::Body::from_stream. Already a transitive dep; declared
+# explicitly so V150 streaming code can name `bytes::Bytes`.
+bytes = { version = "1", optional = true }
 
 # === V96: Self-Learning deps ===
 # Wasmtime runtime for Skill Forge WASM execution (fuel + ResourceLimiter)

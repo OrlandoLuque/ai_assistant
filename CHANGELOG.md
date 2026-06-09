@@ -5,6 +5,73 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v114 (2026-06-09) — V150: SSE streaming passthrough + per-chunk timeout (0.2.101)
+
+V78 buffered every upstream response with `resp.bytes().await` before
+forwarding to the client. That worked for JSON but broke real
+incremental SSE — clients got the stream all-at-once at the end. V150
+fixes the hot path: when the upstream's `content-type` is
+`text/event-stream` or `application/x-ndjson`, the proxy now pipes
+`reqwest::Response::bytes_stream()` straight into
+`axum::body::Body::from_stream(...)`.
+
+To keep the path honest against slow / hung backends, each chunk gap
+is wrapped in a `tokio::time::timeout(stream_chunk_timeout, ...)`.
+Default 30s, tunable via `[routing] stream_chunk_timeout_secs`. Five
+new Prometheus counters expose what the streaming path is doing
+(`proxy_stream_chunks_total`, `proxy_stream_aborts_chunk_timeout`,
+`proxy_stream_aborts_upstream`, `proxy_stream_aborts_client_close`,
+`proxy_stream_disabled_output_guard`).
+
+The non-stream chat path (which runs output guards) deliberately
+keeps the bufferize-then-scan behavior, but when the upstream comes
+back with an SSE content-type the response now carries
+`x-streaming-disabled: output-guard-active` so clients can tell
+"stream auto-disabled by guards" apart from "no stream available."
+
+### Added
+- `stream_chunk_timeout_secs` knob in `[routing]` (default 30s).
+- Helper `streaming_body_with_chunk_timeout` wrapping
+  `reqwest::Response::bytes_stream()` with per-chunk timeout and
+  metric accounting; `forward_core_streamable` parallel to
+  `forward_core` that returns an axum `Response` directly and decides
+  stream-vs-buffer from the upstream's content-type.
+- Three forwarding sites now go through `forward_core_streamable`:
+  gateway passthrough handler (fallback route), gateway chat handler's
+  stream branch, free-proxy path.
+- `inject_streaming_disabled` helper + `x-streaming-disabled` header
+  on non-stream chat responses with SSE-shaped upstream bodies.
+- 5 V150 Prometheus counters in `/metrics`:
+  `proxy_stream_chunks_total`, `proxy_stream_aborts_chunk_timeout`,
+  `proxy_stream_aborts_upstream`, `proxy_stream_aborts_client_close`,
+  `proxy_stream_disabled_output_guard`.
+- 5 `gateway_e2e` integration tests covering: passthrough SSE
+  streams, per-chunk timeout aborts and counts, chat-stream branch
+  pipes SSE, non-stream chat with SSE upstream sets
+  `x-streaming-disabled`, JSON chat regression (no header).
+- `bytes` crate dependency (gated on `server-axum`) — needed for
+  zero-copy `bytes::Bytes` payloads on the stream path.
+- `src/bin/mock_llama_server.rs`: configurable SSE endpoint
+  (`/sse-test?chunks=N&gap_ms=M&stall_after=K`) + SSE branch of
+  `POST /v1/chat/completions` when body contains `"stream":true`.
+  Drives V150's streaming tests without polluting V149's e2e harness.
+
+### Changed
+- `ProxyState` carries `stream_chunk_timeout: Duration`; the proxy
+  wiring in `main()` reads `[routing] stream_chunk_timeout_secs`.
+- `RoutingSection` gains the optional `stream_chunk_timeout_secs`
+  field. Schema-drift regression test (V149.1) covers the new field.
+- `examples/ai_proxy.toml` documents the new knob.
+- `ProxyMetrics` extended by 5 counters (all `AtomicU64`, all
+  surfaced in the Prometheus text body).
+
+### Notes
+- Streams are not cacheable. The cache layer is bypassed on the
+  stream paths (already V78 policy for `stream:true` requests).
+- The non-stream chat path still bufferizes — output guards (PII /
+  toxicity / faithfulness) cannot operate on an incremental stream.
+  `x-streaming-disabled: output-guard-active` makes this visible.
+
 ## [Unreleased] - v113.1 (2026-06-08) — V149.1: config schema drift fix + regression test (0.2.100)
 
 Post-commit audit of V149 caught a documentation/schema drift: the

@@ -103,7 +103,7 @@ dependencies = [
 
 [[package]]
 name = "ai_assistant"
-version = "0.2.100"
+version = "0.2.101"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -116,6 +116,7 @@ dependencies = [
  "bincode",
  "blake3",
  "bollard",
+ "bytes",
  "candle-core",
  "candle-nn",
  "candle-transformers",

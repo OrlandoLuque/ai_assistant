@@ -8,6 +8,13 @@
 //! * `GET /health` → `200 OK` after an optional `MOCK_LLAMA_DELAY_MS`
 //!   ramp-up so tests can exercise the wait-loop.
 //! * `GET /v1/models` → `200 OK` with a single dummy model entry.
+//! * `GET /sse-test?chunks=N&gap_ms=M&stall_after=K` → emits an
+//!   `text/event-stream` body with `N` chunks separated by `M` ms.
+//!   If `stall_after=K` is set, the stream emits `K` chunks then hangs
+//!   forever (drives V150 per-chunk timeout tests).
+//! * `POST /v1/chat/completions` → `text/event-stream` SSE when the
+//!   body contains `"stream":true` (env knobs reused from `/sse-test`),
+//!   else a single JSON chat response.
 //! * Anything else → `404 Not Found`.
 //!
 //! Reads only the args it cares about (`--host`, `--port`,
@@ -70,8 +77,8 @@ fn main() {
             Ok(s) => s,
             Err(_) => continue,
         };
-        // Tiny request parser: read until \r\n\r\n or 1 KiB.
-        let mut buf = [0u8; 1024];
+        // Tiny request parser: read until \r\n\r\n or 4 KiB.
+        let mut buf = [0u8; 4096];
         let n = match stream.read(&mut buf) {
             Ok(n) => n,
             Err(_) => continue,
@@ -79,8 +86,31 @@ fn main() {
         let req = String::from_utf8_lossy(&buf[..n]);
         let first_line = req.lines().next().unwrap_or("");
         let mut parts = first_line.split_whitespace();
-        let _method = parts.next().unwrap_or("");
-        let path = parts.next().unwrap_or("");
+        let method = parts.next().unwrap_or("");
+        let raw_path = parts.next().unwrap_or("");
+        let (path, query) = match raw_path.find('?') {
+            Some(i) => (&raw_path[..i], &raw_path[i + 1..]),
+            None => (raw_path, ""),
+        };
+
+        // Streaming endpoints handled inline (they write bytes directly).
+        if path == "/sse-test" {
+            stream_sse(&mut stream, query);
+            continue;
+        }
+        if path == "/v1/chat/completions" && method == "POST" {
+            let stream_requested =
+                req.contains("\"stream\":true") || req.contains("\"stream\": true");
+            if stream_requested {
+                stream_sse(&mut stream, query);
+                continue;
+            }
+            let body = "{\"id\":\"mock\",\"object\":\"chat.completion\",\"created\":0,\
+                \"model\":\"mock\",\"choices\":[{\"index\":0,\"message\":\
+                {\"role\":\"assistant\",\"content\":\"hello\"},\"finish_reason\":\"stop\"}]}";
+            let _ = write_response(&mut stream, "200 OK", body);
+            continue;
+        }
 
         let (status, body) = match path {
             "/health" => {
@@ -106,6 +136,79 @@ fn main() {
         };
         let _ = write_response(&mut stream, status, &body);
     }
+}
+
+fn parse_query_u64(query: &str, key: &str) -> Option<u64> {
+    for pair in query.split('&') {
+        let mut kv = pair.splitn(2, '=');
+        let k = kv.next().unwrap_or("");
+        let v = kv.next().unwrap_or("");
+        if k == key {
+            return v.parse().ok();
+        }
+    }
+    None
+}
+
+fn env_or(name: &str, default: u64) -> u64 {
+    env::var(name)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
+/// Emit an SSE response on `stream`. Knobs (query > env > default):
+///
+/// * `chunks` / `MOCK_SSE_CHUNKS` (default 3)
+/// * `gap_ms` / `MOCK_SSE_GAP_MS` (default 50)
+/// * `stall_after` / `MOCK_SSE_STALL_AFTER` — if set, emit that many
+///   chunks then sleep forever, without `[DONE]` or close.
+///
+/// HTTP framing: `Connection: close`, no `Content-Length`. The body is
+/// terminated by EOF (TCP close), which `reqwest::Response::bytes_stream`
+/// handles naturally.
+fn stream_sse(stream: &mut std::net::TcpStream, query: &str) {
+    let chunks = parse_query_u64(query, "chunks").unwrap_or_else(|| env_or("MOCK_SSE_CHUNKS", 3));
+    let gap_ms = parse_query_u64(query, "gap_ms").unwrap_or_else(|| env_or("MOCK_SSE_GAP_MS", 50));
+    let stall_after = parse_query_u64(query, "stall_after").or_else(|| {
+        env::var("MOCK_SSE_STALL_AFTER")
+            .ok()
+            .and_then(|v| v.parse().ok())
+    });
+
+    let header = "HTTP/1.1 200 OK\r\n\
+        Content-Type: text/event-stream\r\n\
+        Cache-Control: no-cache\r\n\
+        Connection: close\r\n\
+        \r\n";
+    if stream.write_all(header.as_bytes()).is_err() {
+        return;
+    }
+    let _ = stream.flush();
+
+    for i in 0..chunks {
+        if let Some(k) = stall_after {
+            if i >= k {
+                // Hang forever (test should drive the proxy's per-chunk
+                // timeout). 1h is effectively "forever" for any test.
+                std::thread::sleep(Duration::from_secs(3600));
+                return;
+            }
+        }
+        let line = format!(
+            "data: {{\"choices\":[{{\"delta\":{{\"content\":\"chunk-{}\"}},\"index\":0}}]}}\n\n",
+            i
+        );
+        if stream.write_all(line.as_bytes()).is_err() {
+            return;
+        }
+        let _ = stream.flush();
+        if gap_ms > 0 {
+            std::thread::sleep(Duration::from_millis(gap_ms));
+        }
+    }
+    let _ = stream.write_all(b"data: [DONE]\n\n");
+    let _ = stream.flush();
 }
 
 fn write_response(
