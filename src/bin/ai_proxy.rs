@@ -258,6 +258,9 @@ fn compute_dedupe_key(api_key: Option<&str>, request_id: &str) -> u64 {
 /// Validate the `x-request-id` (length + dedupe) on non-idempotent
 /// methods. Returns `Err(response)` if invalid or duplicate.
 /// GET/HEAD requests bypass dedupe (idempotent by spec).
+// Err carries a ready-built Response by design: it only materializes on
+// rejects, and boxing would cascade through forward_core's `?` chain.
+#[allow(clippy::result_large_err)]
 fn check_request_id_dedupe(
     state: &ProxyState,
     method: &axum::http::Method,
@@ -321,6 +324,8 @@ fn parse_forward_hops(headers: &axum::http::HeaderMap) -> u32 {
 /// Loop guard: increment the inbound hops by 1, fail with 508 if the
 /// new value exceeds the configured ceiling. Returns the new value
 /// the proxy should advertise on its outbound request.
+// Err carries a ready-built Response by design (see check_request_id_dedupe).
+#[allow(clippy::result_large_err)]
 fn next_forward_hops(state: &ProxyState, headers: &axum::http::HeaderMap) -> Result<u32, Response> {
     let inbound = parse_forward_hops(headers);
     let next = inbound.saturating_add(1);
@@ -674,6 +679,8 @@ fn parse_models_response(bytes: &[u8]) -> Vec<String> {
 /// Returns `Err(envelope)` only for `ModelAware` when no backend
 /// advertises the requested model — the OpenAI 404 envelope tells
 /// callers their model isn't available anywhere in the mesh.
+// Err carries a ready-built Response by design (see check_request_id_dedupe).
+#[allow(clippy::result_large_err)]
 fn pick_by_policy(state: &ProxyState, model_hint: Option<&str>) -> Result<usize, Response> {
     state.metrics.record_routing(state.policy);
     match state.policy {
@@ -1808,8 +1815,8 @@ fn main() -> ExitCode {
                 "(none)"
             }
         );
-        if cli.config.is_some() {
-            println!("  config: {}", cli.config.as_ref().unwrap().display());
+        if let Some(ref config_path) = cli.config {
+            println!("  config: {}", config_path.display());
             println!(
                 "  middleware.enabled_flags: rate_limit={} pii_in={} pii_out={} tox_in={} tox_out={} attack={} budget={} cache={} audit={}",
                 effective.middleware.enable_rate_limit,

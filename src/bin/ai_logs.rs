@@ -18,7 +18,7 @@
 use ai_assistant::distributed_log::{
     colorize_level, parse_log_level, ExportFormat, LogLevel, LogReader, LogTailer,
 };
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -68,7 +68,7 @@ fn main() {
     }
 }
 
-fn cmd_list(source: &PathBuf, _min_level: LogLevel) {
+fn cmd_list(source: &Path, _min_level: LogLevel) {
     let traces = match LogReader::list_traces(source) {
         Ok(t) => t,
         Err(e) => {
@@ -83,8 +83,8 @@ fn cmd_list(source: &PathBuf, _min_level: LogLevel) {
     }
 
     println!(
-        "{:<36} {:>6} {:>8} {:>8} {:<20} {}",
-        "TRACE ID", "ENTRIES", "FIRST", "LAST", "NODES", "LEVELS"
+        "{:<36} {:>6} {:>8} {:>8} {:<20} LEVELS",
+        "TRACE ID", "ENTRIES", "FIRST", "LAST", "NODES"
     );
     println!("{}", "-".repeat(100));
 
@@ -113,7 +113,7 @@ fn cmd_list(source: &PathBuf, _min_level: LogLevel) {
     println!("\n{} trace(s) found", traces.len());
 }
 
-fn cmd_show(trace_id: &str, source: &PathBuf, min_level: LogLevel, no_color: bool) {
+fn cmd_show(trace_id: &str, source: &Path, min_level: LogLevel, no_color: bool) {
     let entries = match read_entries(source) {
         Ok(e) => e,
         Err(e) => {
@@ -211,7 +211,7 @@ fn cmd_tail(source: &PathBuf, min_level: LogLevel, interval_secs: u64, no_color:
     }
 }
 
-fn cmd_export(trace_id: &str, source: &PathBuf, format_str: &str, output: Option<&str>) {
+fn cmd_export(trace_id: &str, source: &Path, format_str: &str, output: Option<&str>) {
     let entries = match read_entries(source) {
         Ok(e) => e,
         Err(e) => {
@@ -260,7 +260,7 @@ fn cmd_export(trace_id: &str, source: &PathBuf, format_str: &str, output: Option
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 fn read_entries(
-    source: &PathBuf,
+    source: &Path,
 ) -> Result<Vec<ai_assistant::distributed_log::DistributedLogEntry>, String> {
     if source.is_dir() {
         LogReader::read_dir(source).map_err(|e| format!("{}: {}", source.display(), e))

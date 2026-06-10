@@ -31,7 +31,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path, Query, State};
+#[cfg(feature = "distributed-network")]
+use axum::extract::Query;
+use axum::extract::{Path, State};
 use axum::http::{header, Method, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event as SseEvent, KeepAlive as SseKeepAlive, Sse};
@@ -1107,8 +1109,15 @@ async fn chat_stream_handler(
 
     tokio::task::spawn_blocking(move || {
         let mut ass = assistant.blocking_lock();
-        // Use cancellable send so client disconnect aborts the LLM call
-        let cancel_token = ass.send_message_cancellable(message, &knowledge_context);
+        // Use cancellable send so client disconnect aborts the LLM call.
+        // system_prompt rides the session_notes slot, mirroring the
+        // non-streaming handler's send_message_with_notes call.
+        let cancel_token = ass.send_message_cancellable_with_notes(
+            message,
+            &knowledge_context,
+            &system_prompt,
+            "",
+        );
         loop {
             match ass.poll_response() {
                 Some(crate::messages::AiResponse::Chunk(token)) => {
@@ -1420,9 +1429,16 @@ async fn openai_completions_handler(
                 }
             }
 
-            // Generate with streaming + cancellation support
+            // Generate with streaming + cancellation support.
+            // stream_sys_prompt rides the session_notes slot, mirroring
+            // the non-streaming branch below.
             let mut ass = assistant.blocking_lock();
-            let cancel_token = ass.send_message_cancellable(stream_user_msg, &knowledge_context);
+            let cancel_token = ass.send_message_cancellable_with_notes(
+                stream_user_msg,
+                &knowledge_context,
+                &stream_sys_prompt,
+                "",
+            );
             loop {
                 match ass.poll_response() {
                     Some(crate::messages::AiResponse::Chunk(token)) => {

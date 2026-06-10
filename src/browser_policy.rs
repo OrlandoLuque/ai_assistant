@@ -215,7 +215,6 @@ impl BrowserPolicy {
                     };
                 }
             }
-            _ => {}
         }
         JsValidation::Allowed
     }

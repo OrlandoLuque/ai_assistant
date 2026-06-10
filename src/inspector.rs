@@ -271,7 +271,7 @@ impl EgressInspector {
     }
 
     fn is_egress(&self, name: &str) -> bool {
-        self.egress_tool_names.iter().any(|n| *n == name)
+        self.egress_tool_names.contains(&name)
     }
 }
 

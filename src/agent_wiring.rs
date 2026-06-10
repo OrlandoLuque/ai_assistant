@@ -9,6 +9,9 @@
 //! - BestFit scoring for task assignment
 
 use crate::agent_definition::{AgentDefinition, AgentSpec, GuardrailSpec, WarningSeverity};
+// AutoApproveAll is deprecated for external callers; the wiring still maps
+// AutonomyLevel::Autonomous onto it deliberately (see approval_handler below).
+#[allow(deprecated)]
 use crate::agent_policy::{AgentPolicy, AgentPolicyBuilder, AutoApproveAll};
 use crate::agent_sandbox::SandboxValidator;
 use crate::agentic_loop::LoopMessage;
@@ -596,6 +599,39 @@ impl Ord for PoolTask {
     }
 }
 
+/// Heap entry pairing a task with its submission sequence number.
+/// `BinaryHeap` gives no ordering guarantee among equal keys, so without
+/// the tiebreaker two equal-priority tasks could dequeue in either order.
+/// Lower sequence (earlier submission) wins among equal priorities → FIFO.
+#[derive(Debug, Clone)]
+struct QueuedPoolTask {
+    task: PoolTask,
+    seq: u64,
+}
+
+impl PartialEq for QueuedPoolTask {
+    fn eq(&self, other: &Self) -> bool {
+        self.task.priority == other.task.priority && self.seq == other.seq
+    }
+}
+
+impl Eq for QueuedPoolTask {}
+
+impl PartialOrd for QueuedPoolTask {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for QueuedPoolTask {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.task
+            .priority
+            .cmp(&other.task.priority)
+            .then(other.seq.cmp(&self.seq))
+    }
+}
+
 // ============================================================================
 // E10: AgentPool — manages multiple agents with a priority queue
 // ============================================================================
@@ -736,7 +772,7 @@ pub struct AgentPool {
     /// Currently running agents and their status.
     active_agents: HashMap<String, PoolAgentStatus>,
     /// Task queue (priority-ordered).
-    queue: BinaryHeap<PoolTask>,
+    queue: BinaryHeap<QueuedPoolTask>,
     /// Factory to create response generators for agents.
     response_generator_factory: ResponseGeneratorFactory,
     /// Supervisor configuration.
@@ -807,9 +843,11 @@ impl AgentPool {
         self.definitions.insert(def.agent.name.clone(), def);
     }
 
-    /// Submit a task to the pool.
+    /// Submit a task to the pool. Equal-priority tasks dequeue FIFO.
     pub fn submit_task(&mut self, task: PoolTask) {
-        self.queue.push(task);
+        let seq = self.sequence_counter;
+        self.sequence_counter = self.sequence_counter.wrapping_add(1);
+        self.queue.push(QueuedPoolTask { task, seq });
     }
 
     /// Get the number of active agents.
@@ -1821,11 +1859,24 @@ mod tests {
 
         // BinaryHeap pops highest first
         let first = pool.queue.pop().unwrap();
-        assert_eq!(first.id, "high");
+        assert_eq!(first.task.id, "high");
         let second = pool.queue.pop().unwrap();
-        assert_eq!(second.id, "mid");
+        assert_eq!(second.task.id, "mid");
         let third = pool.queue.pop().unwrap();
-        assert_eq!(third.id, "low");
+        assert_eq!(third.task.id, "low");
+    }
+
+    #[test]
+    fn test_pool_equal_priority_dequeues_fifo() {
+        let mut pool = make_test_pool();
+        pool.submit_task(PoolTask::new("a", "first in").with_priority(5));
+        pool.submit_task(PoolTask::new("b", "second in").with_priority(5));
+        pool.submit_task(PoolTask::new("c", "third in").with_priority(5));
+
+        // Same priority → submission order must be preserved (FIFO).
+        assert_eq!(pool.queue.pop().unwrap().task.id, "a");
+        assert_eq!(pool.queue.pop().unwrap().task.id, "b");
+        assert_eq!(pool.queue.pop().unwrap().task.id, "c");
     }
 
     #[test]

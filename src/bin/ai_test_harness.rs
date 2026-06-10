@@ -17,44 +17,50 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
+use std::sync::OnceLock;
 use std::time::Instant;
 
 // ─── Color / Output Helpers ───────────────────────────────────────────────────
+//
+// CLI flags written once in main() before any test runs, read everywhere.
+// Atomics + OnceLock instead of `static mut` so no unsafe is needed.
 
-static mut USE_COLOR: bool = true;
-static mut JSON_MODE: bool = false;
-static mut VERBOSE: bool = false;
-static mut SUMMARY_ONLY: bool = false;
-static mut SORT_BY_DURATION: bool = false;
-static mut TIMEOUT_MS: f64 = 30_000.0;
-static mut FILTER_PATTERN: Option<String> = None;
+static USE_COLOR: AtomicBool = AtomicBool::new(true);
+static JSON_MODE: AtomicBool = AtomicBool::new(false);
+static VERBOSE: AtomicBool = AtomicBool::new(false);
+static SUMMARY_ONLY: AtomicBool = AtomicBool::new(false);
+static SORT_BY_DURATION: AtomicBool = AtomicBool::new(false);
+// f64 stored as bits; default 30_000.0 ms.
+static TIMEOUT_MS_BITS: AtomicU64 = AtomicU64::new(0x40DD4C0000000000);
+static FILTER_PATTERN: OnceLock<String> = OnceLock::new();
 
 fn color_enabled() -> bool {
-    unsafe { USE_COLOR }
+    USE_COLOR.load(AtomicOrdering::Relaxed)
 }
 
 fn json_mode() -> bool {
-    unsafe { JSON_MODE }
+    JSON_MODE.load(AtomicOrdering::Relaxed)
 }
 
 fn verbose_mode() -> bool {
-    unsafe { VERBOSE }
+    VERBOSE.load(AtomicOrdering::Relaxed)
 }
 
 fn summary_only() -> bool {
-    unsafe { SUMMARY_ONLY }
+    SUMMARY_ONLY.load(AtomicOrdering::Relaxed)
 }
 
 fn sort_by_duration() -> bool {
-    unsafe { SORT_BY_DURATION }
+    SORT_BY_DURATION.load(AtomicOrdering::Relaxed)
 }
 
 fn get_timeout_ms() -> f64 {
-    unsafe { TIMEOUT_MS }
+    f64::from_bits(TIMEOUT_MS_BITS.load(AtomicOrdering::Relaxed))
 }
 
 fn get_filter() -> Option<&'static str> {
-    unsafe { FILTER_PATTERN.as_deref() }
+    FILTER_PATTERN.get().map(|s| s.as_str())
 }
 
 fn should_run(name: &str) -> bool {
@@ -142,9 +148,6 @@ impl CategoryResult {
     }
     fn slow(&self) -> usize {
         self.results.iter().filter(|r| r.slow).count()
-    }
-    fn total(&self) -> usize {
-        self.results.len()
     }
     fn total_active(&self) -> usize {
         self.results.iter().filter(|r| !r.skipped).count()
@@ -13375,7 +13378,7 @@ fn tests_precision() -> CategoryResult {
             ];
             let mut correct = 0;
             for (user, resource, perm, expected_allowed) in &checks {
-                let result = manager.check_permission(user, resource.clone(), perm.clone(), None);
+                let result = manager.check_permission(user, *resource, *perm, None);
                 let is_allowed = matches!(result, AccessResult::Allowed);
                 if is_allowed == *expected_allowed {
                     correct += 1;
@@ -14021,7 +14024,7 @@ fn tests_precision() -> CategoryResult {
                 if let Ok(sorted) = g.topological_sort() {
                     let ids: Vec<&str> = sorted.iter().map(|n| n.id.as_str()).collect();
                     // Verify all edges go forward in the sort order
-                    let edges = vec![("a", "b"), ("a", "c"), ("b", "d"), ("c", "d"), ("c", "e")];
+                    let edges = [("a", "b"), ("a", "c"), ("b", "d"), ("c", "d"), ("c", "e")];
                     let all_forward = edges.iter().all(|(from, to)| {
                         let pf = ids.iter().position(|&x| x == *from).unwrap_or(99);
                         let pt = ids.iter().position(|&x| x == *to).unwrap_or(0);
@@ -16234,16 +16237,14 @@ fn main() {
         match args[i].as_str() {
             "--all" => run_all = true,
             "--list" => list_only = true,
-            "--no-color" => unsafe { USE_COLOR = false },
-            "--verbose" | "-v" => unsafe { VERBOSE = true },
-            "--summary-only" => unsafe { SUMMARY_ONLY = true },
-            "--sort=duration" => unsafe { SORT_BY_DURATION = true },
+            "--no-color" => USE_COLOR.store(false, AtomicOrdering::Relaxed),
+            "--verbose" | "-v" => VERBOSE.store(true, AtomicOrdering::Relaxed),
+            "--summary-only" => SUMMARY_ONLY.store(true, AtomicOrdering::Relaxed),
+            "--sort=duration" => SORT_BY_DURATION.store(true, AtomicOrdering::Relaxed),
             "--json" => {
                 json_output = true;
-                unsafe {
-                    USE_COLOR = false;
-                    JSON_MODE = true;
-                }
+                USE_COLOR.store(false, AtomicOrdering::Relaxed);
+                JSON_MODE.store(true, AtomicOrdering::Relaxed);
             }
             "--json-file" => {
                 i += 1;
@@ -16258,9 +16259,7 @@ fn main() {
                 i += 1;
                 if i < args.len() {
                     if let Ok(ms) = args[i].parse::<f64>() {
-                        unsafe {
-                            TIMEOUT_MS = ms;
-                        }
+                        TIMEOUT_MS_BITS.store(ms.to_bits(), AtomicOrdering::Relaxed);
                     } else {
                         eprintln!("--timeout requires a number (ms)");
                         std::process::exit(1);
@@ -16436,9 +16435,7 @@ fn main() {
             }
             _ if args[i].starts_with("--filter=") => {
                 let pat = args[i].trim_start_matches("--filter=").to_string();
-                unsafe {
-                    FILTER_PATTERN = Some(pat);
-                }
+                let _ = FILTER_PATTERN.set(pat);
             }
             other => {
                 eprintln!("Unknown argument: {}", other);

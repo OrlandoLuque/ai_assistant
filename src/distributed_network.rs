@@ -995,6 +995,10 @@ impl EventLoop {
             .send(NetworkEvent::PeerConnected(peer_id, addr))
             .await;
 
+        // Deliver any hinted handoffs queued for this peer while it was
+        // unreachable — without this the handoff queue only ever grows.
+        self.drain_handoffs_for_peer(&peer_id).await;
+
         Ok(peer_id)
     }
 
@@ -1091,6 +1095,10 @@ impl EventLoop {
         let _ = event_tx
             .send(NetworkEvent::PeerConnected(peer_id, addr))
             .await;
+
+        // Deliver any hinted handoffs queued for this peer while it was
+        // unreachable (mirrors connect_to_peer).
+        self.drain_handoffs_for_peer(&peer_id).await;
 
         // Emit JoinRequestReceived event
         let _ = event_tx
@@ -2147,21 +2155,6 @@ impl EventLoop {
                     .await;
             }
         }
-    }
-
-    /// Select the best peers from candidates based on reputation score.
-    ///
-    /// Returns up to `count` peers sorted by reputation descending.
-    /// Peers not found in the peer table are excluded.
-    fn select_best_peers(&self, candidates: &[NodeId], count: usize) -> Vec<NodeId> {
-        let peers = self.peers.read().unwrap_or_else(|e| e.into_inner());
-        let mut scored: Vec<(NodeId, f32)> = candidates
-            .iter()
-            .filter(|id| **id != self.node_id)
-            .filter_map(|id| peers.get(id).map(|p| (*id, p.reputation)))
-            .collect();
-        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        scored.into_iter().take(count).map(|(id, _)| id).collect()
     }
 
     /// Drain hinted handoffs for a reconnected peer.

@@ -949,6 +949,9 @@ pub use distributed_agents::{
     TaskDistributionStatus,
 };
 
+// AutoApproveAll stays re-exported (deprecated) so downstream test code keeps
+// compiling; the deprecation note steers production callers away.
+#[allow(deprecated)]
 #[cfg(feature = "autonomous")]
 pub use agent_policy::{
     ActionDescriptor, ActionType, AgentPolicy, AgentPolicyBuilder, ApprovalHandler, AutoApproveAll,

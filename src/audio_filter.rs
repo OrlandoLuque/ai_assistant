@@ -9,7 +9,7 @@
 //! - `audio-separation` — ONNX-based source separation (Demucs/SepFormer)
 
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 // ============================================================================
@@ -524,16 +524,17 @@ impl SpeakerDiarizer {
 
 /// MFCC-based speaker verification (pure Rust, no external deps).
 /// Less accurate than neural models (~85%) but zero dependencies.
+///
+/// The simplified pipeline derives coefficients from per-frame log
+/// energies — no mel filterbank stage, so no band count to configure.
 pub struct MfccSpeakerVerifier {
     num_coefficients: usize,
-    num_mel_bands: usize,
 }
 
 impl MfccSpeakerVerifier {
     pub fn new() -> Self {
         Self {
             num_coefficients: 13,
-            num_mel_bands: 26,
         }
     }
 
@@ -546,7 +547,7 @@ impl MfccSpeakerVerifier {
         let frame_size = (sample_rate as usize * 25) / 1000; // 25ms frames
         let hop_size = (sample_rate as usize * 10) / 1000; // 10ms hop
 
-        let mut all_coeffs = vec![vec![0.0f32; self.num_coefficients]; 0];
+        let mut all_coeffs: Vec<Vec<f32>> = Vec::new();
 
         let mut pos = 0;
         while pos + frame_size <= audio.len() {
@@ -1815,9 +1816,9 @@ pub struct VoiceAnonymizer {
     jitter_range: f32,
     /// How much spectral noise to inject (0.0 = none, 1.0 = heavy).
     noise_amount: f32,
-    // Internal state
+    // Internal state. The per-frame resampler restarts its read position
+    // at 0 each frame, so no cross-frame position needs to be tracked.
     buffer: Vec<f32>,
-    read_pos: f64,
     frame_counter: u64,
     /// Smoothed current shift for this frame (avoids clicks).
     current_shift: f32,
@@ -1831,7 +1832,6 @@ impl VoiceAnonymizer {
             jitter_range: jitter_range.abs(),
             noise_amount: noise_amount.clamp(0.0, 1.0),
             buffer: Vec::new(),
-            read_pos: 0.0,
             frame_counter: 0,
             current_shift: base_shift,
         }

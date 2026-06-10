@@ -45,7 +45,6 @@ impl std::fmt::Display for EmotionCategory {
             Self::Confused => write!(f, "confused"),
             Self::Calm => write!(f, "calm"),
             Self::Bored => write!(f, "bored"),
-            _ => write!(f, "unknown"),
         }
     }
 }
@@ -494,7 +493,6 @@ impl std::fmt::Display for AudioEvent {
             Self::Music => write!(f, "music"),
             Self::Silence => write!(f, "silence"),
             Self::Noise => write!(f, "noise"),
-            _ => write!(f, "unknown"),
         }
     }
 }

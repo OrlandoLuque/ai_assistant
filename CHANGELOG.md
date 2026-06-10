@@ -5,6 +5,69 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v115 (2026-06-11) — V151: zero-warnings sweep + 3 wiring bugs found by the warnings (0.2.102)
+
+A full `cargo clippy` sweep over the CI feature matrix (36 warnings →
+0). Most fixes are mechanical, but three warnings turned out to be
+**real bugs** — the lint was pointing at half-wired features:
+
+### Fixed (bugs surfaced by warnings)
+- **`server_axum.rs` streaming endpoints dropped the client's
+  `system_prompt`**: both SSE streaming paths (native `/chat/stream`
+  and the OpenAI-compat stream branch) called
+  `send_message_cancellable(message, knowledge)` which has no
+  system-prompt slot, silently ignoring the field the non-streaming
+  paths honor. Now they call `send_message_cancellable_with_notes`
+  mirroring the non-streaming handlers. (Found via two
+  `unused_variable` warnings.)
+- **`distributed_network.rs` hinted handoffs were never delivered**:
+  the replication pass enqueues `HintedHandoff`s for unreachable
+  peers, but `drain_handoffs_for_peer` had no caller — the queue
+  could only grow. Now wired at both `PeerConnected` sites
+  (outbound connect + inbound accept). (Found via a `dead_code`
+  warning.)
+- **`agent_wiring.rs` FIFO tiebreaker existed but wasn't wired**:
+  `AgentPool.sequence_counter` was documented as the FIFO tiebreaker
+  for the priority queue, but `PoolTask`'s `Ord` only compared
+  priority — equal-priority tasks dequeued in arbitrary order. New
+  private `QueuedPoolTask { task, seq }` heap entry orders by
+  `(priority desc, seq asc)`; new regression test
+  `test_pool_equal_priority_dequeues_fifo`.
+
+### Changed (mechanical cleanup, no behavior change)
+- `ai_test_harness`: all 7 `static mut` CLI flags migrated to
+  `AtomicBool`/`AtomicU64`/`OnceLock` — no `unsafe` left in the flag
+  plumbing.
+- `ai_proxy`: `#[allow(clippy::result_large_err)]` with justification
+  on the three `Result<_, Response>` helpers (boxing would cascade
+  through the forwarding hot path for a cold error branch);
+  `unwrap`-after-`is_some` → `if let`.
+- Deprecated `AutoApproveAll`: scoped `#[allow(deprecated)]` on its
+  own trait impl, the lib re-export, and the wiring import (the
+  deprecation is for external callers; in-crate plumbing is
+  deliberate).
+- Dead code removed: `MfccSpeakerVerifier.num_mel_bands`,
+  `VoiceAnonymizer.read_pos`, `autonomous_loop.planning_hint_idx`
+  (never-implemented cleanup feature), `CategoryResult::total`,
+  `distributed_network::select_best_peers` (reputation-based peer
+  pick with no consumer; git history preserves it).
+- `group_queue_host`: client eviction log now includes the reported
+  name and remote addr (the fields existed but were never read).
+- `emotion_detection`/`browser_policy`: unreachable `_` arms removed
+  from in-crate matches over `#[non_exhaustive]` enums.
+- Win32 `BOOL`/`DWORD` FFI aliases: scoped
+  `#[allow(clippy::upper_case_acronyms)]`.
+- Assorted `clippy --fix` output: `&PathBuf` → `&Path` params,
+  `contains()` over `iter().any()`, `io::Error::other`, redundant
+  clones/refs, `Vec::new` over zero-sized `vec![]`.
+
+### Notes
+- `server_axum` distributed-log `Query` import now gated on
+  `distributed-network` (was unconditionally imported but only used
+  behind the gate).
+- 8,445 lib tests + 107 ai_proxy tests pass; clippy reports 0
+  warnings across the full CI feature matrix.
+
 ## [Unreleased] - v114 (2026-06-09) — V150: SSE streaming passthrough + per-chunk timeout (0.2.101)
 
 V78 buffered every upstream response with `resp.bytes().await` before

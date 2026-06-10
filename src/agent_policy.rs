@@ -115,6 +115,9 @@ pub trait ApprovalHandler: Send + Sync {
 )]
 pub struct AutoApproveAll;
 
+// The deprecated type still needs its trait impl; the allow silences the
+// self-referential deprecation warning without un-deprecating the type.
+#[allow(deprecated)]
 impl ApprovalHandler for AutoApproveAll {
     fn request_approval(&self, action: &str, risk: RiskLevel) -> bool {
         if risk >= RiskLevel::High {

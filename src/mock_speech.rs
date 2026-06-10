@@ -95,7 +95,7 @@ impl SpeechProvider for MockSpeechProvider {
 
     fn synthesize(
         &self,
-        text: &str,
+        _text: &str,
         _options: &SynthesisOptions,
     ) -> anyhow::Result<SynthesisResult> {
         // Generate a valid sine wave (440Hz = A4 note)

@@ -544,7 +544,7 @@ impl SpeechProvider for GoogleSpeechProvider {
 
         let response = ureq::post(url)
             .set("Content-Type", "application/json")
-            .set("x-goog-api-key", &api_key)
+            .set("x-goog-api-key", api_key)
             .timeout(self.config.timeout)
             .send_json(body)
             .context("Google STT request failed")?;
@@ -639,7 +639,7 @@ impl SpeechProvider for GoogleSpeechProvider {
 
         let response = ureq::post(url)
             .set("Content-Type", "application/json")
-            .set("x-goog-api-key", &api_key)
+            .set("x-goog-api-key", api_key)
             .timeout(self.config.timeout)
             .send_json(body)
             .context("Google TTS request failed")?;

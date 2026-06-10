@@ -262,8 +262,6 @@ pub struct AutonomousAgent {
     cancellation_token: Option<Arc<AtomicBool>>,
     /// Mailbox for receiving inter-agent messages (checked between iterations).
     mailbox: Option<std::sync::mpsc::Receiver<InterAgentMessage>>,
-    /// Index of the planning hint message in conversation (for cleanup).
-    planning_hint_idx: Option<usize>,
     /// Optional knowledge provider for context enrichment (RAG, KG, Memory, etc.).
     knowledge_provider: Option<Arc<dyn KnowledgeProvider>>,
     /// Agent methodology — controls workflow phases, reasoning, review triggers, etc.
@@ -1355,7 +1353,6 @@ impl AutonomousAgentBuilder {
             tools_called_log: Vec::new(),
             cancellation_token: self.cancellation_token,
             mailbox: self.mailbox,
-            planning_hint_idx: None,
             knowledge_provider: self.knowledge_provider,
             methodology: self.methodology,
             #[cfg(feature = "self-correction")]

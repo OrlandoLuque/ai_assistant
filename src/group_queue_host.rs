@@ -147,14 +147,13 @@ impl Default for HostConfig {
 }
 
 struct ConnectedClient {
-    /// Slot assigned to this client (one per connection).
-    slot: SlotId,
-    /// Name the client reported.
+    /// Name the client reported (for diagnostics). The slot is the map key.
     name: String,
     /// Last heartbeat time.
     last_seen: Instant,
     /// Writer half for pushing updates.
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    /// Remote address (for diagnostics).
     addr: SocketAddr,
 }
 
@@ -242,11 +241,11 @@ impl GroupQueueHost {
         timeout: Duration,
     ) {
         let now = Instant::now();
-        let dropped: Vec<SlotId> = {
+        let dropped: Vec<(SlotId, String, SocketAddr)> = {
             let cl = clients.lock().unwrap_or_else(|e| e.into_inner());
             cl.iter()
                 .filter(|(_, c)| now.duration_since(c.last_seen) > timeout)
-                .map(|(k, _)| *k)
+                .map(|(k, c)| (*k, c.name.clone(), c.addr))
                 .collect()
         };
         if dropped.is_empty() {
@@ -254,8 +253,13 @@ impl GroupQueueHost {
         }
         let mut cl = clients.lock().unwrap_or_else(|e| e.into_inner());
         let mut t = table.lock().unwrap_or_else(|e| e.into_inner());
-        for slot in &dropped {
-            eprintln!("[host] dropping slot {} (heartbeat timeout)", slot.as_u8());
+        for (slot, name, addr) in &dropped {
+            eprintln!(
+                "[host] dropping slot {} — {} ({}) heartbeat timeout",
+                slot.as_u8(),
+                name,
+                addr
+            );
             cl.remove(slot);
             if let Some(a) = t.get(*slot) {
                 let mut updated = a.clone();
@@ -378,7 +382,6 @@ impl GroupQueueHost {
                         cl.insert(
                             slot,
                             ConnectedClient {
-                                slot,
                                 name: name.clone(),
                                 last_seen: Instant::now(),
                                 writer: writer.clone(),

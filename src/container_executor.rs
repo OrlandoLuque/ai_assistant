@@ -552,7 +552,7 @@ impl ContainerExecutor {
         for (host_path, _) in &opts.bind_mounts {
             let normalized = host_path.replace('\\', "/");
             let trimmed = normalized.trim_end_matches('/');
-            if DANGEROUS_MOUNTS.iter().any(|d| trimmed == *d) {
+            if DANGEROUS_MOUNTS.contains(&trimmed) {
                 return Err(ContainerError::PolicyViolation(format!(
                     "Bind mount to dangerous host path '{}' is not allowed",
                     host_path

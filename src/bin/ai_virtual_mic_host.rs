@@ -128,7 +128,10 @@ fn ctrlc_handler<F: Fn() + Send + 'static>(f: F) {
             FIRED.store(true, Ordering::Relaxed);
             1 // TRUE — handled
         }
+        // Win32 API type names kept verbatim for FFI readability.
+        #[allow(clippy::upper_case_acronyms)]
         type BOOL = i32;
+        #[allow(clippy::upper_case_acronyms)]
         type DWORD = u32;
         extern "system" {
             fn SetConsoleCtrlHandler(
