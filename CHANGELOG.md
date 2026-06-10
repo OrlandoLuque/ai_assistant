@@ -5,6 +5,79 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v116 (2026-06-11) — V152: full test-battery findings — 7 real bugs (0.2.103)
+
+Ran the project's own 585-test harness (`ai_test_harness --all`, 131
+categories) end-to-end as a full functional battery. 9 failures; all
+triaged and fixed. The two most serious were silent feature-graph
+breaks that CI never saw because the affected cfg-gates were never
+enabled by any CI feature combination:
+
+### Fixed — critical (silent feature-graph breaks)
+- **AES-256-GCM content encryption was broken under `full`/`rag`
+  builds**: `rag = ["rusqlite", "dep:aes-gcm"]` enabled the optional
+  *dependency* but not the like-named *feature*, so every
+  `cfg(feature = "aes-gcm")` gate in `content_encryption.rs` stayed
+  off — AES/ChaCha requests returned `EncryptionFailed` (fail-loud by
+  design, but still broken). The lib's own AES tests are behind the
+  same cfg, so they never compiled in CI either. Fix:
+  `rag = ["rusqlite", "aes-gcm"]` (reference the feature). The gated
+  tests now run under `full`.
+- **PDF parsing was broken under `documents` builds** — same pattern:
+  `documents = ["dep:zip", "dep:pdf-extract"]` never lit
+  `cfg(feature = "pdf-extract")` in `document_parsing/parser.rs`.
+  Fix: reference the `pdf-extract` feature.
+
+### Fixed — panics
+- **`PiiDetector::detect` panicked on overlapping matches** (e.g. the
+  phone pattern matching digits inside a credit-card number): the
+  redaction loop applied `replace_range` with original-string indexes
+  on an already-mutated string → out-of-bounds; overlaps could also
+  leave partial PII unredacted. Now overlaps are resolved before
+  redaction (higher confidence, then longer span, then earlier start).
+
+### Fixed — quality (heuristics under test thresholds)
+- **Content moderation missed harmful-instruction prompts** (recall
+  0.125): patterns only covered direct violence/hate/self-harm
+  phrasing. Added a harmful-instruction layer (weapon construction,
+  drug synthesis, forgery, unauthorized access, malware, burglary,
+  poisoning, stalking) and a new `ModerationCategory::Illicit`;
+  Weapons/Drugs/Fraud/Illicit added to the default category set.
+  Recall on the harness battery: 0.125 → 1.0.
+- **Intent classification accuracy 0.55 → ≥0.9**: scoring normalized
+  by pattern-set size, penalizing intents for having more registered
+  synonyms; "please" as a Request pattern outvoted action verbs; "Hi!"
+  missed because only "hi " (trailing space) was registered; common
+  command verbs (set/summarize/translate/calculate/tell me/remind)
+  missing. New scoring: raw evidence count + 0.5 start-of-message
+  bonus, confidence = relative share.
+- **`estimate_tokens` recalibrated**: pure bytes/3.5 overestimated
+  English prose (~30%). ASCII text now uses word + punctuation
+  evidence floored by chars/4.5; non-ASCII keeps bytes/3.5 (UTF-8
+  byte inflation ≈ token density). Code estimates improve via the
+  punctuation term. 3 lib tests updated to the new (closer-to-BPE)
+  expectations.
+
+### Fixed — consistency
+- **Sentence/paragraph chunking packed to `max_tokens` instead of
+  `target_tokens`**, producing chunks ~2.5× larger than requested and
+  inconsistent with `chunk_fixed_size` (which honors target). Both
+  strategies now pack toward `target_tokens`; `max_tokens` remains the
+  oversized-single-unit trigger.
+
+### Fixed — stale tests (code was right)
+- Harness expected the OLD fail-open guardrail behavior; the pipeline
+  deliberately fails closed when a guard panics (a panicking guard
+  must not become a bypass vector). Test now asserts fail-closed.
+- Harness expected 7 `EntityType` variants; 9 exist since V81-V88
+  added Paper + Author for the research module.
+
+### Verification
+- `ai_test_harness --all`: **585/585 pass** (was 576/585).
+- `cargo test --lib` (CI feature set): **8,448 pass** (3 more than
+  before — the AES tests now compile in).
+- clippy: 0 warnings. ai_proxy: 107/107.
+
 ## [Unreleased] - v115 (2026-06-11) — V151: zero-warnings sweep + 3 wiring bugs found by the warnings (0.2.102)
 
 A full `cargo clippy` sweep over the CI feature matrix (36 warnings →

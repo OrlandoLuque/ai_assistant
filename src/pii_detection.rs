@@ -342,6 +342,27 @@ impl PiiDetector {
             }
         }
 
+        // Resolve overlapping matches before redacting. Two patterns can
+        // claim overlapping spans (e.g. the phone pattern matching digits
+        // inside a credit-card number). Applying both replace_range calls
+        // would reuse original-string indexes on an already-mutated string —
+        // out-of-bounds panic — and could leave partial PII unredacted.
+        // Preference: higher confidence, then longer span, then earlier start.
+        all_detections.sort_by(|a, b| {
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then((b.end - b.start).cmp(&(a.end - a.start)))
+                .then(a.start.cmp(&b.start))
+        });
+        let mut chosen: Vec<DetectedPii> = Vec::new();
+        for d in all_detections {
+            if chosen.iter().all(|c| d.end <= c.start || d.start >= c.end) {
+                chosen.push(d);
+            }
+        }
+        let mut all_detections = chosen;
+
         // Sort by start position descending for proper replacement
         all_detections.sort_by(|a, b| b.start.cmp(&a.start));
 

@@ -7228,7 +7228,8 @@ fn tests_knowledge_graph() -> CategoryResult {
     // Test EntityType::all()
     results.push(run_test("EntityType::all returns all types", || {
         let all_types = KGEntityType::all();
-        assert_eq_test!(all_types.len(), 7);
+        // 9 since V81-V88 added Paper + Author for the research module.
+        assert_eq_test!(all_types.len(), 9);
         assert_test!(
             all_types.contains(&KGEntityType::Organization),
             "should contain Organization"
@@ -9465,11 +9466,17 @@ fn tests_fallback_resilience() -> CategoryResult {
             pipeline.add_guard(Box::new(PanickingGuard));
             pipeline.add_guard(Box::new(SafeGuard));
 
-            // Should NOT crash — panicking guard should be skipped
+            // Should NOT crash — and the pipeline FAILS CLOSED: a panicking
+            // guard blocks the message instead of being skipped. A guard that
+            // panics on crafted input must not become a bypass vector.
             let result = pipeline.check_input("test message");
             assert_test!(
-                result.passed,
-                "pipeline should pass after skipping panicking guard"
+                !result.passed,
+                "pipeline must fail closed when a guard panics"
+            );
+            assert_test!(
+                result.blocked_by.as_deref() == Some("panicker"),
+                "blocked_by must identify the panicking guard"
             );
             Ok(())
         },

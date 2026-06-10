@@ -754,12 +754,12 @@ mod tests {
             ..Default::default()
         };
         let stream = ResumableStream::new(config);
-        // 100 chars ≈ 29 tokens (ceil(100/3.5))
+        // 100-char single word ≈ 23 tokens (chars/4.5 floor dominates).
         let text = "a".repeat(100);
         stream.push(&text);
 
         let cp = stream.latest_checkpoint().unwrap();
-        assert_eq!(cp.token_count, 29);
+        assert_eq!(cp.token_count, 23);
     }
 
     // ---- ResilientSseStream tests ----

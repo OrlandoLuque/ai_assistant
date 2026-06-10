@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.102"
+version = "0.2.103"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -87,7 +87,10 @@ adapters = []
 tools = []
 
 # Document parsing: EPUB, DOCX, HTML, PDF, feeds, tables
-documents = ["dep:zip", "dep:pdf-extract"]
+# NOTE: references the `pdf-extract` FEATURE (not `dep:pdf-extract`) so the
+# cfg(feature = "pdf-extract") gates in document_parsing/parser.rs light up.
+# With `dep:` only, the crate compiled but PDF parsing returned an error.
+documents = ["dep:zip", "pdf-extract"]
 
 # Evaluation and benchmarking: fine-tuning, metrics, A/B testing
 eval = []
@@ -113,7 +116,10 @@ gpu-sharing = ["distributed-network"]
 server-tls = ["dep:rustls", "dep:rustls-pemfile"]
 
 # RAG with SQLite FTS5 and encrypted knowledge packages
-rag = ["rusqlite", "dep:aes-gcm"]
+# NOTE: references the `aes-gcm` FEATURE (not `dep:aes-gcm`) so that the
+# cfg(feature = "aes-gcm") gates in content_encryption.rs light up. With
+# `dep:` only, the crate compiled but AES-256-GCM returned EncryptionFailed.
+rag = ["rusqlite", "aes-gcm"]
 
 # Research: academic search APIs (arXiv, Semantic Scholar, PubMed), BibTeX, literature review
 research = []

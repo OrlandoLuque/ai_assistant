@@ -226,7 +226,11 @@ impl SmartChunker {
             let trimmed = sentence.trim();
             let sentence_tokens = Self::estimate_tokens(trimmed);
 
-            if Self::estimate_tokens(&current) + sentence_tokens > self.config.max_tokens
+            // Pack toward target_tokens (the desired chunk size), mirroring
+            // chunk_fixed_size. max_tokens is the hard cap for single units
+            // that cannot be subdivided, not the packing bound — packing to
+            // max produced chunks ~2.5x larger than the caller asked for.
+            if Self::estimate_tokens(&current) + sentence_tokens > self.config.target_tokens
                 && !current.is_empty()
             {
                 // Save current chunk
@@ -317,7 +321,8 @@ impl SmartChunker {
                 continue;
             }
 
-            if Self::estimate_tokens(&current) + para_tokens > self.config.max_tokens
+            // Pack toward target_tokens (see chunk_by_sentences).
+            if Self::estimate_tokens(&current) + para_tokens > self.config.target_tokens
                 && !current.is_empty()
             {
                 let content = current.trim().to_string();

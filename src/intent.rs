@@ -137,6 +137,16 @@ impl IntentClassifier {
                 "stop ",
                 "delete ",
                 "remove ",
+                "set ",
+                "summarize ",
+                "translate ",
+                "calculate ",
+                "compute ",
+                "tell me",
+                "remind ",
+                "open ",
+                "play ",
+                "send ",
                 // Spanish
                 "haz ",
                 "crea ",
@@ -145,6 +155,11 @@ impl IntentClassifier {
                 "ejecuta ",
                 "borra ",
                 "elimina ",
+                "resume ",
+                "traduce ",
+                "calcula ",
+                "dime ",
+                "recu\u{00e9}rdame ", // recuérdame
             ],
         );
 
@@ -153,12 +168,17 @@ impl IntentClassifier {
             vec![
                 "hello",
                 "hi ",
+                "hi!",
+                "hi,",
                 "hey ",
+                "hey!",
+                "hey there",
                 "good morning",
                 "good afternoon",
                 "good evening",
                 "greetings",
                 "howdy",
+                "how are you", // greeting formula, not an information question
                 // Spanish
                 "hola",
                 "buenos d\u{00ed}as", // buenos días
@@ -223,10 +243,13 @@ impl IntentClassifier {
             ],
         );
 
+        // NOTE: deliberately no bare politeness markers ("please",
+        // "por favor") — they decorate commands/questions without being
+        // requests themselves, and as patterns they outvoted the verb
+        // ("Please translate X" must classify as Command, not Request).
         patterns.insert(
             Intent::Request,
             vec![
-                "please",
                 "could you",
                 "would you",
                 "can you",
@@ -235,7 +258,6 @@ impl IntentClassifier {
                 "i'd like",
                 "help me",
                 // Spanish
-                "por favor",
                 "necesito",
                 "quiero",
                 "podr\u{00ed}as",     // podrías
@@ -404,20 +426,32 @@ impl IntentClassifier {
         let lower = message.to_lowercase();
         let mut scores: HashMap<Intent, f64> = HashMap::new();
 
+        // Raw evidence count per intent, with a small bonus for a pattern
+        // anchored at the start of the message (greetings and imperatives
+        // lead). Scores are NOT divided by the pattern-set size: that
+        // penalized intents for having many registered synonyms, so adding
+        // coverage made an intent *less* likely to win.
         for (intent, patterns) in &self.patterns {
             let mut score = 0.0;
             for pattern in patterns {
-                if lower.contains(pattern) {
+                if let Some(pos) = lower.find(pattern) {
                     score += 1.0;
+                    if pos == 0 {
+                        score += 0.5;
+                    }
                 }
             }
             if score > 0.0 {
-                scores.insert(*intent, score / patterns.len() as f64);
+                scores.insert(*intent, score);
             }
         }
 
-        // Get all intents sorted by score
-        let mut all_intents: Vec<_> = scores.into_iter().collect();
+        // Confidence = relative share of total evidence, bounded (0, 1].
+        let total: f64 = scores.values().sum();
+        let mut all_intents: Vec<_> = scores
+            .into_iter()
+            .map(|(i, s)| (i, if total > 0.0 { s / total } else { 0.0 }))
+            .collect();
         all_intents.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         let (primary, confidence) = all_intents

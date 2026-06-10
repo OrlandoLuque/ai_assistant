@@ -69,11 +69,31 @@ impl ContextUsage {
 
 /// Estimate token count from text
 ///
-/// Uses an approximation of ~3.5 characters per token, which works well
-/// for mixed content (English ~4 chars/token, Spanish ~3 chars/token,
-/// code ~2.5 chars/token).
+/// ASCII text uses word + punctuation evidence (BPE splits on words and
+/// emits punctuation as separate tokens), floored by a chars/4.5 bound so
+/// long single words ("internationalization") aren't undercounted. Code
+/// lands close to real tokenizers via the punctuation term. Non-ASCII
+/// text falls back to bytes/3.5 — UTF-8 byte inflation approximates the
+/// higher token density of accented text and CJK.
 pub fn estimate_tokens(text: &str) -> usize {
-    (text.len() as f64 / 3.5).ceil() as usize
+    if text.is_empty() {
+        return 0;
+    }
+    if !text.is_ascii() {
+        return (text.len() as f64 / 3.5).ceil() as usize;
+    }
+    // Words containing alphanumerics carry ~1.3 tokens each; punctuation
+    // chars add ~0.5 each (BPE usually merges adjacent punctuation).
+    // Pure-punctuation "words" are excluded from the word count so a lone
+    // "." isn't billed as both a word and a punctuation token.
+    let words = text
+        .split_whitespace()
+        .filter(|w| w.chars().any(|c| c.is_ascii_alphanumeric()))
+        .count();
+    let punct = text.chars().filter(|c| c.is_ascii_punctuation()).count();
+    let by_words = (words as f64 * 1.3 + punct as f64 * 0.5).round() as usize;
+    let by_chars = (text.len() as f64 / 4.5).ceil() as usize;
+    by_words.max(by_chars)
 }
 
 /// Estimate tokens using the best available method for the given model.

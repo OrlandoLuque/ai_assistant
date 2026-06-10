@@ -1726,8 +1726,9 @@ mod tests {
 
     #[test]
     fn test_estimate_tokens_longer() {
+        // One 100-char "word": the chars/4.5 floor dominates (= 23).
         let text = "a".repeat(100);
-        assert_eq!(estimate_tokens(&text), (100_f64 / 3.5).ceil() as usize); // 29
+        assert_eq!(estimate_tokens(&text), (100_f64 / 4.5).ceil() as usize); // 23
     }
 
     // -- BudgetAllocation surplus ------------------------------------------

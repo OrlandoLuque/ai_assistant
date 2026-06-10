@@ -40,6 +40,10 @@ impl Default for ModerationConfig {
                 ModerationCategory::SelfHarm,
                 ModerationCategory::Sexual,
                 ModerationCategory::Harassment,
+                ModerationCategory::Weapons,
+                ModerationCategory::Drugs,
+                ModerationCategory::Fraud,
+                ModerationCategory::Illicit,
             ],
             action: ModerationAction::Flag,
             threshold: 0.7,
@@ -78,6 +82,10 @@ pub enum ModerationCategory {
     Weapons,
     /// Financial fraud
     Fraud,
+    /// Instructions for illegal activity (hacking, forgery, burglary,
+    /// malware, evading detection). Distinct from Violence/Weapons: the
+    /// harm is the *how-to seeking*, not the act described.
+    Illicit,
     /// Custom category
     Custom,
 }
@@ -98,6 +106,7 @@ impl ModerationCategory {
             ModerationCategory::Drugs => "Drug Content",
             ModerationCategory::Weapons => "Weapons",
             ModerationCategory::Fraud => "Fraud",
+            ModerationCategory::Illicit => "Illegal Activity",
             ModerationCategory::Custom => "Custom",
         }
     }
@@ -261,6 +270,91 @@ impl ContentModerator {
             r"\b(?:damn|hell|crap)\b",
             0.3,
             "Mild profanity",
+        );
+
+        // Harmful-instruction seeking. The patterns key on the *how-to
+        // framing* combined with a harm noun — "how to make a bomb",
+        // "ways to poison someone" — not on the nouns alone, so neutral
+        // mentions ("the bomb squad arrived") stay clean.
+        let howto = r"(?:how\s+to|ways?\s+to|methods?\s+(?:for|of)|guide\s+to|instructions?\s+for|techniques?\s+for|tips\s+for|detailed\s+guide\s+to)";
+
+        // Weapons construction
+        self.add_pattern(
+            ModerationCategory::Weapons,
+            &format!(
+                r"{howto}\s+(?:\w+\s+){{0,3}}?(?:make|making|build|building|create|creating)?\s*(?:a\s+|an\s+)?(?:bomb|explosive|weapon|gun|silencer|firearm)"
+            ),
+            0.85,
+            "Weapon construction instructions",
+        );
+        self.add_pattern(
+            ModerationCategory::Weapons,
+            r"\b(?:make|build|construct|assemble)\s+(?:a\s+|an\s+)?(?:bomb|explosive|pipe\s+bomb|silencer)\b",
+            0.85,
+            "Weapon construction phrasing",
+        );
+
+        // Drug synthesis / manufacture
+        self.add_pattern(
+            ModerationCategory::Drugs,
+            r"\b(?:synthesiz(?:e|ing)|cook(?:ing)?|manufactur(?:e|ing)|produc(?:e|ing))\s+(?:\w+\s+){0,2}?(?:illegal\s+)?(?:drugs?|meth(?:amphetamine)?|narcotics|fentanyl)\b",
+            0.85,
+            "Drug synthesis instructions",
+        );
+
+        // Fraud / forgery / unauthorized access
+        self.add_pattern(
+            ModerationCategory::Fraud,
+            r"\b(?:forg(?:e|ing)|counterfeit(?:ing)?|fak(?:e|ing))\s+(?:\w+\s+){0,2}?(?:documents?|id|identity|passports?|currency|money|signatures?)\b",
+            0.8,
+            "Forgery instructions",
+        );
+        self.add_pattern(
+            ModerationCategory::Fraud,
+            r"\bhack(?:ing)?\s+(?:into\s+)?(?:\w+(?:'s)?\s+){0,3}?(?:account|email|phone|computer|network|password|system)\b",
+            0.8,
+            "Unauthorized access instructions",
+        );
+        self.add_pattern(
+            ModerationCategory::Fraud,
+            r"\bidentity\s+theft\b",
+            0.75,
+            "Identity theft reference",
+        );
+
+        // Other illegal-activity instruction seeking
+        self.add_pattern(
+            ModerationCategory::Illicit,
+            r"\b(?:create|creating|make|making|write|writing)\s+(?:a\s+)?(?:computer\s+)?(?:virus|malware|ransomware|worm|trojan)\b",
+            0.85,
+            "Malware creation instructions",
+        );
+        self.add_pattern(
+            ModerationCategory::Illicit,
+            r"\bbreak(?:ing)?\s+into\s+(?:a\s+|an\s+)?(?:house|home|building|car|apartment)\b",
+            0.8,
+            "Burglary instructions",
+        );
+        self.add_pattern(
+            ModerationCategory::Illicit,
+            r"\b(?:poison(?:ing)?|drug(?:ging)?)\s+(?:someone|somebody|a\s+person|people)\b",
+            0.85,
+            "Poisoning reference",
+        );
+        self.add_pattern(
+            ModerationCategory::Illicit,
+            r"\b(?:stalk(?:ing)?|track(?:ing)?)\s+(?:someone|somebody|a\s+person)\b",
+            0.75,
+            "Stalking reference",
+        );
+        // Deliberately below the default 0.7 threshold: detection-evasion
+        // framing appears in legitimate text ("merged without being
+        // noticed"), so alone it contributes to risk_score but never flags.
+        self.add_pattern(
+            ModerationCategory::Illicit,
+            r"\bwithout\s+(?:being\s+)?(?:detect(?:ed|ion)|caught|noticed|a\s+trace)\b",
+            0.65,
+            "Detection-evasion framing",
         );
     }
 
