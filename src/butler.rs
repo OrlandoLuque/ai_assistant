@@ -4500,8 +4500,15 @@ mod tests {
         }
     }
 
+    /// Env vars are process-global; tests mutating the same var race when
+    /// the harness runs them on parallel threads (one test's remove_var can
+    /// land between a sibling's set_var and its assert — seen in CI
+    /// Coverage). Every test touching VLLM_BASE_URL must hold this lock.
+    static VLLM_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn vllm_detector_name_and_default_url() {
+        let _guard = VLLM_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // Detector should have deterministic name + URL when no env vars.
         std::env::remove_var("VLLM_BASE_URL");
         let detector = VLlmDetector::new();
@@ -4511,10 +4518,12 @@ mod tests {
 
     #[test]
     fn vllm_detector_honors_env_var() {
+        let _guard = VLLM_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("VLLM_BASE_URL", "http://my-gpu-host:8000");
         let detector = VLlmDetector::new();
-        assert_eq!(detector.base_url, "http://my-gpu-host:8000");
+        let url = detector.base_url.clone();
         std::env::remove_var("VLLM_BASE_URL");
+        assert_eq!(url, "http://my-gpu-host:8000");
     }
 
     #[test]
