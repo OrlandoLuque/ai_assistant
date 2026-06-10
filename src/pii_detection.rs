@@ -552,20 +552,23 @@ impl PiiDetector {
         }
     }
 
-    /// Mask a value with asterisks
+    /// Mask a value with asterisks, keeping the first/last `show` chars.
+    ///
+    /// Operates on `char`s, not bytes: byte-slicing a value containing
+    /// multi-byte UTF-8 (accented names, emoji) at a non-char-boundary
+    /// panics. PII values routinely contain such characters, so the
+    /// char-based path is required for correctness, not just politeness.
     fn mask_value(&self, value: &str) -> String {
-        let len = value.len();
-        if len <= 4 {
-            "*".repeat(len)
-        } else {
-            let show = (len / 4).max(1);
-            format!(
-                "{}{}{}",
-                &value[..show],
-                "*".repeat(len - show * 2),
-                &value[len - show..]
-            )
+        let chars: Vec<char> = value.chars().collect();
+        let n = chars.len();
+        if n <= 4 {
+            return "*".repeat(n);
         }
+        let show = (n / 4).max(1);
+        let head: String = chars[..show].iter().collect();
+        let tail: String = chars[n - show..].iter().collect();
+        let masked = n - show * 2;
+        format!("{}{}{}", head, "*".repeat(masked), tail)
     }
 
     /// Hash a value
@@ -720,6 +723,32 @@ mod tests {
         let result = detector.detect("Email: test@example.com");
 
         assert!(result.redacted.contains("*"));
+    }
+
+    #[test]
+    fn test_mask_value_multibyte_no_panic() {
+        // mask_value previously byte-sliced; multi-byte UTF-8 (accents,
+        // emoji) at a non-char-boundary panicked. Detect uses Custom
+        // patterns so we can drive masking over arbitrary matched text.
+        let config = PiiConfig {
+            redaction: RedactionStrategy::Mask,
+            detect_types: vec![PiiType::Custom],
+            custom_patterns: vec![CustomPiiPattern {
+                name: "token".to_string(),
+                pattern: r"tok-\S+".to_string(),
+                replacement: "[TOKEN]".to_string(),
+            }],
+            ..Default::default()
+        };
+        let detector = PiiDetector::new(config);
+        // Mask is applied via mask_value; exercise it directly too.
+        for s in ["tök-Zürich🏔️café", "tok-日本語テスト", "tök-é"] {
+            let masked = detector.mask_value(s);
+            // Must not panic and must produce *some* output.
+            assert!(!masked.is_empty());
+        }
+        // End-to-end through detect() with a multi-byte custom match.
+        let _ = detector.detect("token tok-Zürich🏔️ here");
     }
 
     #[test]

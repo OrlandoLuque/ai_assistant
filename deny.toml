@@ -47,6 +47,13 @@ ignore = [
     # Re-check by: 2026-08-01 OR when reqwest publishes a version that
     # drops the rustls-pemfile dep.
     "RUSTSEC-2025-0134",
+    # lru 0.12.5 unsound IterMut (Stacked Borrows violation). Purely
+    # transitive: tantivy -> lance/lancedb; no direct lru usage in this
+    # crate (verified by grep, V153 audit). The unsoundness requires
+    # calling IterMut in a specific pattern inside tantivy's internals;
+    # not reachable from our API surface.
+    # Re-check by: 2026-09-01 OR when lancedb/tantivy bump lru >= 0.16.
+    "RUSTSEC-2026-0002",
 ]
 
 # ----------------------------------------------------------------

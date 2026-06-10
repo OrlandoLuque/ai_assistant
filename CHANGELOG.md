@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v117 (2026-06-11) — V153: security audit — UTF-8 DoS fix + RUSTSEC sweep (0.2.104)
+
+Parallel security audit of the subsystems touched recently (ai_proxy
+V149/V150, crypto, PII, moderation) plus a transitive-dependency
+`cargo audit` sweep. Full report: `docs/SECURITY_AUDIT_V152.md`. One
+exploitable bug found and fixed; everything else verified SOLID.
+
+### Fixed (security)
+- **`PiiDetector::mask_value` panicked on multi-byte UTF-8 (DoS)**:
+  the mask path used `value.len()` (bytes) and byte-slicing
+  `&value[..show]`. PII values routinely contain accented characters
+  or emoji (names, emails); a slice landing mid-character panics with
+  `is_char_boundary`, taking down whatever processes the input.
+  Rewritten over `char`s. Regression test
+  `test_mask_value_multibyte_no_panic` covers
+  `"tök-Zürich🏔️café"`, `"tok-日本語テスト"`, `"tök-é"`.
+
+### Changed (supply chain)
+- Suppressed **RUSTSEC-2026-0002** (lru 0.12.5 unsound `IterMut`) in
+  `deny.toml` + both CI ignore lists (kept in sync; the
+  `audit-deny-sync` job enforces it). Purely transitive via
+  `tantivy`/`lance`; no direct `lru` usage in this crate (verified by
+  grep). Re-check 2026-09-01 or when lancedb/tantivy bump lru ≥ 0.16.
+
+### Audit verdicts (no code change needed)
+- **ai_proxy** (6 vectors: dedupe DoS, forward-hops loop guard,
+  streaming chunk timeout, header/topology leak, /v1/models auth,
+  SSRF): all SOLID.
+- **crypto** (content_encryption / secure_backup /
+  encrypted_knowledge): OsRng nonces, 32-byte key enforcement,
+  fail-loud (never silently degrades to XOR), AEAD tamper detection:
+  SOLID.
+- **content_moderation** ReDoS: 1MB DFA limit + bounded/lazy
+  quantifiers on the V152 patterns: SOLID.
+
 ## [Unreleased] - v116 (2026-06-11) — V152: full test-battery findings — 7 real bugs (0.2.103)
 
 Ran the project's own 585-test harness (`ai_test_harness --all`, 131
