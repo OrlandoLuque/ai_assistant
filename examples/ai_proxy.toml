@@ -97,10 +97,16 @@ on_middleware_error = "block"
 # served-by header, max 8 forward hops, no model polling).
 [routing]
 # One of: round_robin (default) | local_first | model_aware
+#         | model_aware_local_first
 # - round_robin: even fanout across healthy backends, model-agnostic.
 # - local_first: walk backends in config order; first healthy wins.
 # - model_aware: restrict candidates to backends advertising the
-#   requested model. Auto-enables /v1/models polling.
+#   requested model, then round-robin across them. Auto-enables
+#   /v1/models polling.
+# - model_aware_local_first: like model_aware, but pick the FIRST
+#   advertiser in config order instead of round-robin — deterministic
+#   sticky routing where a primary serves a model and others are warm
+#   standbys. Auto-enables /v1/models polling.
 policy = "round_robin"
 
 # Whether x-mesh-served-by exposes the literal addr (true, default)

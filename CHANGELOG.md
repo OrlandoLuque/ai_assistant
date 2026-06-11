@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v120 (2026-06-11) — V156: composite model_aware+local_first routing policy (0.2.107)
+
+Completes V149 follow-up #4. The most worthwhile of the registered
+product follow-ups; the rest are evaluated and deferred with rationale
+(see Notes).
+
+### Added
+- **`model_aware_local_first` routing policy** for `ai_proxy`: filters
+  candidates to backends advertising the requested model (like
+  `model_aware`), then picks the FIRST in config order (like
+  `local_first`) instead of round-robin. Deterministic sticky routing
+  for a "primary serves the model, others are warm standbys" topology.
+  Same no-model-hint fallback (round-robin) and same 404
+  `model_not_in_mesh` on no match. Auto-enables `/v1/models` polling
+  like `model_aware`.
+- New `proxy_requests_by_policy{policy="model_aware_local_first"}`
+  Prometheus counter; documented in `examples/ai_proxy.toml`.
+- 3 tests: sticky-to-first-advertiser, skips-first-when-model-absent,
+  parse + `is_model_aware` classification.
+
+### Changed (internal)
+- Extracted `model_aware_candidates()` shared by both model-aware
+  policies (candidate filtering + 404), and a `RoutingPolicy::
+  is_model_aware()` helper replacing 8 scattered `== ModelAware`
+  comparisons — so the two variants stay uniform for hint extraction
+  and polling auto-enable.
+
+### Notes — other V149/V150 follow-ups, deferred with rationale
+- **Stream cache (record/replay)**: a genuine feature, not a quick
+  follow-up — deserves its own design cycle (cache key, partial-stream
+  semantics, eviction). Not started.
+- **Per-stream tracing**: touches the V150 hot streaming path just
+  stabilized; lower priority than shipping the clean policy. Deferred.
+- **Connection-pool warmth metric**: speculative without a measured
+  need. Deferred.
+
 ## [Unreleased] - v119 (2026-06-11) — V155: security audit pt.2 — mesh + sandbox + browser (0.2.106)
 
 Second audit pass over the subsystems V153 left out (out of "recent"

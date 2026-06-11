@@ -546,6 +546,14 @@ enum RoutingPolicy {
     /// present in the request, falls back to round-robin across all
     /// healthy backends so non-chat endpoints still work.
     ModelAware,
+    /// V155 (follow-up V149 #4): composite of model_aware + local_first.
+    /// Restrict candidates to backends that advertise the requested
+    /// model (like `ModelAware`), then pick the FIRST in config order
+    /// (like `LocalFirst`) instead of round-robin. Gives deterministic,
+    /// sticky model routing — useful when a primary backend should serve
+    /// a model and others are warm standbys. Same no-model fallback and
+    /// same 404-on-no-match as `ModelAware`.
+    ModelAwareLocalFirst,
 }
 
 impl RoutingPolicy {
@@ -554,10 +562,18 @@ impl RoutingPolicy {
             "round_robin" => Ok(Self::RoundRobin),
             "local_first" => Ok(Self::LocalFirst),
             "model_aware" => Ok(Self::ModelAware),
+            "model_aware_local_first" => Ok(Self::ModelAwareLocalFirst),
             other => Err(format!(
-                "Invalid routing policy '{other}'. Expected one of: round_robin, local_first, model_aware"
+                "Invalid routing policy '{other}'. Expected one of: round_robin, local_first, model_aware, model_aware_local_first"
             )),
         }
+    }
+
+    /// True for any policy that filters candidates by advertised model.
+    /// Drives model-hint extraction and `/v1/models` polling auto-enable
+    /// so both model-aware variants are treated uniformly.
+    fn is_model_aware(&self) -> bool {
+        matches!(self, Self::ModelAware | Self::ModelAwareLocalFirst)
     }
 }
 
@@ -569,6 +585,8 @@ struct ProxyMetrics {
     requests_round_robin: AtomicU64,
     requests_local_first: AtomicU64,
     requests_model_aware: AtomicU64,
+    /// V155: requests routed by the composite model_aware+local_first policy.
+    requests_model_aware_local_first: AtomicU64,
     loop_detected_total: AtomicU64,
     dedupe_hit_total: AtomicU64,
     model_aware_no_match_total: AtomicU64,
@@ -596,6 +614,7 @@ impl ProxyMetrics {
             RoutingPolicy::RoundRobin => &self.requests_round_robin,
             RoutingPolicy::LocalFirst => &self.requests_local_first,
             RoutingPolicy::ModelAware => &self.requests_model_aware,
+            RoutingPolicy::ModelAwareLocalFirst => &self.requests_model_aware_local_first,
         };
         c.fetch_add(1, Ordering::Relaxed);
     }
@@ -695,38 +714,66 @@ fn pick_by_policy(state: &ProxyState, model_hint: Option<&str>) -> Result<usize,
             Ok(0)
         }
         RoutingPolicy::ModelAware => {
-            let Some(model) = model_hint else {
-                // No model hint — fall back to round-robin. Keeps
-                // non-chat endpoints (e.g. `/v1/embeddings` without
-                // an explicit `model` parsed by us) working.
-                return Ok(pick_healthy_backend(state));
-            };
-            let candidates: Vec<usize> = state
-                .backends
-                .iter()
-                .enumerate()
-                .filter(|(_, b)| b.healthy.load(Ordering::Relaxed))
-                .filter(|(_, b)| b.advertises_model(model))
-                .map(|(idx, _)| idx)
-                .collect();
-            if candidates.is_empty() {
-                state
-                    .metrics
-                    .model_aware_no_match_total
-                    .fetch_add(1, Ordering::Relaxed);
-                let mut r = openai_error(
-                    StatusCode::NOT_FOUND,
-                    OpenAiErrorKind::NotFound,
-                    format!("model {model} not available in mesh"),
-                    Some("model_not_in_mesh"),
-                );
-                inject_self_served_by(&mut r, state);
-                return Err(r);
+            let candidates = model_aware_candidates(state, model_hint)?;
+            match candidates {
+                // No model hint — fall back to round-robin so non-chat
+                // endpoints still work.
+                None => Ok(pick_healthy_backend(state)),
+                Some(c) => {
+                    let n = state.next_index.fetch_add(1, Ordering::Relaxed);
+                    Ok(c[n % c.len()])
+                }
             }
-            let n = state.next_index.fetch_add(1, Ordering::Relaxed);
-            Ok(candidates[n % candidates.len()])
+        }
+        RoutingPolicy::ModelAwareLocalFirst => {
+            let candidates = model_aware_candidates(state, model_hint)?;
+            match candidates {
+                None => Ok(pick_healthy_backend(state)),
+                // First in config order (candidates preserve enumerate
+                // order), giving deterministic sticky routing.
+                Some(c) => Ok(c[0]),
+            }
         }
     }
+}
+
+/// Shared candidate selection for the model-aware policies. Returns:
+/// - `Ok(None)` when there is no model hint (caller falls back to RR),
+/// - `Ok(Some(idxs))` with the healthy backends advertising the model,
+///   in config order,
+/// - `Err(envelope)` (404 `model_not_in_mesh`) when a model was given
+///   but no healthy backend advertises it.
+#[allow(clippy::result_large_err)]
+fn model_aware_candidates(
+    state: &ProxyState,
+    model_hint: Option<&str>,
+) -> Result<Option<Vec<usize>>, Response> {
+    let Some(model) = model_hint else {
+        return Ok(None);
+    };
+    let candidates: Vec<usize> = state
+        .backends
+        .iter()
+        .enumerate()
+        .filter(|(_, b)| b.healthy.load(Ordering::Relaxed))
+        .filter(|(_, b)| b.advertises_model(model))
+        .map(|(idx, _)| idx)
+        .collect();
+    if candidates.is_empty() {
+        state
+            .metrics
+            .model_aware_no_match_total
+            .fetch_add(1, Ordering::Relaxed);
+        let mut r = openai_error(
+            StatusCode::NOT_FOUND,
+            OpenAiErrorKind::NotFound,
+            format!("model {model} not available in mesh"),
+            Some("model_not_in_mesh"),
+        );
+        inject_self_served_by(&mut r, state);
+        return Err(r);
+    }
+    Ok(Some(candidates))
 }
 
 #[derive(Serialize)]
@@ -1863,13 +1910,13 @@ fn main() -> ExitCode {
     let policy = effective.routing_policy;
     let polling_pinned = effective.routing.enable_model_polling.unwrap_or(false);
     let any_static_models = backends.iter().any(|b| !b.static_models.is_empty());
-    let model_polling_enabled = polling_pinned || policy == RoutingPolicy::ModelAware;
+    let model_polling_enabled = polling_pinned || policy.is_model_aware();
 
     // Startup validation per plan: model_aware with no static models
     // declared and no explicit polling opt-out → keep polling on and warn.
-    if policy == RoutingPolicy::ModelAware && !any_static_models && !polling_pinned {
+    if policy.is_model_aware() && !any_static_models && !polling_pinned {
         eprintln!(
-            "warning: routing policy is 'model_aware' but no backend declared static \
+            "warning: routing policy is model-aware but no backend declared static \
              [[backends]].models — enabling /v1/models polling automatically. Until the \
              first health-poll completes, no backend advertises any model and all \
              requests will return 404 'model_not_in_mesh'."
@@ -2013,6 +2060,7 @@ async fn proxy_metrics_handler(State(state): State<ProxyState>) -> Response {
          proxy_requests_by_policy{{policy=\"round_robin\"}} {}\n\
          proxy_requests_by_policy{{policy=\"local_first\"}} {}\n\
          proxy_requests_by_policy{{policy=\"model_aware\"}} {}\n\
+         proxy_requests_by_policy{{policy=\"model_aware_local_first\"}} {}\n\
          # HELP proxy_loop_detected_total Requests rejected with 508 because x-forward-hops exceeded the ceiling\n\
          # TYPE proxy_loop_detected_total counter\n\
          proxy_loop_detected_total {}\n\
@@ -2036,6 +2084,7 @@ async fn proxy_metrics_handler(State(state): State<ProxyState>) -> Response {
         m.requests_round_robin.load(Ordering::Relaxed),
         m.requests_local_first.load(Ordering::Relaxed),
         m.requests_model_aware.load(Ordering::Relaxed),
+        m.requests_model_aware_local_first.load(Ordering::Relaxed),
         m.loop_detected_total.load(Ordering::Relaxed),
         m.dedupe_hit_total.load(Ordering::Relaxed),
         m.model_aware_no_match_total.load(Ordering::Relaxed),
@@ -2257,13 +2306,13 @@ async fn proxy_forward_handler(State(state): State<ProxyState>, req: Request) ->
     // policies; ModelAware always re-routes by the request's `model`
     // field (a sticky session shouldn't override model awareness, or
     // the policy is meaningless).
-    let model_hint = if state.policy == RoutingPolicy::ModelAware {
+    let model_hint = if state.policy.is_model_aware() {
         extract_model_from_body(&body_bytes)
     } else {
         None
     };
 
-    let backend_idx = if state.policy != RoutingPolicy::ModelAware {
+    let backend_idx = if !state.policy.is_model_aware() {
         if let Some(ref sid) = session_id {
             if let Some(idx) = state.session_affinity.get(sid).map(|r| *r) {
                 if state.backends[idx].healthy.load(Ordering::Relaxed) {
@@ -3013,13 +3062,13 @@ async fn forward_core(
 
     // V149 F4: ModelAware needs the request's model field; cheap peek
     // since the body is already buffered by the caller.
-    let model_hint = if state.policy == RoutingPolicy::ModelAware {
+    let model_hint = if state.policy.is_model_aware() {
         extract_model_from_body(&body_bytes)
     } else {
         None
     };
 
-    let backend_idx = if state.policy != RoutingPolicy::ModelAware {
+    let backend_idx = if !state.policy.is_model_aware() {
         if let Some(ref sid) = session_id {
             if let Some(idx) = state.session_affinity.get(sid).map(|r| *r) {
                 if state.backends[idx].healthy.load(Ordering::Relaxed) {
@@ -3161,13 +3210,13 @@ async fn forward_core_streamable(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
-    let model_hint = if state.policy == RoutingPolicy::ModelAware {
+    let model_hint = if state.policy.is_model_aware() {
         extract_model_from_body(&body_bytes)
     } else {
         None
     };
 
-    let backend_idx = if state.policy != RoutingPolicy::ModelAware {
+    let backend_idx = if !state.policy.is_model_aware() {
         if let Some(ref sid) = session_id {
             if let Some(idx) = state.session_affinity.get(sid).map(|r| *r) {
                 if state.backends[idx].healthy.load(Ordering::Relaxed) {
@@ -6071,6 +6120,80 @@ mod tests {
                     );
                 }
             });
+        }
+
+        // V155: composite model_aware + local_first.
+        #[test]
+        fn test_model_aware_local_first_picks_first_advertiser() {
+            rt().block_on(async {
+                let (a_addr, _a_sh) = spawn_mock_backend(chat_ok_response).await;
+                let (b_addr, _b_sh) = spawn_mock_backend(chat_ok_response).await;
+                // BOTH advertise llama3. ModelAware would round-robin between
+                // them; ModelAwareLocalFirst must always pick A (config order).
+                let backends = vec![
+                    Backend::with_models(a_addr.clone(), vec!["llama3".to_string()]),
+                    Backend::with_models(b_addr.clone(), vec!["llama3".to_string()]),
+                ];
+                let state = make_state_full(backends, None, RoutingPolicy::ModelAwareLocalFirst);
+                let router = router_from_state(state);
+
+                for _ in 0..5 {
+                    let r = router
+                        .clone()
+                        .oneshot(chat_req(chat_body_with_model("llama3", "p")))
+                        .await
+                        .unwrap();
+                    assert_eq!(r.status(), 200);
+                    assert_eq!(
+                        r.headers()
+                            .get("x-mesh-served-by")
+                            .and_then(|v| v.to_str().ok()),
+                        Some(a_addr.as_str()),
+                        "composite policy must stick to the first advertiser"
+                    );
+                }
+            });
+        }
+
+        #[test]
+        fn test_model_aware_local_first_skips_first_when_model_absent() {
+            rt().block_on(async {
+                let (a_addr, _a_sh) = spawn_mock_backend(chat_ok_response).await;
+                let (b_addr, _b_sh) = spawn_mock_backend(chat_ok_response).await;
+                // A is first in config order but only has mistral; the
+                // requested llama3 lives on B. Composite policy must skip A.
+                let backends = vec![
+                    Backend::with_models(a_addr.clone(), vec!["mistral".to_string()]),
+                    Backend::with_models(b_addr.clone(), vec!["llama3".to_string()]),
+                ];
+                let state = make_state_full(backends, None, RoutingPolicy::ModelAwareLocalFirst);
+                let router = router_from_state(state);
+
+                let r = router
+                    .oneshot(chat_req(chat_body_with_model("llama3", "p")))
+                    .await
+                    .unwrap();
+                assert_eq!(r.status(), 200);
+                assert_eq!(
+                    r.headers()
+                        .get("x-mesh-served-by")
+                        .and_then(|v| v.to_str().ok()),
+                    Some(b_addr.as_str()),
+                    "composite policy must pick the advertiser even if not first"
+                );
+            });
+        }
+
+        #[test]
+        fn test_model_aware_local_first_parses_and_is_model_aware() {
+            assert_eq!(
+                RoutingPolicy::parse("model_aware_local_first").unwrap(),
+                RoutingPolicy::ModelAwareLocalFirst
+            );
+            assert!(RoutingPolicy::ModelAwareLocalFirst.is_model_aware());
+            assert!(RoutingPolicy::ModelAware.is_model_aware());
+            assert!(!RoutingPolicy::LocalFirst.is_model_aware());
+            assert!(!RoutingPolicy::RoundRobin.is_model_aware());
         }
 
         #[test]
