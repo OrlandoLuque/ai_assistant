@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v118 (2026-06-11) — V154: CI preventive debt — harness battery + feature/dep drift lint (0.2.105)
+
+Closes the visibility gap that let V152's bugs reach master unseen.
+Two new CI gates — and the drift lint immediately caught a third
+instance of the same bug that V152's manual fix had missed.
+
+### Added (CI gates)
+- **`harness-battery` job**: runs `ai_test_harness --all` (585
+  functional tests / 131 categories) on every push/PR. The harness is
+  NOT cfg-gated like the lib unit tests, so it catches feature-graph
+  breaks, heuristic-quality regressions, and panics on real input that
+  the `test` job structurally cannot. Exits non-zero on failure → gates
+  merges.
+- **`feature-dep-drift` job** + `scripts/check_feature_dep_drift.py`:
+  fails if a feature lists `dep:X` while `X` is also a feature gated in
+  src/ via `cfg(feature = "X")`. That drift silently disables the gated
+  path and its tests at once (the V152 AES/PDF bug class). Stdlib-only
+  Python, matching the existing deprecation-policy checker.
+
+### Fixed (caught by the new lint)
+- **`backup` feature had the same latent drift**: `backup = [...,
+  "dep:aes-gcm", ...]` enabled the aes-gcm crate but left
+  `cfg(feature = "aes-gcm")` gates off, so a `backup`-only build (no
+  `rag`) would have `content_encryption`'s AES path disabled — the
+  exact bug V152 fixed for `rag` and `documents` but missed here.
+  Changed to reference the `aes-gcm` feature. V152's manual sweep found
+  2 of 3; the automated lint found the third.
+
 ## [Unreleased] - v117 (2026-06-11) — V153: security audit — UTF-8 DoS fix + RUSTSEC sweep (0.2.104)
 
 Parallel security audit of the subsystems touched recently (ai_proxy

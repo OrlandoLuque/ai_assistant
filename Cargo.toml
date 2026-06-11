@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.104"
+version = "0.2.105"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -516,7 +516,10 @@ pdf-extract = ["dep:pdf-extract"]
 # avoid pulling crypto deps for users who only need providers.
 backup = [
     "dep:zip",
-    "dep:aes-gcm",
+    # FEATURE not dep: so cfg(feature = "aes-gcm") gates in
+    # content_encryption.rs light up under backup-only builds too
+    # (same V152 drift class the lint now guards — caught here in V154).
+    "aes-gcm",
     "dep:sha2",
     "dep:ed25519-dalek",
     "dep:hkdf",
