@@ -35,8 +35,9 @@ fn secure_random_bytes(len: usize) -> Vec<u8> {
 ///
 /// Returns true only if both slices have equal length and identical contents.
 /// Uses XOR accumulation so the comparison takes the same time regardless
-/// of where (or whether) the slices differ.
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+/// of where (or whether) the slices differ. (Length is compared early — for
+/// fixed-length secrets like join tokens that is not a meaningful leak.)
+pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }

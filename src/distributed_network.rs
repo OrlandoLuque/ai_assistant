@@ -31,7 +31,7 @@ use crate::consistent_hash::ConsistentHashRing;
 use crate::distributed::{NodeId, NodeMessage};
 use crate::failure_detector::{HeartbeatConfig, HeartbeatManager, NodeStatus};
 use crate::merkle_sync::{AntiEntropySync, MerkleTree};
-use crate::node_security::{CertificateManager, JoinToken, NodeIdentity};
+use crate::node_security::{constant_time_eq, CertificateManager, JoinToken, NodeIdentity};
 
 // =============================================================================
 // Configuration
@@ -1155,7 +1155,12 @@ impl EventLoop {
                 // Validate token inside a block so the write guard is dropped before await
                 let (valid, resp) = {
                     let mut tokens = self.join_tokens.write().unwrap_or_else(|e| e.into_inner());
-                    let valid = tokens.iter_mut().any(|t| t.token == token && t.consume());
+                    // Constant-time token comparison: `==` on String leaks
+                    // match length via timing. Matches the challenge-response
+                    // path's use of constant_time_eq (node_security.rs).
+                    let valid = tokens.iter_mut().any(|t| {
+                        constant_time_eq(t.token.as_bytes(), token.as_bytes()) && t.consume()
+                    });
                     if valid {
                         let peer_list: Vec<(Vec<u8>, String)> = self
                             .peers
@@ -1418,7 +1423,10 @@ impl EventLoop {
                                   // Validate join token if the cluster requires one
                 if config_join_token.is_some() {
                     let mut tokens = join_tokens.write().unwrap_or_else(|e| e.into_inner());
-                    let valid = tokens.iter_mut().any(|t| t.token == *token && t.consume());
+                    // Constant-time comparison (see the inbound path above).
+                    let valid = tokens.iter_mut().any(|t| {
+                        constant_time_eq(t.token.as_bytes(), token.as_bytes()) && t.consume()
+                    });
                     if !valid {
                         return Some(NodeMessage::JoinRejected {
                             reason: "Invalid or expired join token".to_string(),
@@ -1872,9 +1880,15 @@ impl EventLoop {
     }
 
     /// Remove expired entries from local storage.
-    fn cleanup_expired(&self) {
-        let mut storage = self.storage.write().unwrap_or_else(|e| e.into_inner());
-        storage.retain(|_, v| !v.is_expired());
+    fn cleanup_expired(&mut self) {
+        {
+            let mut storage = self.storage.write().unwrap_or_else(|e| e.into_inner());
+            storage.retain(|_, v| !v.is_expired());
+        }
+        // Drop hinted handoffs past their TTL. Without this the bounded
+        // queue (cap 1000) fills with stale entries for peers that never
+        // came back and stops accepting fresh handoffs — a slow self-DoS.
+        let _expired = self.handoff_queue.expire_old();
     }
 
     /// Run LAN discovery via UDP broadcast.

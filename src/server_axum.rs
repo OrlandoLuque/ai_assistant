@@ -2187,7 +2187,14 @@ async fn get_trace_handler(
         _ => crate::distributed_log::ExportFormat::Json,
     };
 
-    let body = guard.export_trace(&trace_id, format);
+    // Honor the optional `min_level` query param (trace/debug/info/warn/error).
+    // An unrecognized value is ignored (no filter) rather than erroring.
+    let min_level = params
+        .min_level
+        .as_deref()
+        .and_then(crate::distributed_log::parse_log_level);
+
+    let body = guard.export_trace_filtered(&trace_id, format, min_level);
 
     let content_type = match format {
         crate::distributed_log::ExportFormat::Json => "application/json",

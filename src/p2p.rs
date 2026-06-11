@@ -451,7 +451,7 @@ impl NatTraversal {
         let location = response
             .lines()
             .find(|line| line.to_uppercase().starts_with("LOCATION:"))
-            .and_then(|line| line.splitn(2, ':').nth(1))
+            .and_then(|line| line.split_once(':').map(|x| x.1))
             .map(|s| s.trim().to_string())
             .ok_or("No LOCATION in SSDP response")?;
 

@@ -184,6 +184,15 @@ impl BrowserPolicy {
     }
 
     /// Validate JavaScript code against the permission level.
+    ///
+    /// SECURITY MODEL: the pattern checks below are **defense-in-depth, not a
+    /// hard boundary**. Substring matching on JS source is bypassable by any
+    /// determined adversary (`window['fe'+'tch']`, `Function(...)`, unicode
+    /// escapes, `atob` decoding). They catch the obvious/accidental cases.
+    /// For untrusted input the real boundary must be the browser itself —
+    /// run with `JsPermission::Disabled`, an isolated/sandboxed context, or a
+    /// restrictive CSP. Do not treat a `ReadOnly`/`Mutating` pass as proof the
+    /// script is safe.
     pub fn validate_js(&self, js: &str) -> JsValidation {
         match self.js_permission {
             JsPermission::Disabled => {
@@ -311,8 +320,23 @@ fn contains_critical_pattern(js: &str) -> bool {
 /// Extract host from a URL string.
 fn extract_host(url: &str) -> String {
     let without_scheme = url.split("://").nth(1).unwrap_or(url);
-    let host_port = without_scheme.split('/').next().unwrap_or("");
-    let host = host_port.split(':').next().unwrap_or("");
+    let authority = without_scheme.split('/').next().unwrap_or("");
+    // Strip userinfo: in `userinfo@host:port` the real host is after the
+    // LAST '@'. Without this, `https://attacker.com@192.168.1.1/` yields
+    // host `attacker.com@192.168.1.1`, which fails IP parsing, so the
+    // private-IP / metadata-endpoint checks are bypassed and the browser
+    // navigates to the real host (192.168.1.1) after the '@' — an SSRF hole.
+    let host_port = match authority.rsplit_once('@') {
+        Some((_userinfo, host)) => host,
+        None => authority,
+    };
+    // Drop the port. Bracketed IPv6 literals (`[::1]:443`) keep their
+    // colons inside the brackets, so split on the closing bracket first.
+    let host = if let Some(stripped) = host_port.strip_prefix('[') {
+        stripped.split(']').next().unwrap_or("")
+    } else {
+        host_port.split(':').next().unwrap_or("")
+    };
     host.to_string()
 }
 
@@ -448,6 +472,30 @@ mod tests {
             .is_allowed());
         assert!(!policy
             .validate_url("https://metadata.google.internal/")
+            .is_allowed());
+    }
+
+    #[test]
+    fn test_userinfo_cannot_bypass_private_ip_check() {
+        // SSRF regression: the real host is after the last '@'. Before the
+        // extract_host fix, `attacker.com@192.168.1.1` failed IP parsing
+        // and slipped past the private-IP gate while the browser would
+        // navigate to 192.168.1.1.
+        let policy = BrowserPolicy::restrictive();
+        assert!(!policy
+            .validate_url("https://attacker.com@192.168.1.1/")
+            .is_allowed());
+        assert!(!policy
+            .validate_url("https://user:pass@127.0.0.1/admin")
+            .is_allowed());
+        assert!(!policy
+            .validate_url("https://foo@169.254.169.254/latest/meta-data/")
+            .is_allowed());
+        // IPv6 loopback literal in brackets must still be caught.
+        assert!(!policy.validate_url("https://[::1]/").is_allowed());
+        // A legitimate userinfo on a public host stays allowed.
+        assert!(policy
+            .validate_url("https://user@example.com/")
             .is_allowed());
     }
 

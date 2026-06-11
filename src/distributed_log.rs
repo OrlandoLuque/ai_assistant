@@ -454,7 +454,23 @@ impl LogCollector {
 
     /// Export a trace's unified log in the given format.
     pub fn export_trace(&self, trace_id: &str, format: ExportFormat) -> String {
-        let entries = self.get_unified_log(trace_id);
+        self.export_trace_filtered(trace_id, format, None)
+    }
+
+    /// Like [`export_trace`], but drops entries below `min_level` when
+    /// `min_level` is `Some`. `None` exports every entry (identical to
+    /// `export_trace`). Wired to the `min_level` query param of
+    /// `GET /v1/logs/traces/{trace_id}`.
+    pub fn export_trace_filtered(
+        &self,
+        trace_id: &str,
+        format: ExportFormat,
+        min_level: Option<LogLevel>,
+    ) -> String {
+        let mut entries = self.get_unified_log(trace_id);
+        if let Some(threshold) = min_level {
+            entries.retain(|e| e.level >= threshold);
+        }
 
         match format {
             ExportFormat::Json => {

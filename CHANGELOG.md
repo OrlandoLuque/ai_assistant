@@ -5,6 +5,57 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v119 (2026-06-11) — V155: security audit pt.2 — mesh + sandbox + browser (0.2.106)
+
+Second audit pass over the subsystems V153 left out (out of "recent"
+scope): `distributed_network`/`node_security`, the autonomous-agent
+sandbox, and `browser_policy`. Two parallel auditors; every finding
+hand-verified against the code before acting (two of their "RISK HIGH"
+calls were misanalyzed — see SECURITY_AUDIT_V155.md). 3 real bugs +
+1 half-wired feature fixed. Full report: `docs/SECURITY_AUDIT_V155.md`.
+
+### Fixed (security)
+- **SSRF — private-IP check bypass via URL userinfo** (`browser_policy`):
+  `extract_host` did not strip userinfo, so
+  `https://attacker.com@192.168.1.1/` yielded host
+  `attacker.com@192.168.1.1`, which fails IP parsing — slipping past
+  the private-IP and metadata-endpoint gates while the browser would
+  navigate to the real host (after the `@`). Now takes the host after
+  the LAST `@` and handles bracketed IPv6 literals. 5 regression tests.
+- **Timing leak in join-token comparison** (`distributed_network`):
+  the cluster membership token was compared with String `==` (not
+  constant-time) at two sites, enabling byte-by-byte brute force.
+  `constant_time_eq` already existed and was used for challenge-
+  response — now used for the token too (made `pub(crate)`).
+- **Self-DoS — hinted handoffs never expired** (`distributed_network`):
+  `HintedHandoffQueue::expire_old()` was defined and tested but had no
+  caller, so the bounded queue (cap 1000) filled with stale entries for
+  peers that never returned and stopped accepting fresh handoffs. Wired
+  into the 30s cleanup cycle.
+
+### Fixed (half-wired feature)
+- **`min_level` query param ignored** (`server_axum`):
+  `GET /v1/logs/traces/{id}` accepted a `min_level` filter the handler
+  dropped (the V151 bug class). New `export_trace_filtered` in
+  `distributed_log`; handler now parses and applies it.
+
+### Changed (documentation of trust model)
+- `browser_policy::validate_js` gained an explicit SECURITY MODEL doc:
+  the JS pattern filters are defense-in-depth, NOT a hard boundary
+  (substring matching on JS is bypassable). Real boundary for untrusted
+  input is `JsPermission::Disabled` / sandbox / CSP.
+
+### Cleanup
+- Fixed 2 pre-existing clippy warnings under network features (not in
+  the standard clippy job's feature set): dead `min_level` field (now
+  used), manual `split_once` in `p2p`.
+
+### Audit verdicts (no code change)
+- mTLS config SOLID (no dangerous verifiers); bincode 16MB cap SOLID;
+  max_connections SOLID; ring-poisoning resistant; sandbox path
+  traversal SOLID; rest of SSRF (scheme/IP-range/metadata) SOLID;
+  `AutoApproveAll` reachable only via explicit autonomy level.
+
 ## [Unreleased] - v118 (2026-06-11) — V154: CI preventive debt — harness battery + feature/dep drift lint (0.2.105)
 
 Closes the visibility gap that let V152's bugs reach master unseen.
