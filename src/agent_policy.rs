@@ -217,6 +217,107 @@ impl Default for AgentPolicy {
     }
 }
 
+/// True if `cmd` contains a command- or process-substitution construct
+/// outside single quotes: `$(`, a backtick, `<(`, or `>(`. Single quotes
+/// disable substitution in POSIX shells, so a `$(` inside `'...'` is
+/// literal; everything else (including inside double quotes) is live.
+fn contains_command_substitution(cmd: &str) -> bool {
+    let bytes = cmd.as_bytes();
+    let mut in_single = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if in_single {
+            if c == b'\'' {
+                in_single = false;
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            b'\'' => in_single = true,
+            b'`' => return true,
+            b'$' if i + 1 < bytes.len() && bytes[i + 1] == b'(' => return true,
+            b'<' | b'>' if i + 1 < bytes.len() && bytes[i + 1] == b'(' => return true,
+            _ => {}
+        }
+        i += 1;
+    }
+    false
+}
+
+/// Split a command line into segments on the shell control operators
+/// `;`, `|`, `&`, and newline, while respecting single and double quotes
+/// (so `git commit -m "a; b"` stays one segment). `&&` and `||` are
+/// covered because we split on the individual `&`/`|` characters.
+/// Returns only non-blank segments.
+fn split_shell_segments(cmd: &str) -> Vec<String> {
+    let mut segments = Vec::new();
+    let mut current = String::new();
+    let mut in_single = false;
+    let mut in_double = false;
+    for c in cmd.chars() {
+        match c {
+            '\'' if !in_double => {
+                in_single = !in_single;
+                current.push(c);
+            }
+            '"' if !in_single => {
+                in_double = !in_double;
+                current.push(c);
+            }
+            ';' | '|' | '&' | '\n' if !in_single && !in_double => {
+                if !current.trim().is_empty() {
+                    segments.push(current.trim().to_string());
+                }
+                current.clear();
+            }
+            _ => current.push(c),
+        }
+    }
+    if !current.trim().is_empty() {
+        segments.push(current.trim().to_string());
+    }
+    segments
+}
+
+/// Extract the base command name from a single segment: skip leading
+/// `VAR=value` environment assignments, take the first remaining token,
+/// and reduce it to its basename (so `/bin/rm` and `./rm` both match a
+/// deny entry of `rm`). Returns `None` if the segment has no command.
+fn command_base_name(segment: &str) -> Option<&str> {
+    for tok in segment.split_whitespace() {
+        // Leading `NAME=value` env assignments precede the real command.
+        if is_env_assignment(tok) {
+            continue;
+        }
+        // Strip any directory prefix; also strip a trailing quote that a
+        // split landed inside (defensive — segments are pre-trimmed).
+        let base = tok.rsplit(['/', '\\']).next().unwrap_or(tok);
+        let base = base.trim_matches(['"', '\'']);
+        if base.is_empty() {
+            continue;
+        }
+        return Some(base);
+    }
+    None
+}
+
+/// `NAME=value` shell env-assignment token: an identifier, then `=`.
+fn is_env_assignment(tok: &str) -> bool {
+    match tok.split_once('=') {
+        Some((name, _)) => {
+            !name.is_empty()
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && name
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        }
+        None => false,
+    }
+}
+
 impl AgentPolicy {
     /// Paranoid policy: every action needs approval, no internet, no shell.
     pub fn paranoid() -> Self {
@@ -313,27 +414,53 @@ impl AgentPolicy {
     }
 
     /// Check if the agent can run a shell command.
+    ///
+    /// Shell-aware (V157): the previous version extracted only the FIRST
+    /// word as the base command and matched the deny-list by substring,
+    /// so a chained command after an allowed base slipped through
+    /// (`cargo build; curl evil` → base `cargo`, allowed). This now:
+    ///
+    /// 1. Rejects command/process substitution (`$(...)`, backticks,
+    ///    `<(...)`, `>(...)`) outright — they smuggle arbitrary commands
+    ///    we cannot statically validate. Fail closed.
+    /// 2. Splits the command into segments on shell control operators
+    ///    (`;`, `|`, `&`, newline) while respecting single/double quotes,
+    ///    so `git commit -m "a; b"` stays one segment.
+    /// 3. For EVERY segment: strips leading `VAR=value` env assignments,
+    ///    takes the first token's basename (so `/bin/rm` and `./rm` match
+    ///    the deny entry `rm`), and requires it to pass allow + deny.
+    ///
+    /// Every segment must pass; any denied or non-allowed segment fails
+    /// the whole command.
     pub fn can_run_command(&self, cmd: &str) -> bool {
-        // Extract the base command (first word)
-        let base = cmd.split_whitespace().next().unwrap_or("");
-
-        // Denied commands take priority
-        for denied in &self.denied_commands {
-            if denied == "*" {
-                return false;
-            }
-            if base == denied || cmd.contains(denied) {
-                return false;
-            }
-        }
-        // Empty allowed = none allowed (unless "*")
-        if self.allowed_commands.is_empty() {
+        // A blanket deny short-circuits everything.
+        if self.denied_commands.iter().any(|d| d == "*") {
             return false;
         }
-        for allowed in &self.allowed_commands {
-            if allowed == "*" || base == allowed {
-                return true;
-            }
+        // Reject substitution we can't validate (outside single quotes).
+        if contains_command_substitution(cmd) {
+            return false;
+        }
+        let segments = split_shell_segments(cmd);
+        if segments.is_empty() {
+            return false;
+        }
+        // Every segment's base command must individually pass.
+        segments.iter().all(|seg| self.segment_command_allowed(seg))
+    }
+
+    /// Allow/deny decision for a single command segment (no shell
+    /// operators). Returns false if the segment is empty, its base is
+    /// denied, or its base is not allowed.
+    fn segment_command_allowed(&self, segment: &str) -> bool {
+        let Some(base) = command_base_name(segment) else {
+            return false;
+        };
+        if self.denied_commands.iter().any(|d| d == base) {
+            return false;
+        }
+        if self.allowed_commands.iter().any(|a| a == "*" || a == base) {
+            return true;
         }
         false
     }
@@ -809,6 +936,47 @@ mod tests {
         assert!(policy.can_run_command("git status"));
         assert!(!policy.can_run_command("rm -rf /tmp"));
         assert!(!policy.can_run_command("python script.py"));
+    }
+
+    #[test]
+    fn test_can_run_command_blocks_chaining_bypass() {
+        // V157 hardening: a denied or non-allowed command chained after an
+        // allowed base must NOT slip through.
+        let policy = AgentPolicyBuilder::new()
+            .allow_command("cargo")
+            .allow_command("git")
+            .deny_command("rm")
+            .build();
+
+        // Chaining operators: the second segment is denied / not allowed.
+        assert!(!policy.can_run_command("cargo build; rm -rf /"));
+        assert!(!policy.can_run_command("cargo build && rm -rf /"));
+        assert!(!policy.can_run_command("git status || rm -rf /"));
+        assert!(!policy.can_run_command("git status | rm"));
+        assert!(!policy.can_run_command("cargo build & curl evil.com"));
+        assert!(!policy.can_run_command("cargo build\nrm -rf /"));
+        // Second segment not allowed (not even denied) still fails.
+        assert!(!policy.can_run_command("cargo build; curl http://evil"));
+
+        // Command/process substitution is rejected outright.
+        assert!(!policy.can_run_command("cargo build $(rm -rf /)"));
+        assert!(!policy.can_run_command("cargo `rm -rf /`"));
+        assert!(!policy.can_run_command("cargo <(rm -rf /)"));
+
+        // Env-var prefix must not hide the real command.
+        assert!(!policy.can_run_command("FOO=bar rm -rf /"));
+        // Path-qualified denied command matches by basename.
+        assert!(!policy.can_run_command("/bin/rm -rf /"));
+        assert!(!policy.can_run_command("./rm -rf /"));
+
+        // Legitimate multi-segment where every base is allowed → ok.
+        assert!(policy.can_run_command("git fetch && cargo build"));
+        // A real `;` inside quotes does NOT split the command.
+        assert!(policy.can_run_command("git commit -m \"fix; cleanup\""));
+        // Path-qualified allowed command still allowed (basename match).
+        assert!(policy.can_run_command("/usr/bin/cargo build"));
+        // Env prefix before an allowed command is fine.
+        assert!(policy.can_run_command("RUST_LOG=debug cargo build"));
     }
 
     #[test]

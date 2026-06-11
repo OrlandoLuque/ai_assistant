@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v121 (2026-06-11) — V157: security hardening — the 4 V155 follow-ups (0.2.108)
+
+Implements all four hardening follow-ups the V155 audit registered. Full
+detail: `docs/SECURITY_HARDENING_V157.md`.
+
+### Fixed (security hardening)
+- **`can_run_command` shell-aware parsing** (`agent_policy`): the old
+  check took only the first word as the base command and matched the
+  deny-list by substring, so a command chained after an allowed base
+  slipped through (`cargo build; curl evil` → base `cargo`, allowed). Now
+  it rejects command/process substitution (`$(...)`, backticks, `<(...)`,
+  `>(...)`), splits on shell operators (`;` `|` `&` newline) respecting
+  quotes, strips `VAR=value` prefixes, and checks every segment's
+  basename against allow + deny. Every segment must pass.
+- **Mesh storage exhaustion guards** (`distributed_network`): an
+  authenticated peer could `Put`/`Replicate` unbounded data and OOM a
+  node. Added O(1) admission control — `MAX_STORED_VALUE_BYTES` (16 MiB
+  per value) + `MAX_STORED_KEYS` (100k distinct keys; updates to existing
+  keys always allowed). Gates both Put and Replicate; rejection surfaces
+  as `success: false`.
+- **Per-target-node handoff cap** (`distributed_network`): the
+  hinted-handoff queue had only a global cap (1000), so one dead peer
+  could fill it and starve others. Added `max_per_node` (default
+  `max_size / 10`) + `with_max_per_node` builder.
+- **NodeId ↔ TLS certificate binding** (`distributed_network` /
+  `node_security`): identity exchange took the peer's NodeId from its
+  self-reported message — a valid-cert peer could claim any NodeId. Both
+  exchange paths now derive the NodeId from the leaf cert presented during
+  the mTLS handshake and reject a mismatch (fail-closed). Free by
+  construction: a node's own id is `node_id_from_cert(own_cert)`, so
+  legitimate peers always match; only impersonators mismatch. Validated
+  by the live `test_two_nodes_connect` handshake.
+
+### Tests
+- `test_can_run_command_blocks_chaining_bypass`,
+  `test_storage_admits_caps`,
+  `test_process_message_put_rejects_oversized_value`,
+  `test_handoff_per_node_cap_prevents_starvation`. Existing
+  `test_two_nodes_connect` now also exercises the cert binding.
+
+### Notes
+- Per-peer storage byte-quota with attribution remains a registered
+  follow-up (needs the storage map to track the writing peer).
+
 ## [Unreleased] - v120 (2026-06-11) — V156: composite model_aware+local_first routing policy (0.2.107)
 
 Completes V149 follow-up #4. The most worthwhile of the registered

@@ -330,6 +330,22 @@ pub struct NetworkNode {
     shutdown: Arc<std::sync::atomic::AtomicBool>,
 }
 
+// V157: storage exhaustion guards. The mesh trusts authenticated peers,
+// but a misbehaving (or compromised) peer should not be able to OOM a node
+// by storing one giant value or a flood of keys. Both checks are O(1) so
+// they add no per-write scan under adversarial load. A tight total-byte
+// quota with per-peer attribution is a registered follow-up (needs the
+// storage map to track which peer wrote each key).
+//
+// Max bytes for a single stored value. Matches the 16 MiB wire-message cap
+// — a value can't arrive larger than a message anyway, but pinning it here
+// keeps the guard explicit if the message cap ever changes.
+const MAX_STORED_VALUE_BYTES: usize = 16 * 1024 * 1024;
+// Max number of distinct keys a node will store. Bounds the many-small-keys
+// exhaustion vector. Updates to existing keys are always allowed (they
+// don't grow the key count).
+const MAX_STORED_KEYS: usize = 100_000;
+
 /// A value stored in the local key-value store.
 #[derive(Clone, Debug)]
 struct StoredValue {
@@ -1264,6 +1280,20 @@ impl EventLoop {
         let _ = event_tx.send(NetworkEvent::PeerDisconnected(peer_id)).await;
     }
 
+    /// V157: admission control for an incoming store. Rejects values over
+    /// the per-value cap, and new keys (not already present) once the
+    /// key-count cap is reached. Caller holds the storage write lock.
+    fn storage_admits(store: &HashMap<String, StoredValue>, key: &str, value: &[u8]) -> bool {
+        if value.len() > MAX_STORED_VALUE_BYTES {
+            return false;
+        }
+        // Updating an existing key never grows the key count.
+        if !store.contains_key(key) && store.len() >= MAX_STORED_KEYS {
+            return false;
+        }
+        true
+    }
+
     /// Process an incoming message and optionally return a response.
     ///
     /// Handles all NodeMessage variants with appropriate logic:
@@ -1317,10 +1347,17 @@ impl EventLoop {
             } => {
                 let ttl = ttl_secs.map(Duration::from_secs);
                 let mut storage_w = storage.write().unwrap_or_else(|e| e.into_inner());
-                storage_w.insert(key.clone(), StoredValue::new(value.clone(), ttl));
+                let success = if Self::storage_admits(&storage_w, key, value) {
+                    storage_w.insert(key.clone(), StoredValue::new(value.clone(), ttl));
+                    true
+                } else {
+                    // Over the value-size or key-count cap — reject so the
+                    // peer learns the write didn't land (no silent drop).
+                    false
+                };
                 Some(NodeMessage::PutAck {
                     key: key.clone(),
-                    success: true,
+                    success,
                     request_id: 0,
                 })
             }
@@ -1344,7 +1381,10 @@ impl EventLoop {
                 let should_update = storage_w
                     .get(key)
                     .map_or(true, |existing| existing.version < *version);
-                if should_update {
+                // Apply the same admission caps to replicated writes — a
+                // peer must not bypass them by sending Replicate over Put.
+                let cap_ok = Self::storage_admits(&storage_w, key, value);
+                if should_update && cap_ok {
                     storage_w.insert(
                         key.clone(),
                         StoredValue {
@@ -1354,10 +1394,14 @@ impl EventLoop {
                         },
                     );
                 }
+                // Success means the replica is in the desired state: either
+                // we applied the update, or it was already at >= version.
+                // Only a cap rejection of a needed write is a real failure.
+                let success = !should_update || cap_ok;
                 Some(NodeMessage::ReplicateAck {
                     key: key.clone(),
                     version: *version,
-                    success: true,
+                    success,
                 })
             }
             NodeMessage::ReplicateAck { .. } => None,
@@ -1545,6 +1589,38 @@ impl EventLoop {
     }
 
     /// Exchange identity with a peer (client side).
+    /// V157: derive the peer's NodeId from the leaf certificate it
+    /// presented during the (already-verified) mTLS handshake. Returns
+    /// `None` only if the connection somehow exposes no certificate —
+    /// which should never happen under the enforced mutual-TLS config.
+    fn peer_cert_node_id(connection: &quinn::Connection) -> Option<NodeId> {
+        let identity = connection.peer_identity()?;
+        let certs = identity
+            .downcast::<Vec<rustls::pki_types::CertificateDer<'static>>>()
+            .ok()?;
+        let leaf = certs.first()?;
+        Some(CertificateManager::node_id_from_cert(leaf.as_ref()))
+    }
+
+    /// V157: reject a peer whose self-reported NodeId does not match the
+    /// identity bound in its TLS certificate. A node's own NodeId is
+    /// `node_id_from_cert(own_cert)`, so a legitimate peer always matches;
+    /// a peer claiming someone else's id is an impersonation attempt.
+    /// Fail-closed: if the cert can't be read (should be impossible under
+    /// enforced mTLS), the connection is rejected rather than trusted.
+    fn verify_claimed_node_id(
+        connection: &quinn::Connection,
+        claimed: NodeId,
+    ) -> Result<(), String> {
+        match Self::peer_cert_node_id(connection) {
+            Some(cert_id) if cert_id == claimed => Ok(()),
+            Some(cert_id) => Err(format!(
+                "peer NodeId {claimed} does not match its TLS certificate identity {cert_id}"
+            )),
+            None => Err("peer presented no TLS certificate to bind its NodeId".to_string()),
+        }
+    }
+
     async fn exchange_identity(&self, connection: &quinn::Connection) -> Result<NodeId, String> {
         let (mut send, mut recv) = connection
             .open_bi()
@@ -1564,7 +1640,11 @@ impl EventLoop {
         // Receive their response
         let response = Self::read_message(&mut recv).await?;
         match response {
-            NodeMessage::Pong { sender, .. } => Ok(sender),
+            NodeMessage::Pong { sender, .. } => {
+                // Bind the claimed id to the peer's TLS certificate.
+                Self::verify_claimed_node_id(connection, sender)?;
+                Ok(sender)
+            }
             _ => Err("Unexpected response during identity exchange".to_string()),
         }
     }
@@ -1585,6 +1665,8 @@ impl EventLoop {
             NodeMessage::Ping { sender, .. } => sender,
             _ => return Err("Expected Ping for identity exchange".to_string()),
         };
+        // Bind the claimed id to the peer's TLS certificate.
+        Self::verify_claimed_node_id(connection, peer_id)?;
 
         // Send our response
         let response = NodeMessage::Pong {
@@ -2262,22 +2344,47 @@ pub struct HintedHandoff {
 pub struct HintedHandoffQueue {
     queue: Vec<HintedHandoff>,
     max_size: usize,
+    /// V157: per-target-node cap. Without it, one dead/flaky peer can
+    /// trigger enough failed replications to fill the whole global queue
+    /// and starve handoffs destined for other peers (a per-peer DoS).
+    max_per_node: usize,
     default_ttl: u64,
 }
 
 impl HintedHandoffQueue {
     /// Create a new hinted handoff queue with a maximum size and default TTL in seconds.
+    /// The per-target-node cap defaults to `max_size / 10` (min 1) so no
+    /// single peer can occupy more than ~10% of the queue.
     pub fn new(max_size: usize, default_ttl: u64) -> Self {
         Self {
             queue: Vec::new(),
             max_size,
+            max_per_node: (max_size / 10).max(1),
             default_ttl,
         }
     }
 
-    /// Enqueue a hinted handoff entry. Returns false if the queue is full.
+    /// Override the per-target-node cap (default `max_size / 10`).
+    pub fn with_max_per_node(mut self, max_per_node: usize) -> Self {
+        self.max_per_node = max_per_node.max(1);
+        self
+    }
+
+    /// Number of queued entries currently destined for `node_id`.
+    fn count_for_node(&self, node_id: &[u8]) -> usize {
+        self.queue
+            .iter()
+            .filter(|e| e.target_node == node_id)
+            .count()
+    }
+
+    /// Enqueue a hinted handoff entry. Returns false if the global queue
+    /// is full OR this target node already holds its per-node cap.
     pub fn enqueue(&mut self, mut handoff: HintedHandoff) -> bool {
         if self.queue.len() >= self.max_size {
+            return false;
+        }
+        if self.count_for_node(&handoff.target_node) >= self.max_per_node {
             return false;
         }
         if handoff.ttl_seconds == 0 {
@@ -3029,6 +3136,49 @@ mod tests {
     }
 
     #[test]
+    fn test_storage_admits_caps() {
+        // V157: oversized value rejected; key-count cap blocks NEW keys but
+        // not updates to existing ones.
+        let mut store: HashMap<String, StoredValue> = HashMap::new();
+        // Oversized value rejected regardless of key count.
+        let huge = vec![0u8; MAX_STORED_VALUE_BYTES + 1];
+        assert!(!EventLoop::storage_admits(&store, "k", &huge));
+        // Normal value admitted.
+        assert!(EventLoop::storage_admits(&store, "k", b"small"));
+        // Simulate the key-count cap being reached with a stub entry set.
+        // (We can't cheaply insert 100k entries here, so check the boundary
+        // logic directly: an existing key is always admitted; a brand-new
+        // key is gated on len < cap.)
+        store.insert(
+            "existing".to_string(),
+            StoredValue::new(b"v".to_vec(), None),
+        );
+        assert!(EventLoop::storage_admits(&store, "existing", b"update"));
+        assert!(EventLoop::storage_admits(&store, "brand-new", b"v"));
+    }
+
+    #[test]
+    fn test_process_message_put_rejects_oversized_value() {
+        let storage = Arc::new(RwLock::new(HashMap::new()));
+        let peers = Arc::new(RwLock::new(HashMap::new()));
+        let tokens = Arc::new(RwLock::new(Vec::new()));
+        let node_id = NodeId::from_string("server");
+        let put_msg = NodeMessage::Put {
+            key: "big".to_string(),
+            value: vec![0u8; MAX_STORED_VALUE_BYTES + 1],
+            ttl_secs: None,
+        };
+        let resp = EventLoop::process_message(&put_msg, node_id, &storage, &peers, &tokens, &None);
+        match resp {
+            Some(NodeMessage::PutAck { success, .. }) => {
+                assert!(!success, "oversized Put must be rejected (success=false)")
+            }
+            _ => panic!("Expected PutAck"),
+        }
+        assert_eq!(storage.read().unwrap().len(), 0, "nothing stored");
+    }
+
+    #[test]
     fn test_process_message_get_put() {
         let storage = Arc::new(RwLock::new(HashMap::new()));
         let peers = Arc::new(RwLock::new(HashMap::new()));
@@ -3716,6 +3866,35 @@ mod tests {
         assert!(queue.enqueue(h2));
         assert!(!queue.enqueue(h3)); // Queue full
         assert_eq!(queue.len(), 2);
+    }
+
+    #[test]
+    fn test_handoff_per_node_cap_prevents_starvation() {
+        // V157: a single dead peer must not occupy the whole queue.
+        // Global cap 100, per-node cap explicitly 3.
+        let mut queue = HintedHandoffQueue::new(100, 3600).with_max_per_node(3);
+        let mk = |i: u8, node: u8| HintedHandoff {
+            key: format!("k{i}"),
+            value: vec![i],
+            target_node: vec![node],
+            created_at: 1000,
+            attempts: 0,
+            ttl_seconds: 3600,
+        };
+        // Peer 1 fills its 3 slots, then is capped — even though the
+        // global queue has plenty of room.
+        assert!(queue.enqueue(mk(1, 1)));
+        assert!(queue.enqueue(mk(2, 1)));
+        assert!(queue.enqueue(mk(3, 1)));
+        assert!(!queue.enqueue(mk(4, 1)), "peer 1 over its per-node cap");
+        // A different peer still gets its own slots — not starved.
+        assert!(queue.enqueue(mk(5, 2)));
+        assert!(queue.enqueue(mk(6, 2)));
+        assert_eq!(queue.len(), 5);
+        // After draining peer 1, it can enqueue again.
+        let drained = queue.drain_for_node(&[1]);
+        assert_eq!(drained.len(), 3);
+        assert!(queue.enqueue(mk(7, 1)));
     }
 
     #[test]

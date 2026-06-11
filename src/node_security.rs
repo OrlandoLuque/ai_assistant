@@ -322,7 +322,12 @@ impl CertificateManager {
     }
 
     /// Derive a NodeId from the first 20 bytes of a certificate's SHA-256 hash.
-    fn node_id_from_cert(cert_der: &[u8]) -> NodeId {
+    ///
+    /// `pub(crate)` so the network layer can bind a peer's claimed NodeId to
+    /// the identity in its TLS certificate (V157): a node's own NodeId is
+    /// derived this way, so a legitimate peer's self-reported id always
+    /// matches its cert — only an impersonator mismatches.
+    pub(crate) fn node_id_from_cert(cert_der: &[u8]) -> NodeId {
         let hash = Sha256::digest(cert_der);
         let mut bytes = [0u8; 20];
         bytes.copy_from_slice(&hash[..20]);
