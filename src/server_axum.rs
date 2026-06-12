@@ -4178,7 +4178,7 @@ mod tests {
             published: None,
             tags: None,
         };
-        admin_create_virtual_model(State(state.clone()), Json(req))
+        let _ = admin_create_virtual_model(State(state.clone()), Json(req))
             .await
             .unwrap();
 
@@ -4353,7 +4353,7 @@ mod tests {
             provider: Some(crate::config::AiProvider::Ollama),
             display_name: Some("My Llama".to_string()),
         };
-        admin_publish_model(
+        let _ = admin_publish_model(
             State(state.clone()),
             Path("llama3:8b".to_string()),
             Some(Json(req)),

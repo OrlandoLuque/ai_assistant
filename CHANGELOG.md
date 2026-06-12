@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v122 (2026-06-11) — V158: per-peer mesh storage byte quota (0.2.109)
+
+Closes the last registered storage follow-up from V155/V157: a per-peer
+byte quota so one authenticated peer cannot monopolize a node's storage
+and starve others. Full detail: `docs/SECURITY_HARDENING_V158.md`.
+
+### Added
+- **`MeshStore`** wraps the mesh key-value map and tracks per-peer value
+  bytes. Reads are unchanged (`Deref` to the inner map); all mutations go
+  through `put`/`remove`/`retain_unexpired`, which keep the byte counters
+  in sync under the same lock — no `DerefMut`, so a raw `.insert()` won't
+  compile and the counters can't desync.
+- `StoredValue.owner: NodeId` — the peer a value is attributed to (the
+  sender of the write), or `LOCAL_OWNER` for this node's own writes.
+- **`MAX_BYTES_PER_PEER` (64 MiB)** quota enforced in `storage_admits` on
+  all three peer-write paths (`Put`, `Replicate`, `SyncData`), O(1), with
+  credit-back for same-key overwrites. Local writes are exempt. With the
+  50-connection cap this bounds total peer storage at ~3.2 GiB.
+- Tests: `test_storage_admits_per_peer_quota`,
+  `test_meshstore_accounting_on_overwrite_and_remove`; the live
+  `test_two_nodes_connect` exercises the real path through the wrapper.
+
+### Fixed
+- 2 pre-existing `must_use` warnings in `server_axum` admin-handler tests
+  (only visible under the network feature set the standard clippy job
+  doesn't cover).
+
+### Notes
+- V157 (per-value + key-count caps) + V158 (per-peer byte quota) together
+  close the V155 storage-exhaustion findings. No storage follow-ups remain.
+
 ## [Unreleased] - v121 (2026-06-11) — V157: security hardening — the 4 V155 follow-ups (0.2.108)
 
 Implements all four hardening follow-ups the V155 audit registered. Full

@@ -311,7 +311,7 @@ pub struct NetworkNode {
     /// Shared hash ring.
     ring: Arc<RwLock<ConsistentHashRing>>,
     /// Shared local key-value storage.
-    storage: Arc<RwLock<HashMap<String, StoredValue>>>,
+    storage: Arc<RwLock<MeshStore>>,
     /// Shared heartbeat manager.
     heartbeat_mgr: Arc<RwLock<HeartbeatManager>>,
     /// Shared anti-entropy sync state (used by periodic sync loop).
@@ -332,10 +332,8 @@ pub struct NetworkNode {
 
 // V157: storage exhaustion guards. The mesh trusts authenticated peers,
 // but a misbehaving (or compromised) peer should not be able to OOM a node
-// by storing one giant value or a flood of keys. Both checks are O(1) so
-// they add no per-write scan under adversarial load. A tight total-byte
-// quota with per-peer attribution is a registered follow-up (needs the
-// storage map to track which peer wrote each key).
+// by storing one giant value or a flood of keys. All checks are O(1) so
+// they add no per-write scan under adversarial load.
 //
 // Max bytes for a single stored value. Matches the 16 MiB wire-message cap
 // — a value can't arrive larger than a message anyway, but pinning it here
@@ -345,6 +343,16 @@ const MAX_STORED_VALUE_BYTES: usize = 16 * 1024 * 1024;
 // exhaustion vector. Updates to existing keys are always allowed (they
 // don't grow the key count).
 const MAX_STORED_KEYS: usize = 100_000;
+// V158: max value bytes a single peer may hold on this node at once. Adds
+// fairness on top of the absolute caps above: one peer cannot monopolize
+// the node's storage budget and starve others. With the default 50-peer
+// connection cap this also bounds total peer-attributed storage at
+// ~3.2 GiB (64 MiB × 50). Local writes by this node are exempt.
+const MAX_BYTES_PER_PEER: u64 = 64 * 1024 * 1024;
+
+/// Sentinel owner for values written by this node's own local API (not on
+/// behalf of a peer). Such writes are exempt from the per-peer quota.
+const LOCAL_OWNER: NodeId = NodeId([0u8; 20]);
 
 /// A value stored in the local key-value store.
 #[derive(Clone, Debug)]
@@ -352,6 +360,10 @@ struct StoredValue {
     data: Vec<u8>,
     version: u64,
     expires_at: Option<Instant>,
+    /// V158: the peer this value is attributed to for the per-peer storage
+    /// quota — the peer that sent the write that created/updated it, or
+    /// `LOCAL_OWNER` for this node's own local writes.
+    owner: NodeId,
 }
 
 impl StoredValue {
@@ -363,11 +375,108 @@ impl StoredValue {
                 .unwrap_or_default()
                 .as_micros() as u64,
             expires_at: ttl.map(|d| Instant::now() + d),
+            owner: LOCAL_OWNER,
         }
+    }
+
+    /// Attribute this value to `owner` for the per-peer quota.
+    fn owned_by(mut self, owner: NodeId) -> Self {
+        self.owner = owner;
+        self
     }
 
     fn is_expired(&self) -> bool {
         self.expires_at.map_or(false, |exp| Instant::now() > exp)
+    }
+}
+
+/// V158: key-value storage with per-peer byte accounting. Wraps the entry
+/// map and tracks how many value bytes each peer is responsible for, so the
+/// per-peer quota can be enforced in O(1) without scanning the map on every
+/// write. Reads go through `Deref` to the inner map unchanged; every
+/// mutation goes through the methods here so the byte counters never
+/// desync (there is deliberately no `DerefMut`).
+#[derive(Default)]
+struct MeshStore {
+    entries: HashMap<String, StoredValue>,
+    bytes_per_peer: HashMap<NodeId, u64>,
+}
+
+impl std::ops::Deref for MeshStore {
+    type Target = HashMap<String, StoredValue>;
+    fn deref(&self) -> &Self::Target {
+        &self.entries
+    }
+}
+
+impl MeshStore {
+    /// Value bytes currently attributed to `owner`.
+    fn peer_bytes(&self, owner: &NodeId) -> u64 {
+        self.bytes_per_peer.get(owner).copied().unwrap_or(0)
+    }
+
+    /// Bytes `owner` would hold after writing `new_len` to `key`, crediting
+    /// back any existing entry under `key` that `owner` already owns.
+    fn projected_peer_bytes(&self, owner: &NodeId, key: &str, new_len: usize) -> u64 {
+        let mut total = self.peer_bytes(owner);
+        if let Some(existing) = self.entries.get(key) {
+            if existing.owner == *owner {
+                total = total.saturating_sub(existing.data.len() as u64);
+            }
+        }
+        total.saturating_add(new_len as u64)
+    }
+
+    /// Insert or overwrite `key`, maintaining the per-peer byte counters
+    /// (`value.owner` is the attribution).
+    fn put(&mut self, key: String, value: StoredValue) {
+        if let Some((owner, len)) = self
+            .entries
+            .get(&key)
+            .map(|old| (old.owner, old.data.len()))
+        {
+            self.decr(owner, len);
+        }
+        self.incr(value.owner, value.data.len());
+        self.entries.insert(key, value);
+    }
+
+    /// Remove `key`, decrementing its owner's byte count.
+    fn remove(&mut self, key: &str) -> Option<StoredValue> {
+        let removed = self.entries.remove(key);
+        if let Some(ref v) = removed {
+            self.decr(v.owner, v.data.len());
+        }
+        removed
+    }
+
+    /// Drop expired entries, decrementing their owners' byte counts.
+    fn retain_unexpired(&mut self) {
+        let bytes_per_peer = &mut self.bytes_per_peer;
+        self.entries.retain(|_, v| {
+            if v.is_expired() {
+                if let Some(b) = bytes_per_peer.get_mut(&v.owner) {
+                    *b = b.saturating_sub(v.data.len() as u64);
+                }
+                false
+            } else {
+                true
+            }
+        });
+        self.bytes_per_peer.retain(|_, b| *b > 0);
+    }
+
+    fn incr(&mut self, owner: NodeId, len: usize) {
+        *self.bytes_per_peer.entry(owner).or_insert(0) += len as u64;
+    }
+
+    fn decr(&mut self, owner: NodeId, len: usize) {
+        if let Some(b) = self.bytes_per_peer.get_mut(&owner) {
+            *b = b.saturating_sub(len as u64);
+            if *b == 0 {
+                self.bytes_per_peer.remove(&owner);
+            }
+        }
     }
 }
 
@@ -426,8 +535,7 @@ impl NetworkNode {
             config.replication.vnodes_per_node,
             config.replication.max_copies,
         )));
-        let storage: Arc<RwLock<HashMap<String, StoredValue>>> =
-            Arc::new(RwLock::new(HashMap::new()));
+        let storage: Arc<RwLock<MeshStore>> = Arc::new(RwLock::new(MeshStore::default()));
         let heartbeat_mgr = Arc::new(RwLock::new(HeartbeatManager::new(HeartbeatConfig {
             interval: config.heartbeat_interval,
             phi_threshold: config.phi_threshold,
@@ -704,7 +812,8 @@ impl NetworkNode {
     /// Store a value directly in local storage (no replication).
     pub fn local_store(&self, key: &str, value: Vec<u8>, ttl: Option<Duration>) {
         let mut storage = self.storage.write().unwrap_or_else(|e| e.into_inner());
-        storage.insert(key.to_string(), StoredValue::new(value, ttl));
+        // Local write — owned by LOCAL_OWNER (exempt from the per-peer quota).
+        storage.put(key.to_string(), StoredValue::new(value, ttl));
     }
 
     /// Check the health status of a peer.
@@ -790,7 +899,7 @@ struct EventLoop {
     identity: NodeIdentity,
     peers: Arc<RwLock<HashMap<NodeId, PeerState>>>,
     ring: Arc<RwLock<ConsistentHashRing>>,
-    storage: Arc<RwLock<HashMap<String, StoredValue>>>,
+    storage: Arc<RwLock<MeshStore>>,
     heartbeat_mgr: Arc<RwLock<HeartbeatManager>>,
     merkle: Arc<RwLock<AntiEntropySync>>,
     join_tokens: Arc<RwLock<Vec<JoinToken>>>,
@@ -1215,7 +1324,7 @@ impl EventLoop {
         peer_id: NodeId,
         self_node_id: NodeId,
         peers: Arc<RwLock<HashMap<NodeId, PeerState>>>,
-        storage: Arc<RwLock<HashMap<String, StoredValue>>>,
+        storage: Arc<RwLock<MeshStore>>,
         join_tokens: Arc<RwLock<Vec<JoinToken>>>,
         config_join_token: Option<String>,
         messages_received: Arc<std::sync::atomic::AtomicU64>,
@@ -1246,6 +1355,7 @@ impl EventLoop {
                             let response = Self::process_message(
                                 &msg,
                                 self_node_id,
+                                peer_id,
                                 &storage,
                                 &peers,
                                 &join_tokens,
@@ -1280,15 +1390,23 @@ impl EventLoop {
         let _ = event_tx.send(NetworkEvent::PeerDisconnected(peer_id)).await;
     }
 
-    /// V157: admission control for an incoming store. Rejects values over
-    /// the per-value cap, and new keys (not already present) once the
-    /// key-count cap is reached. Caller holds the storage write lock.
-    fn storage_admits(store: &HashMap<String, StoredValue>, key: &str, value: &[u8]) -> bool {
+    /// V157/V158: admission control for an incoming store from `owner`.
+    /// Rejects values over the per-value cap, new keys past the key-count
+    /// cap, and writes that would push `owner` over the per-peer byte quota.
+    /// `LOCAL_OWNER` (this node's own writes) is exempt from the per-peer
+    /// quota. Caller holds the storage write lock.
+    fn storage_admits(store: &MeshStore, key: &str, value: &[u8], owner: NodeId) -> bool {
         if value.len() > MAX_STORED_VALUE_BYTES {
             return false;
         }
         // Updating an existing key never grows the key count.
         if !store.contains_key(key) && store.len() >= MAX_STORED_KEYS {
+            return false;
+        }
+        // Per-peer byte quota (peers only — local writes are trusted).
+        if owner != LOCAL_OWNER
+            && store.projected_peer_bytes(&owner, key, value.len()) > MAX_BYTES_PER_PEER
+        {
             return false;
         }
         true
@@ -1305,7 +1423,10 @@ impl EventLoop {
     fn process_message(
         msg: &NodeMessage,
         self_node_id: NodeId,
-        storage: &Arc<RwLock<HashMap<String, StoredValue>>>,
+        // V158: the peer that sent this message — attribution subject for
+        // the per-peer storage quota on Put/Replicate/SyncData.
+        sender: NodeId,
+        storage: &Arc<RwLock<MeshStore>>,
         peers: &Arc<RwLock<HashMap<NodeId, PeerState>>>,
         join_tokens: &Arc<RwLock<Vec<JoinToken>>>,
         config_join_token: &Option<String>,
@@ -1347,12 +1468,16 @@ impl EventLoop {
             } => {
                 let ttl = ttl_secs.map(Duration::from_secs);
                 let mut storage_w = storage.write().unwrap_or_else(|e| e.into_inner());
-                let success = if Self::storage_admits(&storage_w, key, value) {
-                    storage_w.insert(key.clone(), StoredValue::new(value.clone(), ttl));
+                let success = if Self::storage_admits(&storage_w, key, value, sender) {
+                    storage_w.put(
+                        key.clone(),
+                        StoredValue::new(value.clone(), ttl).owned_by(sender),
+                    );
                     true
                 } else {
-                    // Over the value-size or key-count cap — reject so the
-                    // peer learns the write didn't land (no silent drop).
+                    // Over the value-size, key-count, or per-peer byte cap —
+                    // reject so the peer learns the write didn't land (no
+                    // silent drop).
                     false
                 };
                 Some(NodeMessage::PutAck {
@@ -1383,14 +1508,15 @@ impl EventLoop {
                     .map_or(true, |existing| existing.version < *version);
                 // Apply the same admission caps to replicated writes — a
                 // peer must not bypass them by sending Replicate over Put.
-                let cap_ok = Self::storage_admits(&storage_w, key, value);
+                let cap_ok = Self::storage_admits(&storage_w, key, value, sender);
                 if should_update && cap_ok {
-                    storage_w.insert(
+                    storage_w.put(
                         key.clone(),
                         StoredValue {
                             data: value.clone(),
                             version: *version,
                             expires_at: None,
+                            owner: sender,
                         },
                     );
                 }
@@ -1451,12 +1577,21 @@ impl EventLoop {
                 }
             }
             NodeMessage::SyncData { entries } => {
-                // Store received entries (only if we don't have a newer version)
+                // Store received entries (only those we don't already have).
+                // Attributed to the sending peer and subject to the same
+                // admission caps as Put/Replicate so anti-entropy sync can't
+                // be used to bypass the per-peer quota.
                 let mut storage_w = storage.write().unwrap_or_else(|e| e.into_inner());
                 for (key, data) in entries {
-                    storage_w
-                        .entry(key.clone())
-                        .or_insert_with(|| StoredValue::new(data.clone(), None));
+                    if storage_w.contains_key(key) {
+                        continue;
+                    }
+                    if Self::storage_admits(&storage_w, key, data, sender) {
+                        storage_w.put(
+                            key.clone(),
+                            StoredValue::new(data.clone(), None).owned_by(sender),
+                        );
+                    }
                 }
                 None
             }
@@ -1576,7 +1711,7 @@ impl EventLoop {
 
     /// Convert local storage into a BTreeMap for Merkle tree construction.
     fn storage_to_btree(
-        storage: &Arc<RwLock<HashMap<String, StoredValue>>>,
+        storage: &Arc<RwLock<MeshStore>>,
     ) -> std::collections::BTreeMap<String, Vec<u8>> {
         let storage_r = storage.read().unwrap_or_else(|e| e.into_inner());
         let mut tree_data = std::collections::BTreeMap::new();
@@ -1747,12 +1882,12 @@ impl EventLoop {
         ttl: Option<Duration>,
         event_tx: &mpsc::Sender<NetworkEvent>,
     ) -> Result<(), String> {
-        // Store locally
+        // Store locally (our own write — LOCAL_OWNER, quota-exempt).
         let stored = StoredValue::new(value.clone(), ttl);
         let version = stored.version;
         {
             let mut storage = self.storage.write().unwrap_or_else(|e| e.into_inner());
-            storage.insert(key.to_string(), stored);
+            storage.put(key.to_string(), stored);
         }
 
         // Determine replica nodes
@@ -1965,7 +2100,7 @@ impl EventLoop {
     fn cleanup_expired(&mut self) {
         {
             let mut storage = self.storage.write().unwrap_or_else(|e| e.into_inner());
-            storage.retain(|_, v| !v.is_expired());
+            storage.retain_unexpired();
         }
         // Drop hinted handoffs past their TTL. Without this the bounded
         // queue (cap 1000) fills with stale entries for peers that never
@@ -2814,6 +2949,7 @@ mod tests {
             data: b"old".to_vec(),
             version: 1,
             expires_at: Some(Instant::now() - Duration::from_secs(1)),
+            owner: LOCAL_OWNER,
         };
         assert!(value.is_expired());
     }
@@ -3117,7 +3253,7 @@ mod tests {
 
     #[test]
     fn test_process_message_ping() {
-        let storage = Arc::new(RwLock::new(HashMap::new()));
+        let storage = Arc::new(RwLock::new(MeshStore::default()));
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let tokens = Arc::new(RwLock::new(Vec::new()));
         let node_id = NodeId::from_string("server");
@@ -3125,7 +3261,8 @@ mod tests {
             sender: NodeId::from_string("client"),
             timestamp: 42,
         };
-        let resp = EventLoop::process_message(&msg, node_id, &storage, &peers, &tokens, &None);
+        let resp =
+            EventLoop::process_message(&msg, node_id, node_id, &storage, &peers, &tokens, &None);
         match resp {
             Some(NodeMessage::Pong { sender, timestamp }) => {
                 assert_eq!(sender, node_id);
@@ -3139,27 +3276,90 @@ mod tests {
     fn test_storage_admits_caps() {
         // V157: oversized value rejected; key-count cap blocks NEW keys but
         // not updates to existing ones.
-        let mut store: HashMap<String, StoredValue> = HashMap::new();
+        let mut store = MeshStore::default();
+        let peer = NodeId::from_string("peer-1");
         // Oversized value rejected regardless of key count.
         let huge = vec![0u8; MAX_STORED_VALUE_BYTES + 1];
-        assert!(!EventLoop::storage_admits(&store, "k", &huge));
+        assert!(!EventLoop::storage_admits(&store, "k", &huge, peer));
         // Normal value admitted.
-        assert!(EventLoop::storage_admits(&store, "k", b"small"));
-        // Simulate the key-count cap being reached with a stub entry set.
-        // (We can't cheaply insert 100k entries here, so check the boundary
-        // logic directly: an existing key is always admitted; a brand-new
-        // key is gated on len < cap.)
-        store.insert(
+        assert!(EventLoop::storage_admits(&store, "k", b"small", peer));
+        // An existing key is always admitted; a brand-new key is gated on
+        // len < cap (boundary logic — we don't insert 100k entries here).
+        store.put(
             "existing".to_string(),
             StoredValue::new(b"v".to_vec(), None),
         );
-        assert!(EventLoop::storage_admits(&store, "existing", b"update"));
-        assert!(EventLoop::storage_admits(&store, "brand-new", b"v"));
+        assert!(EventLoop::storage_admits(
+            &store, "existing", b"update", peer
+        ));
+        assert!(EventLoop::storage_admits(&store, "brand-new", b"v", peer));
+    }
+
+    #[test]
+    fn test_storage_admits_per_peer_quota() {
+        // V158: a peer cannot exceed MAX_BYTES_PER_PEER; another peer and
+        // local writes are unaffected. Fill the quota with max-per-value
+        // chunks (a single value can't reach the per-peer cap since the
+        // per-value cap is smaller).
+        let mut store = MeshStore::default();
+        let peer_a = NodeId::from_string("peer-a");
+        let peer_b = NodeId::from_string("peer-b");
+        let chunk = MAX_STORED_VALUE_BYTES; // 16 MiB — the max single value
+        let n = MAX_BYTES_PER_PEER as usize / chunk; // exactly fills the cap
+        for i in 0..n {
+            store.put(
+                format!("a{i}"),
+                StoredValue::new(vec![0u8; chunk], None).owned_by(peer_a),
+            );
+        }
+        // peer_a is at its cap: any new key is over.
+        assert!(!EventLoop::storage_admits(&store, "a-extra", b"x", peer_a));
+        // A different peer has its own budget — unaffected.
+        assert!(EventLoop::storage_admits(&store, "b-key", b"x", peer_b));
+        // Local writes (LOCAL_OWNER) are exempt from the per-peer quota.
+        assert!(EventLoop::storage_admits(
+            &store,
+            "local",
+            &vec![0u8; chunk],
+            LOCAL_OWNER
+        ));
+        // peer_a overwriting ITS OWN key is judged on the net delta, so a
+        // same-size rewrite stays within quota.
+        assert!(EventLoop::storage_admits(
+            &store,
+            "a0",
+            &vec![0u8; chunk],
+            peer_a
+        ));
+    }
+
+    #[test]
+    fn test_meshstore_accounting_on_overwrite_and_remove() {
+        // V158: byte counters track overwrite (delta) and removal correctly,
+        // including a change of owner on overwrite.
+        let mut store = MeshStore::default();
+        let peer_a = NodeId::from_string("acct-a");
+        let peer_b = NodeId::from_string("acct-b");
+        store.put(
+            "k".to_string(),
+            StoredValue::new(vec![0u8; 100], None).owned_by(peer_a),
+        );
+        assert_eq!(store.peer_bytes(&peer_a), 100);
+        // Overwrite by a different peer moves the bytes off A and onto B.
+        store.put(
+            "k".to_string(),
+            StoredValue::new(vec![0u8; 40], None).owned_by(peer_b),
+        );
+        assert_eq!(store.peer_bytes(&peer_a), 0);
+        assert_eq!(store.peer_bytes(&peer_b), 40);
+        // Removal frees B's bytes.
+        store.remove("k");
+        assert_eq!(store.peer_bytes(&peer_b), 0);
     }
 
     #[test]
     fn test_process_message_put_rejects_oversized_value() {
-        let storage = Arc::new(RwLock::new(HashMap::new()));
+        let storage = Arc::new(RwLock::new(MeshStore::default()));
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let tokens = Arc::new(RwLock::new(Vec::new()));
         let node_id = NodeId::from_string("server");
@@ -3168,7 +3368,9 @@ mod tests {
             value: vec![0u8; MAX_STORED_VALUE_BYTES + 1],
             ttl_secs: None,
         };
-        let resp = EventLoop::process_message(&put_msg, node_id, &storage, &peers, &tokens, &None);
+        let resp = EventLoop::process_message(
+            &put_msg, node_id, node_id, &storage, &peers, &tokens, &None,
+        );
         match resp {
             Some(NodeMessage::PutAck { success, .. }) => {
                 assert!(!success, "oversized Put must be rejected (success=false)")
@@ -3180,7 +3382,7 @@ mod tests {
 
     #[test]
     fn test_process_message_get_put() {
-        let storage = Arc::new(RwLock::new(HashMap::new()));
+        let storage = Arc::new(RwLock::new(MeshStore::default()));
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let tokens = Arc::new(RwLock::new(Vec::new()));
         let node_id = NodeId::from_string("server");
@@ -3191,7 +3393,9 @@ mod tests {
             value: b"world".to_vec(),
             ttl_secs: None,
         };
-        let resp = EventLoop::process_message(&put_msg, node_id, &storage, &peers, &tokens, &None);
+        let resp = EventLoop::process_message(
+            &put_msg, node_id, node_id, &storage, &peers, &tokens, &None,
+        );
         match resp {
             Some(NodeMessage::PutAck { key, success, .. }) => {
                 assert_eq!(key, "hello");
@@ -3205,7 +3409,9 @@ mod tests {
             key: "hello".to_string(),
             request_id: 1,
         };
-        let resp = EventLoop::process_message(&get_msg, node_id, &storage, &peers, &tokens, &None);
+        let resp = EventLoop::process_message(
+            &get_msg, node_id, node_id, &storage, &peers, &tokens, &None,
+        );
         match resp {
             Some(NodeMessage::GetResponse {
                 key,
@@ -3222,7 +3428,7 @@ mod tests {
 
     #[test]
     fn test_process_message_delete() {
-        let storage = Arc::new(RwLock::new(HashMap::new()));
+        let storage = Arc::new(RwLock::new(MeshStore::default()));
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let tokens = Arc::new(RwLock::new(Vec::new()));
         let node_id = NodeId::from_string("server");
@@ -3231,13 +3437,15 @@ mod tests {
         storage
             .write()
             .unwrap()
-            .insert("key".to_string(), StoredValue::new(b"val".to_vec(), None));
+            .put("key".to_string(), StoredValue::new(b"val".to_vec(), None));
 
         let del_msg = NodeMessage::Delete {
             key: "key".to_string(),
             request_id: 5,
         };
-        let resp = EventLoop::process_message(&del_msg, node_id, &storage, &peers, &tokens, &None);
+        let resp = EventLoop::process_message(
+            &del_msg, node_id, node_id, &storage, &peers, &tokens, &None,
+        );
         match resp {
             Some(NodeMessage::DeleteAck {
                 key,
@@ -3257,7 +3465,7 @@ mod tests {
 
     #[test]
     fn test_process_message_replicate() {
-        let storage = Arc::new(RwLock::new(HashMap::new()));
+        let storage = Arc::new(RwLock::new(MeshStore::default()));
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let tokens = Arc::new(RwLock::new(Vec::new()));
         let node_id = NodeId::from_string("server");
@@ -3267,7 +3475,8 @@ mod tests {
             value: b"rep_val".to_vec(),
             version: 100,
         };
-        let resp = EventLoop::process_message(&msg, node_id, &storage, &peers, &tokens, &None);
+        let resp =
+            EventLoop::process_message(&msg, node_id, node_id, &storage, &peers, &tokens, &None);
         match resp {
             Some(NodeMessage::ReplicateAck {
                 key,
@@ -3290,18 +3499,19 @@ mod tests {
 
     #[test]
     fn test_process_message_replicate_version_check() {
-        let storage = Arc::new(RwLock::new(HashMap::new()));
+        let storage = Arc::new(RwLock::new(MeshStore::default()));
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let tokens = Arc::new(RwLock::new(Vec::new()));
         let node_id = NodeId::from_string("server");
 
         // Store with high version
-        storage.write().unwrap().insert(
+        storage.write().unwrap().put(
             "key".to_string(),
             StoredValue {
                 data: b"new".to_vec(),
                 version: 200,
                 expires_at: None,
+                owner: LOCAL_OWNER,
             },
         );
 
@@ -3311,14 +3521,14 @@ mod tests {
             value: b"old".to_vec(),
             version: 100,
         };
-        EventLoop::process_message(&msg, node_id, &storage, &peers, &tokens, &None);
+        EventLoop::process_message(&msg, node_id, node_id, &storage, &peers, &tokens, &None);
 
         assert_eq!(storage.read().unwrap().get("key").unwrap().data, b"new");
     }
 
     #[test]
     fn test_process_message_join_request_no_token_required() {
-        let storage = Arc::new(RwLock::new(HashMap::new()));
+        let storage = Arc::new(RwLock::new(MeshStore::default()));
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let tokens = Arc::new(RwLock::new(Vec::new()));
         let node_id = NodeId::from_string("server");
@@ -3328,7 +3538,8 @@ mod tests {
             cert_der: vec![1, 2, 3],
         };
         // No join token required (config_join_token is None)
-        let resp = EventLoop::process_message(&msg, node_id, &storage, &peers, &tokens, &None);
+        let resp =
+            EventLoop::process_message(&msg, node_id, node_id, &storage, &peers, &tokens, &None);
         match resp {
             Some(NodeMessage::JoinAccepted { .. }) => {} // Expected
             _ => panic!("Expected JoinAccepted when no token required"),
@@ -3337,7 +3548,7 @@ mod tests {
 
     #[test]
     fn test_process_message_join_request_valid_token() {
-        let storage = Arc::new(RwLock::new(HashMap::new()));
+        let storage = Arc::new(RwLock::new(MeshStore::default()));
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let token = JoinToken::generate(24, Some(5));
         let token_str = token.token.clone();
@@ -3349,8 +3560,15 @@ mod tests {
             cert_der: vec![],
         };
         let config_token = Some("required".to_string());
-        let resp =
-            EventLoop::process_message(&msg, node_id, &storage, &peers, &tokens, &config_token);
+        let resp = EventLoop::process_message(
+            &msg,
+            node_id,
+            node_id,
+            &storage,
+            &peers,
+            &tokens,
+            &config_token,
+        );
         match resp {
             Some(NodeMessage::JoinAccepted { .. }) => {} // Expected
             _ => panic!("Expected JoinAccepted with valid token"),
@@ -3359,7 +3577,7 @@ mod tests {
 
     #[test]
     fn test_process_message_join_request_invalid_token() {
-        let storage = Arc::new(RwLock::new(HashMap::new()));
+        let storage = Arc::new(RwLock::new(MeshStore::default()));
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let tokens = Arc::new(RwLock::new(vec![JoinToken::generate(24, Some(5))]));
         let node_id = NodeId::from_string("server");
@@ -3369,8 +3587,15 @@ mod tests {
             cert_der: vec![],
         };
         let config_token = Some("required".to_string());
-        let resp =
-            EventLoop::process_message(&msg, node_id, &storage, &peers, &tokens, &config_token);
+        let resp = EventLoop::process_message(
+            &msg,
+            node_id,
+            node_id,
+            &storage,
+            &peers,
+            &tokens,
+            &config_token,
+        );
         match resp {
             Some(NodeMessage::JoinRejected { reason }) => {
                 assert!(reason.contains("Invalid"));
@@ -3381,7 +3606,7 @@ mod tests {
 
     #[test]
     fn test_process_message_sync_request_same_data() {
-        let storage = Arc::new(RwLock::new(HashMap::new()));
+        let storage = Arc::new(RwLock::new(MeshStore::default()));
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let tokens = Arc::new(RwLock::new(Vec::new()));
         let node_id = NodeId::from_string("server");
@@ -3394,7 +3619,8 @@ mod tests {
             .unwrap_or_default();
 
         let msg = NodeMessage::SyncRequest { merkle_root: root };
-        let resp = EventLoop::process_message(&msg, node_id, &storage, &peers, &tokens, &None);
+        let resp =
+            EventLoop::process_message(&msg, node_id, node_id, &storage, &peers, &tokens, &None);
         match resp {
             Some(NodeMessage::SyncResponse { diff_keys }) => {
                 assert!(diff_keys.is_empty(), "Identical data should have no diff");
@@ -3405,13 +3631,13 @@ mod tests {
 
     #[test]
     fn test_process_message_sync_request_different_data() {
-        let storage = Arc::new(RwLock::new(HashMap::new()));
+        let storage = Arc::new(RwLock::new(MeshStore::default()));
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let tokens = Arc::new(RwLock::new(Vec::new()));
         let node_id = NodeId::from_string("server");
 
         // Put data in storage
-        storage.write().unwrap().insert(
+        storage.write().unwrap().put(
             "local_key".to_string(),
             StoredValue::new(b"data".to_vec(), None),
         );
@@ -3420,7 +3646,8 @@ mod tests {
         let msg = NodeMessage::SyncRequest {
             merkle_root: vec![0u8; 32],
         };
-        let resp = EventLoop::process_message(&msg, node_id, &storage, &peers, &tokens, &None);
+        let resp =
+            EventLoop::process_message(&msg, node_id, node_id, &storage, &peers, &tokens, &None);
         match resp {
             Some(NodeMessage::SyncResponse { diff_keys }) => {
                 assert!(diff_keys.contains(&"local_key".to_string()));
@@ -3431,7 +3658,7 @@ mod tests {
 
     #[test]
     fn test_process_message_sync_data() {
-        let storage = Arc::new(RwLock::new(HashMap::new()));
+        let storage = Arc::new(RwLock::new(MeshStore::default()));
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let tokens = Arc::new(RwLock::new(Vec::new()));
         let node_id = NodeId::from_string("server");
@@ -3439,7 +3666,7 @@ mod tests {
         let msg = NodeMessage::SyncData {
             entries: vec![("synced_key".to_string(), b"synced_val".to_vec())],
         };
-        EventLoop::process_message(&msg, node_id, &storage, &peers, &tokens, &None);
+        EventLoop::process_message(&msg, node_id, node_id, &storage, &peers, &tokens, &None);
 
         assert_eq!(
             storage.read().unwrap().get("synced_key").unwrap().data,
@@ -3449,7 +3676,7 @@ mod tests {
 
     #[test]
     fn test_process_message_peer_exchange() {
-        let storage = Arc::new(RwLock::new(HashMap::new()));
+        let storage = Arc::new(RwLock::new(MeshStore::default()));
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let tokens = Arc::new(RwLock::new(Vec::new()));
         let node_id = NodeId::from_string("server");
@@ -3465,7 +3692,8 @@ mod tests {
         let msg = NodeMessage::PeerExchangeRequest {
             sender: vec![1, 2, 3],
         };
-        let resp = EventLoop::process_message(&msg, node_id, &storage, &peers, &tokens, &None);
+        let resp =
+            EventLoop::process_message(&msg, node_id, node_id, &storage, &peers, &tokens, &None);
         match resp {
             Some(NodeMessage::PeerExchangeResponse { peers: peer_list }) => {
                 assert_eq!(peer_list.len(), 1);
@@ -3477,7 +3705,7 @@ mod tests {
 
     #[test]
     fn test_process_message_vector_search() {
-        let storage = Arc::new(RwLock::new(HashMap::new()));
+        let storage = Arc::new(RwLock::new(MeshStore::default()));
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let tokens = Arc::new(RwLock::new(Vec::new()));
         let node_id = NodeId::from_string("server");
@@ -3487,7 +3715,8 @@ mod tests {
             limit: 5,
             request_id: 42,
         };
-        let resp = EventLoop::process_message(&msg, node_id, &storage, &peers, &tokens, &None);
+        let resp =
+            EventLoop::process_message(&msg, node_id, node_id, &storage, &peers, &tokens, &None);
         match resp {
             Some(NodeMessage::VectorSearchResponse {
                 results,
@@ -3502,7 +3731,7 @@ mod tests {
 
     #[test]
     fn test_process_message_map_task() {
-        let storage = Arc::new(RwLock::new(HashMap::new()));
+        let storage = Arc::new(RwLock::new(MeshStore::default()));
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let tokens = Arc::new(RwLock::new(Vec::new()));
         let node_id = NodeId::from_string("server");
@@ -3512,7 +3741,8 @@ mod tests {
             chunk_id: "chunk1".to_string(),
             data: vec![1, 2, 3],
         };
-        let resp = EventLoop::process_message(&msg, node_id, &storage, &peers, &tokens, &None);
+        let resp =
+            EventLoop::process_message(&msg, node_id, node_id, &storage, &peers, &tokens, &None);
         match resp {
             Some(NodeMessage::MapResult { job_id, .. }) => {
                 assert_eq!(job_id, "job1");
@@ -3568,22 +3798,23 @@ mod tests {
 
     #[test]
     fn test_storage_to_btree() {
-        let storage = Arc::new(RwLock::new(HashMap::new()));
+        let storage = Arc::new(RwLock::new(MeshStore::default()));
         storage
             .write()
             .unwrap()
-            .insert("b".to_string(), StoredValue::new(b"val_b".to_vec(), None));
+            .put("b".to_string(), StoredValue::new(b"val_b".to_vec(), None));
         storage
             .write()
             .unwrap()
-            .insert("a".to_string(), StoredValue::new(b"val_a".to_vec(), None));
+            .put("a".to_string(), StoredValue::new(b"val_a".to_vec(), None));
         // Add an expired entry that should be excluded
-        storage.write().unwrap().insert(
+        storage.write().unwrap().put(
             "expired".to_string(),
             StoredValue {
                 data: b"old".to_vec(),
                 version: 1,
                 expires_at: Some(Instant::now() - Duration::from_secs(1)),
+                owner: LOCAL_OWNER,
             },
         );
 
