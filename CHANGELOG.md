@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v125 (2026-06-18) — V160.1: security advisory bump (0.2.112)
+
+CI maintenance. A new advisory **RUSTSEC-2026-0182** (published
+2026-06-15) flagged `wasmtime-wasi 45.0.1` — "Leak in WASIp1
+`fd_renumber` implementation" (low, 2.3). It tripped the `cargo audit`
+job on the V159/V160 pushes even though the gateway code itself was
+green (Tests / Clippy / Functional Battery all passed). Patched by a
+clean in-range bump of the whole `wasmtime` 45.0.x family
+(`45.0.1 → 45.0.2`) via `cargo update -p wasmtime-wasi --precise
+45.0.2`. No code change; `skill-forge` (the only feature pulling
+wasmtime) still checks clean. `cargo audit` now passes without needing
+a new `--ignore`.
+
 ## [Unreleased] - v124 (2026-06-18) — V160: streaming output guardrails for ai_proxy (0.2.111)
 
 Closes the other gap the gateway docs listed: output guardrails (PII /
