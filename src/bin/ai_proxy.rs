@@ -69,6 +69,10 @@ struct CliArgs {
     help: bool,
     /// V149 F4: `round_robin` | `local_first` | `model_aware`.
     routing_policy: Option<String>,
+    /// V159: TLS cert/key paths (HTTPS). Both required to enable TLS;
+    /// override `[tls]` in the config file.
+    tls_cert: Option<PathBuf>,
+    tls_key: Option<PathBuf>,
 }
 
 // ============================================================================
@@ -887,6 +891,23 @@ struct ProxyConfig {
     audit: AuditSection,
     #[serde(default)]
     routing: RoutingSection,
+    #[serde(default)]
+    tls: TlsSection,
+}
+
+/// V159: optional TLS/HTTPS configuration. When both `cert_path` and
+/// `key_path` are set (and the binary is built with the
+/// `server-axum-tls` feature), the proxy serves HTTPS instead of plain
+/// HTTP. The `--tls-cert` / `--tls-key` CLI flags override these.
+#[derive(Debug, Deserialize, Default, Clone)]
+#[serde(deny_unknown_fields)]
+struct TlsSection {
+    /// Path to the PEM-encoded certificate chain.
+    #[serde(default)]
+    cert_path: Option<String>,
+    /// Path to the PEM-encoded private key.
+    #[serde(default)]
+    key_path: Option<String>,
 }
 
 /// V149 routing configuration. All fields are optional; sensible
@@ -1093,6 +1114,11 @@ struct Effective {
     routing: RoutingSection,
     /// V149 F4: resolved routing policy enum.
     routing_policy: RoutingPolicy,
+    /// V159: resolved TLS cert/key paths (CLI overrides the file).
+    /// HTTPS is served when both are `Some` and the binary is built with
+    /// the `server-axum-tls` feature.
+    tls_cert: Option<String>,
+    tls_key: Option<String>,
 }
 
 /// Merge CLI flags and an optional loaded config file into the final
@@ -1109,6 +1135,8 @@ fn merge_cli_and_config(cli: &CliArgs, file: Option<ProxyConfig>) -> Result<Effe
     let mut middleware = MiddlewareSection::default();
     let mut audit = AuditSection::default();
     let mut routing = RoutingSection::default();
+    let mut tls_cert: Option<String> = None;
+    let mut tls_key: Option<String> = None;
 
     if let Some(cfg) = file {
         // Server section
@@ -1152,6 +1180,8 @@ fn merge_cli_and_config(cli: &CliArgs, file: Option<ProxyConfig>) -> Result<Effe
         middleware = cfg.middleware;
         audit = cfg.audit;
         routing = cfg.routing;
+        tls_cert = cfg.tls.cert_path;
+        tls_key = cfg.tls.key_path;
     } else {
         // No config file: still honor AI_PROXY_API_KEY as a convenience.
         if let Ok(v) = std::env::var("AI_PROXY_API_KEY") {
@@ -1201,6 +1231,13 @@ fn merge_cli_and_config(cli: &CliArgs, file: Option<ProxyConfig>) -> Result<Effe
     if let Some(ref p) = cli.cost_snapshot {
         middleware.cost_snapshot_path = Some(p.to_string_lossy().into_owned());
     }
+    // V159: CLI TLS paths override the [tls] config section.
+    if let Some(ref p) = cli.tls_cert {
+        tls_cert = Some(p.to_string_lossy().into_owned());
+    }
+    if let Some(ref p) = cli.tls_key {
+        tls_key = Some(p.to_string_lossy().into_owned());
+    }
 
     if backend_addrs.is_empty() {
         return Err(
@@ -1234,6 +1271,8 @@ fn merge_cli_and_config(cli: &CliArgs, file: Option<ProxyConfig>) -> Result<Effe
         audit,
         routing,
         routing_policy,
+        tls_cert,
+        tls_key,
     })
 }
 
@@ -1848,12 +1887,22 @@ fn main() -> ExitCode {
     let port = effective.port;
     let health_interval = effective.health_interval;
     let backend_addrs = effective.backend_addrs.clone();
+    // V159: TLS is on only when BOTH cert and key are resolved.
+    let tls_paths: Option<(String, String)> =
+        effective.tls_cert.clone().zip(effective.tls_key.clone());
 
     if cli.dry_run {
         println!("AI Proxy Configuration:");
         println!("  port: {}", port);
         println!("  backends: {:?}", backend_addrs);
         println!("  health-interval: {}s", health_interval);
+        println!(
+            "  tls: {}",
+            match &tls_paths {
+                Some((c, k)) => format!("HTTPS (cert={c}, key={k})"),
+                None => "off (HTTP)".to_string(),
+            }
+        );
         println!(
             "  api-key: {}",
             if effective.api_key.is_some() {
@@ -1963,7 +2012,11 @@ fn main() -> ExitCode {
     }
 
     eprintln!("AI Proxy v{}", env!("CARGO_PKG_VERSION"));
-    eprintln!("Listening on: http://0.0.0.0:{}", port);
+    eprintln!(
+        "Listening on: {}://0.0.0.0:{}",
+        if tls_paths.is_some() { "https" } else { "http" },
+        port
+    );
     eprintln!("Backends: {}", backend_addrs.join(", "));
     eprintln!("Health check interval: {}s", health_interval);
 
@@ -2013,22 +2066,81 @@ fn main() -> ExitCode {
         let app = build_proxy_router(state);
 
         let addr = format!("127.0.0.1:{}", port);
-        let listener = match tokio::net::TcpListener::bind(&addr).await {
-            Ok(l) => l,
-            Err(e) => {
-                eprintln!("Failed to bind to {}: {}", addr, e);
+
+        // V159: serve HTTPS when a TLS cert+key pair is configured,
+        // otherwise plain HTTP. TLS requires the `server-axum-tls` feature.
+        if let Some((cert_path, key_path)) = tls_paths {
+            #[cfg(feature = "server-axum-tls")]
+            {
+                use axum_server::tls_rustls::RustlsConfig;
+                // rustls 0.23 requires a process-level CryptoProvider to be
+                // installed when more than one is compiled in (axum-server's
+                // tls-rustls can pull aws-lc-rs alongside our `ring`). Install
+                // ring explicitly; Err just means it was already set.
+                let _ = rustls::crypto::ring::default_provider().install_default();
+                let socket: std::net::SocketAddr = match addr.parse() {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Invalid bind address {}: {}", addr, e);
+                        std::process::exit(1);
+                    }
+                };
+                let tls_config = match RustlsConfig::from_pem_file(&cert_path, &key_path).await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!(
+                            "Failed to load TLS cert/key ({} / {}): {}",
+                            cert_path, key_path, e
+                        );
+                        std::process::exit(1);
+                    }
+                };
+                // Graceful shutdown via an axum_server Handle (the plain
+                // axum::serve `.with_graceful_shutdown` doesn't apply here).
+                let handle = axum_server::Handle::new();
+                let shutdown_handle = handle.clone();
+                tokio::spawn(async move {
+                    shutdown_signal().await;
+                    shutdown_handle.graceful_shutdown(Some(Duration::from_secs(10)));
+                });
+                eprintln!("Proxy ready (HTTPS). Forwarding requests on https://{} ...", addr);
+                if let Err(e) = axum_server::bind_rustls(socket, tls_config)
+                    .handle(handle)
+                    .serve(app.into_make_service())
+                    .await
+                {
+                    eprintln!("Proxy error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+            #[cfg(not(feature = "server-axum-tls"))]
+            {
+                let _ = (cert_path, key_path);
+                eprintln!(
+                    "TLS cert/key configured but this binary was built without the \
+                     'server-axum-tls' feature. Rebuild with \
+                     --features \"server-axum,security,server-axum-tls\"."
+                );
                 std::process::exit(1);
             }
-        };
+        } else {
+            let listener = match tokio::net::TcpListener::bind(&addr).await {
+                Ok(l) => l,
+                Err(e) => {
+                    eprintln!("Failed to bind to {}: {}", addr, e);
+                    std::process::exit(1);
+                }
+            };
 
-        eprintln!("Proxy ready. Forwarding requests...");
+            eprintln!("Proxy ready. Forwarding requests...");
 
-        if let Err(e) = axum::serve(listener, app)
-            .with_graceful_shutdown(shutdown_signal())
-            .await
-        {
-            eprintln!("Proxy error: {}", e);
-            std::process::exit(1);
+            if let Err(e) = axum::serve(listener, app)
+                .with_graceful_shutdown(shutdown_signal())
+                .await
+            {
+                eprintln!("Proxy error: {}", e);
+                std::process::exit(1);
+            }
         }
     });
 
@@ -3840,6 +3952,14 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
                 let _ = RoutingPolicy::parse(&val)?;
                 cli.routing_policy = Some(val);
             }
+            "--tls-cert" => {
+                i += 1;
+                cli.tls_cert = Some(PathBuf::from(next_val(args, i, "--tls-cert")?));
+            }
+            "--tls-key" => {
+                i += 1;
+                cli.tls_key = Some(PathBuf::from(next_val(args, i, "--tls-key")?));
+            }
             "-h" | "--help" => cli.help = true,
             other => return Err(format!("Unknown argument: '{}'", other)),
         }
@@ -3873,6 +3993,8 @@ fn print_usage() {
     eprintln!(
         "  --routing-policy <POLICY>     One of: round_robin (default), local_first, model_aware"
     );
+    eprintln!("  --tls-cert <PATH>             PEM cert chain (HTTPS; needs server-axum-tls)");
+    eprintln!("  --tls-key <PATH>              PEM private key (HTTPS; both required to enable)");
     eprintln!("  --dry-run                     Print config and exit");
     eprintln!("  -h, --help                    Print this help message");
     eprintln!();
@@ -4102,6 +4224,74 @@ mod tests {
             eff.middleware.cost_snapshot_path.as_deref(),
             Some("/tmp/snap.json")
         );
+    }
+
+    // V159: TLS config parsing + merge.
+    #[test]
+    fn test_parse_args_tls_flags() {
+        let a = args(&[
+            "--tls-cert",
+            "/etc/ssl/cert.pem",
+            "--tls-key",
+            "/etc/ssl/key.pem",
+        ]);
+        let cli = parse_args(&a).unwrap();
+        assert_eq!(
+            cli.tls_cert.as_deref(),
+            Some(std::path::Path::new("/etc/ssl/cert.pem"))
+        );
+        assert_eq!(
+            cli.tls_key.as_deref(),
+            Some(std::path::Path::new("/etc/ssl/key.pem"))
+        );
+    }
+
+    #[test]
+    fn test_tls_from_config_file() {
+        let toml_text = r#"
+            [[backends]]
+            addr = "10.0.0.1:8090"
+
+            [tls]
+            cert_path = "/srv/tls/fullchain.pem"
+            key_path  = "/srv/tls/privkey.pem"
+        "#;
+        let file_cfg: ProxyConfig = toml::from_str(toml_text).unwrap();
+        let eff = merge_cli_and_config(&CliArgs::default(), Some(file_cfg)).unwrap();
+        assert_eq!(eff.tls_cert.as_deref(), Some("/srv/tls/fullchain.pem"));
+        assert_eq!(eff.tls_key.as_deref(), Some("/srv/tls/privkey.pem"));
+    }
+
+    #[test]
+    fn test_tls_cli_overrides_config() {
+        let toml_text = r#"
+            [[backends]]
+            addr = "10.0.0.1:8090"
+
+            [tls]
+            cert_path = "/from/file/cert.pem"
+            key_path  = "/from/file/key.pem"
+        "#;
+        let file_cfg: ProxyConfig = toml::from_str(toml_text).unwrap();
+        let cli = CliArgs {
+            tls_cert: Some(PathBuf::from("/from/cli/cert.pem")),
+            tls_key: Some(PathBuf::from("/from/cli/key.pem")),
+            ..Default::default()
+        };
+        let eff = merge_cli_and_config(&cli, Some(file_cfg)).unwrap();
+        assert_eq!(eff.tls_cert.as_deref(), Some("/from/cli/cert.pem"));
+        assert_eq!(eff.tls_key.as_deref(), Some("/from/cli/key.pem"));
+    }
+
+    #[test]
+    fn test_no_tls_by_default() {
+        let cli = CliArgs {
+            backends: Some("127.0.0.1:11434".to_string()),
+            ..Default::default()
+        };
+        let eff = merge_cli_and_config(&cli, None).unwrap();
+        assert!(eff.tls_cert.is_none());
+        assert!(eff.tls_key.is_none());
     }
 
     #[test]

@@ -137,3 +137,15 @@ max_forward_hops = 8
 # Default 30s. Lower it to be more aggressive against slow-loris-style
 # backends; raise it for legitimately slow generators.
 # stream_chunk_timeout_secs = 30
+
+# ---------------------------------------------------------------------------
+# [tls] — V159: HTTPS
+# ---------------------------------------------------------------------------
+# Serve HTTPS instead of plain HTTP. BOTH paths must be set, and the
+# binary must be built with the `server-axum-tls` feature:
+#     cargo build --release --bin ai_proxy \
+#         --features "server-axum,security,server-axum-tls"
+# The --tls-cert / --tls-key CLI flags override these.
+# [tls]
+# cert_path = "/etc/ssl/ai_proxy/fullchain.pem"
+# key_path  = "/etc/ssl/ai_proxy/privkey.pem"

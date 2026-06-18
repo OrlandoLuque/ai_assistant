@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v123 (2026-06-18) — V159: HTTPS/TLS for ai_proxy (0.2.110)
+
+Closes a gap surfaced while documenting the gateway: `ai_proxy` could
+only serve plain HTTP. It now serves HTTPS directly, reusing the
+existing `server-axum-tls` (axum-server + rustls) infrastructure.
+
+### Added
+- **`[tls]` config section + `--tls-cert` / `--tls-key` CLI flags.** When
+  both a cert and key are resolved (CLI overrides the file) and the
+  binary is built with `server-axum-tls`, the proxy serves HTTPS instead
+  of plain HTTP via `axum_server::bind_rustls`, with a graceful-shutdown
+  `Handle`. Build with
+  `--features "server-axum,security,server-axum-tls"`.
+- The ring `CryptoProvider` is installed explicitly at TLS startup
+  (rustls 0.23 requires it when more than one provider is compiled in —
+  axum-server's tls-rustls can pull aws-lc-rs alongside our ring).
+- Startup banner and `--dry-run` now report `http` vs `https`.
+- Documented `[tls]` in `examples/ai_proxy.toml`; 4 tests
+  (flag parse, config parse, CLI-over-file override, off-by-default).
+
+### Notes
+- TLS without the `server-axum-tls` feature is a clear startup error
+  (rebuild with the feature) rather than a silent fallback.
+- Verified end-to-end: a self-signed run serves `/metrics` over a
+  TLSv1.3 (`TLS_AES_256_GCM_SHA384`) handshake.
+
 ## [Unreleased] - v122 (2026-06-11) — V158: per-peer mesh storage byte quota (0.2.109)
 
 Closes the last registered storage follow-up from V155/V157: a per-peer
