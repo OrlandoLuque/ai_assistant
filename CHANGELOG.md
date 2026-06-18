@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v124 (2026-06-18) — V160: streaming output guardrails for ai_proxy (0.2.111)
+
+Closes the other gap the gateway docs listed: output guardrails (PII /
+toxicity / prompt-injection) didn't run over a live SSE stream — the
+chat stream path bypassed them. They now run **chunk-by-chunk over the
+stream as it flows**, using the library's existing
+`StreamingGuardrailPipeline`. A response that turns toxic / leaks PII /
+matches an injection pattern mid-stream is **terminated mid-flight** —
+the offending tail never reaches the client.
+
+### Added
+- **`streaming_body_with_guards`**: reassembles SSE frames
+  (`\n\n`-terminated), extracts each `choices[].delta.content`, and
+  feeds it to a `StreamingGuardrailPipeline`. The action decides:
+  `Pass`/`Flag` forward the frame (Flag bumps a metric), `Pause` holds
+  the frame until a later `Pass` flushes it (bounded — an over-long hold
+  fails closed), `Block` terminates the stream with a terminal
+  `data: {"error":{...,"code":"output_guard"}}` event. Still wrapped in
+  the V150 per-chunk inactivity timeout.
+- **`build_streaming_pipeline`**: mirrors the enabled **output** guards
+  (`enable_pii_output` → `StreamingPiiGuard`, `enable_toxicity_output`
+  → `StreamingToxicityGuard`, `enable_attack_filter` → a
+  `StreamingPatternGuard` with common injection markers). Returns `None`
+  when no output guard is on, so the path stays a plain passthrough.
+- `forward_core_streamable` gained an `Option<StreamingGuardrailPipeline>`
+  argument; the chat stream branch passes the built pipeline, the
+  generic passthrough passes `None`.
+- Two new `/metrics` counters: `proxy_stream_guard_blocks_total`,
+  `proxy_stream_guard_flags_total`.
+- Tests: 4 new — SSE-delta extraction, pipeline toggle, a real
+  end-to-end "blocked mid-stream, secret tail never leaks" test, and a
+  "clean stream passes through" test.
+
+### Notes
+- Streaming guards catch violations mid-stream — they can't un-send what
+  already streamed, but they stop the leak from continuing. This is the
+  honest contract of streaming guardrails.
+- No new config: the existing `enable_pii_output` /
+  `enable_toxicity_output` / `enable_attack_filter` flags now also cover
+  the SSE path (they previously only ran on buffered responses).
+
 ## [Unreleased] - v123 (2026-06-18) — V159: HTTPS/TLS for ai_proxy (0.2.110)
 
 Closes a gap surfaced while documenting the gateway: `ai_proxy` could
