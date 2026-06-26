@@ -103,9 +103,7 @@ struct ScanResult {
 #[derive(Clone)]
 struct KnowledgeSourceInfo {
     name: String,
-    #[allow(dead_code)]
     file_path: String,
-    #[allow(dead_code)]
     is_kpkg: bool,
     doc_count: usize,
     status: KnowledgeStatus,

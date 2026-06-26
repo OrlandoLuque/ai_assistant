@@ -195,7 +195,6 @@ impl Default for DeviceRegistry {
 /// Commands are published to MQTT topics.
 /// State is updated via subscriptions to state topics.
 pub struct MqttHomeBackend {
-    #[allow(dead_code)]
     config: MqttConfig,
     registry: Arc<Mutex<DeviceRegistry>>,
     /// Command rate limiter — tracks (timestamp_secs, entity_id) pairs.

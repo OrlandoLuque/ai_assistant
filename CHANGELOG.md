@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v129 (2026-06-26) — V164: sweep unnecessary dead_code allows (0.2.116)
+
+Fourth and final code-quality audit follow-up. Of the 59
+`#[allow(dead_code)]` attributes, the ones that suppressed nothing (the
+item is actually used) were removed; the ones silencing a real dead-code
+warning were kept.
+
+### Changed
+- **Removed 23 `#[allow(dead_code)]`, kept 36** (8 files: `ai_proxy` ×11,
+  `ai_gui-pro` ×5, `ai_gui` ×2, `ai_breeder`, `ai_recipes`, `server_axum`,
+  `home_automation/mqtt_backend`, `skill_forge/declarative`). Only
+  attribute lines changed — no item deleted, no allow added. Each removal
+  verified to introduce no new warning under clippy `-D warnings` for the
+  combo that compiles it (lib `FEATURES_STD` + default; per-bin
+  required-features for `ai_proxy`/`ai_gui`/`ai_gui-pro`/`ai_breeder`).
+
+### Note
+- Surfaced (not fixed here) a **pre-existing** compile break in the
+  `server-axum` + `eval-suite` combo: `server_axum.rs:2636` calls a
+  non-existent `crate::eval_suite::EvalGenerator` (and passes the wrong
+  type to `register_eval_tools`, which expects an
+  `Arc<dyn Fn(&str) -> Result<String, String>>`). Not built by CI
+  (`FEATURES_STD` excludes `server-axum`); tracked for a separate fix.
+
 ## [Unreleased] - v128 (2026-06-26) — V163: split advanced_routing into a module (0.2.115)
 
 Third code-quality audit follow-up: the ~9.6K-line god file

@@ -747,7 +747,6 @@ pub struct HealthResponse {
 
 /// OpenAI-compatible chat completion request.
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 pub struct OpenAIChatRequest {
     #[serde(default)]
     pub model: Option<String>,

@@ -1014,7 +1014,6 @@ struct OpenAiErrorBody {
 /// HTTP status. Specific helpers (`unauthorized`, `rate_limited`, …)
 /// pick the right kind for their case.
 #[derive(Clone, Copy)]
-#[allow(dead_code)] // `NotFound` consumed by V149 F4/F5 (model not found).
 enum OpenAiErrorKind {
     InvalidRequest,
     Authentication,
@@ -1108,7 +1107,6 @@ struct TlsSection {
 /// constraints, no loop guard).
 #[derive(Debug, Deserialize, Default, Clone)]
 #[serde(deny_unknown_fields)]
-#[allow(dead_code)] // Fields consumed across F1-F5 of V149.
 struct RoutingSection {
     /// One of: `round_robin` (default), `local_first`, `model_aware`.
     /// Parsed by F4. F1 declares the field for schema stability.
@@ -1298,10 +1296,8 @@ struct Effective {
     health_interval: u64,
     api_key: Option<String>,
     /// Consumed by WS-2/WS-3/WS-5 in follow-up workstreams.
-    #[allow(dead_code)]
     middleware: MiddlewareSection,
     /// Consumed by WS-4 (audit log writer).
-    #[allow(dead_code)]
     audit: AuditSection,
     /// V149 routing knobs (served-by exposure, max hops, policy).
     routing: RoutingSection,
@@ -1519,7 +1515,6 @@ mod cache {
     /// A cached backend response. `pii_free` gates whether the entry may be
     /// stored at all — see [`ResponseCache::put`].
     #[derive(Clone, Debug)]
-    #[allow(dead_code)] // `status` consumed by WS-2 (request handler wiring).
     pub(super) struct CachedResponse {
         pub body: Vec<u8>,
         pub status: u16,
@@ -1681,7 +1676,6 @@ mod rate_limit {
         /// Drop buckets whose most-recent timestamp is older than
         /// `window * 2`. Intended to be called periodically from a background
         /// task so the map doesn't grow without bound.
-        #[allow(dead_code)] // Background cleanup task is wired in WS-2.
         pub fn cleanup_stale(&self) {
             let cutoff = Instant::now()
                 .checked_sub(self.window * 2)
@@ -1712,7 +1706,6 @@ mod audit {
     /// Tagged audit outcome. Serializes as `{"kind":"blocked","reason":"pii"}`.
     #[derive(Serialize, Debug, Clone)]
     #[serde(tag = "kind", content = "reason", rename_all = "snake_case")]
-    #[allow(dead_code)] // Variants consumed by WS-2 (request path wiring).
     pub(super) enum AuditOutcome {
         Ok,
         Blocked(String),
@@ -1867,7 +1860,6 @@ mod audit {
         }
 
         #[cfg(test)]
-        #[allow(dead_code)]
         pub fn path(&self) -> &Path {
             &self.path
         }
@@ -1942,7 +1934,6 @@ mod budget {
 
     /// Result of calling [`BudgetGate::pre_request`].
     #[derive(Debug, Clone)]
-    #[allow(dead_code)] // Consumed by WS-2 (request path wiring).
     pub(super) enum BudgetCheck {
         Allow,
         Warn(String),
@@ -1985,7 +1976,6 @@ mod budget {
         }
 
         /// Record an actual response's token usage. Idempotent per request.
-        #[allow(dead_code)] // Consumed by WS-2.
         pub fn post_response(&self, model: &str, input_tokens: usize, output_tokens: usize) {
             let mut guard = self.inner.lock();
             let _entry = guard.post_response(model, input_tokens, output_tokens);
@@ -1994,7 +1984,6 @@ mod budget {
         /// Return the optional snapshot path for diagnostics. WS-5 intentionally
         /// does NOT auto-load or auto-flush snapshots — that's wired in WS-2
         /// (restore at startup + periodic 60s flush task).
-        #[allow(dead_code)]
         pub fn snapshot_path(&self) -> Option<&Path> {
             self.snapshot_path.as_deref()
         }

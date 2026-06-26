@@ -547,7 +547,6 @@ fn truncate(s: &str, max: usize) -> String {
 
 // Keep `Unit` in the import list used for live type-checking; not all
 // subcommands touch units directly but exports/compares need them.
-#[allow(dead_code)]
 fn _type_check_unit(_: &Unit) {}
 
 fn print_help() {

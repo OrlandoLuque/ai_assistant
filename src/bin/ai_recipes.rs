@@ -348,5 +348,4 @@ fn cmd_audit(dir: &Path) -> ExitCode {
 }
 
 // suppress dead_code warning if RecipeError is unused via direct path
-#[allow(dead_code)]
 fn _force_link_recipe_error(_e: RecipeError) {}

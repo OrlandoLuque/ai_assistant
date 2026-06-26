@@ -433,7 +433,6 @@ impl StepBudget {
 }
 
 // Silence dead-code warnings when the `skill-forge` feature is off.
-#[allow(dead_code)]
 fn _use_capability_error(e: CapabilityError) -> String {
     e.to_string()
 }
