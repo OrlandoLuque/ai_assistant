@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v132 (2026-06-26) — V167: split assistant.rs into impl submodules (0.2.119)
+
+Splits the last god file the audit flagged — the central `AiAssistant`
+facade (`assistant.rs`, 8.5K) — into `src/assistant/` of 10 files.
+
+### Changed
+- **`assistant.rs` → `assistant/{mod,rag,messaging,integrations,context,
+  memory,execution,conversation,models,metrics}.rs`**. Each concern group
+  moved into a submodule with its own `impl AiAssistant`. Submodules are
+  descendants of the `assistant` module, so they access the struct's
+  private fields with no visibility change; only 5 cross-section private
+  helpers widened to `pub(crate)`. No public signature changed (V162's
+  `AiResult` returns untouched). Test module kept byte-identical in
+  `mod.rs`. `lib.rs` untouched; all re-exports resolve.
+
+With this, all three audited god files are split (advanced_routing V163,
+ai_test_harness V166, assistant V167).
+
 ## [Unreleased] - v131 (2026-06-26) — V166: split ai_test_harness into a module (0.2.118)
 
 Splits the second-largest god file — the test-harness binary
