@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v131 (2026-06-26) — V166: split ai_test_harness into a module (0.2.118)
+
+Splits the second-largest god file — the test-harness binary
+`ai_test_harness.rs` (16.6K lines) — into a `src/bin/ai_test_harness/`
+directory of 16 files (largest 2.4K).
+
+### Changed
+- **`src/bin/ai_test_harness.rs` → `src/bin/ai_test_harness/{main,basics,
+  features,features2,chains,pipelines,rag_graph,resilience,stress,
+  precision,eval,p2p,containers,replay,replay_stub,macros}.rs`**. Pure
+  reorganization — no logic change. `Cargo.toml` `[[bin]]` path updated.
+  ~140 category fns made `pub(crate)`; replay/containers/p2p modules keep
+  their exact cfg gates. `ai_test_harness --all` still 585/585.
+
 ## [Unreleased] - v130 (2026-06-26) — V165: fix server-axum+eval-suite compile break (0.2.117)
 
 Fixes the pre-existing compile break surfaced by V164.

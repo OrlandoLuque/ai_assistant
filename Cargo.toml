@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.117"
+version = "0.2.118"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -712,7 +712,7 @@ bench = false
 
 [[bin]]
 name = "ai_test_harness"
-path = "src/bin/ai_test_harness.rs"
+path = "src/bin/ai_test_harness/main.rs"
 required-features = ["full", "browser"]
 bench = false
 
