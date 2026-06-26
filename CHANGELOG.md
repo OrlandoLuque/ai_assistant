@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v128 (2026-06-26) — V163: split advanced_routing into a module (0.2.115)
+
+Third code-quality audit follow-up: the ~9.6K-line god file
+`advanced_routing.rs` is split into a `advanced_routing/` directory
+module of 10 cohesive files (largest now 2.7K lines).
+
+### Changed
+- **`advanced_routing.rs` → `advanced_routing/{mod,bandit,automata,
+  hierarchical,ensemble,contextual,bootstrap,distributed,pipeline,
+  mcp_tools}.rs`**. Pure reorganization — no logic or behavior change.
+  Public paths unchanged (`mod.rs` re-exports every item via
+  `pub use <submodule>::*`; `lib.rs` untouched). Tests co-located per
+  submodule, count identical (256 default / 272 with eval-suite). Three
+  field sets widened to `pub(crate)` for legitimate cross-module snapshot
+  reconstruction (a strict widening).
+
 ## [Unreleased] - v127 (2026-06-26) — V162: AiAssistant speaks AiResult (0.2.114)
 
 Second code-quality audit follow-up: the flagship `AiAssistant` object
