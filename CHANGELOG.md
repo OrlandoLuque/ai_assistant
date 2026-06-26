@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v130 (2026-06-26) — V165: fix server-axum+eval-suite compile break (0.2.117)
+
+Fixes the pre-existing compile break surfaced by V164.
+
+### Fixed
+- **`server-axum` + `eval-suite` now compiles.** `server_axum.rs`'s MCP
+  registration constructed a non-existent `eval_suite::EvalGenerator` and
+  passed the wrong type to `register_eval_tools` (which expects a
+  generator closure `Arc<dyn Fn(&str) -> Result<String, String>>`). Wired
+  it to the configured provider via `providers::generate_response` with a
+  default config, consistent with the other MCP backends in that function.
+
+### CI
+- Added `"server-axum,eval-suite"` to the feature matrix so the combo is
+  built/tested on every push (regression guard).
+
 ## [Unreleased] - v129 (2026-06-26) — V164: sweep unnecessary dead_code allows (0.2.116)
 
 Fourth and final code-quality audit follow-up. Of the 59

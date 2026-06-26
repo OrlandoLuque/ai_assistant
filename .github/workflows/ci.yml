@@ -162,6 +162,7 @@ jobs:
           - "server-axum"
           - "server-axum,server-axum-tls"
           - "server-axum,server-openapi"
+          - "server-axum,eval-suite"
           - "server-axum,distributed-network,server-cluster"
           # Advanced features (Tier 2)
           - "voice-agent"

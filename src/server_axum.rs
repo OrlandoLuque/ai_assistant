@@ -2632,9 +2632,17 @@ fn build_unified_mcp_server() -> Arc<std::sync::RwLock<crate::mcp_protocol::McpS
     // ── Eval suite tools ────────────────────────────────────────────
     #[cfg(feature = "eval-suite")]
     {
-        let generator = std::sync::Arc::new(std::sync::Mutex::new(
-            crate::eval_suite::EvalGenerator::new(),
-        ));
+        // `register_eval_tools` takes a generator closure `Fn(&str) ->
+        // Result<String, String>` that produces a model response for an
+        // eval prompt. Wire it to the configured provider (default config,
+        // consistent with the other MCP backends registered here).
+        let generator: std::sync::Arc<dyn Fn(&str) -> Result<String, String> + Send + Sync> =
+            std::sync::Arc::new(|prompt: &str| {
+                let config = crate::AiConfig::default();
+                let messages = [crate::ChatMessage::user(prompt)];
+                crate::providers::generate_response(&config, &messages, "")
+                    .map_err(|e| e.to_string())
+            });
         crate::eval_suite::register_eval_tools(&mut mcp, generator);
         tool_count += 3;
         log::info!("MCP: +3 Eval suite tools");
