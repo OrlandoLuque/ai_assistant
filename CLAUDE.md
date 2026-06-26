@@ -9,10 +9,10 @@ Esto te da el contexto completo: dónde estamos, qué se ha hecho, cómo trabaja
 
 ## Sobre el Proyecto
 - **Librería Rust** para integración con LLMs locales y cloud
-- **~423K líneas de código**, 369 archivos fuente (.rs), 6.095+ tests
+- **~523K líneas de código**, 500 archivos fuente (.rs), 9.600+ tests
 - **Autor único**: Orlando José Luque Moraira (Lander) — orlando.luque@gmail.com
 - **Estado**: NO publicado en ningún sitio (ni crates.io, ni GitHub público, ni distribuido a terceros)
-- **Feature flags**: 61 (core, multi-agent, security, analytics, rag, distributed, autonomous, gui-pro, audio-io, gpu-sharing, research, etc.)
+- **Feature flags**: 93 (core, multi-agent, security, analytics, rag, distributed, autonomous, gui-pro, audio-io, gpu-sharing, research, etc.)
 
 ## Módulos Principales
 - Multi-proveedor LLM (18): Ollama, LM Studio, OpenAI, Anthropic, Gemini, Azure OpenAI, Bedrock, Groq, Together AI, Fireworks, DeepSeek, Mistral, Perplexity, OpenRouter, HuggingFace, LocalAI, Kobold.cpp, text-gen-webui
@@ -70,7 +70,7 @@ Esto te da el contexto completo: dónde estamos, qué se ha hecho, cómo trabaja
 3. Respetar la estructura modular existente basada en feature flags de Cargo
 4. Zero `.unwrap()` en producción — usar proper error handling siempre
 5. Zero warnings del compilador — compilación limpia en todas las combinaciones de features
-6. Tests para todo — el proyecto tiene 6.095+ tests y debe mantenerse así
+6. Tests para todo — el proyecto tiene 9.600+ tests y debe mantenerse así
 
 ## Documentos Generados
 - `Informe_Viabilidad_ai_assistant.docx` — Informe completo de viabilidad v2 (monetización, PI, licenciamiento)

@@ -21,6 +21,7 @@ pub use crate::progress::{Progress, ProgressCallback};
 
 // Configuration
 pub use crate::config_file::ConfigFile;
+pub use crate::retry::RetryConfig;
 
 // Server
 pub use crate::server::{AiServer, AuthConfig, CorsConfig, ServerConfig, ServerHandle};

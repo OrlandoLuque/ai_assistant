@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::error::{AiError, AiResult, ConfigError};
 use crate::retry::RetryConfig;
 
 /// Default URL for `llama.cpp` `llama-server` (matches upstream default).
@@ -373,6 +374,93 @@ impl AiConfig {
             _ => None,
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Fluent builder helpers (V161)
+    //
+    // `AiConfig` keeps all fields `pub` and its `Default`, so direct field
+    // assignment still works exactly as before. These additive, chainable
+    // setters make the common "start from default, tweak a few things" path
+    // read nicely and pair with `validate()` for a fail-fast check.
+    // -------------------------------------------------------------------------
+
+    /// Choose the provider (chainable). Equivalent to assigning `.provider`.
+    pub fn with_provider(mut self, provider: AiProvider) -> Self {
+        self.provider = provider;
+        self
+    }
+
+    /// Choose the model name (chainable).
+    pub fn with_model(mut self, model: impl Into<String>) -> Self {
+        self.selected_model = model.into();
+        self
+    }
+
+    /// Set the cloud API key (chainable). Overrides the env-var fallback used
+    /// by [`get_api_key`](Self::get_api_key).
+    pub fn with_api_key(mut self, api_key: impl Into<String>) -> Self {
+        self.api_key = api_key.into();
+        self
+    }
+
+    /// Set the generation temperature (chainable). Range is checked by
+    /// [`validate`](Self::validate), not here.
+    pub fn with_temperature(mut self, temperature: f32) -> Self {
+        self.temperature = temperature;
+        self
+    }
+
+    /// Set how many history messages to keep in context (chainable).
+    pub fn with_max_history_messages(mut self, max_history_messages: usize) -> Self {
+        self.max_history_messages = max_history_messages;
+        self
+    }
+
+    /// Set the retry policy for network operations (chainable).
+    pub fn with_retry_config(mut self, retry_config: RetryConfig) -> Self {
+        self.retry_config = retry_config;
+        self
+    }
+
+    /// Validate the configuration, catching mistakes that would otherwise only
+    /// surface as confusing runtime failures:
+    ///
+    /// * `temperature` outside the documented `0.0..=2.0` range,
+    /// * a cloud provider selected with no API key (neither configured nor
+    ///   reachable via the provider's `*_API_KEY` environment variable),
+    /// * a provider that resolves to an empty base URL.
+    ///
+    /// This is opt-in — call it after building a config if you want a
+    /// fail-fast check. Returns `Ok(())` when the config is usable as-is.
+    pub fn validate(&self) -> AiResult<()> {
+        if !(0.0..=2.0).contains(&self.temperature) {
+            return Err(AiError::Config(ConfigError::InvalidValue {
+                field: "temperature".to_string(),
+                value: self.temperature.to_string(),
+                expected: "a value in 0.0..=2.0".to_string(),
+            }));
+        }
+        if self.provider.is_cloud() && self.get_api_key().is_none() {
+            return Err(AiError::Config(ConfigError::MissingValue {
+                field: "api_key".to_string(),
+                description: format!(
+                    "provider '{}' is a cloud provider and needs an API key \
+                     (set AiConfig.api_key or the provider's *_API_KEY env var)",
+                    self.provider.display_name()
+                ),
+            }));
+        }
+        if self.get_base_url().trim().is_empty() {
+            return Err(AiError::Config(ConfigError::MissingValue {
+                field: "base_url".to_string(),
+                description: format!(
+                    "provider '{}' resolves to an empty base URL",
+                    self.provider.display_name()
+                ),
+            }));
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -383,6 +471,49 @@ mod tests {
     fn test_ai_provider_defaults() {
         let provider = AiProvider::default();
         assert_eq!(provider, AiProvider::Ollama);
+    }
+
+    #[test]
+    fn test_config_builder_fluent() {
+        let cfg = AiConfig::default()
+            .with_provider(AiProvider::Ollama)
+            .with_model("llama3")
+            .with_temperature(0.5)
+            .with_max_history_messages(10);
+        assert_eq!(cfg.selected_model, "llama3");
+        assert_eq!(cfg.temperature, 0.5);
+        assert_eq!(cfg.max_history_messages, 10);
+        // A local provider with a default URL validates cleanly.
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn test_config_validate_rejects_bad_temperature() {
+        assert!(AiConfig::default()
+            .with_temperature(5.0)
+            .validate()
+            .is_err());
+        assert!(AiConfig::default()
+            .with_temperature(-0.1)
+            .validate()
+            .is_err());
+    }
+
+    #[test]
+    fn test_config_validate_cloud_requires_key() {
+        let cfg = AiConfig::default()
+            .with_provider(AiProvider::OpenAI)
+            .with_api_key("");
+        // Only assert the failure when the developer's env doesn't already
+        // provide a key (otherwise the env fallback legitimately satisfies it).
+        if std::env::var("OPENAI_API_KEY").is_err() {
+            assert!(cfg.validate().is_err());
+        }
+        // With a key set, it must validate regardless of env.
+        let cfg_keyed = AiConfig::default()
+            .with_provider(AiProvider::OpenAI)
+            .with_api_key("sk-test");
+        assert!(cfg_keyed.validate().is_ok());
     }
 
     #[test]

@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v126 (2026-06-26) — V161: code-quality audit follow-ups (0.2.113)
+
+Follow-ups from a full code-quality / organization / ergonomics audit of
+the crate. Mechanical hygiene was already excellent (rustfmt-clean,
+clippy near-clean, ~9,600 co-located tests); V161 closes the concrete
+findings.
+
+### Fixed
+- **Reachable panic in ensemble vote tallying** (`advanced_routing.rs`):
+  the four private tally strategies (`majority_vote`, `weighted_average`,
+  `unanimous`, `max_confidence`) panicked on an empty `votes` slice
+  (`max_by(...).unwrap()` / `votes[0]`). Added an empty-slice guard in
+  `tally_votes` and converted all four sites to `?`-propagating
+  `ok_or_else` / `.first()`. Panic-free regardless of caller; new
+  regression test covers all strategies.
+
+### Changed
+- **Removed 12 unnecessary `unsafe impl Send/Sync`** in `vector_db.rs`
+  (Pinecone/Chroma/Milvus/Weaviate/Redis/Elasticsearch clients) — every
+  field is already `Send + Sync`, so the structs are auto-`Send + Sync`
+  and the manual `unsafe` was redundant. Drops the crate's `unsafe` count
+  by 12.
+- **CI clippy now runs `-D warnings`** (was `-W clippy::all`), making the
+  "zero warnings" rule structural for lib + bins. Not applied to
+  tests/examples or as a source-level `#![deny(warnings)]` (footgun) — see
+  IMPROVEMENTS_V161.md for the rationale.
+- Three `useless_vec` test literals converted to arrays
+  (`reranker.rs`, `advanced_routing.rs`).
+- Refreshed stale `CLAUDE.md` metrics: ~523K lines / 500 files / 9,600+
+  tests / 93 feature flags.
+
+### Added
+- **`AiConfig` builder ergonomics** (additive — fields stay `pub`):
+  chainable `with_provider`/`with_model`/`with_api_key`/`with_temperature`/
+  `with_max_history_messages`/`with_retry_config`, plus a `validate()`
+  fail-fast check (temperature range, cloud-provider key presence, empty
+  base URL). `prelude` now re-exports `RetryConfig`.
+
 ## [Unreleased] - v125 (2026-06-18) — V160.1: security advisory bump (0.2.112)
 
 CI maintenance. A new advisory **RUSTSEC-2026-0182** (published

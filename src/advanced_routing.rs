@@ -2508,6 +2508,15 @@ impl EnsembleRouter {
     }
 
     fn tally_votes(&self, votes: &[SubRouterVote]) -> Result<RoutingOutcome, AdvancedRoutingError> {
+        // Defensive: every tally strategy below assumes at least one vote.
+        // `route()` already guards this, but guarding here too makes the
+        // private tally helpers panic-free regardless of caller.
+        if votes.is_empty() {
+            return Err(AdvancedRoutingError::NoRoutingPath {
+                query: "ensemble".to_string(),
+                reason: "no votes to tally".to_string(),
+            });
+        }
         match self.strategy {
             EnsembleStrategy::MajorityVote => self.majority_vote(votes),
             EnsembleStrategy::WeightedAverage => self.weighted_average(votes),
@@ -2539,7 +2548,10 @@ impl EnsembleRouter {
                 )
             })
             .map(|(arm, (count, conf))| (arm.to_string(), *count, *conf))
-            .unwrap();
+            .ok_or_else(|| AdvancedRoutingError::NoRoutingPath {
+                query: "ensemble".to_string(),
+                reason: "majority_vote: no votes to tally".to_string(),
+            })?;
 
         let alternatives: Vec<(ArmId, f64)> = counts
             .iter()
@@ -2571,7 +2583,10 @@ impl EnsembleRouter {
             .iter()
             .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(arm, score)| (arm.to_string(), *score))
-            .unwrap();
+            .ok_or_else(|| AdvancedRoutingError::NoRoutingPath {
+                query: "ensemble".to_string(),
+                reason: "weighted_average: no votes to tally".to_string(),
+            })?;
 
         let total_weight: f64 = scores.values().sum();
         let confidence = if total_weight > 0.0 {
@@ -2597,7 +2612,14 @@ impl EnsembleRouter {
     }
 
     fn unanimous(&self, votes: &[SubRouterVote]) -> Result<RoutingOutcome, AdvancedRoutingError> {
-        let first_arm = &votes[0].outcome.selected_arm;
+        let first_arm = &votes
+            .first()
+            .ok_or_else(|| AdvancedRoutingError::NoRoutingPath {
+                query: "ensemble".to_string(),
+                reason: "unanimous: no votes to tally".to_string(),
+            })?
+            .outcome
+            .selected_arm;
         if votes.iter().all(|v| v.outcome.selected_arm == *first_arm) {
             let max_conf = votes
                 .iter()
@@ -2631,7 +2653,10 @@ impl EnsembleRouter {
                     .partial_cmp(&b.outcome.confidence)
                     .unwrap_or(std::cmp::Ordering::Equal)
             })
-            .unwrap();
+            .ok_or_else(|| AdvancedRoutingError::NoRoutingPath {
+                query: "ensemble".to_string(),
+                reason: "max_confidence: no votes to tally".to_string(),
+            })?;
 
         let alternatives: Vec<(ArmId, f64)> = votes
             .iter()
@@ -7085,6 +7110,26 @@ mod tests {
     }
 
     #[test]
+    fn test_tally_votes_empty_is_error_not_panic() {
+        // Regression (V161): every tally strategy used to `.unwrap()` the
+        // max_by result (or index `votes[0]`) and would panic on an empty
+        // slice. They must now return Err instead of panicking, for every
+        // strategy, even though `route()` already guards the public path.
+        for strategy in [
+            EnsembleStrategy::MajorityVote,
+            EnsembleStrategy::WeightedAverage,
+            EnsembleStrategy::Unanimous,
+            EnsembleStrategy::MaxConfidence,
+        ] {
+            let ensemble = EnsembleRouter::new(strategy);
+            assert!(
+                ensemble.tally_votes(&[]).is_err(),
+                "empty votes under {strategy:?} must be Err, not a panic"
+            );
+        }
+    }
+
+    #[test]
     fn test_ensemble_single_router() {
         let mut ensemble = EnsembleRouter::new(EnsembleStrategy::MajorityVote);
         let mut bandit = BanditRouter::with_seed(BanditConfig::default(), 42);
@@ -9477,7 +9522,7 @@ mod tests {
     #[test]
     fn test_compute_best_arm_mean_single_arm() {
         let f = make_ctx_features("code", 0.5, 100, true);
-        let obs = vec![
+        let obs = [
             ContextualObservation {
                 context: ContextSnapshot::from(&f),
                 arm_id: "opus".into(),
@@ -9503,7 +9548,7 @@ mod tests {
     #[test]
     fn test_compute_best_arm_mean_two_arms() {
         let f = make_ctx_features("code", 0.5, 100, true);
-        let obs = vec![
+        let obs = [
             ContextualObservation {
                 context: ContextSnapshot::from(&f),
                 arm_id: "haiku".into(),

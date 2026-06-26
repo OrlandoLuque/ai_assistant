@@ -2654,19 +2654,12 @@ impl VectorDb for ElasticsearchClient {
     }
 }
 
-// Implement Send + Sync for new backends
-unsafe impl Send for PineconeClient {}
-unsafe impl Sync for PineconeClient {}
-unsafe impl Send for ChromaClient {}
-unsafe impl Sync for ChromaClient {}
-unsafe impl Send for MilvusClient {}
-unsafe impl Sync for MilvusClient {}
-unsafe impl Send for WeaviateClient {}
-unsafe impl Sync for WeaviateClient {}
-unsafe impl Send for RedisVectorClient {}
-unsafe impl Sync for RedisVectorClient {}
-unsafe impl Send for ElasticsearchClient {}
-unsafe impl Sync for ElasticsearchClient {}
+// Note: PineconeClient, ChromaClient, MilvusClient, WeaviateClient,
+// RedisVectorClient and ElasticsearchClient are all auto-`Send + Sync` —
+// every field is `String` / `Option<String>` / `VectorDbConfig` /
+// `HashMap<String, StoredVector>`, which are themselves `Send + Sync`.
+// The manual `unsafe impl`s that used to live here were unnecessary and
+// have been removed (no `unsafe` needed to share these across threads).
 
 #[cfg(test)]
 mod tests {

@@ -53,7 +53,12 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: Run clippy
-        run: cargo clippy --features "$FEATURES_STD" -- -W clippy::all
+        # -D warnings makes the "zero warnings" rule structural: any rustc or
+        # clippy warning in the lib/bins fails CI (was -W, i.e. advisory only).
+        # Scoped to lib+bins on purpose — tests/examples legitimately use the
+        # crate's own #[deprecated] items and #[non_exhaustive] configs, which
+        # --all-targets -D warnings would wrongly reject.
+        run: cargo clippy --features "$FEATURES_STD" -- -D warnings
 
   fmt:
     name: Format

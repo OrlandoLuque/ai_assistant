@@ -835,7 +835,7 @@ mod tests {
 
     #[test]
     fn test_scored_document_ordering() {
-        let mut docs = vec![
+        let mut docs = [
             make_doc("low", 0.1, 2),
             make_doc("high", 0.9, 0),
             make_doc("mid", 0.5, 1),
