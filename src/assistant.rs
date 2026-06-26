@@ -1,6 +1,6 @@
 //! Main AI Assistant implementation
 
-use anyhow::Result;
+use crate::error::{AiError, AiResult};
 use std::path::Path;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -2158,7 +2158,7 @@ impl AiAssistant {
     ///
     /// Like `generate_sync()` but automatically builds RAG context from the query.
     #[cfg(feature = "rag")]
-    pub fn generate_sync_with_rag(&mut self, user_message: String) -> Result<String> {
+    pub fn generate_sync_with_rag(&mut self, user_message: String) -> AiResult<String> {
         let (knowledge_ctx, _conversation_ctx) = self.build_rag_context(&user_message);
         self.generate_sync(user_message, &knowledge_ctx)
     }
@@ -2260,7 +2260,7 @@ impl AiAssistant {
         user_message: String,
         images: Vec<crate::vision::ImageInput>,
         knowledge_context: &str,
-    ) -> Result<String> {
+    ) -> AiResult<String> {
         self.conversation
             .push(ChatMessage::user(&user_message).with_images(images));
 
@@ -2312,7 +2312,7 @@ impl AiAssistant {
             }
             Err(primary_err) => {
                 if !self.fallback_enabled || self.fallback_providers.is_empty() {
-                    return Err(primary_err);
+                    return Err(primary_err.into());
                 }
                 let mut last_err = primary_err;
                 let mut found = None;
@@ -2484,7 +2484,7 @@ impl AiAssistant {
         &mut self,
         user_message: String,
         knowledge_context: &str,
-    ) -> Result<String> {
+    ) -> AiResult<String> {
         crate::diag_debug!(
             "[assistant] generate_sync: mode={:?}, conversation_len={}, knowledge={} chars",
             self.context_mode,
@@ -2534,7 +2534,7 @@ impl AiAssistant {
             }
             Err(primary_err) => {
                 if !self.fallback_enabled || self.fallback_providers.is_empty() {
-                    return Err(primary_err);
+                    return Err(primary_err.into());
                 }
                 // Try fallback providers
                 let mut last_err = primary_err;
@@ -3157,7 +3157,7 @@ impl AiAssistant {
     }
 
     /// Save sessions to file
-    pub fn save_sessions_to_file(&self, path: &Path) -> Result<()> {
+    pub fn save_sessions_to_file(&self, path: &Path) -> AiResult<()> {
         let mut store = self.session_store.clone();
 
         // Update current session in store
@@ -3169,11 +3169,11 @@ impl AiAssistant {
             store.save_session(updated);
         }
 
-        store.save_to_file(path)
+        store.save_to_file(path).map_err(AiError::from)
     }
 
     /// Load sessions from file
-    pub fn load_sessions_from_file(&mut self, path: &Path) -> Result<()> {
+    pub fn load_sessions_from_file(&mut self, path: &Path) -> AiResult<()> {
         self.session_store = ChatSessionStore::load_from_file(path)?;
 
         // Restore current session
@@ -3412,7 +3412,7 @@ impl AiAssistant {
     ///
     /// Note: You can also use `set_rag_path()` for lazy initialization, which
     /// will create the database automatically when first needed.
-    pub fn init_rag(&mut self, db_path: &Path) -> Result<()> {
+    pub fn init_rag(&mut self, db_path: &Path) -> AiResult<()> {
         self.rag_db_path = Some(db_path.to_path_buf());
         self.rag_db = Some(RagDb::open(db_path)?);
         Ok(())
@@ -3490,13 +3490,13 @@ impl AiAssistant {
     /// Use `delete_knowledge_document()` to also remove from database.
     ///
     /// Returns `Err` if `append_only_mode` is enabled in `RagConfig`.
-    pub fn unregister_knowledge_document(&mut self, source: &str) -> Result<()> {
+    pub fn unregister_knowledge_document(&mut self, source: &str) -> AiResult<()> {
         if self.rag_config.append_only_mode {
-            return Err(anyhow::anyhow!(
+            return Err(AiError::Other(format!(
                 "Cannot unregister knowledge document '{}': append-only mode is enabled. \
                  Only adding new documents is allowed.",
                 source
-            ));
+            )));
         }
         self.pending_documents.remove(source);
         self.registered_sources.retain(|s| s != source);
@@ -3509,13 +3509,13 @@ impl AiAssistant {
     /// Removes the document from both the pending list and the database.
     ///
     /// Returns `Err` if `append_only_mode` is enabled in `RagConfig`.
-    pub fn delete_knowledge_document(&mut self, source: &str) -> Result<()> {
+    pub fn delete_knowledge_document(&mut self, source: &str) -> AiResult<()> {
         if self.rag_config.append_only_mode {
-            return Err(anyhow::anyhow!(
+            return Err(AiError::Other(format!(
                 "Cannot delete knowledge document '{}': append-only mode is enabled. \
                  Only adding new documents is allowed.",
                 source
-            ));
+            )));
         }
         self.pending_documents.remove(source);
         self.registered_sources.retain(|s| s != source);
@@ -3849,7 +3849,7 @@ impl AiAssistant {
 
     #[cfg(feature = "rag")]
     /// Get or create user in RAG database, returns global notes
-    pub fn ensure_user(&mut self) -> Result<String> {
+    pub fn ensure_user(&mut self) -> AiResult<String> {
         if self.ensure_rag_initialized() {
             if let Some(ref db) = self.rag_db {
                 let user = db.get_or_create_user(&self.user_id)?;
@@ -3876,10 +3876,10 @@ impl AiAssistant {
     ///
     /// Note: Prefer using `register_knowledge_document()` for automatic
     /// management of document indexing.
-    pub fn index_knowledge_document(&mut self, source: &str, content: &str) -> Result<usize> {
+    pub fn index_knowledge_document(&mut self, source: &str, content: &str) -> AiResult<usize> {
         if self.ensure_rag_initialized() {
             if let Some(ref db) = self.rag_db {
-                return db.index_document(source, content);
+                return db.index_document(source, content).map_err(AiError::from);
             }
         }
         Ok(0)
@@ -3887,7 +3887,7 @@ impl AiAssistant {
 
     #[cfg(feature = "rag")]
     /// Clear all knowledge from the database
-    pub fn clear_knowledge(&mut self) -> Result<()> {
+    pub fn clear_knowledge(&mut self) -> AiResult<()> {
         self.pending_documents.clear();
         if self.ensure_rag_initialized() {
             if let Some(ref db) = self.rag_db {
@@ -3899,10 +3899,10 @@ impl AiAssistant {
 
     #[cfg(feature = "rag")]
     /// Get knowledge base statistics (chunk count, total tokens)
-    pub fn get_knowledge_stats(&mut self) -> Result<(usize, usize)> {
+    pub fn get_knowledge_stats(&mut self) -> AiResult<(usize, usize)> {
         if self.ensure_rag_initialized() {
             if let Some(ref db) = self.rag_db {
-                return db.get_knowledge_stats();
+                return db.get_knowledge_stats().map_err(AiError::from);
             }
         }
         Ok((0, 0))
@@ -4293,7 +4293,7 @@ impl AiAssistant {
 
     #[cfg(feature = "rag")]
     /// Store a message in the RAG database
-    pub fn store_message_in_rag(&mut self, msg: &ChatMessage, in_context: bool) -> Result<()> {
+    pub fn store_message_in_rag(&mut self, msg: &ChatMessage, in_context: bool) -> AiResult<()> {
         if self.ensure_rag_initialized() {
             if let Some(ref db) = self.rag_db {
                 let session_id = self
@@ -4314,7 +4314,7 @@ impl AiAssistant {
     #[cfg(feature = "rag")]
     /// Archive old messages from context to RAG storage
     /// This marks messages as out-of-context but keeps them searchable
-    pub fn archive_messages_to_rag(&mut self, count: usize) -> Result<()> {
+    pub fn archive_messages_to_rag(&mut self, count: usize) -> AiResult<()> {
         if self.rag_message_ids.len() < count {
             return Ok(());
         }
@@ -4337,7 +4337,7 @@ impl AiAssistant {
 
     #[cfg(feature = "rag")]
     /// Get conversation stats from RAG database
-    pub fn get_conversation_rag_stats(&mut self) -> Result<(usize, usize, usize)> {
+    pub fn get_conversation_rag_stats(&mut self) -> AiResult<(usize, usize, usize)> {
         if self.ensure_rag_initialized() {
             if let Some(ref db) = self.rag_db {
                 let session_id = self
@@ -4345,7 +4345,9 @@ impl AiAssistant {
                     .as_ref()
                     .map(|s| s.id.as_str())
                     .unwrap_or("default");
-                return db.get_conversation_stats(&self.user_id, session_id);
+                return db
+                    .get_conversation_stats(&self.user_id, session_id)
+                    .map_err(AiError::from);
             }
         }
         Ok((0, 0, 0))
@@ -4445,7 +4447,7 @@ impl AiAssistant {
 
     #[cfg(feature = "rag")]
     /// Set notes for a specific knowledge source/guide
-    pub fn set_knowledge_notes(&mut self, source: &str, notes: &str) -> Result<()> {
+    pub fn set_knowledge_notes(&mut self, source: &str, notes: &str) -> AiResult<()> {
         if self.ensure_rag_initialized() {
             if let Some(ref db) = self.rag_db {
                 if notes.is_empty() {
@@ -4515,7 +4517,7 @@ impl AiAssistant {
 
     #[cfg(feature = "rag")]
     /// Set global notes in RAG database for current user
-    pub fn set_rag_global_notes(&mut self, notes: &str) -> Result<()> {
+    pub fn set_rag_global_notes(&mut self, notes: &str) -> AiResult<()> {
         if self.ensure_rag_initialized() {
             if let Some(ref db) = self.rag_db {
                 db.set_user_global_notes(&self.user_id, notes)?;
@@ -4548,7 +4550,7 @@ impl AiAssistant {
 
     #[cfg(feature = "rag")]
     /// Set session notes in RAG database for current user and session
-    pub fn set_rag_session_notes(&mut self, notes: &str) -> Result<()> {
+    pub fn set_rag_session_notes(&mut self, notes: &str) -> AiResult<()> {
         if self.ensure_rag_initialized() {
             if let Some(ref db) = self.rag_db {
                 let session_id = self
@@ -4573,7 +4575,7 @@ impl AiAssistant {
     ///
     /// Exports all indexed documents and their chunks to a JSON file that can
     /// be imported later or shared between installations.
-    pub fn export_knowledge_to_file(&mut self, path: &std::path::Path) -> Result<()> {
+    pub fn export_knowledge_to_file(&mut self, path: &std::path::Path) -> AiResult<()> {
         if self.ensure_rag_initialized() {
             if let Some(ref db) = self.rag_db {
                 db.export_knowledge_to_file(path)?;
@@ -4594,10 +4596,12 @@ impl AiAssistant {
         &mut self,
         path: &std::path::Path,
         replace: bool,
-    ) -> Result<usize> {
+    ) -> AiResult<usize> {
         if self.ensure_rag_initialized() {
             if let Some(ref db) = self.rag_db {
-                return db.import_knowledge_from_file(path, replace);
+                return db
+                    .import_knowledge_from_file(path, replace)
+                    .map_err(AiError::from);
             }
         }
         Ok(0)
@@ -4627,10 +4631,10 @@ impl AiAssistant {
         &mut self,
         data: &crate::rag::KnowledgeExport,
         replace: bool,
-    ) -> Result<usize> {
+    ) -> AiResult<usize> {
         if self.ensure_rag_initialized() {
             if let Some(ref db) = self.rag_db {
-                return db.import_knowledge(data, replace);
+                return db.import_knowledge(data, replace).map_err(AiError::from);
             }
         }
         Ok(0)
@@ -4695,7 +4699,7 @@ impl AiAssistant {
     #[cfg(feature = "rag")]
     /// Set priority for a knowledge source
     /// Higher priority sources appear first in search results
-    pub fn set_source_priority(&mut self, source: &str, priority: i32) -> Result<()> {
+    pub fn set_source_priority(&mut self, source: &str, priority: i32) -> AiResult<()> {
         if self.ensure_rag_initialized() {
             if let Some(ref db) = self.rag_db {
                 db.set_source_priority(source, priority)?;
@@ -4727,16 +4731,18 @@ impl AiAssistant {
 
     /// Set the operation mode (respects allowed_max ceiling).
     #[cfg(feature = "autonomous")]
-    pub fn set_operation_mode(&mut self, mode: OperationMode) -> Result<()> {
+    pub fn set_operation_mode(&mut self, mode: OperationMode) -> AiResult<()> {
         self.mode_manager
             .set_mode(mode)
-            .map_err(|e| anyhow::anyhow!(e))
+            .map_err(|e| AiError::Other(e.to_string()))
     }
 
     /// Escalate to next operation mode.
     #[cfg(feature = "autonomous")]
-    pub fn escalate_mode(&mut self) -> Result<OperationMode> {
-        self.mode_manager.escalate().map_err(|e| anyhow::anyhow!(e))
+    pub fn escalate_mode(&mut self) -> AiResult<OperationMode> {
+        self.mode_manager
+            .escalate()
+            .map_err(|e| AiError::Other(e.to_string()))
     }
 
     /// De-escalate to lower operation mode.
@@ -4780,7 +4786,7 @@ impl AiAssistant {
         response_generator: Arc<
             dyn Fn(&[crate::agentic_loop::LoopMessage]) -> String + Send + Sync,
         >,
-    ) -> Result<AutonomousAgent> {
+    ) -> AiResult<AutonomousAgent> {
         let profile = self
             .profile_registry
             .get_agent_profile(profile_name)
@@ -4820,7 +4826,7 @@ impl AiAssistant {
         response_generator: Arc<
             dyn Fn(&[crate::agentic_loop::LoopMessage]) -> String + Send + Sync,
         >,
-    ) -> Result<AutonomousAgent> {
+    ) -> AiResult<AutonomousAgent> {
         let handler: Arc<dyn UserInteractionHandler> = Arc::new(AutoApproveInteraction::new());
         let im = Arc::new(InteractionManager::new(handler, 300));
 
@@ -4870,7 +4876,7 @@ impl AiAssistant {
     /// Auto-configure the assistant using Butler's environment scan.
     /// Updates the AiConfig based on detected providers.
     #[cfg(feature = "butler")]
-    pub fn auto_configure(&mut self) -> Result<()> {
+    pub fn auto_configure(&mut self) -> AiResult<()> {
         if self.butler.is_none() {
             self.butler = Some(Butler::new());
         }
@@ -5070,11 +5076,11 @@ impl AiAssistant {
     #[cfg(feature = "containers")]
     pub fn create_container_executor(
         &self,
-    ) -> Result<crate::container_executor::ContainerExecutor> {
+    ) -> AiResult<crate::container_executor::ContainerExecutor> {
         crate::container_executor::ContainerExecutor::new(
             crate::container_executor::ContainerConfig::default(),
         )
-        .map_err(|e| anyhow::anyhow!(e))
+        .map_err(|e| AiError::Other(e.to_string()))
     }
 
     /// Create a container executor with custom configuration.
@@ -5082,8 +5088,9 @@ impl AiAssistant {
     pub fn create_container_executor_with_config(
         &self,
         config: crate::container_executor::ContainerConfig,
-    ) -> Result<crate::container_executor::ContainerExecutor> {
-        crate::container_executor::ContainerExecutor::new(config).map_err(|e| anyhow::anyhow!(e))
+    ) -> AiResult<crate::container_executor::ContainerExecutor> {
+        crate::container_executor::ContainerExecutor::new(config)
+            .map_err(|e| AiError::Other(e.to_string()))
     }
 
     /// Execute code in an isolated Docker container.
@@ -5095,7 +5102,7 @@ impl AiAssistant {
         &self,
         code: &str,
         language: &crate::code_sandbox::Language,
-    ) -> Result<crate::code_sandbox::ExecutionResult> {
+    ) -> AiResult<crate::code_sandbox::ExecutionResult> {
         let mut sandbox = crate::container_sandbox::ContainerSandbox::new(
             crate::container_sandbox::ContainerSandboxConfig::default(),
         )
@@ -5105,8 +5112,8 @@ impl AiAssistant {
 
     /// Create a shared folder for container file exchange.
     #[cfg(feature = "containers")]
-    pub fn create_shared_folder(&self) -> Result<crate::shared_folder::SharedFolder> {
-        crate::shared_folder::SharedFolder::temp()
+    pub fn create_shared_folder(&self) -> AiResult<crate::shared_folder::SharedFolder> {
+        crate::shared_folder::SharedFolder::temp().map_err(AiError::from)
     }
 
     // === Document Creation ===
@@ -5115,7 +5122,7 @@ impl AiAssistant {
     ///
     /// Internally creates a `ContainerExecutor` and a temporary `SharedFolder`.
     #[cfg(feature = "containers")]
-    pub fn create_document_pipeline(&self) -> Result<crate::document_pipeline::DocumentPipeline> {
+    pub fn create_document_pipeline(&self) -> AiResult<crate::document_pipeline::DocumentPipeline> {
         let executor = crate::container_executor::ContainerExecutor::new(
             crate::container_executor::ContainerConfig::default(),
         )
@@ -5137,7 +5144,7 @@ impl AiAssistant {
         content: &str,
         source_format: crate::document_pipeline::SourceFormat,
         output_format: crate::document_pipeline::OutputFormat,
-    ) -> Result<crate::document_pipeline::DocumentResult> {
+    ) -> AiResult<crate::document_pipeline::DocumentResult> {
         let executor = crate::container_executor::ContainerExecutor::new(
             crate::container_executor::ContainerConfig::default(),
         )
@@ -5157,7 +5164,9 @@ impl AiAssistant {
             extra_args: Vec::new(),
             metadata: std::collections::HashMap::new(),
         };
-        pipeline.create(&request).map_err(|e| anyhow::anyhow!(e))
+        pipeline
+            .create(&request)
+            .map_err(|e| AiError::Other(e.to_string()))
     }
 
     // === Speech (STT / TTS) ===
@@ -5176,9 +5185,11 @@ impl AiAssistant {
         audio: &[u8],
         format: crate::speech::AudioFormat,
         language: Option<&str>,
-    ) -> Result<crate::speech::TranscriptionResult> {
+    ) -> AiResult<crate::speech::TranscriptionResult> {
         let provider = crate::speech::create_speech_provider(provider_name)?;
-        provider.transcribe(audio, format, language)
+        provider
+            .transcribe(audio, format, language)
+            .map_err(AiError::from)
     }
 
     /// Synthesize text to audio using the specified speech provider.
@@ -5193,9 +5204,9 @@ impl AiAssistant {
         provider_name: &str,
         text: &str,
         options: &crate::speech::SynthesisOptions,
-    ) -> Result<crate::speech::SynthesisResult> {
+    ) -> AiResult<crate::speech::SynthesisResult> {
         let provider = crate::speech::create_speech_provider(provider_name)?;
-        provider.synthesize(text, options)
+        provider.synthesize(text, options).map_err(AiError::from)
     }
 
     /// Get the recommended speech configuration from butler (if available).
@@ -5222,29 +5233,35 @@ impl AiAssistant {
         provider_name: &str,
         audio: &[u8],
         name: &str,
-    ) -> Result<String> {
+    ) -> AiResult<String> {
         use crate::speech::VoiceCloneProvider;
         let (quality, warnings) = crate::speech::assess_enrollment_quality(audio, 16000);
         if quality < 0.3 {
-            anyhow::bail!(
+            return Err(AiError::Other(format!(
                 "Audio quality too low ({:.0}%): {}",
                 quality * 100.0,
                 warnings.join("; ")
-            );
+            )));
         }
         match provider_name {
             "elevenlabs" => {
                 let provider = crate::speech::ElevenLabsCloneProvider::from_env()?;
-                provider.enroll(audio, crate::speech::AudioFormat::Pcm, name, 16000)
+                provider
+                    .enroll(audio, crate::speech::AudioFormat::Pcm, name, 16000)
+                    .map_err(AiError::from)
             }
             "xtts" => {
                 let provider = crate::speech::XttsCloneProvider::local();
-                provider.enroll(audio, crate::speech::AudioFormat::Pcm, name, 16000)
+                provider
+                    .enroll(audio, crate::speech::AudioFormat::Pcm, name, 16000)
+                    .map_err(AiError::from)
             }
-            _ => anyhow::bail!(
-                "Unknown clone provider '{}'. Available: elevenlabs, xtts",
-                provider_name
-            ),
+            _ => {
+                return Err(AiError::Other(format!(
+                    "Unknown clone provider '{}'. Available: elevenlabs, xtts",
+                    provider_name
+                )))
+            }
         }
     }
 
@@ -5255,19 +5272,28 @@ impl AiAssistant {
         provider_name: &str,
         text: &str,
         voice_id: &str,
-    ) -> Result<crate::speech::SynthesisResult> {
+    ) -> AiResult<crate::speech::SynthesisResult> {
         use crate::speech::VoiceCloneProvider;
         let options = crate::speech::SynthesisOptions::default();
         match provider_name {
             "elevenlabs" => {
                 let provider = crate::speech::ElevenLabsCloneProvider::from_env()?;
-                provider.synthesize_cloned(text, &voice_id.to_string(), &options)
+                provider
+                    .synthesize_cloned(text, &voice_id.to_string(), &options)
+                    .map_err(AiError::from)
             }
             "xtts" => {
                 let provider = crate::speech::XttsCloneProvider::local();
-                provider.synthesize_cloned(text, &voice_id.to_string(), &options)
+                provider
+                    .synthesize_cloned(text, &voice_id.to_string(), &options)
+                    .map_err(AiError::from)
             }
-            _ => anyhow::bail!("Unknown clone provider '{}'", provider_name),
+            _ => {
+                return Err(AiError::Other(format!(
+                    "Unknown clone provider '{}'",
+                    provider_name
+                )))
+            }
         }
     }
 
@@ -5825,7 +5851,7 @@ fn generate_conversation_summary(
     config: &AiConfig,
     messages: &[ChatMessage],
     previous_summary: Option<&str>,
-) -> Result<String> {
+) -> AiResult<String> {
     let mut conversation_text = String::new();
     for msg in messages {
         let role = if msg.role == "user" {
@@ -5907,7 +5933,8 @@ Summary:"#,
 
     let response = ureq::post(&url)
         .timeout(std::time::Duration::from_secs(90))
-        .send_json(&request_body)?;
+        .send_json(&request_body)
+        .map_err(anyhow::Error::from)?;
 
     let body: serde_json::Value = response.into_json()?;
 

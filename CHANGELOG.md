@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v127 (2026-06-26) — V162: AiAssistant speaks AiResult (0.2.114)
+
+Second code-quality audit follow-up: the flagship `AiAssistant` object
+now returns the crate's own `AiResult<T>` (= `Result<T, AiError>`) from
+its public methods instead of type-erased `anyhow::Result<T>`.
+
+### Changed
+- **`AiAssistant` public API → `AiResult`**: 38 methods + one free helper
+  migrated from the `anyhow::Result` alias to `crate::error::AiResult`.
+  Behavior-preserving (relies on the existing
+  `impl From<anyhow::Error> for AiError`); the few non-`?` error sites
+  (`bail!`, `return Err(anyhow!…)`, tail `map_err`) were rewritten to the
+  byte-identical `AiError::Other`. No caller (bins/examples) needed
+  changes — `AiError: std::error::Error`.
+
+### Security (CI advisory hygiene, folded in)
+- **RUSTSEC-2026-0185** (quinn-proto remote memory exhaustion): fixed by
+  bump `quinn-proto 0.11.14 → 0.11.15`.
+- **RUSTSEC-2026-0187** (lopdf stack overflow, transitive via
+  pdf-extract, no upstream fix using lopdf ≥0.42 yet): ignored with a
+  documented rationale + re-check date, sync'd across `ci.yml`,
+  `supply-chain.yml` and `deny.toml`.
+
 ## [Unreleased] - v126 (2026-06-26) — V161: code-quality audit follow-ups (0.2.113)
 
 Follow-ups from a full code-quality / organization / ergonomics audit of
