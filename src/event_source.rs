@@ -471,7 +471,7 @@ fn sanitize_for_prompt(s: &str) -> String {
     let mut clean = s.to_string();
     // Truncate to prevent huge payloads
     if clean.len() > 2000 {
-        clean.truncate(2000);
+        crate::text_util::truncate_string(&mut clean, 2000);
         clean.push_str("...[truncated]");
     }
     // Remove common injection patterns

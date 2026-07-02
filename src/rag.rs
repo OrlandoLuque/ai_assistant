@@ -1902,7 +1902,7 @@ pub fn build_chunk_boundaries_prompt(document: &str) -> Option<String> {
 
     // Truncate to first ~3000 chars to avoid huge prompts
     let snippet = if document.len() > 3000 {
-        &document[..3000]
+        crate::text_util::truncate_str(&document, 3000)
     } else {
         document
     };
@@ -3068,7 +3068,7 @@ Un **CCU (Cross-Chassis Upgrade)** es un item que permite transformar una nave e
         assert!(
             all_content.contains("cross-chassis") || all_content.contains("ccu"),
             "Results should contain CCU information. Got: {}...",
-            &all_content[..all_content.len().min(200)]
+            crate::text_util::truncate_str(&all_content, 200)
         );
 
         // Build context and verify it's not empty
@@ -3191,7 +3191,7 @@ Ahorro: $25 (12.5%)
         println!("Results count: {}", results.len());
         println!(
             "Content preview: {}...",
-            &all_content[..all_content.len().min(500)]
+            crate::text_util::truncate_str(&all_content, 500)
         );
         println!(
             "Has Aurora: {}, Mustang: {}, Avenger: {}, Cutlass: {}, Cadena: {}",
@@ -3201,7 +3201,7 @@ Ahorro: $25 (12.5%)
         assert!(
             has_chain_keyword || has_aurora,
             "Results should contain CCU chain information. Got: {}...",
-            &all_content[..all_content.len().min(300)]
+            crate::text_util::truncate_str(&all_content, 300)
         );
 
         cleanup_db(&path);

@@ -65,7 +65,7 @@ impl InputSanitizer {
 
         // Check and truncate length
         if output.len() > self.config.max_input_length {
-            output.truncate(self.config.max_input_length);
+            crate::text_util::truncate_string(&mut output, self.config.max_input_length);
             warnings.push(SanitizationWarning::Truncated {
                 original_length: input.len(),
                 max_length: self.config.max_input_length,

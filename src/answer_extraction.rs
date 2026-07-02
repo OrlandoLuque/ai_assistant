@@ -507,7 +507,10 @@ impl AnswerExtractor {
         if text.len() <= self.config.max_answer_length {
             text.to_string()
         } else {
-            format!("{}...", &text[..self.config.max_answer_length])
+            format!(
+                "{}...",
+                crate::text_util::truncate_str(&text, self.config.max_answer_length)
+            )
         }
     }
 }
