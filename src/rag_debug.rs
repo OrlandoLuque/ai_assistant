@@ -1630,7 +1630,10 @@ fn truncate_str(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         s.to_string()
     } else {
-        format!("{}...", &s[..max_len.saturating_sub(3)])
+        format!(
+            "{}...",
+            crate::text_util::truncate_str(&s, max_len.saturating_sub(3))
+        )
     }
 }
 

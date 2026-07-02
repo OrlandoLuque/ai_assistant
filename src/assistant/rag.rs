@@ -685,7 +685,7 @@ impl AiAssistant {
             let target_chars = (knowledge_context.len() as f64 * ratio * 0.95) as usize;
             if target_chars < knowledge_context.len() {
                 // Truncate at a clean line boundary
-                let truncated = &knowledge_context[..target_chars];
+                let truncated = crate::text_util::truncate_str(&knowledge_context, target_chars);
                 let last_newline = truncated.rfind('\n').unwrap_or(target_chars);
                 knowledge_context.truncate(last_newline);
                 knowledge_context.push_str("\n[... truncated to fit context window ...]\n");
