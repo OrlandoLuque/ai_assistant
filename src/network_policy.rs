@@ -108,7 +108,13 @@ impl NetworkPolicy {
         for blocked in &self.blocked_hosts {
             if blocked.starts_with("*.") {
                 let domain = &blocked[2..];
-                if host_lower.ends_with(domain) {
+                // Require a dot boundary: `*.openai.com` must match
+                // `api.openai.com` and `openai.com`, but NOT `evilopenai.com`.
+                if host_lower == domain
+                    || host_lower
+                        .strip_suffix(domain)
+                        .is_some_and(|p| p.ends_with('.'))
+                {
                     return PolicyDecision::Denied {
                         reason: format!("Host '{}' matches blocked pattern '{}'", host, blocked),
                     };
@@ -125,7 +131,12 @@ impl NetworkPolicy {
         for allowed in &self.allowed_hosts {
             if allowed.starts_with("*.") {
                 let domain = &allowed[2..];
-                if host_lower.ends_with(domain) {
+                // Same dot-boundary requirement as the block path.
+                if host_lower == domain
+                    || host_lower
+                        .strip_suffix(domain)
+                        .is_some_and(|p| p.ends_with('.'))
+                {
                     return PolicyDecision::Allowed;
                 }
             }
