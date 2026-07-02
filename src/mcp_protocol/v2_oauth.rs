@@ -325,24 +325,16 @@ impl OAuthTokenManager {
                 self.current_token = Some(token.clone());
                 Ok(token)
             }
-            Err(_) => {
-                // Fallback to simulated exchange.
-                self.exchange_code_simulated(code)
+            Err(e) => {
+                // SECURITY: never fabricate a token on a network/transport
+                // failure — that would hand out a fake Bearer credential to
+                // the caller. Fail closed and surface the error instead.
+                Err(format!(
+                    "OAuth token endpoint unreachable, refusing to fabricate a token: {}",
+                    e
+                ))
             }
         }
-    }
-
-    /// Simulated exchange for when no real OAuth server is reachable.
-    fn exchange_code_simulated(&mut self, code: &str) -> Result<OAuthToken, String> {
-        let token = OAuthToken {
-            access_token: format!("access-{}", code),
-            token_type: "Bearer".to_string(),
-            expires_at: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
-            refresh_token: Some(format!("refresh-{}", code)),
-            scope: Some(self.config.scopes.join(" ")),
-        };
-        self.current_token = Some(token.clone());
-        Ok(token)
     }
 
     /// Refresh the current token.
@@ -382,28 +374,15 @@ impl OAuthTokenManager {
                 self.current_token = Some(token.clone());
                 Ok(token)
             }
-            Err(_) => {
-                // Fallback to simulated refresh.
-                self.refresh_token_simulated(&refresh, scope)
+            Err(e) => {
+                // SECURITY: fail closed instead of fabricating a refreshed token.
+                let _ = (&refresh, &scope);
+                Err(format!(
+                    "OAuth refresh endpoint unreachable, refusing to fabricate a token: {}",
+                    e
+                ))
             }
         }
-    }
-
-    /// Simulated refresh for when no real OAuth server is reachable.
-    fn refresh_token_simulated(
-        &mut self,
-        refresh: &str,
-        scope: Option<String>,
-    ) -> Result<OAuthToken, String> {
-        let token = OAuthToken {
-            access_token: format!("refreshed-{}", refresh),
-            token_type: "Bearer".to_string(),
-            expires_at: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
-            refresh_token: Some(refresh.to_string()),
-            scope,
-        };
-        self.current_token = Some(token.clone());
-        Ok(token)
     }
 
     /// Parse an OAuth token endpoint JSON response into an `OAuthToken`.
@@ -844,21 +823,16 @@ mod tests {
         let mut manager = OAuthTokenManager::new(config);
         let pkce = PkceChallenge::from_verifier("test_verifier_for_exchange_code");
 
-        // exchange_code will fail to reach the real server and fall back to simulated
+        // The test token endpoint is unreachable. Post-fix, exchange_code MUST
+        // fail closed (return Err) rather than fabricate a fake Bearer token.
         let result = manager.exchange_code("test-auth-code", &pkce);
         assert!(
-            result.is_ok(),
-            "exchange_code should succeed (via simulation fallback)"
+            result.is_err(),
+            "exchange_code must fail closed when the token endpoint is unreachable, not fabricate a token"
         );
 
-        let token = result.unwrap();
-        assert_eq!(token.access_token, "access-test-auth-code");
-        assert_eq!(token.token_type, "Bearer");
-        assert!(token.refresh_token.is_some());
-        assert!(token.expires_at.is_some());
-
-        // Token should now be stored in the manager
-        assert!(manager.current_token().is_some());
+        // Nothing should have been stored.
+        assert!(manager.current_token().is_none());
     }
 
     #[test]
@@ -876,17 +850,13 @@ mod tests {
         };
         manager.set_token(token);
 
-        // refresh_token will fail to reach the real server and fall back to simulated
+        // Unreachable refresh endpoint: refresh MUST fail closed rather than
+        // fabricate a refreshed token.
         let result = manager.refresh_token();
         assert!(
-            result.is_ok(),
-            "refresh_token should succeed (via simulation fallback)"
+            result.is_err(),
+            "refresh_token must fail closed when the refresh endpoint is unreachable, not fabricate a token"
         );
-
-        let refreshed = result.unwrap();
-        assert_eq!(refreshed.access_token, "refreshed-my-refresh-token");
-        assert_eq!(refreshed.token_type, "Bearer");
-        assert!(refreshed.expires_at.is_some());
 
         // Refreshing without a refresh token should fail
         let mut manager2 = OAuthTokenManager::new(test_config());
@@ -1000,21 +970,17 @@ mod tests {
         };
         manager.set_token(expired_token);
 
-        // get_valid_token should detect expiry and auto-refresh (via simulation fallback)
+        // get_valid_token detects expiry and attempts a real refresh. With the
+        // refresh endpoint unreachable it MUST fail closed (Err) rather than
+        // hand back a fabricated token — so an expired token stays expired.
         let result = manager.get_valid_token();
         assert!(
-            result.is_ok(),
-            "get_valid_token should refresh an expired token"
-        );
-
-        let valid = result.unwrap();
-        assert_eq!(
-            valid.access_token, "refreshed-auto-refresh-token",
-            "Token should have been refreshed"
+            result.is_err(),
+            "get_valid_token must fail closed when the refresh endpoint is unreachable"
         );
         assert!(
-            !manager.is_token_expired(),
-            "After refresh, token should not be expired"
+            manager.is_token_expired(),
+            "The stored token must remain expired (no fabricated refresh)"
         );
     }
 
