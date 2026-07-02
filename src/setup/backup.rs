@@ -161,11 +161,19 @@ pub fn restore_backup(archive: &Path, target_dir: &Path) -> Result<(), String> {
         let file_data = &data[pos..pos + data_len];
         pos += data_len;
 
-        // Security: prevent path traversal
+        // Security: prevent path traversal. Reject `..` AND absolute / drive-
+        // qualified paths — an absolute entry makes `target_dir.join` discard
+        // the base and write anywhere on disk.
         let rel = PathBuf::from(&path_str);
-        if rel
-            .components()
-            .any(|c| matches!(c, std::path::Component::ParentDir))
+        if rel.is_absolute()
+            || rel.components().any(|c| {
+                matches!(
+                    c,
+                    std::path::Component::ParentDir
+                        | std::path::Component::RootDir
+                        | std::path::Component::Prefix(_)
+                )
+            })
         {
             return Err(format!("Path traversal detected in archive: {}", path_str));
         }

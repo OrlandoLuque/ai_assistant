@@ -130,9 +130,18 @@ impl SharedFolder {
 
     /// Validate that a relative path does not escape the shared folder.
     fn validate_relative_path(&self, relative_path: &str) -> Result<()> {
+        // A Windows drive-absolute ("C:\\..") or drive-relative ("C:..") path
+        // makes `Path::join` discard the base entirely, escaping the sandbox —
+        // and it passes the naive `..` / leading-separator checks. Reject any
+        // absolute or drive-qualified path as well.
+        let has_windows_drive = relative_path.len() >= 2
+            && relative_path.as_bytes()[0].is_ascii_alphabetic()
+            && relative_path.as_bytes()[1] == b':';
         if relative_path.contains("..")
             || relative_path.starts_with('/')
             || relative_path.starts_with('\\')
+            || std::path::Path::new(relative_path).is_absolute()
+            || has_windows_drive
         {
             anyhow::bail!(
                 "Path traversal detected in relative path: {}",

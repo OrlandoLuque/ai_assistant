@@ -902,6 +902,22 @@ fn run_extract(args: &[String]) -> Result<(), String> {
     );
 
     for doc in &docs {
+        // Security: reject zip-slip / path traversal. `doc.path` comes from an
+        // attacker-authorable .kpkg manifest; an absolute, drive-qualified, or
+        // `..`-containing path would make `join` write outside `output`.
+        let rel = std::path::Path::new(&doc.path);
+        if rel.is_absolute()
+            || rel.components().any(|c| {
+                matches!(
+                    c,
+                    std::path::Component::ParentDir
+                        | std::path::Component::RootDir
+                        | std::path::Component::Prefix(_)
+                )
+            })
+        {
+            return Err(format!("Refusing unsafe path in package: {}", doc.path));
+        }
         let doc_path = output.join(&doc.path);
 
         // Create parent directories
