@@ -606,15 +606,16 @@ fn metadata_filter_to_sql(filter: &MetadataFilter) -> Option<String> {
     use crate::vector_db::FilterOperation;
     match &filter.operation {
         FilterOperation::Equals(v) => {
+            // Escape single quotes in both the field name and string value to
+            // prevent SQL injection into the DataFusion predicate. (The old
+            // template also emitted a dangling `%'`, producing invalid SQL.)
             let val_str = match v {
-                serde_json::Value::String(s) => format!("\"{}\"", s),
+                serde_json::Value::String(s) => format!("\"{}\"", s.replace('\'', "''")),
                 other => other.to_string(),
             };
+            let field = filter.field.replace('\'', "''");
             // Search for "field": value pattern in the JSON string
-            Some(format!(
-                "metadata LIKE '%\"{}\":{}'%'",
-                filter.field, val_str
-            ))
+            Some(format!("metadata LIKE '%\"{}\":{}%'", field, val_str))
         }
         FilterOperation::Contains(needle) => {
             Some(format!("metadata LIKE '%{}%'", needle.replace('\'', "''")))
