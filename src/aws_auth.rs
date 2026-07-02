@@ -99,7 +99,7 @@ pub fn sign_request(params: &SigV4Params, credentials: &AwsCredentials) -> Resul
     let amz_date = &now; // YYYYMMDD'T'HHMMSS'Z'
 
     // Parse URL to get host and path
-    let (host, path, query) = parse_url(&params.url)?;
+    let (host, path, query) = parse_url(&params.url).map_err(|e| anyhow::anyhow!(e))?;
 
     // Step 1: Create canonical request
     let payload_hash = hex_sha256(&params.body);
@@ -352,80 +352,83 @@ fn hex_encode(bytes: &[u8]) -> String {
 // Tests
 // ============================================================================
 
+// SigV4 helpers used by `sign_request` (aws-bedrock) and the tests.
+// Previously mislocated inside `mod tests`, which broke compilation under
+// `--features aws-bedrock` (E0425: cannot find function ...).
+#[cfg(any(feature = "aws-bedrock", test))]
+fn chrono_free_now() -> String {
+    let dur = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let total_secs = dur.as_secs();
+    let secs_in_day = total_secs % 86400;
+    let days = total_secs / 86400;
+    let hours = secs_in_day / 3600;
+    let minutes = (secs_in_day % 3600) / 60;
+    let seconds = secs_in_day % 60;
+    let (y, m, d) = days_to_ymd(days);
+    format!(
+        "{:04}{:02}{:02}T{:02}{:02}{:02}Z",
+        y, m, d, hours, minutes, seconds
+    )
+}
+
+#[cfg(any(feature = "aws-bedrock", test))]
+fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
+    // Civil calendar algorithm from Howard Hinnant
+    days += 719468;
+    let era = days / 146097;
+    let doe = days - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
+}
+
+#[cfg(any(feature = "aws-bedrock", test))]
+fn parse_url(url: &str) -> std::result::Result<(String, String, Option<String>), String> {
+    let stripped = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .ok_or_else(|| "URL must start with http(s)://".to_string())?;
+    let (host, rest) = stripped.split_once('/').unwrap_or((stripped, ""));
+    let (path, query) = if let Some((p, q)) = rest.split_once('?') {
+        (format!("/{}", p), Some(q.to_string()))
+    } else if rest.is_empty() {
+        ("/".to_string(), None)
+    } else {
+        (format!("/{}", rest), None)
+    };
+    Ok((host.to_string(), path, query))
+}
+
+#[cfg(any(feature = "aws-bedrock", test))]
+fn uri_encode_path(path: &str) -> String {
+    path.split('/')
+        .map(|segment| {
+            segment
+                .bytes()
+                .map(|b| {
+                    if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'~'
+                    {
+                        (b as char).to_string()
+                    } else {
+                        format!("%{:02X}", b)
+                    }
+                })
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn chrono_free_now() -> String {
-        let dur = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default();
-        let total_secs = dur.as_secs();
-        let secs_in_day = total_secs % 86400;
-        let days = total_secs / 86400;
-        let hours = secs_in_day / 3600;
-        let minutes = (secs_in_day % 3600) / 60;
-        let seconds = secs_in_day % 60;
-        let (y, m, d) = days_to_ymd(days);
-        format!(
-            "{:04}{:02}{:02}T{:02}{:02}{:02}Z",
-            y, m, d, hours, minutes, seconds
-        )
-    }
-
-    fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
-        // Civil calendar algorithm from Howard Hinnant
-        days += 719468;
-        let era = days / 146097;
-        let doe = days - era * 146097;
-        let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-        let y = yoe + era * 400;
-        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-        let mp = (5 * doy + 2) / 153;
-        let d = doy - (153 * mp + 2) / 5 + 1;
-        let m = if mp < 10 { mp + 3 } else { mp - 9 };
-        let y = if m <= 2 { y + 1 } else { y };
-        (y, m, d)
-    }
-
-    fn parse_url(url: &str) -> std::result::Result<(String, String, Option<String>), String> {
-        let stripped = url
-            .strip_prefix("https://")
-            .or_else(|| url.strip_prefix("http://"))
-            .ok_or_else(|| "URL must start with http(s)://".to_string())?;
-        let (host, rest) = stripped.split_once('/').unwrap_or((stripped, ""));
-        let (path, query) = if let Some((p, q)) = rest.split_once('?') {
-            (format!("/{}", p), Some(q.to_string()))
-        } else if rest.is_empty() {
-            ("/".to_string(), None)
-        } else {
-            (format!("/{}", rest), None)
-        };
-        Ok((host.to_string(), path, query))
-    }
-
-    fn uri_encode_path(path: &str) -> String {
-        path.split('/')
-            .map(|segment| {
-                segment
-                    .bytes()
-                    .map(|b| {
-                        if b.is_ascii_alphanumeric()
-                            || b == b'-'
-                            || b == b'_'
-                            || b == b'.'
-                            || b == b'~'
-                        {
-                            (b as char).to_string()
-                        } else {
-                            format!("%{:02X}", b)
-                        }
-                    })
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("/")
-    }
 
     #[test]
     fn test_aws_credentials_new() {
