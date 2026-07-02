@@ -1487,7 +1487,7 @@ fn truncate(s: &str, max_len: usize) -> String {
     } else {
         format!(
             "{}...",
-            crate::text_util::truncate_str(&s, max_len.saturating_sub(3))
+            crate::text_util::truncate_str(s, max_len.saturating_sub(3))
         )
     }
 }

@@ -126,7 +126,7 @@ impl TopicMatcher {
     pub fn extract_topics(&self, text: &str) -> Vec<String> {
         // Guard: max input size (#1: DoS prevention)
         let text = if text.len() > 100_000 {
-            crate::text_util::truncate_str(&text, 100_000)
+            crate::text_util::truncate_str(text, 100_000)
         } else {
             text
         };
@@ -285,7 +285,7 @@ pub fn build_topic_classify_prompt(query: &str, chunks: &[(String, String)]) -> 
     );
     for (i, (id, preview)) in chunks.iter().enumerate() {
         let safe_preview = if preview.len() > 200 {
-            format!("{}...", crate::text_util::truncate_str(&preview, 200))
+            format!("{}...", crate::text_util::truncate_str(preview, 200))
         } else {
             preview.clone()
         };
@@ -456,7 +456,7 @@ pub fn build_granular_scoring_prompt(query: &str, sentences: &[String]) -> Strin
     );
     for (i, sentence) in sentences.iter().enumerate() {
         let safe = if sentence.len() > 200 {
-            format!("{}...", crate::text_util::truncate_str(&sentence, 200))
+            format!("{}...", crate::text_util::truncate_str(sentence, 200))
         } else {
             sentence.clone()
         };

@@ -1902,7 +1902,7 @@ pub fn build_chunk_boundaries_prompt(document: &str) -> Option<String> {
 
     // Truncate to first ~3000 chars to avoid huge prompts
     let snippet = if document.len() > 3000 {
-        crate::text_util::truncate_str(&document, 3000)
+        crate::text_util::truncate_str(document, 3000)
     } else {
         document
     };
