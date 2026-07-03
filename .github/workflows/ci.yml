@@ -125,6 +125,11 @@ jobs:
       #                       reach >=0.41); build-time XML of trusted
       #                       wayland protocol files only, no direct use in
       #                       src/. Revisit when wayland-scanner bumps it.
+      #   RUSTSEC-2026-0192 — ttf-parser unmaintained (no safe upgrade;
+      #                       transitive via egui/epaint/ab_glyph). DoS-
+      #                       class only; cargo-deny denies unmaintained,
+      #                       cargo-audit only warns. Revisit when egui
+      #                       migrates to skrifa/fontations.
       - name: Run cargo audit
         run: |
           cargo audit \
@@ -134,7 +139,8 @@ jobs:
             --ignore RUSTSEC-2026-0002 \
             --ignore RUSTSEC-2026-0187 \
             --ignore RUSTSEC-2026-0194 \
-            --ignore RUSTSEC-2026-0195
+            --ignore RUSTSEC-2026-0195 \
+            --ignore RUSTSEC-2026-0192
 
   feature-matrix:
     name: Feature Matrix (${{ matrix.features }})

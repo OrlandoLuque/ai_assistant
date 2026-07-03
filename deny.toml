@@ -75,6 +75,11 @@ ignore = [
     # quick-xml (same crate/version, second DoS): unbounded namespace-
     # declaration allocation in NsReader. Same transitive constraint.
     "RUSTSEC-2026-0195",
+    # ttf-parser 0.25.1 unmaintained, no safe upgrade (transitive via
+    # egui/epaint/ab_glyph; egui has not migrated to skrifa). cargo-deny
+    # denies unmaintained where cargo-audit only warns.
+    # Re-check by: 2026-10-01 OR when egui drops ttf-parser.
+    "RUSTSEC-2026-0192",
 ]
 
 # ----------------------------------------------------------------
