@@ -215,6 +215,9 @@ pub mod feedback_loop;
 pub mod file_references;
 #[cfg(feature = "backup")]
 pub mod secure_backup;
+/// Shared SSRF host-classification helpers (private-range / encoded-IP /
+/// IPv6 / userinfo normalization) used by the outbound-fetch guards.
+pub mod ssrf;
 pub mod text_util;
 // V79: C FFI bindings — 20 extern "C" entry points behind the `ffi`
 // feature. Consumed by C/C++/C#/Unity/Unreal/Bevy via the generated

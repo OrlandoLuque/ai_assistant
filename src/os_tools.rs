@@ -441,45 +441,19 @@ fn register_http_get(registry: &mut ToolRegistry, sandbox: Arc<RwLock<SandboxVal
         // DNS names to IPs, so a malicious DNS name that resolves to 127.0.0.1
         // (DNS rebinding) can still bypass this guard.  Full protection
         // requires a DNS-resolving proxy or a connect-callback in the HTTP
-        // client, which ureq does not currently expose.
-        if let Some(host_with_port) = url.split("://").nth(1).and_then(|s| s.split('/').next()) {
-            let host = host_with_port.split(':').next().unwrap_or(host_with_port);
-            if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-                let is_private = match ip {
-                    std::net::IpAddr::V4(v4) => {
-                        v4.is_loopback() || v4.is_private() || v4.is_link_local()
-                        || v4.octets()[0] == 169 && v4.octets()[1] == 254  // link-local
-                        || v4.octets() == [0, 0, 0, 0]
-                        || v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64
-                    } // CGNAT
-                    std::net::IpAddr::V6(v6) => {
-                        v6.is_loopback() || (v6.segments()[0] & 0xFE00) == 0xFC00
-                    } // ULA
-                };
-                if is_private {
-                    return Err(ToolError::ExecutionFailed(
-                        "SSRF blocked: requests to private/internal IP addresses are not allowed"
-                            .into(),
-                    ));
-                }
-            }
-            // Block common internal hostnames (including localhost with any port)
-            let lower = host.to_lowercase();
-            if lower == "localhost"
-                || lower.ends_with(".local")
-                || lower.ends_with(".internal")
-                || lower == "metadata.google.internal"
-            {
+        // client, which ureq does not currently expose.  The shared
+        // `ssrf` normalizer closes the encoded-IP (decimal/hex/octal),
+        // `userinfo@host` and bracketed/mapped-IPv6 bypasses.
+        if let Some(host) = crate::ssrf::extract_host(url) {
+            if crate::ssrf::is_internal_hostname(host) {
                 return Err(ToolError::ExecutionFailed(
                     "SSRF blocked: requests to internal hostnames are not allowed".into(),
                 ));
             }
-            // Block AWS/cloud metadata endpoint by string match (covers
-            // http://169.254.169.254/... even when parsed as IP above,
-            // but kept as an explicit string guard for defence-in-depth)
-            if host_with_port.starts_with("169.254.169.254") {
+            if crate::ssrf::parse_host_ip(host).is_some_and(|ip| crate::ssrf::is_blocked_ip(&ip)) {
                 return Err(ToolError::ExecutionFailed(
-                    "SSRF blocked: requests to cloud metadata endpoint are not allowed".into(),
+                    "SSRF blocked: requests to private/internal IP addresses are not allowed"
+                        .into(),
                 ));
             }
         }
@@ -832,5 +806,42 @@ mod tests {
         let result = registry.execute(&call).unwrap();
         assert!(result.content.contains("hello_test"));
         assert!(result.content.contains("Exit code: 0"));
+    }
+
+    /// Wiring regression (audit V188): http_get's SSRF pre-flight must block
+    /// the encoded-IP / userinfo / bracketed-IPv6 loopback forms even under
+    /// InternetMode::FullAccess (the scenario where this guard is the only
+    /// SSRF protection). Each URL points at loopback/metadata, so the guard
+    /// returns an error before any network access.
+    #[test]
+    fn test_http_get_blocks_ssrf_bypasses() {
+        let sandbox = test_sandbox();
+        let mut registry = ToolRegistry::new();
+        register_os_tools(&mut registry, sandbox);
+
+        for url in [
+            "http://127.0.0.1/",
+            "http://2130706433/",                  // decimal loopback
+            "http://0x7f000001/",                  // hex loopback
+            "http://017700000001/",                // octal loopback
+            "http://127.1/",                       // short-form loopback
+            "http://trusted.com@127.0.0.1/",       // userinfo bypass
+            "http://[::1]:9000/",                  // bracketed IPv6 loopback
+            "http://2852039166/latest/meta-data/", // decimal 169.254.169.254
+            "http://localhost:8080/",
+        ] {
+            let call = ToolCall::new(
+                "http_get",
+                HashMap::from([(
+                    "url".to_string(),
+                    serde_json::Value::String(url.to_string()),
+                )]),
+            );
+            let result = registry.execute(&call);
+            assert!(
+                result.is_err(),
+                "expected SSRF block for {url}, got {result:?}"
+            );
+        }
     }
 }

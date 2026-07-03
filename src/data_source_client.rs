@@ -750,36 +750,20 @@ impl DataSourceClient {
     }
 
     /// Check if a URL points at a private/internal address (SSRF protection).
+    ///
+    /// Uses the shared [`crate::ssrf`] normalizer so encoded-IP
+    /// (decimal/hex/octal), `userinfo@host`, and IPv6
+    /// ULA/link-local/IPv4-mapped forms are all classified (the previous
+    /// inline check only blocked IPv6 loopback). DNS names are not resolved.
     fn is_private_url(url: &str) -> bool {
-        if let Some(host) = url
-            .split("://")
-            .nth(1)
-            .and_then(|s| s.split('/').next())
-            .and_then(|s| s.split(':').next())
-        {
-            let lower = host.to_lowercase();
-            if lower == "localhost"
-                || lower.ends_with(".local")
-                || lower.ends_with(".internal")
-                || lower == "metadata.google.internal"
-            {
-                return true;
+        match crate::ssrf::extract_host(url) {
+            Some(host) => {
+                crate::ssrf::is_internal_hostname(host)
+                    || crate::ssrf::parse_host_ip(host)
+                        .is_some_and(|ip| crate::ssrf::is_blocked_ip(&ip))
             }
-            if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-                return match ip {
-                    std::net::IpAddr::V4(v4) => {
-                        v4.is_loopback()
-                            || v4.is_private()
-                            || v4.is_link_local()
-                            || v4.octets() == [0, 0, 0, 0]
-                            // CGNAT range 100.64.0.0/10
-                            || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64)
-                    }
-                    std::net::IpAddr::V6(v6) => v6.is_loopback(),
-                };
-            }
+            None => false,
         }
-        false
     }
 
     /// Executes a single HTTP request without retry logic.

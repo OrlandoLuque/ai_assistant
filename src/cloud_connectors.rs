@@ -28,42 +28,19 @@ use std::collections::HashMap;
 /// addresses).  Used before making HTTP requests to user-provided endpoints to
 /// prevent server-side request forgery (SSRF).
 fn is_safe_url(url: &str) -> bool {
-    if let Some(authority) = url.split("://").nth(1).and_then(|s| s.split('/').next()) {
-        // Handle IPv6 addresses in brackets: [::1], [::1]:8080
-        let host = if authority.starts_with('[') {
-            // Extract the part inside brackets (IPv6 literal)
-            authority
-                .find(']')
-                .map(|end| &authority[1..end])
-                .unwrap_or(authority)
-        } else {
-            // IPv4 or hostname — strip port
-            authority.split(':').next().unwrap_or(authority)
-        };
-
-        let lower = host.to_lowercase();
-        // Block well-known internal hostnames
-        if lower == "localhost"
-            || lower.ends_with(".local")
-            || lower.ends_with(".internal")
-            || lower == "metadata.google.internal"
-        {
-            return false;
+    match crate::ssrf::extract_host(url) {
+        Some(host) => {
+            // Block well-known internal hostnames.
+            if crate::ssrf::is_internal_hostname(host) {
+                return false;
+            }
+            // Block literal or encoded IPs (decimal/hex/octal, bracketed or
+            // IPv4-mapped IPv6) in private/reserved ranges. A plain hostname
+            // cannot be classified here without DNS, so allow it.
+            !crate::ssrf::parse_host_ip(host).is_some_and(|ip| crate::ssrf::is_blocked_ip(&ip))
         }
-        // Block IP addresses in private/reserved ranges
-        if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-            return match ip {
-                std::net::IpAddr::V4(v4) => {
-                    !v4.is_loopback()          // 127.0.0.0/8
-                        && !v4.is_private()    // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
-                        && !v4.is_link_local() // 169.254.0.0/16
-                        && v4.octets() != [0, 0, 0, 0]
-                }
-                std::net::IpAddr::V6(v6) => !v6.is_loopback(),
-            };
-        }
+        None => true,
     }
-    true
 }
 
 // ============================================================================

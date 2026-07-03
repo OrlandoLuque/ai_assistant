@@ -587,10 +587,31 @@ fn validate_url_host(url: &str, context: &str) -> Result<(), String> {
             }
         }
     }
+    // Normalized host check: catches userinfo@host, integer-encoded IPs
+    // (decimal/hex/octal) and bracketed / IPv4-mapped IPv6 forms that the
+    // substring patterns above miss. DNS names are still not resolved
+    // (documented best-effort limitation).
+    if let Some(host) = crate::ssrf::extract_host(url) {
+        if crate::ssrf::is_internal_hostname(host)
+            || crate::ssrf::parse_host_ip(host).is_some_and(|ip| crate::ssrf::is_blocked_ip(&ip))
+        {
+            return Err(format!(
+                "{}: blocked SSRF target (private/internal host)",
+                context
+            ));
+        }
+    }
     Ok(())
 }
 
 fn is_private_host(host: &str) -> bool {
+    // Prefer the shared normalizer (encoded IPs, IPv6 ULA/link-local/mapped)
+    // and keep the substring fallbacks as defence-in-depth.
+    if crate::ssrf::is_internal_hostname(host)
+        || crate::ssrf::parse_host_ip(host).is_some_and(|ip| crate::ssrf::is_blocked_ip(&ip))
+    {
+        return true;
+    }
     let lower = host.to_lowercase();
     lower == "localhost"
         || lower.starts_with("127.")
