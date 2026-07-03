@@ -352,7 +352,15 @@ fn is_private_ip(ip: &IpAddr) -> bool {
                 || o[0] == 127
                 || o[0] == 0
         }
-        IpAddr::V6(v6) => v6.is_loopback() || v6.segments()[0] == 0xfd00,
+        IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || (v6.segments()[0] & 0xfe00) == 0xfc00
+                || (v6.segments()[0] & 0xffc0) == 0xfe80
+                || v6
+                    .to_ipv4_mapped()
+                    .is_some_and(|v4| is_private_ip(&IpAddr::V4(v4)))
+        }
     }
 }
 
