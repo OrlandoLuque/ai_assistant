@@ -1042,7 +1042,10 @@ impl ThinkingTagParser {
                     self.in_thinking_block = false;
                 } else {
                     // No closing tag yet — flush safe content to thinking accumulator
-                    let safe_len = self.buffer.len().saturating_sub(CLOSE_TAG_LEN);
+                    let safe_len = crate::text_util::floor_char_boundary(
+                        &self.buffer,
+                        self.buffer.len().saturating_sub(CLOSE_TAG_LEN),
+                    );
                     if safe_len > 0 {
                         let safe_part = self.buffer[..safe_len].to_string();
                         self.thinking_content.push_str(&safe_part);
@@ -1066,7 +1069,10 @@ impl ThinkingTagParser {
                     self.in_thinking_block = true;
                 } else {
                     // No opening tag — flush safe content as visible
-                    let safe_len = self.buffer.len().saturating_sub(OPEN_TAG_LEN);
+                    let safe_len = crate::text_util::floor_char_boundary(
+                        &self.buffer,
+                        self.buffer.len().saturating_sub(OPEN_TAG_LEN),
+                    );
                     if safe_len > 0 {
                         let safe_part = self.buffer[..safe_len].to_string();
                         visible_output.push_str(&safe_part);

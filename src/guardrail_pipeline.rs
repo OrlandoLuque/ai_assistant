@@ -740,9 +740,13 @@ impl StreamingGuardrailPipeline {
         self.metrics.chunks_received += 1;
         self.tokens_since_eval += 1;
 
-        // Trim to max_buffer_size (keep the tail).
+        // Trim to max_buffer_size (keep the tail). Floor the cut to a char
+        // boundary so a multibyte char straddling `start` doesn't panic.
         if self.accumulated.len() > self.config.max_buffer_size {
-            let start = self.accumulated.len() - self.config.max_buffer_size;
+            let start = crate::text_util::floor_char_boundary(
+                &self.accumulated,
+                self.accumulated.len() - self.config.max_buffer_size,
+            );
             self.accumulated = self.accumulated[start..].to_string();
         }
 
