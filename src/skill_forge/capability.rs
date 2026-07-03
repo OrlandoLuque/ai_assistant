@@ -120,7 +120,7 @@ impl NetAllowList {
     pub fn allows(&self, host: &str) -> bool {
         for entry in &self.hosts {
             if let Some(suffix) = entry.strip_prefix("*.") {
-                if host.ends_with(suffix) && host != suffix {
+                if host.strip_suffix(suffix).is_some_and(|p| p.ends_with('.')) {
                     return true;
                 }
             } else if entry == host {
