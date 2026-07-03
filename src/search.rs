@@ -259,19 +259,16 @@ impl ConversationSearcher {
 
     /// Search for exact phrase match
     fn search_exact(&self, query: &SearchQuery, results: &mut Vec<SearchResult>) {
-        let query_lower = query.text.to_lowercase();
-
         for (idx, (session, msg)) in self.index.messages.iter().enumerate() {
             if !self.matches_filters(msg, session.as_deref(), query) {
                 continue;
             }
 
-            let content_lower = msg.content.to_lowercase();
-            if let Some(pos) = content_lower.find(&query_lower) {
+            if let Some((pos, end)) = crate::text_util::find_ci_range(&msg.content, &query.text) {
                 let highlights = vec![HighlightSpan {
                     start: pos,
-                    end: pos + query.text.len(),
-                    text: msg.content[pos..pos + query.text.len()].to_string(),
+                    end,
+                    text: msg.content[pos..end].to_string(),
                 }];
 
                 results.push(SearchResult {
@@ -304,12 +301,13 @@ impl ConversationSearcher {
 
             for query_token in &query_tokens {
                 // Check exact match
-                if let Some(pos) = content_lower.find(query_token) {
+                if let Some((pos, end)) = crate::text_util::find_ci_range(&msg.content, query_token)
+                {
                     score += 1.0;
                     highlights.push(HighlightSpan {
                         start: pos,
-                        end: pos + query_token.len(),
-                        text: msg.content[pos..pos + query_token.len()].to_string(),
+                        end,
+                        text: msg.content[pos..end].to_string(),
                     });
                 } else {
                     // Check fuzzy match
@@ -318,11 +316,13 @@ impl ConversationSearcher {
                         let similarity = Self::calculate_similarity(query_token, content_token);
                         if similarity > 0.7 {
                             score += similarity;
-                            if let Some(pos) = content_lower.find(content_token) {
+                            if let Some((pos, end)) =
+                                crate::text_util::find_ci_range(&msg.content, content_token)
+                            {
                                 highlights.push(HighlightSpan {
                                     start: pos,
-                                    end: pos + content_token.len(),
-                                    text: msg.content[pos..pos + content_token.len()].to_string(),
+                                    end,
+                                    text: msg.content[pos..end].to_string(),
                                 });
                             }
                         }
@@ -358,16 +358,16 @@ impl ConversationSearcher {
                 continue;
             }
 
-            let content_lower = msg.content.to_lowercase();
             let mut highlights = Vec::new();
             let mut all_found = true;
 
             for query_token in &query_tokens {
-                if let Some(pos) = content_lower.find(query_token) {
+                if let Some((pos, end)) = crate::text_util::find_ci_range(&msg.content, query_token)
+                {
                     highlights.push(HighlightSpan {
                         start: pos,
-                        end: pos + query_token.len(),
-                        text: msg.content[pos..pos + query_token.len()].to_string(),
+                        end,
+                        text: msg.content[pos..end].to_string(),
                     });
                 } else {
                     all_found = false;
@@ -400,16 +400,16 @@ impl ConversationSearcher {
                 continue;
             }
 
-            let content_lower = msg.content.to_lowercase();
             let mut highlights = Vec::new();
             let mut matches = 0;
 
             for query_token in &query_tokens {
-                if let Some(pos) = content_lower.find(query_token) {
+                if let Some((pos, end)) = crate::text_util::find_ci_range(&msg.content, query_token)
+                {
                     highlights.push(HighlightSpan {
                         start: pos,
-                        end: pos + query_token.len(),
-                        text: msg.content[pos..pos + query_token.len()].to_string(),
+                        end,
+                        text: msg.content[pos..end].to_string(),
                     });
                     matches += 1;
                 }
@@ -459,22 +459,38 @@ impl ConversationSearcher {
 
     /// Simple pattern matching (subset of regex)
     fn match_pattern(&self, pattern: &str, text: &str) -> Option<Vec<HighlightSpan>> {
-        // Simple case-insensitive substring for now
-        // A full regex implementation would be more complex
-        let pattern_lower = pattern.to_lowercase();
-        let text_lower = text.to_lowercase();
-
+        // Simple case-insensitive substring for now.
+        // A full regex implementation would be more complex.
         let mut highlights = Vec::new();
         let mut start = 0;
 
-        while let Some(pos) = text_lower[start..].find(&pattern_lower) {
-            let abs_pos = start + pos;
-            highlights.push(HighlightSpan {
-                start: abs_pos,
-                end: abs_pos + pattern.len(),
-                text: text[abs_pos..abs_pos + pattern.len()].to_string(),
-            });
-            start = abs_pos + 1;
+        // Walk the *original* text case-insensitively so the highlight
+        // offsets are valid char boundaries of `text` (a lowercased copy
+        // can have different byte offsets and slicing it into `text`
+        // panics on multi-byte chars).
+        while start <= text.len() {
+            let Some((rel_start, rel_end)) =
+                crate::text_util::find_ci_range(&text[start..], pattern)
+            else {
+                break;
+            };
+            let abs_start = start + rel_start;
+            let abs_end = start + rel_end;
+            if abs_end > abs_start {
+                highlights.push(HighlightSpan {
+                    start: abs_start,
+                    end: abs_end,
+                    text: text[abs_start..abs_end].to_string(),
+                });
+            }
+            // Advance one char from the match start (overlapping matches,
+            // as the original `pos + 1` did), staying on a char boundary.
+            let step = text[abs_start..]
+                .chars()
+                .next()
+                .map(|c| c.len_utf8())
+                .unwrap_or(1);
+            start = abs_start + step;
         }
 
         if highlights.is_empty() {
@@ -859,5 +875,48 @@ mod tests {
         let query = SearchQuery::new("Rust");
         let results = searcher.search(&query);
         assert!(results.is_empty());
+    }
+
+    /// Regression (audit V186): highlight offsets must point into the
+    /// *original* message, not into a `to_lowercase()` copy whose byte
+    /// offsets shift for non-length-preserving chars (here 'ẞ' -> 'ß',
+    /// which is one byte shorter). The old code sliced the original at the
+    /// lowercased offset, producing a shifted highlight and, for text with
+    /// multi-byte chars at the shifted position, a panic.
+    #[test]
+    fn test_highlight_offsets_multibyte() {
+        // 'ẞ' (U+1E9E, 3 bytes) lowercases to 'ß' (2 bytes): the byte
+        // offset of "SYSTEM" in the lowercased copy is one less than in the
+        // original, so a naive slice returns " SYSTE" instead of "SYSTEM".
+        let messages = vec![ChatMessage::user("ẞ SYSTEM prompt á".to_string())];
+
+        for mode in [
+            SearchMode::Exact,
+            SearchMode::Fuzzy,
+            SearchMode::AllWords,
+            SearchMode::AnyWord,
+            SearchMode::Regex,
+        ] {
+            let mut searcher = ConversationSearcher::new();
+            searcher.index_messages(&messages, None);
+            let query = SearchQuery::new("system").mode(mode);
+            let results = searcher.search(&query);
+            assert!(!results.is_empty(), "no results for mode {mode:?}");
+            for r in &results {
+                for h in &r.highlights {
+                    // Offsets are valid boundaries and address the original.
+                    assert_eq!(
+                        &r.message.content[h.start..h.end],
+                        h.text,
+                        "highlight slice mismatch for mode {mode:?}"
+                    );
+                    assert!(
+                        h.text.eq_ignore_ascii_case("system"),
+                        "expected the SYSTEM span, got {:?} for mode {mode:?}",
+                        h.text
+                    );
+                }
+            }
+        }
     }
 }

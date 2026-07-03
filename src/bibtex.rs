@@ -569,10 +569,10 @@ fn sanitize_latex(input: &str) -> String {
     for cmd in DANGEROUS_COMMANDS {
         // Remove the command and any braced argument following it
         loop {
-            let lower = result.to_lowercase();
-            let cmd_lower = cmd.to_lowercase();
-            if let Some(pos) = lower.find(&cmd_lower) {
-                let end = pos + cmd.len();
+            // Case-insensitive match on the ORIGINAL string so `pos`/`end`
+            // are valid char boundaries of `result` (a lowercased-copy offset
+            // panics on multibyte input — the sanitizer runs on untrusted .bib).
+            if let Some((pos, end)) = crate::text_util::find_ci_range(&result, cmd) {
                 // If followed by a braced argument, remove that too
                 let after = &result[end..];
                 let skip = if after.starts_with('{') {

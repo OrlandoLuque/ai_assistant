@@ -32,9 +32,57 @@ pub fn truncate_string(s: &mut String, max: usize) {
     s.truncate(cut);
 }
 
+/// Case-insensitive substring search that returns the `[start, end)` byte
+/// range **of the original `haystack`** (not of a lowercased copy).
+///
+/// The audit found many panics of the form
+/// `let lo = s.to_lowercase(); let p = lo.find(x); &s[p..]` — `p` is a byte
+/// offset into the *lowercased* copy but is used to slice the *original*,
+/// and `to_lowercase()` is not length-preserving, so `p` can land inside a
+/// multi-byte char and panic. This walks the original directly, so the
+/// returned offsets are always valid char boundaries of `haystack`.
+pub fn find_ci_range(haystack: &str, needle: &str) -> Option<(usize, usize)> {
+    let needle_lower = needle.to_lowercase();
+    if needle_lower.is_empty() {
+        return Some((0, 0));
+    }
+    for (start, _) in haystack.char_indices() {
+        // Accumulate the lowercased haystack char-by-char from `start` until
+        // it reaches (or overshoots) the needle length, then compare.
+        let mut acc = String::new();
+        for (off, ch) in haystack[start..].char_indices() {
+            acc.extend(ch.to_lowercase());
+            if acc.len() >= needle_lower.len() {
+                if acc == needle_lower {
+                    return Some((start, start + off + ch.len_utf8()));
+                }
+                break;
+            }
+        }
+    }
+    None
+}
+
+/// Case-insensitive `find` returning the start byte offset in the original
+/// `haystack`. See [`find_ci_range`].
+pub fn find_ci(haystack: &str, needle: &str) -> Option<usize> {
+    find_ci_range(haystack, needle).map(|(s, _)| s)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn find_ci_handles_multibyte_prefix() {
+        // 'ẞ' (3 bytes) lowercases to 'ß' (2 bytes): offsets diverge.
+        let hay = "ẞ start INPUT rest";
+        let (s, e) = find_ci_range(hay, "input").unwrap();
+        assert_eq!(&hay[s..e], "INPUT"); // valid original slice, no panic
+        assert_eq!(find_ci("áéí hello", "HELLO"), Some("áéí ".len()));
+        assert_eq!(find_ci("abc", "xyz"), None);
+        assert_eq!(find_ci("abc", ""), Some(0));
+    }
 
     #[test]
     fn no_panic_on_multibyte() {
