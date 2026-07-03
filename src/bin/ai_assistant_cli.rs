@@ -656,7 +656,10 @@ fn main() -> ExitCode {
                             let prefix = if role == "user" { "You" } else { "AI" };
                             // Truncate long messages in history view
                             let display = if content.len() > 200 {
-                                format!("{}...", &content[..200])
+                                format!(
+                                    "{}...",
+                                    ai_assistant::text_util::truncate_str(&content, 200)
+                                )
                             } else {
                                 content.to_string()
                             };

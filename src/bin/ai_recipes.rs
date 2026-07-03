@@ -212,7 +212,7 @@ fn cmd_inspect(target: &str, dir: &Path) -> ExitCode {
 fn short(s: &str) -> String {
     let one = s.replace('\n', " ");
     if one.len() > 72 {
-        format!("{}…", &one[..72])
+        format!("{}…", ai_assistant::text_util::truncate_str(&one, 72))
     } else {
         one
     }

@@ -498,7 +498,7 @@ impl AgenticLoop {
 
         // Limit length
         if query.len() > 100 {
-            query.truncate(100);
+            crate::text_util::truncate_string(&mut query, 100);
         }
 
         query

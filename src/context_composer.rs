@@ -317,7 +317,7 @@ pub fn generate_mini_summary(messages: &[(String, String)], max_tokens: usize) -
 
     // Final truncation safety-net
     if estimate_tokens(&summary) > max_tokens && summary.len() > max_chars {
-        summary.truncate(max_chars);
+        crate::text_util::truncate_string(&mut summary, max_chars);
     }
 
     summary.trim_end().to_string()
