@@ -658,7 +658,7 @@ fn main() -> ExitCode {
                             let display = if content.len() > 200 {
                                 format!(
                                     "{}...",
-                                    ai_assistant::text_util::truncate_str(&content, 200)
+                                    ai_assistant::text_util::truncate_str(content, 200)
                                 )
                             } else {
                                 content.to_string()
