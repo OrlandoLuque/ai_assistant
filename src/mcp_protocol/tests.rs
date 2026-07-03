@@ -1103,12 +1103,14 @@ fn test_exchange_code() {
     let mut manager = OAuthTokenManager::new(config);
     let pkce = PkceChallenge::from_verifier("test-verifier");
 
-    let token = manager.exchange_code("auth-code-xyz", &pkce).unwrap();
-    assert_eq!(token.access_token, "access-auth-code-xyz");
-    assert_eq!(token.token_type, "Bearer");
-    assert!(token.expires_at.is_some());
-    assert!(token.refresh_token.is_some());
-    assert!(!manager.is_token_expired());
+    // The test token endpoint is unreachable; exchange_code must fail closed
+    // (Err) rather than fabricate a fake Bearer token (V168 security fix).
+    let result = manager.exchange_code("auth-code-xyz", &pkce);
+    assert!(
+        result.is_err(),
+        "exchange_code must fail closed, not fabricate a token"
+    );
+    assert!(manager.is_token_expired(), "nothing should be stored");
 }
 
 #[test]
@@ -1141,13 +1143,11 @@ fn test_refresh_token_flow() {
     let mut manager = OAuthTokenManager::new(config);
     let pkce = PkceChallenge::from_verifier("test-verifier");
 
-    // First get a token
-    manager.exchange_code("code-1", &pkce).unwrap();
-
-    // Now refresh
-    let refreshed = manager.refresh_token().unwrap();
-    assert!(refreshed.access_token.starts_with("refreshed-"));
-    assert!(!manager.is_token_expired());
+    // With no reachable OAuth server, exchange_code fails closed (V168), so
+    // there is no token to refresh — both operations must return Err rather
+    // than fabricate tokens.
+    assert!(manager.exchange_code("code-1", &pkce).is_err());
+    assert!(manager.refresh_token().is_err());
 }
 
 #[test]

@@ -63,6 +63,18 @@ ignore = [
     # Re-check by: 2026-09-01 OR when pdf-extract publishes a release that
     # depends on lopdf >= 0.42.
     "RUSTSEC-2026-0187",
+    # quick-xml 0.39.2 quadratic run time when checking a start tag for
+    # duplicate attribute names. Purely transitive via wayland-scanner
+    # (the Linux GUI file-dialog chain rfd -> ashpd -> wayland-client ->
+    # wayland-scanner), which pins quick-xml ^0.39 and cannot reach the
+    # fixed >= 0.41. quick-xml is not used directly anywhere in src/; the
+    # only consumer parses trusted, build-time wayland protocol XML, so the
+    # DoS is not reachable from crate input.
+    # Re-check by: 2026-10-01 OR when wayland-scanner bumps quick-xml >= 0.41.
+    "RUSTSEC-2026-0194",
+    # quick-xml (same crate/version, second DoS): unbounded namespace-
+    # declaration allocation in NsReader. Same transitive constraint.
+    "RUSTSEC-2026-0195",
 ]
 
 # ----------------------------------------------------------------
