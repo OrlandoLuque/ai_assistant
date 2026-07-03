@@ -838,7 +838,7 @@ fn print_manifest_formatted(manifest: &KpkgManifest, file: &Path, file_size: usi
 fn truncate_string(s: &str, max_len: usize) -> String {
     let s = s.replace('\n', " ").replace('\r', "");
     if s.len() > max_len {
-        format!("{}...", &s[..max_len])
+        format!("{}...", ai_assistant::text_util::truncate_str(&s, max_len))
     } else {
         s
     }

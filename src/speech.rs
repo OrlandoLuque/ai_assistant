@@ -608,7 +608,7 @@ impl SpeechProvider for GoogleSpeechProvider {
 
         // Extract language code from voice name (e.g., "en-US" from "en-US-Standard-A")
         let lang_code = if voice_name.len() >= 5 {
-            &voice_name[..5]
+            crate::text_util::truncate_str(voice_name, 5)
         } else {
             "en-US"
         };

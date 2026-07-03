@@ -1944,7 +1944,7 @@ pub mod agent_bridge {
         match &image.data {
             ImageData::Url(url) => {
                 let safe = if url.len() > 64 {
-                    &url[..64]
+                    crate::text_util::truncate_str(url, 64)
                 } else {
                     url.as_str()
                 };

@@ -290,7 +290,10 @@ fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_string()
     } else {
-        format!("{}...", &s[..max - 3])
+        format!(
+            "{}...",
+            ai_assistant::text_util::truncate_str(s, max.saturating_sub(3))
+        )
     }
 }
 

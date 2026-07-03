@@ -86,7 +86,10 @@ impl ChatSession {
     pub fn auto_name(&mut self) {
         if let Some(first_msg) = self.messages.iter().find(|m| m.role == "user") {
             let summary = if first_msg.content.len() > 40 {
-                format!("{}...", &first_msg.content[..40])
+                format!(
+                    "{}...",
+                    crate::text_util::truncate_str(&first_msg.content, 40)
+                )
             } else {
                 first_msg.content.clone()
             };

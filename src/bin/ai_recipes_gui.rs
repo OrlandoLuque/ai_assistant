@@ -270,7 +270,7 @@ impl RecipesAuditApp {
 fn short(s: &str) -> String {
     let one = s.replace('\n', " ");
     if one.len() > 90 {
-        format!("{}…", &one[..90])
+        format!("{}…", ai_assistant::text_util::truncate_str(&one, 90))
     } else {
         one
     }
