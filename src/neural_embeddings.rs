@@ -188,7 +188,7 @@ impl DenseEmbedder {
 
         // Process in batches
         for chunk in texts.chunks(self.config.batch_size) {
-            let batch_results = if url.contains("ollama") {
+            let batch_results = if url.contains("ollama") || url.contains("/api/embeddings") {
                 self.embed_ollama(chunk)?
             } else if url.contains("openai") {
                 self.embed_openai(chunk)?
