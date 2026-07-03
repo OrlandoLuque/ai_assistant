@@ -566,8 +566,17 @@ impl ContainerExecutor {
                     .allowed_bind_mount_prefixes
                     .iter()
                     .any(|prefix| {
+                        // An empty prefix makes starts_with() match EVERY path,
+                        // silently allowlisting all host mounts (fail-open).
+                        // Skip empty prefixes so they never grant access.
+                        if prefix.as_os_str().is_empty() {
+                            return false;
+                        }
                         let prefix_canon =
                             std::fs::canonicalize(prefix).unwrap_or_else(|_| prefix.clone());
+                        if prefix_canon.as_os_str().is_empty() {
+                            return false;
+                        }
                         hp_canon.starts_with(&prefix_canon)
                     });
                 if !allowed {
