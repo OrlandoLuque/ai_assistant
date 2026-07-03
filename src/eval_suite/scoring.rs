@@ -326,8 +326,8 @@ fn extract_numeric_answer(response: &str) -> Option<f64> {
 
     // Pattern: "The answer is X" or "= X"
     for prefix in &["the answer is ", "answer: ", "answer is ", "= "] {
-        if let Some(rest) = trimmed.to_lowercase().find(prefix) {
-            let after = &trimmed[rest + prefix.len()..];
+        if let Some((_, end)) = crate::text_util::find_ci_range(trimmed, prefix) {
+            let after = &trimmed[end..];
             let num_str: String = after
                 .trim()
                 .chars()

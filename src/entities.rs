@@ -984,9 +984,8 @@ impl FactExtractor {
         confidence: f32,
         source: &str,
     ) -> Option<Fact> {
-        let sentence_lower = sentence.to_lowercase();
-        if let Some(pos) = sentence_lower.find(pattern) {
-            let after = &sentence[pos + pattern.len()..].trim();
+        if let Some((_, end)) = crate::text_util::find_ci_range(sentence, pattern) {
+            let after = sentence[end..].trim();
             if !after.is_empty() {
                 let object = self.extract_object(after);
                 if !object.is_empty() {
@@ -1013,9 +1012,8 @@ impl FactExtractor {
         confidence: f32,
         source: &str,
     ) -> Option<Fact> {
-        let sentence_lower = sentence.to_lowercase();
-        if let Some(pos) = sentence_lower.find(pattern) {
-            let after = &sentence[pos + pattern.len()..].trim();
+        if let Some((_, end)) = crate::text_util::find_ci_range(sentence, pattern) {
+            let after = sentence[end..].trim();
             if !after.is_empty() {
                 let object = self.extract_object(after);
                 if !object.is_empty() {
@@ -1036,10 +1034,9 @@ impl FactExtractor {
         confidence: f32,
         source: &str,
     ) -> Option<Fact> {
-        let sentence_lower = sentence.to_lowercase();
-        if let Some(pos) = sentence_lower.find(pattern) {
-            let before = &sentence[..pos].trim();
-            let after = &sentence[pos + pattern.len()..].trim();
+        if let Some((start, end)) = crate::text_util::find_ci_range(sentence, pattern) {
+            let before = sentence[..start].trim();
+            let after = sentence[end..].trim();
 
             if !before.is_empty() && !after.is_empty() {
                 let subject = self.extract_last_noun_phrase(before);

@@ -69,6 +69,35 @@ pub fn find_ci(haystack: &str, needle: &str) -> Option<usize> {
     find_ci_range(haystack, needle).map(|(s, _)| s)
 }
 
+/// Case-insensitive `rfind`: the `[start, end)` byte range **of the original
+/// `haystack`** of the *last* case-insensitive occurrence of `needle`.
+/// Same char-boundary guarantee as [`find_ci_range`].
+pub fn rfind_ci_range(haystack: &str, needle: &str) -> Option<(usize, usize)> {
+    let mut best = None;
+    let mut start = 0;
+    while start <= haystack.len() {
+        let Some((rel_start, rel_end)) = find_ci_range(&haystack[start..], needle) else {
+            break;
+        };
+        let abs = (start + rel_start, start + rel_end);
+        best = Some(abs);
+        // Advance one char past this match's start to look for a later one.
+        let step = haystack[abs.0..]
+            .chars()
+            .next()
+            .map(|c| c.len_utf8())
+            .unwrap_or(1);
+        start = abs.0 + step;
+    }
+    best
+}
+
+/// Case-insensitive `rfind` returning the start byte offset in the original
+/// `haystack` of the last match. See [`rfind_ci_range`].
+pub fn rfind_ci(haystack: &str, needle: &str) -> Option<usize> {
+    rfind_ci_range(haystack, needle).map(|(s, _)| s)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -82,6 +111,18 @@ mod tests {
         assert_eq!(find_ci("áéí hello", "HELLO"), Some("áéí ".len()));
         assert_eq!(find_ci("abc", "xyz"), None);
         assert_eq!(find_ci("abc", ""), Some(0));
+    }
+
+    #[test]
+    fn rfind_ci_returns_last_match() {
+        // Two matches; rfind must return the later one, with valid offsets.
+        let hay = "ẞ tag ONE tag two";
+        let (s, e) = rfind_ci_range(hay, "tag").unwrap();
+        assert_eq!(&hay[s..e], "tag"); // the second, lowercase "tag"
+        assert_eq!(s, hay.rfind("tag").unwrap());
+        // Case-insensitive last match across a multibyte prefix.
+        assert_eq!(rfind_ci("áéí AB xy AB", "ab"), Some("áéí AB xy ".len()));
+        assert_eq!(rfind_ci("abc", "xyz"), None);
     }
 
     #[test]

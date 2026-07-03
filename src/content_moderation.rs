@@ -391,19 +391,18 @@ impl ContentModerator {
     pub fn moderate(&self, text: &str) -> ModerationResult {
         let mut flags = Vec::new();
         let mut category_scores: HashMap<ModerationCategory, f64> = HashMap::new();
-        let text_lower = text.to_lowercase();
 
         // Check blocked terms first
         for term in &self.blocked_set {
-            if let Some(pos) = text_lower.find(term) {
+            if let Some((start, end)) = crate::text_util::find_ci_range(text, term) {
                 // Check if in allowed list
                 if !self.allowed_set.contains(term) {
                     flags.push(ModerationFlag {
                         category: ModerationCategory::Custom,
                         confidence: 1.0,
-                        matched_text: term.clone(),
-                        start: pos,
-                        end: pos + term.len(),
+                        matched_text: text[start..end].to_string(),
+                        start,
+                        end,
                         reason: "Blocked term".to_string(),
                     });
                     *category_scores

@@ -259,12 +259,11 @@ impl PatternFactExtractor {
         predicate_keyword: &str,
         episode_id: &str,
     ) -> Option<SemanticFact> {
-        let text_lower = text.to_lowercase();
-        let pred_lower = predicate_keyword.to_lowercase();
-
-        if let Some(pred_pos) = text_lower.find(&pred_lower) {
-            let before = text[..pred_pos].trim();
-            let after = text[pred_pos + predicate_keyword.len()..].trim();
+        if let Some((pred_start, pred_end)) =
+            crate::text_util::find_ci_range(text, predicate_keyword)
+        {
+            let before = text[..pred_start].trim();
+            let after = text[pred_end..].trim();
 
             // Extract subject: last word(s) before predicate
             let subject = before.split_whitespace().last().unwrap_or("").to_string();

@@ -685,7 +685,7 @@ impl PatternEntityExtractor {
                         name: name.clone(),
                         entity_type: *entity_type,
                         aliases: vec![],
-                        position: text_lower.find(name),
+                        position: crate::text_util::find_ci(text, name),
                         context: None,
                     },
                 );
@@ -703,7 +703,7 @@ impl PatternEntityExtractor {
                                 name: canonical.clone(),
                                 entity_type: *entity_type,
                                 aliases: vec![],
-                                position: text_lower.find(alias),
+                                position: crate::text_util::find_ci(text, alias),
                                 context: None,
                             });
                     if !entry.aliases.contains(alias) {

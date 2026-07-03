@@ -235,14 +235,11 @@ impl MemoryExtractor {
         match &rule.extraction_type {
             ExtractionRuleType::NamePattern => {
                 // "my name is X" / "mi nombre es X" / "me llamo X" / "soy X"
-                let text_lower = text.to_lowercase();
-
                 // English + Spanish name prefixes
-                let name_prefixes: &[(&str, usize)] =
-                    &[("my name is ", 11), ("mi nombre es ", 13), ("me llamo ", 9)];
-                for &(prefix, skip) in name_prefixes {
-                    if let Some(pos) = text_lower.find(prefix) {
-                        let after = &text[pos + skip..];
+                let name_prefixes: &[&str] = &["my name is ", "mi nombre es ", "me llamo "];
+                for prefix in name_prefixes {
+                    if let Some((_, end)) = crate::text_util::find_ci_range(text, prefix) {
+                        let after = &text[end..];
                         let name: String = after
                             .chars()
                             .take_while(|c| c.is_alphanumeric() || *c == '-' || *c == '\'')
@@ -258,8 +255,8 @@ impl MemoryExtractor {
                 }
 
                 // Spanish: "soy X" — only when followed by a capitalized word
-                if let Some(pos) = text_lower.find("soy ") {
-                    let after = &text[pos + 4..];
+                if let Some((_, end)) = crate::text_util::find_ci_range(text, "soy ") {
+                    let after = &text[end..];
                     if let Some(first_char) = after.chars().next() {
                         if first_char.is_uppercase() {
                             let name: String = after
@@ -280,16 +277,16 @@ impl MemoryExtractor {
                 None
             }
             ExtractionRuleType::PreferencePattern => {
-                let text_lower = text.to_lowercase();
-
                 // English: "I prefer X [over Y]"
-                if let Some(pos) = text_lower.find("i prefer ") {
-                    let after = &text[pos + 9..];
+                if let Some((_, end)) = crate::text_util::find_ci_range(text, "i prefer ") {
+                    let after = &text[end..];
                     let after_trimmed = after.trim();
                     // Check for "X over Y" pattern
-                    if let Some(over_pos) = after_trimmed.to_lowercase().find(" over ") {
-                        let preferred = after_trimmed[..over_pos].trim().to_string();
-                        let other = after_trimmed[over_pos + 6..].trim().to_string();
+                    if let Some((over_start, over_end)) =
+                        crate::text_util::find_ci_range(after_trimmed, " over ")
+                    {
+                        let preferred = after_trimmed[..over_start].trim().to_string();
+                        let other = after_trimmed[over_end..].trim().to_string();
                         if !preferred.is_empty() {
                             return Some(MemoryExtraction::Preference {
                                 key: format!("preference:{}", preferred.to_lowercase()),
@@ -313,14 +310,14 @@ impl MemoryExtractor {
                 }
 
                 // Spanish preference patterns: "prefiero X", "me gusta X", "no me gusta X"
-                let es_pref_patterns: &[(&str, usize, bool)] = &[
-                    ("no me gusta ", 12, true), // negative preference (check first)
-                    ("prefiero ", 9, false),
-                    ("me gusta ", 9, false),
+                let es_pref_patterns: &[(&str, bool)] = &[
+                    ("no me gusta ", true), // negative preference (check first)
+                    ("prefiero ", false),
+                    ("me gusta ", false),
                 ];
-                for &(prefix, skip, is_negative) in es_pref_patterns {
-                    if let Some(pos) = text_lower.find(prefix) {
-                        let after = &text[pos + skip..];
+                for &(prefix, is_negative) in es_pref_patterns {
+                    if let Some((_, end)) = crate::text_util::find_ci_range(text, prefix) {
+                        let after = &text[end..];
                         let preferred: String = after
                             .trim()
                             .chars()
@@ -344,16 +341,12 @@ impl MemoryExtractor {
                 None
             }
             ExtractionRuleType::FactPattern => {
-                let text_lower = text.to_lowercase();
                 // "remember that X" / "recuerda que X" / "ten en cuenta que X"
-                let fact_prefixes: &[(&str, usize)] = &[
-                    ("remember that ", 14),
-                    ("recuerda que ", 13),
-                    ("ten en cuenta que ", 18),
-                ];
-                for &(prefix, skip) in fact_prefixes {
-                    if let Some(pos) = text_lower.find(prefix) {
-                        let content = text[pos + skip..].trim();
+                let fact_prefixes: &[&str] =
+                    &["remember that ", "recuerda que ", "ten en cuenta que "];
+                for prefix in fact_prefixes {
+                    if let Some((_, end)) = crate::text_util::find_ci_range(text, prefix) {
+                        let content = text[end..].trim();
                         if !content.is_empty() {
                             let now = chrono::Utc::now();
                             return Some(MemoryExtraction::NewFact {
@@ -373,9 +366,11 @@ impl MemoryExtractor {
                 }
                 // "X is Y" / "X are Y"
                 for verb in &[" is ", " are "] {
-                    if let Some(pos) = text_lower.find(verb) {
-                        let subject = text[..pos].trim();
-                        let object = text[pos + verb.len()..].trim();
+                    if let Some((verb_start, verb_end)) =
+                        crate::text_util::find_ci_range(text, verb)
+                    {
+                        let subject = text[..verb_start].trim();
+                        let object = text[verb_end..].trim();
                         // Filter out very short subjects/objects
                         if subject.len() >= 2 && object.len() >= 2 {
                             let now = chrono::Utc::now();

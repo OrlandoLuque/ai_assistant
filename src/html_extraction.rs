@@ -746,7 +746,7 @@ impl HtmlExtractor {
         // Extract inner HTML
         let close_tag = format!("</{}>", tag);
         let inner_start = caps.get(0).map(|m| m.end()).unwrap_or(0);
-        let inner_html = if let Some(close_pos) = html.to_lowercase().rfind(&close_tag) {
+        let inner_html = if let Some(close_pos) = crate::text_util::rfind_ci(html, &close_tag) {
             html[inner_start..close_pos].to_string()
         } else {
             html[inner_start..].to_string()

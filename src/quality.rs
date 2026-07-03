@@ -591,7 +591,7 @@ impl QualityAnalyzer {
                     issue_type: QualityIssueType::SafetyIssue,
                     description: "Response contains refusal or disclaimer".to_string(),
                     severity: 0.2,
-                    position: response_lower.find(pattern),
+                    position: crate::text_util::find_ci(response, pattern),
                     suggestion: None,
                 });
             }
