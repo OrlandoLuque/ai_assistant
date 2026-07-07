@@ -113,10 +113,70 @@ pub fn extract_domain(entity_id: &str) -> Result<String, String> {
 }
 
 /// Validate a broker/service URL for SSRF.
+///
+/// Home hubs legitimately live on the LAN, so — unlike the general
+/// [`crate::ssrf`] guard — private/loopback ranges are intentionally NOT
+/// blocked here. Only cloud-metadata endpoints are denied, including the
+/// non-AWS/GCP ones (Alibaba, Oracle) and integer-encoded IP forms that the
+/// old substring check missed (e.g. `http://2852039166/` == 169.254.169.254).
 pub fn validate_backend_url(url: &str) -> Result<(), String> {
     let lower = url.to_lowercase();
-    if lower.contains("169.254.") || lower.contains("metadata.google") {
+    // Metadata hostnames.
+    if lower.contains("metadata.google") {
+        return Err("Blocked: SSRF target (metadata endpoint)".into());
+    }
+    // Resolve the host — decoding encoded-IP forms — and block metadata IPs.
+    if let Some(host) = crate::ssrf::extract_host(url) {
+        if crate::ssrf::parse_host_ip(host).is_some_and(|ip| is_cloud_metadata_ip(&ip)) {
+            return Err("Blocked: SSRF target (metadata endpoint)".into());
+        }
+    }
+    // Literal fallback for hosts we cannot parse.
+    if lower.contains("169.254.")
+        || lower.contains("100.100.100.200")
+        || lower.contains("192.0.0.192")
+    {
         return Err("Blocked: SSRF target (metadata endpoint)".into());
     }
     Ok(())
+}
+
+/// True if `ip` is a well-known cloud instance-metadata address. Covers the
+/// link-local range used by AWS/Azure/GCP/DigitalOcean plus the Alibaba and
+/// Oracle OCI classic endpoints. Does **not** match general private ranges.
+fn is_cloud_metadata_ip(ip: &std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            let o = v4.octets();
+            (o[0] == 169 && o[1] == 254) // 169.254.0.0/16 (169.254.169.254, ...)
+                || o == [100, 100, 100, 200] // Alibaba Cloud
+                || o == [192, 0, 0, 192] // Oracle OCI classic
+        }
+        std::net::IpAddr::V6(_) => false,
+    }
+}
+
+#[cfg(test)]
+mod backend_url_tests {
+    use super::validate_backend_url;
+
+    #[test]
+    fn blocks_cloud_metadata_including_encoded_and_non_aws() {
+        // AWS/Azure/GCP link-local metadata, literal and integer-encoded.
+        assert!(validate_backend_url("http://169.254.169.254/latest/meta-data/").is_err());
+        assert!(validate_backend_url("http://2852039166/latest/meta-data/").is_err());
+        assert!(validate_backend_url("http://metadata.google.internal/").is_err());
+        // Non-AWS/GCP metadata endpoints the old substring check missed.
+        assert!(validate_backend_url("http://100.100.100.200/").is_err()); // Alibaba
+        assert!(validate_backend_url("http://192.0.0.192/").is_err()); // Oracle
+    }
+
+    #[test]
+    fn allows_lan_hosts() {
+        // Home hubs live on the LAN — private ranges must NOT be blocked here.
+        assert!(validate_backend_url("http://192.168.1.50:8123/").is_ok());
+        assert!(validate_backend_url("http://10.0.0.5/").is_ok());
+        assert!(validate_backend_url("http://homeassistant.local:8123/").is_ok());
+        assert!(validate_backend_url("https://api.example.com/").is_ok());
+    }
 }

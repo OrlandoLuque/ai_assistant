@@ -458,6 +458,15 @@ impl RemoteMcpClient {
         if !(value.starts_with("http://") || value.starts_with("https://")) {
             return None;
         }
+        // Shared normalizer: catches userinfo@host, encoded-IP
+        // (decimal/hex/octal) and bracketed / IPv4-mapped IPv6 forms that the
+        // string checks below miss.
+        if crate::ssrf::is_ssrf_blocked_url(value) {
+            return Some(format!(
+                "SSRF: blocked request to private/internal host ({})",
+                value
+            ));
+        }
         // Extract host portion
         let after_scheme = if let Some(rest) = value.strip_prefix("http://") {
             rest
@@ -509,20 +518,45 @@ impl RemoteMcpClient {
         None
     }
 
-    /// Scan all string values in tool arguments for SSRF-risky URLs.
+    /// Scan all string values in tool arguments — recursively, including
+    /// nested objects and arrays — for SSRF-risky URLs. A URL carried inside
+    /// a nested structure such as `{"request": {"url": "http://10.0.0.1"}}`
+    /// or `{"urls": ["http://169.254.169.254/"]}` must not bypass the guard
+    /// (the previous version only inspected top-level string values).
     fn validate_tool_arguments(
         arguments: &HashMap<String, serde_json::Value>,
     ) -> Result<(), McpClientError> {
         for (key, value) in arguments {
-            if let Some(s) = value.as_str() {
+            Self::scan_value_for_ssrf(key, value)?;
+        }
+        Ok(())
+    }
+
+    /// Recursively walk a JSON value and run [`Self::check_ssrf`] on every
+    /// string leaf. `path` is a dotted/indexed breadcrumb used only for the
+    /// error message.
+    fn scan_value_for_ssrf(path: &str, value: &serde_json::Value) -> Result<(), McpClientError> {
+        match value {
+            serde_json::Value::String(s) => {
                 if let Some(msg) = Self::check_ssrf(s) {
                     return Err(McpClientError::ServerError {
                         url: String::new(),
                         code: -1,
-                        message: format!("Argument '{}': {}", key, msg),
+                        message: format!("Argument '{}': {}", path, msg),
                     });
                 }
             }
+            serde_json::Value::Array(items) => {
+                for (i, item) in items.iter().enumerate() {
+                    Self::scan_value_for_ssrf(&format!("{}[{}]", path, i), item)?;
+                }
+            }
+            serde_json::Value::Object(map) => {
+                for (k, v) in map {
+                    Self::scan_value_for_ssrf(&format!("{}.{}", path, k), v)?;
+                }
+            }
+            _ => {}
         }
         Ok(())
     }
@@ -2076,5 +2110,33 @@ mod tests {
         client.connect().unwrap();
         assert!(client.is_simulated());
         assert!(client.is_connected());
+    }
+
+    #[test]
+    fn test_validate_tool_arguments_scans_nested_and_encoded() {
+        use serde_json::json;
+
+        // Top-level public URL: allowed.
+        let ok = HashMap::from([("url".to_string(), json!("https://api.example.com/v1"))]);
+        assert!(RemoteMcpClient::validate_tool_arguments(&ok).is_ok());
+
+        // URL nested inside an object must be caught (previously bypassed the
+        // top-level-only scan).
+        let nested_obj = HashMap::from([(
+            "request".to_string(),
+            json!({ "url": "http://169.254.169.254/latest/meta-data/" }),
+        )]);
+        assert!(RemoteMcpClient::validate_tool_arguments(&nested_obj).is_err());
+
+        // URL nested inside an array must be caught.
+        let nested_arr = HashMap::from([(
+            "urls".to_string(),
+            json!(["https://ok.example.com", "http://10.0.0.1/"]),
+        )]);
+        assert!(RemoteMcpClient::validate_tool_arguments(&nested_arr).is_err());
+
+        // Encoded-decimal loopback (caught via the shared normalizer).
+        let encoded = HashMap::from([("u".to_string(), json!("http://2130706433/"))]);
+        assert!(RemoteMcpClient::validate_tool_arguments(&encoded).is_err());
     }
 }

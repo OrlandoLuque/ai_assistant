@@ -377,7 +377,7 @@ pub fn register_home_tools(server: &mut McpServer, backend: Arc<Mutex<dyn HomeBa
                     .ok_or("Missing required parameter: entity_id")?;
                 let guard = backend.lock().map_err(|e| format!("Lock error: {}", e))?;
                 let device = guard.get_device(entity_id)?;
-                Ok(serde_json::to_value(&device).map_err(|e| e.to_string())?)
+                serde_json::to_value(&device).map_err(|e| e.to_string())
             },
         );
     }
