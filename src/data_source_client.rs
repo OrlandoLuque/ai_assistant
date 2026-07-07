@@ -784,86 +784,189 @@ impl DataSourceClient {
         let start = Instant::now();
         let timeout_secs = self.config.timeout_ms / 1000;
 
+        // With SSRF protection on we must re-validate the host of every
+        // redirect hop, so disable ureq's transparent auto-follow and follow
+        // manually below. Otherwise a 3xx pointing at http://169.254.169.254/
+        // (cloud metadata) or any internal host would be followed without
+        // re-checking, defeating the initial `is_private_url` guard. Without
+        // protection, keep ureq's default redirect handling.
         let agent = ureq::AgentBuilder::new()
             .timeout(Duration::from_secs(timeout_secs.max(1)))
+            .redirects(if self.config.ssrf_protection { 0 } else { 5 })
             .build();
 
-        let mut request = match method {
-            "GET" => agent.get(url),
-            "POST" => agent.post(url),
-            "PUT" => agent.put(url),
-            "DELETE" => agent.delete(url),
-            "PATCH" => agent.request("PATCH", url),
-            _ => return Err(anyhow!("Unsupported HTTP method: {}", method)),
-        };
+        // Turn a finished ureq response into our DataSourceResponse.
+        let build_response =
+            |status: u16, resp: ureq::Response, duration_ms: u64| -> DataSourceResponse {
+                let mut headers = HashMap::new();
+                for name in resp.headers_names() {
+                    if let Some(value) = resp.header(&name) {
+                        headers.insert(name, value.to_string());
+                    }
+                }
+                let body_str = resp.into_string().unwrap_or_default();
+                let json = serde_json::from_str::<serde_json::Value>(&body_str).ok();
+                DataSourceResponse {
+                    status,
+                    body: body_str,
+                    json,
+                    headers,
+                    from_cache: false,
+                    duration_ms,
+                }
+            };
 
-        // Apply user agent
-        request = request.set("User-Agent", &self.config.user_agent);
+        const MAX_REDIRECTS: u32 = 5;
+        let mut redirects_followed = 0u32;
+        let mut current_url = url.to_string();
+        let mut current_method = method.to_string();
+        let mut current_body: Option<serde_json::Value> = body.cloned();
 
-        // Apply custom headers
-        for (key, value) in &self.config.headers {
-            request = request.set(key, value);
+        loop {
+            let mut request = match current_method.as_str() {
+                "GET" => agent.get(&current_url),
+                "POST" => agent.post(&current_url),
+                "PUT" => agent.put(&current_url),
+                "DELETE" => agent.delete(&current_url),
+                "PATCH" => agent.request("PATCH", &current_url),
+                _ => return Err(anyhow!("Unsupported HTTP method: {}", method)),
+            };
+
+            request = request.set("User-Agent", &self.config.user_agent);
+            for (key, value) in &self.config.headers {
+                request = request.set(key, value);
+            }
+            request = self.apply_auth(request);
+
+            let result = if let Some(json_body) = &current_body {
+                request.send_json(json_body.clone())
+            } else {
+                request.call()
+            };
+
+            let duration_ms = start.elapsed().as_millis() as u64;
+
+            // Manual redirect handling under SSRF protection: re-validate each
+            // hop's host before following it.
+            if self.config.ssrf_protection {
+                if let Ok(resp) = &result {
+                    let status = resp.status();
+                    // 3xx except 304 Not Modified is a redirect.
+                    if (300..400).contains(&status) && status != 304 {
+                        let location = resp.header("location").map(|s| s.to_string());
+                        match location {
+                            Some(location) => {
+                                if redirects_followed >= MAX_REDIRECTS {
+                                    return Err(anyhow!(
+                                        "SSRF protection: too many redirects (> {})",
+                                        MAX_REDIRECTS
+                                    ));
+                                }
+                                let target = Self::resolve_redirect(&current_url, &location)
+                                    .ok_or_else(|| {
+                                        anyhow!(
+                                            "SSRF protection: unsupported redirect target '{}'",
+                                            location
+                                        )
+                                    })?;
+                                if Self::is_private_url(&target) {
+                                    return Err(anyhow!(
+                                        "SSRF protection: redirect to private/internal address blocked: {}",
+                                        target
+                                    ));
+                                }
+                                // 303 and (by browser convention) 301/302 drop
+                                // to GET without a body; 307/308 preserve both.
+                                if status != 307 && status != 308 {
+                                    current_method = "GET".to_string();
+                                    current_body = None;
+                                }
+                                current_url = target;
+                                redirects_followed += 1;
+                                continue;
+                            }
+                            None => {
+                                // Redirect with no Location header: return it.
+                                let resp = result.expect("result is Ok in this branch");
+                                return Ok(build_response(status, resp, duration_ms));
+                            }
+                        }
+                    }
+                }
+            }
+
+            return match result {
+                Ok(resp) => {
+                    let status = resp.status();
+                    Ok(build_response(status, resp, duration_ms))
+                }
+                Err(ureq::Error::Status(status, resp)) => {
+                    Ok(build_response(status, resp, duration_ms))
+                }
+                Err(ureq::Error::Transport(transport)) => {
+                    Err(anyhow!("Transport error: {}", transport))
+                }
+            };
         }
+    }
 
-        // Apply authentication
-        request = self.apply_auth(request);
-
-        // Execute request
-        let result = if let Some(json_body) = body {
-            request.send_json(json_body.clone())
+    /// Resolve a redirect `Location` value against the request `base` URL into
+    /// an absolute `http(s)` URL so the target host can be re-validated.
+    /// Handles absolute, scheme-relative (`//host/..`), absolute-path
+    /// (`/path`) and relative-path locations. Returns `None` for an empty
+    /// target or one carrying a non-http(s) scheme (e.g. `javascript:`).
+    fn resolve_redirect(base: &str, location: &str) -> Option<String> {
+        let location = location.trim();
+        if location.is_empty() {
+            return None;
+        }
+        // Absolute http(s) URL.
+        if location.starts_with("http://") || location.starts_with("https://") {
+            return Some(location.to_string());
+        }
+        let (scheme, base_rest) = if let Some(rest) = base.strip_prefix("https://") {
+            ("https", rest)
+        } else if let Some(rest) = base.strip_prefix("http://") {
+            ("http", rest)
         } else {
-            request.call()
+            return None;
         };
-
-        let duration_ms = start.elapsed().as_millis() as u64;
-
-        match result {
-            Ok(resp) => {
-                let status = resp.status();
-                let mut headers = HashMap::new();
-
-                // Collect response headers
-                for name in resp.headers_names() {
-                    if let Some(value) = resp.header(&name) {
-                        headers.insert(name, value.to_string());
-                    }
-                }
-
-                let body_str = resp.into_string().unwrap_or_default();
-                let json = serde_json::from_str::<serde_json::Value>(&body_str).ok();
-
-                Ok(DataSourceResponse {
-                    status,
-                    body: body_str,
-                    json,
-                    headers,
-                    from_cache: false,
-                    duration_ms,
-                })
+        // Scheme-relative: //host/path
+        if let Some(hostpath) = location.strip_prefix("//") {
+            return Some(format!("{}://{}", scheme, hostpath));
+        }
+        // Reject an explicit non-http scheme (javascript:, ftp:, data:, ...).
+        // A scheme is `[a-zA-Z][a-zA-Z0-9+.-]*:` at the very start.
+        if let Some(colon) = location.find(':') {
+            let before = &location[..colon];
+            let looks_like_scheme = before
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic())
+                && before
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'));
+            if looks_like_scheme {
+                return None;
             }
-            Err(ureq::Error::Status(status, resp)) => {
-                let mut headers = HashMap::new();
-                for name in resp.headers_names() {
-                    if let Some(value) = resp.header(&name) {
-                        headers.insert(name, value.to_string());
-                    }
-                }
-
-                let body_str = resp.into_string().unwrap_or_default();
-                let json = serde_json::from_str::<serde_json::Value>(&body_str).ok();
-
-                Ok(DataSourceResponse {
-                    status,
-                    body: body_str,
-                    json,
-                    headers,
-                    from_cache: false,
-                    duration_ms,
-                })
-            }
-            Err(ureq::Error::Transport(transport)) => {
-                Err(anyhow!("Transport error: {}", transport))
-            }
+        }
+        // Split the base into authority and path.
+        let (authority, base_path) = match base_rest.find('/') {
+            Some(i) => (&base_rest[..i], &base_rest[i..]),
+            None => (base_rest, "/"),
+        };
+        if let Some(abs_path) = location.strip_prefix('/') {
+            Some(format!("{}://{}/{}", scheme, authority, abs_path))
+        } else {
+            // Relative path: replace the last segment of the base path.
+            let dir_end = base_path.rfind('/').map(|i| i + 1).unwrap_or(0);
+            Some(format!(
+                "{}://{}{}{}",
+                scheme,
+                authority,
+                &base_path[..dir_end],
+                location
+            ))
         }
     }
 }
@@ -922,6 +1025,53 @@ fn base64_encode(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_resolve_redirect_forms() {
+        // Absolute target is returned verbatim (may change host — caller
+        // re-validates it).
+        assert_eq!(
+            DataSourceClient::resolve_redirect("http://a.com/x", "https://evil.com/y").as_deref(),
+            Some("https://evil.com/y")
+        );
+        // Scheme-relative keeps the base scheme.
+        assert_eq!(
+            DataSourceClient::resolve_redirect("https://a.com/x", "//b.com/z").as_deref(),
+            Some("https://b.com/z")
+        );
+        // Absolute path on the same authority (port preserved).
+        assert_eq!(
+            DataSourceClient::resolve_redirect("http://a.com:8080/x/y", "/z").as_deref(),
+            Some("http://a.com:8080/z")
+        );
+        // Relative path replaces the last segment.
+        assert_eq!(
+            DataSourceClient::resolve_redirect("http://a.com/x/y", "z").as_deref(),
+            Some("http://a.com/x/z")
+        );
+        // Non-http schemes and empty targets are refused.
+        assert_eq!(
+            DataSourceClient::resolve_redirect("http://a.com/", "javascript:alert(1)"),
+            None
+        );
+        assert_eq!(
+            DataSourceClient::resolve_redirect("http://a.com/", ""),
+            None
+        );
+    }
+
+    #[test]
+    fn test_redirect_target_to_internal_is_private() {
+        // A redirect to the cloud-metadata endpoint (absolute, or via an
+        // encoded IP) must be classified private so the loop refuses it.
+        assert!(DataSourceClient::is_private_url(
+            "http://169.254.169.254/latest/meta-data/"
+        ));
+        assert!(DataSourceClient::is_private_url("http://2130706433/")); // decimal loopback
+        assert!(!DataSourceClient::is_private_url(
+            "https://api.example.com/"
+        ));
+    }
 
     #[test]
     fn test_default_config() {
