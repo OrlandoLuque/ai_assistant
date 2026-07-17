@@ -226,6 +226,16 @@ pub struct AiConfig {
     /// time when the `vision` feature is enabled.
     #[serde(default)]
     pub mmproj_path: Option<std::path::PathBuf>,
+    /// Override for the Ollama context window (`num_ctx`) in tokens.
+    ///
+    /// `None` (default) auto-sizes `num_ctx` to fit the prompt, capped at a
+    /// VRAM-safe ceiling and at the model's real window. Set an explicit value
+    /// to request a larger window when you have the VRAM (e.g. to keep a big
+    /// injected knowledge document fully in context) — but note that an
+    /// over-large `num_ctx` allocates a proportionally large KV cache and can
+    /// OOM/crash the Ollama server. Capped at the model's real context size.
+    #[serde(default)]
+    pub ollama_num_ctx: Option<usize>,
 }
 
 impl std::fmt::Debug for AiConfig {
@@ -259,6 +269,7 @@ impl std::fmt::Debug for AiConfig {
                     .and_then(|p| p.file_name())
                     .map(|s| s.to_string_lossy().into_owned()),
             )
+            .field("ollama_num_ctx", &self.ollama_num_ctx)
             .finish()
     }
 }
@@ -281,6 +292,7 @@ impl Default for AiConfig {
             temperature: 0.7,
             retry_config: RetryConfig::default(),
             mmproj_path: None,
+            ollama_num_ctx: None,
         }
     }
 }

@@ -304,6 +304,11 @@ fn print_usage() {
     println!("    --list-tiers                   List available RAG tiers");
     println!("    --json                         Output response as JSON");
     println!("    --temperature <float>          Temperature (0.0-2.0)");
+    println!("    --num-ctx <n>                  Ollama context window override (tokens).");
+    println!("                                   Default auto-sizes safely; raise it when you");
+    println!(
+        "                                   have the VRAM to keep large knowledge in context."
+    );
     println!();
     println!("Examples:");
     println!("  ai_cli scan");
@@ -917,6 +922,7 @@ fn cmd_query(args: &[String]) -> ExitCode {
     let mut rag_tier_name: Option<String> = None;
     let mut json_output = false;
     let mut temperature: Option<f32> = None;
+    let mut num_ctx_override: Option<usize> = None;
     let mut prompt_parts: Vec<String> = Vec::new();
     let mut image_paths: Vec<String> = Vec::new();
 
@@ -1021,6 +1027,20 @@ fn cmd_query(args: &[String]) -> ExitCode {
                     }
                 }
             }
+            "--num-ctx" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: --num-ctx requires a value");
+                    return ExitCode::from(1);
+                }
+                match args[i].parse::<usize>() {
+                    Ok(n) => num_ctx_override = Some(n),
+                    Err(_) => {
+                        eprintln!("Error: invalid num-ctx '{}'", args[i]);
+                        return ExitCode::from(1);
+                    }
+                }
+            }
             arg if arg.starts_with('-') => {
                 eprintln!("Error: unknown option '{}' for 'query'", arg);
                 return ExitCode::from(1);
@@ -1082,6 +1102,9 @@ fn cmd_query(args: &[String]) -> ExitCode {
     }
     if let Some(t) = temperature {
         assistant.config.temperature = t;
+    }
+    if let Some(n) = num_ctx_override {
+        assistant.config.ollama_num_ctx = Some(n);
     }
 
     // If no model set, try auto-detection

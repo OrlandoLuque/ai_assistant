@@ -816,6 +816,7 @@ impl ConfigFile {
             temperature: self.generation.temperature,
             retry_config: crate::retry::RetryConfig::default(),
             mmproj_path: None,
+            ollama_num_ctx: None,
         }
     }
 

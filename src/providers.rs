@@ -252,6 +252,93 @@ fn build_messages_array(
     messages
 }
 
+/// Smallest context window we ever request from Ollama. Comfortable for
+/// ordinary chats and small injected knowledge, and stable so Ollama does not
+/// reload the model between a short and a medium prompt.
+const OLLAMA_NUM_CTX_FLOOR: usize = 8192;
+/// VRAM-safe ceiling for the *auto* window. An 8B model at this window uses
+/// roughly 2 GB of KV cache; going much higher risks OOM-**crashing** the
+/// Ollama server (an over-large `num_ctx` does not fail cleanly — it takes the
+/// server down). Users with spare VRAM raise it explicitly via
+/// [`crate::config::AiConfig::ollama_num_ctx`].
+const OLLAMA_NUM_CTX_AUTO_CEILING: usize = 16384;
+/// Headroom reserved (on top of the prompt) for the model's own response when
+/// sizing `num_ctx`.
+const OLLAMA_RESPONSE_RESERVE_TOKENS: usize = 2048;
+
+/// Pick an Ollama `num_ctx` for a request.
+///
+/// Ollama defaults to a tiny window (~2048 tokens) and silently truncates
+/// anything longer — dropping injected knowledge and earlier conversation
+/// turns, which is the root cause of "it lost the context / made up the price
+/// it supposedly had".
+///
+/// * `override_ctx = Some(n)` — honour the user's explicit choice (they accept
+///   the VRAM cost), clamped to the model's real trained window.
+/// * `None` (auto) — fit `prompt_tokens` plus a response reserve, quantized to
+///   power-of-two steps (so the value is stable across similar requests and
+///   Ollama does not reload the model, which reallocates the KV cache), and
+///   capped at both the VRAM-safe ceiling and the model's real window.
+pub(crate) fn ollama_num_ctx(
+    model: &str,
+    prompt_tokens: usize,
+    override_ctx: Option<usize>,
+) -> usize {
+    let model_max = crate::context::get_model_context_size(model);
+    if let Some(n) = override_ctx {
+        return n.clamp(1, model_max);
+    }
+    let needed = prompt_tokens.saturating_add(OLLAMA_RESPONSE_RESERVE_TOKENS);
+    let mut ctx = OLLAMA_NUM_CTX_FLOOR;
+    while ctx < needed {
+        ctx = ctx.saturating_mul(2);
+    }
+    ctx.min(OLLAMA_NUM_CTX_AUTO_CEILING).min(model_max)
+}
+
+/// Estimate the prompt token count for the exact slice `build_messages_array`
+/// sends: the system prompt plus the last `max_history` conversation messages.
+fn estimate_prompt_tokens(
+    model: &str,
+    system_prompt: &str,
+    conversation: &[ChatMessage],
+    max_history: usize,
+) -> usize {
+    let mut tokens = crate::context::estimate_tokens_for_model(system_prompt, model);
+    let start = conversation.len().saturating_sub(max_history);
+    for msg in &conversation[start..] {
+        tokens += crate::context::estimate_tokens_for_model(&msg.content, model);
+    }
+    tokens
+}
+
+/// Build the Ollama `options` object (temperature + sized `num_ctx`) for a
+/// text chat request.
+fn ollama_chat_options(
+    config: &AiConfig,
+    system_prompt: &str,
+    conversation: &[ChatMessage],
+) -> serde_json::Value {
+    let prompt_tokens = estimate_prompt_tokens(
+        &config.selected_model,
+        system_prompt,
+        conversation,
+        config.max_history_messages,
+    );
+    let num_ctx = ollama_num_ctx(&config.selected_model, prompt_tokens, config.ollama_num_ctx);
+    if prompt_tokens.saturating_add(OLLAMA_RESPONSE_RESERVE_TOKENS) > num_ctx {
+        log::warn!(
+            "[ollama] prompt is ~{prompt_tokens} tokens but num_ctx is {num_ctx}; Ollama will \
+             truncate the context (earlier turns / injected knowledge may be dropped). Raise \
+             AiConfig.ollama_num_ctx (you have the VRAM) or reduce the context.",
+        );
+    }
+    serde_json::json!({
+        "temperature": config.temperature,
+        "num_ctx": num_ctx,
+    })
+}
+
 /// Generate streaming response using Ollama API
 pub fn generate_ollama_streaming(
     config: &AiConfig,
@@ -272,9 +359,7 @@ pub fn generate_ollama_streaming(
         "model": config.selected_model,
         "messages": messages,
         "stream": true,
-        "options": {
-            "temperature": config.temperature
-        }
+        "options": ollama_chat_options(config, system_prompt, conversation),
     });
 
     // Retry only the connection; stream reading is not retried
@@ -432,9 +517,7 @@ pub fn generate_ollama_response(
         "model": config.selected_model,
         "messages": messages,
         "stream": false,
-        "options": {
-            "temperature": config.temperature
-        }
+        "options": ollama_chat_options(config, system_prompt, conversation),
     });
 
     let response = retry_with_config(config.retry_config.clone(), || {
@@ -558,11 +641,28 @@ pub fn generate_ollama_response_with_images(
         msg_array.push(m.to_ollama_format());
     }
 
+    // Size num_ctx for the vision prompt: text tokens plus a per-image
+    // allowance (an encoded image expands to many tokens).
+    let vision_prompt_tokens =
+        crate::context::estimate_tokens_for_model(system_prompt, &config.selected_model)
+            + messages
+                .iter()
+                .map(|m| {
+                    crate::context::estimate_tokens_for_model(&m.text, &config.selected_model)
+                        + m.images.len().saturating_mul(1024)
+                })
+                .sum::<usize>();
+    let num_ctx = ollama_num_ctx(
+        &config.selected_model,
+        vision_prompt_tokens,
+        config.ollama_num_ctx,
+    );
+
     let request_body = serde_json::json!({
         "model": config.selected_model,
         "messages": msg_array,
         "stream": false,
-        "options": { "temperature": config.temperature },
+        "options": { "temperature": config.temperature, "num_ctx": num_ctx },
     });
 
     let response = retry_with_config(config.retry_config.clone(), || {
@@ -1035,9 +1135,7 @@ pub fn generate_ollama_streaming_cancellable(
         "model": config.selected_model,
         "messages": messages,
         "stream": true,
-        "options": {
-            "temperature": config.temperature
-        }
+        "options": ollama_chat_options(config, system_prompt, conversation),
     });
 
     // Retry only the connection; stream reading is not retried
@@ -2869,6 +2967,28 @@ mod context_size_tests {
 mod tests {
     use super::*;
     use crate::session::{ResponseStyle, UserPreferences};
+
+    #[test]
+    fn test_ollama_num_ctx_sizing() {
+        // --- Auto sizing (override = None) ---
+        // Small prompt on a large-context model -> the comfortable floor.
+        assert_eq!(ollama_num_ctx("llama3.1:8b", 100, None), 8192);
+        // A prompt needing ~35k tokens would quantize to 65536, but auto is
+        // capped at the VRAM-safe ceiling (16384) — an over-large num_ctx
+        // OOM-crashes the server, so auto never risks it.
+        assert_eq!(ollama_num_ctx("llama3.1:8b", 35_000, None), 16_384);
+        // Never exceed the model's real window. gemma2 caps at 8192.
+        assert_eq!(ollama_num_ctx("gemma2:9b", 100_000, None), 8_192);
+        // llama2 has only a 4096 window: clamped down to it.
+        assert_eq!(ollama_num_ctx("llama2:7b", 100, None), 4_096);
+
+        // --- Explicit override ---
+        // Honoured as-is when within the model window (user accepts VRAM cost).
+        assert_eq!(ollama_num_ctx("llama3.1:8b", 100, Some(32_768)), 32_768);
+        // But still clamped to the model's real window.
+        assert_eq!(ollama_num_ctx("gemma2:9b", 100, Some(65_536)), 8_192);
+        assert_eq!(ollama_num_ctx("qwen2.5:14b", 100, Some(32_768)), 32_768);
+    }
 
     #[test]
     fn test_errorcode_resilient() {

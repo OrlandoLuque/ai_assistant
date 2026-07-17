@@ -258,10 +258,20 @@ async fn generate_ollama_async(
         }));
     }
 
+    // Size num_ctx so Ollama does not silently truncate the prompt to its
+    // small default window (see providers::ollama_num_ctx).
+    let prompt_tokens = crate::context::estimate_tokens_for_model(system_prompt, model)
+        + messages
+            .iter()
+            .map(|m| crate::context::estimate_tokens_for_model(&m.content, model))
+            .sum::<usize>();
+    let num_ctx = crate::providers::ollama_num_ctx(model, prompt_tokens, None);
+
     let body = serde_json::json!({
         "model": model,
         "messages": api_messages,
         "stream": false,
+        "options": { "num_ctx": num_ctx },
     });
 
     let response = client
