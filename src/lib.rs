@@ -216,6 +216,10 @@ pub mod fault_injection;
 #[cfg(feature = "feedback-loop")]
 pub mod feedback_loop;
 pub mod file_references;
+/// Lightweight in-memory knowledge retrieval: chunk a large `--knowledge`
+/// document and keep only the passages relevant to the query, so the prompt
+/// stays small instead of forcing a huge context window.
+pub mod knowledge_retrieval;
 #[cfg(feature = "backup")]
 pub mod secure_backup;
 /// Shared SSRF host-classification helpers (private-range / encoded-IP /

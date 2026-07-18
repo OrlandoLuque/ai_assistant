@@ -304,6 +304,7 @@ fn print_usage() {
     println!("    --system <prompt>              System prompt");
     println!("    --file <path>                  Read user prompt from file instead of argument");
     println!("    --knowledge <path>             Inject file content as knowledge context");
+    println!("    --full-knowledge               Inject the whole knowledge file (skip retrieval)");
     println!("    --rag-tier <tier>              RAG tier (fast, semantic, enhanced, thorough, graph, full)");
     println!("    --list-tiers                   List available RAG tiers");
     println!("    --json                         Output response as JSON");
@@ -1027,6 +1028,7 @@ fn cmd_query(args: &[String]) -> ExitCode {
     let mut json_output = false;
     let mut temperature: Option<f32> = None;
     let mut num_ctx_override: Option<usize> = None;
+    let mut full_knowledge = false;
     let mut prompt_parts: Vec<String> = Vec::new();
     let mut image_paths: Vec<String> = Vec::new();
 
@@ -1144,6 +1146,9 @@ fn cmd_query(args: &[String]) -> ExitCode {
                         return ExitCode::from(1);
                     }
                 }
+            }
+            "--full-knowledge" => {
+                full_knowledge = true;
             }
             arg if arg.starts_with('-') => {
                 eprintln!("Error: unknown option '{}' for 'query'", arg);
@@ -1269,7 +1274,7 @@ fn cmd_query(args: &[String]) -> ExitCode {
     }
 
     // Load knowledge context
-    let knowledge = if let Some(ref path) = knowledge_path {
+    let mut knowledge = if let Some(ref path) = knowledge_path {
         match std::fs::read_to_string(path) {
             Ok(content) => content,
             Err(e) => {
@@ -1280,6 +1285,25 @@ fn cmd_query(args: &[String]) -> ExitCode {
     } else {
         String::new()
     };
+
+    // Large knowledge: retrieve only the passages relevant to the query so the
+    // prompt stays small, instead of injecting the whole document and forcing a
+    // huge context window (costly in VRAM; silently truncated on small-window
+    // models). Disable with --full-knowledge.
+    const KNOWLEDGE_RETRIEVAL_THRESHOLD: usize = 12_000; // chars
+    const KNOWLEDGE_RETRIEVAL_TARGET: usize = 8_000; // chars
+    if !full_knowledge && knowledge.len() > KNOWLEDGE_RETRIEVAL_THRESHOLD {
+        let before = knowledge.len();
+        knowledge = ai_assistant::knowledge_retrieval::select_relevant(
+            &knowledge,
+            &user_prompt,
+            KNOWLEDGE_RETRIEVAL_TARGET,
+        );
+        eprintln!(
+            "Knowledge is large ({before} chars) — retrieved {} chars of query-relevant passages (use --full-knowledge to inject all).",
+            knowledge.len()
+        );
+    }
 
     // Vision path: when --image is supplied, bypass the streaming assistant
     // and call the vision dispatcher directly. Knowledge (if any) is appended
