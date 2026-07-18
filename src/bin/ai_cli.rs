@@ -145,6 +145,7 @@ fn main() -> ExitCode {
         "config" => cmd_config(&command_args[1..]),
         "butler" => cmd_butler(&command_args[1..]),
         "query" => cmd_query(&command_args[1..]),
+        "qa" => cmd_qa(&command_args[1..]),
         "bench" => cmd_bench(&command_args[1..]),
         "test" => cmd_test(&command_args[1..]),
         "cost" => cmd_cost(&command_args[1..]),
@@ -206,6 +207,9 @@ fn print_usage() {
     println!("    --max-history <n>              Set max history messages");
     println!("  butler [--config <file>]       Run Butler advisor (optimization recommendations)");
     println!("  query [options] <prompt>       Send a one-shot query to an LLM");
+    println!(
+        "  qa [--provider/--model/...]    Run conversation-quality scenarios (context, grounding)"
+    );
     println!("  bench [options]                Run Criterion benchmarks (44 benchmarks)");
     println!("    --filter <pattern>             Filter benchmarks by name");
     println!("    --list                         List available benchmarks");
@@ -910,6 +914,106 @@ fn cmd_butler_recommend_prompt(_args: &[String]) -> ExitCode {
 // =============================================================================
 // query — one-shot LLM query
 // =============================================================================
+
+fn cmd_qa(args: &[String]) -> ExitCode {
+    let provider_name = find_flag_value(args, "--provider").map(String::from);
+    let model_name = find_flag_value(args, "--model").map(String::from);
+    let url_override = find_flag_value(args, "--url").map(String::from);
+    let num_ctx_override = find_flag_value(args, "--num-ctx").and_then(|s| s.parse::<usize>().ok());
+
+    let mut assistant = AiAssistant::new();
+    if let Some(ref name) = provider_name {
+        assistant.config.provider = provider_from_name(name);
+    }
+    if let Some(ref name) = model_name {
+        assistant.config.selected_model = name.clone();
+    }
+    if let Some(ref url) = url_override {
+        match assistant.config.provider {
+            ai_assistant::AiProvider::Ollama => assistant.config.ollama_url = url.clone(),
+            ai_assistant::AiProvider::LMStudio => assistant.config.lm_studio_url = url.clone(),
+            _ => assistant.config.custom_url = url.clone(),
+        }
+    }
+    if let Some(n) = num_ctx_override {
+        assistant.config.ollama_num_ctx = Some(n);
+    }
+
+    // Auto-detect a model when none was given (same path as `query`).
+    if assistant.config.selected_model.is_empty() {
+        #[cfg(feature = "butler")]
+        {
+            eprint!("Auto-detecting providers...");
+            let mut butler = Butler::new();
+            let report = butler.scan();
+            eprintln!(" done.");
+            let models = build_unified_model_list(&report);
+            if !models.is_empty() {
+                assistant.config.selected_model = models[0].name.clone();
+                assistant.config.provider = models[0].provider.clone();
+                apply_provider_url(&mut assistant, &report, &models[0].provider);
+            }
+        }
+    }
+    if assistant.config.selected_model.is_empty() {
+        eprintln!(
+            "Error: no model available. Specify --provider and --model, or start a local provider."
+        );
+        return ExitCode::from(1);
+    }
+
+    let config = assistant.config.clone();
+    println!(
+        "Conversation QA — {} / {}\n",
+        config.provider.display_name(),
+        config.selected_model
+    );
+
+    let scenarios = ai_assistant::conversation_qa::builtin_scenarios();
+    let mut all_passed = true;
+    for scenario in &scenarios {
+        let result = scenario.run(&config);
+        if !result.passed {
+            all_passed = false;
+        }
+        println!(
+            "[{}] {} — {}",
+            if result.passed { "PASS" } else { "FAIL" },
+            result.name,
+            scenario.description
+        );
+        for (i, t) in result.turns.iter().enumerate() {
+            println!(
+                "    turn {}: {} ({} ms)",
+                i + 1,
+                if t.passed { "ok" } else { "FAIL" },
+                t.latency_ms
+            );
+            if let Some(ref e) = t.error {
+                println!("      error: {}", e);
+            }
+            if !t.missing.is_empty() {
+                println!("      missing: {:?}", t.missing);
+                println!(
+                    "      answer: {}",
+                    ai_assistant::text_util::truncate_str(&t.answer, 200)
+                );
+            }
+            if !t.forbidden_hit.is_empty() {
+                println!("      forbidden present: {:?}", t.forbidden_hit);
+            }
+        }
+        println!();
+    }
+
+    if all_passed {
+        println!("All {} scenarios passed.", scenarios.len());
+        ExitCode::SUCCESS
+    } else {
+        println!("Some scenarios FAILED.");
+        ExitCode::from(1)
+    }
+}
 
 fn cmd_query(args: &[String]) -> ExitCode {
     let mut provider_name: Option<String> = None;

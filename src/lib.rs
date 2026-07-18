@@ -195,6 +195,9 @@ pub mod config_optimizer;
 pub mod config_security;
 pub mod connection_pool;
 pub mod context_budget;
+/// Conversation QA harness: multi-turn context-following / grounding
+/// scenarios scored with deterministic keyword checks (`ai_cli qa`).
+pub mod conversation_qa;
 #[cfg(feature = "browser")]
 pub mod crawl_policy;
 pub mod curated_models;
