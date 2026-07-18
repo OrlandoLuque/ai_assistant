@@ -236,6 +236,13 @@ pub struct AiConfig {
     /// OOM/crash the Ollama server. Capped at the model's real context size.
     #[serde(default)]
     pub ollama_num_ctx: Option<usize>,
+    /// Ollama embedding model for **semantic** knowledge retrieval (e.g.
+    /// `"nomic-embed-text"`). When set and reachable, large-knowledge / fresh-
+    /// context retrieval ranks passages by embedding similarity (handles
+    /// paraphrase / synonyms); when `None` or unreachable it falls back to the
+    /// always-available lexical term-overlap ranker.
+    #[serde(default)]
+    pub embedding_model: Option<String>,
 }
 
 impl std::fmt::Debug for AiConfig {
@@ -270,6 +277,7 @@ impl std::fmt::Debug for AiConfig {
                     .map(|s| s.to_string_lossy().into_owned()),
             )
             .field("ollama_num_ctx", &self.ollama_num_ctx)
+            .field("embedding_model", &self.embedding_model)
             .finish()
     }
 }
@@ -293,6 +301,7 @@ impl Default for AiConfig {
             retry_config: RetryConfig::default(),
             mmproj_path: None,
             ollama_num_ctx: None,
+            embedding_model: None,
         }
     }
 }

@@ -309,6 +309,10 @@ fn print_usage() {
     println!("    --file <path>                  Read user prompt from file instead of argument");
     println!("    --knowledge <path>             Inject file content as knowledge context");
     println!("    --full-knowledge               Inject the whole knowledge file (skip retrieval)");
+    println!(
+        "    --lexical                      Use lexical retrieval (default is semantic embeddings)"
+    );
+    println!("    --embedding-model <name>       Ollama embedding model for semantic retrieval");
     println!("    --profile <name>               Apply a runtime profile (see `ai_cli profiles`)");
     println!("    --rag-tier <tier>              RAG tier (fast, semantic, enhanced, thorough, graph, full)");
     println!("    --list-tiers                   List available RAG tiers");
@@ -952,6 +956,8 @@ fn cmd_qa(args: &[String]) -> ExitCode {
     let url_override = find_flag_value(args, "--url").map(String::from);
     let num_ctx_override = find_flag_value(args, "--num-ctx").and_then(|s| s.parse::<usize>().ok());
     let fresh_context = args.iter().any(|a| a == "--fresh-context");
+    let lexical = args.iter().any(|a| a == "--lexical");
+    let embedding_model = find_flag_value(args, "--embedding-model").map(String::from);
 
     let mut assistant = AiAssistant::new();
     if let Some(ref name) = provider_name {
@@ -969,6 +975,12 @@ fn cmd_qa(args: &[String]) -> ExitCode {
     }
     if let Some(n) = num_ctx_override {
         assistant.config.ollama_num_ctx = Some(n);
+    }
+    // Semantic retrieval by default (lexical fallback); --lexical / --embedding-model.
+    if let Some(ref m) = embedding_model {
+        assistant.config.embedding_model = Some(m.clone());
+    } else if !lexical {
+        assistant.config.embedding_model = Some("nomic-embed-text".to_string());
     }
 
     // Auto-detect a model when none was given (same path as `query`).
@@ -1066,6 +1078,8 @@ fn cmd_query(args: &[String]) -> ExitCode {
     let mut num_ctx_override: Option<usize> = None;
     let mut full_knowledge = false;
     let mut profile_name: Option<String> = None;
+    let mut lexical = false;
+    let mut embedding_model: Option<String> = None;
     let mut prompt_parts: Vec<String> = Vec::new();
     let mut image_paths: Vec<String> = Vec::new();
 
@@ -1187,6 +1201,17 @@ fn cmd_query(args: &[String]) -> ExitCode {
             "--full-knowledge" => {
                 full_knowledge = true;
             }
+            "--lexical" => {
+                lexical = true;
+            }
+            "--embedding-model" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: --embedding-model requires a model name");
+                    return ExitCode::from(1);
+                }
+                embedding_model = Some(args[i].clone());
+            }
             "--profile" => {
                 i += 1;
                 if i >= args.len() {
@@ -1277,6 +1302,16 @@ fn cmd_query(args: &[String]) -> ExitCode {
     if let Some(n) = num_ctx_override {
         assistant.config.ollama_num_ctx = Some(n);
     }
+    // Knowledge retrieval ranker: semantic by default (falls back to lexical
+    // automatically when the embedding model is unreachable); --lexical forces
+    // lexical, --embedding-model overrides the model.
+    if let Some(ref m) = embedding_model {
+        assistant.config.embedding_model = Some(m.clone());
+    } else if lexical {
+        assistant.config.embedding_model = None;
+    } else if assistant.config.embedding_model.is_none() {
+        assistant.config.embedding_model = Some("nomic-embed-text".to_string());
+    }
 
     // If no model set, try auto-detection
     if assistant.config.selected_model.is_empty() {
@@ -1356,14 +1391,19 @@ fn cmd_query(args: &[String]) -> ExitCode {
     const KNOWLEDGE_RETRIEVAL_TARGET: usize = 8_000; // chars
     if !full_knowledge && knowledge.len() > KNOWLEDGE_RETRIEVAL_THRESHOLD {
         let before = knowledge.len();
-        knowledge = ai_assistant::knowledge_retrieval::select_relevant(
+        // Semantic retrieval when an embedding model is set (handles paraphrase);
+        // falls back to lexical automatically if it is not reachable.
+        knowledge = ai_assistant::knowledge_retrieval::select_relevant_auto(
             &knowledge,
             &user_prompt,
             KNOWLEDGE_RETRIEVAL_TARGET,
+            &assistant.config.ollama_url,
+            assistant.config.embedding_model.as_deref(),
         );
         eprintln!(
-            "Knowledge is large ({before} chars) — retrieved {} chars of query-relevant passages (use --full-knowledge to inject all).",
-            knowledge.len()
+            "Knowledge is large ({before} chars) — retrieved {} chars of {} passages (use --full-knowledge to inject all).",
+            knowledge.len(),
+            if assistant.config.embedding_model.is_some() { "semantically-ranked" } else { "term-matched" }
         );
     }
 

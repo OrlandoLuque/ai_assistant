@@ -64,7 +64,13 @@ impl AiAssistant {
             let older = if older_text.is_empty() {
                 String::new()
             } else {
-                crate::knowledge_retrieval::select_relevant(&older_text, &user_message, 3000)
+                crate::knowledge_retrieval::select_relevant_auto(
+                    &older_text,
+                    &user_message,
+                    3000,
+                    &self.config.ollama_url,
+                    self.config.embedding_model.as_deref(),
+                )
             };
             [older, recent]
                 .into_iter()

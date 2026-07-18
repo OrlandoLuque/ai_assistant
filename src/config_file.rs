@@ -817,6 +817,7 @@ impl ConfigFile {
             retry_config: crate::retry::RetryConfig::default(),
             mmproj_path: None,
             ollama_num_ctx: None,
+            embedding_model: None,
         }
     }
 

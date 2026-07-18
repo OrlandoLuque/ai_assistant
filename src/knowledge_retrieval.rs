@@ -130,9 +130,156 @@ pub fn select_relevant(knowledge: &str, query: &str, max_chars: usize) -> String
         .join("\n\n")
 }
 
+/// Cosine similarity of two equal-length vectors (0 when either is empty/zero
+/// or lengths differ).
+fn cosine(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
+    let (mut dot, mut na, mut nb) = (0.0f32, 0.0f32, 0.0f32);
+    for i in 0..a.len() {
+        dot += a[i] * b[i];
+        na += a[i] * a[i];
+        nb += b[i] * b[i];
+    }
+    if na == 0.0 || nb == 0.0 {
+        0.0
+    } else {
+        dot / (na.sqrt() * nb.sqrt())
+    }
+}
+
+/// Embed a batch of texts via Ollama's `/api/embed`. Returns `None` on any
+/// failure (model missing, server down, malformed response) so callers can
+/// fall back to lexical retrieval.
+fn ollama_embed(ollama_url: &str, model: &str, texts: &[&str]) -> Option<Vec<Vec<f32>>> {
+    let url = format!("{}/api/embed", ollama_url.trim_end_matches('/'));
+    let body = serde_json::json!({ "model": model, "input": texts });
+    let resp = ureq::post(&url)
+        .timeout(std::time::Duration::from_secs(30))
+        .send_json(&body)
+        .ok()?;
+    let json: serde_json::Value = resp.into_json().ok()?;
+    let arr = json.get("embeddings")?.as_array()?;
+    let mut out = Vec::with_capacity(arr.len());
+    for e in arr {
+        let v: Vec<f32> = e
+            .as_array()?
+            .iter()
+            .map(|x| x.as_f64().unwrap_or(0.0) as f32)
+            .collect();
+        out.push(v);
+    }
+    if out.len() == texts.len() {
+        Some(out)
+    } else {
+        None
+    }
+}
+
+/// Semantic variant of [`select_relevant`]: ranks chunks by cosine similarity
+/// of their Ollama embeddings to the query embedding, so paraphrased or
+/// synonymous queries still match (lexical term-overlap would miss "¿de qué
+/// vivo?" against "trabajo de arquitecta"). Returns `None` if embeddings are
+/// unavailable — the caller should then fall back to [`select_relevant`].
+pub fn select_relevant_semantic(
+    knowledge: &str,
+    query: &str,
+    max_chars: usize,
+    ollama_url: &str,
+    model: &str,
+) -> Option<String> {
+    if knowledge.len() <= max_chars {
+        return Some(knowledge.to_string());
+    }
+    let chunk_target = (max_chars / 4).max(200);
+    let chunks = chunk(knowledge, chunk_target);
+    if chunks.is_empty() {
+        return Some(String::new());
+    }
+    // Embed the query and every chunk in one batch call.
+    let mut texts: Vec<&str> = Vec::with_capacity(chunks.len() + 1);
+    texts.push(query);
+    texts.extend(chunks.iter().map(|c| c.as_str()));
+    let embs = ollama_embed(ollama_url, model, &texts)?;
+    let (q_emb, chunk_embs) = embs.split_first()?;
+
+    let mut ranked: Vec<(f32, usize, &String)> = chunks
+        .iter()
+        .enumerate()
+        .map(|(i, c)| (cosine(q_emb, &chunk_embs[i]), i, c))
+        .collect();
+    ranked.sort_by(|a, b| {
+        b.0.partial_cmp(&a.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(a.1.cmp(&b.1))
+    });
+
+    let mut selected: Vec<(usize, &String)> = Vec::new();
+    let mut used = 0usize;
+    for (_, idx, c) in ranked {
+        let cost = c.len() + 2;
+        if used + cost > max_chars && !selected.is_empty() {
+            break;
+        }
+        selected.push((idx, c));
+        used += cost;
+        if used >= max_chars {
+            break;
+        }
+    }
+    selected.sort_by_key(|(i, _)| *i);
+    Some(
+        selected
+            .into_iter()
+            .map(|(_, c)| c.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n"),
+    )
+}
+
+/// Retrieve relevant passages using **semantic** ranking when an
+/// `embedding_model` is supplied and reachable (better for paraphrased
+/// queries), falling back to the always-available **lexical**
+/// [`select_relevant`] otherwise.
+pub fn select_relevant_auto(
+    knowledge: &str,
+    query: &str,
+    max_chars: usize,
+    ollama_url: &str,
+    embedding_model: Option<&str>,
+) -> String {
+    if let Some(model) = embedding_model {
+        if let Some(sem) = select_relevant_semantic(knowledge, query, max_chars, ollama_url, model)
+        {
+            return sem;
+        }
+    }
+    select_relevant(knowledge, query, max_chars)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cosine_basic() {
+        assert!((cosine(&[1.0, 0.0], &[1.0, 0.0]) - 1.0).abs() < 1e-6);
+        assert!(cosine(&[1.0, 0.0], &[0.0, 1.0]).abs() < 1e-6);
+        assert_eq!(cosine(&[], &[]), 0.0);
+    }
+
+    #[test]
+    fn auto_falls_back_to_lexical_without_model() {
+        // No embedding model -> lexical path, still retrieves the buried line.
+        let mut doc = String::new();
+        for i in 0..200 {
+            doc.push_str(&format!("Section {i}: filler notes.\n\n"));
+        }
+        doc.push_str("Startup (menos de 10 empleados): 490 EUR.\n\n");
+        let out = select_relevant_auto(&doc, "precio Startup", 600, "http://127.0.0.1:11434", None);
+        assert!(out.contains("490"));
+    }
 
     #[test]
     fn returns_short_knowledge_unchanged() {
