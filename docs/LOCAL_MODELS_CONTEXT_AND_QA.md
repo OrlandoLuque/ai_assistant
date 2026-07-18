@@ -163,57 +163,53 @@ and update state.
 
 ## 6. Measured results across local models
 
-Run: `ai_cli qa --model <m>` (Ollama) or
-`ai_cli qa --provider llamacpp --url <server> --model <m>` (PrismML).
+Scores use **greedy decoding (temperature 0)** so they are reproducible —
+stochastic sampling made the extreme-quant models vary ±1–2 scenarios per run
+(a single sampled run once showed a spurious rescue that did not reproduce).
+Run with `ai_cli qa --model <m>` (Ollama) or
+`ai_cli qa --provider llamacpp --url <server> --model <m>` (PrismML); add
+`--fresh-context` for the FreshContext column.
 
-| Model | Quant | context_recall | grounded | multi_fact | fact_update | multi_grounded | Total |
-|---|---|:---:|:---:|:---:|:---:|:---:|:---:|
-| **llama3.1:8b** | Q4 | ✅ | ✅ | ✅ | ✅ | ✅ | **5/5** |
-| **llama3.2:3b** _(mobile)_ | Q4 | ✅ | ✅ | ✅ | ✅ | ✅ | **5/5** |
-| **llama3.2:1b** _(mobile)_ | Q4 | ✅ | ✅ | — | — | — | passes basics |
-| **qwen2.5:1.5b-instruct** _(mobile)_ | Q4 | ✅ | ✅ | — | — | — | passes basics |
-| **gemma2:2b** _(mobile)_ | Q4 | ✅ | ✅ | — | — | — | passes basics |
-| **Bonsai-4B** (PrismML) | 1-bit `Q1_0` | ✅ | ✅ | ❌ | ✅ | ✅ | **4/5** |
-| **Bonsai-8B** (PrismML) | 1-bit `Q1_0` | ✅ | ✅ | ❌ | ❌ | ✅ | **3/5** |
-| **Ternary-Bonsai-4B** (PrismML) | ternary `Q2_0` (~1.58-bit) | ✅ | ✅ | ❌ | ✅ | ✅ | **4/5** |
+| Model | Quant | context | grounded | multi_fact | fact_update | multi_grnd | Conv. | Fresh |
+|---|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **llama3.1:8b** | Q4 | ✅ | ✅ | ✅ | ✅ | ✅ | **5/5** | **5/5** |
+| **llama3.2:3b** _(mobile)_ | Q4 | ✅ | ✅ | ✅ | ✅ | ✅ | **5/5** | **5/5** |
+| **Bonsai-4B** (PrismML) | 1-bit `Q1_0` | ✅ | ✅ | ❌ | ❌→✅ | ✅ | 3/5 | **4/5** |
+| **Bonsai-8B** (PrismML) | 1-bit `Q1_0` | ✅ | ✅ | ❌ | ❌→✅ | ✅ | 3/5 | **4/5** |
+| **Ternary-Bonsai-4B** (PrismML) | ternary `Q2_0` (~1.58-bit) | ✅ | ✅ | ❌ | ❌→✅ | ✅ | 3/5 | **4/5** |
 
-_(The mobile 1–3B Q4 rows were exercised on the two basic scenarios; the
-complex three are shown for the models we ran the full suite on.)_
+_(The `fact_update` cell shows Conversation → FreshContext. The mobile 1–3B Q4
+models — llama3.2:1b, qwen2.5:1.5b, gemma2:2b — pass the two basic scenarios;
+the full 5-scenario suite was run on the models above.)_
 
 ### Findings
 
-- **Q4 small models are excellent for complex conversations.** Even the mobile
-  **3B** (`llama3.2:3b`) scores **5/5** — it tracks four facts through
-  distractions, honours a mid-conversation update, and grounds several prices
-  from a large document.
-- **Pure 1-bit (`Q1_0`) models degrade on complexity, and not monotonically
-  with size.** `Bonsai-4B` loses one fact of a four-fact set
-  (`multi_fact_tracking`); `Bonsai-8B` additionally fails `fact_update` — i.e.
-  the **larger** 1-bit model is **worse** on the update test. Extreme 1-bit
-  quantization damages exactly the multi-fact / state-update reasoning the
-  complex tests target, while leaving single-fact recall and grounding intact.
+- **Q4 small models are excellent for complex conversations** — even the mobile
+  **3B** (`llama3.2:3b`) scores 5/5 in **both** modes.
+- **Extreme-quant (1-bit / 1.58-bit) models hit two walls.** In Conversation
+  mode all three (Bonsai-4B/8B, Ternary-4B) score **3/5**, failing
+  `multi_fact_tracking` **and** `fact_update`. Quality is **not monotonic with
+  size** — the 8B 1-bit is no better than the 4B.
+- **FreshContext reliably rescues `fact_update`** (3/5 → 4/5 for all three).
+  Its recency-kept recent turns make a mid-conversation correction stick, where
+  the raw full history confuses the degraded model into the stale value.
+- The **`multi_fact_tracking` wall** — holding four facts at once and pulling
+  different ones after distractions — **persists in both modes**. That is the
+  ability sub-2-bit quantization damages most.
 
-### Are there "1-bit-class" models that pass the complex tests?
+### Are there "1-bit-class" models that pass all five?
 
-**Partly.** Ternary Bonsai (three states, `Q2_0` container, ~1.58-bit) is a
-distinct, higher-quality extreme quant than pure 1-bit `Q1_0`, and it does
-measurably better: **`Ternary-Bonsai-4B` scores 4/5** — it recovers the
-`fact_update` test that the 1-bit `Bonsai-8B` failed, and passes grounding,
-recall and multi-price retrieval. But it still fails the single hardest one,
-`multi_fact_tracking` (holding four facts at once and pulling different ones
-after distractions).
+**No.** The best of the extreme-quant class reaches **4/5** (all three, in
+FreshContext); none passes `multi_fact_tracking`. Ternary (`Q2_0`, ~1.58-bit)
+is a higher-quality extreme quant than pure 1-bit `Q1_0` but hits the same wall.
 
-So: **no extreme-quant (1-bit or 1.58-bit) model passed all five** in these
-tests; the best of the class (`Ternary-Bonsai-4B`) reaches **4/5**, versus a
-straightforward **5/5** for any Q4 model of 3B+. The common wall for the whole
-extreme-quant class is **simultaneous multi-fact tracking** — the ability that
-sub-2-bit quantization damages most.
-
-**Practical recommendation:** use **1-bit `Q1_0`** only for the simplest
-recall/grounding on the most memory-constrained devices; for a real
-conversational assistant that must track and update state, prefer a **Q4 model
-of 3B+** (the `mobile` profile on `llama3.2:3b` is the sweet spot), stepping up
-to 7–9B (`local-balanced`) when the hardware allows.
+**Practical recommendation:** for a real conversational assistant that must
+track and update state, prefer a **Q4 model of 3B+** (the `mobile` profile on
+`llama3.2:3b` is the sweet spot), stepping up to 7–9B (`local-balanced`) when
+the hardware allows. Use extreme-quant models only for the simplest
+recall/grounding on the most memory-constrained devices. (Structured **memory
+extraction / re-injection** — the memory manager — is the likely path to lift
+the `multi_fact_tracking` wall even for weak models; see §7.)
 
 ---
 
