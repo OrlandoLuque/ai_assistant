@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.145"
+version = "0.2.146"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -158,6 +158,12 @@ full = [
     "hardware-detection",
     "hardware-nvml",
     "model-recommender",
+    # Butler = environment auto-detection (providers, hardware, project). It is
+    # dep-free (`autonomous = []`) and completes the recommender stack already
+    # in `full`. Without it the shipped CLIs' `scan` / `providers` commands —
+    # the core "just works" onboarding — fail with "requires the butler
+    # feature", so it belongs in the default/product build.
+    "butler",
 ]
 
 # Binary storage: bincode + gzip for internal data (faster, smaller than JSON)

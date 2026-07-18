@@ -7,12 +7,12 @@ use crate::retry::RetryConfig;
 
 /// Default URL for `llama.cpp` `llama-server` (matches upstream default).
 fn default_llamacpp_url() -> String {
-    "http://localhost:8080".to_string()
+    "http://127.0.0.1:8080".to_string()
 }
 
 /// Default URL for vLLM OpenAI-compatible server (matches upstream default).
 fn default_vllm_url() -> String {
-    "http://localhost:8000".to_string()
+    "http://127.0.0.1:8000".to_string()
 }
 
 /// Available AI provider types
@@ -279,11 +279,11 @@ impl Default for AiConfig {
         Self {
             provider: AiProvider::Ollama,
             selected_model: String::new(),
-            ollama_url: "http://localhost:11434".to_string(),
-            lm_studio_url: "http://localhost:1234".to_string(),
-            text_gen_webui_url: "http://localhost:5000".to_string(),
-            kobold_url: "http://localhost:5001".to_string(),
-            local_ai_url: "http://localhost:8080".to_string(),
+            ollama_url: "http://127.0.0.1:11434".to_string(),
+            lm_studio_url: "http://127.0.0.1:1234".to_string(),
+            text_gen_webui_url: "http://127.0.0.1:5000".to_string(),
+            kobold_url: "http://127.0.0.1:5001".to_string(),
+            local_ai_url: "http://127.0.0.1:8080".to_string(),
             llamacpp_url: default_llamacpp_url(),
             vllm_url: default_vllm_url(),
             custom_url: String::new(),
@@ -562,16 +562,16 @@ mod tests {
     #[test]
     fn test_llamacpp_default_url() {
         let config = AiConfig::default();
-        assert_eq!(config.llamacpp_url, "http://localhost:8080");
+        assert_eq!(config.llamacpp_url, "http://127.0.0.1:8080");
     }
 
     #[test]
     fn test_llamacpp_get_provider_url() {
         let mut config = AiConfig::default();
         config.provider = AiProvider::LlamaCpp;
-        assert_eq!(config.get_base_url(), "http://localhost:8080");
-        config.llamacpp_url = "http://localhost:9999".to_string();
-        assert_eq!(config.get_base_url(), "http://localhost:9999");
+        assert_eq!(config.get_base_url(), "http://127.0.0.1:8080");
+        config.llamacpp_url = "http://127.0.0.1:9999".to_string();
+        assert_eq!(config.get_base_url(), "http://127.0.0.1:9999");
     }
 
     #[test]
@@ -583,8 +583,8 @@ mod tests {
     fn test_ai_config_defaults() {
         let config = AiConfig::default();
         assert_eq!(config.provider, AiProvider::Ollama);
-        assert_eq!(config.ollama_url, "http://localhost:11434");
-        assert_eq!(config.lm_studio_url, "http://localhost:1234");
+        assert_eq!(config.ollama_url, "http://127.0.0.1:11434");
+        assert_eq!(config.lm_studio_url, "http://127.0.0.1:1234");
         assert_eq!(config.max_history_messages, 20);
         assert!((config.temperature - 0.7).abs() < f32::EPSILON);
     }
@@ -600,11 +600,11 @@ mod tests {
     #[test]
     fn test_ai_config_get_base_url() {
         let config = AiConfig::default();
-        assert_eq!(config.get_base_url(), "http://localhost:11434");
+        assert_eq!(config.get_base_url(), "http://127.0.0.1:11434");
 
         let mut config2 = AiConfig::default();
         config2.provider = AiProvider::LMStudio;
-        assert_eq!(config2.get_base_url(), "http://localhost:1234");
+        assert_eq!(config2.get_base_url(), "http://127.0.0.1:1234");
 
         let mut config3 = AiConfig::default();
         config3.provider = AiProvider::OpenAICompatible {
@@ -677,14 +677,14 @@ mod tests {
     #[test]
     fn test_vllm_default_url() {
         let config = AiConfig::default();
-        assert_eq!(config.vllm_url, "http://localhost:8000");
+        assert_eq!(config.vllm_url, "http://127.0.0.1:8000");
     }
 
     #[test]
     fn test_vllm_get_provider_url() {
         let mut config = AiConfig::default();
         config.provider = AiProvider::VLLM;
-        assert_eq!(config.get_base_url(), "http://localhost:8000");
+        assert_eq!(config.get_base_url(), "http://127.0.0.1:8000");
         config.vllm_url = "http://gpu-box:8000".to_string();
         assert_eq!(config.get_base_url(), "http://gpu-box:8000");
     }

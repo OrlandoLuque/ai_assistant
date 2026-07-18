@@ -468,7 +468,7 @@ mod tests {
             ]
         }));
 
-        let models = fetch_ollama_models_async(&client, "http://localhost:11434")
+        let models = fetch_ollama_models_async(&client, "http://127.0.0.1:11434")
             .await
             .unwrap();
         assert_eq!(models.len(), 2);
@@ -486,7 +486,7 @@ mod tests {
         }));
 
         let models =
-            fetch_openai_models_async(&client, "http://localhost:1234", AiProvider::LMStudio)
+            fetch_openai_models_async(&client, "http://127.0.0.1:1234", AiProvider::LMStudio)
                 .await
                 .unwrap();
         assert_eq!(models.len(), 2);
@@ -499,7 +499,7 @@ mod tests {
             "result": "mistral-7b"
         }));
 
-        let models = fetch_kobold_models_async(&client, "http://localhost:5001")
+        let models = fetch_kobold_models_async(&client, "http://127.0.0.1:5001")
             .await
             .unwrap();
         assert_eq!(models.len(), 1);
@@ -509,7 +509,7 @@ mod tests {
     #[tokio::test]
     async fn test_fetch_models_async_error() {
         let client = MockAsyncClient::with_error("Connection refused");
-        let result = fetch_ollama_models_async(&client, "http://localhost:11434").await;
+        let result = fetch_ollama_models_async(&client, "http://127.0.0.1:11434").await;
         assert!(result.is_err());
     }
 

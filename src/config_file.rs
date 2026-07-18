@@ -10,8 +10,8 @@
 //! model = "llama2"
 //!
 //! [urls]
-//! ollama = "http://localhost:11434"
-//! lm_studio = "http://localhost:1234"
+//! ollama = "http://127.0.0.1:11434"
+//! lm_studio = "http://127.0.0.1:1234"
 //!
 //! [generation]
 //! temperature = 0.7
@@ -32,7 +32,7 @@
 //!     "model": "llama2"
 //!   },
 //!   "urls": {
-//!     "ollama": "http://localhost:11434"
+//!     "ollama": "http://127.0.0.1:11434"
 //!   },
 //!   "generation": {
 //!     "temperature": 0.7
@@ -161,25 +161,25 @@ pub struct UrlConfig {
 }
 
 fn default_ollama_url() -> String {
-    "http://localhost:11434".to_string()
+    "http://127.0.0.1:11434".to_string()
 }
 fn default_lm_studio_url() -> String {
-    "http://localhost:1234".to_string()
+    "http://127.0.0.1:1234".to_string()
 }
 fn default_text_gen_url() -> String {
-    "http://localhost:5000".to_string()
+    "http://127.0.0.1:5000".to_string()
 }
 fn default_kobold_url() -> String {
-    "http://localhost:5001".to_string()
+    "http://127.0.0.1:5001".to_string()
 }
 fn default_local_ai_url() -> String {
-    "http://localhost:8080".to_string()
+    "http://127.0.0.1:8080".to_string()
 }
 fn default_llamacpp_url() -> String {
-    "http://localhost:8080".to_string()
+    "http://127.0.0.1:8080".to_string()
 }
 fn default_vllm_url() -> String {
-    "http://localhost:8000".to_string()
+    "http://127.0.0.1:8000".to_string()
 }
 
 impl Default for UrlConfig {
@@ -2358,7 +2358,7 @@ knowledge_enabled = true
 
         // Initially Ollama — local URL
         let url1 = cfg.lock().unwrap().get_base_url();
-        assert_eq!(url1, "http://localhost:11434");
+        assert_eq!(url1, "http://127.0.0.1:11434");
 
         // Switch to OpenAI via MCP
         call_tool(
@@ -2394,7 +2394,7 @@ knowledge_enabled = true
             serde_json::json!({"field": "provider", "value": "lmstudio"}),
         );
         let url5 = cfg.lock().unwrap().get_base_url();
-        assert_eq!(url5, "http://localhost:1234");
+        assert_eq!(url5, "http://127.0.0.1:1234");
     }
 
     #[test]
@@ -2595,7 +2595,7 @@ knowledge_enabled = true
             assert_eq!(c.selected_model, "codellama:13b");
             assert!((c.temperature - 0.1).abs() < 0.01);
             assert_eq!(c.max_history_messages, 5);
-            assert_eq!(c.get_base_url(), "http://localhost:11434");
+            assert_eq!(c.get_base_url(), "http://127.0.0.1:11434");
         }
 
         // Phase 2: Complex reasoning task — switch to cloud, high context
@@ -2670,7 +2670,7 @@ knowledge_enabled = true
         {
             let c = cfg.lock().unwrap();
             assert!(!c.provider.is_cloud());
-            assert_eq!(c.get_base_url(), "http://localhost:1234");
+            assert_eq!(c.get_base_url(), "http://127.0.0.1:1234");
             assert_eq!(c.selected_model, "mistral-7b");
         }
 

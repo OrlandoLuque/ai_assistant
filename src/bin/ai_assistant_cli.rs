@@ -853,8 +853,8 @@ fn fetch_models_blocking(assistant: &mut AiAssistant) {
     }
     if assistant.available_models.is_empty() {
         eprintln!("\nNo models found. Check that your provider is running.");
-        eprintln!("  Ollama:    ollama serve    (default: http://localhost:11434)");
-        eprintln!("  LM Studio: start LM Studio (default: http://localhost:1234)");
+        eprintln!("  Ollama:    ollama serve    (default: http://127.0.0.1:11434)");
+        eprintln!("  LM Studio: start LM Studio (default: http://127.0.0.1:1234)");
         eprintln!("  Cloud:     set API key env vars (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)");
         eprintln!("\nYou can still chat if you set a model manually with /model <name>\n");
     } else {

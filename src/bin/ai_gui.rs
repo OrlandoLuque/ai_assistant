@@ -680,8 +680,8 @@ struct GuiSettings {
 impl Default for GuiSettings {
     fn default() -> Self {
         Self {
-            ollama_url: "http://localhost:11434".to_string(),
-            lm_studio_url: "http://localhost:1234".to_string(),
+            ollama_url: "http://127.0.0.1:11434".to_string(),
+            lm_studio_url: "http://127.0.0.1:1234".to_string(),
             temperature: 0.7,
             max_history: 20,
             graph_enabled: false,

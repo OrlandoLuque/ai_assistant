@@ -155,7 +155,7 @@ pub struct OllamaDetector {
 impl OllamaDetector {
     pub fn new() -> Self {
         let base_url =
-            std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "http://localhost:11434".to_string());
+            std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "http://127.0.0.1:11434".to_string());
         Self { base_url }
     }
 }
@@ -222,7 +222,7 @@ pub struct LmStudioDetector {
 impl LmStudioDetector {
     pub fn new() -> Self {
         let base_url =
-            std::env::var("LM_STUDIO_URL").unwrap_or_else(|_| "http://localhost:1234".to_string());
+            std::env::var("LM_STUDIO_URL").unwrap_or_else(|_| "http://127.0.0.1:1234".to_string());
         Self { base_url }
     }
 }
@@ -293,7 +293,7 @@ pub struct VLlmDetector {
 impl VLlmDetector {
     pub fn new() -> Self {
         let base_url =
-            std::env::var("VLLM_BASE_URL").unwrap_or_else(|_| "http://localhost:8000".to_string());
+            std::env::var("VLLM_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:8000".to_string());
         Self { base_url }
     }
 }
@@ -368,7 +368,7 @@ pub struct LlamaCppDetector {
 impl LlamaCppDetector {
     pub fn new() -> Self {
         let base_url = std::env::var("LLAMACPP_BASE_URL")
-            .unwrap_or_else(|_| "http://localhost:8080".to_string());
+            .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
         Self { base_url }
     }
 }
@@ -873,7 +873,7 @@ impl ResourceDetector for WhisperDetector {
 
         // 1. Check for whisper.cpp server (default port 8080, OpenAI-compatible)
         let server_url = std::env::var("WHISPER_SERVER_URL")
-            .unwrap_or_else(|_| "http://localhost:8080".to_string());
+            .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
         match ureq::get(&format!("{}/v1/models", server_url))
             .timeout(std::time::Duration::from_secs(2))
             .call()
@@ -969,7 +969,7 @@ pub struct PiperDetector {
 impl PiperDetector {
     pub fn new() -> Self {
         let base_url =
-            std::env::var("PIPER_URL").unwrap_or_else(|_| "http://localhost:5000".to_string());
+            std::env::var("PIPER_URL").unwrap_or_else(|_| "http://127.0.0.1:5000".to_string());
         Self { base_url }
     }
 }
@@ -1033,7 +1033,7 @@ pub struct CoquiDetector {
 impl CoquiDetector {
     pub fn new() -> Self {
         let base_url =
-            std::env::var("COQUI_URL").unwrap_or_else(|_| "http://localhost:5002".to_string());
+            std::env::var("COQUI_URL").unwrap_or_else(|_| "http://127.0.0.1:5002".to_string());
         Self { base_url }
     }
 }
@@ -1135,11 +1135,21 @@ impl Butler {
 
     /// Run all detectors, cache results, and produce an `EnvironmentReport`.
     pub fn scan(&mut self) -> EnvironmentReport {
-        // Run every detector and cache by name
+        // Run every detector and cache by name. Detectors are independent and
+        // several make network calls or spawn subprocesses, so run them
+        // CONCURRENTLY (scoped threads): serial execution made a full scan take
+        // tens of seconds; concurrent it is ≈ the slowest single probe.
         self.cache.clear();
-        for detector in &self.detectors {
-            let result = detector.detect();
-            self.cache.insert(detector.name().to_string(), result);
+        let results: Vec<(String, DetectionResult)> = std::thread::scope(|s| {
+            let handles: Vec<_> = self
+                .detectors
+                .iter()
+                .map(|d| s.spawn(move || (d.name().to_string(), d.detect())))
+                .collect();
+            handles.into_iter().filter_map(|h| h.join().ok()).collect()
+        });
+        for (name, result) in results {
+            self.cache.insert(name, result);
         }
 
         // Build report from cached results
@@ -1153,7 +1163,7 @@ impl Butler {
                     .details
                     .get("url")
                     .cloned()
-                    .unwrap_or_else(|| "http://localhost:11434".to_string());
+                    .unwrap_or_else(|| "http://127.0.0.1:11434".to_string());
                 llm_providers.push(DetectedProvider {
                     name: "Ollama".to_string(),
                     provider_type: AiProvider::Ollama,
@@ -1175,7 +1185,7 @@ impl Butler {
                     .details
                     .get("url")
                     .cloned()
-                    .unwrap_or_else(|| "http://localhost:1234".to_string());
+                    .unwrap_or_else(|| "http://127.0.0.1:1234".to_string());
                 llm_providers.push(DetectedProvider {
                     name: "LM Studio".to_string(),
                     provider_type: AiProvider::LMStudio,
@@ -1197,7 +1207,7 @@ impl Butler {
                     .details
                     .get("url")
                     .cloned()
-                    .unwrap_or_else(|| "http://localhost:8000".to_string());
+                    .unwrap_or_else(|| "http://127.0.0.1:8000".to_string());
                 llm_providers.push(DetectedProvider {
                     name: "vLLM".to_string(),
                     provider_type: AiProvider::VLLM,
@@ -1219,7 +1229,7 @@ impl Butler {
                     .details
                     .get("url")
                     .cloned()
-                    .unwrap_or_else(|| "http://localhost:8080".to_string());
+                    .unwrap_or_else(|| "http://127.0.0.1:8080".to_string());
                 llm_providers.push(DetectedProvider {
                     name: "llama.cpp".to_string(),
                     provider_type: AiProvider::LlamaCpp,
@@ -2435,7 +2445,7 @@ impl<'a> ButlerAdvisor<'a> {
                     .into(),
                 action: "Install vLLM (`ai_setup install vllm` or `docker run \
                     vllm/vllm-openai:latest`) and point the assistant at it \
-                    (provider: VLLM, url: http://localhost:8000)."
+                    (provider: VLLM, url: http://127.0.0.1:8000)."
                     .into(),
                 feature_flag: None,
                 already_enabled: false,
@@ -3958,7 +3968,7 @@ mod tests {
         DetectedProvider {
             name: "Ollama".to_string(),
             provider_type: AiProvider::Ollama,
-            url: "http://localhost:11434".to_string(),
+            url: "http://127.0.0.1:11434".to_string(),
             available_models: vec!["llama3".to_string()],
         }
     }
@@ -4513,7 +4523,7 @@ mod tests {
         std::env::remove_var("VLLM_BASE_URL");
         let detector = VLlmDetector::new();
         assert_eq!(detector.name(), "vllm");
-        assert_eq!(detector.base_url, "http://localhost:8000");
+        assert_eq!(detector.base_url, "http://127.0.0.1:8000");
     }
 
     #[test]
@@ -4531,7 +4541,7 @@ mod tests {
         std::env::remove_var("LLAMACPP_BASE_URL");
         let detector = LlamaCppDetector::new();
         assert_eq!(detector.name(), "llamacpp");
-        assert_eq!(detector.base_url, "http://localhost:8080");
+        assert_eq!(detector.base_url, "http://127.0.0.1:8080");
     }
 
     #[test]
@@ -4577,7 +4587,7 @@ mod tests {
         report.llm_providers.push(DetectedProvider {
             name: "vLLM".into(),
             provider_type: AiProvider::VLLM,
-            url: "http://localhost:8000".into(),
+            url: "http://127.0.0.1:8000".into(),
             available_models: vec![],
         });
         let rec = butler.recommend_runtime(&report, WorkloadHint::Auto);
@@ -4599,12 +4609,12 @@ mod tests {
         report.llm_providers.push(DetectedProvider {
             name: "vLLM".into(),
             provider_type: AiProvider::VLLM,
-            url: "http://localhost:8000".into(),
+            url: "http://127.0.0.1:8000".into(),
             available_models: vec![],
         });
         let config = butler.suggest_config(&report);
         assert_eq!(config.provider, AiProvider::VLLM);
-        assert_eq!(config.vllm_url, "http://localhost:8000");
+        assert_eq!(config.vllm_url, "http://127.0.0.1:8000");
     }
 
     #[test]
@@ -4614,7 +4624,7 @@ mod tests {
         report.llm_providers.push(DetectedProvider {
             name: "llama.cpp".into(),
             provider_type: AiProvider::LlamaCpp,
-            url: "http://localhost:8080".into(),
+            url: "http://127.0.0.1:8080".into(),
             available_models: vec![],
         });
         let config = butler.suggest_config(&report);
