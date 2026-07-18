@@ -1009,6 +1009,7 @@ fn cmd_qa(args: &[String]) -> ExitCode {
     let fresh_context = args.iter().any(|a| a == "--fresh-context");
     let lexical = args.iter().any(|a| a == "--lexical");
     let embedding_model = find_flag_value(args, "--embedding-model").map(String::from);
+    let temperature = find_flag_value(args, "--temperature").and_then(|s| s.parse::<f32>().ok());
 
     let mut assistant = AiAssistant::new();
     if let Some(ref name) = provider_name {
@@ -1027,6 +1028,10 @@ fn cmd_qa(args: &[String]) -> ExitCode {
     if let Some(n) = num_ctx_override {
         assistant.config.ollama_num_ctx = Some(n);
     }
+    // Deterministic scoring: greedy decoding (temp 0) so runs are reproducible
+    // — stochastic sampling made extreme-quant models vary +/-1-2 scenarios
+    // between runs. --temperature overrides.
+    assistant.config.temperature = temperature.unwrap_or(0.0);
     // Semantic retrieval by default (lexical fallback); --lexical / --embedding-model.
     if let Some(ref m) = embedding_model {
         assistant.config.embedding_model = Some(m.clone());
