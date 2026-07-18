@@ -1065,6 +1065,18 @@ struct AiGuiApp {
 }
 
 impl AiGuiApp {
+    /// Apply a named runtime profile (from the `--profile` launch flag) to the
+    /// initial config. Unknown names are ignored with a note.
+    fn apply_profile(&mut self, name: &str) {
+        match ai_assistant::runtime_profiles::find(name) {
+            Some(p) => {
+                p.apply(&mut self.assistant.config);
+                eprintln!("Applied runtime profile '{}'.", p.name);
+            }
+            None => eprintln!("Unknown profile '{name}' (see `ai_cli profiles`); ignoring."),
+        }
+    }
+
     fn new() -> Self {
         let data_dir = Self::get_data_dir();
         if let Err(e) = std::fs::create_dir_all(&data_dir) {
@@ -5613,12 +5625,24 @@ fn main() -> eframe::Result<()> {
         ..Default::default()
     };
 
+    // Optional launch flag: `ai_gui-pro --profile <name>` applies a runtime
+    // profile (mobile, local-balanced, ...) to the initial config.
+    let profile = std::env::args()
+        .collect::<Vec<_>>()
+        .windows(2)
+        .find(|w| w[0] == "--profile")
+        .map(|w| w[1].clone());
+
     eframe::run_native(
         "AI Assistant",
         options,
-        Box::new(|cc| {
+        Box::new(move |cc| {
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
-            Box::new(AiGuiApp::new())
+            let mut app = AiGuiApp::new();
+            if let Some(ref name) = profile {
+                app.apply_profile(name);
+            }
+            Box::new(app)
         }),
     )
 }
