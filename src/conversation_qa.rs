@@ -134,10 +134,20 @@ impl QaScenario {
     pub fn run_with_timeout(&self, config: &AiConfig, per_turn: Duration) -> QaScenarioResult {
         let mut assistant = AiAssistant::new();
         assistant.config = config.clone();
-        let knowledge = self.knowledge.clone().unwrap_or_default();
 
         let mut turns = Vec::with_capacity(self.turns.len());
         for turn in &self.turns {
+            // Mirror the CLI: when the knowledge is large, retrieve only the
+            // passages relevant to *this* turn's question, so the harness
+            // exercises the full retrieval + context stack (not just a huge
+            // window).
+            let knowledge = match &self.knowledge {
+                Some(k) if k.len() > 12_000 => {
+                    crate::knowledge_retrieval::select_relevant(k, &turn.prompt, 8_000)
+                }
+                Some(k) => k.clone(),
+                None => String::new(),
+            };
             let start = Instant::now();
             assistant.send_message(turn.prompt.clone(), &knowledge);
 
@@ -234,7 +244,76 @@ pub fn builtin_scenarios() -> Vec<QaScenario> {
             )
             .expect("490")],
         },
+        // --- Larger / more complex conversations ---
+        QaScenario {
+            name: "multi_fact_tracking".to_string(),
+            description: "Tracks several facts over turns and recalls them after distractions"
+                .to_string(),
+            knowledge: None,
+            turns: vec![
+                QaTurn::new(
+                    "Te doy varios datos sobre mí, guárdalos: me llamo Ana, vivo en Sevilla, \
+                     tengo un perro llamado Toby y trabajo de arquitecta.",
+                ),
+                QaTurn::new("Cuéntame un dato curioso muy corto sobre el mar."),
+                QaTurn::new("Cuéntame otro dato curioso corto, ahora sobre el espacio."),
+                QaTurn::new("¿En qué ciudad vivo y cómo se llama mi perro? Una frase.")
+                    .expect("Sevilla")
+                    .expect("Toby"),
+                QaTurn::new("¿De qué trabajo? Una palabra.").expect("arquitecta"),
+            ],
+        },
+        QaScenario {
+            name: "fact_update".to_string(),
+            description: "Uses the most recent value after a fact is updated mid-conversation"
+                .to_string(),
+            knowledge: None,
+            turns: vec![
+                QaTurn::new("Mi color favorito es el azul."),
+                QaTurn::new("Espera, cámbialo: a partir de ahora mi color favorito es el rojo."),
+                QaTurn::new("Hablemos de otra cosa: dime un número entre 1 y 10."),
+                QaTurn::new("¿Cuál es mi color favorito ahora? Una sola palabra.").expect("rojo"),
+            ],
+        },
+        QaScenario {
+            name: "multi_grounded".to_string(),
+            description:
+                "Answers several prices across turns from a large doc (exercises retrieval)"
+                    .to_string(),
+            knowledge: Some(big_support_plans_knowledge()),
+            turns: vec![
+                QaTurn::new(
+                    "Según el catálogo, ¿cuánto cuesta al mes el plan Premium? Solo el importe.",
+                )
+                .expect("99"),
+                QaTurn::new("¿Y el plan Estándar? Solo el importe.").expect("49"),
+                QaTurn::new("¿Y el plan Empresa? Solo el importe.").expect("290"),
+            ],
+        },
     ]
+}
+
+/// A large support-plans catalogue with the four plan prices buried in filler,
+/// so the `multi_grounded` scenario exercises per-turn retrieval.
+fn big_support_plans_knowledge() -> String {
+    let mut doc = String::new();
+    for i in 0..150 {
+        doc.push_str(&format!(
+            "Sección {i}: notas de integración, SLA, límites de API y detalles de \
+             despliegue del producto para el perfil de build {i}.\n\n"
+        ));
+    }
+    doc.push_str(
+        "Catálogo de planes de soporte (EUR al mes): Básico 19, Estándar 49, \
+         Premium 99, Empresa 290.\n\n",
+    );
+    for i in 150..300 {
+        doc.push_str(&format!(
+            "Sección {i}: más notas de arquitectura, colas, caché y observabilidad \
+             del perfil {i}.\n\n"
+        ));
+    }
+    doc
 }
 
 #[cfg(test)]
