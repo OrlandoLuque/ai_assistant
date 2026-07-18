@@ -16,34 +16,34 @@ impl AiAssistant {
         let local_ai_url = self.config.local_ai_url.clone();
 
         thread::spawn(move || {
+            // Probe every provider CONCURRENTLY. A closed localhost port can
+            // take several seconds to refuse a connection (IPv6-first on
+            // Windows), so probing sequentially serializes those delays and
+            // blows past the caller's poll timeout — losing even a live
+            // provider's models. Each probe is single-attempt with a short
+            // timeout (see the fetch_* functions); whatever succeeds is kept.
+            let handles = vec![
+                thread::spawn(move || fetch_ollama_models(&ollama_url).unwrap_or_default()),
+                thread::spawn(move || {
+                    fetch_openai_compatible_models(&lm_studio_url, AiProvider::LMStudio)
+                        .unwrap_or_default()
+                }),
+                thread::spawn(move || {
+                    fetch_openai_compatible_models(&text_gen_webui_url, AiProvider::TextGenWebUI)
+                        .unwrap_or_default()
+                }),
+                thread::spawn(move || fetch_kobold_models(&kobold_url).unwrap_or_default()),
+                thread::spawn(move || {
+                    fetch_openai_compatible_models(&local_ai_url, AiProvider::LocalAI)
+                        .unwrap_or_default()
+                }),
+            ];
+
             let mut all_models = Vec::new();
-
-            // Try Ollama
-            if let Ok(models) = fetch_ollama_models(&ollama_url) {
-                all_models.extend(models);
-            }
-
-            // Try LM Studio
-            if let Ok(models) = fetch_openai_compatible_models(&lm_studio_url, AiProvider::LMStudio)
-            {
-                all_models.extend(models);
-            }
-
-            // Try text-generation-webui
-            if let Ok(models) =
-                fetch_openai_compatible_models(&text_gen_webui_url, AiProvider::TextGenWebUI)
-            {
-                all_models.extend(models);
-            }
-
-            // Try Kobold.cpp
-            if let Ok(models) = fetch_kobold_models(&kobold_url) {
-                all_models.extend(models);
-            }
-
-            // Try LocalAI
-            if let Ok(models) = fetch_openai_compatible_models(&local_ai_url, AiProvider::LocalAI) {
-                all_models.extend(models);
+            for handle in handles {
+                if let Ok(models) = handle.join() {
+                    all_models.extend(models);
+                }
             }
 
             let _ = tx.send(AiResponse::ModelsLoaded(all_models));

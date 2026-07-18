@@ -8,89 +8,83 @@ use crate::config::{AiConfig, AiProvider};
 use crate::conversation_control::CancellationToken;
 use crate::messages::{AiResponse, ChatMessage};
 use crate::models::{format_size, ModelInfo};
-use crate::retry::{retry_with_config, RetryConfig};
+use crate::retry::retry_with_config;
 use crate::session::UserPreferences;
 
-/// Fetch models from Ollama API.
-///
-/// Uses `RetryConfig::fast()` (2 retries with short backoff) to handle
-/// transient connection errors when listing available models.
+/// Timeout for a single model-discovery probe. Discovery runs against every
+/// configured provider, so a closed port (which on Windows can take several
+/// seconds to refuse a `localhost` connection) must fail fast — and the probe
+/// is single-attempt: retrying a provider that is down just multiplies the
+/// latency of the whole scan (the caller re-scans on demand).
+const MODEL_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Fetch models from Ollama API. Single-attempt, short-timeout discovery probe.
 pub fn fetch_ollama_models(base_url: &str) -> Result<Vec<ModelInfo>> {
     let url = format!("{}/api/tags", base_url);
-    retry_with_config(RetryConfig::fast(), || {
-        let response = ureq::get(&url)
-            .timeout(std::time::Duration::from_secs(5))
-            .call()?;
-        let body: serde_json::Value = response.into_json()?;
+    let response = ureq::get(&url)
+        .timeout(MODEL_PROBE_TIMEOUT)
+        .call()
+        .context("Failed to fetch Ollama models")?;
+    let body: serde_json::Value = response.into_json()?;
 
-        let mut models = Vec::new();
-        if let Some(model_list) = body.get("models").and_then(|m| m.as_array()) {
-            for model in model_list {
-                if let Some(name) = model.get("name").and_then(|n| n.as_str()) {
-                    models.push(ModelInfo {
-                        name: name.to_string(),
-                        provider: AiProvider::Ollama,
-                        size: model.get("size").and_then(|s| s.as_u64()).map(format_size),
-                        modified_at: model
-                            .get("modified_at")
-                            .and_then(|m| m.as_str())
-                            .map(|s| s.to_string()),
-                        capabilities: None,
-                    });
-                }
+    let mut models = Vec::new();
+    if let Some(model_list) = body.get("models").and_then(|m| m.as_array()) {
+        for model in model_list {
+            if let Some(name) = model.get("name").and_then(|n| n.as_str()) {
+                models.push(ModelInfo {
+                    name: name.to_string(),
+                    provider: AiProvider::Ollama,
+                    size: model.get("size").and_then(|s| s.as_u64()).map(format_size),
+                    modified_at: model
+                        .get("modified_at")
+                        .and_then(|m| m.as_str())
+                        .map(|s| s.to_string()),
+                    capabilities: None,
+                });
             }
         }
-        Ok(models)
-    })
-    .context("Failed to fetch Ollama models")
+    }
+    Ok(models)
 }
 
-/// Fetch models from OpenAI-compatible API (LM Studio, LocalAI, etc.)
-///
-/// Uses `RetryConfig::fast()` (2 retries) for transient connection errors.
+/// Fetch models from an OpenAI-compatible API (LM Studio, LocalAI, etc.).
+/// Single-attempt, short-timeout discovery probe.
 pub fn fetch_openai_compatible_models(
     base_url: &str,
     provider: AiProvider,
 ) -> Result<Vec<ModelInfo>> {
     let url = format!("{}/v1/models", base_url);
-    retry_with_config(RetryConfig::fast(), || {
-        let response = ureq::get(&url)
-            .timeout(std::time::Duration::from_secs(5))
-            .call()?;
-        let body: serde_json::Value = response.into_json()?;
+    let response = ureq::get(&url)
+        .timeout(MODEL_PROBE_TIMEOUT)
+        .call()
+        .context("Failed to fetch OpenAI-compatible models")?;
+    let body: serde_json::Value = response.into_json()?;
 
-        let mut models = Vec::new();
-        if let Some(data) = body.get("data").and_then(|d| d.as_array()) {
-            for model in data {
-                if let Some(id) = model.get("id").and_then(|i| i.as_str()) {
-                    models.push(ModelInfo {
-                        name: id.to_string(),
-                        provider: provider.clone(),
-                        size: None,
-                        modified_at: None,
-                        capabilities: None,
-                    });
-                }
+    let mut models = Vec::new();
+    if let Some(data) = body.get("data").and_then(|d| d.as_array()) {
+        for model in data {
+            if let Some(id) = model.get("id").and_then(|i| i.as_str()) {
+                models.push(ModelInfo {
+                    name: id.to_string(),
+                    provider: provider.clone(),
+                    size: None,
+                    modified_at: None,
+                    capabilities: None,
+                });
             }
         }
-        Ok(models)
-    })
-    .context("Failed to fetch OpenAI-compatible models")
+    }
+    Ok(models)
 }
 
-/// Fetch models from Kobold.cpp API.
-///
-/// Uses `RetryConfig::fast()` for the primary model endpoint. The fallback
-/// version-check endpoint uses best-effort (no retry) since it's already a fallback.
+/// Fetch models from Kobold.cpp API. Single-attempt, short-timeout discovery
+/// probe (with a best-effort version-check fallback).
 pub fn fetch_kobold_models(base_url: &str) -> Result<Vec<ModelInfo>> {
     let url = format!("{}/api/v1/model", base_url);
-    let response = retry_with_config(RetryConfig::fast(), || {
-        let resp = ureq::get(&url)
-            .timeout(std::time::Duration::from_secs(5))
-            .call()?;
-        Ok(resp)
-    })
-    .context("Failed to connect to Kobold.cpp")?;
+    let response = ureq::get(&url)
+        .timeout(MODEL_PROBE_TIMEOUT)
+        .call()
+        .context("Failed to connect to Kobold.cpp")?;
 
     let body: serde_json::Value = response.into_json()?;
 
