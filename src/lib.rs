@@ -220,6 +220,9 @@ pub mod file_references;
 /// document and keep only the passages relevant to the query, so the prompt
 /// stays small instead of forcing a huge context window.
 pub mod knowledge_retrieval;
+/// Functional runtime profiles (mobile, local-balanced, coding, ...): a
+/// "pick one and it just works" bundle of tunables over `AiConfig`.
+pub mod runtime_profiles;
 #[cfg(feature = "backup")]
 pub mod secure_backup;
 /// Shared SSRF host-classification helpers (private-range / encoded-IP /

@@ -146,6 +146,7 @@ fn main() -> ExitCode {
         "butler" => cmd_butler(&command_args[1..]),
         "query" => cmd_query(&command_args[1..]),
         "qa" => cmd_qa(&command_args[1..]),
+        "profiles" => cmd_profiles_list(),
         "bench" => cmd_bench(&command_args[1..]),
         "test" => cmd_test(&command_args[1..]),
         "cost" => cmd_cost(&command_args[1..]),
@@ -209,6 +210,9 @@ fn print_usage() {
     println!("  query [options] <prompt>       Send a one-shot query to an LLM");
     println!(
         "  qa [--provider/--model/...]    Run conversation-quality scenarios (context, grounding)"
+    );
+    println!(
+        "  profiles                       List runtime profiles (mobile, local-balanced, ...)"
     );
     println!("  bench [options]                Run Criterion benchmarks (44 benchmarks)");
     println!("    --filter <pattern>             Filter benchmarks by name");
@@ -305,6 +309,7 @@ fn print_usage() {
     println!("    --file <path>                  Read user prompt from file instead of argument");
     println!("    --knowledge <path>             Inject file content as knowledge context");
     println!("    --full-knowledge               Inject the whole knowledge file (skip retrieval)");
+    println!("    --profile <name>               Apply a runtime profile (see `ai_cli profiles`)");
     println!("    --rag-tier <tier>              RAG tier (fast, semantic, enhanced, thorough, graph, full)");
     println!("    --list-tiers                   List available RAG tiers");
     println!("    --json                         Output response as JSON");
@@ -916,6 +921,31 @@ fn cmd_butler_recommend_prompt(_args: &[String]) -> ExitCode {
 // query — one-shot LLM query
 // =============================================================================
 
+fn cmd_profiles_list() -> ExitCode {
+    use ai_assistant::runtime_profiles::BUILTIN_PROFILES;
+    println!("Runtime profiles (apply with `query --profile <name>`):\n");
+    for p in BUILTIN_PROFILES {
+        println!("  {}", p.name);
+        println!("    {}", p.description);
+        println!(
+            "    temperature={}, num_ctx={}, history={}, retrieval={}",
+            p.temperature,
+            p.num_ctx
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| "auto".to_string()),
+            p.max_history,
+            if p.use_knowledge_retrieval {
+                "on"
+            } else {
+                "off"
+            }
+        );
+        println!("    tuned for: {}", p.recommended_models.join(", "));
+        println!();
+    }
+    ExitCode::SUCCESS
+}
+
 fn cmd_qa(args: &[String]) -> ExitCode {
     let provider_name = find_flag_value(args, "--provider").map(String::from);
     let model_name = find_flag_value(args, "--model").map(String::from);
@@ -1029,6 +1059,7 @@ fn cmd_query(args: &[String]) -> ExitCode {
     let mut temperature: Option<f32> = None;
     let mut num_ctx_override: Option<usize> = None;
     let mut full_knowledge = false;
+    let mut profile_name: Option<String> = None;
     let mut prompt_parts: Vec<String> = Vec::new();
     let mut image_paths: Vec<String> = Vec::new();
 
@@ -1150,6 +1181,14 @@ fn cmd_query(args: &[String]) -> ExitCode {
             "--full-knowledge" => {
                 full_knowledge = true;
             }
+            "--profile" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: --profile requires a name (see `ai_cli profiles`)");
+                    return ExitCode::from(1);
+                }
+                profile_name = Some(args[i].clone());
+            }
             arg if arg.starts_with('-') => {
                 eprintln!("Error: unknown option '{}' for 'query'", arg);
                 return ExitCode::from(1);
@@ -1190,6 +1229,23 @@ fn cmd_query(args: &[String]) -> ExitCode {
             Ok(config) => assistant.load_config(config),
             Err(e) => {
                 eprintln!("Error loading config '{}': {}", path, e);
+                return ExitCode::from(1);
+            }
+        }
+    }
+
+    // Apply a runtime profile first, so explicit flags below still win.
+    if let Some(ref pname) = profile_name {
+        match ai_assistant::runtime_profiles::find(pname) {
+            Some(p) => {
+                p.apply(&mut assistant.config);
+                if !p.use_knowledge_retrieval {
+                    full_knowledge = true;
+                }
+                eprintln!("Using profile '{}': {}", p.name, p.description);
+            }
+            None => {
+                eprintln!("Unknown profile '{pname}'. See `ai_cli profiles`.");
                 return ExitCode::from(1);
             }
         }
