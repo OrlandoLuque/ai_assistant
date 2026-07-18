@@ -34,6 +34,58 @@ impl AiAssistant {
         let (tx, rx) = mpsc::channel();
         self.rx_response = Some(rx);
 
+        // FreshContext sends only the latest turn to the model. To still let it
+        // recall facts stated earlier, retrieve the turns of the full
+        // conversation relevant to this question and inject them as context —
+        // this is the whole point of FreshContext: keep the entire conversation
+        // available and pull in only what the current turn needs.
+        let fresh_history = if matches!(self.context_mode, ContextMode::FreshContext)
+            && self.conversation.len() > 1
+        {
+            let prior = &self.conversation[..self.conversation.len() - 1];
+            // Always keep the most recent turns verbatim (recency — so a
+            // mid-conversation correction/update is never dropped by relevance
+            // ranking), PLUS retrieve older turns relevant to the current
+            // question. Emitted oldest-first so the model reads any updates in
+            // chronological order and uses the latest value.
+            const RECENT_TURNS: usize = 6;
+            let split = prior.len().saturating_sub(RECENT_TURNS);
+            let fmt = |m: &ChatMessage| format!("{}: {}", m.role, m.content);
+            let recent: String = prior[split..]
+                .iter()
+                .map(fmt)
+                .collect::<Vec<_>>()
+                .join("\n");
+            let older_text: String = prior[..split]
+                .iter()
+                .map(fmt)
+                .collect::<Vec<_>>()
+                .join("\n");
+            let older = if older_text.is_empty() {
+                String::new()
+            } else {
+                crate::knowledge_retrieval::select_relevant(&older_text, &user_message, 3000)
+            };
+            [older, recent]
+                .into_iter()
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n")
+        } else {
+            String::new()
+        };
+        let merged_knowledge: String;
+        let knowledge_context: &str = if fresh_history.is_empty() {
+            knowledge_context
+        } else if knowledge_context.is_empty() {
+            merged_knowledge = format!("Relevant earlier conversation:\n{fresh_history}");
+            &merged_knowledge
+        } else {
+            merged_knowledge =
+                format!("Relevant earlier conversation:\n{fresh_history}\n\n{knowledge_context}");
+            &merged_knowledge
+        };
+
         // Build context using the adaptive budget allocator
         let intent = self.classify_intent_for_budget(&user_message);
         let allocated_context =
