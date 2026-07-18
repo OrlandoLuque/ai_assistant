@@ -127,23 +127,28 @@ impl QaScenario {
     /// Run this scenario against `config`'s provider/model with the default
     /// per-turn timeout.
     pub fn run(&self, config: &AiConfig) -> QaScenarioResult {
-        self.run_with_timeout(config, DEFAULT_TURN_TIMEOUT, false)
+        self.run_with_timeout(config, DEFAULT_TURN_TIMEOUT, false, false)
     }
 
-    /// Run with an explicit per-turn timeout and context mode. When
-    /// `fresh_context` is set, the assistant uses FreshContext mode (only the
-    /// latest turn is sent to the model, with the relevant earlier turns
-    /// retrieved and injected) — used to verify FreshContext still recalls.
+    /// Run with an explicit per-turn timeout, context mode, and memory setting.
+    /// When `fresh_context` is set, the assistant uses FreshContext mode. When
+    /// `memory` is set, the memory manager is enabled (facts are extracted from
+    /// turns and re-injected) — used to test whether structured memory lifts
+    /// the multi-fact-tracking wall on weak models.
     pub fn run_with_timeout(
         &self,
         config: &AiConfig,
         per_turn: Duration,
         fresh_context: bool,
+        memory: bool,
     ) -> QaScenarioResult {
         let mut assistant = AiAssistant::new();
         assistant.config = config.clone();
         if fresh_context {
             assistant.set_context_mode(crate::ContextMode::FreshContext);
+        }
+        if memory {
+            assistant.enable_memory(crate::memory::MemoryConfig::default());
         }
 
         let mut turns = Vec::with_capacity(self.turns.len());

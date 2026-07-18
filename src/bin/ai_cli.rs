@@ -1007,6 +1007,7 @@ fn cmd_qa(args: &[String]) -> ExitCode {
     let url_override = find_flag_value(args, "--url").map(String::from);
     let num_ctx_override = find_flag_value(args, "--num-ctx").and_then(|s| s.parse::<usize>().ok());
     let fresh_context = args.iter().any(|a| a == "--fresh-context");
+    let memory = args.iter().any(|a| a == "--memory");
     let lexical = args.iter().any(|a| a == "--lexical");
     let embedding_model = find_flag_value(args, "--embedding-model").map(String::from);
     let temperature = find_flag_value(args, "--temperature").and_then(|s| s.parse::<f32>().ok());
@@ -1064,10 +1065,11 @@ fn cmd_qa(args: &[String]) -> ExitCode {
 
     let config = assistant.config.clone();
     println!(
-        "Conversation QA — {} / {}{}\n",
+        "Conversation QA — {} / {}{}{}\n",
         config.provider.display_name(),
         config.selected_model,
-        if fresh_context { " [FreshContext]" } else { "" }
+        if fresh_context { " [FreshContext]" } else { "" },
+        if memory { " [memory]" } else { "" }
     );
 
     let scenarios = ai_assistant::conversation_qa::builtin_scenarios();
@@ -1077,6 +1079,7 @@ fn cmd_qa(args: &[String]) -> ExitCode {
             &config,
             ai_assistant::conversation_qa::DEFAULT_TURN_TIMEOUT,
             fresh_context,
+            memory,
         );
         if !result.passed {
             all_passed = false;
