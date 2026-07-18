@@ -124,6 +124,15 @@ exercised — turn N can be asked about a fact stated in turn 1. Scoring is
 substring checks (no LLM judge). A turn passes if all its checks hold; a
 scenario passes if all its turns pass.
 
+> **Test conditions (important).** Unless a flag says otherwise, the harness is
+> a **bare baseline**: default **Conversation** mode (full history), with **no
+> extra subsystems** enabled — no memory manager, no persistent RAG store, no
+> anti-hallucination, no quality gates. So the results reflect the model plus
+> the core context handling, not machinery layered on top (they are honest /
+> pessimistic). Two flags change the conditions: `--fresh-context` runs in
+> FreshContext mode (§8), and retrieval defaults to **semantic** embeddings
+> with a lexical fallback (`--lexical` forces lexical) (§8).
+
 The built-in scenarios (and what each one measures):
 
 - **`context_recall`** — states a name and a favourite colour, then a
@@ -208,7 +217,59 @@ to 7–9B (`local-balanced`) when the hardware allows.
 
 ---
 
-## 7. Running the extreme-quant models (PrismML)
+## 7. FreshContext & knowledge retrieval (lexical vs semantic)
+
+### FreshContext (V200)
+
+FreshContext mode sends only the **latest** turn to the model (to maximize
+tokens for knowledge). The catch: a bare `send_message` in FreshContext used to
+throw the earlier conversation away entirely (plain `send_message` never called
+the RAG retrieval path, and conversation auto-store is off by default), so
+multi-turn recall failed — defeating the whole point.
+
+Fixed so FreshContext **retrieves what the current turn needs** from the full
+in-memory conversation:
+
+- the **most recent** turns are kept verbatim (recency — so a mid-conversation
+  correction/update is **never** dropped by relevance ranking), PLUS
+- **older** turns relevant to the question are retrieved and prepended, in
+  chronological order.
+
+With this, FreshContext passes all 5 scenarios on llama3.1:8b **and** the mobile
+llama3.2:3b — including `fact_update` (a naive relevance-only retrieval could
+have surfaced the stale value). Run it with `ai_cli qa --fresh-context`.
+
+### Retrieval rankers and the store types
+
+- **Default persistent store** (`rag.db`): SQLite **FTS5 — lexical** (keyword),
+  not semantic. `knowledge_graph.db` is a graph store.
+- **Semantic / vector** (embeddings): **opt-in** tier — LanceDB
+  (`--features vector-lancedb`), Qdrant, etc. Not in `full` (heavy deps).
+- **Ad-hoc knowledge retrieval** (`knowledge_retrieval`, used for `--knowledge`
+  and FreshContext history) has two rankers:
+  - **lexical** — term-overlap, zero-dependency, instant, offline, deterministic;
+  - **semantic** — cosine similarity of **Ollama embeddings** (`/api/embed`,
+    e.g. `nomic-embed-text`), which handles paraphrase / synonyms.
+
+**Semantic is the default** in the CLI (`nomic-embed-text`), with an automatic
+**lexical fallback** when the embedding model is not reachable. Why default:
+semantic is strictly better *when embeddings are available*; lexical is kept as
+the always-available, offline, zero-dependency fallback — not merely a toggle.
+Force lexical with `--lexical`; pick another embedder with
+`--embedding-model <name>`; set it in code via `AiConfig.embedding_model`.
+
+**Why it matters (measured):** a 30 KB document with `"la persona encargada de
+las finanzas es Carlos Vega"` buried in filler, queried with the paraphrase
+`"¿quién gestiona el dinero de la empresa?"` (no shared content words):
+
+| Ranker | Result |
+|---|---|
+| lexical (`--lexical`) | "no information found" ❌ |
+| semantic (default) | **"Carlos Vega."** ✅ (and faster — fewer, better-targeted passages) |
+
+---
+
+## 8. Running the extreme-quant models (PrismML)
 
 The Bonsai / Ternary-Bonsai weights use a custom `Q1_0` / ternary kernel that
 mainline `llama.cpp` does not implement, so they need the PrismML fork:
@@ -242,6 +303,9 @@ ai_cli models                     # list available local models
 ai_cli profiles                   # list runtime profiles
 ai_cli query --profile mobile --model llama3.2:3b --knowledge big.md "…"
 ai_cli qa --model llama3.1:8b     # run the conversation-quality scenarios
+ai_cli qa --fresh-context …       # run them in FreshContext mode
 ai_cli query --num-ctx 32768 …    # raise the Ollama window (you have the VRAM)
 ai_cli query --full-knowledge …   # inject the whole knowledge doc (skip retrieval)
+ai_cli query --lexical …          # lexical retrieval (default is semantic embeddings)
+ai_cli query --embedding-model nomic-embed-text …   # pick the semantic embedder
 ```
