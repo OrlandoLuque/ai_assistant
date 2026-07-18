@@ -177,11 +177,8 @@ fn ollama_embed(ollama_url: &str, model: &str, texts: &[&str]) -> Option<Vec<Vec
     }
 }
 
-/// Semantic variant of [`select_relevant`]: ranks chunks by cosine similarity
-/// of their Ollama embeddings to the query embedding, so paraphrased or
-/// synonymous queries still match (lexical term-overlap would miss "¿de qué
-/// vivo?" against "trabajo de arquitecta"). Returns `None` if embeddings are
-/// unavailable — the caller should then fall back to [`select_relevant`].
+/// Semantic variant of [`select_relevant`] using an **Ollama** embedding model.
+/// See [`select_relevant_semantic_with`].
 pub fn select_relevant_semantic(
     knowledge: &str,
     query: &str,
@@ -189,6 +186,27 @@ pub fn select_relevant_semantic(
     ollama_url: &str,
     model: &str,
 ) -> Option<String> {
+    select_relevant_semantic_with(knowledge, query, max_chars, |texts| {
+        ollama_embed(ollama_url, model, texts)
+    })
+}
+
+/// Semantic retrieval given **any** batch embedder (`embed(&[text]) ->
+/// vectors`): ranks chunks by cosine similarity of their embedding to the
+/// query's, so paraphrased / synonymous queries still match (lexical
+/// term-overlap would miss "¿de qué vivo?" against "trabajo de arquitecta").
+/// The embedder can be Ollama, an in-process candle model
+/// ([`crate::local_embedder`]), or anything else. Returns `None` if `embed`
+/// fails, so the caller can fall back to lexical [`select_relevant`].
+pub fn select_relevant_semantic_with<F>(
+    knowledge: &str,
+    query: &str,
+    max_chars: usize,
+    embed: F,
+) -> Option<String>
+where
+    F: FnOnce(&[&str]) -> Option<Vec<Vec<f32>>>,
+{
     if knowledge.len() <= max_chars {
         return Some(knowledge.to_string());
     }
@@ -201,8 +219,11 @@ pub fn select_relevant_semantic(
     let mut texts: Vec<&str> = Vec::with_capacity(chunks.len() + 1);
     texts.push(query);
     texts.extend(chunks.iter().map(|c| c.as_str()));
-    let embs = ollama_embed(ollama_url, model, &texts)?;
+    let embs = embed(&texts)?;
     let (q_emb, chunk_embs) = embs.split_first()?;
+    if chunk_embs.len() != chunks.len() {
+        return None;
+    }
 
     let mut ranked: Vec<(f32, usize, &String)> = chunks
         .iter()

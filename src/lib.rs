@@ -220,6 +220,10 @@ pub mod file_references;
 /// document and keep only the passages relevant to the query, so the prompt
 /// stays small instead of forcing a huge context window.
 pub mod knowledge_retrieval;
+/// In-process semantic embedder (candle BERT, e.g. all-MiniLM-L6-v2): semantic
+/// retrieval without an Ollama/embedding server (feature `embeddings-local`).
+#[cfg(feature = "embeddings-local")]
+pub mod local_embedder;
 /// Functional runtime profiles (mobile, local-balanced, coding, ...): a
 /// "pick one and it just works" bundle of tunables over `AiConfig`.
 pub mod runtime_profiles;

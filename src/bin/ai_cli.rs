@@ -925,6 +925,57 @@ fn cmd_butler_recommend_prompt(_args: &[String]) -> ExitCode {
 // query — one-shot LLM query
 // =============================================================================
 
+/// Retrieve the query-relevant passages of a large knowledge doc. Uses the
+/// in-process candle embedder for `--embedding-model local`, else the
+/// Ollama-semantic / lexical `select_relevant_auto`.
+fn retrieve_knowledge_for_query(
+    knowledge: &str,
+    query: &str,
+    target: usize,
+    config: &ai_assistant::AiConfig,
+) -> String {
+    if config.embedding_model.as_deref() == Some("local") {
+        #[cfg(feature = "embeddings-local")]
+        {
+            let dir = ai_assistant::local_embedder::default_model_dir();
+            eprintln!("Loading in-process embedder (all-MiniLM)...");
+            match ai_assistant::local_embedder::LocalEmbedder::load_or_download(
+                &dir,
+                ai_assistant::local_embedder::DEFAULT_MODEL_REPO,
+            ) {
+                Ok(emb) => {
+                    if let Some(r) =
+                        ai_assistant::knowledge_retrieval::select_relevant_semantic_with(
+                            knowledge,
+                            query,
+                            target,
+                            |t| emb.embed(t).ok(),
+                        )
+                    {
+                        return r;
+                    }
+                }
+                Err(e) => eprintln!("Local embedder unavailable ({e}); using lexical."),
+            }
+            return ai_assistant::knowledge_retrieval::select_relevant(knowledge, query, target);
+        }
+        #[cfg(not(feature = "embeddings-local"))]
+        {
+            eprintln!(
+                "--embedding-model local needs the `embeddings-local` feature; using lexical."
+            );
+            return ai_assistant::knowledge_retrieval::select_relevant(knowledge, query, target);
+        }
+    }
+    ai_assistant::knowledge_retrieval::select_relevant_auto(
+        knowledge,
+        query,
+        target,
+        &config.ollama_url,
+        config.embedding_model.as_deref(),
+    )
+}
+
 fn cmd_profiles_list() -> ExitCode {
     use ai_assistant::runtime_profiles::BUILTIN_PROFILES;
     println!("Runtime profiles (apply with `query --profile <name>`):\n");
@@ -1392,13 +1443,13 @@ fn cmd_query(args: &[String]) -> ExitCode {
     if !full_knowledge && knowledge.len() > KNOWLEDGE_RETRIEVAL_THRESHOLD {
         let before = knowledge.len();
         // Semantic retrieval when an embedding model is set (handles paraphrase);
-        // falls back to lexical automatically if it is not reachable.
-        knowledge = ai_assistant::knowledge_retrieval::select_relevant_auto(
+        // "local" uses the in-process embedder, otherwise Ollama; both fall back
+        // to lexical automatically if unavailable.
+        knowledge = retrieve_knowledge_for_query(
             &knowledge,
             &user_prompt,
             KNOWLEDGE_RETRIEVAL_TARGET,
-            &assistant.config.ollama_url,
-            assistant.config.embedding_model.as_deref(),
+            &assistant.config,
         );
         eprintln!(
             "Knowledge is large ({before} chars) — retrieved {} chars of {} passages (use --full-knowledge to inject all).",

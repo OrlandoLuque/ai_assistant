@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.153"
+version = "0.2.154"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -393,6 +393,17 @@ gui-local-inference = ["local-inference", "dep:eframe"]
 # yet — those follow once the CPU baseline is verified end-to-end.
 local-inference-candle = [
     "local-inference",
+    "dep:candle-core",
+    "dep:candle-nn",
+    "dep:candle-transformers",
+    "dep:tokenizers",
+]
+
+# In-process semantic embedder (candle BERT, e.g. all-MiniLM-L6-v2): semantic
+# knowledge retrieval WITHOUT an Ollama/embedding server. Bundleable and
+# mobile-friendly (~22M params). Falls back to lexical when the model files are
+# absent. Opt-in — heavy candle deps.
+embeddings-local = [
     "dep:candle-core",
     "dep:candle-nn",
     "dep:candle-transformers",
