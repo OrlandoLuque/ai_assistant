@@ -342,6 +342,87 @@ written to the wrong config field — so multi-server measurements all hit
 
 ---
 
+## 9. Mobile & on-device (and the cheap-local / capable-remote split)
+
+This section collects what the V192–V205 work established about running the
+assistant **on a phone** — kept here so we don't lose the thread for future
+work.
+
+### Which models actually run on a phone
+
+| Class | Q4 size | Runs on | Speed (recent flagship) |
+|---|---|---|---|
+| **1–1.5B** (llama3.2:1b, qwen2.5:1.5b) | ~0.7–1.1 GB | most modern phones (6 GB+ RAM) | ~15–30+ tok/s |
+| **2–3B** (gemma2:2b, llama3.2:3b, qwen2.5:3b) | ~1.6–2.3 GB | flagships / 8 GB+ RAM | ~5–15 tok/s |
+| 7B+ | ~4.5 GB+ | not practical on-device | — |
+
+- **3B Q4 is the practical upper edge** for comfortable on-device use: needs
+  ~3–4 GB free RAM (tight on a 6 GB phone, smooth on 8 GB+). It is also the
+  **sweet spot**: `llama3.2:3b` scored **6/6** on the full harness (§6), so a
+  phone-sized model is genuinely capable for a conversational assistant, not
+  just runnable.
+- Runtimes that host these on-device: **llama.cpp** (Android/iOS builds),
+  **MLC-LLM**, **Google AI Edge / MediaPipe**, **Apple MLX**, PocketPal. (Ollama
+  itself is a desktop/server daemon, not a mobile runtime — on a phone you embed
+  llama.cpp/MLX directly. The library's provider abstraction still applies.)
+
+### The on-device stack we now have
+
+Everything an on-device assistant needs runs **without a server**:
+
+- **`mobile` runtime profile** (§4) — temp 0.3, `num_ctx` 4096, history 8,
+  knowledge-retrieval on, tuned for 1–3B models. One flag and it "just works".
+- **In-process semantic embedder** (V202, feature `embeddings-local`) —
+  candle `all-MiniLM-L6-v2` (~22M params, ~90 MB, CPU, milliseconds). Semantic
+  retrieval **with no Ollama / embedding server**, so paraphrase queries work
+  on-device (the "¿quién gestiona el dinero?" → *Carlos Vega* case in §7).
+- **Structured fact ledger** (`--memory`, V205, §6) — heuristic, provider-free,
+  and exactly what a small model needs: it converts multi-fact *tracking* into a
+  single-fact *lookup* and, being latest-wins, makes mid-conversation
+  corrections stick.
+
+### What scenarios we improved (net, for a small/local model)
+
+- **Grounding stopped inventing prices** — the original `num_ctx` truncation bug
+  (§1) silently dropped injected knowledge; a small model would answer "no
+  information" or hallucinate. Fixed → `grounded_price` / `multi_grounded` pass.
+  This was the concrete "loses context, invents prices" complaint.
+- **On-device paraphrase retrieval** — lexical retrieval missed reworded
+  queries; the in-process embedder finds them without a server (§7).
+- **Robust fact-correction on weak models** — `--memory` rescues `fact_update`
+  on the 1-bit Bonsai-4B (5/6 → 6/6, §6); a small Q4 already handles it.
+- **Out-of-the-box onboarding** — provider auto-detection + `127.0.0.1`
+  defaults + a picked model, so a downloaded binary works against a local
+  runtime without hand-configuration (§2).
+
+### Futurible: rescue a cheap local model with a capable remote one
+
+**Does it make sense to "rescue" a cheap model with an expensive one?** Yes —
+and it fits this library's distributed design particularly well:
+
+- **The expensive part is infrequent and small.** Fact extraction is *one short
+  structured output per user turn* (a few facts as JSON), not a full generation.
+  So offloading it costs little bandwidth/latency and buys a lot of accuracy.
+- **It can live on a stronger machine.** The phone runs the cheap chat model
+  (fluent, low-latency, private); a capable model does the occasional
+  extraction — and with the **distributed / p2p** layer that extractor can run
+  on a home desktop/server, not the phone. This cleanly separates *conversation
+  fluency* (cheap, local, private) from *memory accuracy* (occasional, capable,
+  optionally remote).
+- **The local heuristic covers the common cases for free**, so the remote LLM
+  extractor is only for the long tail — and the heuristic-authoritative merge
+  (§6) means a slow, absent, or wrong remote extractor can never corrupt a fact
+  the heuristic knows.
+
+**Current state vs. the futurible.** `--memory-llm` today wires the extractor to
+the **same** configured model (`SelfChatEnhancer`), which is why a *weak*
+extractor is counterproductive (§6). The natural next step is a **separate,
+configurable extractor endpoint/model** — pointing it at a capable model on a
+stronger machine (local or over the distributed layer) is the design this
+research points to. Not built yet; noted here so we don't lose it.
+
+---
+
 ## Quick reference
 
 ```sh
