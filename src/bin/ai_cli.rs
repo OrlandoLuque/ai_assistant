@@ -1007,7 +1007,9 @@ fn cmd_qa(args: &[String]) -> ExitCode {
     let url_override = find_flag_value(args, "--url").map(String::from);
     let num_ctx_override = find_flag_value(args, "--num-ctx").and_then(|s| s.parse::<usize>().ok());
     let fresh_context = args.iter().any(|a| a == "--fresh-context");
-    let memory = args.iter().any(|a| a == "--memory");
+    let memory_llm = args.iter().any(|a| a == "--memory-llm");
+    // --memory-llm implies memory (heuristic + LLM extraction).
+    let memory = memory_llm || args.iter().any(|a| a == "--memory");
     let lexical = args.iter().any(|a| a == "--lexical");
     let embedding_model = find_flag_value(args, "--embedding-model").map(String::from);
     let temperature = find_flag_value(args, "--temperature").and_then(|s| s.parse::<f32>().ok());
@@ -1023,6 +1025,7 @@ fn cmd_qa(args: &[String]) -> ExitCode {
         match assistant.config.provider {
             ai_assistant::AiProvider::Ollama => assistant.config.ollama_url = url.clone(),
             ai_assistant::AiProvider::LMStudio => assistant.config.lm_studio_url = url.clone(),
+            ai_assistant::AiProvider::LlamaCpp => assistant.config.llamacpp_url = url.clone(),
             _ => assistant.config.custom_url = url.clone(),
         }
     }
@@ -1069,7 +1072,13 @@ fn cmd_qa(args: &[String]) -> ExitCode {
         config.provider.display_name(),
         config.selected_model,
         if fresh_context { " [FreshContext]" } else { "" },
-        if memory { " [memory]" } else { "" }
+        if memory_llm {
+            " [memory+llm]"
+        } else if memory {
+            " [memory]"
+        } else {
+            ""
+        }
     );
 
     let scenarios = ai_assistant::conversation_qa::builtin_scenarios();
@@ -1080,6 +1089,7 @@ fn cmd_qa(args: &[String]) -> ExitCode {
             ai_assistant::conversation_qa::DEFAULT_TURN_TIMEOUT,
             fresh_context,
             memory,
+            memory_llm,
         );
         if !result.passed {
             all_passed = false;
@@ -1352,6 +1362,7 @@ fn cmd_query(args: &[String]) -> ExitCode {
         match assistant.config.provider {
             ai_assistant::AiProvider::Ollama => assistant.config.ollama_url = url.clone(),
             ai_assistant::AiProvider::LMStudio => assistant.config.lm_studio_url = url.clone(),
+            ai_assistant::AiProvider::LlamaCpp => assistant.config.llamacpp_url = url.clone(),
             _ => assistant.config.custom_url = url.clone(),
         }
     }
@@ -1667,6 +1678,7 @@ fn run_delegated_llm(args: &[String], prompt: &str) -> ExitCode {
         match assistant.config.provider {
             ai_assistant::AiProvider::Ollama => assistant.config.ollama_url = url.clone(),
             ai_assistant::AiProvider::LMStudio => assistant.config.lm_studio_url = url.clone(),
+            ai_assistant::AiProvider::LlamaCpp => assistant.config.llamacpp_url = url.clone(),
             _ => assistant.config.custom_url = url.clone(),
         }
     }
@@ -2862,6 +2874,7 @@ fn cmd_verify(args: &[String]) -> ExitCode {
         match assistant.config.provider {
             ai_assistant::AiProvider::Ollama => assistant.config.ollama_url = url.clone(),
             ai_assistant::AiProvider::LMStudio => assistant.config.lm_studio_url = url.clone(),
+            ai_assistant::AiProvider::LlamaCpp => assistant.config.llamacpp_url = url.clone(),
             _ => assistant.config.custom_url = url.clone(),
         }
     }

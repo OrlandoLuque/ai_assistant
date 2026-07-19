@@ -580,6 +580,14 @@ pub struct MemoryManager {
     pub long_term: MemoryStore,
     /// Working memory
     pub working: WorkingMemory,
+    /// Structured personal-fact ledger (attribute -> latest value). Re-injected
+    /// verbatim by [`Self::build_context`] so weak models can look a fact up
+    /// instead of tracking it across turns; latest-wins so a corrected fact
+    /// overwrites the old one.
+    pub facts: crate::fact_extraction::FactLedger,
+    /// Optional LLM used to extract arbitrary facts beyond the heuristic
+    /// patterns. Opt-in via [`Self::set_fact_extractor`].
+    fact_llm: Option<Box<dyn crate::llm_enhance::LlmEnhancer>>,
 }
 
 impl MemoryManager {
@@ -588,7 +596,16 @@ impl MemoryManager {
         Self {
             long_term: MemoryStore::new(config),
             working: WorkingMemory::new(),
+            facts: crate::fact_extraction::FactLedger::new(),
+            fact_llm: None,
         }
+    }
+
+    /// Attach an LLM extractor so [`Self::process_message`] also extracts
+    /// arbitrary personal facts (not just the heuristic patterns) from each
+    /// user turn. A failed LLM call falls back silently to the heuristics.
+    pub fn set_fact_extractor(&mut self, llm: Box<dyn crate::llm_enhance::LlmEnhancer>) {
+        self.fact_llm = Some(llm);
     }
 
     /// Process a message and update memories
@@ -603,6 +620,12 @@ impl MemoryManager {
 
         // Extract entities and facts for working memory
         let content = &message.content;
+
+        // Structured personal-fact extraction from user turns only (the user's
+        // own statements about themselves). Heuristic always; LLM if attached.
+        if message.is_user() {
+            self.facts.observe(content, self.fact_llm.as_deref());
+        }
 
         // Simple entity extraction (URLs, emails)
         for word in content.split_whitespace() {
@@ -649,6 +672,13 @@ impl MemoryManager {
             max_tokens
         );
         let mut context = String::new();
+
+        // Structured user facts first: small, always-relevant, authoritative.
+        let facts_block = self.facts.render();
+        if !facts_block.is_empty() {
+            context.push_str(&facts_block);
+            context.push('\n');
+        }
 
         // Add working memory summary
         let working_summary = self.working.summary();

@@ -210,6 +210,10 @@ pub mod error;
 pub mod error_taxonomy;
 pub mod event_source;
 pub mod events;
+/// Structured personal-fact extraction + latest-wins ledger: turns multi-fact
+/// tracking into a single-fact lookup for weak/quantized models (re-injected by
+/// the memory manager). Heuristic patterns always on; LLM extraction opt-in.
+pub mod fact_extraction;
 pub mod fallback;
 #[cfg(any(test, feature = "chaos-testing"))]
 pub mod fault_injection;
@@ -229,6 +233,9 @@ pub mod local_embedder;
 pub mod runtime_profiles;
 #[cfg(feature = "backup")]
 pub mod secure_backup;
+/// An `LlmEnhancer` backed by the assistant's own configured model, used to
+/// power opt-in LLM extraction (e.g. `fact_extraction`) without extra wiring.
+pub mod self_enhancer;
 /// Shared SSRF host-classification helpers (private-range / encoded-IP /
 /// IPv6 / userinfo normalization) used by the outbound-fetch guards.
 pub mod ssrf;

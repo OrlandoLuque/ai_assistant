@@ -127,28 +127,38 @@ impl QaScenario {
     /// Run this scenario against `config`'s provider/model with the default
     /// per-turn timeout.
     pub fn run(&self, config: &AiConfig) -> QaScenarioResult {
-        self.run_with_timeout(config, DEFAULT_TURN_TIMEOUT, false, false)
+        self.run_with_timeout(config, DEFAULT_TURN_TIMEOUT, false, false, false)
     }
 
     /// Run with an explicit per-turn timeout, context mode, and memory setting.
     /// When `fresh_context` is set, the assistant uses FreshContext mode. When
-    /// `memory` is set, the memory manager is enabled (facts are extracted from
-    /// turns and re-injected) — used to test whether structured memory lifts
-    /// the multi-fact-tracking wall on weak models.
+    /// `memory` is set, the memory manager is enabled (personal facts are
+    /// extracted from user turns and re-injected). When `memory_llm` is also
+    /// set, an LLM extractor (the same model) is attached so arbitrary facts
+    /// beyond the heuristic patterns are captured — used to test whether
+    /// structured memory lifts the multi-fact-tracking wall on weak models.
     pub fn run_with_timeout(
         &self,
         config: &AiConfig,
         per_turn: Duration,
         fresh_context: bool,
         memory: bool,
+        memory_llm: bool,
     ) -> QaScenarioResult {
         let mut assistant = AiAssistant::new();
         assistant.config = config.clone();
         if fresh_context {
             assistant.set_context_mode(crate::ContextMode::FreshContext);
         }
-        if memory {
+        if memory || memory_llm {
             assistant.enable_memory(crate::memory::MemoryConfig::default());
+            if memory_llm {
+                if let Some(mm) = assistant.memory_manager_mut() {
+                    mm.set_fact_extractor(Box::new(crate::self_enhancer::SelfChatEnhancer::new(
+                        config.clone(),
+                    )));
+                }
+            }
         }
 
         let mut turns = Vec::with_capacity(self.turns.len());
@@ -276,7 +286,10 @@ pub fn builtin_scenarios() -> Vec<QaScenario> {
                 QaTurn::new("¿En qué ciudad vivo y cómo se llama mi perro? Una frase.")
                     .expect("Sevilla")
                     .expect("Toby"),
-                QaTurn::new("¿De qué trabajo? Una palabra.").expect("arquitecta"),
+                // Stem, not "arquitecta": a correct recall may use the generic
+                // masculine "arquitecto" — we test recall of the *profession*,
+                // not its grammatical gender.
+                QaTurn::new("¿De qué trabajo? Una palabra.").expect("arquitect"),
             ],
         },
         QaScenario {
@@ -289,6 +302,28 @@ pub fn builtin_scenarios() -> Vec<QaScenario> {
                 QaTurn::new("Espera, cámbialo: a partir de ahora mi color favorito es el rojo."),
                 QaTurn::new("Hablemos de otra cosa: dime un número entre 1 y 10."),
                 QaTurn::new("¿Cuál es mi color favorito ahora? Una sola palabra.").expect("rojo"),
+            ],
+        },
+        QaScenario {
+            name: "multi_fact_hard".to_string(),
+            description:
+                "Tracks six facts across four distraction turns (stresses raw-context tracking)"
+                    .to_string(),
+            knowledge: None,
+            turns: vec![
+                QaTurn::new(
+                    "Guárdate estos datos sobre mí: me llamo Ana, vivo en Sevilla, tengo un \
+                     perro llamado Toby, tengo un gato llamado Michi, trabajo de arquitecta y \
+                     mi color favorito es el rojo.",
+                ),
+                QaTurn::new("Cuéntame un dato curioso muy corto sobre el mar."),
+                QaTurn::new("Ahora uno muy corto sobre el espacio."),
+                QaTurn::new("Dime un número entre 1 y 10."),
+                QaTurn::new("Cuéntame un chiste muy corto de programadores."),
+                QaTurn::new("¿Cómo se llama mi gato? Una palabra.").expect("Michi"),
+                QaTurn::new("¿En qué ciudad vivo? Una palabra.").expect("Sevilla"),
+                QaTurn::new("¿De qué trabajo? Una palabra.").expect("arquitect"),
+                QaTurn::new("¿Cuál es mi color favorito? Una palabra.").expect("rojo"),
             ],
         },
         QaScenario {

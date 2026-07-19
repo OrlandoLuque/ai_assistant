@@ -145,7 +145,14 @@ The built-in scenarios (and what each one measures):
   job), then **two** distraction turns, then asks about several of them
   (city + pet, then job). Tests holding **multiple facts simultaneously** and
   retrieving different ones after distractions — much harder than a single
-  fact.
+  fact. _(The profession check matches the **stem** `arquitect`, not the exact
+  `arquitecta`: a correct recall may use the generic masculine `arquitecto`;
+  we test recall of the profession, not its grammatical gender — see §6.)_
+- **`multi_fact_hard`** — states **six** facts at once (name, city, dog, cat,
+  job, favourite colour), then **four** distraction turns, then asks about
+  four of them. A deliberately harder stress test of raw-context tracking —
+  more facts, more distractions, and (with a small window) enough turns that
+  early facts risk being pushed out.
 - **`fact_update`** — states a favourite colour, then **corrects it**
   mid-conversation, then (after a distraction) asks for the current value.
   Tests using the **most recent** value — i.e. that later turns override
@@ -155,7 +162,7 @@ The built-in scenarios (and what each one measures):
   retrieval + multi-turn** together: each turn must retrieve the right passage
   from a big document and answer a different figure.
 
-The last three are the "larger / more complex" conversations: they separate
+The last four are the "larger / more complex" conversations: they separate
 models that merely echo the last thing said from models that actually track
 and update state.
 
@@ -163,53 +170,89 @@ and update state.
 
 ## 6. Measured results across local models
 
-Scores use **greedy decoding (temperature 0)** so they are reproducible —
-stochastic sampling made the extreme-quant models vary ±1–2 scenarios per run
-(a single sampled run once showed a spurious rescue that did not reproduce).
-Run with `ai_cli qa --model <m>` (Ollama) or
-`ai_cli qa --provider llamacpp --url <server> --model <m>` (PrismML); add
-`--fresh-context` for the FreshContext column.
+Scores use **greedy decoding (temperature 0)** so they are reproducible. Run
+with `ai_cli qa --model <m>` (Ollama) or
+`ai_cli qa --provider llamacpp --url <server> --model <m>` (PrismML).
 
-| Model | Quant | context | grounded | multi_fact | fact_update | multi_grnd | Conv. | Fresh |
-|---|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| **llama3.1:8b** | Q4 | ✅ | ✅ | ✅ | ✅ | ✅ | **5/5** | **5/5** |
-| **llama3.2:3b** _(mobile)_ | Q4 | ✅ | ✅ | ✅ | ✅ | ✅ | **5/5** | **5/5** |
-| **Bonsai-4B** (PrismML) | 1-bit `Q1_0` | ✅ | ✅ | ❌ | ❌→✅ | ✅ | 3/5 | **4/5** |
-| **Bonsai-8B** (PrismML) | 1-bit `Q1_0` | ✅ | ✅ | ❌ | ❌→✅ | ✅ | 3/5 | **4/5** |
-| **Ternary-Bonsai-4B** (PrismML) | ternary `Q2_0` (~1.58-bit) | ✅ | ✅ | ❌ | ❌→✅ | ✅ | 3/5 | **4/5** |
+> **Two measurement fixes (V205) that changed the picture.** An earlier version
+> of this section reported the extreme-quant models failing `multi_fact_tracking`
+> and `fact_update`. Re-measuring surfaced two flaws — one a real bug, one a
+> scoring artifact — and once fixed, most of that "wall" was **not** the models:
+>
+> 1. **`--url` was ignored for the `llamacpp` provider.** The CLI routed `--url`
+>    into `custom_url`, but the provider reads `llamacpp_url` (default
+>    `:8080`). So *every* PrismML measurement silently hit whatever was on
+>    `:8080`, regardless of the `--url` given — the per-model rows were all the
+>    **same** server. Fixed: `--url` now sets `llamacpp_url` for that provider,
+>    so each model is measured on its own port.
+> 2. **A gender-inflection scoring artifact.** `multi_fact_tracking` required the
+>    literal string `arquitecta`; the models recalled the profession correctly
+>    but answered with the generic masculine `arquitecto` — scored as a miss.
+>    The bar was grammatical gender, not recall. Fixed with a gender-neutral
+>    stem (`arquitect`).
 
-_(The `fact_update` cell shows Conversation → FreshContext. The mobile 1–3B Q4
-models — llama3.2:1b, qwen2.5:1.5b, gemma2:2b — pass the two basic scenarios;
-the full 5-scenario suite was run on the models above.)_
+Corrected results on the full **6-scenario** suite, each model on its own
+endpoint:
+
+| Model | Quant | baseline | `--memory` | note |
+|---|---|:---:|:---:|---|
+| **llama3.2:3b** _(mobile)_ | Q4 | **6/6** | 6/6 | Ollama; fully capable |
+| **Bonsai-8B** (PrismML) | 1-bit `Q1_0` | **6/6** | 6/6 | already tracks & updates state |
+| **Bonsai-4B** (PrismML) | 1-bit `Q1_0` | 5/6 | **6/6** | `--memory` rescues `fact_update` |
+| **Ternary-Bonsai-4B** (PrismML) | ternary `Q2_0` (~1.58-bit) | — | — | excluded (see below) |
+
+_Ternary-4B is excluded from the table: the model itself answers correctly via
+the raw server API, but through the streaming client it is slow enough (≈16 s
+for a two-token reply) to return empty completions in the harness — a
+slow-model streaming artifact, not a memory result._
 
 ### Findings
 
-- **Q4 small models are excellent for complex conversations** — even the mobile
-  **3B** (`llama3.2:3b`) scores 5/5 in **both** modes.
-- **Extreme-quant (1-bit / 1.58-bit) models hit two walls.** In Conversation
-  mode all three (Bonsai-4B/8B, Ternary-4B) score **3/5**, failing
-  `multi_fact_tracking` **and** `fact_update`. Quality is **not monotonic with
-  size** — the 8B 1-bit is no better than the 4B.
-- **FreshContext reliably rescues `fact_update`** (3/5 → 4/5 for all three).
-  Its recency-kept recent turns make a mid-conversation correction stick, where
-  the raw full history confuses the degraded model into the stale value.
-- The **`multi_fact_tracking` wall** — holding four facts at once and pulling
-  different ones after distractions — **persists in both modes**. That is the
-  ability sub-2-bit quantization damages most.
+- **With the two fixes, the "multi-fact wall" largely dissolves.** The real
+  Bonsai-8B (1-bit) is **6/6** — it tracks four *and* six facts across
+  distractions and applies a mid-conversation correction, with no help. Even
+  the 1-bit **Bonsai-4B** is **5/6**, missing only `fact_update`.
+- **Q4 small models are excellent** — the mobile **3B** (`llama3.2:3b`) is
+  **6/6**, including the harder `multi_fact_hard`.
+- **The structured fact ledger (`--memory`) rescues `fact_update` on
+  Bonsai-4B (5/6 → 6/6).** The heuristic extractor records personal facts as a
+  **latest-wins** ledger (`color favorito: rojo` overwrites `azul`) and
+  re-injects it as an explicit block, so the weak model *reads the current
+  value* instead of being confused by raw history — baseline answered `¡7!`
+  (echoing an unrelated number); with the ledger it answers `rojo`.
+- **LLM extraction (`--memory-llm`) is only as good as the extractor model.**
+  Using the weak 1-bit model itself as the extractor initially *regressed* the
+  8B (6/6 → 5/6): asked to extract from "change it to red", the 1-bit extractor
+  misread the correction and returned the stale colour. Fix: the deterministic
+  heuristic is **authoritative** — the LLM may only *add* attributes the
+  heuristic doesn't cover, never overwrite one it does. Use `--memory-llm` with
+  a **capable** model; the heuristic-last merge bounds the downside.
 
-### Are there "1-bit-class" models that pass all five?
+### How the fact ledger works (`--memory` / `--memory-llm`)
 
-**No.** The best of the extreme-quant class reaches **4/5** (all three, in
-FreshContext); none passes `multi_fact_tracking`. Ternary (`Q2_0`, ~1.58-bit)
-is a higher-quality extreme quant than pure 1-bit `Q1_0` but hits the same wall.
+`crate::fact_extraction::FactLedger` turns hard multi-fact *tracking* into an
+easy single-fact *lookup*:
 
-**Practical recommendation:** for a real conversational assistant that must
-track and update state, prefer a **Q4 model of 3B+** (the `mobile` profile on
-`llama3.2:3b` is the sweet spot), stepping up to 7–9B (`local-balanced`) when
-the hardware allows. Use extreme-quant models only for the simplest
-recall/grounding on the most memory-constrained devices. (Structured **memory
-extraction / re-injection** — the memory manager — is the likely path to lift
-the `multi_fact_tracking` wall even for weak models; see §7.)
+- **Heuristic (always on with `--memory`)** — Spanish/English patterns extract
+  `attribute = value` from each user turn (`me llamo`→nombre, `vivo en`→ciudad,
+  `trabajo de`→profesión, `tengo un perro llamado`→perro, `mi color favorito
+  es`→color favorito, …). Provider-free, deterministic.
+- **Latest-wins** — a corrected fact overwrites the old value, so the ledger
+  handles `fact_update` by construction.
+- **Re-injection** — the memory manager renders the ledger as an authoritative
+  "Datos conocidos del usuario" block and injects it via the context-budget
+  allocator, so it is present on the turn that asks.
+- **LLM (opt-in with `--memory-llm`)** — a `SelfChatEnhancer` runs the
+  configured model to extract arbitrary facts the patterns miss, merged
+  under the heuristic (see finding above).
+
+**Practical recommendation:** for a real conversational assistant, prefer a
+**Q4 model of 3B+** (the `mobile` profile on `llama3.2:3b` is the sweet spot;
+6/6 with no extras), stepping up to 7–9B (`local-balanced`) when the hardware
+allows. The 1-bit Bonsai models are more capable than first reported — the 8B
+is 6/6 unaided — and `--memory` closes the one remaining gap on the 4B. Reserve
+the raw extreme-quant path for the most memory-constrained devices, and turn on
+`--memory` there for robust fact-correction.
 
 ---
 
@@ -286,8 +329,16 @@ ai_cli query --provider llamacpp --model Bonsai-4B-Q1_0 "…"
 ai_cli qa    --provider llamacpp --model Bonsai-4B-Q1_0
 ```
 
-No app changes were needed — the existing `llamacpp` provider plus the
-`127.0.0.1` default (V194) cover it.
+The provider's default URL is `http://127.0.0.1:8080`; to reach a server on
+another port (e.g. running several models at once) pass `--url`:
+
+```sh
+ai_cli qa --provider llamacpp --url http://127.0.0.1:8081 --model Bonsai-8B-Q1_0
+```
+
+_(`--url` for the `llamacpp` provider was silently ignored before V205 — it was
+written to the wrong config field — so multi-server measurements all hit
+`:8080`. Fixed in V205; see §6.)_
 
 ---
 
@@ -300,6 +351,8 @@ ai_cli profiles                   # list runtime profiles
 ai_cli query --profile mobile --model llama3.2:3b --knowledge big.md "…"
 ai_cli qa --model llama3.1:8b     # run the conversation-quality scenarios
 ai_cli qa --fresh-context …       # run them in FreshContext mode
+ai_cli qa --memory …              # enable the structured fact ledger (heuristic)
+ai_cli qa --memory-llm …          # + LLM fact extraction (use a capable model)
 ai_cli query --num-ctx 32768 …    # raise the Ollama window (you have the VRAM)
 ai_cli query --full-knowledge …   # inject the whole knowledge doc (skip retrieval)
 ai_cli query --lexical …          # lexical retrieval (default is semantic embeddings)
