@@ -226,7 +226,9 @@ slow-model streaming artifact, not a memory result._
   misread the correction and returned the stale colour. Fix: the deterministic
   heuristic is **authoritative** — the LLM may only *add* attributes the
   heuristic doesn't cover, never overwrite one it does. Use `--memory-llm` with
-  a **capable** model; the heuristic-last merge bounds the downside.
+  a **capable** model — point it at a stronger model/endpoint (even on another
+  machine) with `--extractor-*` (§9); the heuristic-last merge bounds the
+  downside.
 
 ### How the fact ledger works (`--memory` / `--memory-llm`)
 
@@ -395,7 +397,7 @@ Everything an on-device assistant needs runs **without a server**:
   defaults + a picked model, so a downloaded binary works against a local
   runtime without hand-configuration (§2).
 
-### Futurible: rescue a cheap local model with a capable remote one
+### Rescue a cheap local model with a capable remote one (V206)
 
 **Does it make sense to "rescue" a cheap model with an expensive one?** Yes —
 and it fits this library's distributed design particularly well:
@@ -414,12 +416,42 @@ and it fits this library's distributed design particularly well:
   (§6) means a slow, absent, or wrong remote extractor can never corrupt a fact
   the heuristic knows.
 
-**Current state vs. the futurible.** `--memory-llm` today wires the extractor to
-the **same** configured model (`SelfChatEnhancer`), which is why a *weak*
-extractor is counterproductive (§6). The natural next step is a **separate,
-configurable extractor endpoint/model** — pointing it at a capable model on a
-stronger machine (local or over the distributed layer) is the design this
-research points to. Not built yet; noted here so we don't lose it.
+**This is now built.** The fact extractor is a separate, configurable
+model/endpoint — not tied to the chat model:
+
+```sh
+# cheap local chat model (Bonsai-4B via llama.cpp) rescued by a capable
+# extractor (llama3.2:3b) that can live on any other machine/provider:
+ai_cli qa --provider llamacpp --url http://127.0.0.1:8080 --model Bonsai-4B-Q1_0 \
+          --memory-llm \
+          --extractor-provider ollama --extractor-url http://192.168.1.5:11434 \
+          --extractor-model llama3.2:3b
+```
+
+- `--memory-llm` alone → extractor = the chat model (fine only if that model is
+  capable; on a weak model it is counterproductive, §6).
+- `--extractor-model` / `--extractor-provider` / `--extractor-url` → point the
+  extractor at a **different, more capable** model, anywhere.
+
+**Works with every "model on another machine" mechanism the library supports,**
+because they are all consumed as an HTTP endpoint and the extractor
+(`SelfChatEnhancer`) is a full multi-provider client (any `AiConfig`):
+
+| Mechanism | How to target it as the extractor |
+|---|---|
+| Remote **Ollama** / **llama.cpp** / **vLLM** / LM Studio / … on another host | `--extractor-provider <p> --extractor-url http://host:port` |
+| **Mesh / `ai_proxy` gateway** (OpenAI-compatible, load-balances a backend fleet) | `--extractor-provider openai-compatible --extractor-url http://proxy:8080` |
+| **GPU-sharing / distributed** node (serves an OpenAI-compatible endpoint) | `--extractor-provider openai-compatible --extractor-url <node>` |
+| **Cloud** (OpenAI, Anthropic, Groq, …) | `--extractor-provider anthropic --extractor-model …` (key via env/config) |
+
+Library API (for embedders): `assistant.set_fact_extractor(Box::new(
+SelfChatEnhancer::new(stronger_config)))` — or any custom `LlmEnhancer`, so a
+bespoke P2P transport can be plugged in the same way. The extractor runs greedy
+(temperature 0) for stable JSON, and its result is merged *under* the
+heuristic, so a slow/absent/wrong remote extractor is always safe.
+
+_Validated (V206): chat on Bonsai-4B (`llama.cpp` :8080) with the extractor on
+`llama3.2:3b` (Ollama, a different provider/endpoint) → 6/6, no regression._
 
 ---
 
@@ -433,7 +465,9 @@ ai_cli query --profile mobile --model llama3.2:3b --knowledge big.md "…"
 ai_cli qa --model llama3.1:8b     # run the conversation-quality scenarios
 ai_cli qa --fresh-context …       # run them in FreshContext mode
 ai_cli qa --memory …              # enable the structured fact ledger (heuristic)
-ai_cli qa --memory-llm …          # + LLM fact extraction (use a capable model)
+ai_cli qa --memory-llm …          # + LLM fact extraction (same model)
+ai_cli qa --memory-llm --extractor-provider ollama --extractor-url http://host:11434 \
+          --extractor-model llama3.2:3b …   # extractor on a different/remote model (§9)
 ai_cli query --num-ctx 32768 …    # raise the Ollama window (you have the VRAM)
 ai_cli query --full-knowledge …   # inject the whole knowledge doc (skip retrieval)
 ai_cli query --lexical …          # lexical retrieval (default is semantic embeddings)

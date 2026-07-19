@@ -127,35 +127,36 @@ impl QaScenario {
     /// Run this scenario against `config`'s provider/model with the default
     /// per-turn timeout.
     pub fn run(&self, config: &AiConfig) -> QaScenarioResult {
-        self.run_with_timeout(config, DEFAULT_TURN_TIMEOUT, false, false, false)
+        self.run_with_timeout(config, DEFAULT_TURN_TIMEOUT, false, false, None)
     }
 
     /// Run with an explicit per-turn timeout, context mode, and memory setting.
     /// When `fresh_context` is set, the assistant uses FreshContext mode. When
     /// `memory` is set, the memory manager is enabled (personal facts are
-    /// extracted from user turns and re-injected). When `memory_llm` is also
-    /// set, an LLM extractor (the same model) is attached so arbitrary facts
-    /// beyond the heuristic patterns are captured — used to test whether
-    /// structured memory lifts the multi-fact-tracking wall on weak models.
+    /// extracted from user turns and re-injected). When `extractor` is `Some`,
+    /// an LLM fact extractor backed by that config is attached — this may be a
+    /// **different, more capable** model/endpoint than the chat model (e.g. a
+    /// stronger model on another machine), so a cheap local chat model can be
+    /// "rescued" by an occasional capable extraction pass.
     pub fn run_with_timeout(
         &self,
         config: &AiConfig,
         per_turn: Duration,
         fresh_context: bool,
         memory: bool,
-        memory_llm: bool,
+        extractor: Option<AiConfig>,
     ) -> QaScenarioResult {
         let mut assistant = AiAssistant::new();
         assistant.config = config.clone();
         if fresh_context {
             assistant.set_context_mode(crate::ContextMode::FreshContext);
         }
-        if memory || memory_llm {
+        if memory || extractor.is_some() {
             assistant.enable_memory(crate::memory::MemoryConfig::default());
-            if memory_llm {
+            if let Some(ext_cfg) = extractor {
                 if let Some(mm) = assistant.memory_manager_mut() {
                     mm.set_fact_extractor(Box::new(crate::self_enhancer::SelfChatEnhancer::new(
-                        config.clone(),
+                        ext_cfg,
                     )));
                 }
             }

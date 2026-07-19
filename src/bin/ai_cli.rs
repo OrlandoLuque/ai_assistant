@@ -1001,13 +1001,45 @@ fn cmd_profiles_list() -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Route a `--url` value into the field the given provider actually reads, so
+/// `--url` works for every self-hosted provider AND for a generic
+/// OpenAI-compatible endpoint (a remote mesh / `ai_proxy` gateway / gpu-share
+/// node), whose base URL lives inside the provider enum itself.
+fn set_provider_url(config: &mut ai_assistant::AiConfig, url: &str) {
+    use ai_assistant::AiProvider as P;
+    match config.provider {
+        P::Ollama => config.ollama_url = url.to_string(),
+        P::LMStudio => config.lm_studio_url = url.to_string(),
+        P::TextGenWebUI => config.text_gen_webui_url = url.to_string(),
+        P::KoboldCpp => config.kobold_url = url.to_string(),
+        P::LocalAI => config.local_ai_url = url.to_string(),
+        P::LlamaCpp => config.llamacpp_url = url.to_string(),
+        P::VLLM => config.vllm_url = url.to_string(),
+        P::OpenAICompatible { .. } => {
+            config.provider = P::OpenAICompatible {
+                base_url: url.to_string(),
+            }
+        }
+        _ => config.custom_url = url.to_string(),
+    }
+}
+
 fn cmd_qa(args: &[String]) -> ExitCode {
     let provider_name = find_flag_value(args, "--provider").map(String::from);
     let model_name = find_flag_value(args, "--model").map(String::from);
     let url_override = find_flag_value(args, "--url").map(String::from);
     let num_ctx_override = find_flag_value(args, "--num-ctx").and_then(|s| s.parse::<usize>().ok());
     let fresh_context = args.iter().any(|a| a == "--fresh-context");
-    let memory_llm = args.iter().any(|a| a == "--memory-llm");
+    // Optional separate/stronger extractor for LLM fact extraction: it may point
+    // at a different (usually more capable) model/endpoint than the chat model,
+    // even on another machine — so a cheap local chat model is rescued by an
+    // occasional capable extraction pass.
+    let ext_model = find_flag_value(args, "--extractor-model").map(String::from);
+    let ext_provider = find_flag_value(args, "--extractor-provider").map(String::from);
+    let ext_url = find_flag_value(args, "--extractor-url").map(String::from);
+    let has_ext_override = ext_model.is_some() || ext_provider.is_some() || ext_url.is_some();
+    // --memory-llm enables LLM extraction; any --extractor-* also implies it.
+    let memory_llm = has_ext_override || args.iter().any(|a| a == "--memory-llm");
     // --memory-llm implies memory (heuristic + LLM extraction).
     let memory = memory_llm || args.iter().any(|a| a == "--memory");
     let lexical = args.iter().any(|a| a == "--lexical");
@@ -1022,12 +1054,7 @@ fn cmd_qa(args: &[String]) -> ExitCode {
         assistant.config.selected_model = name.clone();
     }
     if let Some(ref url) = url_override {
-        match assistant.config.provider {
-            ai_assistant::AiProvider::Ollama => assistant.config.ollama_url = url.clone(),
-            ai_assistant::AiProvider::LMStudio => assistant.config.lm_studio_url = url.clone(),
-            ai_assistant::AiProvider::LlamaCpp => assistant.config.llamacpp_url = url.clone(),
-            _ => assistant.config.custom_url = url.clone(),
-        }
+        set_provider_url(&mut assistant.config, url);
     }
     if let Some(n) = num_ctx_override {
         assistant.config.ollama_num_ctx = Some(n);
@@ -1067,18 +1094,40 @@ fn cmd_qa(args: &[String]) -> ExitCode {
     }
 
     let config = assistant.config.clone();
+
+    // Build the LLM fact-extractor config when requested. Defaults to the chat
+    // model; --extractor-* point it at a different (usually stronger) model,
+    // optionally on another machine. Extraction runs greedy (temperature 0).
+    let extractor_config = if memory_llm {
+        let mut ec = config.clone();
+        if let Some(ref p) = ext_provider {
+            ec.provider = provider_from_name(p);
+        }
+        if let Some(ref m) = ext_model {
+            ec.selected_model = m.clone();
+        }
+        if let Some(ref u) = ext_url {
+            set_provider_url(&mut ec, u);
+        }
+        ec.temperature = 0.0;
+        Some(ec)
+    } else {
+        None
+    };
+
+    let mode_label = if let Some(ref ec) = extractor_config {
+        format!(" [memory+llm: {}]", ec.selected_model)
+    } else if memory {
+        " [memory]".to_string()
+    } else {
+        String::new()
+    };
     println!(
         "Conversation QA — {} / {}{}{}\n",
         config.provider.display_name(),
         config.selected_model,
         if fresh_context { " [FreshContext]" } else { "" },
-        if memory_llm {
-            " [memory+llm]"
-        } else if memory {
-            " [memory]"
-        } else {
-            ""
-        }
+        mode_label
     );
 
     let scenarios = ai_assistant::conversation_qa::builtin_scenarios();
@@ -1089,7 +1138,7 @@ fn cmd_qa(args: &[String]) -> ExitCode {
             ai_assistant::conversation_qa::DEFAULT_TURN_TIMEOUT,
             fresh_context,
             memory,
-            memory_llm,
+            extractor_config.clone(),
         );
         if !result.passed {
             all_passed = false;
@@ -2130,6 +2179,13 @@ fn provider_from_name(name: &str) -> ai_assistant::AiProvider {
         "kobold" | "koboldcpp" | "kobold-cpp" | "kobold_cpp" => ai_assistant::AiProvider::KoboldCpp,
         "localai" | "local-ai" | "local_ai" => ai_assistant::AiProvider::LocalAI,
         "textgen" | "textgen-webui" | "text-gen-webui" => ai_assistant::AiProvider::TextGenWebUI,
+        // Generic OpenAI-compatible endpoint — the route for a remote mesh /
+        // `ai_proxy` gateway / gpu-share node. Pair with `--extractor-url` /
+        // `--url` to set the base URL.
+        "openai-compatible" | "openai_compatible" | "oai-compatible" | "compatible" | "proxy"
+        | "mesh" => ai_assistant::AiProvider::OpenAICompatible {
+            base_url: String::new(),
+        },
         other => {
             eprintln!(
                 "Warning: unknown provider '{}', defaulting to Ollama",

@@ -13,6 +13,23 @@ impl AiAssistant {
         self.memory_manager = None;
     }
 
+    /// Attach an LLM fact extractor to the memory manager (enabling memory first
+    /// if needed). The extractor may be backed by a **different, more capable**
+    /// model/endpoint than the chat model — e.g.
+    /// `SelfChatEnhancer::new(stronger_config)` pointing at a stronger model on
+    /// another machine — so a cheap local chat model is "rescued" by an
+    /// occasional capable extraction pass. The deterministic heuristic stays
+    /// authoritative, so a slow/absent/wrong extractor can only add facts, never
+    /// corrupt a known one.
+    pub fn set_fact_extractor(&mut self, llm: Box<dyn crate::llm_enhance::LlmEnhancer>) {
+        if self.memory_manager.is_none() {
+            self.enable_memory(MemoryConfig::default());
+        }
+        if let Some(mm) = self.memory_manager.as_mut() {
+            mm.set_fact_extractor(llm);
+        }
+    }
+
     /// Whether the memory system is enabled.
     pub fn has_memory(&self) -> bool {
         self.memory_manager.is_some()

@@ -322,4 +322,34 @@ mod tests {
         assert!(p.contains("USER DATA to analyze"));
         assert!(p.contains("JSON array"));
     }
+
+    #[test]
+    fn llm_extractor_adds_novel_facts_but_heuristic_wins() {
+        // The LLM path works through ANY `LlmEnhancer` — here a mock, but in
+        // practice a SelfChatEnhancer pointed at a remote/mesh model. It should
+        // ADD a fact the heuristic misses (hobby) yet NEVER overwrite one the
+        // heuristic knows (colour): the LLM here returns the *wrong* colour and
+        // must lose to the heuristic's correct one.
+        use crate::llm_enhance::MockLlm;
+        let mock = MockLlm::new(
+            "[{\"attribute\":\"hobby\",\"value\":\"ajedrez\"},\
+             {\"attribute\":\"color favorito\",\"value\":\"azul\"}]",
+        );
+        let mut ledger = FactLedger::new();
+        ledger.observe("mi color favorito es el rojo", Some(&mock));
+        assert_eq!(get(ledger.facts(), "hobby"), Some("ajedrez")); // LLM added it
+        assert_eq!(get(ledger.facts(), "color favorito"), Some("rojo")); // heuristic won
+    }
+
+    #[test]
+    fn a_failing_extractor_never_corrupts_heuristic_facts() {
+        // A slow/absent/broken remote extractor (returns Err) must be harmless:
+        // the heuristic result stands.
+        use crate::llm_enhance::MockLlm;
+        let failing = MockLlm::failing();
+        let mut ledger = FactLedger::new();
+        ledger.observe("me llamo Ana, vivo en Sevilla", Some(&failing));
+        assert_eq!(get(ledger.facts(), "nombre"), Some("Ana"));
+        assert_eq!(get(ledger.facts(), "ciudad"), Some("Sevilla"));
+    }
 }
