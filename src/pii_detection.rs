@@ -366,8 +366,18 @@ impl PiiDetector {
         // Sort by start position descending for proper replacement
         all_detections.sort_by(|a, b| b.start.cmp(&a.start));
 
-        // Apply redactions
+        // Apply redactions. Defensive guard: never panic on a malformed span.
+        // Redaction is a security function, so a bad offset (off a char
+        // boundary or out of range, from any detector or a custom pattern)
+        // must skip that span, not crash the whole redaction.
         for detection in &all_detections {
+            if detection.start >= detection.end
+                || detection.end > redacted.len()
+                || !redacted.is_char_boundary(detection.start)
+                || !redacted.is_char_boundary(detection.end)
+            {
+                continue;
+            }
             redacted.replace_range(detection.start..detection.end, &detection.redacted);
             *counts.entry(detection.pii_type).or_insert(0) += 1;
         }
@@ -424,17 +434,26 @@ impl PiiDetector {
                             .unwrap_or(false)
                         {
                             if let Some(start) = text.find(*word) {
-                                let full_name = format!("{} {}", word, next);
-                                let end = start + full_name.len();
+                                // Compute `end` from the ACTUAL byte position of
+                                // `next` in the text — not `start + "word next".len()`.
+                                // `split_whitespace` collapses arbitrary separators
+                                // (multiple spaces, tabs, newlines), so assuming a
+                                // single space can land `end` mid-UTF-8-char and
+                                // panic the later `replace_range`.
+                                let after_word = start + word.len();
+                                if let Some(rel) = text[after_word..].find(*next) {
+                                    let end = after_word + rel + next.len();
+                                    let full_name = text[start..end].to_string();
 
-                                detections.push(DetectedPii {
-                                    pii_type: PiiType::Name,
-                                    value: full_name.clone(),
-                                    redacted: self.redact_value(PiiType::Name, &full_name),
-                                    start,
-                                    end,
-                                    confidence: 0.6,
-                                });
+                                    detections.push(DetectedPii {
+                                        pii_type: PiiType::Name,
+                                        value: full_name.clone(),
+                                        redacted: self.redact_value(PiiType::Name, &full_name),
+                                        start,
+                                        end,
+                                        confidence: 0.6,
+                                    });
+                                }
                             }
                         }
                     }
@@ -749,6 +768,32 @@ mod tests {
         }
         // End-to-end through detect() with a multi-byte custom match.
         let _ = detector.detect("token tok-Zürich🏔️ here");
+    }
+
+    #[test]
+    fn detect_names_multibyte_and_spacing_no_panic() {
+        // Regression: High-sensitivity name detection computed the span end as
+        // `start + "word next".len()` (assuming a single ASCII space). With
+        // arbitrary whitespace or multi-byte text, that offset could land off a
+        // UTF-8 char boundary and panic `replace_range`. It must never panic and
+        // must redact the real span.
+        let config = PiiConfig {
+            detect_types: vec![PiiType::Name],
+            sensitivity: SensitivityLevel::High,
+            ..Default::default()
+        };
+        let detector = PiiDetector::new(config);
+        for input in [
+            "john Müller lives here",
+            "john  Müller",       // collapsed double space
+            "john\u{00A0}Müller", // non-breaking space (is_whitespace)
+            "café john Ángel",    // multi-byte before and inside next
+            "bobby bob Ángel",    // common name as a substring of another word
+            "mary Ísabel García",
+        ] {
+            let result = detector.detect(input); // must not panic
+            assert!(!result.redacted.is_empty());
+        }
     }
 
     #[test]
