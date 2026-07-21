@@ -745,6 +745,29 @@ pub struct ReferenceResolver {
     pub max_lists: usize,
 }
 
+/// Small EN↔ES topic-synonym bridge for cross-language reference
+/// disambiguation: true when `word` is a known synonym of a topic containing
+/// the canonical stem (e.g. "arma" refers to a "weapons" list).
+fn topic_matches_synonym(topic: &str, word: &str) -> bool {
+    const SYNONYMS: &[(&str, &[&str])] = &[
+        ("weapon", &["arma", "armas"]),
+        ("ship", &["nave", "naves", "barco", "barcos"]),
+        (
+            "car",
+            &["coche", "coches", "auto", "autos", "vehiculo", "vehiculos"],
+        ),
+        ("book", &["libro", "libros"]),
+        ("song", &["cancion", "canciones", "tema", "temas"]),
+        ("movie", &["pelicula", "peliculas", "film", "films"]),
+        ("player", &["jugador", "jugadores"]),
+        ("option", &["opcion", "opciones"]),
+        ("item", &["objeto", "objetos", "articulo", "articulos"]),
+    ];
+    SYNONYMS
+        .iter()
+        .any(|(canon, words)| topic.contains(canon) && words.contains(&word))
+}
+
 impl ReferenceResolver {
     pub fn new() -> Self {
         Self {
@@ -870,19 +893,27 @@ impl ReferenceResolver {
         // Try to find which list the user is referring to
         let target_list = if self.tracked_lists.is_empty() {
             return None;
-        } else if self.tracked_lists.len() == 1 || index.is_some() {
-            // If there's only one list, or we have an index, use the most recent
+        } else if self.tracked_lists.len() == 1 {
             &self.tracked_lists[0]
         } else {
-            // Try to match by topic keywords
-            let best = self.tracked_lists.iter().max_by_key(|list| {
+            // Multiple lists: disambiguate by topic keyword overlap (bilingual),
+            // and only fall back to the most-recent list when NO list's topic is
+            // referenced. Having an item index does NOT make the topic
+            // irrelevant — "the second ship" must pick the ships list, not
+            // whichever list happens to be newest.
+            let topic_score = |list: &TrackedList| -> usize {
                 let topic_lower = list.topic.to_lowercase();
                 msg_lower
                     .split_whitespace()
-                    .filter(|w| w.len() > 2 && topic_lower.contains(w))
+                    .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()))
+                    .filter(|w| w.len() > 2)
+                    .filter(|w| topic_lower.contains(*w) || topic_matches_synonym(&topic_lower, w))
                     .count()
-            });
-            best.unwrap_or(&self.tracked_lists[0])
+            };
+            match self.tracked_lists.iter().max_by_key(|l| topic_score(l)) {
+                Some(l) if topic_score(l) > 0 => l,
+                _ => &self.tracked_lists[0],
+            }
         };
 
         if let Some(idx) = index {
