@@ -205,10 +205,12 @@ impl CoapMessage {
             Vec::new()
         };
 
-        // Find payload marker (0xFF)
-        let payload_start = data[4 + tkl..]
-            .iter()
-            .position(|&b| b == 0xFF)
+        // Find payload marker (0xFF). Use `get` so a truncated datagram whose
+        // declared token length (tkl, 0-15) exceeds the actual length does not
+        // panic on the slice.
+        let payload_start = data
+            .get(4 + tkl..)
+            .and_then(|rest| rest.iter().position(|&b| b == 0xFF))
             .map(|pos| 4 + tkl + pos + 1);
 
         let payload = payload_start
@@ -533,6 +535,21 @@ fn generate_token() -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decode_truncated_datagram_no_panic() {
+        // Regression: a datagram whose declared token length (tkl, low nibble of
+        // byte 0, up to 15) exceeds its actual length must not panic the payload
+        // slice `data[4 + tkl..]`.
+        for data in [
+            vec![0x05u8, 0, 0, 0],     // tkl=5, only 4 bytes
+            vec![0x0F, 1, 0, 0, 0, 0], // tkl=15, 6 bytes
+            vec![0x0F, 1, 0, 0, 0xFF], // tkl=15, payload marker but truncated
+            vec![0x00, 0, 0, 0],       // tkl=0, minimal valid
+        ] {
+            let _ = CoapMessage::decode(&data); // must not panic
+        }
+    }
 
     #[test]
     fn test_coap_config_default() {

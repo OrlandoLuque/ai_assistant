@@ -149,7 +149,9 @@ impl McpServer {
 
         let page_size = 50; // Default page size
         let all_tools: Vec<&McpTool> = self.tools.values().collect();
-        let start = cursor.unwrap_or(0);
+        // Clamp the client-supplied cursor: an out-of-range value would make
+        // `start > end` and panic the slice below.
+        let start = cursor.unwrap_or(0).min(all_tools.len());
         let end = (start + page_size).min(all_tools.len());
         let page = &all_tools[start..end];
 
@@ -302,5 +304,19 @@ impl McpServer {
                 })
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tools_list_out_of_range_cursor_no_panic() {
+        // Regression: an out-of-range client-supplied cursor must not panic the
+        // page slice (would make `start > end`).
+        let server = McpServer::new("test", "1.0");
+        let params = Some(serde_json::json!({ "cursor": "999999" }));
+        let _ = server.handle_tools_list(Some(serde_json::json!(1)), params); // must not panic
     }
 }
