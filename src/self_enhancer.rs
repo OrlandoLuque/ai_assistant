@@ -11,7 +11,7 @@
 
 use crate::config::AiConfig;
 use crate::llm_enhance::LlmEnhancer;
-use crate::llm_provider::{ConfigLlmProvider, LlmProvider};
+use crate::llm_provider::provider_from_config;
 use crate::messages::ChatMessage;
 
 /// An [`LlmEnhancer`] that answers with a one-shot completion through the
@@ -29,11 +29,11 @@ impl SelfChatEnhancer {
 
 impl LlmEnhancer for SelfChatEnhancer {
     fn generate(&self, prompt: &str, _max_tokens: usize) -> Result<String, String> {
-        // Depend on the LlmProvider port, not a whole AiAssistant: a single
-        // stateless call (no memory/extractor attached), so it can never recurse
-        // into another extraction. The prompt is self-contained, so no system
-        // prompt is needed.
-        let provider = ConfigLlmProvider::new(self.config.clone());
+        // Depend on the LlmProvider port via the phase-3 factory (Ollama ->
+        // OllamaAdapter, others -> ConfigLlmProvider) — not a whole AiAssistant:
+        // a single stateless call (no memory/extractor attached), so it can
+        // never recurse. The prompt is self-contained, so no system prompt.
+        let provider = provider_from_config(self.config.clone());
         provider
             .generate(&[ChatMessage::user(prompt)], "")
             .map_err(|e| e.to_string())
