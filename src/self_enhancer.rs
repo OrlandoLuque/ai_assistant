@@ -1,65 +1,42 @@
-//! An [`LlmEnhancer`] backed by the assistant's own configured model (V205).
+//! An [`LlmEnhancer`] backed by the configured model, via the [`LlmProvider`]
+//! port (V205; migrated onto the port in the phase-1 hexagonalization).
 //!
 //! Lets optional LLM-enhanced features (e.g. arbitrary personal-fact extraction
 //! in [`crate::fact_extraction`]) run against the same provider/model the user
-//! already configured, without the caller wiring up a separate client. Each
-//! [`generate`](SelfChatEnhancer::generate) call spins a fresh, memory-less
-//! [`AiAssistant`] and drives one completion to the end — memory-less so it can
-//! never recurse back into the enhancer that invoked it.
-
-use std::time::{Duration, Instant};
+//! already configured — or a different, stronger one on another machine —
+//! without the caller wiring up a client. It depends on the [`LlmProvider`]
+//! abstraction, not on a full [`crate::AiAssistant`], so each call is a single
+//! stateless completion with no risk of recursing back into the enhancer that
+//! invoked it.
 
 use crate::config::AiConfig;
 use crate::llm_enhance::LlmEnhancer;
-use crate::messages::AiResponse;
-use crate::AiAssistant;
+use crate::llm_provider::{ConfigLlmProvider, LlmProvider};
+use crate::messages::ChatMessage;
 
-/// An [`LlmEnhancer`] that answers by running a one-shot completion on a fresh
-/// assistant configured exactly like the caller's.
+/// An [`LlmEnhancer`] that answers with a one-shot completion through the
+/// [`LlmProvider`] port, using `config`'s provider/model/URLs.
 pub struct SelfChatEnhancer {
     config: AiConfig,
-    timeout: Duration,
 }
 
 impl SelfChatEnhancer {
-    /// Create an enhancer that uses `config`'s provider/model. Default 60s
-    /// per-call timeout.
+    /// Create an enhancer that uses `config`'s provider/model.
     pub fn new(config: AiConfig) -> Self {
-        Self {
-            config,
-            timeout: Duration::from_secs(60),
-        }
-    }
-
-    /// Override the per-call timeout.
-    pub fn with_timeout(mut self, timeout: Duration) -> Self {
-        self.timeout = timeout;
-        self
+        Self { config }
     }
 }
 
 impl LlmEnhancer for SelfChatEnhancer {
     fn generate(&self, prompt: &str, _max_tokens: usize) -> Result<String, String> {
-        let mut assistant = AiAssistant::new();
-        assistant.config = self.config.clone();
-        // Deliberately memory-less: no fact ledger / extractor is attached, so
-        // this call cannot recurse into another extraction.
-        assistant.send_message(prompt.to_string(), "");
-
-        let start = Instant::now();
-        loop {
-            match assistant.poll_response() {
-                Some(AiResponse::Complete(text)) | Some(AiResponse::Cancelled(text)) => {
-                    return Ok(text)
-                }
-                Some(AiResponse::Error(e)) => return Err(e),
-                _ => {}
-            }
-            if start.elapsed() > self.timeout {
-                return Err("SelfChatEnhancer: generation timed out".to_string());
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        // Depend on the LlmProvider port, not a whole AiAssistant: a single
+        // stateless call (no memory/extractor attached), so it can never recurse
+        // into another extraction. The prompt is self-contained, so no system
+        // prompt is needed.
+        let provider = ConfigLlmProvider::new(self.config.clone());
+        provider
+            .generate(&[ChatMessage::user(prompt)], "")
+            .map_err(|e| e.to_string())
     }
 
     fn model_name(&self) -> &str {

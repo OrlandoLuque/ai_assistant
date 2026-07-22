@@ -266,6 +266,11 @@ pub mod learning_control;
 pub mod llamacpp_capability;
 pub mod llm_enhance;
 pub mod llm_judge;
+/// LLM provider **port** (hexagonal, phase 1): a `LlmProvider` trait so callers
+/// depend on an abstraction instead of the enum-dispatch `providers::generate_*`
+/// free functions — enabling injection/mocking. `ConfigLlmProvider` is the
+/// default adapter that delegates to the existing path (behaviour unchanged).
+pub mod llm_provider;
 pub mod load_shedding;
 #[cfg(feature = "local-inference")]
 pub mod local_inference;
@@ -347,6 +352,7 @@ pub use gguf_downloader::{
 };
 pub use huggingface::{huggingface_model_info, parse_hf_response, HfModelInfo};
 pub use llamacpp_capability::{parse_props, probe_llamacpp, LlamaCppCapability};
+pub use llm_provider::{ConfigLlmProvider, LlmProvider};
 pub use messages::{AiResponse, ChatMessage};
 pub use models::{ModelCapabilityInfo, ModelInfo, ModelRegistry};
 pub use providers::{
