@@ -23,7 +23,7 @@ use std::sync::mpsc::Sender;
 
 use anyhow::Result;
 
-use crate::config::AiConfig;
+use crate::config::{AiConfig, AiProvider};
 use crate::conversation_control::CancellationToken;
 use crate::messages::{AiResponse, ChatMessage};
 
@@ -53,6 +53,13 @@ pub trait LlmProvider: Send + Sync {
         tx: &Sender<AiResponse>,
         cancel_token: &CancellationToken,
     ) -> Result<()>;
+
+    /// Short identifier of the backend this adapter targets (diagnostics). The
+    /// default covers adapters that dispatch by config; dedicated adapters
+    /// override it.
+    fn backend_name(&self) -> &'static str {
+        "config-dispatch"
+    }
 }
 
 /// Default adapter: holds an [`AiConfig`] and delegates to the existing
@@ -109,6 +116,73 @@ impl LlmProvider for ConfigLlmProvider {
     }
 }
 
+/// Dedicated adapter for the native Ollama API — phase 3, the first provider
+/// pulled out of the `match &config.provider` dispatch into its own adapter.
+///
+/// It delegates to the `providers::generate_ollama_*` functions. Ollama is a
+/// **local** provider, so it is unaffected by the cloud PII-masking layer in
+/// `generate_response` — which is exactly why it is the first safe extraction.
+/// (Cloud providers still route through [`ConfigLlmProvider`] so they keep that
+/// masking; extracting them cleanly needs a PII-masking *decorator* around the
+/// port — see `ai_assistant_plans/HEXAGONAL_PLAN.md`, F3.)
+pub struct OllamaAdapter {
+    config: AiConfig,
+}
+
+impl OllamaAdapter {
+    /// Build an Ollama adapter bound to `config` (uses `config.ollama_url`).
+    pub fn new(config: AiConfig) -> Self {
+        Self { config }
+    }
+}
+
+impl LlmProvider for OllamaAdapter {
+    fn generate(&self, conversation: &[ChatMessage], system_prompt: &str) -> Result<String> {
+        crate::providers::generate_ollama_response(&self.config, conversation, system_prompt)
+    }
+
+    fn generate_streaming(
+        &self,
+        conversation: &[ChatMessage],
+        system_prompt: &str,
+        tx: &Sender<AiResponse>,
+    ) -> Result<()> {
+        crate::providers::generate_ollama_streaming(&self.config, conversation, system_prompt, tx)
+    }
+
+    fn generate_streaming_cancellable(
+        &self,
+        conversation: &[ChatMessage],
+        system_prompt: &str,
+        tx: &Sender<AiResponse>,
+        cancel_token: &CancellationToken,
+    ) -> Result<()> {
+        crate::providers::generate_ollama_streaming_cancellable(
+            &self.config,
+            conversation,
+            system_prompt,
+            tx,
+            cancel_token,
+        )
+    }
+
+    fn backend_name(&self) -> &'static str {
+        "ollama"
+    }
+}
+
+/// Select the [`LlmProvider`] adapter for `config`'s provider. Ollama gets its
+/// dedicated [`OllamaAdapter`]; every other provider currently routes through
+/// [`ConfigLlmProvider`] (preserving the cloud PII-masking layer). This is the
+/// single dispatch point that will grow one adapter per provider as phase 3
+/// proceeds.
+pub fn provider_from_config(config: AiConfig) -> Box<dyn LlmProvider> {
+    match config.provider {
+        AiProvider::Ollama => Box::new(OllamaAdapter::new(config)),
+        _ => Box::new(ConfigLlmProvider::new(config)),
+    }
+}
+
 /// A trivial [`LlmProvider`] that answers every request with a fixed reply.
 ///
 /// The whole point of the port: inject this via
@@ -151,6 +225,10 @@ impl LlmProvider for MockLlmProvider {
         let _ = tx.send(AiResponse::Complete(self.reply.clone()));
         Ok(())
     }
+
+    fn backend_name(&self) -> &'static str {
+        "mock"
+    }
 }
 
 #[cfg(test)]
@@ -179,6 +257,19 @@ mod tests {
         let model = cfg.selected_model.clone();
         let adapter = ConfigLlmProvider::new(cfg);
         assert_eq!(adapter.config().selected_model, model);
+    }
+
+    #[test]
+    fn factory_dispatches_ollama_to_its_adapter() {
+        // Ollama gets the dedicated adapter; other providers fall back to the
+        // config-dispatch adapter (which preserves cloud PII masking).
+        let mut cfg = AiConfig::default();
+        cfg.provider = AiProvider::Ollama;
+        assert_eq!(provider_from_config(cfg).backend_name(), "ollama");
+
+        let mut cfg = AiConfig::default();
+        cfg.provider = AiProvider::Anthropic;
+        assert_eq!(provider_from_config(cfg).backend_name(), "config-dispatch");
     }
 
     /// The payoff of phase 2: a full `AiAssistant` generates through an injected
