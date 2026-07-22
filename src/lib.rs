@@ -352,7 +352,7 @@ pub use gguf_downloader::{
 };
 pub use huggingface::{huggingface_model_info, parse_hf_response, HfModelInfo};
 pub use llamacpp_capability::{parse_props, probe_llamacpp, LlamaCppCapability};
-pub use llm_provider::{ConfigLlmProvider, LlmProvider};
+pub use llm_provider::{ConfigLlmProvider, LlmProvider, MockLlmProvider};
 pub use messages::{AiResponse, ChatMessage};
 pub use models::{ModelCapabilityInfo, ModelInfo, ModelRegistry};
 pub use providers::{

@@ -412,6 +412,12 @@ pub struct AiAssistant {
     /// When enabled, FreshContext mode includes memory-based context alongside RAG.
     pub memory_manager: Option<MemoryManager>,
 
+    /// Optional injected LLM provider (hexagonal port, phase 2). When set,
+    /// generation routes through this adapter instead of the default
+    /// enum-dispatch `try_generate_with_fallback` path — used to inject a mock
+    /// (server-less tests) or a custom/remote provider. `None` = default.
+    llm_provider: Option<std::sync::Arc<dyn crate::llm_provider::LlmProvider>>,
+
     /// Optional API key manager for providers that require authentication.
     api_key_manager: Option<ApiKeyManager>,
 
@@ -755,6 +761,7 @@ impl AiAssistant {
             compaction_config: CompactionConfig::default(),
             context_mode: ContextMode::default(),
             memory_manager: None,
+            llm_provider: None,
             api_key_manager: None,
             event_bus: crate::events::EventBus::new(),
 

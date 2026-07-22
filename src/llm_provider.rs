@@ -109,50 +109,61 @@ impl LlmProvider for ConfigLlmProvider {
     }
 }
 
+/// A trivial [`LlmProvider`] that answers every request with a fixed reply.
+///
+/// The whole point of the port: inject this via
+/// [`crate::AiAssistant::set_llm_provider`] to exercise the domain
+/// (`send_message` / agents) **without a live model server** — deterministic,
+/// offline tests. Also handy in examples.
+pub struct MockLlmProvider {
+    reply: String,
+}
+
+impl MockLlmProvider {
+    /// A mock that returns `reply` for every generation.
+    pub fn new(reply: impl Into<String>) -> Self {
+        Self {
+            reply: reply.into(),
+        }
+    }
+}
+
+impl LlmProvider for MockLlmProvider {
+    fn generate(&self, _conversation: &[ChatMessage], _system_prompt: &str) -> Result<String> {
+        Ok(self.reply.clone())
+    }
+    fn generate_streaming(
+        &self,
+        _conversation: &[ChatMessage],
+        _system_prompt: &str,
+        tx: &Sender<AiResponse>,
+    ) -> Result<()> {
+        let _ = tx.send(AiResponse::Complete(self.reply.clone()));
+        Ok(())
+    }
+    fn generate_streaming_cancellable(
+        &self,
+        _conversation: &[ChatMessage],
+        _system_prompt: &str,
+        tx: &Sender<AiResponse>,
+        _cancel_token: &CancellationToken,
+    ) -> Result<()> {
+        let _ = tx.send(AiResponse::Complete(self.reply.clone()));
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::mpsc::channel;
-
-    /// A mock adapter: proves the port is usable without any live backend —
-    /// the whole point of introducing it.
-    struct MockLlmProvider {
-        reply: String,
-    }
-
-    impl LlmProvider for MockLlmProvider {
-        fn generate(&self, _conversation: &[ChatMessage], _system_prompt: &str) -> Result<String> {
-            Ok(self.reply.clone())
-        }
-        fn generate_streaming(
-            &self,
-            _conversation: &[ChatMessage],
-            _system_prompt: &str,
-            tx: &Sender<AiResponse>,
-        ) -> Result<()> {
-            let _ = tx.send(AiResponse::Complete(self.reply.clone()));
-            Ok(())
-        }
-        fn generate_streaming_cancellable(
-            &self,
-            _conversation: &[ChatMessage],
-            _system_prompt: &str,
-            tx: &Sender<AiResponse>,
-            _cancel_token: &CancellationToken,
-        ) -> Result<()> {
-            let _ = tx.send(AiResponse::Complete(self.reply.clone()));
-            Ok(())
-        }
-    }
 
     #[test]
     fn port_is_object_safe_send_sync_and_mockable() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<Box<dyn LlmProvider>>();
 
-        let provider: Box<dyn LlmProvider> = Box::new(MockLlmProvider {
-            reply: "hola".to_string(),
-        });
+        let provider: Box<dyn LlmProvider> = Box::new(MockLlmProvider::new("hola"));
         assert_eq!(provider.generate(&[], "sys").unwrap(), "hola");
 
         let (tx, rx) = channel();
@@ -168,5 +179,40 @@ mod tests {
         let model = cfg.selected_model.clone();
         let adapter = ConfigLlmProvider::new(cfg);
         assert_eq!(adapter.config().selected_model, model);
+    }
+
+    /// The payoff of phase 2: a full `AiAssistant` generates through an injected
+    /// provider with NO live server — the send/poll domain flow, deterministic.
+    #[test]
+    fn assistant_generates_via_injected_provider_without_a_server() {
+        use std::sync::Arc;
+        use std::time::{Duration, Instant};
+
+        let mut assistant = crate::AiAssistant::new();
+        assert!(!assistant.has_custom_llm_provider());
+        assistant.set_llm_provider(Arc::new(MockLlmProvider::new("mocked answer 42")));
+        assert!(assistant.has_custom_llm_provider());
+
+        assistant.send_message("hello".to_string(), "");
+
+        let start = Instant::now();
+        loop {
+            match assistant.poll_response() {
+                Some(AiResponse::Complete(text)) => {
+                    assert!(
+                        text.contains("mocked answer 42"),
+                        "unexpected reply: {text:?}"
+                    );
+                    break;
+                }
+                Some(AiResponse::Error(e)) => panic!("unexpected error: {e}"),
+                _ => {}
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(5),
+                "timed out waiting for the mocked response"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 }

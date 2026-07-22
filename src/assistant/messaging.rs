@@ -1,6 +1,30 @@
 use super::*;
 
 impl AiAssistant {
+    // === LLM provider injection (hexagonal port, phase 2) ===
+
+    /// Inject an [`crate::llm_provider::LlmProvider`] adapter so text generation
+    /// routes through it instead of the default enum-dispatch path — e.g. a mock
+    /// for server-less tests, or a custom/remote provider. It is driven by the
+    /// same `send_message` / `poll_response` flow. [`Self::clear_llm_provider`]
+    /// restores the default behaviour.
+    pub fn set_llm_provider(
+        &mut self,
+        provider: std::sync::Arc<dyn crate::llm_provider::LlmProvider>,
+    ) {
+        self.llm_provider = Some(provider);
+    }
+
+    /// Whether a custom [`crate::llm_provider::LlmProvider`] is currently injected.
+    pub fn has_custom_llm_provider(&self) -> bool {
+        self.llm_provider.is_some()
+    }
+
+    /// Remove any injected provider, restoring the default generation path.
+    pub fn clear_llm_provider(&mut self) {
+        self.llm_provider = None;
+    }
+
     // === Message Handling ===
 
     /// Send a message and start generating a response
@@ -114,17 +138,27 @@ impl AiAssistant {
             Vec::new()
         };
         let last_provider = self.fallback_last_provider.clone();
+        // Hexagonal port (phase 2): when an LlmProvider adapter is injected,
+        // route generation through it (mock/custom/remote); otherwise the
+        // default enum-dispatch fallback path is untouched.
+        let injected = self.llm_provider.clone();
 
         thread::spawn(move || {
-            try_generate_with_fallback(
-                &config,
-                &conversation,
-                &system_prompt,
-                &tx,
-                &fallback_providers,
-                None,
-                &last_provider,
-            );
+            if let Some(provider) = injected {
+                if let Err(e) = provider.generate_streaming(&conversation, &system_prompt, &tx) {
+                    let _ = tx.send(crate::messages::AiResponse::Error(e.to_string()));
+                }
+            } else {
+                try_generate_with_fallback(
+                    &config,
+                    &conversation,
+                    &system_prompt,
+                    &tx,
+                    &fallback_providers,
+                    None,
+                    &last_provider,
+                );
+            }
         });
     }
 
@@ -470,17 +504,27 @@ impl AiAssistant {
             Vec::new()
         };
         let last_provider = self.fallback_last_provider.clone();
+        // Hexagonal port (phase 2): when an LlmProvider adapter is injected,
+        // route generation through it (mock/custom/remote); otherwise the
+        // default enum-dispatch fallback path is untouched.
+        let injected = self.llm_provider.clone();
 
         thread::spawn(move || {
-            try_generate_with_fallback(
-                &config,
-                &conversation,
-                &system_prompt,
-                &tx,
-                &fallback_providers,
-                None,
-                &last_provider,
-            );
+            if let Some(provider) = injected {
+                if let Err(e) = provider.generate_streaming(&conversation, &system_prompt, &tx) {
+                    let _ = tx.send(crate::messages::AiResponse::Error(e.to_string()));
+                }
+            } else {
+                try_generate_with_fallback(
+                    &config,
+                    &conversation,
+                    &system_prompt,
+                    &tx,
+                    &fallback_providers,
+                    None,
+                    &last_provider,
+                );
+            }
         });
     }
 
