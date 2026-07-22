@@ -6,8 +6,9 @@ use std::sync::mpsc::Sender;
 
 use crate::config::{AiConfig, AiProvider};
 use crate::conversation_control::CancellationToken;
+use crate::http_client::{HttpClient, UreqClient};
 use crate::messages::{AiResponse, ChatMessage};
-use crate::models::{format_size, ModelInfo};
+use crate::models::ModelInfo;
 use crate::retry::retry_with_config;
 use crate::session::UserPreferences;
 
@@ -20,31 +21,13 @@ const MODEL_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(
 
 /// Fetch models from Ollama API. Single-attempt, short-timeout discovery probe.
 pub fn fetch_ollama_models(base_url: &str) -> Result<Vec<ModelInfo>> {
+    // Route the probe through the `HttpClient` port (hexagonal F4) and reuse the
+    // shared parser — same 3s timeout, no more inlined `ureq` + duplicated parse.
     let url = format!("{}/api/tags", base_url);
-    let response = ureq::get(&url)
-        .timeout(MODEL_PROBE_TIMEOUT)
-        .call()
+    let body = UreqClient
+        .get_json(&url, MODEL_PROBE_TIMEOUT.as_secs())
         .context("Failed to fetch Ollama models")?;
-    let body: serde_json::Value = response.into_json()?;
-
-    let mut models = Vec::new();
-    if let Some(model_list) = body.get("models").and_then(|m| m.as_array()) {
-        for model in model_list {
-            if let Some(name) = model.get("name").and_then(|n| n.as_str()) {
-                models.push(ModelInfo {
-                    name: name.to_string(),
-                    provider: AiProvider::Ollama,
-                    size: model.get("size").and_then(|s| s.as_u64()).map(format_size),
-                    modified_at: model
-                        .get("modified_at")
-                        .and_then(|m| m.as_str())
-                        .map(|s| s.to_string()),
-                    capabilities: None,
-                });
-            }
-        }
-    }
-    Ok(models)
+    Ok(crate::http_client::parse_ollama_models(&body))
 }
 
 /// Fetch models from an OpenAI-compatible API (LM Studio, LocalAI, etc.).
@@ -53,28 +36,12 @@ pub fn fetch_openai_compatible_models(
     base_url: &str,
     provider: AiProvider,
 ) -> Result<Vec<ModelInfo>> {
+    // Route through the `HttpClient` port (hexagonal F4) + shared parser.
     let url = format!("{}/v1/models", base_url);
-    let response = ureq::get(&url)
-        .timeout(MODEL_PROBE_TIMEOUT)
-        .call()
+    let body = UreqClient
+        .get_json(&url, MODEL_PROBE_TIMEOUT.as_secs())
         .context("Failed to fetch OpenAI-compatible models")?;
-    let body: serde_json::Value = response.into_json()?;
-
-    let mut models = Vec::new();
-    if let Some(data) = body.get("data").and_then(|d| d.as_array()) {
-        for model in data {
-            if let Some(id) = model.get("id").and_then(|i| i.as_str()) {
-                models.push(ModelInfo {
-                    name: id.to_string(),
-                    provider: provider.clone(),
-                    size: None,
-                    modified_at: None,
-                    capabilities: None,
-                });
-            }
-        }
-    }
-    Ok(models)
+    Ok(crate::http_client::parse_openai_models(&body, provider))
 }
 
 /// Fetch models from Kobold.cpp API. Single-attempt, short-timeout discovery
