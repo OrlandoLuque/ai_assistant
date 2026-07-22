@@ -306,7 +306,9 @@ pub fn generate_mini_summary(messages: &[(String, String)], max_tokens: usize) -
         } else {
             let limit = remaining.saturating_sub(role.len() + 7);
             if limit > 0 && limit <= trimmed.len() {
-                summary.push_str(&trimmed[..limit]);
+                // `limit` is a byte budget; truncate on a char boundary to avoid
+                // panicking on multi-byte text.
+                summary.push_str(crate::text_util::truncate_str(trimmed, limit));
                 summary.push_str("...");
             } else if limit > 0 {
                 summary.push_str(trimmed);
@@ -1331,6 +1333,14 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+
+    #[test]
+    fn mini_summary_multibyte_no_panic() {
+        // Regression: truncating the first sentence to a byte budget must not
+        // panic on multi-byte text (`&trimmed[..limit]` fell mid-char).
+        let messages = vec![("user".to_string(), "日".repeat(50))];
+        let _ = generate_mini_summary(&messages, 8); // must not panic
+    }
 
     // -- Ordering tests ----------------------------------------------------
 

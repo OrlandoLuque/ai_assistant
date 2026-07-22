@@ -1951,7 +1951,13 @@ pub fn suggest_chunk_boundaries_with_llm(
                             let mut chunks = Vec::new();
                             let mut prev = 0;
                             for &boundary in &boundaries.boundaries {
-                                let boundary = boundary.min(content.len());
+                                // The LLM returns arbitrary character offsets that
+                                // may land inside a multi-byte UTF-8 char; snap to a
+                                // char boundary before slicing (`prev` inherits it).
+                                let boundary = crate::text_util::floor_char_boundary(
+                                    content,
+                                    boundary.min(content.len()),
+                                );
                                 if boundary > prev {
                                     let slice = &content[prev..boundary];
                                     if !slice.trim().is_empty() {
@@ -2519,27 +2525,42 @@ impl DiscourseChunker {
 
     /// Find a good split point near the target position
     fn find_split_point(&self, text: &str, target: usize) -> usize {
-        // Look backwards from target for a sentence boundary
-        let search_start = target.saturating_sub(100);
-        let search_range = &text[search_start..target.min(text.len())];
+        // Look backwards from target for a sentence boundary. `target` and
+        // `target - 100` are byte budgets that can land inside a multi-byte UTF-8
+        // char, so snap both to char boundaries before slicing (would panic
+        // otherwise on accented / CJK text).
+        let end = crate::text_util::floor_char_boundary(text, target.min(text.len()));
+        let search_start = crate::text_util::floor_char_boundary(text, target.saturating_sub(100));
+        let search_range = &text[search_start..end];
+
+        // The split point sits just past the matched boundary char; for a
+        // multi-byte whitespace char `pos + 1` can be mid-char, so round up to
+        // the next char boundary (never past `text.len()`).
+        let snap_after = |raw: usize| -> usize {
+            let mut i = raw.min(text.len());
+            while i < text.len() && !text.is_char_boundary(i) {
+                i += 1;
+            }
+            i
+        };
 
         // Try sentence boundary first (. ! ?)
         if let Some(pos) = search_range.rfind(|c| c == '.' || c == '!' || c == '?') {
-            return search_start + pos + 1;
+            return snap_after(search_start + pos + 1);
         }
 
         // Try newline
         if let Some(pos) = search_range.rfind('\n') {
-            return search_start + pos + 1;
+            return snap_after(search_start + pos + 1);
         }
 
         // Fall back to whitespace
         if let Some(pos) = search_range.rfind(char::is_whitespace) {
-            return search_start + pos + 1;
+            return snap_after(search_start + pos + 1);
         }
 
-        // Last resort: split at target
-        target.min(text.len())
+        // Last resort: split at the boundary-safe target
+        end
     }
 }
 
@@ -2547,6 +2568,21 @@ impl DiscourseChunker {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn discourse_chunk_multibyte_no_panic() {
+        // Regression: a segment larger than max_chunk_size made of multi-byte
+        // chars must not panic when find_split_point slices at a byte budget
+        // (`target` / `target - 100`) that falls mid-char.
+        let cfg = DiscourseConfig {
+            max_chunk_size: 50,
+            ..Default::default()
+        };
+        let chunker = DiscourseChunker::new(cfg);
+        let doc = "日".repeat(100); // 300 bytes, no whitespace
+        let chunks = chunker.chunk(&doc);
+        assert!(!chunks.is_empty());
+    }
 
     #[test]
     fn test_chunk_document() {

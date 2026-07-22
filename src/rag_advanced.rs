@@ -174,24 +174,32 @@ impl SmartChunker {
         let mut index = 0;
 
         while start < document.len() {
-            let end = (start + target_chars).min(document.len());
+            // `start`/`end` are byte budgets (token-count * 4) that can land
+            // inside a multi-byte UTF-8 char; snap to char boundaries before
+            // slicing to avoid panics on accented / CJK documents. `start_b` is
+            // the boundary-safe cursor; `start` stays the mutable loop cursor.
+            let start_b = crate::text_util::floor_char_boundary(document, start);
+            let end = crate::text_util::floor_char_boundary(
+                document,
+                (start_b + target_chars).min(document.len()),
+            );
 
             // Try to break at word boundary
             let actual_end = if end < document.len() {
-                document[start..end]
+                document[start_b..end]
                     .rfind(char::is_whitespace)
-                    .map(|p| start + p)
+                    .map(|p| start_b + p)
                     .unwrap_or(end)
             } else {
                 end
             };
 
-            let content = document[start..actual_end].trim().to_string();
+            let content = document[start_b..actual_end].trim().to_string();
             if !content.is_empty() {
                 chunks.push(SmartChunk {
                     content: content.clone(),
                     tokens: Self::estimate_tokens(&content),
-                    start_offset: start,
+                    start_offset: start_b,
                     end_offset: actual_end,
                     index,
                     section: None,
@@ -995,6 +1003,25 @@ pub struct ChunkMetadata {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fixed_size_chunk_multibyte_no_panic() {
+        // Regression: FixedSize chunking sliced the document at a byte budget
+        // (target_tokens * 4) that can fall inside a multi-byte UTF-8 char.
+        let config = ChunkingConfig {
+            strategy: ChunkingStrategy::FixedSize,
+            target_tokens: 50,
+            min_tokens: 50,
+            max_tokens: 500,
+            overlap_tokens: 0,
+            preserve_markdown: false,
+            preserve_code_blocks: false,
+        };
+        let chunker = SmartChunker::new(config);
+        let doc = "日".repeat(200); // 600 bytes; byte 200 is mid-char
+        let chunks = chunker.chunk(&doc);
+        assert!(!chunks.is_empty());
+    }
 
     #[test]
     fn test_smart_chunker() {

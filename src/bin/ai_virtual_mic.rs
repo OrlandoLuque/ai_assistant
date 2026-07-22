@@ -283,8 +283,6 @@ fn is_addressed_to_agent(transcript: &str, agent_name: &str) -> bool {
 /// Detects patterns like "soy Carlos", "me llamo Ana", "I'm John", "my name is Sarah",
 /// "call me Bob", "llámame Pedro". Returns the extracted name if found.
 fn extract_self_introduction(transcript: &str) -> Option<String> {
-    let lower = transcript.to_lowercase();
-
     let patterns: &[&str] = &[
         "me llamo ",
         "soy ",
@@ -300,8 +298,11 @@ fn extract_self_introduction(transcript: &str) -> Option<String> {
     ];
 
     for pattern in patterns {
-        if let Some(pos) = lower.find(pattern) {
-            let after = &transcript[pos + pattern.len()..];
+        // Case-insensitive search on the ORIGINAL transcript: finding the offset
+        // in a `to_lowercase()` copy and slicing the original panics when an
+        // earlier char changes byte-length under lowercasing (İ→i̇, ß→ss, ﬀ→ff).
+        if let Some((_, end)) = ai_assistant::text_util::find_ci_range(transcript, pattern) {
+            let after = &transcript[end..];
             // Take the first word(s) as name — up to comma, period, or 2 words
             let name: String = after
                 .split(|c: char| c == ',' || c == '.' || c == '!' || c == '?')
@@ -3882,4 +3883,20 @@ fn main() -> Result<(), eframe::Error> {
             Box::new(VirtualMicApp::new())
         }),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn self_intro_multibyte_no_panic() {
+        // Regression: `İ` grows a byte under lowercasing, so the offset found in
+        // the lowercased copy was too large; slicing the ORIGINAL transcript then
+        // landed mid-char and panicked. In "İ my name is é" the old code sliced
+        // byte 15, which is inside the trailing `é`.
+        let _ = extract_self_introduction("İ my name is é");
+        let _ = extract_self_introduction("ﬀ me llamo José");
+        let _ = extract_self_introduction("İ call me ñ");
+    }
 }
