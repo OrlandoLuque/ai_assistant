@@ -1464,27 +1464,18 @@ fn fetch_kobold_context_size(base_url: &str) -> Option<usize> {
     // Try the max_context_length endpoint
     let url = format!("{}/api/v1/config/max_context_length", base_url);
 
-    if let Ok(response) = ureq::get(&url)
-        .timeout(std::time::Duration::from_secs(5))
-        .call()
-    {
-        if let Ok(json) = response.into_json::<serde_json::Value>() {
-            if let Some(result) = json.get("value").and_then(|v| v.as_u64()) {
-                return Some(result as usize);
-            }
+    // Routed through the HttpClient port (F4).
+    if let Ok(json) = UreqClient.get_json(&url, 5) {
+        if let Some(result) = json.get("value").and_then(|v| v.as_u64()) {
+            return Some(result as usize);
         }
     }
 
     // Try alternative endpoint
     let url_alt = format!("{}/api/extra/true_max_context_length", base_url);
-    if let Ok(response) = ureq::get(&url_alt)
-        .timeout(std::time::Duration::from_secs(5))
-        .call()
-    {
-        if let Ok(json) = response.into_json::<serde_json::Value>() {
-            if let Some(result) = json.get("value").and_then(|v| v.as_u64()) {
-                return Some(result as usize);
-            }
+    if let Ok(json) = UreqClient.get_json(&url_alt, 5) {
+        if let Some(result) = json.get("value").and_then(|v| v.as_u64()) {
+            return Some(result as usize);
         }
     }
 
@@ -1496,39 +1487,31 @@ fn fetch_openai_model_context(base_url: &str, model_name: &str) -> Option<usize>
     // Try to get specific model info
     let url = format!("{}/v1/models/{}", base_url, model_name);
 
-    if let Ok(response) = ureq::get(&url)
-        .timeout(std::time::Duration::from_secs(5))
-        .call()
-    {
-        if let Ok(json) = response.into_json::<serde_json::Value>() {
-            // LM Studio and some others include context_length
-            if let Some(ctx) = json.get("context_length").and_then(|v| v.as_u64()) {
-                return Some(ctx as usize);
-            }
-            // Some use max_context_length
-            if let Some(ctx) = json.get("max_context_length").and_then(|v| v.as_u64()) {
-                return Some(ctx as usize);
-            }
-            // LocalAI might use context_size
-            if let Some(ctx) = json.get("context_size").and_then(|v| v.as_u64()) {
-                return Some(ctx as usize);
-            }
+    // Routed through the HttpClient port (F4).
+    if let Ok(json) = UreqClient.get_json(&url, 5) {
+        // LM Studio and some others include context_length
+        if let Some(ctx) = json.get("context_length").and_then(|v| v.as_u64()) {
+            return Some(ctx as usize);
+        }
+        // Some use max_context_length
+        if let Some(ctx) = json.get("max_context_length").and_then(|v| v.as_u64()) {
+            return Some(ctx as usize);
+        }
+        // LocalAI might use context_size
+        if let Some(ctx) = json.get("context_size").and_then(|v| v.as_u64()) {
+            return Some(ctx as usize);
         }
     }
 
     // Try listing all models and finding ours
     let models_url = format!("{}/v1/models", base_url);
-    if let Ok(response) = ureq::get(&models_url)
-        .timeout(std::time::Duration::from_secs(5))
-        .call()
-    {
-        if let Ok(json) = response.into_json::<serde_json::Value>() {
-            if let Some(data) = json.get("data").and_then(|d| d.as_array()) {
-                for model in data {
-                    if model.get("id").and_then(|i| i.as_str()) == Some(model_name) {
-                        if let Some(ctx) = model.get("context_length").and_then(|v| v.as_u64()) {
-                            return Some(ctx as usize);
-                        }
+    // Routed through the HttpClient port (F4).
+    if let Ok(json) = UreqClient.get_json(&models_url, 5) {
+        if let Some(data) = json.get("data").and_then(|d| d.as_array()) {
+            for model in data {
+                if model.get("id").and_then(|i| i.as_str()) == Some(model_name) {
+                    if let Some(ctx) = model.get("context_length").and_then(|v| v.as_u64()) {
+                        return Some(ctx as usize);
                     }
                 }
             }
