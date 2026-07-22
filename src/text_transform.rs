@@ -650,12 +650,14 @@ impl TextTransformer {
                 (self.text.clone(), 0)
             }
         } else {
-            let lower = self.text.to_lowercase();
-            let find_lower = find.to_lowercase();
-            if let Some(pos) = lower.find(&find_lower) {
-                let mut new = self.text[..pos].to_string();
+            // Case-insensitive match on the ORIGINAL text (valid byte offsets;
+            // a `to_lowercase()` copy drifts and could slice off a boundary).
+            if let Some((match_start, match_end)) =
+                crate::text_util::find_ci_range(&self.text, find)
+            {
+                let mut new = self.text[..match_start].to_string();
                 new.push_str(replace);
-                new.push_str(&self.text[pos + find.len()..]);
+                new.push_str(&self.text[match_end..]);
                 (new, 1)
             } else {
                 (self.text.clone(), 0)

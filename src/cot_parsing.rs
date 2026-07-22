@@ -298,13 +298,12 @@ impl CotParser {
 
     /// Extract final answer from response
     fn extract_answer(&self, response: &str) -> Option<String> {
-        let lower = response.to_lowercase();
-
         for marker in &self.config.answer_markers {
-            let marker_lower = marker.to_lowercase();
-            if let Some(pos) = lower.find(&marker_lower) {
-                let start = pos + marker.len();
-                let rest = &response[start..];
+            // Case-insensitive match on the ORIGINAL response so the offset is
+            // valid there (a `to_lowercase()` copy drifts on length-changing
+            // chars → slicing could hit a non-char-boundary and panic).
+            if let Some((_, marker_end)) = crate::text_util::find_ci_range(response, marker) {
+                let rest = &response[marker_end..];
 
                 // Take until end of sentence or paragraph
                 let end = rest

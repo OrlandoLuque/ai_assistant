@@ -488,11 +488,12 @@ fn sanitize_for_prompt(s: &str) -> String {
         "[INST]",
         "```system",
     ];
-    let lower = clean.to_lowercase();
     for pattern in &patterns {
-        if lower.contains(pattern) {
+        // Case-insensitive match on the ORIGINAL `clean` so the offset is valid
+        // (a `to_lowercase()` copy drifts → slice could panic off a boundary).
+        if let Some((match_start, _)) = crate::text_util::find_ci_range(&clean, pattern) {
             clean = clean.replace(
-                &clean[lower.find(pattern).unwrap_or(0)..],
+                &clean[match_start..],
                 "[FILTERED: potential prompt injection]",
             );
             break;

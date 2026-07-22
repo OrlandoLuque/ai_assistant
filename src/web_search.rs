@@ -1312,11 +1312,12 @@ impl WebCrawler {
 
     /// Extract the <title> tag content.
     pub fn extract_title(html: &str) -> Option<String> {
-        let lower = html.to_lowercase();
-        let start = lower.find("<title>")?;
-        let content_start = start + 7; // len("<title>")
-        let end = lower[content_start..].find("</title>")?;
-        let title = html[content_start..content_start + end].trim().to_string();
+        // Locate the tags in the ORIGINAL html (case-insensitive), so the byte
+        // offsets are valid there. A `to_lowercase()` copy drifts on
+        // length-changing chars before the title → slicing could panic.
+        let (_, open_end) = crate::text_util::find_ci_range(html, "<title>")?;
+        let (rel_close, _) = crate::text_util::find_ci_range(&html[open_end..], "</title>")?;
+        let title = html[open_end..open_end + rel_close].trim().to_string();
         if title.is_empty() {
             None
         } else {

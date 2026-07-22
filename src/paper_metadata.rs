@@ -375,8 +375,6 @@ impl PaperMetadataExtractor {
 
     /// Extract abstract text.
     fn extract_abstract(&self, text: &str) -> Option<String> {
-        let lower = text.to_lowercase();
-
         // Look for "Abstract" heading followed by text
         for marker in &[
             "abstract\n",
@@ -385,10 +383,9 @@ impl PaperMetadataExtractor {
             "abstract —",
             "abstract:",
         ] {
-            if let Some(pos) = lower.find(marker) {
-                let start = pos + marker.len();
+            if let Some((_, marker_end)) = crate::text_util::find_ci_range(text, marker) {
                 // Abstract ends at next section heading or double newline
-                let content = &text[start..];
+                let content = &text[marker_end..];
                 let end = self.find_section_break(content);
                 let abstract_text = content[..end].trim().to_string();
                 if !abstract_text.is_empty() && abstract_text.len() > 20 {
@@ -457,12 +454,11 @@ impl PaperMetadataExtractor {
 
     /// Extract keywords.
     fn extract_keywords(&self, text: &str) -> Vec<String> {
-        let lower = text.to_lowercase();
-
         for marker in &["keywords:", "keywords —", "key words:", "index terms:"] {
-            if let Some(pos) = lower.find(marker) {
-                let start = pos + marker.len();
-                let content = &text[start..];
+            // Case-insensitive match on the ORIGINAL text (valid byte offset;
+            // a `to_lowercase()` copy drifts → slice could panic off a boundary).
+            if let Some((_, marker_end)) = crate::text_util::find_ci_range(text, marker) {
+                let content = &text[marker_end..];
                 // Keywords line ends at newline
                 let end = content.find('\n').unwrap_or(content.len());
                 let kw_line = content[..end].trim();
@@ -604,15 +600,17 @@ impl PaperMetadataExtractor {
 
     /// Extract raw reference strings.
     fn extract_references(&self, text: &str) -> Vec<String> {
-        let lower = text.to_lowercase();
-
-        // Find "References" section
-        let ref_start = if let Some(pos) = lower.rfind("\nreferences\n") {
-            pos + "\nreferences\n".len()
-        } else if let Some(pos) = lower.rfind("\nreferences\r\n") {
-            pos + "\nreferences\r\n".len()
-        } else if let Some(pos) = lower.rfind("\nbibliography\n") {
-            pos + "\nbibliography\n".len()
+        // Find the References/Bibliography section case-insensitively on the
+        // ORIGINAL text, so the offset is valid there (a `to_lowercase()` copy
+        // drifts and could slice off a UTF-8 boundary → panic).
+        let ref_start = if let Some((_, end)) =
+            crate::text_util::rfind_ci_range(text, "\nreferences\n")
+        {
+            end
+        } else if let Some((_, end)) = crate::text_util::rfind_ci_range(text, "\nreferences\r\n") {
+            end
+        } else if let Some((_, end)) = crate::text_util::rfind_ci_range(text, "\nbibliography\n") {
+            end
         } else {
             return Vec::new();
         };

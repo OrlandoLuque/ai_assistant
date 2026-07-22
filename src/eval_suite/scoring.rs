@@ -211,8 +211,10 @@ fn extract_answer_letter(response: &str) -> Option<String> {
         "answer: ",
     ];
     for marker in &answer_markers {
-        if let Some(pos) = lower.find(marker) {
-            let after = &trimmed[pos + marker.len()..];
+        // Case-insensitive on the ORIGINAL `trimmed` (valid byte offset; a
+        // lowercased copy drifts → slice could panic off a boundary).
+        if let Some((_, marker_end)) = crate::text_util::find_ci_range(trimmed, marker) {
+            let after = &trimmed[marker_end..];
             let after = after.trim();
             // Extract letter: could be "B", "B)", "(B)", "**B**", "B."
             let cleaned = after
@@ -234,8 +236,8 @@ fn extract_answer_letter(response: &str) -> Option<String> {
     // Pattern 4: "therefore, X" or "so the answer is X" — look for conclusion markers
     let conclusion_markers = ["therefore, ", "therefore ", "thus, ", "so, ", "hence, "];
     for marker in &conclusion_markers {
-        if let Some(pos) = lower.rfind(marker) {
-            let after = &trimmed[pos + marker.len()..];
+        if let Some((_, marker_end)) = crate::text_util::rfind_ci_range(trimmed, marker) {
+            let after = &trimmed[marker_end..];
             let after = after
                 .trim()
                 .trim_start_matches('(')

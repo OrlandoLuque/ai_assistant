@@ -394,23 +394,21 @@ impl AnswerExtractor {
 
     fn extract_with_indicators(&self, sentences: &[String]) -> Option<ExtractedAnswer> {
         for (i, sentence) in sentences.iter().enumerate() {
-            let lower = sentence.to_lowercase();
-
             for indicator in &self.answer_indicators {
-                if lower.contains(indicator) {
-                    // Extract the part after the indicator
-                    if let Some(pos) = lower.find(indicator) {
-                        let answer_part = &sentence[pos + indicator.len()..];
-                        if !answer_part.trim().is_empty() {
-                            return Some(ExtractedAnswer {
-                                answer: self.truncate_answer(answer_part.trim()),
-                                confidence: 0.85,
-                                position: i,
-                                context: self.get_context(sentences, i),
-                                answer_type: AnswerType::Factual,
-                                evidence: vec![sentence.clone()],
-                            });
-                        }
+                // Case-insensitive match on the ORIGINAL sentence so the offset
+                // is valid there (a `to_lowercase()` copy drifts on
+                // length-changing chars → slice could panic off a boundary).
+                if let Some((_, ind_end)) = crate::text_util::find_ci_range(sentence, indicator) {
+                    let answer_part = &sentence[ind_end..];
+                    if !answer_part.trim().is_empty() {
+                        return Some(ExtractedAnswer {
+                            answer: self.truncate_answer(answer_part.trim()),
+                            confidence: 0.85,
+                            position: i,
+                            context: self.get_context(sentences, i),
+                            answer_type: AnswerType::Factual,
+                            evidence: vec![sentence.clone()],
+                        });
                     }
                 }
             }

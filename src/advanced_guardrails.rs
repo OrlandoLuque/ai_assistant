@@ -546,14 +546,25 @@ impl BiasDetector {
     }
 
     fn extract_context(&self, text: &str, pattern: &str) -> String {
-        let lower = text.to_lowercase();
-        if let Some(pos) = lower.find(&pattern.to_lowercase()) {
-            let start = pos.saturating_sub(30);
-            let end = (pos + pattern.len() + 30).min(text.len());
-            format!("...{}...", &text[start..end])
-        } else {
-            String::new()
+        // Find the pattern in the ORIGINAL text (case-insensitive). Using a
+        // `pos` from `text.to_lowercase()` was a bug: lowercasing can change
+        // byte lengths (ß→ss, İ→i̇), so that offset is not always valid in
+        // `text` — and the raw ±30-byte window could land off a UTF-8 char
+        // boundary and panic the slice on multi-byte input.
+        let Some((match_start, match_end)) = crate::text_util::find_ci_range(text, pattern) else {
+            return String::new();
+        };
+        // Widen ~30 bytes each side, snapped to char boundaries so the slice is
+        // always valid.
+        let mut start = match_start.saturating_sub(30);
+        while start > 0 && !text.is_char_boundary(start) {
+            start -= 1;
         }
+        let mut end = (match_end + 30).min(text.len());
+        while end < text.len() && !text.is_char_boundary(end) {
+            end += 1;
+        }
+        format!("...{}...", &text[start..end])
     }
 
     fn calculate_severity(&self, pattern: &str) -> f32 {
@@ -1181,6 +1192,30 @@ pub struct FullSafetyCheck {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bias_detect_multibyte_context_no_panic() {
+        // Regression: extract_context sliced `text` with byte offsets computed
+        // from `text.to_lowercase()` and a raw ±30-byte window, which panicked
+        // on multi-byte UTF-8 (and could use offsets invalid in the original).
+        let detector = BiasDetector::new(BiasConfig::default());
+        for text in [
+            "Ñoño, ¿por qué eres tan bossy? 😀 Zürich café niño",
+            "münchen straße — man up, cabrón 🚀 émile",
+            "😀😀😀 those people 日本語 café ñ",
+            "bossy",        // pattern at the very start
+            "café ¿ bossy", // pattern at the very end
+        ] {
+            let result = detector.detect(text); // must not panic
+                                                // A pattern is present, so we should get an occurrence with context.
+            if text.contains("bossy") || text.contains("man up") || text.contains("those people") {
+                assert!(
+                    !result.occurrences.is_empty(),
+                    "expected a bias occurrence for: {text:?}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn test_constitutional_principle() {

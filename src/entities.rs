@@ -394,38 +394,42 @@ impl EntityExtractor {
     /// Extract programming languages
     fn extract_programming_languages(&self, text: &str) -> Vec<Entity> {
         let mut entities = Vec::new();
-        let text_lower = text.to_lowercase();
-
         for lang in &self.programming_languages {
             let mut search_start = 0;
-            while let Some(pos) = text_lower[search_start..].find(lang) {
-                let abs_pos = search_start + pos;
-                // Check word boundaries
-                let before_ok = abs_pos == 0
-                    || !text
+            // Case-insensitive search on the ORIGINAL text: `find_ci_range`
+            // returns byte offsets valid in `text`. (Offsets from a
+            // `to_lowercase()` copy drift on length-changing chars and could
+            // slice off a UTF-8 char boundary → panic.)
+            while let Some((rel_start, rel_end)) =
+                crate::text_util::find_ci_range(&text[search_start..], lang)
+            {
+                let start = search_start + rel_start;
+                let end = search_start + rel_end;
+                // Check word boundaries around the match (char-safe).
+                let before_ok = start == 0
+                    || !text[..start]
                         .chars()
-                        .nth(abs_pos - 1)
+                        .next_back()
                         .map(|c| c.is_alphanumeric())
                         .unwrap_or(false);
-                let after_ok = abs_pos + lang.len() >= text.len()
-                    || !text
+                let after_ok = end >= text.len()
+                    || !text[end..]
                         .chars()
-                        .nth(abs_pos + lang.len())
+                        .next()
                         .map(|c| c.is_alphanumeric())
                         .unwrap_or(false);
 
                 if before_ok && after_ok {
-                    let original = &text[abs_pos..abs_pos + lang.len()];
                     entities.push(Entity::new(
-                        original,
+                        &text[start..end],
                         EntityType::ProgrammingLanguage,
                         0.85,
-                        abs_pos,
-                        abs_pos + lang.len(),
+                        start,
+                        end,
                     ));
                 }
 
-                search_start = abs_pos + lang.len();
+                search_start = end;
             }
         }
 
@@ -644,17 +648,21 @@ impl EntityExtractor {
     /// Extract organizations (heuristic)
     fn extract_organizations(&self, text: &str) -> Vec<Entity> {
         let mut entities = Vec::new();
-        let text_lower = text.to_lowercase();
 
         for suffix in &self.org_suffixes {
             let pattern = format!(" {}", suffix);
             let mut search_start = 0;
 
-            while let Some(pos) = text_lower[search_start..].find(&pattern) {
-                let abs_pos = search_start + pos;
+            // Search the ORIGINAL text case-insensitively (valid byte offsets,
+            // no panic — see note in `extract_programming_languages`).
+            while let Some((rel_start, rel_end)) =
+                crate::text_util::find_ci_range(&text[search_start..], &pattern)
+            {
+                let match_start = search_start + rel_start;
+                let match_end = search_start + rel_end;
 
                 // Find start of organization name (previous capitalized words)
-                let before = &text[..abs_pos];
+                let before = &text[..match_start];
                 let words: Vec<&str> = before.split_whitespace().collect();
 
                 if let Some(last_word) = words.last() {
@@ -664,11 +672,10 @@ impl EntityExtractor {
                         .map(|c| c.is_uppercase())
                         .unwrap_or(false)
                     {
-                        let org_name = format!(
-                            "{} {}",
-                            last_word,
-                            &text[abs_pos + 1..abs_pos + 1 + suffix.len()]
-                        );
+                        // Matched suffix minus the leading ASCII space (so
+                        // `match_start + 1` is a valid char boundary).
+                        let org_name =
+                            format!("{} {}", last_word, &text[match_start + 1..match_end]);
                         if let Some(start) = text.find(&org_name) {
                             entities.push(Entity::new(
                                 &org_name,
@@ -681,7 +688,7 @@ impl EntityExtractor {
                     }
                 }
 
-                search_start = abs_pos + suffix.len();
+                search_start = match_end;
             }
         }
 
@@ -691,28 +698,29 @@ impl EntityExtractor {
     /// Apply a custom pattern
     fn apply_custom_pattern(&self, text: &str, pattern: &EntityCustomPattern) -> Vec<Entity> {
         let mut entities = Vec::new();
-        let text_lower = text.to_lowercase();
-
         for keyword in &pattern.keywords {
-            let keyword_lower = keyword.to_lowercase();
             let mut search_start = 0;
 
-            while let Some(pos) = text_lower[search_start..].find(&keyword_lower) {
-                let abs_pos = search_start + pos;
-                let original = &text[abs_pos..abs_pos + keyword.len()];
+            // Search the ORIGINAL text case-insensitively (see note in
+            // `extract_programming_languages`): valid byte offsets, no panic.
+            while let Some((rel_start, rel_end)) =
+                crate::text_util::find_ci_range(&text[search_start..], keyword)
+            {
+                let start = search_start + rel_start;
+                let end = search_start + rel_end;
 
                 entities.push(
                     Entity::new(
-                        original,
+                        &text[start..end],
                         pattern.entity_type,
                         pattern.confidence,
-                        abs_pos,
-                        abs_pos + keyword.len(),
+                        start,
+                        end,
                     )
                     .with_metadata("pattern", &pattern.name),
                 );
 
-                search_start = abs_pos + keyword.len();
+                search_start = end;
             }
         }
 
@@ -1345,6 +1353,23 @@ impl FactStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extract_multibyte_no_panic() {
+        // Regression: extraction found offsets in a `to_lowercase()` copy and
+        // sliced the ORIGINAL text; a length-changing char (İ, ß, ﬀ …) before a
+        // match drifted the offset and could slice off a UTF-8 boundary → panic.
+        let extractor = EntityExtractor::new(EntityExtractorConfig::default());
+        for text in [
+            "İstanbul: usé Python y Rust en Açaí Corp. café ☕",
+            "straße münchen — I wrote it in JavaScript at Zürich Inc.",
+            "ﬀ ligature test with Java at Åre Ltd. 日本語",
+            "Python",
+            "café Python ñ Rust",
+        ] {
+            let _ = extractor.extract(text); // must not panic
+        }
+    }
 
     #[test]
     fn test_entity_extraction_email() {
