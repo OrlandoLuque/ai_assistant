@@ -871,6 +871,41 @@ pub fn generate_kobold_response(
     Ok(content)
 }
 
+/// Build the sender that streamed chunks are written to, inserting a PII-unmask
+/// relay when (and only when) the input was masked.
+///
+/// The non-streaming path unmasks its whole response at the end; streaming has
+/// no single "end", so we relay each `AiResponse` through an intermediate
+/// channel and unmask the text of `Chunk` / `Complete` / `Cancelled` before it
+/// reaches the caller. When `pii_map` is empty (all local providers) there is
+/// nothing to unmask, so the caller's own sender is returned unchanged.
+fn pii_unmask_relay(
+    tx: &Sender<AiResponse>,
+    pii_map: &crate::pii_tokenizer::PiiTokenMap,
+) -> (Sender<AiResponse>, Option<std::thread::JoinHandle<()>>) {
+    if pii_map.is_empty() {
+        return (tx.clone(), None);
+    }
+    let (inner_tx, inner_rx) = std::sync::mpsc::channel::<AiResponse>();
+    let out = tx.clone();
+    let map = pii_map.clone();
+    let handle = std::thread::spawn(move || {
+        use crate::pii_tokenizer::PiiTokenizer;
+        for msg in inner_rx {
+            let unmasked = match msg {
+                AiResponse::Chunk(t) => AiResponse::Chunk(PiiTokenizer::unmask(&t, &map)),
+                AiResponse::Complete(t) => AiResponse::Complete(PiiTokenizer::unmask(&t, &map)),
+                AiResponse::Cancelled(t) => AiResponse::Cancelled(PiiTokenizer::unmask(&t, &map)),
+                other => other,
+            };
+            if out.send(unmasked).is_err() {
+                break;
+            }
+        }
+    });
+    (inner_tx, Some(handle))
+}
+
 /// Generate response with streaming - routes to appropriate provider
 pub fn generate_response_streaming(
     config: &AiConfig,
@@ -925,8 +960,14 @@ pub fn generate_response_streaming(
         );
     }
 
+    // Route streamed chunks through a PII-unmask relay (a no-op passthrough for
+    // local providers, whose `pii_map` is empty).
+    let (dispatch_tx, relay) = pii_unmask_relay(tx, &pii_map);
+
     let result = match &config.provider {
-        AiProvider::Ollama => generate_ollama_streaming(config, conversation, system_prompt, tx),
+        AiProvider::Ollama => {
+            generate_ollama_streaming(config, conversation, system_prompt, &dispatch_tx)
+        }
         AiProvider::KoboldCpp => {
             // Kobold doesn't support streaming well, fall back to non-streaming
             log::warn!(
@@ -934,7 +975,7 @@ pub fn generate_response_streaming(
                 config.selected_model
             );
             let response = generate_kobold_response(config, conversation, system_prompt)?;
-            let _ = tx.send(AiResponse::Complete(response));
+            let _ = dispatch_tx.send(AiResponse::Complete(response));
             Ok(())
         }
         AiProvider::LMStudio
@@ -953,13 +994,13 @@ pub fn generate_response_streaming(
         | AiProvider::Mistral
         | AiProvider::Perplexity
         | AiProvider::OpenRouter => {
-            generate_openai_streaming(config, conversation, system_prompt, tx)
+            generate_openai_streaming(config, conversation, system_prompt, &dispatch_tx)
         }
         AiProvider::AzureOpenAI { .. } => crate::cloud_providers::generate_azure_openai_streaming(
             config,
             conversation,
             system_prompt,
-            tx,
+            &dispatch_tx,
         ),
         AiProvider::Gemini => {
             // Gemini uses its own API format, not OpenAI-compatible
@@ -969,10 +1010,17 @@ pub fn generate_response_streaming(
             );
             let response =
                 crate::cloud_providers::generate_gemini_cloud(config, conversation, system_prompt)?;
-            let _ = tx.send(AiResponse::Complete(response));
+            let _ = dispatch_tx.send(AiResponse::Complete(response));
             Ok(())
         }
     };
+
+    // Close our end and flush the relay (if any) so every unmasked chunk has
+    // reached the caller before we return.
+    drop(dispatch_tx);
+    if let Some(handle) = relay {
+        let _ = handle.join();
+    }
 
     let latency_ms = start.elapsed().as_millis();
     match &result {
@@ -1293,7 +1341,7 @@ pub fn generate_response_streaming_cancellable(
     cancel_token: &CancellationToken,
 ) -> Result<()> {
     // PII protection for cloud providers
-    let mut _pii_map = crate::pii_tokenizer::PiiTokenMap::new();
+    let mut pii_map = crate::pii_tokenizer::PiiTokenMap::new();
     let pii_conversation: Vec<ChatMessage>;
     let conversation = if config.provider.is_cloud() {
         let mut tokenizer = crate::pii_tokenizer::PiiTokenizer::with_default();
@@ -1301,7 +1349,7 @@ pub fn generate_response_streaming_cancellable(
             .iter()
             .map(|msg| {
                 let (masked_content, map) = tokenizer.mask(&msg.content);
-                _pii_map.extend(map);
+                pii_map.extend(map);
                 ChatMessage {
                     role: msg.role.clone(),
                     content: masked_content,
@@ -1332,12 +1380,17 @@ pub fn generate_response_streaming_cancellable(
         config.selected_model
     );
 
+    // Route streamed chunks through a PII-unmask relay (a no-op passthrough for
+    // local providers). Cancellation notices carry no text, so they go straight
+    // to the caller's sender.
+    let (dispatch_tx, relay) = pii_unmask_relay(tx, &pii_map);
+
     let result = match &config.provider {
         AiProvider::Ollama => generate_ollama_streaming_cancellable(
             config,
             conversation,
             system_prompt,
-            tx,
+            &dispatch_tx,
             cancel_token,
         ),
         AiProvider::KoboldCpp => {
@@ -1356,7 +1409,7 @@ pub fn generate_response_streaming_cancellable(
                 config.selected_model
             );
             let response = generate_kobold_response(config, conversation, system_prompt)?;
-            let _ = tx.send(AiResponse::Complete(response));
+            let _ = dispatch_tx.send(AiResponse::Complete(response));
             Ok(())
         }
         AiProvider::LMStudio
@@ -1378,7 +1431,7 @@ pub fn generate_response_streaming_cancellable(
             config,
             conversation,
             system_prompt,
-            tx,
+            &dispatch_tx,
             cancel_token,
         ),
         AiProvider::AzureOpenAI { .. } => {
@@ -1394,7 +1447,7 @@ pub fn generate_response_streaming_cancellable(
                 config,
                 conversation,
                 system_prompt,
-                tx,
+                &dispatch_tx,
             )
         }
         AiProvider::Gemini => {
@@ -1412,10 +1465,16 @@ pub fn generate_response_streaming_cancellable(
             );
             let response =
                 crate::cloud_providers::generate_gemini_cloud(config, conversation, system_prompt)?;
-            let _ = tx.send(AiResponse::Complete(response));
+            let _ = dispatch_tx.send(AiResponse::Complete(response));
             Ok(())
         }
     };
+
+    // Close our end and flush the relay (if any) before returning.
+    drop(dispatch_tx);
+    if let Some(handle) = relay {
+        let _ = handle.join();
+    }
 
     let latency_ms = start.elapsed().as_millis();
     match &result {
@@ -2757,6 +2816,61 @@ impl AuditedProvider {
 // ---------------------------------------------------------------------------
 // ProviderRegistry tests
 // ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod pii_stream_relay_tests {
+    use super::*;
+
+    #[test]
+    fn relay_unmasks_streamed_chunks() {
+        // Mask a real email, then stream the masked text back through the relay
+        // and confirm it is unmasked before reaching the caller (the bug: the
+        // streaming path built the map but never applied it).
+        let mut tok = crate::pii_tokenizer::PiiTokenizer::with_default();
+        let (masked, map) = tok.mask("email me at real.person@example.com please");
+        assert!(!map.is_empty(), "the email should have been masked");
+        assert!(
+            !masked.contains("real.person@example.com"),
+            "masked text still contains the raw email: {masked}"
+        );
+
+        let (out_tx, out_rx) = std::sync::mpsc::channel();
+        let (dispatch_tx, relay) = pii_unmask_relay(&out_tx, &map);
+        dispatch_tx.send(AiResponse::Chunk(masked.clone())).unwrap();
+        dispatch_tx
+            .send(AiResponse::Complete(masked.clone()))
+            .unwrap();
+        drop(dispatch_tx);
+        if let Some(h) = relay {
+            h.join().unwrap();
+        }
+
+        match out_rx.recv().unwrap() {
+            AiResponse::Chunk(t) => assert!(t.contains("real.person@example.com"), "chunk: {t}"),
+            other => panic!("expected Chunk, got {other:?}"),
+        }
+        match out_rx.recv().unwrap() {
+            AiResponse::Complete(t) => {
+                assert!(t.contains("real.person@example.com"), "complete: {t}")
+            }
+            other => panic!("expected Complete, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn relay_is_passthrough_without_masking() {
+        // No masking (local providers) => no relay thread, sender unchanged.
+        let empty = crate::pii_tokenizer::PiiTokenMap::new();
+        let (out_tx, out_rx) = std::sync::mpsc::channel();
+        let (dispatch_tx, relay) = pii_unmask_relay(&out_tx, &empty);
+        assert!(relay.is_none(), "no relay thread should be spawned");
+        dispatch_tx
+            .send(AiResponse::Chunk("hola".to_string()))
+            .unwrap();
+        drop(dispatch_tx);
+        assert!(matches!(out_rx.recv().unwrap(), AiResponse::Chunk(t) if t == "hola"));
+    }
+}
 
 #[cfg(test)]
 mod provider_registry_tests {
