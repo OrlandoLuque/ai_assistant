@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.160"
+version = "0.2.161"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -1210,8 +1210,13 @@ codegen-units = 1
 opt-level = "z"
 # Strip symbols from binary
 strip = true
-# Abort on panic (smaller binary, no unwinding)
-panic = "abort"
+# Unwind on panic. Slightly larger (landing pads + unwinding tables) but
+# REQUIRED for correctness/security: `std::panic::catch_unwind` is a no-op under
+# `panic = "abort"`, which would silently defeat the GuardrailPipeline's
+# fail-closed-on-panicking-guard protection and turn every latent panic into a
+# hard process crash with no per-operation recovery. (The hardened
+# `release-protected` profile keeps `abort` on purpose — less string leakage.)
+panic = "unwind"
 
 [profile.release-fast]
 inherits = "release"
