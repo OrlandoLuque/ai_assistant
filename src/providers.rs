@@ -964,56 +964,13 @@ pub fn generate_response_streaming(
     // local providers, whose `pii_map` is empty).
     let (dispatch_tx, relay) = pii_unmask_relay(tx, &pii_map);
 
-    let result = match &config.provider {
-        AiProvider::Ollama => {
-            generate_ollama_streaming(config, conversation, system_prompt, &dispatch_tx)
-        }
-        AiProvider::KoboldCpp => {
-            // Kobold doesn't support streaming well, fall back to non-streaming
-            log::warn!(
-                "[llm] provider=KoboldCpp model={} fallback=non-streaming reason=kobold_no_stream_support",
-                config.selected_model
-            );
-            let response = generate_kobold_response(config, conversation, system_prompt)?;
-            let _ = dispatch_tx.send(AiResponse::Complete(response));
-            Ok(())
-        }
-        AiProvider::LMStudio
-        | AiProvider::TextGenWebUI
-        | AiProvider::LocalAI
-        | AiProvider::LlamaCpp
-        | AiProvider::VLLM
-        | AiProvider::OpenAICompatible { .. }
-        | AiProvider::OpenAI
-        | AiProvider::Anthropic
-        | AiProvider::Bedrock { .. }
-        | AiProvider::Groq
-        | AiProvider::Together
-        | AiProvider::Fireworks
-        | AiProvider::DeepSeek
-        | AiProvider::Mistral
-        | AiProvider::Perplexity
-        | AiProvider::OpenRouter => {
-            generate_openai_streaming(config, conversation, system_prompt, &dispatch_tx)
-        }
-        AiProvider::AzureOpenAI { .. } => crate::cloud_providers::generate_azure_openai_streaming(
-            config,
-            conversation,
-            system_prompt,
-            &dispatch_tx,
-        ),
-        AiProvider::Gemini => {
-            // Gemini uses its own API format, not OpenAI-compatible
-            log::info!(
-                "[llm] provider=Gemini model={} fallback=non-streaming reason=gemini_custom_api",
-                config.selected_model
-            );
-            let response =
-                crate::cloud_providers::generate_gemini_cloud(config, conversation, system_prompt)?;
-            let _ = dispatch_tx.send(AiResponse::Complete(response));
-            Ok(())
-        }
-    };
+    // Dispatch via the phase-3 raw adapter factory (streamed chunks flow into
+    // the PII-unmask relay's `dispatch_tx`).
+    let result = crate::llm_provider::raw_provider_from_config(config.clone()).generate_streaming(
+        conversation,
+        system_prompt,
+        &dispatch_tx,
+    );
 
     // Close our end and flush the relay (if any) so every unmasked chunk has
     // reached the caller before we return.
@@ -1098,32 +1055,10 @@ pub fn generate_response(
         );
     }
 
-    let result = match &config.provider {
-        AiProvider::Ollama => generate_ollama_response(config, conversation, system_prompt),
-        AiProvider::KoboldCpp => generate_kobold_response(config, conversation, system_prompt),
-        AiProvider::LMStudio
-        | AiProvider::TextGenWebUI
-        | AiProvider::LocalAI
-        | AiProvider::LlamaCpp
-        | AiProvider::VLLM
-        | AiProvider::OpenAICompatible { .. }
-        | AiProvider::OpenAI
-        | AiProvider::Anthropic
-        | AiProvider::Bedrock { .. }
-        | AiProvider::Groq
-        | AiProvider::Together
-        | AiProvider::Fireworks
-        | AiProvider::DeepSeek
-        | AiProvider::Mistral
-        | AiProvider::Perplexity
-        | AiProvider::OpenRouter => generate_openai_response(config, conversation, system_prompt),
-        AiProvider::AzureOpenAI { .. } => {
-            crate::cloud_providers::generate_azure_openai_cloud(config, conversation, system_prompt)
-        }
-        AiProvider::Gemini => {
-            crate::cloud_providers::generate_gemini_cloud(config, conversation, system_prompt)
-        }
-    };
+    // Dispatch via the phase-3 raw adapter factory — this was one of three
+    // identical `match &config.provider` blocks. PII mask/unmask stays here.
+    let result = crate::llm_provider::raw_provider_from_config(config.clone())
+        .generate(conversation, system_prompt);
 
     let latency_ms = start.elapsed().as_millis();
     match &result {
@@ -1385,90 +1320,11 @@ pub fn generate_response_streaming_cancellable(
     // to the caller's sender.
     let (dispatch_tx, relay) = pii_unmask_relay(tx, &pii_map);
 
-    let result = match &config.provider {
-        AiProvider::Ollama => generate_ollama_streaming_cancellable(
-            config,
-            conversation,
-            system_prompt,
-            &dispatch_tx,
-            cancel_token,
-        ),
-        AiProvider::KoboldCpp => {
-            // Kobold doesn't support streaming well, fall back to non-streaming
-            // Check cancellation before blocking call
-            if cancel_token.is_cancelled() {
-                log::info!(
-                    "[llm] provider=KoboldCpp model={} status=cancelled reason=pre_kobold_call",
-                    config.selected_model
-                );
-                let _ = tx.send(AiResponse::Cancelled(String::new()));
-                return Ok(());
-            }
-            log::warn!(
-                "[llm] provider=KoboldCpp model={} fallback=non-streaming reason=kobold_no_stream_support",
-                config.selected_model
-            );
-            let response = generate_kobold_response(config, conversation, system_prompt)?;
-            let _ = dispatch_tx.send(AiResponse::Complete(response));
-            Ok(())
-        }
-        AiProvider::LMStudio
-        | AiProvider::TextGenWebUI
-        | AiProvider::LocalAI
-        | AiProvider::LlamaCpp
-        | AiProvider::VLLM
-        | AiProvider::OpenAICompatible { .. }
-        | AiProvider::OpenAI
-        | AiProvider::Anthropic
-        | AiProvider::Bedrock { .. }
-        | AiProvider::Groq
-        | AiProvider::Together
-        | AiProvider::Fireworks
-        | AiProvider::DeepSeek
-        | AiProvider::Mistral
-        | AiProvider::Perplexity
-        | AiProvider::OpenRouter => generate_openai_streaming_cancellable(
-            config,
-            conversation,
-            system_prompt,
-            &dispatch_tx,
-            cancel_token,
-        ),
-        AiProvider::AzureOpenAI { .. } => {
-            if cancel_token.is_cancelled() {
-                log::info!(
-                    "[llm] provider=AzureOpenAI model={} status=cancelled reason=pre_azure_call",
-                    config.selected_model
-                );
-                let _ = tx.send(AiResponse::Cancelled(String::new()));
-                return Ok(());
-            }
-            crate::cloud_providers::generate_azure_openai_streaming(
-                config,
-                conversation,
-                system_prompt,
-                &dispatch_tx,
-            )
-        }
-        AiProvider::Gemini => {
-            if cancel_token.is_cancelled() {
-                log::info!(
-                    "[llm] provider=Gemini model={} status=cancelled reason=pre_gemini_call",
-                    config.selected_model
-                );
-                let _ = tx.send(AiResponse::Cancelled(String::new()));
-                return Ok(());
-            }
-            log::info!(
-                "[llm] provider=Gemini model={} fallback=non-streaming reason=gemini_custom_api",
-                config.selected_model
-            );
-            let response =
-                crate::cloud_providers::generate_gemini_cloud(config, conversation, system_prompt)?;
-            let _ = dispatch_tx.send(AiResponse::Complete(response));
-            Ok(())
-        }
-    };
+    // Dispatch via the phase-3 raw adapter factory. The per-provider
+    // cancellation checks + fallbacks now live in the adapters; streamed chunks
+    // flow into the PII-unmask relay's `dispatch_tx`.
+    let result = crate::llm_provider::raw_provider_from_config(config.clone())
+        .generate_streaming_cancellable(conversation, system_prompt, &dispatch_tx, cancel_token);
 
     // Close our end and flush the relay (if any) before returning.
     drop(dispatch_tx);

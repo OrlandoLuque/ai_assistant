@@ -183,6 +183,207 @@ pub fn provider_from_config(config: AiConfig) -> Box<dyn LlmProvider> {
     }
 }
 
+// ── Internal raw per-provider adapters (phase 3) ────────────────────────────
+//
+// These do the per-provider dispatch by delegating to the low-level
+// `providers::*` / `cloud_providers::*` functions, WITHOUT PII masking — the
+// mask/unmask stays in `generate_response*`, which wrap these. They exist so the
+// three identical `match &config.provider` blocks in `providers.rs` collapse
+// into the single `raw_provider_from_config` dispatch below. Each method mirrors
+// exactly what the corresponding match arm did.
+
+/// Kobold.cpp: no real streaming — the streaming methods produce the full
+/// response as one `Complete` (matching the old match's fallback).
+pub(crate) struct RawKoboldProvider {
+    pub config: AiConfig,
+}
+
+impl LlmProvider for RawKoboldProvider {
+    fn generate(&self, conversation: &[ChatMessage], system_prompt: &str) -> Result<String> {
+        crate::providers::generate_kobold_response(&self.config, conversation, system_prompt)
+    }
+    fn generate_streaming(
+        &self,
+        conversation: &[ChatMessage],
+        system_prompt: &str,
+        tx: &Sender<AiResponse>,
+    ) -> Result<()> {
+        let response =
+            crate::providers::generate_kobold_response(&self.config, conversation, system_prompt)?;
+        let _ = tx.send(AiResponse::Complete(response));
+        Ok(())
+    }
+    fn generate_streaming_cancellable(
+        &self,
+        conversation: &[ChatMessage],
+        system_prompt: &str,
+        tx: &Sender<AiResponse>,
+        cancel_token: &CancellationToken,
+    ) -> Result<()> {
+        if cancel_token.is_cancelled() {
+            let _ = tx.send(AiResponse::Cancelled(String::new()));
+            return Ok(());
+        }
+        let response =
+            crate::providers::generate_kobold_response(&self.config, conversation, system_prompt)?;
+        let _ = tx.send(AiResponse::Complete(response));
+        Ok(())
+    }
+    fn backend_name(&self) -> &'static str {
+        "kobold"
+    }
+}
+
+/// The whole OpenAI-compatible family (LM Studio, vLLM, llama.cpp, OpenAI,
+/// Anthropic, Bedrock, Groq, ... — every arm that dispatched to
+/// `generate_openai_*`).
+pub(crate) struct RawOpenAiCompatProvider {
+    pub config: AiConfig,
+}
+
+impl LlmProvider for RawOpenAiCompatProvider {
+    fn generate(&self, conversation: &[ChatMessage], system_prompt: &str) -> Result<String> {
+        crate::providers::generate_openai_response(&self.config, conversation, system_prompt)
+    }
+    fn generate_streaming(
+        &self,
+        conversation: &[ChatMessage],
+        system_prompt: &str,
+        tx: &Sender<AiResponse>,
+    ) -> Result<()> {
+        crate::providers::generate_openai_streaming(&self.config, conversation, system_prompt, tx)
+    }
+    fn generate_streaming_cancellable(
+        &self,
+        conversation: &[ChatMessage],
+        system_prompt: &str,
+        tx: &Sender<AiResponse>,
+        cancel_token: &CancellationToken,
+    ) -> Result<()> {
+        crate::providers::generate_openai_streaming_cancellable(
+            &self.config,
+            conversation,
+            system_prompt,
+            tx,
+            cancel_token,
+        )
+    }
+    fn backend_name(&self) -> &'static str {
+        "openai-compatible"
+    }
+}
+
+/// Azure OpenAI cloud.
+pub(crate) struct RawAzureProvider {
+    pub config: AiConfig,
+}
+
+impl LlmProvider for RawAzureProvider {
+    fn generate(&self, conversation: &[ChatMessage], system_prompt: &str) -> Result<String> {
+        crate::cloud_providers::generate_azure_openai_cloud(
+            &self.config,
+            conversation,
+            system_prompt,
+        )
+    }
+    fn generate_streaming(
+        &self,
+        conversation: &[ChatMessage],
+        system_prompt: &str,
+        tx: &Sender<AiResponse>,
+    ) -> Result<()> {
+        crate::cloud_providers::generate_azure_openai_streaming(
+            &self.config,
+            conversation,
+            system_prompt,
+            tx,
+        )
+    }
+    fn generate_streaming_cancellable(
+        &self,
+        conversation: &[ChatMessage],
+        system_prompt: &str,
+        tx: &Sender<AiResponse>,
+        cancel_token: &CancellationToken,
+    ) -> Result<()> {
+        if cancel_token.is_cancelled() {
+            let _ = tx.send(AiResponse::Cancelled(String::new()));
+            return Ok(());
+        }
+        crate::cloud_providers::generate_azure_openai_streaming(
+            &self.config,
+            conversation,
+            system_prompt,
+            tx,
+        )
+    }
+    fn backend_name(&self) -> &'static str {
+        "azure-openai"
+    }
+}
+
+/// Google Gemini cloud — its own API, no OpenAI-compatible streaming, so the
+/// streaming methods produce the full response as one `Complete`.
+pub(crate) struct RawGeminiProvider {
+    pub config: AiConfig,
+}
+
+impl LlmProvider for RawGeminiProvider {
+    fn generate(&self, conversation: &[ChatMessage], system_prompt: &str) -> Result<String> {
+        crate::cloud_providers::generate_gemini_cloud(&self.config, conversation, system_prompt)
+    }
+    fn generate_streaming(
+        &self,
+        conversation: &[ChatMessage],
+        system_prompt: &str,
+        tx: &Sender<AiResponse>,
+    ) -> Result<()> {
+        let response = crate::cloud_providers::generate_gemini_cloud(
+            &self.config,
+            conversation,
+            system_prompt,
+        )?;
+        let _ = tx.send(AiResponse::Complete(response));
+        Ok(())
+    }
+    fn generate_streaming_cancellable(
+        &self,
+        conversation: &[ChatMessage],
+        system_prompt: &str,
+        tx: &Sender<AiResponse>,
+        cancel_token: &CancellationToken,
+    ) -> Result<()> {
+        if cancel_token.is_cancelled() {
+            let _ = tx.send(AiResponse::Cancelled(String::new()));
+            return Ok(());
+        }
+        let response = crate::cloud_providers::generate_gemini_cloud(
+            &self.config,
+            conversation,
+            system_prompt,
+        )?;
+        let _ = tx.send(AiResponse::Complete(response));
+        Ok(())
+    }
+    fn backend_name(&self) -> &'static str {
+        "gemini"
+    }
+}
+
+/// Internal dispatch factory (no PII) used inside `generate_response*` to
+/// replace the three identical `match &config.provider` blocks. PII masking is
+/// applied by the wrappers around this, so these adapters stay raw.
+pub(crate) fn raw_provider_from_config(config: AiConfig) -> Box<dyn LlmProvider> {
+    match config.provider {
+        AiProvider::Ollama => Box::new(OllamaAdapter::new(config)),
+        AiProvider::KoboldCpp => Box::new(RawKoboldProvider { config }),
+        AiProvider::AzureOpenAI { .. } => Box::new(RawAzureProvider { config }),
+        AiProvider::Gemini => Box::new(RawGeminiProvider { config }),
+        // The whole OpenAI-compatible family (incl. OpenAI/Anthropic/Bedrock).
+        _ => Box::new(RawOpenAiCompatProvider { config }),
+    }
+}
+
 /// A trivial [`LlmProvider`] that answers every request with a fixed reply.
 ///
 /// The whole point of the port: inject this via
