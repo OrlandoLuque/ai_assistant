@@ -495,8 +495,8 @@ impl CodeEditor {
     pub fn move_line_down(&mut self, line_num: usize) -> Result<(), EditError> {
         let lines: Vec<&str> = self.editor.text().lines().collect();
 
-        if line_num >= lines.len() - 1 {
-            return Ok(()); // Can't move last line down
+        if line_num + 1 >= lines.len() {
+            return Ok(()); // Last line (or empty text) can't move down (avoids `len - 1` underflow).
         }
 
         // Swap with next line
@@ -731,6 +731,21 @@ impl CodeSearch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn move_line_edge_cases_no_panic() {
+        // Regression: move_line_down used `lines.len() - 1`, which underflowed
+        // (panic) on empty text. Also verify the boundary no-ops.
+        let mut empty = CodeEditor::new("", LanguageConfig::rust());
+        assert!(empty.move_line_down(0).is_ok());
+        assert!(empty.move_line_up(0).is_ok());
+
+        let mut ed = CodeEditor::new("a\nb\nc", LanguageConfig::rust());
+        assert!(ed.move_line_up(0).is_ok()); // first line up → no-op
+        assert!(ed.move_line_down(2).is_ok()); // last line down → no-op
+        assert!(ed.move_line_up(2).is_ok());
+        assert!(ed.move_line_down(0).is_ok());
+    }
 
     #[test]
     fn test_language_detection() {
