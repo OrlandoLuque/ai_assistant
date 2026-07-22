@@ -473,6 +473,7 @@ fn all_categories() -> Vec<(&'static str, fn() -> CategoryResult)> {
         ("agent", tests_agent),
         ("task_decomposition", tests_task_decomposition),
         ("document_parsing", tests_document_parsing),
+        ("document_ingestion", tests_document_ingestion),
         ("conversation_analytics", tests_conversation_analytics),
         ("vision", tests_vision),
         ("self_consistency", tests_self_consistency),

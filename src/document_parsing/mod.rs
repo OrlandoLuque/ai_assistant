@@ -43,6 +43,10 @@ pub use types::{
 };
 
 // From parser.rs
+/// Build a minimal valid single-page PDF containing the given text — a CI-safe,
+/// offline golden fixture for the PDF path (used by the test harness).
+#[cfg(feature = "pdf-extract")]
+pub use parser::make_minimal_pdf;
 pub use parser::DocumentParser;
 
 // From xml_helpers.rs

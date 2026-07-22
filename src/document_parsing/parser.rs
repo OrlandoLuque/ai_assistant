@@ -2697,3 +2697,78 @@ impl DocumentParser {
         rows
     }
 }
+
+/// Build a minimal, valid single-page PDF containing `text`, computing the
+/// xref byte offsets correctly. Deterministic and offline — a CI-safe golden
+/// fixture for the PDF path (no network, no pre-committed binary). `text` must
+/// not contain the PDF-special characters `(`, `)` or `\`.
+#[cfg(any(test, feature = "pdf-extract"))]
+pub fn make_minimal_pdf(text: &str) -> Vec<u8> {
+    let mut pdf: Vec<u8> = Vec::new();
+    let mut offsets: Vec<usize> = Vec::new();
+    let push = |pdf: &mut Vec<u8>, s: &str| pdf.extend_from_slice(s.as_bytes());
+
+    push(&mut pdf, "%PDF-1.4\n");
+    offsets.push(pdf.len());
+    push(
+        &mut pdf,
+        "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+    );
+    offsets.push(pdf.len());
+    push(
+        &mut pdf,
+        "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+    );
+    offsets.push(pdf.len());
+    push(
+        &mut pdf,
+        "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] \
+         /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n",
+    );
+    let content = format!("BT /F1 24 Tf 72 700 Td ({text}) Tj ET");
+    offsets.push(pdf.len());
+    push(
+        &mut pdf,
+        &format!(
+            "4 0 obj\n<< /Length {} >>\nstream\n{}\nendstream\nendobj\n",
+            content.len(),
+            content
+        ),
+    );
+    offsets.push(pdf.len());
+    push(
+        &mut pdf,
+        "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+    );
+
+    let xref_pos = pdf.len();
+    push(&mut pdf, "xref\n0 6\n0000000000 65535 f \n");
+    for off in &offsets {
+        push(&mut pdf, &format!("{off:010} 00000 n \n"));
+    }
+    push(
+        &mut pdf,
+        &format!("trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{xref_pos}\n%%EOF\n"),
+    );
+    pdf
+}
+
+#[cfg(all(test, feature = "pdf-extract"))]
+mod pdf_tests {
+    use super::*;
+
+    #[test]
+    fn parse_minimal_generated_pdf_extracts_text() {
+        let pdf = make_minimal_pdf("Hello PDF test 12345");
+        let parser = DocumentParser::new(DocumentParserConfig::default());
+        let doc = parser
+            .parse_bytes(&pdf, DocumentFormat::Pdf)
+            .expect("minimal PDF should parse");
+        assert!(
+            doc.text.contains("Hello PDF test 12345"),
+            "extracted text should contain the embedded string, got: {:?}",
+            doc.text
+        );
+        assert!(doc.word_count >= 4, "word_count = {}", doc.word_count);
+    }
+}

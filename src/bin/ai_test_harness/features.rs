@@ -936,6 +936,125 @@ pub(crate) fn tests_document_parsing() -> CategoryResult {
     }
 }
 
+// ─── Document Ingestion (real-world PDFs + large docs) ───────────────────────
+
+/// Download a stable, real arXiv PDF ("Attention Is All You Need") with on-disk
+/// caching. Returns `None` on ANY network error so the battery does not fail
+/// when offline — the deterministic offline test still exercises the PDF path.
+fn fetch_real_pdf() -> Option<Vec<u8>> {
+    use std::io::Read;
+    const URL: &str = "https://arxiv.org/pdf/1706.03762";
+    let dir = std::env::temp_dir().join("ai_assistant_test_pdfs");
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("arxiv_1706.03762.pdf");
+    if let Ok(bytes) = std::fs::read(&path) {
+        if bytes.len() > 10_000 {
+            return Some(bytes);
+        }
+    }
+    let resp = ureq::get(URL)
+        .timeout(std::time::Duration::from_secs(30))
+        .call()
+        .ok()?;
+    let mut buf = Vec::new();
+    resp.into_reader()
+        .take(15 * 1024 * 1024)
+        .read_to_end(&mut buf)
+        .ok()?;
+    if buf.len() < 10_000 {
+        return None;
+    }
+    let _ = std::fs::write(&path, &buf);
+    Some(buf)
+}
+
+pub(crate) fn tests_document_ingestion() -> CategoryResult {
+    use ai_assistant::{DocumentFormat, DocumentParser, DocumentParserConfig};
+
+    println!(
+        "\n{}",
+        bold(&cyan("▶ Document Ingestion (PDF / large real docs)"))
+    );
+    let mut results = Vec::new();
+
+    // 1) Offline, deterministic: a generated minimal PDF round-trips its text.
+    results.push(run_test("pdf minimal round-trip (offline)", || {
+        let pdf = ai_assistant::document_parsing::make_minimal_pdf(
+            "Grounding fact: the license costs 490 euros per year",
+        );
+        let parser = DocumentParser::new(DocumentParserConfig::default());
+        let doc = parser
+            .parse_bytes(&pdf, DocumentFormat::Pdf)
+            .map_err(|e| e.to_string())?;
+        if !doc.text.contains("490") {
+            return Err(format!("extracted text missing '490': {:?}", doc.text));
+        }
+        Ok(())
+    }));
+
+    // 2) Online, real-world large PDF: parse a full arXiv paper + golden strings.
+    results.push(run_test("pdf large real document parse (arxiv)", || {
+        let Some(pdf) = fetch_real_pdf() else {
+            println!("      (network unavailable — skipped real-PDF parse)");
+            return Ok(());
+        };
+        let parser = DocumentParser::new(DocumentParserConfig::default());
+        let doc = parser
+            .parse_bytes(&pdf, DocumentFormat::Pdf)
+            .map_err(|e| e.to_string())?;
+        if doc.word_count < 2000 {
+            return Err(format!(
+                "expected a large document, word_count = {}",
+                doc.word_count
+            ));
+        }
+        let lower = doc.text.to_lowercase();
+        for needle in ["attention", "transformer"] {
+            if !lower.contains(needle) {
+                return Err(format!("golden string '{needle}' missing from parsed PDF"));
+            }
+        }
+        Ok(())
+    }));
+
+    // 3) End-to-end: parse a large real doc -> retrieve. A paraphrase query must
+    //    surface the relevant passage (parse -> chunk -> retrieval pipeline).
+    results.push(run_test("pdf large doc end-to-end retrieval", || {
+        let Some(pdf) = fetch_real_pdf() else {
+            println!("      (network unavailable — skipped e2e retrieval)");
+            return Ok(());
+        };
+        let parser = DocumentParser::new(DocumentParserConfig::default());
+        let doc = parser
+            .parse_bytes(&pdf, DocumentFormat::Pdf)
+            .map_err(|e| e.to_string())?;
+        let passage = ai_assistant::knowledge_retrieval::select_relevant(
+            &doc.text,
+            "how does scaled dot-product attention work",
+            2000,
+        );
+        if passage.trim().is_empty() {
+            return Err("retrieval returned an empty passage".to_string());
+        }
+        let lower = passage.to_lowercase();
+        if !(lower.contains("softmax")
+            || lower.contains("dot-product")
+            || lower.contains("attention"))
+        {
+            return Err(format!(
+                "retrieval did not surface an attention passage: {:.200}",
+                passage
+            ));
+        }
+        Ok(())
+    }));
+
+    CategoryResult {
+        name: "document_ingestion".to_string(),
+        results,
+    }
+}
+
 // ─── Conversation Analytics ─────────────────────────────────────────────────
 
 pub(crate) fn tests_conversation_analytics() -> CategoryResult {
