@@ -73,27 +73,15 @@ Esto te da el contexto completo: dónde estamos, qué se ha hecho, cómo trabaja
 6. Tests para todo — el proyecto tiene 9.600+ tests y debe mantenerse así
 
 ## Plan Nocturno (Night Plan)
-Solo cuando el autor lo pide **explícitamente esa noche**. Trabaja todo lo que
-puedas en las tareas pedidas con el ciclo de calidad habitual (compila, clippy
-`-D warnings`, tests, batería, commit por cambio). Hay una **tarea de suspensión
-programada compartida** (`ClaudeNightSuspend`, p.ej. 02:00) como safety-net por
-si te quedas sin créditos a mitad de trabajo. Helper:
-`C:\Users\Lander\AppData\Local\Temp\night_suspend.ps1` (`-Time HH:MM` (re)programa,
-`-Cancel` la quita, `-Now` la quita y suspende ya). Comprueba la hora con
-`Get-Date` periódicamente y, **si sigues trabajando y se acerca la hora
-programada, reprográmala +30 min** (02:00 → 02:30 → 03:00 …).
-
-Dos variantes (el autor dice cuál):
-- **Solo** (por defecto si pide "y al terminar suspende"): al acabar TODO, quita
-  la programación y **suspende tú directamente** (`night_suspend.ps1 -Now`).
-- **Cooperativo** (cuando puede haber 2+ Claude Codes en paralelo): asegura que
-  exista la programación (créala si no hay), demórala si trabajas cerca de la
-  hora, pero al terminar **NO suspendas** — deja que la programación llegue sola.
-  Así el que aún trabaja la va demorando y nadie interrumpe a otro con una
-  suspensión directa; el último en acabar deja de demorarla y suspende sola.
-
-Fuera del plan nocturno explícito, **NUNCA suspendas/apagues** el equipo (ver
-memoria `feedback_no_suspend`).
+Definido en las **instrucciones globales de usuario** (`~/.claude/CLAUDE.md`),
+aplicable a cualquier proyecto de esta máquina. Resumen: solo cuando el autor lo
+pide explícitamente esa noche; safety-net `ClaudeNightSuspend` + helper
+`C:\Users\Lander\.claude\night_suspend.ps1` (ubicación estable, ya no en Temp);
+dos variantes **Solo** (al acabar suspende directamente) y **Cooperativo** (no
+suspende, deja que la programación llegue sola). Ciclo de calidad de este
+proyecto en el plan nocturno: compila, clippy `-D warnings`, tests, batería,
+commit por cambio. Fuera del plan nocturno explícito, **NUNCA suspendas/apagues**
+el equipo (ver memoria `feedback_no_suspend`).
 
 ## Documentos Generados
 - `Informe_Viabilidad_ai_assistant.docx` — Informe completo de viabilidad v2 (monetización, PI, licenciamiento)
