@@ -392,8 +392,11 @@ impl AiAssistant {
         let conversation = vec![crate::messages::ChatMessage::user(prompt)];
         let system_prompt = build_system_prompt(&self.system_prompt_base, &self.preferences, "");
 
-        // 4. Call the LLM synchronously
-        let response = generate_response(&self.config, &conversation, &system_prompt)
+        // 4. Call the LLM synchronously through the port (F5): honours an injected
+        // provider, else the config-dispatch chain.
+        let response = self
+            .resolve_provider()
+            .generate(&conversation, &system_prompt)
             .map_err(|e| crate::error::AiError::Other(format!("LLM generation failed: {}", e)))?;
 
         // 5. Validate the response against the grammar rules
@@ -493,7 +496,10 @@ impl AiAssistant {
             &self.preferences,
             &effective_knowledge,
         );
-        let response = generate_response(&self.config, &conversation, &system_prompt)
+        // Through the port (F5): honours an injected provider, else config-dispatch.
+        let response = self
+            .resolve_provider()
+            .generate(&conversation, &system_prompt)
             .map_err(|e| crate::error::AiError::Other(format!("LLM generation failed: {}", e)))?;
 
         // 2. Record in conversation

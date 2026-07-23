@@ -33,7 +33,7 @@ impl AiAssistant {
     /// one place.
     ///
     /// [`build_default_provider`]: Self::build_default_provider
-    fn resolve_provider(&self) -> std::sync::Arc<dyn crate::llm_provider::LlmProvider> {
+    pub(crate) fn resolve_provider(&self) -> std::sync::Arc<dyn crate::llm_provider::LlmProvider> {
         if let Some(p) = &self.llm_provider {
             return p.clone();
         }
@@ -695,17 +695,31 @@ impl AiAssistant {
         };
         let last_provider = self.fallback_last_provider.clone();
         let token = cancel_token.clone();
+        // Hexagonal port (F5): honour an injected provider on the cancellable
+        // path too; otherwise the default enum-dispatch fallback path.
+        let injected = self.llm_provider.clone();
 
         thread::spawn(move || {
-            try_generate_with_fallback(
-                &config,
-                &conversation,
-                &system_prompt,
-                &tx,
-                &fallback_providers,
-                Some(&token),
-                &last_provider,
-            );
+            if let Some(provider) = injected {
+                if let Err(e) = provider.generate_streaming_cancellable(
+                    &conversation,
+                    &system_prompt,
+                    &tx,
+                    &token,
+                ) {
+                    let _ = tx.send(crate::messages::AiResponse::Error(e.to_string()));
+                }
+            } else {
+                try_generate_with_fallback(
+                    &config,
+                    &conversation,
+                    &system_prompt,
+                    &tx,
+                    &fallback_providers,
+                    Some(&token),
+                    &last_provider,
+                );
+            }
         });
 
         cancel_token
@@ -824,18 +838,32 @@ impl AiAssistant {
             Vec::new()
         };
         let last_provider = self.fallback_last_provider.clone();
+        // Hexagonal port (F5): honour an injected provider on the cancellable
+        // path too; otherwise the default enum-dispatch fallback path.
+        let injected = self.llm_provider.clone();
 
         let token = cancel_token.clone();
         thread::spawn(move || {
-            try_generate_with_fallback(
-                &config,
-                &conversation,
-                &system_prompt,
-                &tx,
-                &fallback_providers,
-                Some(&token),
-                &last_provider,
-            );
+            if let Some(provider) = injected {
+                if let Err(e) = provider.generate_streaming_cancellable(
+                    &conversation,
+                    &system_prompt,
+                    &tx,
+                    &token,
+                ) {
+                    let _ = tx.send(crate::messages::AiResponse::Error(e.to_string()));
+                }
+            } else {
+                try_generate_with_fallback(
+                    &config,
+                    &conversation,
+                    &system_prompt,
+                    &tx,
+                    &fallback_providers,
+                    Some(&token),
+                    &last_provider,
+                );
+            }
         });
 
         cancel_token

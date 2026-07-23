@@ -23,7 +23,7 @@ use crate::models::ModelInfo;
 use crate::providers::{
     build_system_prompt, build_system_prompt_with_notes, fetch_kobold_models,
     fetch_model_context_size, fetch_ollama_models, fetch_openai_compatible_models,
-    generate_response, generate_response_streaming, generate_response_streaming_cancellable,
+    generate_response_streaming, generate_response_streaming_cancellable,
 };
 use crate::session::{ChatSession, ChatSessionStore, ResponseStyle, UserPreferences};
 

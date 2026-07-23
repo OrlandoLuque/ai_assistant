@@ -765,4 +765,30 @@ mod tests {
         let out = a.generate_sync("hi".to_string(), "").unwrap();
         assert!(out.contains("sync mock 7"), "got: {out}");
     }
+
+    #[test]
+    fn cancellable_streaming_routes_through_injected_provider() {
+        // F5.2: the cancellable streaming path also honours an injected provider.
+        use std::time::{Duration, Instant};
+        let mut assistant = crate::AiAssistant::new();
+        assistant.set_llm_provider(Arc::new(MockLlmProvider::new("cancellable mock 99")));
+        let _token = assistant.send_message_cancellable("hi".to_string(), "");
+
+        let start = Instant::now();
+        loop {
+            match assistant.poll_response() {
+                Some(AiResponse::Complete(text)) => {
+                    assert!(text.contains("cancellable mock 99"), "unexpected: {text:?}");
+                    break;
+                }
+                Some(AiResponse::Error(e)) => panic!("unexpected error: {e}"),
+                _ => {}
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(5),
+                "timed out waiting for the mocked cancellable response"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
 }
