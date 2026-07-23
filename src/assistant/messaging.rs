@@ -25,6 +25,54 @@ impl AiAssistant {
         self.llm_provider = None;
     }
 
+    /// The provider to generate through: the injected custom one if present,
+    /// otherwise the default config-dispatch chain (see [`build_default_provider`]).
+    ///
+    /// This is the single seam the strangler-fig routes every generation entry
+    /// point through, so the `Option<Arc<dyn LlmProvider>>` check lives in exactly
+    /// one place.
+    ///
+    /// [`build_default_provider`]: Self::build_default_provider
+    fn resolve_provider(&self) -> std::sync::Arc<dyn crate::llm_provider::LlmProvider> {
+        if let Some(p) = &self.llm_provider {
+            return p.clone();
+        }
+        std::sync::Arc::new(self.build_default_provider())
+    }
+
+    /// Build the default generation chain from `self.config` +
+    /// `self.fallback_providers` as a [`FallbackLlmProvider`]: the primary is a
+    /// `ConfigLlmProvider` over `self.config` (i.e. exactly `generate_response`),
+    /// followed by one `ConfigLlmProvider` per fallback. Each is labelled with its
+    /// provider display name, and the winner's label is written into
+    /// `self.fallback_last_provider` — so behaviour (including the "which provider
+    /// answered" indicator) matches the legacy `try_generate_with_fallback` /
+    /// `generate_sync` fallback loops, now expressed through the port.
+    ///
+    /// [`FallbackLlmProvider`]: crate::llm_provider::FallbackLlmProvider
+    fn build_default_provider(&self) -> crate::llm_provider::FallbackLlmProvider {
+        use crate::llm_provider::{ConfigLlmProvider, FallbackLlmProvider, LlmProvider};
+        use std::sync::Arc;
+
+        let mut chain: Vec<(String, Arc<dyn LlmProvider>)> = Vec::new();
+        chain.push((
+            self.config.provider.display_name().to_string(),
+            Arc::new(ConfigLlmProvider::new(self.config.clone())),
+        ));
+        if self.fallback_enabled {
+            for (provider, model) in &self.fallback_providers {
+                let mut fb = self.config.clone();
+                fb.provider = provider.clone();
+                fb.selected_model = model.clone();
+                chain.push((
+                    provider.display_name().to_string(),
+                    Arc::new(ConfigLlmProvider::new(fb)),
+                ));
+            }
+        }
+        FallbackLlmProvider::new(chain).with_winner_sink(self.fallback_last_provider.clone())
+    }
+
     // === Message Handling ===
 
     /// Send a message and start generating a response
@@ -574,43 +622,12 @@ impl AiAssistant {
             }
         };
 
-        // Try primary provider
-        let response = match generate_response(&self.config, conversation, &system_prompt) {
-            Ok(r) => {
-                *self
-                    .fallback_last_provider
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner()) =
-                    Some(self.config.provider.display_name().to_string());
-                r
-            }
-            Err(primary_err) => {
-                if !self.fallback_enabled || self.fallback_providers.is_empty() {
-                    return Err(primary_err.into());
-                }
-                // Try fallback providers
-                let mut last_err = primary_err;
-                let mut found = None;
-                for (provider, model) in &self.fallback_providers {
-                    let mut fb_config = self.config.clone();
-                    fb_config.provider = provider.clone();
-                    fb_config.selected_model = model.clone();
-                    match generate_response(&fb_config, conversation, &system_prompt) {
-                        Ok(r) => {
-                            *self
-                                .fallback_last_provider
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner()) =
-                                Some(provider.display_name().to_string());
-                            found = Some(r);
-                            break;
-                        }
-                        Err(e) => last_err = e,
-                    }
-                }
-                found.ok_or(last_err)?
-            }
-        };
+        // Route generation through the resolved provider (F5): an injected custom
+        // provider if present, otherwise the config-dispatch fallback chain, which
+        // records the winning provider's display name into `fallback_last_provider`.
+        let response = self
+            .resolve_provider()
+            .generate(conversation, &system_prompt)?;
 
         self.conversation.push(ChatMessage::assistant(&response));
         self.extract_preferences_from_response(&response);

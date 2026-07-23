@@ -20,6 +20,7 @@
 //! [`AiProvider`]: crate::config::AiProvider
 
 use std::sync::mpsc::Sender;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 
@@ -432,10 +433,259 @@ impl LlmProvider for MockLlmProvider {
     }
 }
 
+/// Adapter that composes an ordered list of **labelled** providers into a
+/// **fallback chain**: each `generate*` call tries them in order and returns the
+/// first success; if all fail it returns the *first* (primary) provider's error.
+/// This mirrors the historical `try_generate_with_fallback` / `generate_sync`
+/// fallback in `assistant/` (config + `fallback_providers`, tried in order) so
+/// the assistant's fallback behaviour can be expressed purely through the port.
+///
+/// Each provider carries a **display label**; the label of the one that answered
+/// is written into a shared cell (see [`with_winner_sink`](Self::with_winner_sink)),
+/// which lets the assistant keep its `fallback_last_provider` indicator working
+/// through the port. An empty chain is a usage error: `generate*` return an error
+/// rather than panicking.
+pub struct FallbackLlmProvider {
+    /// `(display label, provider)`, tried in order; index 0 is the primary.
+    providers: Vec<(String, Arc<dyn LlmProvider>)>,
+    /// Receives the winning provider's label (or `None` when the whole chain
+    /// fails). Shared so callers can observe it (e.g. `fallback_last_provider`).
+    winner: Arc<Mutex<Option<String>>>,
+}
+
+impl FallbackLlmProvider {
+    /// Compose labelled `providers` into a fallback chain (index 0 is the
+    /// primary). Each entry is `(display label, provider)`.
+    pub fn new(providers: Vec<(String, Arc<dyn LlmProvider>)>) -> Self {
+        Self {
+            providers,
+            winner: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Route the winning provider's label into an existing shared cell instead of
+    /// this adapter's own — e.g. the assistant's `fallback_last_provider`.
+    pub fn with_winner_sink(mut self, sink: Arc<Mutex<Option<String>>>) -> Self {
+        self.winner = sink;
+        self
+    }
+
+    /// Display label of the provider that last answered successfully, or `None`
+    /// if none has yet or the whole chain last failed.
+    pub fn last_provider(&self) -> Option<String> {
+        self.winner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    fn record(&self, label: Option<&str>) {
+        *self.winner.lock().unwrap_or_else(|e| e.into_inner()) = label.map(str::to_string);
+    }
+
+    /// Error for a chain where every provider failed — carries the primary
+    /// error, matching the legacy `try_generate_with_fallback` message.
+    fn all_failed(first_err: Option<anyhow::Error>) -> anyhow::Error {
+        match first_err {
+            Some(e) => anyhow::anyhow!("All providers failed. Primary error: {e}"),
+            None => anyhow::anyhow!("FallbackLlmProvider: no providers configured"),
+        }
+    }
+}
+
+impl LlmProvider for FallbackLlmProvider {
+    fn generate(&self, conversation: &[ChatMessage], system_prompt: &str) -> Result<String> {
+        let mut first_err = None;
+        for (label, p) in &self.providers {
+            match p.generate(conversation, system_prompt) {
+                Ok(text) => {
+                    self.record(Some(label));
+                    return Ok(text);
+                }
+                Err(e) => {
+                    if first_err.is_none() {
+                        first_err = Some(e);
+                    }
+                }
+            }
+        }
+        self.record(None);
+        Err(Self::all_failed(first_err))
+    }
+
+    fn generate_streaming(
+        &self,
+        conversation: &[ChatMessage],
+        system_prompt: &str,
+        tx: &Sender<AiResponse>,
+    ) -> Result<()> {
+        let mut first_err = None;
+        for (label, p) in &self.providers {
+            match p.generate_streaming(conversation, system_prompt, tx) {
+                Ok(()) => {
+                    self.record(Some(label));
+                    return Ok(());
+                }
+                Err(e) => {
+                    if first_err.is_none() {
+                        first_err = Some(e);
+                    }
+                }
+            }
+        }
+        self.record(None);
+        Err(Self::all_failed(first_err))
+    }
+
+    fn generate_streaming_cancellable(
+        &self,
+        conversation: &[ChatMessage],
+        system_prompt: &str,
+        tx: &Sender<AiResponse>,
+        cancel_token: &CancellationToken,
+    ) -> Result<()> {
+        let mut first_err = None;
+        for (i, (label, p)) in self.providers.iter().enumerate() {
+            // Match the legacy dispatcher: the primary always runs; cancellation
+            // is only checked before each *fallback* attempt.
+            if i > 0 && cancel_token.is_cancelled() {
+                return Ok(());
+            }
+            match p.generate_streaming_cancellable(conversation, system_prompt, tx, cancel_token) {
+                Ok(()) => {
+                    self.record(Some(label));
+                    return Ok(());
+                }
+                Err(e) => {
+                    if first_err.is_none() {
+                        first_err = Some(e);
+                    }
+                }
+            }
+        }
+        self.record(None);
+        Err(Self::all_failed(first_err))
+    }
+
+    fn backend_name(&self) -> &'static str {
+        "fallback"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::mpsc::channel;
+
+    /// Test-only adapter that always fails — drives the fallback paths.
+    struct FailingProvider;
+    impl LlmProvider for FailingProvider {
+        fn generate(&self, _c: &[ChatMessage], _s: &str) -> Result<String> {
+            Err(anyhow::anyhow!("primary boom"))
+        }
+        fn generate_streaming(
+            &self,
+            _c: &[ChatMessage],
+            _s: &str,
+            _tx: &Sender<AiResponse>,
+        ) -> Result<()> {
+            Err(anyhow::anyhow!("primary boom"))
+        }
+        fn generate_streaming_cancellable(
+            &self,
+            _c: &[ChatMessage],
+            _s: &str,
+            _tx: &Sender<AiResponse>,
+            _t: &CancellationToken,
+        ) -> Result<()> {
+            Err(anyhow::anyhow!("primary boom"))
+        }
+        fn backend_name(&self) -> &'static str {
+            "failing"
+        }
+    }
+
+    #[test]
+    fn fallback_returns_first_success_and_records_label() {
+        let chain = FallbackLlmProvider::new(vec![
+            ("Primary".to_string(), Arc::new(FailingProvider)),
+            (
+                "Second".to_string(),
+                Arc::new(MockLlmProvider::new("from second")),
+            ),
+            (
+                "Third".to_string(),
+                Arc::new(MockLlmProvider::new("from third")),
+            ),
+        ]);
+        assert_eq!(chain.generate(&[], "sys").unwrap(), "from second");
+        assert_eq!(chain.last_provider().as_deref(), Some("Second"));
+    }
+
+    #[test]
+    fn fallback_primary_success_skips_the_rest() {
+        let chain = FallbackLlmProvider::new(vec![
+            (
+                "Primary".to_string(),
+                Arc::new(MockLlmProvider::new("primary")),
+            ),
+            ("Second".to_string(), Arc::new(FailingProvider)), // never reached
+        ]);
+        assert_eq!(chain.generate(&[], "sys").unwrap(), "primary");
+        assert_eq!(chain.last_provider().as_deref(), Some("Primary"));
+    }
+
+    #[test]
+    fn fallback_all_fail_returns_primary_error() {
+        let chain = FallbackLlmProvider::new(vec![
+            ("Primary".to_string(), Arc::new(FailingProvider)),
+            ("Second".to_string(), Arc::new(FailingProvider)),
+        ]);
+        let err = chain.generate(&[], "sys").unwrap_err().to_string();
+        assert!(err.contains("All providers failed"), "got: {err}");
+        assert!(err.contains("primary boom"), "got: {err}");
+        assert_eq!(chain.last_provider(), None);
+    }
+
+    #[test]
+    fn fallback_streaming_falls_through_to_a_working_provider() {
+        let (tx, rx) = channel();
+        let chain = FallbackLlmProvider::new(vec![
+            ("Primary".to_string(), Arc::new(FailingProvider)),
+            (
+                "Second".to_string(),
+                Arc::new(MockLlmProvider::new("streamed")),
+            ),
+        ]);
+        chain
+            .generate_streaming(&[ChatMessage::user("hi")], "sys", &tx)
+            .unwrap();
+        assert!(matches!(rx.recv().unwrap(), AiResponse::Complete(t) if t == "streamed"));
+        assert_eq!(chain.last_provider().as_deref(), Some("Second"));
+    }
+
+    #[test]
+    fn fallback_winner_sink_is_shared_with_the_caller() {
+        // The winning label lands in the shared cell the caller passed in — this
+        // is how the assistant keeps its `fallback_last_provider` up to date.
+        let sink = Arc::new(Mutex::new(None));
+        let chain = FallbackLlmProvider::new(vec![
+            ("Primary".to_string(), Arc::new(FailingProvider)),
+            ("Second".to_string(), Arc::new(MockLlmProvider::new("ok"))),
+        ])
+        .with_winner_sink(sink.clone());
+        chain.generate(&[], "sys").unwrap();
+        assert_eq!(
+            sink.lock().unwrap_or_else(|e| e.into_inner()).as_deref(),
+            Some("Second")
+        );
+    }
+
+    #[test]
+    fn fallback_empty_chain_errs_without_panicking() {
+        let chain = FallbackLlmProvider::new(vec![]);
+        assert!(chain.generate(&[], "sys").is_err());
+    }
 
     #[test]
     fn port_is_object_safe_send_sync_and_mockable() {
@@ -477,7 +727,6 @@ mod tests {
     /// provider with NO live server — the send/poll domain flow, deterministic.
     #[test]
     fn assistant_generates_via_injected_provider_without_a_server() {
-        use std::sync::Arc;
         use std::time::{Duration, Instant};
 
         let mut assistant = crate::AiAssistant::new();
@@ -506,5 +755,14 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    #[test]
+    fn generate_sync_routes_through_injected_provider() {
+        // F5.1: the non-streaming path also honours an injected provider.
+        let mut a = crate::AiAssistant::new();
+        a.set_llm_provider(Arc::new(MockLlmProvider::new("sync mock 7")));
+        let out = a.generate_sync("hi".to_string(), "").unwrap();
+        assert!(out.contains("sync mock 7"), "got: {out}");
     }
 }
