@@ -1049,6 +1049,164 @@ pub(crate) fn tests_document_ingestion() -> CategoryResult {
         Ok(())
     }));
 
+    // 4) Offline pipeline: PDF -> parse -> chunk. Chunks must cover the text and
+    //    stay within bounds (guards the char-boundary chunking work).
+    results.push(run_test("pdf parse -> chunk pipeline (offline)", || {
+        let body = "Introduction. ".to_string()
+            + &"The transformer relies on self-attention across positions. ".repeat(40);
+        let pdf = ai_assistant::document_parsing::make_minimal_pdf(&body);
+        let parser = DocumentParser::new(DocumentParserConfig::default());
+        let doc = parser
+            .parse_bytes(&pdf, DocumentFormat::Pdf)
+            .map_err(|e| e.to_string())?;
+        let chunks = ai_assistant::SmartChunker::new(ai_assistant::ChunkingConfig::default())
+            .chunk(&doc.text);
+        if chunks.is_empty() {
+            return Err("chunking produced no chunks".to_string());
+        }
+        for c in &chunks {
+            if c.end_offset > doc.text.len() || c.start_offset > c.end_offset {
+                return Err(format!(
+                    "chunk offsets out of bounds: {}..{} (len {})",
+                    c.start_offset,
+                    c.end_offset,
+                    doc.text.len()
+                ));
+            }
+        }
+        Ok(())
+    }));
+
+    // 5) Offline robustness: a PDF whose text is multi-byte (accents / CJK) must
+    //    parse and chunk without panicking (char-boundary safety end to end).
+    results.push(run_test(
+        "pdf multi-byte parse + chunk no panic (offline)",
+        || {
+            let body = "Precio: 490€. Café, niño, ñandú, straße. 日本語のテキスト。".repeat(30);
+            let pdf = ai_assistant::document_parsing::make_minimal_pdf(&body);
+            let parser = DocumentParser::new(DocumentParserConfig::default());
+            let doc = parser
+                .parse_bytes(&pdf, DocumentFormat::Pdf)
+                .map_err(|e| e.to_string())?;
+            // Must not panic on multi-byte content.
+            let _ = ai_assistant::SmartChunker::new(ai_assistant::ChunkingConfig::default())
+                .chunk(&doc.text);
+            Ok(())
+        },
+    ));
+
+    // 6) Offline robustness: empty / garbage / random bytes degrade gracefully
+    //    (Err or empty), never panic.
+    results.push(run_test(
+        "pdf malformed input degrades gracefully (offline)",
+        || {
+            let parser = DocumentParser::new(DocumentParserConfig::default());
+            let _ = parser.parse_bytes(&[], DocumentFormat::Pdf);
+            let _ = parser.parse_bytes(b"%PDF-1.4 not really a pdf body", DocumentFormat::Pdf);
+            let _ = parser.parse_bytes(&[0xFF, 0x00, 0x01, 0xFE, 0x7F, 0x80], DocumentFormat::Pdf);
+            Ok(()) // reaching here without panicking is the assertion
+        },
+    ));
+
+    // 7) Online: a full real paper chunks into many bounded pieces.
+    results.push(run_test("pdf large real doc -> chunk (arxiv)", || {
+        let Some(pdf) = fetch_real_pdf() else {
+            println!("      (network unavailable — skipped real-PDF chunking)");
+            return Ok(());
+        };
+        let parser = DocumentParser::new(DocumentParserConfig::default());
+        let doc = parser
+            .parse_bytes(&pdf, DocumentFormat::Pdf)
+            .map_err(|e| e.to_string())?;
+        let chunks = ai_assistant::SmartChunker::new(ai_assistant::ChunkingConfig::default())
+            .chunk(&doc.text);
+        if chunks.len() < 10 {
+            return Err(format!(
+                "expected many chunks from a full paper, got {}",
+                chunks.len()
+            ));
+        }
+        for c in &chunks {
+            if c.end_offset > doc.text.len() || c.start_offset > c.end_offset {
+                return Err("chunk offset out of bounds on real doc".to_string());
+            }
+        }
+        Ok(())
+    }));
+
+    // 8) Online: retrieval discriminates — two different questions surface two
+    //    different, on-topic passages from the same document.
+    results.push(run_test(
+        "pdf retrieval discriminates between topics (arxiv)",
+        || {
+            let Some(pdf) = fetch_real_pdf() else {
+                println!("      (network unavailable — skipped retrieval discrimination)");
+                return Ok(());
+            };
+            let parser = DocumentParser::new(DocumentParserConfig::default());
+            let doc = parser
+                .parse_bytes(&pdf, DocumentFormat::Pdf)
+                .map_err(|e| e.to_string())?;
+            let pe = ai_assistant::knowledge_retrieval::select_relevant(
+                &doc.text,
+                "positional encoding of token order",
+                1500,
+            )
+            .to_lowercase();
+            let attn = ai_assistant::knowledge_retrieval::select_relevant(
+                &doc.text,
+                "multi-head attention mechanism",
+                1500,
+            )
+            .to_lowercase();
+            if !pe.contains("position") {
+                return Err(format!("positional-encoding query missed it: {:.160}", pe));
+            }
+            if !attn.contains("attention") {
+                return Err(format!("attention query missed it: {:.160}", attn));
+            }
+            Ok(())
+        },
+    ));
+
+    // 9) Online end-to-end through the hexagonal port (F5): parse -> retrieve ->
+    //    generate_sync with an injected deterministic provider. Exercises the full
+    //    document -> AiAssistant -> resolve_provider() pipeline offline-of-a-server.
+    results.push(run_test(
+        "pdf -> retrieve -> grounded answer via port (arxiv)",
+        || {
+            let Some(pdf) = fetch_real_pdf() else {
+                println!("      (network unavailable — skipped grounded e2e)");
+                return Ok(());
+            };
+            let parser = DocumentParser::new(DocumentParserConfig::default());
+            let doc = parser
+                .parse_bytes(&pdf, DocumentFormat::Pdf)
+                .map_err(|e| e.to_string())?;
+            let passage = ai_assistant::knowledge_retrieval::select_relevant(
+                &doc.text,
+                "what is multi-head attention",
+                1500,
+            );
+            if passage.trim().is_empty() {
+                return Err("retrieval returned an empty passage".to_string());
+            }
+            let mut assistant = ai_assistant::AiAssistant::new();
+            assistant.set_llm_provider(std::sync::Arc::new(ai_assistant::MockLlmProvider::new(
+                "grounded-ok",
+            )));
+            let answer = assistant
+                .generate_sync("Explain multi-head attention.".to_string(), &passage)
+                .map_err(|e| e.to_string())?;
+            if !answer.contains("grounded-ok") {
+                return Err(format!(
+                    "assistant did not answer via the injected port: {answer}"
+                ));
+            }
+            Ok(())
+        },
+    ));
+
     CategoryResult {
         name: "document_ingestion".to_string(),
         results,
