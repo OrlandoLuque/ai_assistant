@@ -315,6 +315,9 @@ pub struct LatencyTracker {
 impl LatencyTracker {
     /// Create a new tracker with the given window size and thresholds.
     pub fn new(window_size: usize, p95_threshold: Duration, p99_threshold: Duration) -> Self {
+        // A zero window leaves `samples` empty, panicking `record()`'s
+        // `% samples.len()`; clamp to a safe minimum.
+        let window_size = window_size.max(1);
         let mut samples = Vec::with_capacity(window_size);
         for _ in 0..window_size {
             samples.push(AtomicU64::new(0));
@@ -795,6 +798,13 @@ pub struct LivenessInfo {
 mod tests {
     use super::*;
     use crate::failure_detector::HeartbeatConfig;
+
+    #[test]
+    fn zero_window_latency_tracker_no_panic() {
+        // Regression: window_size=0 left samples empty → `% 0` in record().
+        let t = LatencyTracker::new(0, Duration::from_millis(100), Duration::from_millis(200));
+        t.record(Duration::from_millis(5)); // must not panic
+    }
 
     fn make_health_manager() -> ClusterHealthManager {
         let hb = HeartbeatManager::new(HeartbeatConfig {

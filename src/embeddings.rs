@@ -48,6 +48,10 @@ pub struct LocalEmbedder {
 
 impl LocalEmbedder {
     pub fn new(config: EmbeddingConfig) -> Self {
+        let mut config = config;
+        // A zero dimension count would panic later (`% dimensions` and a
+        // zero-length embedding vector); clamp to a safe minimum.
+        config.dimensions = config.dimensions.max(1);
         Self {
             config,
             doc_freq: HashMap::new(),
@@ -518,6 +522,17 @@ pub struct HybridSearchResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zero_dimensions_no_panic() {
+        // Regression: dimensions=0 → `% 0` and a zero-length embedding vector.
+        let mut e = LocalEmbedder::new(EmbeddingConfig {
+            dimensions: 0,
+            ..Default::default()
+        });
+        e.train(&["hello world", "foo bar"]);
+        let _ = e.embed("hello foo"); // must not panic
+    }
 
     #[test]
     fn test_local_embedder() {

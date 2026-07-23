@@ -771,6 +771,20 @@ impl HistogramStats {
     /// Compute statistics from a slice of values.
     /// The input slice must not be empty.
     pub fn from_values(values: &[f64]) -> Self {
+        // An empty slice would panic (`sorted[0]`, `sorted[count - 1]`); return
+        // zeroed stats instead.
+        if values.is_empty() {
+            return Self {
+                count: 0,
+                sum: 0.0,
+                min: 0.0,
+                max: 0.0,
+                mean: 0.0,
+                p50: 0.0,
+                p95: 0.0,
+                p99: 0.0,
+            };
+        }
         let mut sorted = values.to_vec();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let count = sorted.len();
@@ -2374,6 +2388,13 @@ impl PrometheusMetrics {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn histogram_from_empty_no_panic() {
+        // Regression: sorted[0] / sorted[count - 1] on an empty slice panicked.
+        let s = HistogramStats::from_values(&[]);
+        assert_eq!(s.count, 0);
+    }
 
     #[test]
     fn test_ai_span_new() {

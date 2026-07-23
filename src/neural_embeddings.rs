@@ -467,6 +467,9 @@ pub struct SparseEmbedder {
 
 impl SparseEmbedder {
     pub fn new(config: SparseEmbeddingConfig) -> Self {
+        let mut config = config;
+        // Guard `embed()`'s `% vocab_size` against a zero configured vocab.
+        config.vocab_size = config.vocab_size.max(1);
         Self {
             config,
             idf_scores: HashMap::new(),
@@ -1118,6 +1121,17 @@ pub fn dot_product(a: &[f32], b: &[f32]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zero_vocab_size_no_panic() {
+        // Regression: vocab_size=0 → `% 0` in embed().
+        let mut e = SparseEmbedder::new(SparseEmbeddingConfig {
+            vocab_size: 0,
+            ..Default::default()
+        });
+        e.fit(&["hello world".to_string()]);
+        let _ = e.embed("hello world"); // must not panic
+    }
 
     #[test]
     fn test_errorcode_embedding() {

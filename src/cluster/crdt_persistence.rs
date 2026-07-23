@@ -82,7 +82,7 @@ impl CrdtPersistence {
         }
 
         // Sort by name (timestamp is embedded) to get latest
-        snapshots.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+        snapshots.sort_by_key(|b| std::cmp::Reverse(b.file_name()));
 
         let latest = &snapshots[0];
         let data =
@@ -160,7 +160,7 @@ impl CrdtPersistence {
             return Ok(0);
         }
 
-        snapshots.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+        snapshots.sort_by_key(|b| std::cmp::Reverse(b.file_name()));
 
         let mut removed = 0;
         for old in &snapshots[keep..] {

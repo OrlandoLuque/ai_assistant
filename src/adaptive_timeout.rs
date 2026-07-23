@@ -180,7 +180,9 @@ impl AdaptiveTimeout {
     /// Create a new adaptive timeout calculator with the given configuration.
     pub fn new(config: AdaptiveTimeoutConfig) -> Self {
         let initial_us = config.initial_timeout.as_micros() as u64;
-        let window_size = config.window_size;
+        // A zero window leaves `samples` empty, panicking `record()`'s
+        // `% samples.len()`; clamp to a safe minimum.
+        let window_size = config.window_size.max(1);
         let mut samples = Vec::with_capacity(window_size);
         for _ in 0..window_size {
             samples.push(AtomicU64::new(0));
@@ -316,6 +318,16 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use std::thread;
+
+    #[test]
+    fn zero_window_size_no_panic() {
+        // Regression: a zero window left the ring buffer empty → `% 0` in record().
+        let t = AdaptiveTimeout::new(AdaptiveTimeoutConfig {
+            window_size: 0,
+            ..Default::default()
+        });
+        t.record(Duration::from_millis(5)); // must not panic
+    }
 
     #[test]
     fn test_initial_timeout_used_before_samples() {

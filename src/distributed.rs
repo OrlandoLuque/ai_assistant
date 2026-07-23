@@ -1342,7 +1342,9 @@ impl MapReduceJob {
 
     /// Split raw data into chunks
     pub fn split_input(&mut self, data: &[u8], chunk_prefix: &str) {
-        for (i, chunk_data) in data.chunks(self.config.chunk_size).enumerate() {
+        // `<[u8]>::chunks(0)` panics; clamp a zero configured chunk_size to 1.
+        let chunk_size = self.config.chunk_size.max(1);
+        for (i, chunk_data) in data.chunks(chunk_size).enumerate() {
             let chunk = DataChunk::new(format!("{}_{}", chunk_prefix, i), chunk_data.to_vec());
             self.input_chunks.push(chunk);
         }
@@ -2567,6 +2569,16 @@ mod tests {
 
         let results = coord.get_job_results(&job_id).unwrap();
         assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn split_input_zero_chunk_size_no_panic() {
+        // Regression: chunks(0) panics; a zero configured chunk_size must not.
+        let mut job = MapReduceBuilder::word_count().with_config(MapReduceConfig {
+            chunk_size: 0,
+            ..Default::default()
+        });
+        job.split_input(b"hello world foo", "chunk"); // must not panic
     }
 
     #[test]
