@@ -59,6 +59,14 @@ jobs:
         # crate's own #[deprecated] items and #[non_exhaustive] configs, which
         # --all-targets -D warnings would wrongly reject.
         run: cargo clippy --features "$FEATURES_STD" -- -D warnings
+      - name: Run clippy (network features)
+        # The `check` / `feature-matrix` jobs COMPILE the network features
+        # (server-cluster, p2p, server-axum, gpu-sharing, distributed-network),
+        # but `cargo check`/`test` never run clippy, so their lints went ungated
+        # and quietly accumulated. These features stay out of FEATURES_STD due to
+        # heavy quinn/rustls deps, so lint them here in a dedicated step. Explicit
+        # --lib --bins matches the STD scope (skip tests/examples on purpose).
+        run: cargo clippy --features "$FEATURES_NETWORK" --lib --bins -- -D warnings
 
   fmt:
     name: Format

@@ -424,7 +424,7 @@ fn handle_docker_command(
                 Some(id) => *id,
                 None => return "Usage: /docker rm <container_id> [--force]".to_string(),
             };
-            let force = parts.iter().any(|p| *p == "--force");
+            let force = parts.contains(&"--force");
             let mut guard = match executor.write() {
                 Ok(g) => g,
                 Err(e) => return format!("Error: lock poisoned: {}", e),
@@ -519,7 +519,7 @@ fn handle_docker_command(
             format!("Cleaned up {} container(s)", count)
         }
 
-        "help" | _ => "Docker commands:\n\
+        _ => "Docker commands:\n\
              \x20 /docker list              List all containers\n\
              \x20 /docker create <image>    Create container (--name NAME, --cmd CMD...)\n\
              \x20 /docker start <id>        Start a container\n\

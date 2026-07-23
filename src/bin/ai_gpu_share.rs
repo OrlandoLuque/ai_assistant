@@ -74,8 +74,10 @@ const RESET: &str = "\x1b[0m";
 // =============================================================================
 
 fn cmd_start(args: &[String]) -> ExitCode {
-    let mut config = GpuSharingConfig::default();
-    config.enabled = true;
+    let mut config = GpuSharingConfig {
+        enabled: true,
+        ..Default::default()
+    };
 
     // Parse --provider / --gateway flags
     for arg in args {
@@ -144,7 +146,7 @@ fn cmd_start(args: &[String]) -> ExitCode {
             );
         }
         Err(e) => {
-            println!("  {}*{} Identity init failed: {}{}", RED, RESET, e, "");
+            println!("  {}*{} Identity init failed: {}", RED, RESET, e);
         }
     }
     println!();
@@ -200,10 +202,8 @@ fn cmd_status() -> ExitCode {
     println!("  {}GPU Load:{}    {}0%{}", BOLD, RESET, GREEN, RESET);
     println!();
     println!(
-        "  {}Routing:{}     {}",
-        BOLD,
-        RESET,
-        format!("{:?}", config.routing.strategy)
+        "  {}Routing:{}     {:?}",
+        BOLD, RESET, config.routing.strategy
     );
     println!(
         "  {}Pricing:{}     {} (base: {:.2} credits/1K tokens)",
