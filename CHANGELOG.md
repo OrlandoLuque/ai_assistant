@@ -5,6 +5,57 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — V168–V231 condensed backfill (2026-06 → 2026-07, 0.2.120 → 0.2.183)
+
+This changelog and the `IMPROVEMENTS_V*` series lapsed after V167; the ~60
+versions since are reconstructed here **grouped by theme**. Per-commit detail
+lives in git — each `VNNN:` commit message is self-contained.
+
+### Hexagonalization (ports & adapters)
+- **`LlmProvider` port** introduced and adopted end to end: V210 (port, phase 1),
+  V212 (inject into `AiAssistant`; server-less domain tests), V213–V216
+  (per-provider raw-adapter factory, `OllamaAdapter`, collapse the three
+  `match &config.provider` dispatch blocks), V226–V229 (**F5**:
+  `FallbackLlmProvider`, route `generate_sync` + all streaming + integrations
+  through the port, delete `try_generate_with_fallback`), V230
+  (`PiiMaskingProvider` decorator — extract the cloud PII boundary).
+- **`HttpClient` port**: V217 / V221 route model discovery and context-size
+  probes through the transport port.
+
+### Security hardening
+- **SSRF**: V175, V185, V188–V190 (shared host normalizer, recursive tool-arg
+  scan, per-redirect-hop re-validation, cloud-metadata guard); V182 / V183
+  (allowlist bypasses, complete IPv6 private ranges). Path-traversal writes V169;
+  SQL injection in LanceDB metadata filter V170; container bind-mount allowlist
+  V181; OAuth fails-closed (no fabricated tokens) V168. **PII**: V207 / V215
+  (unmask on the cloud streaming path), decorator V230.
+
+### Panic / robustness sweeps
+- **UTF-8 char-boundary** (the find-on-lowercased → slice-original class):
+  V171–V179, V186–V187, V218 (13 sites at once), V223, V207. Plus V219
+  (obfuscated prompt injection — leetspeak / zero-width), V220 (usize underflow),
+  V222 (CoAP decoder + MCP cursor OOB slices), V224 (clamp zero-config
+  divisors / ring-buffer sizes). V209: release profile `panic = "unwind"` so
+  fail-closed guardrails work in shipped binaries.
+
+### Retrieval, memory & QA
+- V194–V206: conversation-QA harness (multi-turn + grounding scenarios); semantic
+  knowledge retrieval by default with an in-process embedder (V201 / V202);
+  FreshContext recalls earlier turns by recency + relevance (V200); a structured
+  fact ledger with `--memory` / `--memory-llm` and a configurable/remote
+  extractor (V205 / V206); deterministic (temperature 0) QA scoring (V203).
+
+### Runtime, discovery & mobile
+- V191–V199: functional runtime profiles + mobile model tuning; concurrent
+  provider/model discovery (no serial timeout); Ollama `num_ctx` sizing so large
+  context is not silently truncated; provider auto-detection in shipped binaries.
+
+### Tests, CI & docs
+- Real PDF / large-document ingestion harness track (V211, V228); `real_e2e`
+  live-model battery — conversation + documents + tasks (V231); clippy
+  `-D warnings` gate extended to the network feature set (V225); local-model
+  context/QA documentation.
+
 ## [Unreleased] - v132 (2026-06-26) — V167: split assistant.rs into impl submodules (0.2.119)
 
 Splits the last god file the audit flagged — the central `AiAssistant`
