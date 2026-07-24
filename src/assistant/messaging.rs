@@ -34,15 +34,26 @@ impl AiAssistant {
     ///
     /// [`build_default_provider`]: Self::build_default_provider
     pub(crate) fn resolve_provider(&self) -> std::sync::Arc<dyn crate::llm_provider::LlmProvider> {
+        self.resolve_provider_for(&self.config)
+    }
+
+    /// Like [`resolve_provider`](Self::resolve_provider) but builds the default
+    /// chain from an explicit `base` config. Used by the `*_with_notes` streaming
+    /// paths, whose config is adjusted by adaptive thinking rather than being
+    /// `self.config`.
+    pub(crate) fn resolve_provider_for(
+        &self,
+        base: &crate::config::AiConfig,
+    ) -> std::sync::Arc<dyn crate::llm_provider::LlmProvider> {
         if let Some(p) = &self.llm_provider {
             return p.clone();
         }
-        std::sync::Arc::new(self.build_default_provider())
+        std::sync::Arc::new(self.build_default_provider_for(base))
     }
 
-    /// Build the default generation chain from `self.config` +
+    /// Build the default generation chain from an explicit `base` config +
     /// `self.fallback_providers` as a [`FallbackLlmProvider`]: the primary is a
-    /// `ConfigLlmProvider` over `self.config` (i.e. exactly `generate_response`),
+    /// `ConfigLlmProvider` over `base` (i.e. exactly `generate_response`),
     /// followed by one `ConfigLlmProvider` per fallback. Each is labelled with its
     /// provider display name, and the winner's label is written into
     /// `self.fallback_last_provider` — so behaviour (including the "which provider
@@ -50,18 +61,21 @@ impl AiAssistant {
     /// `generate_sync` fallback loops, now expressed through the port.
     ///
     /// [`FallbackLlmProvider`]: crate::llm_provider::FallbackLlmProvider
-    fn build_default_provider(&self) -> crate::llm_provider::FallbackLlmProvider {
+    fn build_default_provider_for(
+        &self,
+        base: &crate::config::AiConfig,
+    ) -> crate::llm_provider::FallbackLlmProvider {
         use crate::llm_provider::{ConfigLlmProvider, FallbackLlmProvider, LlmProvider};
         use std::sync::Arc;
 
         let mut chain: Vec<(String, Arc<dyn LlmProvider>)> = Vec::new();
         chain.push((
-            self.config.provider.display_name().to_string(),
-            Arc::new(ConfigLlmProvider::new(self.config.clone())),
+            base.provider.display_name().to_string(),
+            Arc::new(ConfigLlmProvider::new(base.clone())),
         ));
         if self.fallback_enabled {
             for (provider, model) in &self.fallback_providers {
-                let mut fb = self.config.clone();
+                let mut fb = base.clone();
                 fb.provider = provider.clone();
                 fb.selected_model = model.clone();
                 chain.push((
@@ -176,36 +190,17 @@ impl AiAssistant {
             &effective_knowledge
         };
 
-        let config = self.config.clone();
         let system_prompt =
             build_system_prompt(&self.system_prompt_base, &self.preferences, knowledge_ref);
 
-        let fallback_providers = if self.fallback_enabled {
-            self.fallback_providers.clone()
-        } else {
-            Vec::new()
-        };
-        let last_provider = self.fallback_last_provider.clone();
-        // Hexagonal port (phase 2): when an LlmProvider adapter is injected,
-        // route generation through it (mock/custom/remote); otherwise the
-        // default enum-dispatch fallback path is untouched.
-        let injected = self.llm_provider.clone();
+        // Hexagonal port (F5): the resolved provider is either the injected custom
+        // one or the default config-dispatch fallback chain (which records the
+        // winning provider into `fallback_last_provider`).
+        let provider = self.resolve_provider();
 
         thread::spawn(move || {
-            if let Some(provider) = injected {
-                if let Err(e) = provider.generate_streaming(&conversation, &system_prompt, &tx) {
-                    let _ = tx.send(crate::messages::AiResponse::Error(e.to_string()));
-                }
-            } else {
-                try_generate_with_fallback(
-                    &config,
-                    &conversation,
-                    &system_prompt,
-                    &tx,
-                    &fallback_providers,
-                    None,
-                    &last_provider,
-                );
+            if let Err(e) = provider.generate_streaming(&conversation, &system_prompt, &tx) {
+                let _ = tx.send(crate::messages::AiResponse::Error(e.to_string()));
             }
         });
     }
@@ -546,32 +541,14 @@ impl AiAssistant {
         );
 
         let (system_prompt, config) = self.apply_adaptive_thinking(&user_message, system_prompt);
-        let fallback_providers = if self.fallback_enabled {
-            self.fallback_providers.clone()
-        } else {
-            Vec::new()
-        };
-        let last_provider = self.fallback_last_provider.clone();
-        // Hexagonal port (phase 2): when an LlmProvider adapter is injected,
-        // route generation through it (mock/custom/remote); otherwise the
-        // default enum-dispatch fallback path is untouched.
-        let injected = self.llm_provider.clone();
+
+        // Hexagonal port (F5): resolve through the port using the adaptive-thinking
+        // config as the base (an injected provider still wins when present).
+        let provider = self.resolve_provider_for(&config);
 
         thread::spawn(move || {
-            if let Some(provider) = injected {
-                if let Err(e) = provider.generate_streaming(&conversation, &system_prompt, &tx) {
-                    let _ = tx.send(crate::messages::AiResponse::Error(e.to_string()));
-                }
-            } else {
-                try_generate_with_fallback(
-                    &config,
-                    &conversation,
-                    &system_prompt,
-                    &tx,
-                    &fallback_providers,
-                    None,
-                    &last_provider,
-                );
+            if let Err(e) = provider.generate_streaming(&conversation, &system_prompt, &tx) {
+                let _ = tx.send(crate::messages::AiResponse::Error(e.to_string()));
             }
         });
     }
@@ -684,41 +661,19 @@ impl AiAssistant {
             &effective_knowledge
         };
 
-        let config = self.config.clone();
         let system_prompt =
             build_system_prompt(&self.system_prompt_base, &self.preferences, knowledge_ref);
 
-        let fallback_providers = if self.fallback_enabled {
-            self.fallback_providers.clone()
-        } else {
-            Vec::new()
-        };
-        let last_provider = self.fallback_last_provider.clone();
         let token = cancel_token.clone();
-        // Hexagonal port (F5): honour an injected provider on the cancellable
-        // path too; otherwise the default enum-dispatch fallback path.
-        let injected = self.llm_provider.clone();
+        // Hexagonal port (F5): the resolved provider (injected or the default
+        // config-dispatch fallback chain) drives cancellable streaming.
+        let provider = self.resolve_provider();
 
         thread::spawn(move || {
-            if let Some(provider) = injected {
-                if let Err(e) = provider.generate_streaming_cancellable(
-                    &conversation,
-                    &system_prompt,
-                    &tx,
-                    &token,
-                ) {
-                    let _ = tx.send(crate::messages::AiResponse::Error(e.to_string()));
-                }
-            } else {
-                try_generate_with_fallback(
-                    &config,
-                    &conversation,
-                    &system_prompt,
-                    &tx,
-                    &fallback_providers,
-                    Some(&token),
-                    &last_provider,
-                );
+            if let Err(e) =
+                provider.generate_streaming_cancellable(&conversation, &system_prompt, &tx, &token)
+            {
+                let _ = tx.send(crate::messages::AiResponse::Error(e.to_string()));
             }
         });
 
@@ -832,37 +787,16 @@ impl AiAssistant {
                 provider: config.provider.display_name().to_string(),
                 model: config.selected_model.clone(),
             });
-        let fallback_providers = if self.fallback_enabled {
-            self.fallback_providers.clone()
-        } else {
-            Vec::new()
-        };
-        let last_provider = self.fallback_last_provider.clone();
-        // Hexagonal port (F5): honour an injected provider on the cancellable
-        // path too; otherwise the default enum-dispatch fallback path.
-        let injected = self.llm_provider.clone();
-
         let token = cancel_token.clone();
+        // Hexagonal port (F5): resolve through the port using the adaptive config
+        // (an injected provider still wins) for cancellable streaming.
+        let provider = self.resolve_provider_for(&config);
+
         thread::spawn(move || {
-            if let Some(provider) = injected {
-                if let Err(e) = provider.generate_streaming_cancellable(
-                    &conversation,
-                    &system_prompt,
-                    &tx,
-                    &token,
-                ) {
-                    let _ = tx.send(crate::messages::AiResponse::Error(e.to_string()));
-                }
-            } else {
-                try_generate_with_fallback(
-                    &config,
-                    &conversation,
-                    &system_prompt,
-                    &tx,
-                    &fallback_providers,
-                    Some(&token),
-                    &last_provider,
-                );
+            if let Err(e) =
+                provider.generate_streaming_cancellable(&conversation, &system_prompt, &tx, &token)
+            {
+                let _ = tx.send(crate::messages::AiResponse::Error(e.to_string()));
             }
         });
 

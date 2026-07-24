@@ -23,7 +23,6 @@ use crate::models::ModelInfo;
 use crate::providers::{
     build_system_prompt, build_system_prompt_with_notes, fetch_kobold_models,
     fetch_model_context_size, fetch_ollama_models, fetch_openai_compatible_models,
-    generate_response_streaming, generate_response_streaming_cancellable,
 };
 use crate::session::{ChatSession, ChatSessionStore, ResponseStyle, UserPreferences};
 
@@ -412,10 +411,9 @@ pub struct AiAssistant {
     /// When enabled, FreshContext mode includes memory-based context alongside RAG.
     pub memory_manager: Option<MemoryManager>,
 
-    /// Optional injected LLM provider (hexagonal port, phase 2). When set,
-    /// generation routes through this adapter instead of the default
-    /// enum-dispatch `try_generate_with_fallback` path — used to inject a mock
-    /// (server-less tests) or a custom/remote provider. `None` = default.
+    /// Optional injected LLM provider (hexagonal port). When set, generation
+    /// routes through this adapter; otherwise `resolve_provider` builds the
+    /// default config-dispatch `FallbackLlmProvider` chain. `None` = default.
     llm_provider: Option<std::sync::Arc<dyn crate::llm_provider::LlmProvider>>,
 
     /// Optional API key manager for providers that require authentication.
@@ -517,84 +515,6 @@ impl Default for AiAssistant {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Run streaming generation with optional provider fallback.
-///
-/// Tries the primary config first. On failure, iterates through fallback
-/// providers until one succeeds or all fail. Sends error via `tx` if all fail.
-/// Updates `last_provider` with the name of the provider that served the response.
-fn try_generate_with_fallback(
-    config: &AiConfig,
-    conversation: &[ChatMessage],
-    system_prompt: &str,
-    tx: &Sender<AiResponse>,
-    fallback_providers: &[(AiProvider, String)],
-    cancel_token: Option<&CancellationToken>,
-    last_provider: &Arc<Mutex<Option<String>>>,
-) {
-    let primary_result = match cancel_token {
-        Some(token) => {
-            generate_response_streaming_cancellable(config, conversation, system_prompt, tx, token)
-        }
-        None => generate_response_streaming(config, conversation, system_prompt, tx),
-    };
-
-    if primary_result.is_ok() {
-        *last_provider.lock().unwrap_or_else(|e| e.into_inner()) =
-            Some(config.provider.display_name().to_string());
-        return;
-    }
-
-    let primary_err = primary_result.unwrap_err();
-
-    if fallback_providers.is_empty() {
-        let _ = tx.send(AiResponse::Error(primary_err.to_string()));
-        return;
-    }
-
-    // Primary failed, attempt fallback providers
-    crate::safe_log!(
-        "[fallback] Primary provider {} failed: {}",
-        config.provider.display_name(),
-        primary_err
-    );
-
-    for (fb_provider, fb_model) in fallback_providers {
-        if let Some(token) = cancel_token {
-            if token.is_cancelled() {
-                return;
-            }
-        }
-
-        let mut fb_config = config.clone();
-        fb_config.provider = fb_provider.clone();
-        fb_config.selected_model = fb_model.clone();
-
-        let fb_result = match cancel_token {
-            Some(token) => generate_response_streaming_cancellable(
-                &fb_config,
-                conversation,
-                system_prompt,
-                tx,
-                token,
-            ),
-            None => generate_response_streaming(&fb_config, conversation, system_prompt, tx),
-        };
-
-        if fb_result.is_ok() {
-            *last_provider.lock().unwrap_or_else(|e| e.into_inner()) =
-                Some(fb_provider.display_name().to_string());
-            return;
-        }
-    }
-
-    // All providers failed
-    *last_provider.lock().unwrap_or_else(|e| e.into_inner()) = None;
-    let _ = tx.send(AiResponse::Error(format!(
-        "All providers failed. Primary error: {}",
-        primary_err
-    )));
 }
 
 /// Vision-aware fallback dispatcher. Skips fallback providers that do not
