@@ -941,7 +941,7 @@ pub(crate) fn tests_document_parsing() -> CategoryResult {
 /// Download a stable, real arXiv PDF ("Attention Is All You Need") with on-disk
 /// caching. Returns `None` on ANY network error so the battery does not fail
 /// when offline — the deterministic offline test still exercises the PDF path.
-fn fetch_real_pdf() -> Option<Vec<u8>> {
+pub(crate) fn fetch_real_pdf() -> Option<Vec<u8>> {
     use std::io::Read;
     const URL: &str = "https://arxiv.org/pdf/1706.03762";
     let dir = std::env::temp_dir().join("ai_assistant_test_pdfs");

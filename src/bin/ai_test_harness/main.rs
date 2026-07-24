@@ -413,6 +413,7 @@ mod p2p;
 mod pipelines;
 mod precision;
 mod rag_graph;
+mod real_e2e;
 mod resilience;
 mod stress;
 
@@ -435,6 +436,7 @@ use crate::p2p::*;
 use crate::pipelines::*;
 use crate::precision::*;
 use crate::rag_graph::*;
+use crate::real_e2e::*;
 use crate::resilience::*;
 use crate::stress::*;
 
@@ -474,6 +476,7 @@ fn all_categories() -> Vec<(&'static str, fn() -> CategoryResult)> {
         ("task_decomposition", tests_task_decomposition),
         ("document_parsing", tests_document_parsing),
         ("document_ingestion", tests_document_ingestion),
+        ("real_e2e", tests_real_e2e),
         ("conversation_analytics", tests_conversation_analytics),
         ("vision", tests_vision),
         ("self_consistency", tests_self_consistency),
