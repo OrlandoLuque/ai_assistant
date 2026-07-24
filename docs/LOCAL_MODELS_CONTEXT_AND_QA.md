@@ -197,6 +197,8 @@ endpoint:
 | Model | Quant | baseline | `--memory` | note |
 |---|---|:---:|:---:|---|
 | **llama3.2:3b** _(mobile)_ | Q4 | **6/6** | 6/6 | Ollama; fully capable |
+| **qwen2.5:1.5b-instruct** | Q4 | 5/6 | **6/6** | `--memory` (and `--memory-llm` self) rescue `fact_update` |
+| **llama3.2:1b** | Q4 | 4/6 | 4/6 | floor: not rescued (see findings) |
 | **Bonsai-8B** (PrismML) | 1-bit `Q1_0` | **6/6** | 6/6 | already tracks & updates state |
 | **Bonsai-4B** (PrismML) | 1-bit `Q1_0` | 5/6 | **6/6** | `--memory` rescues `fact_update` |
 | **Ternary-Bonsai-4B** (PrismML) | ternary `Q2_0` (~1.58-bit) | — | — | excluded (see below) |
@@ -220,6 +222,18 @@ slow-model streaming artifact, not a memory result._
   re-injects it as an explicit block, so the weak model *reads the current
   value* instead of being confused by raw history — baseline answered `¡7!`
   (echoing an unrelated number); with the ledger it answers `rojo`.
+- **The rescue reproduces on mainstream Ollama models — and has a floor**
+  (measured 2026-07-24, temp 0, each on its own endpoint). `qwen2.5:1.5b-instruct`
+  shows the exact Bonsai-4B profile: **5/6** baseline (missing only `fact_update`),
+  lifted to **6/6** by both `--memory` (heuristic ledger) and `--memory-llm`
+  (self-extraction — 1.5B is capable enough to extract its own facts). But
+  `llama3.2:1b` stays **4/6** no matter what — `--memory-llm` with even a
+  `qwen2.5:14b` extractor doesn't move it — because its misses are
+  `multi_fact_hard` and `multi_grounded`: the chat model can't *use* the injected
+  / retrieved facts, which is a capability gap, not an extraction gap. So the
+  memory ledger rescues an *update-tracking* miss from ~1.5B upward, but cannot
+  substitute for the chat model's core reasoning below that. The **3B remains the
+  reliable sweet spot** (6/6 unaided).
 - **LLM extraction (`--memory-llm`) is only as good as the extractor model.**
   Using the weak 1-bit model itself as the extractor initially *regressed* the
   8B (6/6 → 5/6): asked to extract from "change it to red", the 1-bit extractor
