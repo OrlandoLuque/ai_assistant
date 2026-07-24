@@ -123,7 +123,7 @@ pub struct CoalescedResult {
 struct PendingGroup {
     requests: Vec<CoalescableRequest>,
     created_at: Instant,
-    result_sender: Option<std::sync::mpsc::Sender<CoalescedResult>>,
+    result_senders: Vec<std::sync::mpsc::Sender<CoalescedResult>>,
 }
 
 /// Request coalescer
@@ -212,15 +212,14 @@ impl RequestCoalescer {
             let group = pending.entry(key.clone()).or_insert_with(|| PendingGroup {
                 requests: Vec::new(),
                 created_at: Instant::now(),
-                result_sender: None,
+                result_senders: Vec::new(),
             });
 
             group.requests.push(request);
 
-            // First request in group owns the sender
-            if group.result_sender.is_none() {
-                group.result_sender = Some(tx.clone());
-            }
+            // Every waiter registers its own sender so the coalesced result is
+            // broadcast back to ALL callers, not just the first one.
+            group.result_senders.push(tx);
         }
 
         CoalescingHandle::pending(rx)
@@ -292,8 +291,8 @@ impl RequestCoalescer {
                     generation_time: Some(generation_time),
                 };
 
-                // Broadcast result to all waiters
-                if let Some(sender) = group.result_sender {
+                // Broadcast the result to every coalesced waiter.
+                for sender in &group.result_senders {
                     let _ = sender.send(result.clone());
                 }
 
@@ -654,6 +653,48 @@ mod tests {
 
         // Same key, should be in same group
         assert_eq!(coalescer.pending_count(), 1);
+    }
+
+    #[test]
+    fn coalesced_waiters_all_receive_the_result() {
+        // Regression: with N coalesced callers the generator runs once but EVERY
+        // waiter must get the shared result — previously only the first did.
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let config = CoalescingConfig {
+            coalescing_window: Duration::from_millis(0),
+            ..Default::default()
+        };
+        let coalescer = RequestCoalescer::new(config);
+
+        let h1 = coalescer.submit(CoalescableRequest::new("same prompt", "model"));
+        let h2 = coalescer.submit(CoalescableRequest::new("same prompt", "model"));
+        assert_eq!(coalescer.pending_count(), 1, "requests should coalesce");
+
+        std::thread::sleep(Duration::from_millis(1));
+        let gen_calls = std::sync::Arc::new(AtomicUsize::new(0));
+        let g = gen_calls.clone();
+        coalescer.process_pending(move |_, _| {
+            g.fetch_add(1, Ordering::SeqCst);
+            Ok("the answer".to_string())
+        });
+
+        assert_eq!(
+            gen_calls.load(Ordering::SeqCst),
+            1,
+            "generation must run once for the coalesced group"
+        );
+        let r1 = h1.wait();
+        let r2 = h2.wait();
+        assert_eq!(
+            r1.map(|r| r.response),
+            Some("the answer".to_string()),
+            "first waiter lost the result"
+        );
+        assert_eq!(
+            r2.map(|r| r.response),
+            Some("the answer".to_string()),
+            "second (coalesced) waiter lost the result"
+        );
     }
 
     #[test]
