@@ -572,6 +572,103 @@ impl LlmProvider for FallbackLlmProvider {
     }
 }
 
+/// Decorator that applies the cloud **PII masking** boundary around any inner
+/// [`LlmProvider`]: personal data in the conversation is tokenised (masked)
+/// before it reaches the wrapped provider, and the masked placeholders are
+/// restored (unmasked) in the response — per-chunk for streaming, through the
+/// same relay the legacy `providers::generate_response*` used.
+///
+/// Masking is **unconditional**: wrap a provider in this only for backends that
+/// must not see raw PII (cloud). Local providers are left undecorated so their
+/// data never leaves the machine. Extracted from `generate_response*` so the
+/// mask/unmask concern becomes a composable port decorator (hexagonal, Fase 3).
+pub struct PiiMaskingProvider {
+    inner: Box<dyn LlmProvider>,
+}
+
+impl PiiMaskingProvider {
+    /// Wrap `inner` so its input is PII-masked and its output PII-unmasked.
+    pub fn new(inner: Box<dyn LlmProvider>) -> Self {
+        Self { inner }
+    }
+
+    /// Mask every message's content, accumulating the placeholder→value map.
+    fn mask(conversation: &[ChatMessage]) -> (Vec<ChatMessage>, crate::pii_tokenizer::PiiTokenMap) {
+        use crate::pii_tokenizer::{PiiTokenMap, PiiTokenizer};
+        let mut pii_map = PiiTokenMap::new();
+        let mut tokenizer = PiiTokenizer::with_default();
+        let masked = conversation
+            .iter()
+            .map(|msg| {
+                let (masked_content, map) = tokenizer.mask(&msg.content);
+                pii_map.extend(map);
+                ChatMessage {
+                    role: msg.role.clone(),
+                    content: masked_content,
+                    ..msg.clone()
+                }
+            })
+            .collect();
+        (masked, pii_map)
+    }
+}
+
+impl LlmProvider for PiiMaskingProvider {
+    fn generate(&self, conversation: &[ChatMessage], system_prompt: &str) -> Result<String> {
+        let (masked, pii_map) = Self::mask(conversation);
+        let result = self.inner.generate(&masked, system_prompt);
+        if pii_map.is_empty() {
+            result
+        } else {
+            result.map(|r| crate::pii_tokenizer::PiiTokenizer::unmask(&r, &pii_map))
+        }
+    }
+
+    fn generate_streaming(
+        &self,
+        conversation: &[ChatMessage],
+        system_prompt: &str,
+        tx: &Sender<AiResponse>,
+    ) -> Result<()> {
+        let (masked, pii_map) = Self::mask(conversation);
+        let (dispatch_tx, relay) = crate::providers::pii_unmask_relay(tx, &pii_map);
+        let result = self
+            .inner
+            .generate_streaming(&masked, system_prompt, &dispatch_tx);
+        drop(dispatch_tx);
+        if let Some(handle) = relay {
+            let _ = handle.join();
+        }
+        result
+    }
+
+    fn generate_streaming_cancellable(
+        &self,
+        conversation: &[ChatMessage],
+        system_prompt: &str,
+        tx: &Sender<AiResponse>,
+        cancel_token: &CancellationToken,
+    ) -> Result<()> {
+        let (masked, pii_map) = Self::mask(conversation);
+        let (dispatch_tx, relay) = crate::providers::pii_unmask_relay(tx, &pii_map);
+        let result = self.inner.generate_streaming_cancellable(
+            &masked,
+            system_prompt,
+            &dispatch_tx,
+            cancel_token,
+        );
+        drop(dispatch_tx);
+        if let Some(handle) = relay {
+            let _ = handle.join();
+        }
+        result
+    }
+
+    fn backend_name(&self) -> &'static str {
+        self.inner.backend_name()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -790,5 +887,122 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    /// Echoes the last message's content back (so the mask→unmask round-trip is
+    /// observable end to end).
+    struct EchoLastProvider;
+    impl LlmProvider for EchoLastProvider {
+        fn generate(&self, conversation: &[ChatMessage], _s: &str) -> Result<String> {
+            Ok(conversation
+                .last()
+                .map(|m| m.content.clone())
+                .unwrap_or_default())
+        }
+        fn generate_streaming(
+            &self,
+            conversation: &[ChatMessage],
+            _s: &str,
+            tx: &Sender<AiResponse>,
+        ) -> Result<()> {
+            let last = conversation
+                .last()
+                .map(|m| m.content.clone())
+                .unwrap_or_default();
+            let _ = tx.send(AiResponse::Complete(last));
+            Ok(())
+        }
+        fn generate_streaming_cancellable(
+            &self,
+            conversation: &[ChatMessage],
+            s: &str,
+            tx: &Sender<AiResponse>,
+            _c: &CancellationToken,
+        ) -> Result<()> {
+            self.generate_streaming(conversation, s, tx)
+        }
+    }
+
+    /// Records the content it was actually handed — to prove the inner (cloud)
+    /// provider never sees raw PII.
+    struct CapturingProvider(Arc<Mutex<String>>);
+    impl LlmProvider for CapturingProvider {
+        fn generate(&self, conversation: &[ChatMessage], _s: &str) -> Result<String> {
+            *self.0.lock().unwrap_or_else(|e| e.into_inner()) = conversation
+                .last()
+                .map(|m| m.content.clone())
+                .unwrap_or_default();
+            Ok("ok".to_string())
+        }
+        fn generate_streaming(
+            &self,
+            conversation: &[ChatMessage],
+            _s: &str,
+            tx: &Sender<AiResponse>,
+        ) -> Result<()> {
+            *self.0.lock().unwrap_or_else(|e| e.into_inner()) = conversation
+                .last()
+                .map(|m| m.content.clone())
+                .unwrap_or_default();
+            let _ = tx.send(AiResponse::Complete("ok".to_string()));
+            Ok(())
+        }
+        fn generate_streaming_cancellable(
+            &self,
+            conversation: &[ChatMessage],
+            s: &str,
+            tx: &Sender<AiResponse>,
+            _c: &CancellationToken,
+        ) -> Result<()> {
+            self.generate_streaming(conversation, s, tx)
+        }
+    }
+
+    #[test]
+    fn pii_decorator_masks_input_before_the_inner_provider_sees_it() {
+        // Security: the wrapped (cloud) provider must never receive raw PII.
+        let captured = Arc::new(Mutex::new(String::new()));
+        let dec = PiiMaskingProvider::new(Box::new(CapturingProvider(captured.clone())));
+        let conv = vec![ChatMessage::user(
+            "please email me at alice@example.com about the invoice",
+        )];
+        let _ = dec.generate(&conv, "sys").unwrap();
+        let seen = captured.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        assert!(
+            !seen.contains("alice@example.com"),
+            "inner provider saw raw PII: {seen}"
+        );
+    }
+
+    #[test]
+    fn pii_decorator_round_trips_pii_through_mask_and_unmask() {
+        // The echo returns the MASKED content; the decorator unmasks it, so the
+        // caller gets the original value back.
+        let dec = PiiMaskingProvider::new(Box::new(EchoLastProvider));
+        let conv = vec![ChatMessage::user(
+            "please email me at alice@example.com about the invoice",
+        )];
+        let out = dec.generate(&conv, "sys").unwrap();
+        assert!(
+            out.contains("alice@example.com"),
+            "unmask should restore the email: {out}"
+        );
+    }
+
+    #[test]
+    fn pii_decorator_unmasks_streaming_chunks() {
+        let (tx, rx) = channel();
+        let dec = PiiMaskingProvider::new(Box::new(EchoLastProvider));
+        let conv = vec![ChatMessage::user("email alice@example.com now")];
+        dec.generate_streaming(&conv, "sys", &tx).unwrap();
+        let text = match rx.recv().unwrap() {
+            AiResponse::Complete(t) => t,
+            AiResponse::Chunk(t) => t,
+            other => panic!("unexpected: {other:?}"),
+        };
+        assert!(
+            text.contains("alice@example.com"),
+            "streaming unmask should restore the email: {text}"
+        );
     }
 }

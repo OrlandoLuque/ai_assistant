@@ -846,7 +846,7 @@ pub fn generate_kobold_response(
 /// channel and unmask the text of `Chunk` / `Complete` / `Cancelled` before it
 /// reaches the caller. When `pii_map` is empty (all local providers) there is
 /// nothing to unmask, so the caller's own sender is returned unchanged.
-fn pii_unmask_relay(
+pub(crate) fn pii_unmask_relay(
     tx: &Sender<AiResponse>,
     pii_map: &crate::pii_tokenizer::PiiTokenMap,
 ) -> (Sender<AiResponse>, Option<std::thread::JoinHandle<()>>) {

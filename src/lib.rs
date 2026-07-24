@@ -354,7 +354,7 @@ pub use huggingface::{huggingface_model_info, parse_hf_response, HfModelInfo};
 pub use llamacpp_capability::{parse_props, probe_llamacpp, LlamaCppCapability};
 pub use llm_provider::{
     provider_from_config, ConfigLlmProvider, FallbackLlmProvider, LlmProvider, MockLlmProvider,
-    OllamaAdapter,
+    OllamaAdapter, PiiMaskingProvider,
 };
 pub use messages::{AiResponse, ChatMessage};
 pub use models::{ModelCapabilityInfo, ModelInfo, ModelRegistry};
