@@ -375,6 +375,16 @@ fn ws_recv(stream: &mut std::net::TcpStream) -> Result<String, BrowserError> {
         payload_len = u64::from_be_bytes(ext);
     }
 
+    // Cap the frame size before allocating: a 127-extended length can request up
+    // to ~16 EiB. CDP frames are small, so a huge length is a corrupt/hostile
+    // frame — reject it rather than attempt the allocation.
+    if payload_len > 16 * 1024 * 1024 {
+        return Err(BrowserError::WebSocketError(format!(
+            "WebSocket frame too large: {} bytes",
+            payload_len
+        )));
+    }
+
     let mask_key = if masked {
         let mut mk = [0u8; 4];
         stream
