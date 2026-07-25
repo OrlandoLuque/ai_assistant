@@ -715,6 +715,10 @@ fn all_categories() -> Vec<(&'static str, fn() -> CategoryResult)> {
     #[cfg(all(feature = "autonomous", feature = "tools"))]
     {
         categories.push(("agentic_code", tests_agentic_code as fn() -> CategoryResult));
+        categories.push((
+            "agentic_multi",
+            tests_agentic_multi as fn() -> CategoryResult,
+        ));
     }
 
     categories

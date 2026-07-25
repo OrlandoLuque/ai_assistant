@@ -221,6 +221,40 @@ fn verify_file(py: &str, target: &Path, checker: &str) -> bool {
     ok
 }
 
+/// Extract the first balanced JSON array from `s`, respecting string quoting so
+/// brackets inside code content don't throw off the depth count. Returns the
+/// `[..]` substring, or None if there's no balanced array.
+fn first_json_array(s: &str) -> Option<String> {
+    let start = s.find('[')?;
+    let mut depth = 0i32;
+    let mut in_str = false;
+    let mut escaped = false;
+    for (i, c) in s.char_indices().skip_while(|&(i, _)| i < start) {
+        if in_str {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_str = false;
+            }
+        } else {
+            match c {
+                '"' => in_str = true,
+                '[' => depth += 1,
+                ']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(s[start..i + c.len_utf8()].to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
 /// Flatten the agent's loop conversation into a single stateless prompt.
 fn render_conversation(conv: &[LoopMessage]) -> String {
     let mut s = String::new();
@@ -254,9 +288,18 @@ fn make_generator(assistant: Arc<Mutex<ai_assistant::AiAssistant>>) -> Generator
             Err(poisoned) => poisoned.into_inner(),
         };
         a.clear_conversation();
-        match a.generate_sync(prompt, "") {
+        let reply = match a.generate_sync(prompt, "") {
             Ok(reply) => reply,
-            Err(e) => format!("(generation error: {e})"),
+            Err(e) => return format!("(generation error: {e})"),
+        };
+        // Local models (especially mid-conversation) tend to emit the tool-call
+        // array and then HALLUCINATE the rest of the transcript ("TOOL_RESULT: …",
+        // more ASSISTANT turns). Keep only the first tool-call array so the agent
+        // parses a clean call and the fabricated continuation is discarded; if the
+        // reply is a plain-text final answer, pass it through untouched.
+        match first_json_array(&reply) {
+            Some(arr) if arr.contains("\"name\"") => arr,
+            _ => reply,
         }
     })
 }
@@ -457,6 +500,207 @@ pub(crate) fn tests_agentic_code() -> CategoryResult {
 
     CategoryResult {
         name: "agentic_code".to_string(),
+        results,
+    }
+}
+
+// ─── Multi-step agentic coding (build → extend → fix, persistent workspace) ────
+//
+// The SAME agent runs a SEQUENCE of instructions against ONE workspace. Because
+// `AutonomousAgent::run()` appends to (never clears) its conversation, each step
+// sees everything the earlier steps built — this is iterative development, the
+// "use it like Claude Code" flow. The final accumulated artifact is verified
+// against a checker that exercises EVERY feature, so the model only passes if it
+// preserved earlier work while adding to it (write_file overwrites the whole
+// file, so it must re-emit prior code correctly each edit).
+
+struct MultiStepTask {
+    name: &'static str,
+    /// File that accumulates across the steps.
+    target: &'static str,
+    seed: &'static [(&'static str, &'static str)],
+    /// Sequential instructions handed to the same agent, in order.
+    steps: &'static [&'static str],
+    /// Verifies the FINAL artifact against every feature that should exist.
+    checker: &'static str,
+}
+
+const MULTI_TASKS: &[MultiStepTask] = &[
+    MultiStepTask {
+        name: "calculator (build up)",
+        target: "calc.py",
+        seed: &[],
+        steps: &[
+            "Create `calc.py` with a function `add(a, b)` that returns a + b. Then run it to check it works.",
+            "Add a function `subtract(a, b)` to `calc.py` returning a - b. KEEP the existing add function. Save the whole file and run it.",
+            "Add two more functions to `calc.py`, keeping everything already there: `multiply(a, b)` returning a * b, and `divide(a, b)` returning a / b but raising ValueError('division by zero') when b == 0. Save and run.",
+        ],
+        checker: "assert add(2, 3) == 5\n\
+                  assert subtract(10, 4) == 6\n\
+                  assert multiply(3, 4) == 12\n\
+                  assert divide(9, 3) == 3\n\
+                  raised = False\n\
+                  try:\n    divide(1, 0)\nexcept ValueError:\n    raised = True\n\
+                  assert raised, 'divide by zero must raise ValueError'\n",
+    },
+    MultiStepTask {
+        name: "stack class (build + fix)",
+        target: "stack.py",
+        seed: &[],
+        steps: &[
+            "Create `stack.py` defining a class `Stack` with methods `push(self, x)`, `pop(self)` and `is_empty(self)`, backed by a Python list. Run it to make sure it imports.",
+            "Add a `peek(self)` method to the `Stack` class returning the top item without removing it, and a `size(self)` method returning the number of items. Keep all existing methods. Save and run.",
+            "Make `pop(self)` raise IndexError('pop from empty stack') when the stack is empty. Keep everything else intact. Save and run.",
+        ],
+        checker: "s = Stack()\n\
+                  assert s.is_empty() == True\n\
+                  s.push(1)\ns.push(2)\ns.push(3)\n\
+                  assert s.size() == 3\n\
+                  assert s.peek() == 3\n\
+                  assert s.pop() == 3\n\
+                  assert s.pop() == 2\n\
+                  assert s.pop() == 1\n\
+                  raised = False\n\
+                  try:\n    s.pop()\nexcept IndexError:\n    raised = True\n\
+                  assert raised, 'pop on empty must raise IndexError'\n",
+    },
+];
+
+fn run_multi_task(py: &'static str, task: &MultiStepTask) -> Result<(), String> {
+    let workspace = std::env::temp_dir().join(format!(
+        "agentic_multi_{}_{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&workspace).map_err(|e| e.to_string())?;
+    for (p, c) in task.seed {
+        if let Ok(full) = safe_join(&workspace, p) {
+            let _ = std::fs::write(full, c);
+        }
+    }
+
+    // ONE agent for the whole sequence — the conversation carries prior steps.
+    let assistant = Arc::new(Mutex::new(crate::bench_util::bench_assistant()));
+    let generator = make_generator(assistant);
+    let policy = AgentPolicyBuilder::new()
+        .autonomy(AutonomyLevel::Autonomous)
+        .working_directory(workspace.clone())
+        .allow_path(workspace.clone())
+        .allow_command("python")
+        .allow_command("python3")
+        .allow_tool("write_file")
+        .allow_tool("read_file")
+        .allow_tool("run_python")
+        .build();
+    let registry = build_tools(workspace.clone(), py);
+    let mut agent = AutonomousAgent::builder("coder", generator)
+        .max_iterations(MAX_ITERS)
+        .system_prompt(AGENT_SYSTEM_PROMPT)
+        .policy(policy)
+        .tool_registry(registry)
+        .mode(OperationMode::Autonomous)
+        .build();
+
+    let debug = std::env::var("AGENTIC_DEBUG").is_ok();
+    let mut total_iters = 0usize;
+    for (i, step) in task.steps.iter().enumerate() {
+        let prompt = format!("Step {}/{}: {}", i + 1, task.steps.len(), step);
+        let outcome = agent.run(&prompt);
+        let (it, tools) = match &outcome {
+            Ok(r) => (r.iterations, r.tools_called.join(",")),
+            Err(e) => (MAX_ITERS, format!("<err: {e}>")),
+        };
+        total_iters += it;
+        if debug {
+            let snap =
+                std::fs::read_to_string(safe_join(&workspace, task.target).unwrap_or_default())
+                    .unwrap_or_else(|_| "<target missing>".to_string());
+            let last_reply = agent
+                .conversation()
+                .iter()
+                .rev()
+                .find(|m| matches!(m.role, LoopRole::Assistant))
+                .map(|m| m.content.clone())
+                .unwrap_or_else(|| "<none>".to_string());
+            println!(
+                "    [dbg] step {} iters={it} tools=[{tools}] target {} bytes\n      model_reply: {:?}\n      target:\n----\n{}\n----",
+                i + 1,
+                snap.len(),
+                last_reply.chars().take(400).collect::<String>(),
+                snap
+            );
+        }
+    }
+
+    let target = safe_join(&workspace, task.target)?;
+    let passed = verify_file(py, &target, task.checker);
+    if !debug {
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    if passed {
+        Ok(())
+    } else {
+        Err(format!(
+            "final artifact failed checker after {} steps ({total_iters} total iters) — model lost state across edits",
+            task.steps.len()
+        ))
+    }
+}
+
+pub(crate) fn tests_agentic_multi() -> CategoryResult {
+    println!(
+        "\n{}",
+        bold(&cyan(
+            "▶ Multi-step agentic coding (build → extend → fix, persistent workspace)"
+        ))
+    );
+    let mut results = Vec::new();
+
+    let py = python_cmd();
+    if !crate::bench_util::backend_reachable() || py.is_none() {
+        let why = if py.is_none() {
+            "no python interpreter"
+        } else {
+            "backend not reachable"
+        };
+        println!("  {} skipping agentic-multi ({why})", yellow("SKIP"));
+        results.push(TestResult {
+            name: "prerequisites".to_string(),
+            passed: true,
+            message: Some(format!("Skipped — {why}")),
+            duration_ms: 0.0,
+            score: None,
+            details: Vec::new(),
+            skipped: true,
+            slow: false,
+        });
+        return CategoryResult {
+            name: "agentic_multi".to_string(),
+            results,
+        };
+    }
+    let py = py.unwrap();
+    println!("  backend: {}", crate::bench_util::bench_label());
+
+    for task in MULTI_TASKS {
+        results.push(run_test(&format!("multi: {}", task.name), || {
+            run_multi_task(py, task)
+        }));
+    }
+
+    let solved = results.iter().filter(|r| r.passed && !r.skipped).count();
+    let total = results.iter().filter(|r| !r.skipped).count();
+    println!(
+        "  {} agentic_multi solved: {}/{} (multi-step, execution-verified, backend={})",
+        bold(&cyan("∑")),
+        solved,
+        total,
+        crate::bench_util::bench_label()
+    );
+
+    CategoryResult {
+        name: "agentic_multi".to_string(),
         results,
     }
 }
