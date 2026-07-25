@@ -75,6 +75,66 @@ const TASKS: &[CodeTask] = &[
                   assert roman_to_int('LVIII') == 58\n\
                   assert roman_to_int('MCMXCIV') == 1994\n",
     },
+    // ── Harder tasks (DP / parsing / algorithms) — these discriminate ──────────
+    CodeTask {
+        name: "is_balanced_brackets",
+        spec: "Define a function `is_balanced(s)` that returns True if the brackets in `s` \
+                (only the characters (), [], {}) are correctly balanced and nested, else False. \
+                Other characters may appear and are ignored.",
+        checker: "assert is_balanced('(a[b]{c})') == True\n\
+                  assert is_balanced('([)]') == False\n\
+                  assert is_balanced('(((') == False\n\
+                  assert is_balanced('') == True\n\
+                  assert is_balanced('a)') == False\n",
+    },
+    CodeTask {
+        name: "two_sum",
+        spec: "Define a function `two_sum(nums, target)` that returns a list of the two DISTINCT \
+                indices `[i, j]` (i < j) such that nums[i] + nums[j] == target. Exactly one \
+                solution exists. Return the indices in increasing order.",
+        checker: "assert two_sum([2, 7, 11, 15], 9) == [0, 1]\n\
+                  assert two_sum([3, 2, 4], 6) == [1, 2]\n\
+                  assert two_sum([3, 3], 6) == [0, 1]\n",
+    },
+    CodeTask {
+        name: "merge_intervals",
+        spec: "Define a function `merge_intervals(intervals)` that merges all overlapping \
+                intervals. `intervals` is a list of [start, end] pairs. Return the merged list \
+                sorted by start. Intervals that touch at an endpoint (e.g. [1,4] and [4,5]) merge.",
+        checker: "assert merge_intervals([[1,3],[2,6],[8,10],[15,18]]) == [[1,6],[8,10],[15,18]]\n\
+                  assert merge_intervals([[1,4],[4,5]]) == [[1,5]]\n\
+                  assert merge_intervals([[1,4],[0,4]]) == [[0,4]]\n\
+                  assert merge_intervals([]) == []\n",
+    },
+    CodeTask {
+        name: "longest_common_subsequence",
+        spec: "Define a function `lcs(a, b)` that returns the LENGTH of the longest common \
+                subsequence of strings `a` and `b` (characters in order but not necessarily \
+                contiguous).",
+        checker: "assert lcs('abcde', 'ace') == 3\n\
+                  assert lcs('abc', 'abc') == 3\n\
+                  assert lcs('abc', 'def') == 0\n\
+                  assert lcs('AGGTAB', 'GXTXAYB') == 4\n",
+    },
+    CodeTask {
+        name: "int_to_roman",
+        spec: "Define a function `int_to_roman(n)` that converts an integer `n` (1..=3999) to its \
+                Roman numeral string (uppercase). Uses subtractive forms (IV, IX, XL, XC, CD, CM).",
+        checker: "assert int_to_roman(3) == 'III'\n\
+                  assert int_to_roman(4) == 'IV'\n\
+                  assert int_to_roman(9) == 'IX'\n\
+                  assert int_to_roman(58) == 'LVIII'\n\
+                  assert int_to_roman(1994) == 'MCMXCIV'\n",
+    },
+    CodeTask {
+        name: "flatten_nested_list",
+        spec: "Define a function `flatten(xs)` that returns a flat list of all the non-list \
+                elements of the arbitrarily-nested list `xs`, preserving left-to-right order.",
+        checker: "assert flatten([1, [2, [3, 4], 5], [6]]) == [1, 2, 3, 4, 5, 6]\n\
+                  assert flatten([]) == []\n\
+                  assert flatten([[[[1]]]]) == [1]\n\
+                  assert flatten([1, 2, 3]) == [1, 2, 3]\n",
+    },
 ];
 
 /// First available Python interpreter, if any.
