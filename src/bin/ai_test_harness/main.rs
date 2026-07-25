@@ -402,7 +402,9 @@ fn run_test_scored(
 mod macros;
 
 mod basics;
+mod bench_util;
 mod chains;
+mod code_gen_bench;
 #[cfg(feature = "containers")]
 mod containers;
 mod eval;
@@ -426,6 +428,7 @@ mod replay;
 
 use crate::basics::*;
 use crate::chains::*;
+use crate::code_gen_bench::*;
 #[cfg(feature = "containers")]
 use crate::containers::*;
 use crate::eval::*;
@@ -477,6 +480,7 @@ fn all_categories() -> Vec<(&'static str, fn() -> CategoryResult)> {
         ("document_parsing", tests_document_parsing),
         ("document_ingestion", tests_document_ingestion),
         ("real_e2e", tests_real_e2e),
+        ("code_gen_bench", tests_code_gen_bench),
         ("conversation_analytics", tests_conversation_analytics),
         ("vision", tests_vision),
         ("self_consistency", tests_self_consistency),

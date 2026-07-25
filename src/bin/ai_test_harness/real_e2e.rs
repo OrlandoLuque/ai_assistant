@@ -9,26 +9,6 @@ use super::*;
 // (contains key terms / non-empty) because model output is not bit-exact. The
 // whole category skips when Ollama is not reachable (e.g. CI).
 
-const MODEL: &str = "llama3.2:3b";
-
-fn ollama_up() -> bool {
-    "127.0.0.1:11434"
-        .parse()
-        .ok()
-        .and_then(|addr| {
-            std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(2)).ok()
-        })
-        .is_some()
-}
-
-fn assistant() -> ai_assistant::AiAssistant {
-    let mut a = ai_assistant::AiAssistant::new();
-    a.config.provider = ai_assistant::AiProvider::Ollama;
-    a.config.selected_model = MODEL.to_string();
-    a.config.temperature = 0.0; // deterministic-ish, reproducible
-    a
-}
-
 pub(crate) fn tests_real_e2e() -> CategoryResult {
     println!(
         "\n{}",
@@ -38,9 +18,9 @@ pub(crate) fn tests_real_e2e() -> CategoryResult {
     );
     let mut results = Vec::new();
 
-    if !ollama_up() {
+    if !crate::bench_util::backend_reachable() {
         println!(
-            "  {} Ollama not running — skipping real E2E",
+            "  {} backend not reachable — skipping real E2E",
             yellow("SKIP")
         );
         results.push(TestResult {
@@ -61,7 +41,7 @@ pub(crate) fn tests_real_e2e() -> CategoryResult {
 
     // 1) Multi-turn conversation: state a fact, distract, then recall it.
     results.push(run_test("real: multi-turn recall (name + topic)", || {
-        let mut a = assistant();
+        let mut a = crate::bench_util::bench_assistant();
         a.generate_sync(
             "My name is Carlos and I work mainly in Rust.".to_string(),
             "",
@@ -84,7 +64,7 @@ pub(crate) fn tests_real_e2e() -> CategoryResult {
 
     // 2) Inline document grounding: the fact lives only in the knowledge block.
     results.push(run_test("real: inline document grounded answer", || {
-        let mut a = assistant();
+        let mut a = crate::bench_util::bench_assistant();
         let doc = "Product sheet: the Model Q laptop weighs 1.2 kg, has 18 hours of \
                    battery life, and costs 1490 euros.";
         let ans = a
@@ -116,7 +96,7 @@ pub(crate) fn tests_real_e2e() -> CategoryResult {
             "what is multi-head attention",
             1800,
         );
-        let mut a = assistant();
+        let mut a = crate::bench_util::bench_assistant();
         let ans = a
             .generate_sync(
                 "Using the provided context, briefly: what is multi-head attention?".to_string(),
@@ -131,7 +111,7 @@ pub(crate) fn tests_real_e2e() -> CategoryResult {
 
     // 4) Extraction task.
     results.push(run_test("real: extraction task (email)", || {
-        let mut a = assistant();
+        let mut a = crate::bench_util::bench_assistant();
         let ans = a
             .generate_sync(
                 "Extract only the email address and output just the email, nothing else: \
@@ -148,7 +128,7 @@ pub(crate) fn tests_real_e2e() -> CategoryResult {
 
     // 5) Summarization task: non-empty and on-topic.
     results.push(run_test("real: summarization on-topic", || {
-        let mut a = assistant();
+        let mut a = crate::bench_util::bench_assistant();
         let para = "Rust is a systems programming language focused on safety and performance. \
                     Its ownership model prevents data races and memory errors at compile time, \
                     without a garbage collector.";
