@@ -92,6 +92,55 @@ const TASKS: &[AgenticTask] = &[
                   assert is_even(0) == True\n\
                   assert is_even(7) == False\n",
     },
+    AgenticTask {
+        name: "bank account class",
+        seed: &[],
+        prompt: "Create `bank.py` defining a class `BankAccount` whose constructor takes an \
+                 optional starting balance (default 0). It has a `balance` attribute, a method \
+                 `deposit(self, amount)` that adds to the balance, and `withdraw(self, amount)` \
+                 that subtracts from the balance but raises ValueError('insufficient funds') if \
+                 amount is greater than the current balance. Write it and run it.",
+        target: "bank.py",
+        checker: "a = BankAccount()\n\
+                  assert a.balance == 0\n\
+                  a.deposit(100)\n\
+                  assert a.balance == 100\n\
+                  a.withdraw(30)\n\
+                  assert a.balance == 70\n\
+                  raised = False\n\
+                  try:\n    a.withdraw(1000)\nexcept ValueError:\n    raised = True\n\
+                  assert raised, 'overdraw must raise ValueError'\n",
+    },
+    AgenticTask {
+        name: "fix binary_search off-by-one",
+        seed: &[(
+            "bsearch.py",
+            "def binary_search(arr, target):\n    lo, hi = 0, len(arr)\n    while lo < hi:\n        mid = (lo + hi) // 2\n        if arr[mid] == target:\n            return mid\n        elif arr[mid] < target:\n            lo = mid\n        else:\n            hi = mid\n    return -1\n",
+        )],
+        prompt: "The file `bsearch.py` has a `binary_search(arr, target)` that should return the \
+                 index of target in the sorted list `arr`, or -1 if absent. It has a bug that makes \
+                 it loop forever on some inputs. Read it, fix the bug, and save the file.",
+        target: "bsearch.py",
+        checker: "assert binary_search([1, 3, 5, 7, 9], 5) == 2\n\
+                  assert binary_search([1, 3, 5, 7, 9], 1) == 0\n\
+                  assert binary_search([1, 3, 5, 7, 9], 9) == 4\n\
+                  assert binary_search([1, 3, 5, 7, 9], 4) == -1\n\
+                  assert binary_search([], 1) == -1\n",
+    },
+    AgenticTask {
+        name: "run-length encode",
+        seed: &[],
+        prompt: "Create `rle.py` with a function `encode(s)` that run-length encodes the string `s`, \
+                 returning a list of [character, count] pairs for each run of consecutive identical \
+                 characters (e.g. the string aaabbc encodes to a list with three pairs: a with 3, \
+                 b with 2, c with 1). An empty string returns an empty list. Write the file, then \
+                 run it to check it works.",
+        target: "rle.py",
+        checker: "assert encode('aaabbc') == [['a', 3], ['b', 2], ['c', 1]]\n\
+                  assert encode('') == []\n\
+                  assert encode('x') == [['x', 1]]\n\
+                  assert encode('aabbaa') == [['a', 2], ['b', 2], ['a', 2]]\n",
+    },
 ];
 
 /// Resolve a model-supplied relative path inside `workspace`, rejecting escapes.
