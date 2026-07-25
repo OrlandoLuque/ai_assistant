@@ -401,6 +401,8 @@ fn run_test_scored(
 #[macro_use]
 mod macros;
 
+#[cfg(all(feature = "autonomous", feature = "tools"))]
+mod agentic_code;
 mod basics;
 mod bench_util;
 mod chains;
@@ -426,6 +428,8 @@ mod replay;
 #[path = "replay_stub.rs"]
 mod replay;
 
+#[cfg(all(feature = "autonomous", feature = "tools"))]
+use crate::agentic_code::*;
 use crate::basics::*;
 use crate::chains::*;
 use crate::code_gen_bench::*;
@@ -705,6 +709,12 @@ fn all_categories() -> Vec<(&'static str, fn() -> CategoryResult)> {
     #[cfg(feature = "research")]
     {
         categories.push(("research", tests_research as fn() -> CategoryResult));
+    }
+
+    // Agentic coding loop (needs the autonomous agent loop + the tool system)
+    #[cfg(all(feature = "autonomous", feature = "tools"))]
+    {
+        categories.push(("agentic_code", tests_agentic_code as fn() -> CategoryResult));
     }
 
     categories
