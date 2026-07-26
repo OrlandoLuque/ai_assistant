@@ -269,14 +269,20 @@ fn scaffold_crate(seed_lib: &str) -> Result<std::path::PathBuf, String> {
 /// Append the checker as a test module to whatever the model wrote and run
 /// `cargo test`: exit 0 means it compiled AND the assertions passed.
 fn verify_crate(cargo: &str, ws: &Path, checker: &str) -> bool {
+    verify_crate_verbose(cargo, ws, checker).0
+}
+
+/// Same as [`verify_crate`] but also returns the cargo output, so a scaffolding
+/// loop can hand the compiler's own errors back to the model.
+fn verify_crate_verbose(cargo: &str, ws: &Path, checker: &str) -> (bool, String) {
     let lib = ws.join("src").join("lib.rs");
     let Ok(src) = std::fs::read_to_string(&lib) else {
-        return false;
+        return (false, "src/lib.rs is missing".to_string());
     };
     let full =
         format!("{src}\n\n#[cfg(test)]\nmod harness_checker {{\n    use super::*;\n{checker}}}\n");
     if std::fs::write(&lib, &full).is_err() {
-        return false;
+        return (false, "could not write src/lib.rs".to_string());
     }
     let out = run_capture(
         cargo,
@@ -285,7 +291,33 @@ fn verify_crate(cargo: &str, ws: &Path, checker: &str) -> bool {
         CARGO_TIMEOUT,
     );
     let _ = std::fs::write(&lib, src); // restore the model's own file
-    out.starts_with("exit_code=0")
+    (out.starts_with("exit_code=0"), out)
+}
+
+/// How many verify→retry rounds the agent gets (`AI_BENCH_SCAFFOLD`, default 1 =
+/// no scaffolding, a single shot). This is the BACKLOG's central hypothesis —
+/// "agentic scaffolding compensates for a weaker local model, at the cost of
+/// time" — expressed as an A/B knob: same model, same tasks, only the number of
+/// verify→feedback→retry rounds changes.
+fn scaffold_rounds() -> usize {
+    std::env::var("AI_BENCH_SCAFFOLD")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|n| *n >= 1)
+        .unwrap_or(1)
+}
+
+/// Turn a failing cargo run into a retry instruction for the model. The hidden
+/// checker itself is NOT revealed — only the compiler/test output, which is what
+/// a developer would see.
+fn retry_prompt(cargo_output: &str) -> String {
+    let tail: String = cargo_output.chars().take(2500).collect();
+    format!(
+        "Your code was compiled and tested against a hidden test suite, and it FAILED. \
+         Here is the exact cargo output:\n\n{tail}\n\n\
+         Fix `src/lib.rs` so it compiles and satisfies the requirements of the original task. \
+         Re-read the file first if you need to, write the corrected version, and run cargo test."
+    )
 }
 
 /// Tools for the Rust workspace: file I/O plus a cargo-only run_command.
@@ -437,20 +469,36 @@ fn run_rust_task(cargo: &'static str, task: &RustTask) -> Result<(), String> {
         .mode(OperationMode::Autonomous)
         .build();
 
-    let outcome = agent.run(task.prompt);
-    let iters = match &outcome {
-        Ok(r) => r.iterations,
-        Err(_) => MAX_ITERS,
-    };
-
-    let passed = verify_crate(cargo, &ws, task.checker);
+    // Scaffolding loop: run, verify by compiling+testing, and on failure hand the
+    // model the compiler's own output and let it try again (AI_BENCH_SCAFFOLD).
+    let rounds = scaffold_rounds();
+    let mut iters = 0usize;
+    let mut last_out = String::new();
+    let mut passed = false;
+    for round in 0..rounds {
+        let prompt = if round == 0 {
+            task.prompt.to_string()
+        } else {
+            retry_prompt(&last_out)
+        };
+        match agent.run(&prompt) {
+            Ok(r) => iters += r.iterations,
+            Err(_) => iters += MAX_ITERS,
+        }
+        let (ok, out) = verify_crate_verbose(cargo, &ws, task.checker);
+        passed = ok;
+        last_out = out;
+        if passed {
+            break;
+        }
+    }
     let _ = std::fs::remove_dir_all(&ws);
 
     if passed {
         Ok(())
     } else {
         Err(format!(
-            "cargo test failed after {iters} agent iteration(s) — code did not compile or assertions failed"
+            "cargo test failed after {rounds} round(s), {iters} agent iteration(s) — code did not compile or assertions failed"
         ))
     }
 }
