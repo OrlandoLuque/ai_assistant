@@ -279,11 +279,10 @@ fn verify_file(py: &str, target: &Path, checker: &str) -> bool {
     ok
 }
 
-/// Extract the first balanced JSON array from `s`, respecting string quoting so
-/// brackets inside code content don't throw off the depth count. Returns the
-/// `[..]` substring, or None if there's no balanced array.
-fn first_json_array(s: &str) -> Option<String> {
-    let start = s.find('[')?;
+/// Extract the balanced `[..]` substring starting at byte offset `start`,
+/// respecting string quoting so brackets inside code content don't throw off the
+/// depth count. None if it never balances.
+fn balanced_array_at(s: &str, start: usize) -> Option<String> {
     let mut depth = 0i32;
     let mut in_str = false;
     let mut escaped = false;
@@ -307,6 +306,35 @@ fn first_json_array(s: &str) -> Option<String> {
                     }
                 }
                 _ => {}
+            }
+        }
+    }
+    None
+}
+
+/// Find the first substring of `s` that is a VALID JSON array of tool calls.
+///
+/// Local models often wrap the call in noise: a malformed array first, or the
+/// model hallucinating the rest of the transcript after a good one. So every `[`
+/// is tried as a start and the candidate must actually PARSE (serde_json) and
+/// contain a `name` field. We deliberately do NOT repair malformed JSON — a model
+/// that cannot emit a valid tool call has genuinely failed the protocol, and
+/// patching it would inflate the score.
+fn first_json_array(s: &str) -> Option<String> {
+    for (start, c) in s.char_indices() {
+        if c != '[' {
+            continue;
+        }
+        let Some(cand) = balanced_array_at(s, start) else {
+            continue;
+        };
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&cand) {
+            let looks_like_calls = v
+                .as_array()
+                .map(|a| !a.is_empty() && a.iter().any(|e| e.get("name").is_some()))
+                .unwrap_or(false);
+            if looks_like_calls {
+                return Some(cand);
             }
         }
     }
@@ -711,6 +739,73 @@ const MULTI_TASKS: &[MultiStepTask] = &[
                   assert mode([1, 1, 2, 2]) == 1\n\
                   assert abs(stdev([2, 4, 4, 4, 5, 5, 7, 9]) - 2.0) < 1e-9\n",
     },
+    MultiStepTask {
+        name: "todo list class",
+        target: "todo.py",
+        seed: &[],
+        steps: &[
+            "Create `todo.py` with a class `TodoList` whose constructor takes no arguments. It has \
+             a method `add(self, item)` that appends an item, and `all(self)` returning the list of \
+             items in insertion order. Run it to check it imports.",
+            "Add a method `remove(self, item)` to `TodoList` that removes the first occurrence of \
+             item, and raises ValueError('not found') if the item is not present. Keep the existing \
+             methods. Save and run.",
+            "Add two more methods to `TodoList`, keeping everything already there: `count(self)` \
+             returning how many items there are, and `clear(self)` removing all items. Save and run.",
+        ],
+        checker: "t = TodoList()\n\
+                  assert t.all() == []\n\
+                  t.add('a')\nt.add('b')\n\
+                  assert t.all() == ['a', 'b']\n\
+                  assert t.count() == 2\n\
+                  t.remove('a')\n\
+                  assert t.all() == ['b']\n\
+                  raised = False\n\
+                  try:\n    t.remove('zzz')\nexcept ValueError:\n    raised = True\n\
+                  assert raised, 'removing a missing item must raise ValueError'\n\
+                  t.clear()\n\
+                  assert t.all() == []\n\
+                  assert t.count() == 0\n",
+    },
+    MultiStepTask {
+        name: "word counter (must modify earlier step)",
+        target: "words.py",
+        seed: &[],
+        steps: &[
+            "Create `words.py` with a function `count_words(text)` returning a dict mapping each \
+             whitespace-separated word in `text` to how many times it occurs. Run it to check.",
+            "Add `top_word(text)` returning the most frequent word; if several tie, return the \
+             alphabetically smallest of the tied words. Keep `count_words`. Save and run.",
+            "Now make the counting CASE-INSENSITIVE: both functions must treat Hello and hello as \
+             the same word, and the keys returned by count_words must be lowercase. Keep both \
+             functions working. Save and run.",
+        ],
+        checker: "assert count_words('a b a') == {'a': 2, 'b': 1}\n\
+                  assert count_words('') == {}\n\
+                  assert count_words('Hello hello HELLO') == {'hello': 3}\n\
+                  assert top_word('x y y') == 'y'\n\
+                  assert top_word('b b a a') == 'a'\n\
+                  assert top_word('Cat cat dog') == 'cat'\n",
+    },
+    MultiStepTask {
+        name: "matrix utils",
+        target: "matrix.py",
+        seed: &[],
+        steps: &[
+            "Create `matrix.py` with a function `transpose(m)` returning the transpose of the \
+             matrix `m` (a list of equal-length lists). Run it to check.",
+            "Add `identity(n)` returning the n by n identity matrix as a list of lists. Keep \
+             `transpose`. Save and run.",
+            "Add `multiply(a, b)` returning the matrix product of `a` and `b`. Keep everything \
+             already there. Save and run.",
+        ],
+        checker: "assert transpose([[1, 2], [3, 4]]) == [[1, 3], [2, 4]]\n\
+                  assert transpose([[1, 2, 3]]) == [[1], [2], [3]]\n\
+                  assert identity(2) == [[1, 0], [0, 1]]\n\
+                  assert identity(1) == [[1]]\n\
+                  assert multiply([[1, 2], [3, 4]], [[1, 0], [0, 1]]) == [[1, 2], [3, 4]]\n\
+                  assert multiply([[1, 2]], [[3], [4]]) == [[11]]\n",
+    },
 ];
 
 fn run_multi_task(py: &'static str, task: &MultiStepTask) -> Result<(), String> {
@@ -772,12 +867,14 @@ fn run_multi_task(py: &'static str, task: &MultiStepTask) -> Result<(), String> 
                 .find(|m| matches!(m.role, LoopRole::Assistant))
                 .map(|m| m.content.clone())
                 .unwrap_or_else(|| "<none>".to_string());
+            let arr = first_json_array(&last_reply);
             println!(
-                "    [dbg] step {} iters={it} tools=[{tools}] target {} bytes\n      model_reply: {:?}\n      target:\n----\n{}\n----",
+                "    [dbg] step {} iters={it} tools=[{tools}] target {} bytes | reply {} chars, balanced_array={} | tail={:?}",
                 i + 1,
                 snap.len(),
-                last_reply.chars().take(400).collect::<String>(),
-                snap
+                last_reply.len(),
+                arr.is_some(),
+                last_reply.chars().rev().take(80).collect::<String>().chars().rev().collect::<String>()
             );
         }
     }
