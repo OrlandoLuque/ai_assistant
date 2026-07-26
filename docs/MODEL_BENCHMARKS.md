@@ -51,7 +51,9 @@ A **sweep** is just a loop over `AI_BENCH_MODEL`. Build the harness with
   `PROCESSOR` column: anything other than ~100% GPU means layers were offloaded to
   CPU because VRAM was busy (desktop apps count!). That inflates times ~10× *and*
   flips results via request timeouts — silently. `nvidia-smi` shows who is holding
-  the VRAM.
+  the VRAM. **Freeing VRAM is not enough**: the split is decided when the model
+  loads, so run `ollama stop <model>` to force a reload once the GPU is free
+  (measured: 166 s → 21.9 s on the same task).
 - **Temperature 0**, but Ollama is not perfectly deterministic — expect ±1
   run-to-run noise on borderline tasks. Re-run 3× before trusting a single number.
 - **Confounds to avoid when authoring tasks:** a solution whose *code* contains a
@@ -64,6 +66,47 @@ A **sweep** is just a loop over `AI_BENCH_MODEL`. Build the harness with
 ---
 
 ## Log (newest first)
+
+### 2026-07-26 (4th) — **clean full sweep**, 6 models × 3 categories (harness @ V240 / 0.2.192)
+
+**Setup:** Ollama, temperature 0, **all models verified 100% GPU** (`ollama ps`)
+after freeing VRAM — see the gotcha below. Tasks: code_gen 11, agentic_code 5,
+agentic_multi 6. This entry supersedes the invalidated run below.
+
+| Model | code_gen (11) | agentic single (5) | agentic multi (6) |
+|---|---|---|---|
+| llama3.2:1b | 9/11 | 1/5 | 0/6 |
+| qwen2.5:1.5b-instruct | 10/11 | 2/5 | 1/6 |
+| gemma2:2b | 10/11 | 1/5 | 1/6 |
+| llama3.2:3b | 11/11 | 2/5 | 1/6 |
+| qwen2.5-coder:7b-instruct | 11/11 | 5/5 | 5/6 |
+| llama3.1:8b | 11/11 | 4/5 | **6/6** |
+
+**Findings:**
+- **The three categories form a clean difficulty ladder.** `code_gen` saturates
+  from 3B up (11/11 for everyone ≥3B — useless for ranking capable models);
+  `agentic_code` splits small vs. large; `agentic_multi` splits hardest.
+- **Multi-step is where the tier boundary lives, and it is sharp.** Everything
+  ≤3B lands at 0–1 of 6 — i.e. essentially *cannot* sustain iterative development —
+  while 7–8B lands at 5–6 of 6. There is no middle tier in this model set.
+- **llama3.1:8b is the only 6/6**, edging qwen2.5-coder:7b (5/6) on multi-step even
+  though the coder model wins single-step (5/5 vs 4/5). With 5–6 tasks a one-task
+  gap is within noise; the honest statement is *both 7–8B models are usable, the
+  ≤3B ones are not*.
+- **Now with 6 multi-step tasks the numbers are far less noisy** than the 2–3 task
+  sets of earlier entries, which is what made the earlier "llama3.2:3b = 1/2"
+  reading unstable.
+
+**Gotcha discovered (worth its own line):** freeing VRAM is *not enough*. Ollama
+decides CPU/GPU layer split **at load time**, so a model loaded while VRAM was
+scarce stays partly on CPU even after the memory frees up. `ollama stop <model>`
+to force a reload. Measured on the same task: **166 s → 21.9 s (7.6×)** purely from
+reloading into a free GPU.
+
+**Commits:** measurement only (harness unchanged since V240 / 0.2.192).
+
+**Next:** more multi-step tasks to resolve the 7B-vs-8B gap; SWE-bench-style repo
+bugfixes; Claude ceiling (still deferred — no API credits).
 
 ### 2026-07-26 (3rd) — 6 multi-step tasks + extraction fix; **run invalidated by VRAM starvation** (harness @ V240 / 0.2.192)
 
