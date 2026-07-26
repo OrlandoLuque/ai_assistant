@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — V168–V231 condensed backfill (2026-06 → 2026-07, 0.2.120 → 0.2.183)
+## [Unreleased] — V168–V238 condensed backfill (2026-06 → 2026-07, 0.2.120 → 0.2.190)
 
 This changelog and the `IMPROVEMENTS_V*` series lapsed after V167; the ~60
 versions since are reconstructed here **grouped by theme**. Per-commit detail
@@ -36,7 +36,9 @@ lives in git — each `VNNN:` commit message is self-contained.
   (obfuscated prompt injection — leetspeak / zero-width), V220 (usize underflow),
   V222 (CoAP decoder + MCP cursor OOB slices), V224 (clamp zero-config
   divisors / ring-buffer sizes). V209: release profile `panic = "unwind"` so
-  fail-closed guardrails work in shipped binaries.
+  fail-closed guardrails work in shipped binaries. V232 fixes `RequestCoalescer`
+  delivering the shared result to only the first waiter; V233 caps the WebSocket
+  frame size in `browser_tools` `ws_recv`.
 
 ### Retrieval, memory & QA
 - V194–V206: conversation-QA harness (multi-turn + grounding scenarios); semantic
@@ -55,6 +57,17 @@ lives in git — each `VNNN:` commit message is self-contained.
   live-model battery — conversation + documents + tasks (V231); clippy
   `-D warnings` gate extended to the network feature set (V225); local-model
   context/QA documentation.
+- **Execution-verified live-model benchmark suite.** `code_gen_bench` runs the
+  code the model writes against assert checkers for a real pass@1 (V234), plus 6
+  harder DP/parsing tasks (V235); the backend is provider/model/endpoint-
+  configurable via `AI_BENCH_*` env, so the same tasks target Ollama, llama.cpp,
+  LM Studio, vLLM, … (V234). `agentic_code` / `agentic_multi` drive the library's
+  own `AutonomousAgent` with a live model over `write_file`/`read_file`/`run_python`
+  tools to build and fix code — single-step (V236; +3 harder tasks V238) and
+  multi-step build→extend→fix on a persistent workspace (V237, which also fixes the
+  tool-call extraction so a model's post-array hallucinated transcript no longer
+  drops the call). Finding: single-function code-gen saturates at 3B, while the
+  multi-step agentic loop is the real cross-model discriminator.
 
 ## [Unreleased] - v132 (2026-06-26) — V167: split assistant.rs into impl submodules (0.2.119)
 
