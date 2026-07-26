@@ -25,7 +25,7 @@ llama.cpp, LM Studio, vLLM, … or a cloud provider.
 |---|---|---|
 | `code_gen_bench` | pass@1 on standalone functions: spec → code → run against checker. | 11 |
 | `agentic_code` | a live model drives the built-in `AutonomousAgent` over workspace tools (`write_file`, `read_file`, `run_python`, `list_dir`, `run_command`) to build & fix code in a temp workspace. | 5 single-step |
-| `agentic_multi` | multi-step iterative coding (build → extend → fix) on **one persistent workspace** (the agent's conversation carries across steps). | 3 (two 3-step, one 4-step) |
+| `agentic_multi` | multi-step iterative coding (build → extend → fix) on **one persistent workspace** (the agent's conversation carries across steps). | 6 (3–4 steps each) |
 
 ## How to run
 
@@ -47,6 +47,11 @@ A **sweep** is just a loop over `AI_BENCH_MODEL`. Build the harness with
 ## How to read / caveats
 
 - **Execution-verified**: PASS = the generated code ran and passed its checker.
+- **Check the model is fully on GPU before trusting a sweep.** `ollama ps` shows a
+  `PROCESSOR` column: anything other than ~100% GPU means layers were offloaded to
+  CPU because VRAM was busy (desktop apps count!). That inflates times ~10× *and*
+  flips results via request timeouts — silently. `nvidia-smi` shows who is holding
+  the VRAM.
 - **Temperature 0**, but Ollama is not perfectly deterministic — expect ±1
   run-to-run noise on borderline tasks. Re-run 3× before trusting a single number.
 - **Confounds to avoid when authoring tasks:** a solution whose *code* contains a
@@ -59,6 +64,42 @@ A **sweep** is just a loop over `AI_BENCH_MODEL`. Build the harness with
 ---
 
 ## Log (newest first)
+
+### 2026-07-26 (3rd) — 6 multi-step tasks + extraction fix; **run invalidated by VRAM starvation** (harness @ V240 / 0.2.192)
+
+**Setup:** Ollama, qwen2.5-coder:7b-instruct. `agentic_multi` grew from 3 to 6
+tasks (added: todo list class, matrix utils, and *word counter*, whose 3rd step must
+**modify** earlier behaviour — make counting case-insensitive — rather than append).
+
+**No sweep numbers published from this run.** Mid-run the box was VRAM-starved:
+`nvidia-smi` showed **13.6 of 16 GB taken by desktop apps** (browser, editors, chat
+apps, Steam), so `ollama ps` reported the 7B running **55%/45% CPU/GPU**. Effects:
+per-task times went from ~14 s to 170–600 s, and one step died on
+`Failed to send request to Ollama` (timeout). Passes observed are still valid
+(execution-verified), but the one failure is confounded, so the set is not
+comparable to earlier entries.
+
+> **Lesson for this notebook: check `ollama ps` shows 100% GPU before trusting a
+> sweep.** A partially CPU-offloaded model changes both timings and pass/fail
+> (timeouts), silently.
+
+**Findings (harness, not models):**
+- **Extraction was brittle.** Instrumenting the debug dump with *reply length* +
+  *balanced-array status* (rather than eyeballing truncated text) showed
+  `first_json_array` locking onto the **first** `[` in a reply: when a model emitted
+  a malformed array and *then* a well-formed one, the good call was discarded and
+  the step silently became a no-op. Fixed by trying every `[` and requiring the
+  candidate to actually **parse** (serde_json) and contain a `name` field. Verified:
+  a step that yielded `tools=[]` now yields `tools=[write_file,write_file,run_python]`.
+- **Deliberately not repairing malformed JSON**: a model that can't emit a valid
+  tool call has genuinely failed the protocol; patching it would inflate scores.
+  Small models *do* drop closing braces/brackets on longer payloads — that is a real,
+  measurable limitation.
+
+**Commits:** V240 (0.2.192).
+
+**Next:** re-run the full sweep (3 categories × models) on a **clean GPU state**;
+Claude ceiling still deferred (no API credits).
 
 ### 2026-07-26 (later) — richer tools + a 4-step chain (harness @ V239 / 0.2.191)
 
