@@ -24,8 +24,8 @@ llama.cpp, LM Studio, vLLM, … or a cloud provider.
 | Category | What it measures | Tasks |
 |---|---|---|
 | `code_gen_bench` | pass@1 on standalone functions: spec → code → run against checker. | 11 |
-| `agentic_code` | a live model drives the built-in `AutonomousAgent` over `write_file`/`read_file`/`run_python` tools to build & fix code in a temp workspace. | 5 single-step |
-| `agentic_multi` | multi-step iterative coding (build → extend → fix) on **one persistent workspace** (the agent's conversation carries across steps). | 2 × 3 steps |
+| `agentic_code` | a live model drives the built-in `AutonomousAgent` over workspace tools (`write_file`, `read_file`, `run_python`, `list_dir`, `run_command`) to build & fix code in a temp workspace. | 5 single-step |
+| `agentic_multi` | multi-step iterative coding (build → extend → fix) on **one persistent workspace** (the agent's conversation carries across steps). | 3 (two 3-step, one 4-step) |
 
 ## How to run
 
@@ -59,6 +59,35 @@ A **sweep** is just a loop over `AI_BENCH_MODEL`. Build the harness with
 ---
 
 ## Log (newest first)
+
+### 2026-07-26 (later) — richer tools + a 4-step chain (harness @ V239 / 0.2.191)
+
+**Setup:** Ollama, temperature 0. Agents gained two tools (`list_dir`,
+`run_command` — whitelisted python/python3/pytest, no shell). `agentic_multi` grew
+a third task: **stats module**, a *4-step* build (mean → +median → +mode → +stdev),
+longer than the existing 3-step chains.
+
+| Model | agentic multi (3) |
+|---|---|
+| gemma2:2b | 0/3 |
+| llama3.2:3b | 0/3 |
+| qwen2.5-coder:7b-instruct | 3/3 |
+| llama3.1:8b | 3/3 |
+
+**Findings:**
+- **The cut at ~7B is binary on this set**: small models solve *none*, 7–8B solve
+  *all three* — including the 4-step chain, so length alone doesn't break the 7–8B
+  models here.
+- **Correction to the previous entry's reading**: llama3.2:3b went 1/2 → 0/3. With
+  samples this small, its earlier 1/2 was borderline rather than a real
+  "half-capable" tier. Robust statement: **3B does not reliably sustain multi-step**.
+  More tasks per category are needed before per-model numbers deserve trust.
+
+**Commits:** V239 (0.2.191).
+
+**Next:** Claude ceiling still pending — **no `ANTHROPIC_API_KEY` in the
+environment**, so the cloud comparison could not run. Also: more multi-step tasks
+(to firm up the numbers), and SWE-bench-style repo bugfixes.
 
 ### 2026-07-26 — first full sweep (harness @ V238 / 0.2.190)
 
