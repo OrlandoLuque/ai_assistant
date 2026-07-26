@@ -69,6 +69,41 @@ A **sweep** is just a loop over `AI_BENCH_MODEL`. Build the harness with
 
 ## Log (newest first)
 
+### 2026-07-27 (2nd) — **negative result**: verify→retry scaffolding does not rescue weaker models (harness @ V242 / 0.2.194)
+
+**Setup:** `agentic_rust` (12 tasks), Ollama, temperature 0, 100% GPU. New knob
+`AI_BENCH_SCAFFOLD=n` gives the agent *n* verify→feedback→retry rounds: after each
+attempt the crate is compiled and tested, and on failure the model receives the real
+cargo output (never the checker source) and is asked to fix `src/lib.rs`.
+
+| Model | scaffold=1 (single shot) | scaffold=3 |
+|---|---|---|
+| llama3.2:3b | 1/12 | 2/12 |
+| llama3.1:8b | 10/12 | 10/12 |
+
+**Finding — the BACKLOG's central hypothesis is NOT supported here.** The bet was
+that *"el andamiaje agéntico compensa un modelo local más flojo, a costa de tiempo"*.
+On this task set it does neither: it does not rescue the incapable model (+1 task out
+of 12, at 3× the time) and does not close the last gap for the model that is already
+close (no change at all).
+
+**Most likely why:** the agent *already* self-corrects inside its 6 loop iterations —
+it can run `cargo test` and read the compiler's errors unaided — so an extra outer
+round carries no new information. What remains are **capability** limits, not slips
+that feedback can fix. Retry helps when a model *knows* the answer and slipped; it
+does not teach a 3B model to write Rust it never could.
+
+**Scope of the claim (important):** this tests ONE form of scaffolding
+(verify→retry) on ONE task set. The other levers the backlog names — RAG over the
+codebase, multi-agent roles, Chain-of-Verification, quality gates, self-consistency —
+are untested and may behave differently. The honest conclusion is narrow: *execution
+feedback alone is not the lever that closes the gap to big models.*
+
+**Commits:** V242 (0.2.194).
+
+**Next:** test a *different* scaffolding lever (multi-agent review, or self-consistency
+over N samples) before accepting or rejecting the broader hypothesis.
+
 ### 2026-07-27 — Rust enters the benchmark + model shootout (harness @ V241 / 0.2.193)
 
 **Setup:** Ollama, temperature 0, every model checked with `ollama ps`. New
