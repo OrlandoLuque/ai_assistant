@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — V168–V238 condensed backfill (2026-06 → 2026-07, 0.2.120 → 0.2.190)
+## [Unreleased] — V168–V244 condensed backfill (2026-06 → 2026-07, 0.2.120 → 0.2.196)
 
 This changelog and the `IMPROVEMENTS_V*` series lapsed after V167; the ~60
 versions since are reconstructed here **grouped by theme**. Per-commit detail
@@ -68,6 +68,17 @@ lives in git — each `VNNN:` commit message is self-contained.
   tool-call extraction so a model's post-array hallucinated transcript no longer
   drops the call). Finding: single-function code-gen saturates at 3B, while the
   multi-step agentic loop is the real cross-model discriminator.
+- **Rust benchmark + scaffolding experiments (V239–V244).** Richer agent tools
+  (`list_dir`, whitelisted `run_command`) and longer chains (V239–V240); then
+  `agentic_rust` / `agentic_rust_multi` (V241, V243), which run the same agentic
+  loop against a throwaway cargo crate and verify with **`cargo test`**, making the
+  type and borrow checkers part of the verifier. Two scaffolding knobs were added to
+  test the backlog's central bet that scaffolding compensates for a weaker local
+  model: `AI_BENCH_SCAFFOLD` (verify→feedback→retry, V242) and `AI_BENCH_SAMPLES` +
+  `AI_BENCH_TEMP` (independent best-of-N, V244). **Both refute it**: llama3.2:3b goes
+  1/12 → 2/12 either way, for 3× the compute, because the remaining failures are
+  capability limits rather than slips. Results are logged per sweep in
+  `docs/MODEL_BENCHMARKS.md`.
 
 ## [Unreleased] - v132 (2026-06-26) — V167: split assistant.rs into impl submodules (0.2.119)
 
