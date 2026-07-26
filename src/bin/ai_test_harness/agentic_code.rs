@@ -42,6 +42,8 @@ Available tools:
 - write_file(path, content): create or overwrite a file. `path` is RELATIVE to the workspace, e.g. "solution.py". `content` is the full file text.
 - read_file(path): return the current contents of a file.
 - run_python(path): execute a python file; returns its stdout, stderr and exit code.
+- list_dir(): list the files currently in the workspace.
+- run_command(command): run a whitelisted command (python, python3, pytest) in the workspace.
 
 Rules:
 - When you act, output ONLY the JSON array — nothing before or after it, no code fences.
@@ -170,19 +172,20 @@ fn python_cmd() -> Option<&'static str> {
     None
 }
 
-/// Run a python file with a timeout, capturing stdout+stderr and exit code as
-/// text — this is what the agent's `run_python` tool hands back to the model so
-/// it can see errors and iterate.
-fn run_python_capture(py: &str, file: &Path, timeout: Duration) -> String {
+/// Run a program with args in `cwd` under a timeout, capturing stdout+stderr and
+/// exit code as text — what the agent's run_python / run_command tools hand back
+/// to the model so it can see errors and iterate.
+fn run_capture(prog: &str, args: &[String], cwd: &Path, timeout: Duration) -> String {
     use std::io::Read;
-    let spawn = std::process::Command::new(py)
-        .arg(file)
+    let spawn = std::process::Command::new(prog)
+        .args(args)
+        .current_dir(cwd)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn();
     let mut child = match spawn {
         Ok(c) => c,
-        Err(e) => return format!("failed to launch python: {e}"),
+        Err(e) => return format!("failed to launch {prog}: {e}"),
     };
     let start = Instant::now();
     let status = loop {
@@ -220,6 +223,12 @@ fn run_python_capture(py: &str, file: &Path, timeout: Duration) -> String {
             out.trim()
         ),
     }
+}
+
+/// Run a python file (the run_python tool), capturing output.
+fn run_python_capture(py: &str, file: &Path, timeout: Duration) -> String {
+    let cwd = file.parent().unwrap_or_else(|| Path::new("."));
+    run_capture(py, &[file.to_string_lossy().into_owned()], cwd, timeout)
 }
 
 /// Run a python file with a timeout; true iff it exits 0. Used for verification.
@@ -438,6 +447,71 @@ fn build_tools(workspace: PathBuf, py: &'static str) -> ToolRegistry {
         reg.register(def, handler);
     }
 
+    // list_dir
+    {
+        let ws = workspace.clone();
+        let def = ToolBuilder::new(
+            "list_dir",
+            "List the file names currently in the workspace.",
+        )
+        .category("filesystem")
+        .build();
+        let handler: Arc<dyn Fn(&ToolCall) -> Result<ToolOutput, ToolError> + Send + Sync> =
+            Arc::new(move |_call: &ToolCall| {
+                let mut names: Vec<String> = std::fs::read_dir(&ws)
+                    .map(|rd| {
+                        rd.flatten()
+                            .map(|e| e.file_name().to_string_lossy().into_owned())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                names.sort();
+                Ok(ToolOutput::text(if names.is_empty() {
+                    "(empty workspace)".to_string()
+                } else {
+                    names.join("\n")
+                }))
+            });
+        reg.register(def, handler);
+    }
+
+    // run_command (allowlisted programs only, no shell interpretation)
+    {
+        let ws = workspace.clone();
+        let def = ToolBuilder::new(
+            "run_command",
+            "Run a whitelisted command (python, python3, pytest) in the workspace and return its \
+             stdout, stderr and exit code.",
+        )
+        .required_string(
+            "command",
+            "The command line, e.g. \"pytest -q\" or \"python solution.py\"",
+        )
+        .category("shell")
+        .build();
+        let handler: Arc<dyn Fn(&ToolCall) -> Result<ToolOutput, ToolError> + Send + Sync> =
+            Arc::new(move |call: &ToolCall| {
+                let cmd = call
+                    .get_string("command")
+                    .ok_or_else(|| ToolError::MissingParameter("command".into()))?;
+                let parts: Vec<String> = cmd.split_whitespace().map(|s| s.to_string()).collect();
+                let prog = parts.first().map(|s| s.as_str()).unwrap_or("");
+                const ALLOWED: &[&str] = &["python", "python3", "pytest"];
+                if !ALLOWED.contains(&prog) {
+                    return Ok(ToolOutput::text(format!(
+                        "(command not allowed: '{prog}'. Allowed: python, python3, pytest)"
+                    )));
+                }
+                Ok(ToolOutput::text(run_capture(
+                    prog,
+                    &parts[1..],
+                    &ws,
+                    RUN_TIMEOUT,
+                )))
+            });
+        reg.register(def, handler);
+    }
+
     reg
 }
 
@@ -464,9 +538,12 @@ fn run_one_task(py: &'static str, task: &AgenticTask) -> Result<(), String> {
         .allow_path(workspace.clone())
         .allow_command("python")
         .allow_command("python3")
+        .allow_command("pytest")
         .allow_tool("write_file")
         .allow_tool("read_file")
         .allow_tool("run_python")
+        .allow_tool("list_dir")
+        .allow_tool("run_command")
         .build();
     let registry = build_tools(workspace.clone(), py);
     let mut agent = AutonomousAgent::builder("coder", generator)
@@ -613,6 +690,27 @@ const MULTI_TASKS: &[MultiStepTask] = &[
                   try:\n    s.pop()\nexcept IndexError:\n    raised = True\n\
                   assert raised, 'pop on empty must raise IndexError'\n",
     },
+    MultiStepTask {
+        name: "stats module (4-step build)",
+        target: "stats.py",
+        seed: &[],
+        steps: &[
+            "Create `stats.py` with a function `mean(nums)` returning the arithmetic mean of the \
+             list `nums`. Run it to check it works.",
+            "Add `median(nums)` to `stats.py` returning the median (for an even-length list, the \
+             average of the two middle values). Keep the existing `mean`. Save and run.",
+            "Add `mode(nums)` to `stats.py` returning the most frequent value; on a tie, return \
+             the smallest of the tied values. Keep everything already there. Save and run.",
+            "Add `stdev(nums)` to `stats.py` returning the POPULATION standard deviation (divide \
+             the summed squared deviations by N, not N-1). Keep everything. Save and run.",
+        ],
+        checker: "assert mean([1, 2, 3, 4]) == 2.5\n\
+                  assert median([1, 2, 3, 4]) == 2.5\n\
+                  assert median([1, 2, 3]) == 2\n\
+                  assert mode([1, 2, 2, 3]) == 2\n\
+                  assert mode([1, 1, 2, 2]) == 1\n\
+                  assert abs(stdev([2, 4, 4, 4, 5, 5, 7, 9]) - 2.0) < 1e-9\n",
+    },
 ];
 
 fn run_multi_task(py: &'static str, task: &MultiStepTask) -> Result<(), String> {
@@ -637,9 +735,12 @@ fn run_multi_task(py: &'static str, task: &MultiStepTask) -> Result<(), String> 
         .allow_path(workspace.clone())
         .allow_command("python")
         .allow_command("python3")
+        .allow_command("pytest")
         .allow_tool("write_file")
         .allow_tool("read_file")
         .allow_tool("run_python")
+        .allow_tool("list_dir")
+        .allow_tool("run_command")
         .build();
     let registry = build_tools(workspace.clone(), py);
     let mut agent = AutonomousAgent::builder("coder", generator)
