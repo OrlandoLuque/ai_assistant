@@ -25,7 +25,9 @@ llama.cpp, LM Studio, vLLM, … or a cloud provider.
 |---|---|---|
 | `code_gen_bench` | pass@1 on standalone functions: spec → code → run against checker. | 11 |
 | `agentic_code` | a live model drives the built-in `AutonomousAgent` over workspace tools (`write_file`, `read_file`, `run_python`, `list_dir`, `run_command`) to build & fix code in a temp workspace. | 5 single-step |
-| `agentic_multi` | multi-step iterative coding (build → extend → fix) on **one persistent workspace** (the agent's conversation carries across steps). | 6 (3–4 steps each) |
+| `agentic_multi` | multi-step iterative coding (build → extend → fix) on **one persistent workspace** (the agent's conversation carries across steps). | 10 (3–5 steps each) |
+| `agentic_rust` | same agentic loop, but in **Rust**: a throwaway cargo crate per task, verified with `cargo test` so the type/borrow checkers gate every answer. | 12 single-step |
+| `agentic_rust_multi` | multi-step Rust on one persistent crate (incl. refactoring a concrete type into a generic one). | 3 × 3 steps |
 
 ## How to run
 
@@ -66,6 +68,55 @@ A **sweep** is just a loop over `AI_BENCH_MODEL`. Build the harness with
 ---
 
 ## Log (newest first)
+
+### 2026-07-27 — Rust enters the benchmark + model shootout (harness @ V241 / 0.2.193)
+
+**Setup:** Ollama, temperature 0, every model checked with `ollama ps`. New
+categories `agentic_rust` (12 single-step tasks) and `agentic_rust_multi` (3 tasks ×
+3 steps), verified by **`cargo test`** — the compiler is part of the verifier, so the
+model must satisfy the type and borrow checkers before an assertion ever runs. All
+12 checkers were validated against reference implementations first, and `cargo test`
+was confirmed to actually run them (a silent "running 0 tests" would have turned
+every task into a false PASS).
+
+Also finished the enlarged Python multi-step set (10 tasks).
+
+| Model | Py multi (10) | Rust single (12) | Rust multi (3) | GPU split |
+|---|---|---|---|---|
+| llama3.2:3b | 1/6* | 1/12 | — | 100% GPU |
+| llama3.1:8b | 6/10 | 10/12 | — | 100% GPU |
+| qwen2.5-coder:7b | **8/10** | 12/12 | 2/3 | 100% GPU |
+| qwen2.5-coder:14b | — | 12/12 | 2/3 | 20%/80% CPU/GPU |
+| qwen3-coder:30b (MoE) | — | 12/12 | **3/3** | 32%/68% CPU/GPU |
+
+\* from the previous 6-task set.
+
+**Findings:**
+- **Rust discriminates far harder at the low end than Python.** llama3.2:3b scores
+  **1/12** on single-step Rust versus 2/5 on the equivalent Python set. The compiler
+  rejects what a Python interpreter would happily run.
+- **…but ≥7B still saturates single-step Rust** (12/12 for all three coder models),
+  so — exactly as with Python — **multi-step is what separates the top**. Only the
+  30B MoE solved all three multi-step Rust tasks, including the one that forces
+  rewriting earlier code (turn a concrete `Stack` into `Stack<T>`).
+- **Bigger task sets flip conclusions.** On 6 Python multi-step tasks llama3.1:8b
+  (6/6) looked better than qwen2.5-coder:7b (5/6); at 10 tasks the coder wins
+  decisively, **8/10 vs 6/10**. Treat any ranking drawn from <10 tasks as noise.
+- **MoE beats a dense model of half the size, on the same VRAM.** `qwen2.5-coder:14b`
+  and `qwen3-coder:30b` both occupy ~18 GB loaded (note: the 9 GB on-disk figure is
+  misleading), so both spill onto CPU on a 16 GB card. Despite spilling *more*
+  (32% vs 20% CPU), the MoE was both **faster** (470 s vs 586 s on the same 3 tasks)
+  and **better** (3/3 vs 2/3) — only ~3B parameters are active per token.
+- **Practical recommendation for this box (RTX 4080 SUPER, 16 GB):**
+  `qwen2.5-coder:7b` for fast iteration (fits entirely in VRAM, 56 s for the same 3
+  tasks, 12/12 single-step); `qwen3-coder:30b` when quality matters most.
+  `qwen2.5-coder:14b` is dominated — same footprint as the MoE, slower and weaker.
+
+**Commits:** V239–V241 (0.2.191 → 0.2.193).
+
+**Next:** more Rust multi-step tasks (3 is too few to rank the top models); the
+backlog's untested hypothesis that agentic scaffolding rescues a weaker model;
+Claude ceiling (still no API credits).
 
 ### 2026-07-26 (4th) — **clean full sweep**, 6 models × 3 categories (harness @ V240 / 0.2.192)
 
