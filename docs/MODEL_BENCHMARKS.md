@@ -27,7 +27,7 @@ llama.cpp, LM Studio, vLLM, … or a cloud provider.
 | `agentic_code` | a live model drives the built-in `AutonomousAgent` over workspace tools (`write_file`, `read_file`, `run_python`, `list_dir`, `run_command`) to build & fix code in a temp workspace. | 5 single-step |
 | `agentic_multi` | multi-step iterative coding (build → extend → fix) on **one persistent workspace** (the agent's conversation carries across steps). | 10 (3–5 steps each) |
 | `agentic_rust` | same agentic loop, but in **Rust**: a throwaway cargo crate per task, verified with `cargo test` so the type/borrow checkers gate every answer. | 12 single-step |
-| `agentic_rust_multi` | multi-step Rust on one persistent crate (incl. refactoring a concrete type into a generic one). | 3 × 3 steps |
+| `agentic_rust_multi` | multi-step Rust on one persistent crate (incl. refactoring a concrete type into a generic one). | 6 × 3 steps |
 
 ## How to run
 
@@ -68,6 +68,33 @@ A **sweep** is just a loop over `AI_BENCH_MODEL`. Build the harness with
 ---
 
 ## Log (newest first)
+
+### 2026-07-27 (3rd) — Rust multi-step doubled (3 → 6 tasks): the MoE separates cleanly (harness @ V243 / 0.2.195)
+
+**Setup:** `agentic_rust_multi` grown from 3 to 6 tasks (added: builder pattern with
+validation, matrix ops accumulating over 3 steps, and trait-then-generic-over-it).
+All three checkers validated against reference implementations first. Ollama,
+temperature 0, GPU state checked.
+
+| Model | Rust multi (3 tasks, previous entry) | **Rust multi (6 tasks)** |
+|---|---|---|
+| qwen2.5-coder:7b | 2/3 | **3/6** |
+| qwen3-coder:30b (MoE) | 3/3 | **6/6** |
+
+**Findings:**
+- **Doubling the task count confirmed what 3 tasks only hinted at.** The MoE is
+  perfect (6/6) while the 7B drops to half (3/6) — a far more decisive gap than
+  3/3 vs 2/3, which was within noise. This is the third time in this notebook that
+  a larger task set changed the reading; treat small-N rankings as provisional.
+- **For iterative Rust work on this box, `qwen3-coder:30b` is the model to use**,
+  despite not fitting in 16 GB — the MoE's ~3B active parameters make the CPU spill
+  affordable in a way a dense model of that size never would be.
+
+**Commits:** V243 (0.2.195).
+
+**Next:** the untested scaffolding levers (RAG over the codebase, multi-agent review,
+self-consistency) after the verify→retry negative result below; Claude ceiling
+still deferred (no API credits).
 
 ### 2026-07-27 (2nd) — **negative result**: verify→retry scaffolding does not rescue weaker models (harness @ V242 / 0.2.194)
 

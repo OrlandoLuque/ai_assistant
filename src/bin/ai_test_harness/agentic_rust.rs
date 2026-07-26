@@ -577,6 +577,64 @@ const RUST_MULTI_TASKS: &[RustMultiTask] = &[
                   assert_eq!(sum_pair(\"10,5\"), Ok(15));\n        \
                   assert!(sum_pair(\"x\").is_err());\n    }\n",
     },
+    RustMultiTask {
+        name: "builder pattern with validation",
+        steps: &[
+            "In `src/lib.rs`, define a public struct `Server` with public fields `port: u16` and \
+             `retries: u32`, plus a public `new(port: u16, retries: u32)` constructor. Run cargo test.",
+            "Add a public struct `ServerBuilder` with a public `new()` returning a builder whose \
+             defaults are port 80 and retries 0, chainable methods `port(self, p: u16) -> Self` and \
+             `retries(self, r: u32) -> Self`, and `build(self) -> Server`. Keep `Server`. Run cargo test.",
+            "Change `build` to `build(self) -> Result<Server, String>`, returning Err when the port \
+             is 0. Everything else must keep working. Run cargo test.",
+        ],
+        checker: "    #[test]\n    fn check() {\n        \
+                  let s = ServerBuilder::new().port(8080).retries(3).build().unwrap();\n        \
+                  assert_eq!(s.port, 8080);\n        \
+                  assert_eq!(s.retries, 3);\n        \
+                  let d = ServerBuilder::new().build().unwrap();\n        \
+                  assert_eq!(d.port, 80);\n        \
+                  assert_eq!(d.retries, 0);\n        \
+                  assert!(ServerBuilder::new().port(0).build().is_err());\n    }\n",
+    },
+    RustMultiTask {
+        name: "matrix ops accumulate",
+        steps: &[
+            "In `src/lib.rs`, write a public function `transpose(m: &Vec<Vec<i32>>) -> Vec<Vec<i32>>` \
+             returning the transpose of the matrix. Run cargo test.",
+            "Add a public function `identity(n: usize) -> Vec<Vec<i32>>` returning the n by n \
+             identity matrix. Keep `transpose`. Run cargo test.",
+            "Add a public function `multiply(a: &Vec<Vec<i32>>, b: &Vec<Vec<i32>>) -> Vec<Vec<i32>>` \
+             returning the matrix product. Keep everything already there. Run cargo test.",
+        ],
+        checker: "    #[test]\n    fn check() {\n        \
+                  assert_eq!(transpose(&vec![vec![1, 2], vec![3, 4]]), vec![vec![1, 3], vec![2, 4]]);\n        \
+                  assert_eq!(identity(2), vec![vec![1, 0], vec![0, 1]]);\n        \
+                  assert_eq!(multiply(&vec![vec![1, 2]], &vec![vec![3], vec![4]]), vec![vec![11]]);\n        \
+                  let m = vec![vec![1, 2], vec![3, 4]];\n        \
+                  assert_eq!(multiply(&m, &identity(2)), m);\n    }\n",
+    },
+    RustMultiTask {
+        name: "trait then generic over it",
+        steps: &[
+            "In `src/lib.rs`, define a public trait `Score` with a method `score(&self) -> i32`, \
+             and a public struct `Player` (public field `points: i32`) with a public `new(points)` \
+             constructor implementing it (score returns points). Run cargo test.",
+            "Add a public struct `Team` (public field `members: Vec<Player>`) with a public \
+             `new(members: Vec<Player>)` constructor, also implementing `Score` — a team's score is \
+             the sum of its members' scores. Keep `Player`. Run cargo test.",
+            "Add a public GENERIC function `best<T: Score>(items: &[T]) -> Option<i32>` returning \
+             the highest score among the items, or None when empty. Keep everything. Run cargo test.",
+        ],
+        checker: "    #[test]\n    fn check() {\n        \
+                  let p = Player::new(7);\n        \
+                  assert_eq!(p.score(), 7);\n        \
+                  let t = Team::new(vec![Player::new(2), Player::new(5)]);\n        \
+                  assert_eq!(t.score(), 7);\n        \
+                  assert_eq!(best(&[Player::new(1), Player::new(9)]), Some(9));\n        \
+                  let empty: Vec<Player> = vec![];\n        \
+                  assert_eq!(best(&empty), None);\n    }\n",
+    },
 ];
 
 fn run_rust_multi_task(cargo: &'static str, task: &RustMultiTask) -> Result<(), String> {
