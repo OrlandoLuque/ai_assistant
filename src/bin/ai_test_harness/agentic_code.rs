@@ -26,10 +26,10 @@ use ai_assistant::{
 // Skips unless BOTH a `python` interpreter and the configured backend
 // (AI_BENCH_* — see bench_util) are present.
 
-const MAX_ITERS: usize = 6;
+pub(crate) const MAX_ITERS: usize = 6;
 const RUN_TIMEOUT: Duration = Duration::from_secs(15);
 
-static COUNTER: AtomicUsize = AtomicUsize::new(0);
+pub(crate) static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 /// Teaches the exact tool-call protocol `parse_tool_calls` accepts: a bare JSON
 /// array of `{"name", "arguments"}` objects, no prose, no markdown fences.
@@ -146,7 +146,7 @@ const TASKS: &[AgenticTask] = &[
 ];
 
 /// Resolve a model-supplied relative path inside `workspace`, rejecting escapes.
-fn safe_join(workspace: &Path, rel: &str) -> Result<PathBuf, String> {
+pub(crate) fn safe_join(workspace: &Path, rel: &str) -> Result<PathBuf, String> {
     let rel = rel.trim().replace('\\', "/");
     let rel = rel.trim_start_matches('/');
     if rel.split('/').any(|c| c == "..") || rel.is_empty() {
@@ -175,7 +175,7 @@ fn python_cmd() -> Option<&'static str> {
 /// Run a program with args in `cwd` under a timeout, capturing stdout+stderr and
 /// exit code as text — what the agent's run_python / run_command tools hand back
 /// to the model so it can see errors and iterate.
-fn run_capture(prog: &str, args: &[String], cwd: &Path, timeout: Duration) -> String {
+pub(crate) fn run_capture(prog: &str, args: &[String], cwd: &Path, timeout: Duration) -> String {
     use std::io::Read;
     let spawn = std::process::Command::new(prog)
         .args(args)
@@ -364,9 +364,9 @@ fn render_conversation(conv: &[LoopMessage]) -> String {
 /// Build the response generator: each call renders the full loop conversation
 /// and asks the live model statelessly (the assistant's own history is cleared
 /// so only the rendered transcript drives generation).
-type Generator = Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync>;
+pub(crate) type Generator = Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync>;
 
-fn make_generator(assistant: Arc<Mutex<ai_assistant::AiAssistant>>) -> Generator {
+pub(crate) fn make_generator(assistant: Arc<Mutex<ai_assistant::AiAssistant>>) -> Generator {
     Arc::new(move |conv: &[LoopMessage]| {
         let prompt = render_conversation(conv);
         let mut a = match assistant.lock() {
@@ -805,6 +805,115 @@ const MULTI_TASKS: &[MultiStepTask] = &[
                   assert identity(1) == [[1]]\n\
                   assert multiply([[1, 2], [3, 4]], [[1, 0], [0, 1]]) == [[1, 2], [3, 4]]\n\
                   assert multiply([[1, 2]], [[3], [4]]) == [[11]]\n",
+    },
+    MultiStepTask {
+        name: "expression evaluator (algorithmic)",
+        target: "expr.py",
+        seed: &[],
+        steps: &[
+            "Create `expr.py` with a function `tokenize(s)` that splits an arithmetic expression \
+             string into a list of tokens: integers become int values, and the characters + - * / \
+             ( ) become single-character string tokens. Spaces are ignored. Multi-digit numbers \
+             must stay together. Run it to check.",
+            "Add `evaluate(s)` to `expr.py` that evaluates the expression using `tokenize`, \
+             honouring operator precedence (* and / bind tighter than + and -). No parentheses \
+             support yet. Integer division is not required; normal division is fine. Keep \
+             `tokenize`. Save and run.",
+            "Now extend `evaluate` to also support parentheses, which override precedence. Keep \
+             everything working. Save and run.",
+        ],
+        checker: "assert tokenize('12+3') == [12, '+', 3]\n\
+                  assert tokenize('2 * (30 - 4)') == [2, '*', '(', 30, '-', 4, ')']\n\
+                  assert evaluate('2+3') == 5\n\
+                  assert evaluate('2+3*4') == 14\n\
+                  assert evaluate('10-2-3') == 5\n\
+                  assert evaluate('(2+3)*4') == 20\n\
+                  assert evaluate('2*(3+4)-5') == 9\n",
+    },
+    MultiStepTask {
+        name: "LRU cache (modify earlier step)",
+        target: "lru.py",
+        seed: &[],
+        steps: &[
+            "Create `lru.py` with a class `LRUCache` whose constructor takes a capacity. It has \
+             `put(self, key, value)` storing a pair, and `get(self, key)` returning the value or \
+             None if absent. No eviction yet. Run it to check.",
+            "Add eviction: when `put` would exceed the capacity, discard the LEAST RECENTLY \
+             INSERTED key before inserting. Also add `size(self)` returning the number of stored \
+             pairs. Keep everything. Save and run.",
+            "Now make it a true LRU: a successful `get(key)` must also count as a use, so that key \
+             becomes the most recently used and is evicted last. Keep all methods working. Save \
+             and run.",
+        ],
+        checker: "c = LRUCache(2)\n\
+                  c.put(1, 'a')\nc.put(2, 'b')\n\
+                  assert c.get(1) == 'a'\n\
+                  assert c.size() == 2\n\
+                  c.put(3, 'c')\n\
+                  assert c.get(2) is None, 'key 2 was least recently used and must be evicted'\n\
+                  assert c.get(1) == 'a'\n\
+                  assert c.get(3) == 'c'\n\
+                  assert c.size() == 2\n",
+    },
+    MultiStepTask {
+        name: "inventory manager (5-step chain)",
+        target: "inventory.py",
+        seed: &[],
+        steps: &[
+            "Create `inventory.py` with a class `Inventory` (constructor takes no arguments) with \
+             a method `add(self, name, qty, price)` recording an item, and `names(self)` returning \
+             the list of item names in insertion order. Run it to check.",
+            "Add `quantity(self, name)` returning the recorded quantity of an item, or 0 if the \
+             item is unknown. Keep everything. Save and run.",
+            "Add `restock(self, name, amount)` which increases that item's quantity, raising \
+             ValueError('unknown item') if the item does not exist. Keep everything. Save and run.",
+            "Add `total_value(self)` returning the sum of quantity * price over all items. Keep \
+             everything. Save and run.",
+            "Add `low_stock(self, threshold)` returning the list of item names whose quantity is \
+             strictly below the threshold, in insertion order. Keep everything. Save and run.",
+        ],
+        checker: "inv = Inventory()\n\
+                  inv.add('bolt', 10, 0.5)\n\
+                  inv.add('nut', 4, 0.25)\n\
+                  assert inv.names() == ['bolt', 'nut']\n\
+                  assert inv.quantity('bolt') == 10\n\
+                  assert inv.quantity('ghost') == 0\n\
+                  inv.restock('nut', 6)\n\
+                  assert inv.quantity('nut') == 10\n\
+                  raised = False\n\
+                  try:\n    inv.restock('ghost', 1)\nexcept ValueError:\n    raised = True\n\
+                  assert raised, 'restocking an unknown item must raise ValueError'\n\
+                  assert abs(inv.total_value() - 7.5) < 1e-9\n\
+                  assert inv.low_stock(10) == []\n\
+                  assert inv.low_stock(11) == ['bolt', 'nut']\n",
+    },
+    MultiStepTask {
+        name: "min-heap priority queue",
+        target: "pq.py",
+        seed: &[],
+        steps: &[
+            "Create `pq.py` with a class `PriorityQueue` (constructor takes no arguments) with \
+             `push(self, item)` and `pop(self)` which removes and returns the SMALLEST item. Run \
+             it to check.",
+            "Add `peek(self)` returning the smallest item without removing it, and `size(self)` \
+             returning how many items are queued. Keep everything. Save and run.",
+            "Make `pop` and `peek` raise IndexError('empty queue') when the queue is empty, and \
+             make sure duplicate items are handled (pushing the same value twice keeps both). \
+             Keep everything. Save and run.",
+        ],
+        checker: "q = PriorityQueue()\n\
+                  assert q.size() == 0\n\
+                  q.push(5)\nq.push(1)\nq.push(3)\nq.push(1)\n\
+                  assert q.size() == 4\n\
+                  assert q.peek() == 1\n\
+                  assert q.pop() == 1\n\
+                  assert q.pop() == 1\n\
+                  assert q.pop() == 3\n\
+                  assert q.pop() == 5\n\
+                  assert q.size() == 0\n\
+                  raised = False\n\
+                  try:\n    q.pop()\nexcept IndexError:\n    raised = True\n\
+                  assert raised, 'pop on empty must raise IndexError'\n",
     },
 ];
 
