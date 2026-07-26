@@ -43,6 +43,17 @@ pub(crate) fn bench_model() -> String {
     env_or("AI_BENCH_MODEL", "llama3.2:3b")
 }
 
+/// Sampling temperature (`AI_BENCH_TEMP`, default 0.0 for reproducibility).
+/// Only worth raising when deliberately measuring best-of-N style sampling,
+/// where identical samples would defeat the point.
+pub(crate) fn bench_temperature() -> f32 {
+    std::env::var("AI_BENCH_TEMP")
+        .ok()
+        .and_then(|v| v.parse::<f32>().ok())
+        .filter(|t| (0.0..=2.0).contains(t))
+        .unwrap_or(0.0)
+}
+
 /// The endpoint URL the assistant will hit (explicit override, else the
 /// provider default). Used both to configure the assistant and to probe
 /// reachability.
@@ -74,7 +85,7 @@ pub(crate) fn bench_assistant() -> AiAssistant {
     let endpoint = bench_endpoint(&provider);
     let mut a = AiAssistant::new();
     a.config.selected_model = bench_model();
-    a.config.temperature = 0.0;
+    a.config.temperature = bench_temperature();
     // Point the right URL field at the endpoint. Only an explicit AI_BENCH_URL
     // (or a non-Ollama provider) changes anything from the defaults.
     match &provider {

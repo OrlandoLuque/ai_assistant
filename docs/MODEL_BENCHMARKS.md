@@ -69,6 +69,42 @@ A **sweep** is just a loop over `AI_BENCH_MODEL`. Build the harness with
 
 ## Log (newest first)
 
+### 2026-07-27 (4th) — second scaffolding lever, same answer: sampling doesn't rescue either (harness @ V244 / 0.2.196)
+
+**Setup:** `agentic_rust` (12 tasks), llama3.2:3b, 100% GPU. New knob
+`AI_BENCH_SAMPLES=n` runs *n* **independent** attempts (fresh crate, fresh agent, no
+memory of the failure) and passes if any succeeds — best-of-N — with
+`AI_BENCH_TEMP` raised so the samples actually differ. This is a *different* lever
+from the previous entry's verify→retry: "more shots at the target" instead of
+"here is your error, try again".
+
+| Strategy (llama3.2:3b, 12 Rust tasks) | Result | Compute |
+|---|---|---|
+| single attempt, temp 0 (baseline) | 1/12 | ×1 |
+| verify→retry ×3 (previous entry) | 2/12 | ×3 |
+| **best-of-3 @ temp 0.7** | **2/12** | ×3 |
+
+**Finding — two independent scaffolding strategies produce the identical marginal
+gain.** Both move the 3B from 1/12 to 2/12 for 3× the compute. That the two agree so
+exactly is the useful part: it rules out "we picked the wrong kind of scaffolding" as
+the explanation. **The 3B's failures are capability failures** — it cannot express
+these programs in Rust at all, so neither showing it the compiler error nor giving it
+more attempts helps. Scaffolding multiplies a model's chances of *finding* an answer
+it could produce; it does not create competence that isn't there.
+
+**Consequence for the BACKLOG's strategy.** The bet that "agentic scaffolding
+compensates for a weaker local model, at the cost of time" now has two failed tests
+behind it. The workable version of the differentiator looks different: **pick a model
+that is already capable** (on this box the 30B MoE — see the entry below) and use
+scaffolding to raise *its* reliability, rather than hoping scaffolding lifts a small
+model into the capable band.
+
+Still untested, and the only honest remaining route to the original claim: levers that
+add **information** rather than attempts — RAG over the codebase, multi-agent review
+with a critic, Chain-of-Verification.
+
+**Commits:** V244 (0.2.196).
+
 ### 2026-07-27 (3rd) — Rust multi-step doubled (3 → 6 tasks): the MoE separates cleanly (harness @ V243 / 0.2.195)
 
 **Setup:** `agentic_rust_multi` grown from 3 to 6 tasks (added: builder pattern with

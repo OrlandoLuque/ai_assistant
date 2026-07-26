@@ -445,7 +445,38 @@ fn build_rust_tools(ws: std::path::PathBuf, cargo: &'static str) -> ToolRegistry
     reg
 }
 
+/// How many INDEPENDENT attempts a task gets (`AI_BENCH_SAMPLES`, default 1).
+/// This is best-of-N: unlike the retry loop, each sample starts from a clean crate
+/// with a fresh agent and no memory of the failure — it tests whether *sampling*
+/// rescues a weak model where *feedback* did not. Pair it with `AI_BENCH_TEMP>0`,
+/// or every sample is the same answer.
+fn sample_count() -> usize {
+    std::env::var("AI_BENCH_SAMPLES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|n| *n >= 1)
+        .unwrap_or(1)
+}
+
 fn run_rust_task(cargo: &'static str, task: &RustTask) -> Result<(), String> {
+    let samples = sample_count();
+    let mut last_err = String::new();
+    for _ in 0..samples {
+        match run_rust_task_once(cargo, task) {
+            Ok(()) => return Ok(()),
+            Err(e) => last_err = e,
+        }
+    }
+    if samples > 1 {
+        Err(format!(
+            "all {samples} independent samples failed; last: {last_err}"
+        ))
+    } else {
+        Err(last_err)
+    }
+}
+
+fn run_rust_task_once(cargo: &'static str, task: &RustTask) -> Result<(), String> {
     let ws = scaffold_crate(task.seed_lib)?;
 
     let assistant = Arc::new(Mutex::new(crate::bench_util::bench_assistant()));
