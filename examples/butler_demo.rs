@@ -66,6 +66,9 @@ fn main() {
                 ProjectType::DotNet => ".NET",
                 ProjectType::Ruby => "Ruby",
                 ProjectType::Unknown => "Unknown",
+                // `ProjectType` is #[non_exhaustive]: a wildcard is required so
+                // adding a variant upstream cannot break this consumer.
+                _ => "Other",
             };
             println!("Project type: {}", name);
         }

@@ -2,14 +2,13 @@
 //!
 //! Run with: cargo run --example autonomous_agent --features "autonomous,tools"
 //!
-//! Demonstrates building an AgentRuntime with a response generator,
+//! Demonstrates building an AutonomousAgent with a response generator,
 //! tool registry, policy, and sandbox, then running it on a task.
 
 use std::sync::Arc;
 
-use ai_assistant::agentic_loop::AgentMessage;
 use ai_assistant::{
-    AgentPolicyBuilder, AgentRuntime, AutonomyLevel, OperationMode, ToolBuilder,
+    AgentPolicyBuilder, AutonomousAgent, AutonomyLevel, LoopMessage, OperationMode, ToolBuilder,
     UnifiedToolHandler, UnifiedToolOutput, UnifiedToolRegistry,
 };
 
@@ -20,12 +19,13 @@ fn main() {
     let call_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let call_count_clone = call_count.clone();
 
-    let response_generator: Arc<dyn Fn(&[AgentMessage]) -> String + Send + Sync> =
+    let response_generator: Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync> =
         Arc::new(move |_conversation| {
             let n = call_count_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             if n == 0 {
-                // First iteration: invoke the "get_time" tool
-                "<tool>get_time</tool>".to_string()
+                // First iteration: invoke the "get_time" tool. Tool calls are a bare
+                // JSON array of {name, arguments} objects — see `parse_tool_calls`.
+                r#"[{"name": "get_time", "arguments": {}}]"#.to_string()
             } else {
                 // Second iteration: produce a final answer (no tool call)
                 "The current time has been retrieved. Task complete.".to_string()
@@ -53,7 +53,7 @@ fn main() {
         .build();
 
     // 4. Build and run the agent.
-    let mut agent = AgentRuntime::builder("demo-agent", response_generator)
+    let mut agent = AutonomousAgent::builder("demo-agent", response_generator)
         .max_iterations(5)
         .system_prompt("You are a helpful assistant with access to tools.")
         .policy(policy)
