@@ -6,7 +6,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use ai_assistant::unified_tools::{ToolBuilder, ToolCall, ToolError, ToolOutput, ToolRegistry};
-use ai_assistant::{AgentPolicyBuilder, AutonomousAgent, AutonomyLevel, OperationMode};
+use ai_assistant::{
+    AgentPolicyBuilder, AutonomousAgent, AutonomyLevel, KnowledgeProvider, OperationMode,
+};
 
 use crate::agentic_code::{make_generator, run_capture, safe_join, COUNTER, MAX_ITERS};
 
@@ -445,6 +447,167 @@ fn build_rust_tools(ws: std::path::PathBuf, cargo: &'static str) -> ToolRegistry
     reg
 }
 
+// ─── Information lever: a KnowledgeProvider of Rust idioms ────────────────────
+//
+// Two "more attempts" levers (verify→retry, best-of-N) both failed to rescue a
+// weak model. The remaining hypothesis is that what a small model lacks is
+// INFORMATION, not chances. `AutonomousAgent` has a built-in hook for exactly
+// that: `KnowledgeProvider::enrich(query)` is called before every iteration and
+// its output injected as a system message.
+//
+// IMPORTANT for the validity of the experiment: these snippets are generic Rust
+// PATTERNS (a cheat-sheet), never solutions to the benchmark tasks. Handing the
+// model the answer would measure nothing.
+
+/// (keywords that must appear in the task text, worked example of the pattern)
+const RUST_IDIOMS: &[(&[&str], &str)] = &[
+    (
+        &["generic", "largest", "any type"],
+        "// Generic function with trait bounds:\n\
+         pub fn count_above<T: PartialOrd + Copy>(xs: &[T], limit: T) -> usize {\n    \
+             xs.iter().filter(|x| **x > limit).count()\n\
+         }",
+    ),
+    (
+        &["trait", "shape", "impl", "dyn"],
+        "// A trait, two implementors, and dynamic dispatch:\n\
+         pub trait Weigh { fn grams(&self) -> f64; }\n\
+         pub struct Apple { pub n: f64 }\n\
+         impl Apple { pub fn new(n: f64) -> Self { Apple { n } } }\n\
+         impl Weigh for Apple { fn grams(&self) -> f64 { self.n } }\n\
+         // let items: Vec<Box<dyn Weigh>> = vec![Box::new(Apple::new(1.0))];",
+    ),
+    (
+        &["lifetime", "longest", "string slice"],
+        "// Explicit lifetime tying the output to both inputs:\n\
+         pub fn pick<'a>(a: &'a str, b: &'a str, first: bool) -> &'a str {\n    \
+             if first { a } else { b }\n\
+         }",
+    ),
+    (
+        &["iterator", "yields", "collect", "countdown"],
+        "// Implementing the Iterator trait:\n\
+         pub struct Ups { n: u32 }\n\
+         impl Ups { pub fn new() -> Self { Ups { n: 0 } } }\n\
+         impl Iterator for Ups {\n    \
+             type Item = u32;\n    \
+             fn next(&mut self) -> Option<u32> {\n        \
+                 self.n += 1;\n        \
+                 if self.n > 3 { None } else { Some(self.n) }\n    \
+             }\n\
+         }",
+    ),
+    (
+        &["option", "none", "result", "err", "error"],
+        "// Option and Result:\n\
+         pub fn half(x: i32) -> Option<i32> {\n    \
+             if x % 2 == 0 { Some(x / 2) } else { None }\n\
+         }\n\
+         pub fn parse_one(s: &str) -> Result<i32, String> {\n    \
+             s.parse::<i32>().map_err(|e| e.to_string())\n\
+         }",
+    ),
+    (
+        &["hashmap", "occurrences", "frequency", "map"],
+        "// Counting into a HashMap with the entry API:\n\
+         use std::collections::HashMap;\n\
+         pub fn tally(xs: &[i32]) -> HashMap<i32, usize> {\n    \
+             let mut m = HashMap::new();\n    \
+             for x in xs { *m.entry(*x).or_insert(0) += 1; }\n    \
+             m\n\
+         }",
+    ),
+    (
+        &["in place", "&mut vec", "dedup", "remove"],
+        "// Mutating a Vec in place (borrow-checker friendly):\n\
+         pub fn keep_positive(v: &mut Vec<i32>) {\n    \
+             v.retain(|x| *x > 0);\n\
+         }",
+    ),
+    (
+        &["enum", "match", "variants"],
+        "// Enum with derives, matched exhaustively:\n\
+         #[derive(Clone, Copy, Debug, PartialEq)]\n\
+         pub enum Color { Red, Blue }\n\
+         pub fn code(c: Color) -> u8 {\n    \
+             match c { Color::Red => 0, Color::Blue => 1 }\n\
+         }",
+    ),
+    (
+        &["builder", "chainable", "chained"],
+        "// Builder with chained by-value setters:\n\
+         pub struct Cfg { pub a: u32 }\n\
+         pub struct CfgBuilder { a: u32 }\n\
+         impl CfgBuilder {\n    \
+             pub fn new() -> Self { CfgBuilder { a: 0 } }\n    \
+             pub fn a(mut self, v: u32) -> Self { self.a = v; self }\n    \
+             pub fn build(self) -> Cfg { Cfg { a: self.a } }\n\
+         }",
+    ),
+    (
+        &["struct", "stack", "push", "pop", "methods"],
+        "// Struct with a constructor and methods:\n\
+         pub struct Bag { items: Vec<i32> }\n\
+         impl Bag {\n    \
+             pub fn new() -> Self { Bag { items: Vec::new() } }\n    \
+             pub fn add(&mut self, x: i32) { self.items.push(x); }\n    \
+             pub fn take(&mut self) -> Option<i32> { self.items.pop() }\n    \
+             pub fn len(&self) -> usize { self.items.len() }\n\
+         }",
+    ),
+];
+
+/// Injects Rust patterns relevant to the current task. Enabled with
+/// `AI_BENCH_KNOWLEDGE=1`.
+///
+/// NOTE: the agent calls `enrich()` with the LAST user/tool message, which after
+/// the first iteration is tool output ("wrote 143 bytes to src/lib.rs") rather
+/// than the task. Matching on that alone injects almost nothing — measured, and it
+/// silently turned the first version of this experiment into a no-op. So the
+/// provider carries the task text it was built with and matches on task + query.
+struct RustIdiomProvider {
+    task: String,
+}
+
+impl KnowledgeProvider for RustIdiomProvider {
+    fn enrich(&self, query: &str) -> String {
+        let q = format!("{} {}", self.task, query).to_lowercase();
+        let hits: Vec<&str> = RUST_IDIOMS
+            .iter()
+            .filter(|(keys, _)| keys.iter().any(|k| q.contains(k)))
+            .map(|(_, snippet)| *snippet)
+            .take(3) // keep the injection small; a wall of text hurts small models
+            .collect();
+        if std::env::var("AGENTIC_DEBUG").is_ok() {
+            eprintln!(
+                "    [dbg] knowledge: {} snippet(s) matched for query {:?}",
+                hits.len(),
+                query.chars().take(70).collect::<String>()
+            );
+        }
+        if hits.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "Reference Rust patterns that may be relevant (these are EXAMPLES of the \
+                 syntax, not the answer — adapt them):\n\n{}",
+                hits.join("\n\n")
+            )
+        }
+    }
+
+    fn name(&self) -> &str {
+        "RustIdiomProvider"
+    }
+}
+
+fn knowledge_enabled() -> bool {
+    matches!(
+        std::env::var("AI_BENCH_KNOWLEDGE").ok().as_deref(),
+        Some("1") | Some("true")
+    )
+}
+
 /// How many INDEPENDENT attempts a task gets (`AI_BENCH_SAMPLES`, default 1).
 /// This is best-of-N: unlike the retry loop, each sample starts from a clean crate
 /// with a fresh agent and no memory of the failure — it tests whether *sampling*
@@ -477,6 +640,7 @@ fn run_rust_task(cargo: &'static str, task: &RustTask) -> Result<(), String> {
 }
 
 fn run_rust_task_once(cargo: &'static str, task: &RustTask) -> Result<(), String> {
+    let task_text = task.prompt;
     let ws = scaffold_crate(task.seed_lib)?;
 
     let assistant = Arc::new(Mutex::new(crate::bench_util::bench_assistant()));
@@ -492,13 +656,18 @@ fn run_rust_task_once(cargo: &'static str, task: &RustTask) -> Result<(), String
         .allow_tool("run_command")
         .build();
     let registry = build_rust_tools(ws.clone(), cargo);
-    let mut agent = AutonomousAgent::builder("rust-coder", generator)
+    let mut builder = AutonomousAgent::builder("rust-coder", generator)
         .max_iterations(MAX_ITERS)
         .system_prompt(RUST_SYSTEM_PROMPT)
         .policy(policy)
         .tool_registry(registry)
-        .mode(OperationMode::Autonomous)
-        .build();
+        .mode(OperationMode::Autonomous);
+    if knowledge_enabled() {
+        builder = builder.with_knowledge_provider(Arc::new(RustIdiomProvider {
+            task: task_text.to_string(),
+        }));
+    }
+    let mut agent = builder.build();
 
     // Scaffolding loop: run, verify by compiling+testing, and on failure hand the
     // model the compiler's own output and let it try again (AI_BENCH_SCAFFOLD).
@@ -669,6 +838,7 @@ const RUST_MULTI_TASKS: &[RustMultiTask] = &[
 ];
 
 fn run_rust_multi_task(cargo: &'static str, task: &RustMultiTask) -> Result<(), String> {
+    let task_text = task.steps.join(" ");
     let ws = scaffold_crate("")?;
 
     let assistant = Arc::new(Mutex::new(crate::bench_util::bench_assistant()));
@@ -684,13 +854,18 @@ fn run_rust_multi_task(cargo: &'static str, task: &RustMultiTask) -> Result<(), 
         .allow_tool("run_command")
         .build();
     let registry = build_rust_tools(ws.clone(), cargo);
-    let mut agent = AutonomousAgent::builder("rust-coder", generator)
+    let mut builder = AutonomousAgent::builder("rust-coder", generator)
         .max_iterations(MAX_ITERS)
         .system_prompt(RUST_SYSTEM_PROMPT)
         .policy(policy)
         .tool_registry(registry)
-        .mode(OperationMode::Autonomous)
-        .build();
+        .mode(OperationMode::Autonomous);
+    if knowledge_enabled() {
+        builder = builder.with_knowledge_provider(Arc::new(RustIdiomProvider {
+            task: task_text.to_string(),
+        }));
+    }
+    let mut agent = builder.build();
 
     let mut total_iters = 0usize;
     for (i, step) in task.steps.iter().enumerate() {

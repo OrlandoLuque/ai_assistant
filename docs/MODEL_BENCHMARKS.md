@@ -69,6 +69,48 @@ A **sweep** is just a loop over `AI_BENCH_MODEL`. Build the harness with
 
 ## Log (newest first)
 
+### 2026-07-27 (5th) — third lever (information), same +1: the plateau is capability (harness @ V246 / 0.2.198)
+
+**Setup:** `agentic_rust` (12 tasks), llama3.2:3b, 100% GPU. `AI_BENCH_KNOWLEDGE=1`
+attaches a `RustIdiomProvider` through the library's own
+`AutonomousAgent::with_knowledge_provider` hook: before every iteration it injects
+worked examples of the Rust patterns the task needs (generics with bounds, trait +
+`dyn` dispatch, explicit lifetimes, implementing `Iterator`, `Option`/`Result`,
+`HashMap` entry API, in-place `retain`, enum + match, builder, struct with methods).
+The snippets are **generic patterns, never solutions** — handing over the answer
+would measure nothing.
+
+| Lever (llama3.2:3b, 12 Rust tasks) | Kind | Result |
+|---|---|---|
+| baseline, single shot @temp0 | — | 1/12 |
+| `AI_BENCH_SCAFFOLD=3` (verify→retry) | more attempts | 2/12 |
+| `AI_BENCH_SAMPLES=3` @temp0.7 (best-of-N) | more attempts | 2/12 |
+| **`AI_BENCH_KNOWLEDGE=1` (idiom injection)** | **more information** | **2/12** |
+
+**Finding: three qualitatively different levers, the identical +1.** Adding
+information does no better than adding attempts. Every strategy plateaus at 2/12,
+which is the strongest evidence yet that the limit is the model's **capability** on
+these tasks, not what it is told or how many tries it gets.
+
+**A trap worth recording (it invalidated the first run of this experiment).** The
+`KnowledgeProvider` contract is `enrich(&self, query: &str)`, and the agent passes
+**the last user/tool message** as `query`. Inside an agentic loop that message is
+almost always *tool output* — `"[Tool: write_file] wrote 143 bytes to src/lib.rs"` —
+not the task. Keyed on that, the provider matched **0 snippets** on the real task
+prompt and the experiment silently measured nothing. It fails *quietly*: no error,
+just no useful context, and you walk away believing "RAG doesn't help" when it never
+ran. Fixed by having the provider carry the task text and match on task + query;
+verified by instrumenting the match count before trusting the numbers.
+**Consequence for wiring real RAG over the codebase: index by the task, not by the
+last message.**
+
+**Commits:** V246 (0.2.198).
+
+**Next:** the levers left are ones that change *who* is reasoning, not what they are
+told — multi-agent review with a critic, Chain-of-Verification. Also worth testing
+whether knowledge injection helps a model that is already near the boundary (the 8B
+at 10/12) rather than one that is far from it.
+
 ### 2026-07-27 (4th) — second scaffolding lever, same answer: sampling doesn't rescue either (harness @ V244 / 0.2.196)
 
 **Setup:** `agentic_rust` (12 tasks), llama3.2:3b, 100% GPU. New knob
