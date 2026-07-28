@@ -146,13 +146,96 @@ const TASKS: &[AgenticTask] = &[
 ];
 
 /// Resolve a model-supplied relative path inside `workspace`, rejecting escapes.
+///
+/// Validation is by path COMPONENT, not by string matching. A previous version
+/// only rejected `..` textually, which left a Windows-specific hole: `Path::join`
+/// REPLACES the base when the argument is absolute, so a model writing to
+/// `C:/Windows/x.txt` — or even the drive-relative `C:evil.txt` — landed outside
+/// the workspace entirely. Verified before and after the fix.
+///
+/// SCOPE (be honest about what this is): this is containment against accidents and
+/// stray paths, **not** a security boundary. `run_python` / `run_command` execute
+/// model-written code with the full privileges of whoever runs the harness, so a
+/// determined program can do anything the user can, path checks or not. Real
+/// isolation would mean running the tasks in a container (the crate has a
+/// `containers` feature) — see the threat-model note in docs/MODEL_BENCHMARKS.md.
 pub(crate) fn safe_join(workspace: &Path, rel: &str) -> Result<PathBuf, String> {
-    let rel = rel.trim().replace('\\', "/");
-    let rel = rel.trim_start_matches('/');
-    if rel.split('/').any(|c| c == "..") || rel.is_empty() {
-        return Err(format!("illegal workspace path: {rel:?}"));
+    use std::path::Component;
+
+    let normalized = rel.trim().replace('\\', "/");
+    let candidate = Path::new(normalized.trim_start_matches('/'));
+    if normalized.trim().is_empty() || candidate.as_os_str().is_empty() {
+        return Err("illegal workspace path: empty".to_string());
     }
-    Ok(workspace.join(rel))
+    for comp in candidate.components() {
+        match comp {
+            // `..` escapes upwards; a drive prefix (`C:`) or root makes the path
+            // absolute, which would silently replace the workspace in `join`.
+            Component::ParentDir => {
+                return Err(format!("illegal workspace path (traversal): {rel:?}"))
+            }
+            Component::Prefix(_) | Component::RootDir => {
+                return Err(format!("illegal workspace path (absolute): {rel:?}"))
+            }
+            Component::CurDir | Component::Normal(_) => {}
+        }
+    }
+    Ok(workspace.join(candidate))
+}
+
+#[cfg(test)]
+mod safe_join_tests {
+    use super::safe_join;
+    use std::path::Path;
+
+    fn ws() -> &'static Path {
+        Path::new("C:/tmp/agentic_ws")
+    }
+
+    #[test]
+    fn accepts_ordinary_relative_paths() {
+        let p = safe_join(ws(), "src/lib.rs").expect("relative path allowed");
+        assert!(p.starts_with(ws()));
+        assert!(safe_join(ws(), "./main.py")
+            .expect("curdir ok")
+            .starts_with(ws()));
+    }
+
+    #[test]
+    fn rejects_traversal_in_both_separators() {
+        assert!(safe_join(ws(), "../../evil.txt").is_err());
+        assert!(safe_join(ws(), "..\\..\\evil.txt").is_err());
+        assert!(safe_join(ws(), "src/../../evil.txt").is_err());
+    }
+
+    /// The regression this fix is about: on Windows these used to ESCAPE, because
+    /// `Path::join` drops the base for an absolute argument.
+    #[test]
+    fn rejects_drive_absolute_and_drive_relative_paths() {
+        for evil in [
+            "C:/Windows/System32/x.txt",
+            "C:\\Windows\\x.txt",
+            "C:evil.txt",
+        ] {
+            let got = safe_join(ws(), evil);
+            assert!(got.is_err(), "{evil:?} should be rejected, got {got:?}");
+        }
+    }
+
+    #[test]
+    fn rooted_and_unc_paths_stay_inside() {
+        // Leading slashes are stripped rather than rejected, so these land inside.
+        for rooted in ["/etc/passwd", "\\\\server\\share\\x"] {
+            let p = safe_join(ws(), rooted).expect("rooted path is contained");
+            assert!(p.starts_with(ws()), "{rooted:?} escaped to {p:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_empty() {
+        assert!(safe_join(ws(), "").is_err());
+        assert!(safe_join(ws(), "   ").is_err());
+    }
 }
 
 /// First available Python interpreter, if any.
