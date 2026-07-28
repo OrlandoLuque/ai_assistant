@@ -2832,6 +2832,10 @@ mod control_tests {
         counter: Arc<AtomicUsize>,
     ) -> Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync> {
         Arc::new(move |_conv: &[LoopMessage]| {
+            // Cost a few ms per turn: with a free-running generator the loop
+            // exhausted its whole iteration budget before a controlling thread
+            // could cancel it, making these tests race.
+            std::thread::sleep(std::time::Duration::from_millis(5));
             counter.fetch_add(1, Ordering::SeqCst);
             r#"[{"name": "noop", "arguments": {}}]"#.to_string()
         })
@@ -2916,8 +2920,13 @@ mod control_tests {
             .build();
 
         let ctl = control.clone();
+        let calls_probe = Arc::clone(&calls);
         let handle = std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(60));
+            // Cancel once the agent is demonstrably running, not after a guessed delay.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while calls_probe.load(Ordering::SeqCst) == 0 && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
             ctl.cancel();
         });
 
@@ -2935,43 +2944,60 @@ mod control_tests {
 
     #[test]
     fn test_pause_holds_the_loop_then_resume_continues() {
+        // NOTE: an earlier version of this test raced. The loop with a trivial
+        // generator and a no-op tool runs so fast that it exhausted 10_000
+        // iterations before a fixed-duration sleep in the controlling thread got
+        // around to cancelling, so the run ended with "Max iterations reached"
+        // instead of "cancelled" — intermittently. It now (a) makes each
+        // generation cost a few ms so the loop cannot run away, and (b) WAITS on
+        // observed progress instead of on the clock.
         let calls = Arc::new(AtomicUsize::new(0));
-        let generator = looping_generator(Arc::clone(&calls));
+        let calls_gen = Arc::clone(&calls);
+        let generator: Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync> =
+            Arc::new(move |_conv: &[LoopMessage]| {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+                calls_gen.fetch_add(1, Ordering::SeqCst);
+                r#"[{"name": "noop", "arguments": {}}]"#.to_string()
+            });
+
         let (builder, control) = AutonomousAgent::builder("paused", generator).with_control();
         let mut agent = builder
-            .max_iterations(10_000)
+            .max_iterations(100_000)
             .policy(permissive_policy())
             .tool_registry(noop_registry())
             .build();
 
-        // Pause BEFORE starting: the loop must hold without consuming iterations.
+        // Hold BEFORE starting: the loop must park without generating anything.
         control.pause();
         let ctl = control.clone();
         let calls_probe = Arc::clone(&calls);
         let handle = std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(150));
-            // While paused the generator must not have been called at all.
+            std::thread::sleep(std::time::Duration::from_millis(200));
             let during_pause = calls_probe.load(Ordering::SeqCst);
             ctl.resume();
-            std::thread::sleep(std::time::Duration::from_millis(80));
+            // Wait for OBSERVED progress rather than a fixed delay.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while calls_probe.load(Ordering::SeqCst) == 0 && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            let after_resume = calls_probe.load(Ordering::SeqCst);
             ctl.cancel();
-            during_pause
+            (during_pause, after_resume)
         });
 
         let result = agent.run("spin").expect("cancellation returns Ok");
-        let during_pause = handle.join().expect("join");
+        let (during_pause, after_resume) = handle.join().expect("join");
 
         assert_eq!(
             during_pause, 0,
             "the agent generated a response while it was supposed to be paused"
         );
         assert!(
-            calls.load(Ordering::SeqCst) > 0,
+            after_resume > 0,
             "the agent never resumed after the pause was lifted"
         );
         assert_eq!(result.output, "Agent cancelled");
     }
-
     #[test]
     fn test_control_handle_is_send_and_sync() {
         fn assert_send_sync<T: Send + Sync>() {}

@@ -17,16 +17,16 @@ use ai_assistant::{
 fn main() {
     println!("=== Media Generation Demo ===\n");
 
-    // 1. Image generation config
-    let mut image_config = ImageGenConfig::default();
-    image_config.width = 1024;
-    image_config.height = 1024;
-    image_config.style = None;
-    image_config.quality = ImageQuality::HD;
-    image_config.num_images = 1;
-    image_config.negative_prompt = Some("blurry, low quality".to_string());
-    image_config.seed = Some(42);
-    image_config.guidance_scale = Some(7.5);
+    // 1. Image generation config. `#[non_exhaustive]`, so chain from `default()`.
+    let image_config = ImageGenConfig::default()
+        .with_width(1024)
+        .with_height(1024)
+        .with_style(None)
+        .with_quality(ImageQuality::HD)
+        .with_num_images(1)
+        .with_negative_prompt(Some("blurry, low quality".to_string()))
+        .with_seed(Some(42))
+        .with_guidance_scale(Some(7.5));
 
     println!("Image Generation Config:");
     println!("  Size: {}x{}", image_config.width, image_config.height);

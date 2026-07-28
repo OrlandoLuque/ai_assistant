@@ -298,6 +298,39 @@ mod inner {
         }
     }
 
+    impl VadConfig {
+        /// Chainable setters. This struct is `#[non_exhaustive]`, so callers outside
+        /// the crate cannot use a struct literal (not even with
+        /// `..Default::default()`); start from [`default`](Default::default) and
+        /// chain the fields you care about:
+        ///
+        /// ```
+        /// # use ai_assistant::VadConfig;
+        /// let vad = VadConfig::default()
+        ///     .with_energy_threshold(0.03)
+        ///     .with_silence_duration_ms(600);
+        /// ```
+        pub fn with_energy_threshold(mut self, v: f32) -> Self {
+            self.energy_threshold = v;
+            self
+        }
+
+        pub fn with_silence_duration_ms(mut self, v: u32) -> Self {
+            self.silence_duration_ms = v;
+            self
+        }
+
+        pub fn with_min_speech_duration_ms(mut self, v: u32) -> Self {
+            self.min_speech_duration_ms = v;
+            self
+        }
+
+        pub fn with_frame_size_ms(mut self, v: u32) -> Self {
+            self.frame_size_ms = v;
+            self
+        }
+    }
+
     /// Events emitted by the VAD detector.
     #[non_exhaustive]
     #[derive(Debug, Clone, PartialEq)]
@@ -898,6 +931,83 @@ mod inner {
     }
 
     impl VoiceAgentConfig {
+        /// Chainable setters. This struct is `#[non_exhaustive]`, so callers outside
+        /// the crate cannot build it with a struct literal; start from
+        /// [`default`](Default::default) and chain:
+        ///
+        /// ```
+        /// # use ai_assistant::{VoiceAgentConfig, VadConfig};
+        /// let cfg = VoiceAgentConfig::default()
+        ///     .with_model_stt("whisper-1")
+        ///     .with_voice_id("alloy")
+        ///     .with_vad_config(VadConfig::default().with_energy_threshold(0.03));
+        /// ```
+        pub fn with_model_stt(mut self, v: impl Into<String>) -> Self {
+            self.model_stt = v.into();
+            self
+        }
+
+        pub fn with_model_tts(mut self, v: impl Into<String>) -> Self {
+            self.model_tts = v.into();
+            self
+        }
+
+        pub fn with_vad_config(mut self, v: VadConfig) -> Self {
+            self.vad_config = v;
+            self
+        }
+
+        pub fn with_interruption_policy(mut self, v: InterruptionPolicy) -> Self {
+            self.interruption_policy = v;
+            self
+        }
+
+        pub fn with_voice_id(mut self, v: impl Into<String>) -> Self {
+            self.voice_id = v.into();
+            self
+        }
+
+        pub fn with_sample_rate(mut self, v: u32) -> Self {
+            self.sample_rate = v;
+            self
+        }
+
+        pub fn with_chunk_size_ms(mut self, v: u32) -> Self {
+            self.chunk_size_ms = v;
+            self
+        }
+
+        pub fn with_turn_policy(mut self, v: TurnPolicy) -> Self {
+            self.turn_policy = v;
+            self
+        }
+
+        pub fn with_emotion_enabled(mut self, v: bool) -> Self {
+            self.emotion_enabled = v;
+            self
+        }
+
+        pub fn with_emotion_tts_instruction(mut self, v: impl Into<String>) -> Self {
+            self.emotion_tts_instruction = v.into();
+            self
+        }
+
+        pub fn with_language(mut self, v: Option<String>) -> Self {
+            self.language = v;
+            self
+        }
+
+        pub fn with_max_audio_duration_secs(mut self, v: u32) -> Self {
+            self.max_audio_duration_secs = v;
+            self
+        }
+
+        #[cfg(feature = "vision")]
+        pub fn with_video_frame_strategy(mut self, v: VideoFrameStrategy) -> Self {
+            self.video_frame_strategy = v;
+            self
+        }
+
         /// Validate the configuration. Returns an error if values are out of range.
         pub fn validate(&self) -> Result<(), AiError> {
             if self.model_stt.is_empty() {
@@ -1464,6 +1574,41 @@ mod inner {
         pub sample_rate: u32,
         pub enable_dtls: bool,
         pub ice_timeout_ms: u64,
+    }
+
+    #[cfg(feature = "webrtc")]
+    impl WebRtcConfig {
+        /// Chainable setters (the struct is `#[non_exhaustive]`, so start from
+        /// [`default`](Default::default) and chain).
+        pub fn with_stun_servers(mut self, v: Vec<String>) -> Self {
+            self.stun_servers = v;
+            self
+        }
+
+        pub fn with_turn_servers(mut self, v: Vec<TurnServer>) -> Self {
+            self.turn_servers = v;
+            self
+        }
+
+        pub fn with_audio_codec(mut self, v: WebRtcAudioCodec) -> Self {
+            self.audio_codec = v;
+            self
+        }
+
+        pub fn with_sample_rate(mut self, v: u32) -> Self {
+            self.sample_rate = v;
+            self
+        }
+
+        pub fn with_enable_dtls(mut self, v: bool) -> Self {
+            self.enable_dtls = v;
+            self
+        }
+
+        pub fn with_ice_timeout_ms(mut self, v: u64) -> Self {
+            self.ice_timeout_ms = v;
+            self
+        }
     }
 
     #[cfg(feature = "webrtc")]

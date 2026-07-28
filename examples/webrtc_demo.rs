@@ -11,27 +11,25 @@ use ai_assistant::{
     WebRtcTransport,
 };
 
-// `WebRtcConfig` is `#[non_exhaustive]`: build it from `default()` and override the
-// fields of interest rather than with a struct literal.
-#[allow(clippy::field_reassign_with_default)]
 fn main() {
     println!("=== WebRTC Voice Transport Demo ===\n");
 
-    // 1. Configure WebRTC with STUN/TURN servers
-    let mut config = WebRtcConfig::default();
-    config.stun_servers = vec![
-        "stun:stun.l.google.com:19302".to_string(),
-        "stun:stun1.l.google.com:19302".to_string(),
-    ];
-    config.turn_servers = vec![TurnServer {
-        url: "turn:turn.example.com:3478".to_string(),
-        username: "user".to_string(),
-        credential: "pass".to_string(),
-    }];
-    config.audio_codec = WebRtcAudioCodec::Opus;
-    config.sample_rate = 48000;
-    config.enable_dtls = true;
-    config.ice_timeout_ms = 5000;
+    // 1. Configure WebRTC with STUN/TURN servers. `WebRtcConfig` is
+    //    `#[non_exhaustive]`: start from `default()` and chain `with_*`.
+    let config = WebRtcConfig::default()
+        .with_stun_servers(vec![
+            "stun:stun.l.google.com:19302".to_string(),
+            "stun:stun1.l.google.com:19302".to_string(),
+        ])
+        .with_turn_servers(vec![TurnServer {
+            url: "turn:turn.example.com:3478".to_string(),
+            username: "user".to_string(),
+            credential: "pass".to_string(),
+        }])
+        .with_audio_codec(WebRtcAudioCodec::Opus)
+        .with_sample_rate(48000)
+        .with_enable_dtls(true)
+        .with_ice_timeout_ms(5000);
 
     println!("WebRTC Config:");
     println!("  STUN servers: {:?}", config.stun_servers);

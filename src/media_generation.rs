@@ -200,6 +200,50 @@ mod inner {
     }
 
     impl ImageGenConfig {
+        /// Chainable setters (the struct is `#[non_exhaustive]`, so start from
+        /// [`default`](Default::default) and chain).
+        pub fn with_width(mut self, v: u32) -> Self {
+            self.width = v;
+            self
+        }
+
+        pub fn with_height(mut self, v: u32) -> Self {
+            self.height = v;
+            self
+        }
+
+        pub fn with_style(mut self, v: Option<ImageStyle>) -> Self {
+            self.style = v;
+            self
+        }
+
+        pub fn with_quality(mut self, v: ImageQuality) -> Self {
+            self.quality = v;
+            self
+        }
+
+        pub fn with_num_images(mut self, v: u32) -> Self {
+            self.num_images = v;
+            self
+        }
+
+        pub fn with_negative_prompt(mut self, v: Option<String>) -> Self {
+            self.negative_prompt = v;
+            self
+        }
+
+        pub fn with_seed(mut self, v: Option<u64>) -> Self {
+            self.seed = v;
+            self
+        }
+
+        pub fn with_guidance_scale(mut self, v: Option<f32>) -> Self {
+            self.guidance_scale = v;
+            self
+        }
+    }
+
+    impl ImageGenConfig {
         /// Validate the configuration, returning an error for invalid params.
         pub fn validate(&self) -> Result<(), AiError> {
             if self.width == 0 {

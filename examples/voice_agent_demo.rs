@@ -8,19 +8,16 @@
 
 use ai_assistant::{InterruptionPolicy, TurnPolicy, VadConfig, VoiceAgent, VoiceAgentConfig};
 
-// The config structs are `#[non_exhaustive]`, so they cannot be built with a struct
-// literal from outside the crate (not even with `..Default::default()`): start from
-// `default()` and override the fields of interest.
-#[allow(clippy::field_reassign_with_default)]
 fn main() {
     println!("=== Real-Time Voice Agent Demo ===\n");
 
-    // 1. Configure VAD (Voice Activity Detection)
-    let mut vad_config = VadConfig::default();
-    vad_config.energy_threshold = 0.03;
-    vad_config.silence_duration_ms = 600;
-    vad_config.min_speech_duration_ms = 150;
-    vad_config.frame_size_ms = 20;
+    // 1. Configure VAD (Voice Activity Detection). The config structs are
+    //    `#[non_exhaustive]`, so build them from `default()` and chain `with_*`.
+    let vad_config = VadConfig::default()
+        .with_energy_threshold(0.03)
+        .with_silence_duration_ms(600)
+        .with_min_speech_duration_ms(150)
+        .with_frame_size_ms(20);
 
     println!("VAD Configuration:");
     println!("  Energy threshold: {}", vad_config.energy_threshold);
@@ -32,15 +29,15 @@ fn main() {
     println!("  Frame size: {}ms", vad_config.frame_size_ms);
 
     // 2. Configure the voice agent
-    let mut config = VoiceAgentConfig::default();
-    config.model_stt = "whisper-1".to_string();
-    config.model_tts = "tts-1".to_string();
-    config.vad_config = vad_config;
-    config.interruption_policy = InterruptionPolicy::Immediate;
-    config.voice_id = "alloy".to_string();
-    config.sample_rate = 16000;
-    config.chunk_size_ms = 20;
-    config.turn_policy = TurnPolicy::NaturalOverlap;
+    let config = VoiceAgentConfig::default()
+        .with_model_stt("whisper-1")
+        .with_model_tts("tts-1")
+        .with_vad_config(vad_config)
+        .with_interruption_policy(InterruptionPolicy::Immediate)
+        .with_voice_id("alloy")
+        .with_sample_rate(16000)
+        .with_chunk_size_ms(20)
+        .with_turn_policy(TurnPolicy::NaturalOverlap);
 
     println!("\nVoice Agent Config:");
     println!("  STT model: {}", config.model_stt);
