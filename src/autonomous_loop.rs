@@ -231,6 +231,105 @@ pub fn is_read_only_tool_name(name: &str) -> bool {
 ///
 /// Drives the loop: generate response -> parse tool calls -> validate in
 /// sandbox -> execute via registry -> feed results back -> repeat.
+/// External, live control over a running agent: cancel it, pause/resume it, or
+/// **queue further instructions that it picks up mid-run**.
+///
+/// The agent's own `pause()` / `resume()` take `&mut self`, so they are unusable
+/// while `run()` is executing — the borrow checker owns the agent for the whole
+/// call. This handle is all shared state (`Arc`), so it is `Clone + Send + Sync`
+/// and can be held by another thread, a UI, or a CLI reader loop:
+///
+/// ```no_run
+/// # use ai_assistant::{AutonomousAgent, LoopMessage};
+/// # use std::sync::Arc;
+/// # let generator: Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync> =
+/// #     Arc::new(|_| String::new());
+/// let (builder, control) = AutonomousAgent::builder("worker", generator).with_control();
+/// let mut agent = builder.build();
+///
+/// std::thread::spawn(move || {
+///     control.queue_prompt("actually, prioritise the failing test first");
+///     control.pause();
+///     control.resume();
+///     control.cancel();
+/// });
+///
+/// let _ = agent.run("refactor the parser");
+/// ```
+///
+/// Queued prompts are injected as **user** messages between iterations, ahead of
+/// the next model call. They are framed as operator instructions — unlike
+/// [`InterAgentMessage`]s from peers, which stay explicitly untrusted.
+#[derive(Clone)]
+pub struct AgentControl {
+    cancel: Arc<AtomicBool>,
+    pause: Arc<AtomicBool>,
+    prompts: Arc<RwLock<std::collections::VecDeque<String>>>,
+}
+
+impl AgentControl {
+    fn new() -> Self {
+        Self {
+            cancel: Arc::new(AtomicBool::new(false)),
+            pause: Arc::new(AtomicBool::new(false)),
+            prompts: Arc::new(RwLock::new(std::collections::VecDeque::new())),
+        }
+    }
+
+    /// Ask the agent to stop at the next iteration boundary.
+    pub fn cancel(&self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+
+    /// Whether cancellation has been requested.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancel.load(Ordering::Relaxed)
+    }
+
+    /// Suspend the agent at the next iteration boundary. It waits (without
+    /// burning CPU) until [`resume`](Self::resume) or [`cancel`](Self::cancel).
+    pub fn pause(&self) {
+        self.pause.store(true, Ordering::Relaxed);
+    }
+
+    /// Let a paused agent continue.
+    pub fn resume(&self) {
+        self.pause.store(false, Ordering::Relaxed);
+    }
+
+    /// Whether the agent is currently asked to hold.
+    pub fn is_paused(&self) -> bool {
+        self.pause.load(Ordering::Relaxed)
+    }
+
+    /// Queue an instruction for the agent to read before its next model call.
+    /// Returns false only if the queue lock is poisoned.
+    pub fn queue_prompt(&self, text: impl Into<String>) -> bool {
+        match self.prompts.write() {
+            Ok(mut q) => {
+                q.push_back(text.into());
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// How many queued instructions the agent has not consumed yet.
+    pub fn pending_prompts(&self) -> usize {
+        self.prompts.read().map(|q| q.len()).unwrap_or(0)
+    }
+}
+
+impl std::fmt::Debug for AgentControl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AgentControl")
+            .field("cancelled", &self.is_cancelled())
+            .field("paused", &self.is_paused())
+            .field("pending_prompts", &self.pending_prompts())
+            .finish()
+    }
+}
+
 /// Message type for inter-agent communication via mailbox.
 #[derive(Debug, Clone)]
 pub struct InterAgentMessage {
@@ -262,6 +361,8 @@ pub struct AutonomousAgent {
     cancellation_token: Option<Arc<AtomicBool>>,
     /// Mailbox for receiving inter-agent messages (checked between iterations).
     mailbox: Option<std::sync::mpsc::Receiver<InterAgentMessage>>,
+    /// External live control (cancel / pause / queued operator prompts).
+    control: Option<AgentControl>,
     /// Optional knowledge provider for context enrichment (RAG, KG, Memory, etc.).
     knowledge_provider: Option<Arc<dyn KnowledgeProvider>>,
     /// Agent methodology — controls workflow phases, reasoning, review triggers, etc.
@@ -400,6 +501,43 @@ impl AutonomousAgent {
                         tool_results: None,
                         #[cfg(feature = "vision")]
                         images: Vec::new(),
+                    });
+                }
+            }
+
+            // External control (AgentControl): drain operator-queued prompts, then
+            // honour a pause request by WAITING here rather than aborting — the
+            // caller asked to hold, not to stop. Cancellation still breaks out.
+            if let Some(ref control) = self.control {
+                let queued: Vec<String> = match control.prompts.write() {
+                    Ok(mut q) => q.drain(..).collect(),
+                    Err(_) => Vec::new(),
+                };
+                for text in queued {
+                    self.conversation.push(LoopMessage {
+                        role: LoopRole::User,
+                        content: format!("[Operator instruction, added mid-run]: {}", text),
+                        tool_calls: None,
+                        tool_results: None,
+                        #[cfg(feature = "vision")]
+                        images: Vec::new(),
+                    });
+                }
+
+                while control.is_paused() && !control.is_cancelled() {
+                    // Sleep rather than spin: a paused agent must not burn a core.
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                if control.is_cancelled() {
+                    self.state = AgentState::Failed("Cancelled".into());
+                    let elapsed = now_millis() - self.start_time;
+                    return Ok(AgentResult {
+                        output: "Agent cancelled".to_string(),
+                        iterations: self.iteration,
+                        tools_called: self.collect_tools_called(),
+                        cost: self.total_cost,
+                        duration_ms: elapsed,
+                        quality_score: None,
                     });
                 }
             }
@@ -1171,6 +1309,7 @@ pub struct AutonomousAgentBuilder {
     current_task_id: Option<String>,
     cancellation_token: Option<Arc<AtomicBool>>,
     mailbox: Option<std::sync::mpsc::Receiver<InterAgentMessage>>,
+    control: Option<AgentControl>,
     knowledge_provider: Option<Arc<dyn KnowledgeProvider>>,
     methodology: AgentMethodology,
     #[cfg(feature = "self-correction")]
@@ -1201,6 +1340,7 @@ impl AutonomousAgentBuilder {
             current_task_id: None,
             cancellation_token: None,
             mailbox: None,
+            control: None,
             knowledge_provider: None,
             methodology: AgentMethodology::default(),
             #[cfg(feature = "self-correction")]
@@ -1324,6 +1464,22 @@ impl AutonomousAgentBuilder {
         self
     }
 
+    /// Install live external control and hand back the [`AgentControl`] handle.
+    ///
+    /// Use this when something outside the agent must be able to steer it *while*
+    /// `run()` is in flight — cancel it, hold it, or queue further instructions
+    /// it will pick up before its next model call. The handle is `Clone + Send +
+    /// Sync`, so keep one per thread/UI as needed.
+    ///
+    /// The cancel flag is shared with [`cancellation_token`](Self::cancellation_token),
+    /// so calling both is redundant but harmless.
+    pub fn with_control(mut self) -> (Self, AgentControl) {
+        let control = AgentControl::new();
+        self.cancellation_token = Some(Arc::clone(&control.cancel));
+        self.control = Some(control.clone());
+        (self, control)
+    }
+
     pub fn build(self) -> AutonomousAgent {
         let sandbox = self
             .sandbox
@@ -1353,6 +1509,7 @@ impl AutonomousAgentBuilder {
             tools_called_log: Vec::new(),
             cancellation_token: self.cancellation_token,
             mailbox: self.mailbox,
+            control: self.control,
             knowledge_provider: self.knowledge_provider,
             methodology: self.methodology,
             #[cfg(feature = "self-correction")]
@@ -2637,5 +2794,164 @@ Let me process the results."#;
             .filter(|t| t.as_str() == "read_file")
             .collect();
         assert_eq!(read_calls.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod control_tests {
+    use super::*;
+    use crate::agent_policy::{AgentPolicyBuilder, AutonomyLevel};
+    use std::sync::atomic::AtomicUsize;
+
+    /// Generator that never finishes on its own: always emits a tool call, so the
+    /// loop keeps iterating until something external stops it.
+    fn looping_generator(
+        counter: Arc<AtomicUsize>,
+    ) -> Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync> {
+        Arc::new(move |_conv: &[LoopMessage]| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            r#"[{"name": "noop", "arguments": {}}]"#.to_string()
+        })
+    }
+
+    /// The default policy caps spend at $1, which ends a hot loop long before an
+    /// external cancel/pause can be observed. These tests are about control, not
+    /// budgeting, so lift the cap.
+    fn permissive_policy() -> AgentPolicy {
+        AgentPolicyBuilder::new()
+            .autonomy(AutonomyLevel::Autonomous)
+            .max_cost(1_000_000.0)
+            .max_iterations(1_000_000)
+            .build()
+    }
+
+    fn noop_registry() -> ToolRegistry {
+        use crate::unified_tools::{ToolBuilder, ToolOutput};
+        let mut reg = ToolRegistry::new();
+        let def = ToolBuilder::new("noop", "Does nothing").build();
+        reg.register(def, Arc::new(|_call| Ok(ToolOutput::text("ok"))));
+        reg
+    }
+
+    #[test]
+    fn test_queued_prompt_reaches_the_conversation_mid_run() {
+        let seen = Arc::new(RwLock::new(Vec::<String>::new()));
+        let seen_w = Arc::clone(&seen);
+        let generator: Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync> =
+            Arc::new(move |conv: &[LoopMessage]| {
+                if let Ok(mut s) = seen_w.write() {
+                    s.push(
+                        conv.iter()
+                            .map(|m| m.content.clone())
+                            .collect::<Vec<_>>()
+                            .join("|"),
+                    );
+                }
+                r#"[{"name": "noop", "arguments": {}}]"#.to_string()
+            });
+
+        let (builder, control) = AutonomousAgent::builder("queued", generator).with_control();
+        let mut agent = builder
+            .max_iterations(3)
+            .tool_registry(noop_registry())
+            .build();
+
+        // Queue before the run: it must be picked up on the very first iteration.
+        assert!(control.queue_prompt("focus on the failing test"));
+        assert_eq!(control.pending_prompts(), 1);
+
+        let _ = agent.run("do the work");
+
+        // Consumed...
+        assert_eq!(control.pending_prompts(), 0);
+        // ...and actually visible to the model.
+        let transcripts = seen.read().expect("lock");
+        assert!(
+            transcripts
+                .iter()
+                .any(|t| t.contains("focus on the failing test")),
+            "queued prompt never reached the model: {transcripts:?}"
+        );
+        assert!(
+            transcripts
+                .iter()
+                .any(|t| t.contains("Operator instruction")),
+            "queued prompt should be framed as an operator instruction"
+        );
+    }
+
+    #[test]
+    fn test_cancel_from_another_thread_stops_the_loop() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let generator = looping_generator(Arc::clone(&calls));
+        let (builder, control) = AutonomousAgent::builder("cancelled", generator).with_control();
+        // Without cancellation this would run 10_000 iterations.
+        let mut agent = builder
+            .max_iterations(10_000)
+            .policy(permissive_policy())
+            .tool_registry(noop_registry())
+            .build();
+
+        let ctl = control.clone();
+        let handle = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(60));
+            ctl.cancel();
+        });
+
+        let result = agent.run("spin").expect("cancellation returns Ok");
+        handle.join().expect("join");
+
+        assert!(control.is_cancelled());
+        assert_eq!(result.output, "Agent cancelled");
+        assert!(
+            result.iterations < 10_000,
+            "loop should have stopped early, ran {} iterations",
+            result.iterations
+        );
+    }
+
+    #[test]
+    fn test_pause_holds_the_loop_then_resume_continues() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let generator = looping_generator(Arc::clone(&calls));
+        let (builder, control) = AutonomousAgent::builder("paused", generator).with_control();
+        let mut agent = builder
+            .max_iterations(10_000)
+            .policy(permissive_policy())
+            .tool_registry(noop_registry())
+            .build();
+
+        // Pause BEFORE starting: the loop must hold without consuming iterations.
+        control.pause();
+        let ctl = control.clone();
+        let calls_probe = Arc::clone(&calls);
+        let handle = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            // While paused the generator must not have been called at all.
+            let during_pause = calls_probe.load(Ordering::SeqCst);
+            ctl.resume();
+            std::thread::sleep(std::time::Duration::from_millis(80));
+            ctl.cancel();
+            during_pause
+        });
+
+        let result = agent.run("spin").expect("cancellation returns Ok");
+        let during_pause = handle.join().expect("join");
+
+        assert_eq!(
+            during_pause, 0,
+            "the agent generated a response while it was supposed to be paused"
+        );
+        assert!(
+            calls.load(Ordering::SeqCst) > 0,
+            "the agent never resumed after the pause was lifted"
+        );
+        assert_eq!(result.output, "Agent cancelled");
+    }
+
+    #[test]
+    fn test_control_handle_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<AgentControl>();
     }
 }

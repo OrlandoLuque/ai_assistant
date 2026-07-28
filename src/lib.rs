@@ -1042,9 +1042,9 @@ pub use user_interaction::{
 
 #[cfg(feature = "autonomous")]
 pub use autonomous_loop::{
-    AgentResult as AutonomousAgentResult, AgentState as AutonomousAgentState, AutonomousAgent,
-    AutonomousAgentBuilder, AutonomousAgentConfig, InterAgentMessage, IterationOutcome,
-    KnowledgeProvider,
+    AgentControl, AgentResult as AutonomousAgentResult, AgentState as AutonomousAgentState,
+    AutonomousAgent, AutonomousAgentBuilder, AutonomousAgentConfig, InterAgentMessage,
+    IterationOutcome, KnowledgeProvider,
 };
 
 #[cfg(feature = "autonomous")]
