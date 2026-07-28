@@ -610,8 +610,14 @@ struct RustIdiomProvider {
 }
 
 impl KnowledgeProvider for RustIdiomProvider {
+    // The agent now supplies the task alongside the latest message (V251), so the
+    // provider no longer has to carry a copy of it just to retrieve sensibly.
     fn enrich(&self, query: &str) -> String {
-        let q = format!("{} {}", self.task, query).to_lowercase();
+        self.enrich_for_task(&self.task, query)
+    }
+
+    fn enrich_for_task(&self, task: &str, query: &str) -> String {
+        let q = format!("{task} {query}").to_lowercase();
         let hits: Vec<&str> = RUST_IDIOMS
             .iter()
             .filter(|(keys, _)| keys.iter().any(|k| q.contains(k)))

@@ -17,6 +17,23 @@ pub trait KnowledgeProvider: Send + Sync {
     /// Returns a string to inject as system context, or empty if nothing relevant.
     fn enrich(&self, query: &str) -> String;
 
+    /// Build enriched context knowing BOTH the task the agent is working on and the
+    /// latest message in the loop. **Prefer implementing this one.**
+    ///
+    /// `enrich`'s single `query` is the last user/tool message, which inside an
+    /// agentic loop is usually tool output — `"[Tool: write_file] wrote 143 bytes
+    /// to src/lib.rs"` — rather than anything describing the goal. A retriever keyed
+    /// on that fetches noise, and does so *silently*: no error, just useless
+    /// context. That mistake cost a whole benchmark experiment before it was
+    /// noticed, so the agent now supplies the original task as well.
+    ///
+    /// The default implementation ignores `task` and delegates to [`enrich`], so
+    /// existing providers keep working unchanged.
+    fn enrich_for_task(&self, task: &str, query: &str) -> String {
+        let _ = task;
+        self.enrich(query)
+    }
+
     /// Provider name for diagnostics.
     fn name(&self) -> &str {
         "KnowledgeProvider"
@@ -363,6 +380,10 @@ pub struct AutonomousAgent {
     mailbox: Option<std::sync::mpsc::Receiver<InterAgentMessage>>,
     /// External live control (cancel / pause / queued operator prompts).
     control: Option<AgentControl>,
+    /// The task string passed to the most recent `run()`. Kept unconditionally so
+    /// knowledge providers can retrieve against the GOAL, not just the last
+    /// message (which is usually tool output mid-loop).
+    current_task: String,
     /// Optional knowledge provider for context enrichment (RAG, KG, Memory, etc.).
     knowledge_provider: Option<Arc<dyn KnowledgeProvider>>,
     /// Agent methodology — controls workflow phases, reasoning, review triggers, etc.
@@ -419,6 +440,7 @@ impl AutonomousAgent {
             return Err("Agent is paused".into());
         }
         self.state = AgentState::Running;
+        self.current_task = task.to_string();
         self.iteration = 0;
         self.total_cost = 0.0;
         self.start_time = now_millis();
@@ -633,7 +655,7 @@ impl AutonomousAgent {
                 .find(|m| m.role == LoopRole::User || m.role == LoopRole::Tool)
                 .map(|m| m.content.clone())
                 .unwrap_or_default();
-            let context = provider.enrich(&query);
+            let context = provider.enrich_for_task(&self.current_task, &query);
             if !context.is_empty() {
                 let idx = self.conversation.len();
                 self.conversation.push(LoopMessage {
@@ -1510,6 +1532,7 @@ impl AutonomousAgentBuilder {
             cancellation_token: self.cancellation_token,
             mailbox: self.mailbox,
             control: self.control,
+            current_task: String::new(),
             knowledge_provider: self.knowledge_provider,
             methodology: self.methodology,
             #[cfg(feature = "self-correction")]
@@ -2953,5 +2976,56 @@ mod control_tests {
     fn test_control_handle_is_send_and_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<AgentControl>();
+    }
+
+    /// Regression for the silent-failure described on `enrich_for_task`: mid-loop
+    /// the "query" is tool output, so a provider keyed only on it never sees the
+    /// goal. The agent must hand over the task as well.
+    #[test]
+    fn test_knowledge_provider_receives_the_task_not_just_the_last_message() {
+        struct Recorder {
+            seen: Arc<RwLock<Vec<(String, String)>>>,
+        }
+        impl KnowledgeProvider for Recorder {
+            fn enrich(&self, _query: &str) -> String {
+                String::new()
+            }
+            fn enrich_for_task(&self, task: &str, query: &str) -> String {
+                if let Ok(mut s) = self.seen.write() {
+                    s.push((task.to_string(), query.to_string()));
+                }
+                String::new()
+            }
+        }
+
+        let seen = Arc::new(RwLock::new(Vec::new()));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let generator = looping_generator(Arc::clone(&calls));
+        let (builder, control) = AutonomousAgent::builder("knows", generator).with_control();
+        let mut agent = builder
+            .max_iterations(3)
+            .policy(permissive_policy())
+            .tool_registry(noop_registry())
+            .with_knowledge_provider(Arc::new(Recorder {
+                seen: Arc::clone(&seen),
+            }))
+            .build();
+
+        let _ = agent.run("implement the parser");
+        drop(control);
+
+        let seen = seen.read().expect("lock");
+        assert!(!seen.is_empty(), "provider was never consulted");
+        // Every call must carry the goal...
+        assert!(
+            seen.iter().all(|(task, _)| task == "implement the parser"),
+            "task text missing from some calls: {seen:?}"
+        );
+        // ...and at least one call happens when the last message is tool output,
+        // which is exactly the case that used to lose the goal.
+        assert!(
+            seen.iter().any(|(_, query)| query.contains("[Tool:")),
+            "expected a mid-loop call whose query is tool output: {seen:?}"
+        );
     }
 }
