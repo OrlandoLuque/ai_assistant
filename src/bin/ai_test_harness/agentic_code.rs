@@ -183,61 +183,6 @@ pub(crate) fn safe_join(workspace: &Path, rel: &str) -> Result<PathBuf, String> 
     Ok(workspace.join(candidate))
 }
 
-#[cfg(test)]
-mod safe_join_tests {
-    use super::safe_join;
-    use std::path::Path;
-
-    fn ws() -> &'static Path {
-        Path::new("C:/tmp/agentic_ws")
-    }
-
-    #[test]
-    fn accepts_ordinary_relative_paths() {
-        let p = safe_join(ws(), "src/lib.rs").expect("relative path allowed");
-        assert!(p.starts_with(ws()));
-        assert!(safe_join(ws(), "./main.py")
-            .expect("curdir ok")
-            .starts_with(ws()));
-    }
-
-    #[test]
-    fn rejects_traversal_in_both_separators() {
-        assert!(safe_join(ws(), "../../evil.txt").is_err());
-        assert!(safe_join(ws(), "..\\..\\evil.txt").is_err());
-        assert!(safe_join(ws(), "src/../../evil.txt").is_err());
-    }
-
-    /// The regression this fix is about: on Windows these used to ESCAPE, because
-    /// `Path::join` drops the base for an absolute argument.
-    #[test]
-    fn rejects_drive_absolute_and_drive_relative_paths() {
-        for evil in [
-            "C:/Windows/System32/x.txt",
-            "C:\\Windows\\x.txt",
-            "C:evil.txt",
-        ] {
-            let got = safe_join(ws(), evil);
-            assert!(got.is_err(), "{evil:?} should be rejected, got {got:?}");
-        }
-    }
-
-    #[test]
-    fn rooted_and_unc_paths_stay_inside() {
-        // Leading slashes are stripped rather than rejected, so these land inside.
-        for rooted in ["/etc/passwd", "\\\\server\\share\\x"] {
-            let p = safe_join(ws(), rooted).expect("rooted path is contained");
-            assert!(p.starts_with(ws()), "{rooted:?} escaped to {p:?}");
-        }
-    }
-
-    #[test]
-    fn rejects_empty() {
-        assert!(safe_join(ws(), "").is_err());
-        assert!(safe_join(ws(), "   ").is_err());
-    }
-}
-
 /// First available Python interpreter, if any.
 fn python_cmd() -> Option<&'static str> {
     for c in ["python", "python3"] {
@@ -1143,5 +1088,60 @@ pub(crate) fn tests_agentic_multi() -> CategoryResult {
     CategoryResult {
         name: "agentic_multi".to_string(),
         results,
+    }
+}
+
+#[cfg(test)]
+mod safe_join_tests {
+    use super::safe_join;
+    use std::path::Path;
+
+    fn ws() -> &'static Path {
+        Path::new("C:/tmp/agentic_ws")
+    }
+
+    #[test]
+    fn accepts_ordinary_relative_paths() {
+        let p = safe_join(ws(), "src/lib.rs").expect("relative path allowed");
+        assert!(p.starts_with(ws()));
+        assert!(safe_join(ws(), "./main.py")
+            .expect("curdir ok")
+            .starts_with(ws()));
+    }
+
+    #[test]
+    fn rejects_traversal_in_both_separators() {
+        assert!(safe_join(ws(), "../../evil.txt").is_err());
+        assert!(safe_join(ws(), "..\\..\\evil.txt").is_err());
+        assert!(safe_join(ws(), "src/../../evil.txt").is_err());
+    }
+
+    /// The regression this fix is about: on Windows these used to ESCAPE, because
+    /// `Path::join` drops the base for an absolute argument.
+    #[test]
+    fn rejects_drive_absolute_and_drive_relative_paths() {
+        for evil in [
+            "C:/Windows/System32/x.txt",
+            "C:\\Windows\\x.txt",
+            "C:evil.txt",
+        ] {
+            let got = safe_join(ws(), evil);
+            assert!(got.is_err(), "{evil:?} should be rejected, got {got:?}");
+        }
+    }
+
+    #[test]
+    fn rooted_and_unc_paths_stay_inside() {
+        // Leading slashes are stripped rather than rejected, so these land inside.
+        for rooted in ["/etc/passwd", "\\\\server\\share\\x"] {
+            let p = safe_join(ws(), rooted).expect("rooted path is contained");
+            assert!(p.starts_with(ws()), "{rooted:?} escaped to {p:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_empty() {
+        assert!(safe_join(ws(), "").is_err());
+        assert!(safe_join(ws(), "   ").is_err());
     }
 }
