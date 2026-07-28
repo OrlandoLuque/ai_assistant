@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — V168–V244 condensed backfill (2026-06 → 2026-07, 0.2.120 → 0.2.196)
+## [Unreleased] — V168–V251 condensed backfill (2026-06 → 2026-07, 0.2.120 → 0.2.203)
 
 This changelog and the `IMPROVEMENTS_V*` series lapsed after V167; the ~60
 versions since are reconstructed here **grouped by theme**. Per-commit detail
@@ -79,6 +79,33 @@ lives in git — each `VNNN:` commit message is self-contained.
   1/12 → 2/12 either way, for 3× the compute, because the remaining failures are
   capability limits rather than slips. Results are logged per sweep in
   `docs/MODEL_BENCHMARKS.md`.
+
+### Agent control, hygiene & safety (V245–V251)
+- **Live agent control (V248).** New `AgentControl`: a `Clone + Send + Sync` handle
+  from `AutonomousAgent::builder(..).with_control()` that can cancel, pause/resume,
+  and **queue instructions the agent picks up mid-run**. Steering was previously
+  impossible — `pause()`/`resume()` take `&mut self` (unusable while `run()` holds
+  the agent) and the loop's reaction to `Paused` was to abort rather than hold.
+  Queued prompts arrive as *operator* messages, kept distinct from the untrusted
+  peer mailbox.
+- **`KnowledgeProvider` now sees the task (V251).** `enrich()` only received the
+  last user/tool message — mid-loop that is tool output, so retrieval keyed on it
+  silently returns noise. Added `enrich_for_task(task, query)` with a defaulted
+  implementation (non-breaking).
+- **Every target unrotted; clippy gate extended to `--all-targets` (V245, V247).**
+  The gate covered `--lib --bins`, and the excluded targets had rotted until several
+  no longer compiled — renamed APIs, struct literals for `#[non_exhaustive]` configs,
+  non-exhaustive matches. All eight examples now build *and run*; deliberate uses of
+  deprecated/`#[non_exhaustive]` items carry scoped `#[allow]`s.
+- **Security (V250).** `safe_join` rejected `..` textually but not absolute paths,
+  and `Path::join` replaces the base for an absolute argument — so on Windows a
+  model-supplied `C:/…` escaped the workspace. Now validated by path component.
+  The harness's threat model is documented explicitly: the allowlists stop accidents,
+  not attacks (`python -c` is arbitrary execution; `cargo build` runs a model-written
+  `build.rs`), so untrusted models need the `containers` feature.
+- **Benchmark guard (V249).** Live-model categories warn when the resident model is
+  under 95% on GPU: CPU offload had silently invalidated three experiments by turning
+  timeouts into apparent model failures.
 
 ## [Unreleased] - v132 (2026-06-26) — V167: split assistant.rs into impl submodules (0.2.119)
 
