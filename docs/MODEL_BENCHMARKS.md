@@ -65,6 +65,36 @@ A **sweep** is just a loop over `AI_BENCH_MODEL`. Build the harness with
   tasks as "create/write the file" (reliably triggers the tool) rather than
   "implement this stub" (models tend to answer in prose).
 
+## Safety and threat model
+
+**This harness compiles and executes code written by a language model**, plus
+allowlisted commands, on the machine that runs it. Be clear-eyed about what that
+does and does not protect:
+
+- **The command allowlists stop accidents, not attacks.** `run_command` is limited
+  to `python` / `python3` / `pytest` (Python tasks) and `cargo build|test|check`
+  (Rust tasks), and commands are executed directly — no shell — so there is no `;`,
+  `&&` or pipe injection. But `python -c "..."` is arbitrary code execution by
+  definition, and `cargo build` runs a `build.rs` **that the model itself can
+  write**. Arguments after the subcommand are not validated either.
+- **`safe_join` is containment, not a boundary.** It rejects traversal (`..`) and
+  anything absolute — including the Windows drive-letter escape fixed in V250,
+  where `Path::join` silently replaced the workspace for a path like
+  `C:/Windows/x.txt`. That keeps *well-behaved* code inside its workspace; it does
+  nothing against code that simply opens whatever path it likes.
+- **Therefore the assumed threat model is: a non-adversarial local model, run by
+  the author, on the author's own machine.** Under that assumption the design is
+  fine, and the value is reproducibility rather than isolation.
+- **If you ever point this at an untrusted, remote or prompt-injected model, run
+  the tasks in a container** (the crate has a `containers` feature). Nothing in the
+  current path would stop hostile generated code from touching the rest of the
+  filesystem.
+
+Housekeeping: each task removes its temp workspace when it finishes, but a run
+killed mid-flight leaves the directory behind (six were found during this review).
+The shared cargo target dir stays small (~9 MB — the task crates have no
+dependencies), so disk growth is not a concern in normal use.
+
 ---
 
 ## Log (newest first)
