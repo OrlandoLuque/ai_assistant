@@ -1822,7 +1822,7 @@ mod tests {
             // The high-importance one should generally be recalled
             let has_good = recalled.iter().any(|e| e.importance > 0.5);
             assert!(
-                has_good || recalled.len() >= 1,
+                has_good || !recalled.is_empty(),
                 "Should recall at least one episode"
             );
         }
@@ -3383,13 +3383,12 @@ mod tests {
                 tags: vec!["entity".into()],
             });
 
-            assert!(procedural.find_by_condition("percentage reduction").len() >= 1);
-            assert!(
-                procedural
-                    .find_by_condition("manufacturer certification")
-                    .len()
-                    >= 1
-            );
+            assert!(!procedural
+                .find_by_condition("percentage reduction")
+                .is_empty());
+            assert!(!procedural
+                .find_by_condition("manufacturer certification")
+                .is_empty());
 
             // ---- Round 2: Memory-augmented evaluation ----
             let mut round2_correct = 0;

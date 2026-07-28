@@ -877,6 +877,9 @@ impl PermissionRequirement {
 
 #[cfg(test)]
 mod tests {
+    // These tests deliberately use the deprecated `AutoApproveAll` handler: the
+    // point is to exercise the policy/sandbox paths without a human in the loop.
+    #![allow(deprecated)]
     use super::*;
 
     #[test]

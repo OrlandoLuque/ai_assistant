@@ -1160,7 +1160,9 @@ mod tests {
         match result {
             Err(BrowserError::WebSocketError(msg)) => {
                 assert!(
-                    msg.contains("TCP connect failed") || msg.contains("refused") || msg.len() > 0
+                    msg.contains("TCP connect failed")
+                        || msg.contains("refused")
+                        || !msg.is_empty()
                 );
             }
             other => panic!("Expected WebSocketError, got: {:?}", other),

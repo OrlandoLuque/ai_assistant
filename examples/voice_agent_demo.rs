@@ -8,16 +8,19 @@
 
 use ai_assistant::{InterruptionPolicy, TurnPolicy, VadConfig, VoiceAgent, VoiceAgentConfig};
 
+// The config structs are `#[non_exhaustive]`, so they cannot be built with a struct
+// literal from outside the crate (not even with `..Default::default()`): start from
+// `default()` and override the fields of interest.
+#[allow(clippy::field_reassign_with_default)]
 fn main() {
     println!("=== Real-Time Voice Agent Demo ===\n");
 
     // 1. Configure VAD (Voice Activity Detection)
-    let vad_config = VadConfig {
-        energy_threshold: 0.03,
-        silence_duration_ms: 600,
-        min_speech_duration_ms: 150,
-        frame_size_ms: 20,
-    };
+    let mut vad_config = VadConfig::default();
+    vad_config.energy_threshold = 0.03;
+    vad_config.silence_duration_ms = 600;
+    vad_config.min_speech_duration_ms = 150;
+    vad_config.frame_size_ms = 20;
 
     println!("VAD Configuration:");
     println!("  Energy threshold: {}", vad_config.energy_threshold);
@@ -29,16 +32,15 @@ fn main() {
     println!("  Frame size: {}ms", vad_config.frame_size_ms);
 
     // 2. Configure the voice agent
-    let config = VoiceAgentConfig {
-        model_stt: "whisper-1".to_string(),
-        model_tts: "tts-1".to_string(),
-        vad_config,
-        interruption_policy: InterruptionPolicy::Immediate,
-        voice_id: "alloy".to_string(),
-        sample_rate: 16000,
-        chunk_size_ms: 20,
-        turn_policy: TurnPolicy::NaturalOverlap,
-    };
+    let mut config = VoiceAgentConfig::default();
+    config.model_stt = "whisper-1".to_string();
+    config.model_tts = "tts-1".to_string();
+    config.vad_config = vad_config;
+    config.interruption_policy = InterruptionPolicy::Immediate;
+    config.voice_id = "alloy".to_string();
+    config.sample_rate = 16000;
+    config.chunk_size_ms = 20;
+    config.turn_policy = TurnPolicy::NaturalOverlap;
 
     println!("\nVoice Agent Config:");
     println!("  STT model: {}", config.model_stt);

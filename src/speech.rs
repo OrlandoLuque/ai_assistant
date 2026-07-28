@@ -3025,7 +3025,7 @@ mod tests {
         let mut provider = XttsCloneProvider::local();
         let audio = vec![1u8; 1000];
 
-        provider.store_reference("test_voice", audio);
+        let _ = provider.store_reference("test_voice", audio);
         assert!(provider.has_reference("test_voice"));
 
         let voices = provider.list_cloned_voices().unwrap();

@@ -4218,6 +4218,9 @@ fn print_usage() {
 
 #[cfg(test)]
 mod tests {
+    // The config sections are #[non_exhaustive]; default()+assign is the
+    // only way to build them here.
+    #![allow(clippy::field_reassign_with_default)]
     use super::*;
 
     fn args(strs: &[&str]) -> Vec<String> {

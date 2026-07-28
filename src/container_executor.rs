@@ -1274,6 +1274,7 @@ mod tests {
     // Helper: skip integration tests when Docker is not available
     // =========================================================================
 
+    #[allow(dead_code)] // used only by the docker-gated tests
     fn skip_if_no_docker() -> bool {
         !ContainerExecutor::is_docker_available()
     }
@@ -1866,7 +1867,7 @@ mod tests {
             bind_mounts: vec![],
         };
 
-        let containers = vec![&old_record, &new_record, &removed_record];
+        let containers = [&old_record, &new_record, &removed_record];
 
         let expired_ids: Vec<&str> = containers
             .iter()

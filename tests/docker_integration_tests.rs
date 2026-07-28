@@ -8,6 +8,9 @@
 //!
 //! Windows: Docker Desktop must be running in Linux containers mode.
 
+#![allow(clippy::field_reassign_with_default)]
+// The container configs are #[non_exhaustive]; default()+assign is the
+// only way to build them from outside the crate.
 #![cfg(feature = "containers")]
 
 use std::sync::{Arc, RwLock};

@@ -2943,7 +2943,7 @@ mod inner {
         #[cfg(feature = "webrtc")]
         #[test]
         fn test_ice_candidate_type_all_variants() {
-            let types = vec![
+            let types = [
                 IceCandidateType::Host,
                 IceCandidateType::ServerReflexive,
                 IceCandidateType::PeerReflexive,
@@ -2964,7 +2964,7 @@ mod inner {
         #[cfg(feature = "webrtc")]
         #[test]
         fn test_webrtc_audio_codec_all_variants() {
-            let codecs = vec![
+            let codecs = [
                 WebRtcAudioCodec::Opus,
                 WebRtcAudioCodec::Pcm16,
                 WebRtcAudioCodec::G711,
@@ -3054,7 +3054,7 @@ mod inner {
 
         #[test]
         fn test_audio_model_capability_all_variants() {
-            let capabilities = vec![
+            let capabilities = [
                 AudioModelCapability::TextOnly,
                 AudioModelCapability::AudioInput,
                 AudioModelCapability::AudioOutput,
@@ -3439,7 +3439,7 @@ mod inner {
             let frame_size = (sample_rate * chunk_ms / 1000) as usize;
 
             // Send loud frames to trigger SpeechStart
-            let loud_frame: Vec<i16> = (0..frame_size).map(|i| ((i % 50) as i16 * 600)).collect();
+            let loud_frame: Vec<i16> = (0..frame_size).map(|i| (i % 50) as i16 * 600).collect();
             let loud_bytes: Vec<u8> = loud_frame.iter().flat_map(|s| s.to_le_bytes()).collect();
             let loud_chunk =
                 AudioChunk::new(loud_bytes.clone(), sample_rate, 1, AudioFormat::Pcm16);

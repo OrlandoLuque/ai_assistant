@@ -141,6 +141,9 @@ fn main() {
             MapReduceStatus::Reducing => "Reducing",
             MapReduceStatus::Completed => "Completed",
             MapReduceStatus::Failed(e) => e.as_str(),
+            // `MapReduceStatus` is #[non_exhaustive]: a wildcard keeps this demo
+            // compiling if a variant is added upstream.
+            _ => "Unknown",
         };
         println!("MR job status: {}", status_str);
         println!("Reduce result: {:?}", job.reduce_result);

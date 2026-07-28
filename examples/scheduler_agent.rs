@@ -11,6 +11,8 @@ use ai_assistant::trigger_system::{
     FiredTrigger, SchedulerConfig, SchedulerRunner, Trigger, TriggerCondition, TriggerManager,
 };
 
+// Config structs here are `#[non_exhaustive]`: build from `default()` + override.
+#[allow(clippy::field_reassign_with_default)]
 fn main() {
     println!("=== Scheduler & Trigger System Demo ===\n");
 
@@ -139,10 +141,10 @@ fn main() {
     }
 
     // Use the SchedulerRunner to tick cron triggers
-    let config = SchedulerConfig {
-        poll_interval_ms: 60_000, // 1 minute intervals
-        ..SchedulerConfig::default()
-    };
+    // `SchedulerConfig` is `#[non_exhaustive]`, so even `..Default::default()` is
+    // rejected outside the crate: start from `default()` and override.
+    let mut config = SchedulerConfig::default();
+    config.poll_interval_ms = 60_000; // 1 minute intervals
     let mut runner = SchedulerRunner::new(config, trigger_mgr);
 
     // Simulate 5 ticks starting at timestamp 0 (epoch)

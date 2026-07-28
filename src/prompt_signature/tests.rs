@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 #[test]
 fn test_field_type_variants() {
-    let types = vec![
+    let types = [
         FieldType::Text,
         FieldType::Number,
         FieldType::Boolean,
@@ -750,7 +750,7 @@ fn test_random_search_with_instructions() {
     let result = optimizer
         .optimize(&sig, &examples, &mut budget)
         .expect("random_search optimize with instructions");
-    assert!(result.best_prompt.system_prompt.len() > 0);
+    assert!(!result.best_prompt.system_prompt.is_empty());
 }
 
 // --- BayesianOptimizer tests ---
@@ -1141,7 +1141,7 @@ fn test_end_to_end_optimize_and_reflect() {
     // Apply improvements
     let improved_sig = reflector.apply_rules(&sig, &rules);
     let improved_compiled = improved_sig.compile();
-    assert!(improved_compiled.system_prompt.len() > 0);
+    assert!(!improved_compiled.system_prompt.is_empty());
 }
 
 #[test]

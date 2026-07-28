@@ -288,6 +288,9 @@ fn now_millis() -> u64 {
 
 #[cfg(test)]
 mod tests {
+    // These tests deliberately use the deprecated `AutoApproveAll` handler: the
+    // point is to exercise the policy/sandbox paths without a human in the loop.
+    #![allow(deprecated)]
     use super::*;
     use crate::agent_policy::{AgentPolicyBuilder, AutoApproveAll, AutoDenyAll, InternetMode};
 

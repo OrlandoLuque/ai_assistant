@@ -14,6 +14,8 @@ use ai_assistant::{
     NetworkConfig, NetworkDiscoveryConfig, NetworkNode, ReplicationConfig, WriteMode,
 };
 
+// Config structs here are `#[non_exhaustive]`: build from `default()` + override.
+#[allow(clippy::field_reassign_with_default)]
 fn main() {
     println!("==========================================================");
     println!("  ai_assistant -- Distributed Network Demo");
@@ -27,30 +29,32 @@ fn main() {
     let identity_dir = std::env::temp_dir().join("dist_net_demo_identity");
     let _ = std::fs::create_dir_all(&identity_dir);
 
-    let config = NetworkConfig {
-        listen_addr: "127.0.0.1:0".parse::<SocketAddr>().expect("valid address"),
-        bootstrap_peers: vec![],
-        identity_dir: identity_dir.clone(),
-        heartbeat_interval: Duration::from_secs(5),
-        replication: ReplicationConfig {
-            min_copies: 1,
-            max_copies: 3,
-            write_mode: WriteMode::Asynchronous,
-            read_quorum: 1,
-            write_quorum: 1,
-            vnodes_per_node: 64,
-        },
-        discovery: NetworkDiscoveryConfig {
-            enable_broadcast: false, // Disabled for demo (no LAN)
-            broadcast_port: 9876,
-            broadcast_interval: Duration::from_secs(30),
-            enable_peer_exchange: true,
-        },
-        join_token: None,
-        max_connections: 10,
-        message_timeout: Duration::from_secs(5),
-        phi_threshold: 8.0,
-    };
+    // These config structs are `#[non_exhaustive]`: build from `default()` + override.
+    let mut replication = ReplicationConfig::default();
+    replication.min_copies = 1;
+    replication.max_copies = 3;
+    replication.write_mode = WriteMode::Asynchronous;
+    replication.read_quorum = 1;
+    replication.write_quorum = 1;
+    replication.vnodes_per_node = 64;
+
+    let mut discovery = NetworkDiscoveryConfig::default();
+    discovery.enable_broadcast = false; // Disabled for demo (no LAN)
+    discovery.broadcast_port = 9876;
+    discovery.broadcast_interval = Duration::from_secs(30);
+    discovery.enable_peer_exchange = true;
+
+    let mut config = NetworkConfig::default();
+    config.listen_addr = "127.0.0.1:0".parse::<SocketAddr>().expect("valid address");
+    config.bootstrap_peers = vec![];
+    config.identity_dir = identity_dir.clone();
+    config.heartbeat_interval = Duration::from_secs(5);
+    config.replication = replication;
+    config.discovery = discovery;
+    config.join_token = None;
+    config.max_connections = 10;
+    config.message_timeout = Duration::from_secs(5);
+    config.phi_threshold = 8.0;
 
     println!("  Listen address:     {}", config.listen_addr);
     println!("  Heartbeat interval: {:?}", config.heartbeat_interval);

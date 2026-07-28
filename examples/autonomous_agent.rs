@@ -12,6 +12,10 @@ use ai_assistant::{
     UnifiedToolHandler, UnifiedToolOutput, UnifiedToolRegistry,
 };
 
+/// What the agent calls to get the next assistant turn. In a real application this
+/// wraps an LLM call; here it is a deterministic mock.
+type ResponseGenerator = Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync>;
+
 fn main() {
     // 1. Create a mock response generator.
     //    In a real application this would call an LLM (e.g. via Ollama).
@@ -19,18 +23,17 @@ fn main() {
     let call_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let call_count_clone = call_count.clone();
 
-    let response_generator: Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync> =
-        Arc::new(move |_conversation| {
-            let n = call_count_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            if n == 0 {
-                // First iteration: invoke the "get_time" tool. Tool calls are a bare
-                // JSON array of {name, arguments} objects — see `parse_tool_calls`.
-                r#"[{"name": "get_time", "arguments": {}}]"#.to_string()
-            } else {
-                // Second iteration: produce a final answer (no tool call)
-                "The current time has been retrieved. Task complete.".to_string()
-            }
-        });
+    let response_generator: ResponseGenerator = Arc::new(move |_conversation| {
+        let n = call_count_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if n == 0 {
+            // First iteration: invoke the "get_time" tool. Tool calls are a bare
+            // JSON array of {name, arguments} objects — see `parse_tool_calls`.
+            r#"[{"name": "get_time", "arguments": {}}]"#.to_string()
+        } else {
+            // Second iteration: produce a final answer (no tool call)
+            "The current time has been retrieved. Task complete.".to_string()
+        }
+    });
 
     // 2. Build a tool registry with a simple "get_time" tool.
     let mut registry = UnifiedToolRegistry::new();

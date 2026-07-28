@@ -2239,6 +2239,7 @@ mod tests {
             .collect()
     }
 
+    #[allow(dead_code)] // helper kept for tests gated behind other features
     fn silence(sample_rate: u32, duration_ms: u32) -> Vec<i16> {
         vec![0i16; (sample_rate * duration_ms as u32 / 1000) as usize]
     }
@@ -2680,8 +2681,8 @@ mod tests {
         let mut processed = original.clone();
         mega.process(&mut processed, 16000);
         assert_ne!(original, processed, "Megaphone should modify the audio");
-        // Soft clipping via tanh means output amplitude is bounded to i16 range.
-        assert!(processed.iter().all(|&s| s.abs() <= i16::MAX));
+        // NOTE: an `s.abs() <= i16::MAX` check here would be vacuous — it is true by
+        // construction for every i16. The strict bound below is the real assertion.
         // The tanh saturation means output cannot exceed i16::MAX (tanh output < 1.0)
         let peak_proc = processed.iter().map(|s| s.abs()).max().unwrap_or(0);
         assert!(

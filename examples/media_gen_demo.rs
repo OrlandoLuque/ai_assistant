@@ -11,20 +11,22 @@ use ai_assistant::{
     VideoGenConfig, VideoProviderRouter, VideoResolution,
 };
 
+// The generation configs are `#[non_exhaustive]`: build them from `default()` and
+// override the fields of interest rather than with a struct literal.
+#[allow(clippy::field_reassign_with_default)]
 fn main() {
     println!("=== Media Generation Demo ===\n");
 
     // 1. Image generation config
-    let image_config = ImageGenConfig {
-        width: 1024,
-        height: 1024,
-        style: None,
-        quality: ImageQuality::HD,
-        num_images: 1,
-        negative_prompt: Some("blurry, low quality".to_string()),
-        seed: Some(42),
-        guidance_scale: Some(7.5),
-    };
+    let mut image_config = ImageGenConfig::default();
+    image_config.width = 1024;
+    image_config.height = 1024;
+    image_config.style = None;
+    image_config.quality = ImageQuality::HD;
+    image_config.num_images = 1;
+    image_config.negative_prompt = Some("blurry, low quality".to_string());
+    image_config.seed = Some(42);
+    image_config.guidance_scale = Some(7.5);
 
     println!("Image Generation Config:");
     println!("  Size: {}x{}", image_config.width, image_config.height);
@@ -43,15 +45,14 @@ fn main() {
     println!("\nImage Router: {:?}", router);
 
     // 4. Video generation config
-    let video_config = VideoGenConfig {
-        duration_seconds: 4.0,
-        fps: 24,
-        resolution: VideoResolution::HD720,
-        aspect_ratio: AspectRatio::Widescreen,
-        style: Some("cinematic".to_string()),
-        seed: None,
-        image_prompt: None,
-    };
+    let mut video_config = VideoGenConfig::default();
+    video_config.duration_seconds = 4.0;
+    video_config.fps = 24;
+    video_config.resolution = VideoResolution::HD720;
+    video_config.aspect_ratio = AspectRatio::Widescreen;
+    video_config.style = Some("cinematic".to_string());
+    video_config.seed = None;
+    video_config.image_prompt = None;
 
     println!("\nVideo Generation Config:");
     println!(

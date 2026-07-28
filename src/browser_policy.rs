@@ -436,7 +436,7 @@ mod tests {
     #[test]
     fn test_restrictive_blocks_http() {
         let policy = BrowserPolicy::restrictive();
-        assert!(policy.validate_url("http://example.com").is_allowed() == false);
+        assert!(!policy.validate_url("http://example.com").is_allowed());
         assert!(policy.validate_url("https://example.com").is_allowed());
     }
 
