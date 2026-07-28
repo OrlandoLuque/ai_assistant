@@ -453,6 +453,29 @@ use crate::stress::*;
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
+/// Categories that MEASURE A MODEL rather than test our code.
+///
+/// Their pass/fail depends on which model `AI_BENCH_MODEL` points at, not on
+/// whether the library is correct: the agentic sets score 5/5, 8/10 and 12/12 with
+/// `qwen2.5-coder:7b` and 2/5, 1/10 and 1/12 with the default `llama3.2:3b`. Left
+/// in `--all` they made the regression suite report 29 "failures" that were simply
+/// a weak default model — noise that would train anyone to ignore a red battery.
+///
+/// So `--all` skips them and they are run deliberately, with a chosen model, via
+/// `--category=<name>` or `--benchmarks`. Results belong in
+/// `docs/MODEL_BENCHMARKS.md`, not in a pass/fail gate.
+const BENCHMARK_CATEGORIES: &[&str] = &[
+    "agentic_code",
+    "agentic_multi",
+    "agentic_rust",
+    "agentic_rust_multi",
+    "code_gen_bench",
+];
+
+fn is_benchmark_category(name: &str) -> bool {
+    BENCHMARK_CATEGORIES.contains(&name)
+}
+
 fn all_categories() -> Vec<(&'static str, fn() -> CategoryResult)> {
     #[allow(unused_mut)]
     let mut categories = vec![
@@ -1312,6 +1335,7 @@ fn load_baseline(path: &str) -> Result<HarnessReport, String> {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let mut run_all = false;
+    let mut run_benchmarks = false;
     let mut category_filter: Option<String> = None;
     let mut list_only = false;
     let mut replay_file: Option<String> = None;
@@ -1334,6 +1358,7 @@ fn main() {
     while i < args.len() {
         match args[i].as_str() {
             "--all" => run_all = true,
+            "--benchmarks" => run_benchmarks = true,
             "--list" => list_only = true,
             "--no-color" => USE_COLOR.store(false, AtomicOrdering::Relaxed),
             "--verbose" | "-v" => VERBOSE.store(true, AtomicOrdering::Relaxed),
@@ -1426,7 +1451,10 @@ fn main() {
                 println!("AI Assistant Test Harness\n");
                 println!("Usage: ai_test_harness [OPTIONS]\n");
                 println!("Test Options:");
-                println!("  --all                   Run all test categories");
+                println!("  --all                   Run all regression categories");
+                println!(
+                    "  --benchmarks            Run only the model-measuring benchmark categories"
+                );
                 println!("  --category=NAME         Run a specific category");
                 println!("  --list                  List available categories");
                 println!("  --no-color              Disable ANSI colors");
@@ -1569,8 +1597,21 @@ fn main() {
     if list_only {
         println!("Available categories ({}):", categories.len());
         for (name, _) in &categories {
-            println!("  - {}", name);
+            if is_benchmark_category(name) {
+                println!(
+                    "  - {} {}",
+                    name,
+                    yellow("[benchmark — excluded from --all]")
+                );
+            } else {
+                println!("  - {}", name);
+            }
         }
+        println!(
+            "\nBenchmark categories measure a MODEL, not the code, so --all skips them.\n\
+             Run them deliberately with --benchmarks or --category=<name>, choosing the\n\
+             model via AI_BENCH_MODEL. See docs/MODEL_BENCHMARKS.md."
+        );
         return;
     }
 
@@ -1581,7 +1622,28 @@ fn main() {
 
     let mut results: Vec<CategoryResult>;
 
-    if run_all {
+    if run_benchmarks {
+        let benches: Vec<(&str, fn() -> CategoryResult)> = categories
+            .iter()
+            .filter(|(name, _)| is_benchmark_category(name))
+            .cloned()
+            .collect();
+        if !json_output {
+            println!(
+                "{}",
+                bold(&cyan("Running BENCHMARK categories (model measurement)..."))
+            );
+        }
+        results = run_categories(&benches);
+    } else if run_all {
+        // Benchmarks measure the configured model, not the code — see
+        // BENCHMARK_CATEGORIES. Keeping them here made --all fail purely because
+        // the default model is weak.
+        let regression: Vec<(&str, fn() -> CategoryResult)> = categories
+            .iter()
+            .filter(|(name, _)| !is_benchmark_category(name))
+            .cloned()
+            .collect();
         if !json_output {
             let filter_msg = match get_filter() {
                 Some(pat) => format!(" (filter: '{}')", pat),
@@ -1594,8 +1656,12 @@ fn main() {
                     filter_msg
                 )))
             );
+            println!(
+                "  ({} model-measuring benchmark categories skipped — run with --benchmarks)",
+                categories.len() - regression.len()
+            );
         }
-        results = run_categories(&categories);
+        results = run_categories(&regression);
     } else if let Some(ref cat_name) = category_filter {
         if let Some((_, f)) = categories
             .iter()
