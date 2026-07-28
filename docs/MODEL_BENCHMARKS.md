@@ -69,6 +69,52 @@ A **sweep** is just a loop over `AI_BENCH_MODEL`. Build the harness with
 
 ## Log (newest first)
 
+### 2026-07-29 — fourth lever (multi-agent critic): the hypothesis is settled (harness @ V250 / 0.2.202)
+
+**Setup:** `agentic_rust` (12 tasks), Ollama, temperature 0, **every run reporting
+zero CPU-offload warnings** (the V249 guard), and the 8B baseline reproducing its
+known 10/12 — two independent signs the conditions are clean.
+
+`AI_BENCH_CRITIC=1` adds the BACKLOG's multi-agent lever: on failure a SECOND agent
+in a reviewer role reads the specification and the produced code and reports
+concrete defects, and that critique — not the compiler output — drives the revision
+round. Same trigger and round count as `AI_BENCH_SCAFFOLD`, so only the
+*information* differs.
+
+| Lever | kind | llama3.2:3b | llama3.1:8b |
+|---|---|---|---|
+| baseline (single shot) | — | 1/12 | 10/12 |
+| `AI_BENCH_SCAFFOLD` (verify→retry) | more attempts | 2/12 | 10/12 |
+| `AI_BENCH_SAMPLES` (best-of-N @temp 0.7) | more attempts | 2/12 | — |
+| `AI_BENCH_KNOWLEDGE` (idiom injection) | more information | 2/12 | — |
+| `AI_BENCH_CRITIC` (multi-agent reviewer) | different reasoner | 2/12 | 10/12 |
+
+**Finding — the BACKLOG's central bet is refuted on this task set.** Four
+qualitatively different scaffolding strategies — retry with compiler feedback,
+independent resampling, injected reference knowledge, and a separate reviewing
+agent — produce the *identical* +1 of 12 on the weak model and *no change at all*
+on the stronger one. Scaffolding raises the odds of a model finding an answer it
+was already capable of producing; it does not manufacture capability that is
+absent, and it does not repair a model that is simply past its depth.
+
+That the four agree so exactly is what makes this conclusive rather than
+suggestive: "we picked the wrong scaffolding" is no longer available as an
+explanation.
+
+**What this means for the project's differentiator.** The viable version is not
+*"scaffolding lets a small local model match a big one"* — that is now measured and
+false. It is *"pick a model that is already in the capable band for the task (here
+the 30B MoE, or 7–8B for simpler work) and use the scaffolding to make it
+reliable and autonomous."* The value of the agentic machinery is **autonomy and
+verification**, not capability amplification.
+
+**Caveat, stated so it is not overclaimed:** one benchmark, one language, twelve
+small tasks, two models. It says nothing about scaffolding on long-horizon,
+multi-file work where planning and memory dominate — which is precisely where the
+`agentic_multi` numbers suggest the real differences live.
+
+**Commits:** V249–V250 (0.2.201 → 0.2.202).
+
 ### 2026-07-27 (5th) — third lever (information), same +1: the plateau is capability (harness @ V246 / 0.2.198)
 
 **Setup:** `agentic_rust` (12 tasks), llama3.2:3b, 100% GPU. `AI_BENCH_KNOWLEDGE=1`
