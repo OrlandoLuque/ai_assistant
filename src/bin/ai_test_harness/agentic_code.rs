@@ -635,6 +635,7 @@ pub(crate) fn tests_agentic_code() -> CategoryResult {
     }
     let py = py.unwrap();
     println!("  backend: {}", crate::bench_util::bench_label());
+    crate::bench_util::warn_if_cpu_offloaded();
 
     for task in TASKS {
         results.push(run_test(&format!("agentic: {}", task.name), || {
@@ -1038,6 +1039,7 @@ pub(crate) fn tests_agentic_multi() -> CategoryResult {
     }
     let py = py.unwrap();
     println!("  backend: {}", crate::bench_util::bench_label());
+    crate::bench_util::warn_if_cpu_offloaded();
 
     for task in MULTI_TASKS {
         results.push(run_test(&format!("multi: {}", task.name), || {

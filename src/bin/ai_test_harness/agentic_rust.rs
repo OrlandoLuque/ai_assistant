@@ -309,6 +309,46 @@ fn scaffold_rounds() -> usize {
         .unwrap_or(1)
 }
 
+/// Multi-agent lever (`AI_BENCH_CRITIC=1`): a SECOND agent in a reviewer role reads
+/// the task and the produced code and reports defects, and that critique — rather
+/// than the compiler's output — is what the coder gets for its retry.
+///
+/// This is the qualitatively different thing the BACKLOG's multi-agent lever
+/// promises: the compiler can only report what fails to build or assert, while a
+/// reviewer can catch code that compiles happily and is simply wrong.
+fn critic_enabled() -> bool {
+    matches!(
+        std::env::var("AI_BENCH_CRITIC").ok().as_deref(),
+        Some("1") | Some("true")
+    )
+}
+
+/// Ask the reviewer agent to critique `code` against `task`. Returns None when the
+/// reviewer approves (or cannot be reached), so the caller can skip a pointless
+/// revision round.
+fn critique(task: &str, code: &str, cargo_output: &str) -> Option<String> {
+    let mut a = crate::bench_util::bench_assistant();
+    a.clear_conversation();
+    let prompt = format!(
+        "You are a meticulous Rust code reviewer. Review the implementation below \
+         against its specification.\n\n\
+         SPECIFICATION:\n{task}\n\n\
+         CURRENT src/lib.rs:\n```rust\n{code}\n```\n\n\
+         The build/test output was:\n{}\n\n\
+         If the code fully satisfies the specification and compiles, reply with exactly \
+         APPROVED and nothing else. Otherwise list the concrete defects as short bullet \
+         points, naming the specific item (function, type, signature, behaviour) that is \
+         wrong and what it should be. Do not write the corrected code.",
+        cargo_output.chars().take(1200).collect::<String>()
+    );
+    match a.generate_sync(prompt, "") {
+        Ok(r) if !r.trim().is_empty() && !r.trim().to_uppercase().starts_with("APPROVED") => {
+            Some(r)
+        }
+        _ => None,
+    }
+}
+
 /// Turn a failing cargo run into a retry instruction for the model. The hidden
 /// checker itself is NOT revealed — only the compiler/test output, which is what
 /// a developer would see.
@@ -671,13 +711,33 @@ fn run_rust_task_once(cargo: &'static str, task: &RustTask) -> Result<(), String
 
     // Scaffolding loop: run, verify by compiling+testing, and on failure hand the
     // model the compiler's own output and let it try again (AI_BENCH_SCAFFOLD).
-    let rounds = scaffold_rounds();
+    // The critic lever implies at least one revision round (that is the point of it),
+    // unless the caller already asked for more.
+    let rounds = if critic_enabled() {
+        scaffold_rounds().max(2)
+    } else {
+        scaffold_rounds()
+    };
     let mut iters = 0usize;
     let mut last_out = String::new();
     let mut passed = false;
     for round in 0..rounds {
         let prompt = if round == 0 {
             task.prompt.to_string()
+        } else if critic_enabled() {
+            // Feed the REVIEWER's findings instead of the raw compiler output.
+            let code = std::fs::read_to_string(ws.join("src").join("lib.rs"))
+                .unwrap_or_else(|_| "<missing>".to_string());
+            match critique(task.prompt, &code, &last_out) {
+                Some(review) => format!(
+                    "A reviewer inspected your implementation against the task and reported \
+                     these problems:\n\n{review}\n\nFix `src/lib.rs` accordingly, then run \
+                     cargo test."
+                ),
+                // Reviewer approved code that actually fails: fall back to the
+                // compiler so the round is not wasted.
+                None => retry_prompt(&last_out),
+            }
         } else {
             retry_prompt(&last_out)
         };
@@ -923,6 +983,7 @@ pub(crate) fn tests_agentic_rust_multi() -> CategoryResult {
     }
     let cargo = cargo.unwrap();
     println!("  backend: {}", crate::bench_util::bench_label());
+    crate::bench_util::warn_if_cpu_offloaded();
 
     for task in RUST_MULTI_TASKS {
         results.push(run_test(&format!("rust multi: {}", task.name), || {
@@ -978,6 +1039,7 @@ pub(crate) fn tests_agentic_rust() -> CategoryResult {
     }
     let cargo = cargo.unwrap();
     println!("  backend: {}", crate::bench_util::bench_label());
+    crate::bench_util::warn_if_cpu_offloaded();
 
     for task in RUST_TASKS {
         results.push(run_test(&format!("rust: {}", task.name), || {

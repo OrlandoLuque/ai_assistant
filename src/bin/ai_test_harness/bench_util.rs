@@ -98,6 +98,68 @@ pub(crate) fn bench_assistant() -> AiAssistant {
     a
 }
 
+/// Ask Ollama which models are resident and how much of each sits in VRAM.
+///
+/// Returns `Some((model, gpu_percent))` for the first loaded model. Ollama fixes
+/// the CPU/GPU layer split when a model LOADS, so a model loaded while VRAM was
+/// busy stays partly on CPU even after memory frees up (`ollama stop <model>`
+/// forces a reload). A partially offloaded model does not merely run slower — it
+/// runs slow enough to hit request timeouts, which silently turns into "the model
+/// failed the task". Three separate experiments in this benchmark were invalidated
+/// that way before this check existed.
+fn ollama_gpu_share() -> Option<(String, u32)> {
+    use std::io::{Read, Write};
+    use std::net::{TcpStream, ToSocketAddrs};
+
+    let ep = bench_endpoint(&bench_provider());
+    let hostport = ep
+        .trim_start_matches("https://")
+        .trim_start_matches("http://");
+    let hostport = hostport.split('/').next().unwrap_or(hostport);
+    let addr = hostport.to_socket_addrs().ok()?.next()?;
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(2)).ok()?;
+    stream.set_read_timeout(Some(Duration::from_secs(3))).ok()?;
+    write!(
+        stream,
+        "GET /api/ps HTTP/1.1\r\nHost: {hostport}\r\nConnection: close\r\nAccept: application/json\r\n\r\n"
+    )
+    .ok()?;
+    let mut body = String::new();
+    stream.read_to_string(&mut body).ok()?;
+
+    let json: serde_json::Value = serde_json::from_str(body.split("\r\n\r\n").nth(1)?).ok()?;
+    let m = json.get("models")?.as_array()?.first()?;
+    let name = m.get("name")?.as_str()?.to_string();
+    let total = m.get("size")?.as_u64()?;
+    let vram = m.get("size_vram")?.as_u64()?;
+    if total == 0 {
+        return None;
+    }
+    Some((name, ((vram as f64 / total as f64) * 100.0).round() as u32))
+}
+
+/// Print a loud warning when the resident model is not (almost) fully on GPU.
+/// Call this at the start of any live-model category: a CPU-offloaded run produces
+/// numbers that look like model failures and are not comparable with anything.
+pub(crate) fn warn_if_cpu_offloaded() {
+    if bench_provider() != AiProvider::Ollama {
+        return; // the /api/ps probe is Ollama-specific
+    }
+    if let Some((model, gpu_pct)) = ollama_gpu_share() {
+        if gpu_pct < 95 {
+            println!(
+                "  {} {} is only {}% on GPU — results will NOT be comparable.\n     \
+                 Free VRAM (nvidia-smi shows who holds it), then `ollama stop {}` to force a \
+                 reload: the CPU/GPU split is fixed at load time.",
+                crate::yellow("WARNING"),
+                model,
+                gpu_pct,
+                model
+            );
+        }
+    }
+}
+
 /// Whether the configured backend's endpoint accepts a TCP connection (so the
 /// category can skip gracefully when the server isn't running, e.g. in CI).
 pub(crate) fn backend_reachable() -> bool {

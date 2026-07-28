@@ -248,6 +248,7 @@ pub(crate) fn tests_code_gen_bench() -> CategoryResult {
         };
     }
     let py = py.unwrap();
+    crate::bench_util::warn_if_cpu_offloaded();
 
     for task in TASKS {
         results.push(run_test(

@@ -38,6 +38,7 @@ pub(crate) fn tests_real_e2e() -> CategoryResult {
             results,
         };
     }
+    crate::bench_util::warn_if_cpu_offloaded();
 
     // 1) Multi-turn conversation: state a fact, distract, then recall it.
     results.push(run_test("real: multi-turn recall (name + topic)", || {
