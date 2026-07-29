@@ -142,9 +142,8 @@ fn main() {
 
     // Use the SchedulerRunner to tick cron triggers
     // `SchedulerConfig` is `#[non_exhaustive]`, so even `..Default::default()` is
-    // rejected outside the crate: start from `default()` and override.
-    let mut config = SchedulerConfig::default();
-    config.poll_interval_ms = 60_000; // 1 minute intervals
+    // rejected outside the crate: start from `default()` and chain `with_*`.
+    let config = SchedulerConfig::default().with_poll_interval_ms(60_000); // 1 minute
     let mut runner = SchedulerRunner::new(config, trigger_mgr);
 
     // Simulate 5 ticks starting at timestamp 0 (epoch)

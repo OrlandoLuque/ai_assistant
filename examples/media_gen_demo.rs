@@ -45,14 +45,14 @@ fn main() {
     println!("\nImage Router: {:?}", router);
 
     // 4. Video generation config
-    let mut video_config = VideoGenConfig::default();
-    video_config.duration_seconds = 4.0;
-    video_config.fps = 24;
-    video_config.resolution = VideoResolution::HD720;
-    video_config.aspect_ratio = AspectRatio::Widescreen;
-    video_config.style = Some("cinematic".to_string());
-    video_config.seed = None;
-    video_config.image_prompt = None;
+    let video_config = VideoGenConfig::default()
+        .with_duration_seconds(4.0)
+        .with_fps(24)
+        .with_resolution(VideoResolution::HD720)
+        .with_aspect_ratio(AspectRatio::Widescreen)
+        .with_style(Some("cinematic".to_string()))
+        .with_seed(None)
+        .with_image_prompt(None);
 
     println!("\nVideo Generation Config:");
     println!(

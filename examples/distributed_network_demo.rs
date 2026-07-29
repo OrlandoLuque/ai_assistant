@@ -14,8 +14,6 @@ use ai_assistant::{
     NetworkConfig, NetworkDiscoveryConfig, NetworkNode, ReplicationConfig, WriteMode,
 };
 
-// Config structs here are `#[non_exhaustive]`: build from `default()` + override.
-#[allow(clippy::field_reassign_with_default)]
 fn main() {
     println!("==========================================================");
     println!("  ai_assistant -- Distributed Network Demo");
@@ -29,14 +27,14 @@ fn main() {
     let identity_dir = std::env::temp_dir().join("dist_net_demo_identity");
     let _ = std::fs::create_dir_all(&identity_dir);
 
-    // These config structs are `#[non_exhaustive]`: build from `default()` + override.
-    let mut replication = ReplicationConfig::default();
-    replication.min_copies = 1;
-    replication.max_copies = 3;
-    replication.write_mode = WriteMode::Asynchronous;
-    replication.read_quorum = 1;
-    replication.write_quorum = 1;
-    replication.vnodes_per_node = 64;
+    // These config structs are `#[non_exhaustive]`: chain `with_*` from `default()`.
+    let replication = ReplicationConfig::default()
+        .with_min_copies(1)
+        .with_max_copies(3)
+        .with_write_mode(WriteMode::Asynchronous)
+        .with_read_quorum(1)
+        .with_write_quorum(1)
+        .with_vnodes_per_node(64);
 
     let mut discovery = NetworkDiscoveryConfig::default();
     discovery.enable_broadcast = false; // Disabled for demo (no LAN)
@@ -44,17 +42,17 @@ fn main() {
     discovery.broadcast_interval = Duration::from_secs(30);
     discovery.enable_peer_exchange = true;
 
-    let mut config = NetworkConfig::default();
-    config.listen_addr = "127.0.0.1:0".parse::<SocketAddr>().expect("valid address");
-    config.bootstrap_peers = vec![];
-    config.identity_dir = identity_dir.clone();
-    config.heartbeat_interval = Duration::from_secs(5);
-    config.replication = replication;
-    config.discovery = discovery;
-    config.join_token = None;
-    config.max_connections = 10;
-    config.message_timeout = Duration::from_secs(5);
-    config.phi_threshold = 8.0;
+    let config = NetworkConfig::default()
+        .with_listen_addr("127.0.0.1:0".parse::<SocketAddr>().expect("valid address"))
+        .with_bootstrap_peers(vec![])
+        .with_identity_dir(identity_dir.clone())
+        .with_heartbeat_interval(Duration::from_secs(5))
+        .with_replication(replication)
+        .with_discovery(discovery)
+        .with_join_token(None)
+        .with_max_connections(10)
+        .with_message_timeout(Duration::from_secs(5))
+        .with_phi_threshold(8.0);
 
     println!("  Listen address:     {}", config.listen_addr);
     println!("  Heartbeat interval: {:?}", config.heartbeat_interval);

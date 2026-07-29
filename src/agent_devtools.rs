@@ -32,6 +32,30 @@ pub struct DevToolsConfig {
     pub breakpoints: Vec<Breakpoint>,
 }
 
+impl DevToolsConfig {
+    /// Chainable setters (the struct is `#[non_exhaustive]`, so start from
+    /// [`default`](Default::default) and chain).
+    pub fn with_enable_recording(mut self, v: bool) -> Self {
+        self.enable_recording = v;
+        self
+    }
+
+    pub fn with_enable_profiling(mut self, v: bool) -> Self {
+        self.enable_profiling = v;
+        self
+    }
+
+    pub fn with_max_recording_steps(mut self, v: usize) -> Self {
+        self.max_recording_steps = v;
+        self
+    }
+
+    pub fn with_breakpoints(mut self, v: Vec<Breakpoint>) -> Self {
+        self.breakpoints = v;
+        self
+    }
+}
+
 impl Default for DevToolsConfig {
     fn default() -> Self {
         Self {

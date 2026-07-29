@@ -63,6 +63,60 @@ pub struct NetworkConfig {
     pub phi_threshold: f64,
 }
 
+impl NetworkConfig {
+    /// Chainable setters (the struct is `#[non_exhaustive]`, so start from
+    /// [`default`](Default::default) and chain).
+    pub fn with_listen_addr(mut self, v: SocketAddr) -> Self {
+        self.listen_addr = v;
+        self
+    }
+
+    pub fn with_bootstrap_peers(mut self, v: Vec<SocketAddr>) -> Self {
+        self.bootstrap_peers = v;
+        self
+    }
+
+    pub fn with_identity_dir(mut self, v: PathBuf) -> Self {
+        self.identity_dir = v;
+        self
+    }
+
+    pub fn with_heartbeat_interval(mut self, v: Duration) -> Self {
+        self.heartbeat_interval = v;
+        self
+    }
+
+    pub fn with_replication(mut self, v: ReplicationConfig) -> Self {
+        self.replication = v;
+        self
+    }
+
+    pub fn with_discovery(mut self, v: DiscoveryConfig) -> Self {
+        self.discovery = v;
+        self
+    }
+
+    pub fn with_join_token(mut self, v: Option<String>) -> Self {
+        self.join_token = v;
+        self
+    }
+
+    pub fn with_max_connections(mut self, v: usize) -> Self {
+        self.max_connections = v;
+        self
+    }
+
+    pub fn with_message_timeout(mut self, v: Duration) -> Self {
+        self.message_timeout = v;
+        self
+    }
+
+    pub fn with_phi_threshold(mut self, v: f64) -> Self {
+        self.phi_threshold = v;
+        self
+    }
+}
+
 impl Default for NetworkConfig {
     fn default() -> Self {
         Self {
@@ -96,6 +150,40 @@ pub struct ReplicationConfig {
     pub write_quorum: usize,
     /// Virtual nodes per physical node in the hash ring.
     pub vnodes_per_node: usize,
+}
+
+impl ReplicationConfig {
+    /// Chainable setters (the struct is `#[non_exhaustive]`, so start from
+    /// [`default`](Default::default) and chain).
+    pub fn with_min_copies(mut self, v: usize) -> Self {
+        self.min_copies = v;
+        self
+    }
+
+    pub fn with_max_copies(mut self, v: usize) -> Self {
+        self.max_copies = v;
+        self
+    }
+
+    pub fn with_write_mode(mut self, v: WriteMode) -> Self {
+        self.write_mode = v;
+        self
+    }
+
+    pub fn with_read_quorum(mut self, v: usize) -> Self {
+        self.read_quorum = v;
+        self
+    }
+
+    pub fn with_write_quorum(mut self, v: usize) -> Self {
+        self.write_quorum = v;
+        self
+    }
+
+    pub fn with_vnodes_per_node(mut self, v: usize) -> Self {
+        self.vnodes_per_node = v;
+        self
+    }
 }
 
 impl Default for ReplicationConfig {

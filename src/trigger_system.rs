@@ -641,6 +641,40 @@ pub struct SchedulerConfig {
     pub enable_feed: bool,
 }
 
+impl SchedulerConfig {
+    /// Chainable setters (the struct is `#[non_exhaustive]`, so start from
+    /// [`default`](Default::default) and chain).
+    pub fn with_poll_interval_ms(mut self, v: u64) -> Self {
+        self.poll_interval_ms = v;
+        self
+    }
+
+    pub fn with_max_concurrent(mut self, v: usize) -> Self {
+        self.max_concurrent = v;
+        self
+    }
+
+    pub fn with_enable_cron(mut self, v: bool) -> Self {
+        self.enable_cron = v;
+        self
+    }
+
+    pub fn with_enable_events(mut self, v: bool) -> Self {
+        self.enable_events = v;
+        self
+    }
+
+    pub fn with_enable_file_watch(mut self, v: bool) -> Self {
+        self.enable_file_watch = v;
+        self
+    }
+
+    pub fn with_enable_feed(mut self, v: bool) -> Self {
+        self.enable_feed = v;
+        self
+    }
+}
+
 impl Default for SchedulerConfig {
     fn default() -> Self {
         Self {

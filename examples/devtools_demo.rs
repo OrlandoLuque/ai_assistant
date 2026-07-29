@@ -13,22 +13,21 @@ use ai_assistant::{
     ExecutionReplay, PerformanceProfiler, ProfileSummary, StateInspector, StepProfile,
 };
 
-// Config structs here are `#[non_exhaustive]`: build from `default()` + override.
-#[allow(clippy::field_reassign_with_default)]
 fn main() {
     println!("=== Agent DevTools Demo ===\n");
 
     // -----------------------------------------------------------------------
     // 1. DevToolsConfig
     // -----------------------------------------------------------------------
-    let mut config = DevToolsConfig::default();
-    config.enable_recording = true;
-    config.enable_profiling = true;
-    config.max_recording_steps = 1000;
-    config.breakpoints = vec![
-        Breakpoint::OnError,
-        Breakpoint::OnCostAbove { threshold: 5.0 },
-    ];
+    // `#[non_exhaustive]`: start from `default()` and chain `with_*`.
+    let config = DevToolsConfig::default()
+        .with_enable_recording(true)
+        .with_enable_profiling(true)
+        .with_max_recording_steps(1000)
+        .with_breakpoints(vec![
+            Breakpoint::OnError,
+            Breakpoint::OnCostAbove { threshold: 5.0 },
+        ]);
     println!(
         "DevToolsConfig: recording={}, profiling={}, max_steps={}",
         config.enable_recording, config.enable_profiling, config.max_recording_steps
@@ -217,18 +216,18 @@ fn main() {
     // 6. AgentDebugger — unified facade
     // -----------------------------------------------------------------------
     println!("\n--- AgentDebugger (unified facade) ---");
-    let mut dbg_config = DevToolsConfig::default();
-    dbg_config.enable_recording = true;
-    dbg_config.enable_profiling = true;
-    dbg_config.max_recording_steps = 500;
-    dbg_config.breakpoints = vec![
-        Breakpoint::BeforeToolCall {
-            tool_name: "dangerous_tool".to_string(),
-        },
-        Breakpoint::AfterStep { step_number: 5 },
-        Breakpoint::OnConfidenceBelow { threshold: 0.5 },
-        Breakpoint::AtStepCount { count: 10 },
-    ];
+    let dbg_config = DevToolsConfig::default()
+        .with_enable_recording(true)
+        .with_enable_profiling(true)
+        .with_max_recording_steps(500)
+        .with_breakpoints(vec![
+            Breakpoint::BeforeToolCall {
+                tool_name: "dangerous_tool".to_string(),
+            },
+            Breakpoint::AfterStep { step_number: 5 },
+            Breakpoint::OnConfidenceBelow { threshold: 0.5 },
+            Breakpoint::AtStepCount { count: 10 },
+        ]);
     let mut debugger = AgentDebugger::new("demo-agent", dbg_config);
     debugger.start();
 

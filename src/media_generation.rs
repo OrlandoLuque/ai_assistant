@@ -1537,6 +1537,45 @@ mod inner {
     }
 
     impl VideoGenConfig {
+        /// Chainable setters (the struct is `#[non_exhaustive]`, so start from
+        /// [`default`](Default::default) and chain).
+        pub fn with_duration_seconds(mut self, v: f32) -> Self {
+            self.duration_seconds = v;
+            self
+        }
+
+        pub fn with_fps(mut self, v: u32) -> Self {
+            self.fps = v;
+            self
+        }
+
+        pub fn with_resolution(mut self, v: VideoResolution) -> Self {
+            self.resolution = v;
+            self
+        }
+
+        pub fn with_aspect_ratio(mut self, v: AspectRatio) -> Self {
+            self.aspect_ratio = v;
+            self
+        }
+
+        pub fn with_style(mut self, v: Option<String>) -> Self {
+            self.style = v;
+            self
+        }
+
+        pub fn with_seed(mut self, v: Option<u64>) -> Self {
+            self.seed = v;
+            self
+        }
+
+        pub fn with_image_prompt(mut self, v: Option<Vec<u8>>) -> Self {
+            self.image_prompt = v;
+            self
+        }
+    }
+
+    impl VideoGenConfig {
         /// Validate the configuration.
         pub fn validate(&self) -> Result<(), AiError> {
             if self.duration_seconds <= 0.0 {
