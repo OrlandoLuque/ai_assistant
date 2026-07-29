@@ -46,6 +46,19 @@ $env:AGENTIC_DEBUG = "1"
 A **sweep** is just a loop over `AI_BENCH_MODEL`. Build the harness with
 `cargo build --bin ai_test_harness --features "full,browser"` first.
 
+These categories are **excluded from `--all`** (which is the regression gate and must
+not go red just because the configured model is weak). Run them deliberately:
+
+```powershell
+.\target\debug\ai_test_harness.exe --benchmarks   # every model-measuring category
+.\target\debug\ai_test_harness.exe --list         # marks which categories are benchmarks
+```
+
+Scaffolding knobs, all off by default so plain runs stay comparable:
+`AI_BENCH_SCAFFOLD=n` (verify→retry rounds), `AI_BENCH_SAMPLES=n` + `AI_BENCH_TEMP`
+(best-of-N), `AI_BENCH_KNOWLEDGE=1` (idiom injection), `AI_BENCH_CRITIC=1`
+(multi-agent reviewer).
+
 ## How to read / caveats
 
 - **Execution-verified**: PASS = the generated code ran and passed its checker.
