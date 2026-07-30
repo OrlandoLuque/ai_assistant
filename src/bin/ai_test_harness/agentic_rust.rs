@@ -171,12 +171,15 @@ const RUST_TASKS: &[RustTask] = &[
                  `area(&self) -> f64`. Then define public structs `Circle` (field `radius: f64`) \
                  and `Rect` (fields `w: f64` and `h: f64`), each with a public `new` constructor, \
                  and implement `Shape` for both. Circle area is PI * r * r. Then run cargo test.",
+        // radius 2, NOT 1: at r = 1 the common `PI * r` mistake is numerically
+        // identical to the correct `PI * r * r`, so a radius-1 test cannot tell
+        // them apart (caught by checker_adequacy).
         checker: "    #[test]\n    fn check() {\n        \
-                  let c = Circle::new(1.0);\n        \
+                  let c = Circle::new(2.0);\n        \
                   let r = Rect::new(2.0, 3.0);\n        \
-                  assert!((c.area() - std::f64::consts::PI).abs() < 1e-9);\n        \
+                  assert!((c.area() - 4.0 * std::f64::consts::PI).abs() < 1e-9);\n        \
                   assert!((r.area() - 6.0).abs() < 1e-9);\n        \
-                  let shapes: Vec<Box<dyn Shape>> = vec![Box::new(Circle::new(1.0)), Box::new(Rect::new(2.0, 3.0))];\n        \
+                  let shapes: Vec<Box<dyn Shape>> = vec![Box::new(Circle::new(2.0)), Box::new(Rect::new(2.0, 3.0))];\n        \
                   assert_eq!(shapes.len(), 2);\n    }\n",
     },
     RustTask {
@@ -189,11 +192,16 @@ const RUST_TASKS: &[RustTask] = &[
         prompt: "In `src/lib.rs`, write a public function `longest` that takes two string slices \
                  with the SAME lifetime and returns the longer one (the first when equal length), \
                  using an explicit lifetime annotation. Then run cargo test.",
+        // Every case here used to have the answer as the FIRST argument, so a
+        // function that just returns `a` passed (caught by checker_adequacy). The
+        // second case now puts the longer string SECOND, and the assertions compare
+        // the value rather than only its length.
         checker: "    #[test]\n    fn check() {\n        \
                   let a = String::from(\"hello\");\n        \
                   let b = String::from(\"hi\");\n        \
-                  assert_eq!(longest(a.as_str(), b.as_str()).len(), 5);\n        \
-                  assert_eq!(longest(\"ab\", \"cd\").len(), 2);\n    }\n",
+                  assert_eq!(longest(a.as_str(), b.as_str()), \"hello\");\n        \
+                  assert_eq!(longest(\"hi\", \"hello\"), \"hello\");\n        \
+                  assert_eq!(longest(\"ab\", \"cd\"), \"ab\");\n    }\n",
     },
     RustTask {
         name: "implement the Iterator trait",
@@ -1156,4 +1164,51 @@ pub(crate) fn tests_agentic_rust() -> CategoryResult {
         name: "agentic_rust".to_string(),
         results,
     }
+}
+
+// ─── Exposed for the `checker_adequacy` category ──────────────────────────────
+
+/// Names of every single-step Rust task, so adequacy entries cannot silently
+/// drift away from the tasks they claim to cover.
+pub(crate) const RUST_TASK_NAMES: &[&str] = &[
+    "sum_even (from scratch)",
+    "fix is_even bug",
+    "divide returning Option",
+    "Stack struct with impl",
+    "count occurrences (HashMap)",
+    "generic largest<T> with trait bounds",
+    "trait with two impls",
+    "explicit lifetimes",
+    "implement the Iterator trait",
+    "borrow checker: dedup in place",
+    "enum + match evaluator",
+    "fizzbuzz (stresses quote escaping)",
+];
+
+/// The assert suite a given task is scored with.
+pub(crate) fn rust_task_checker(name: &str) -> Option<&'static str> {
+    RUST_TASKS
+        .iter()
+        .find(|t| t.name == name)
+        .map(|t| t.checker)
+}
+
+/// Is cargo usable?
+pub(crate) fn cargo_available() -> bool {
+    cargo_cmd().is_some()
+}
+
+/// Compile `snippet` with `checker` appended and report whether the tests pass.
+/// This is the same oracle the benchmark applies to model output, so adequacy is
+/// measured against the real thing rather than a copy of it.
+pub(crate) fn verify_snippet_with_checker(snippet: &str, checker: &str) -> bool {
+    let Some(cargo) = cargo_cmd() else {
+        return false;
+    };
+    let Ok(ws) = scaffold_crate(snippet) else {
+        return false;
+    };
+    let passed = verify_crate(cargo, &ws, checker);
+    let _ = std::fs::remove_dir_all(&ws);
+    passed
 }

@@ -408,6 +408,8 @@ mod agentic_rust;
 mod basics;
 mod bench_util;
 mod chains;
+#[cfg(all(feature = "autonomous", feature = "tools"))]
+mod checker_adequacy;
 mod code_gen_bench;
 #[cfg(feature = "containers")]
 mod containers;
@@ -436,6 +438,8 @@ use crate::agentic_code::*;
 use crate::agentic_rust::*;
 use crate::basics::*;
 use crate::chains::*;
+#[cfg(all(feature = "autonomous", feature = "tools"))]
+use crate::checker_adequacy::*;
 use crate::code_gen_bench::*;
 #[cfg(feature = "containers")]
 use crate::containers::*;
@@ -745,6 +749,10 @@ fn all_categories() -> Vec<(&'static str, fn() -> CategoryResult)> {
         categories.push((
             "agentic_multi",
             tests_agentic_multi as fn() -> CategoryResult,
+        ));
+        categories.push((
+            "checker_adequacy",
+            tests_checker_adequacy as fn() -> CategoryResult,
         ));
         categories.push(("agentic_rust", tests_agentic_rust as fn() -> CategoryResult));
         categories.push((
