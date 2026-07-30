@@ -112,6 +112,60 @@ dependencies), so disk growth is not a concern in normal use.
 
 ## Log (newest first)
 
+### 2026-07-29 — what the failures ACTUALLY are, and what "pre-chewing" should mean (harness @ V255 / 0.2.207)
+
+Instead of aggregate scores, this entry dissects the two tasks `llama3.1:8b` fails in
+`agentic_rust` (it scores 10/12). Both had been filed under "capability wall". Only
+one of them is.
+
+**Case 1 — `borrow checker: dedup in place`.** The model writes:
+
+```rust
+v.retain(|x| { if !seen.contains(x) { seen.insert(*x); true } false });
+```
+
+The **algorithm is correct** — `retain` + `HashSet` is the idiomatic answer, and is
+what the reference implementation uses. There is **no borrow-checker error at all**
+(the task name is misleading and should change). It fails on `error[E0308]`: an `if`
+without `else` used as an expression. rustc even prints the fix
+(`help: … return true;`). The agent had six iterations, could run `cargo test`, and
+never applied it.
+
+**Case 2 — `generic largest<T> with trait bounds`.** The model writes
+`list.iter().max().unwrap()` against a `T: PartialOrd + Copy` signature. That is a
+genuine Rust knowledge gap: `.max()` requires `Ord`, and the task deliberately tests
+`f64`, which is **not** `Ord` — with only `PartialOrd` you must fold by hand.
+
+**Why this matters for automated repair.** rustc's own suggestion for case 2 is
+"add `+ Ord` to the bound". Applying it was tested: the crate then fails to compile
+the float case (`the trait bound f64: Ord is not satisfied`). So **compiling is not
+a sufficient acceptance criterion** — a compiler suggestion can look like a fix and
+break the requirement. Case 1's suggestion, applied verbatim, compiles *and passes
+the checker* (tested).
+
+Note `cargo fix` helps with neither: both suggestions carry
+`applicability = MaybeIncorrect`, and `cargo fix` only applies `MachineApplicable`
+ones (verified via `--message-format=json`).
+
+**Measured dead end: skeleton pre-chewing.** `AI_BENCH_PRECHEW=1` seeds the exact
+signature with `todo!()` bodies so the model supplies only the algorithm. Result:
+**10/12 → 9/12** — worse. It fixed neither failure and broke a task that previously
+passed (`implement the Iterator trait`). The cause was confirmed by dumping the final
+artifact: **two `todo!()` left untouched**. `todo!()` compiles, so `cargo build` told
+the agent everything was fine and it stopped. Handing a model a hole to fill also
+takes it off the pattern it is best at — writing a complete idiomatic file.
+
+**The mechanism worth building instead** (queued, not implemented): parse
+`cargo build --message-format=json`, apply the `suggested_replacement` spans
+**speculatively — including `MaybeIncorrect` ones** — and keep the result only if it
+compiles **and the tests pass**. It asks the model nothing; it is deterministic
+search over rustc's own suggestions with execution as the judge. Expected coverage,
+stated honestly: syntactic slips yes (case 1), conceptual gaps no (case 2) — and
+case 2 *should* keep failing, because that is a real capability difference the
+benchmark exists to measure.
+
+**Commits:** V255 (0.2.207).
+
 ### 2026-07-29 — fourth lever (multi-agent critic): the hypothesis is settled (harness @ V250 / 0.2.202)
 
 **Setup:** `agentic_rust` (12 tasks), Ollama, temperature 0, **every run reporting

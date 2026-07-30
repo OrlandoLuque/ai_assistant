@@ -62,6 +62,13 @@ struct RustTask {
     name: &'static str,
     /// Initial contents of `src/lib.rs` (empty string = start from scratch).
     seed_lib: &'static str,
+    /// Optional "pre-chewed" starting point used only when `AI_BENCH_PRECHEW=1`:
+    /// the exact signature(s) with a `todo!()` body, so the model supplies the
+    /// ALGORITHM and not the Rust syntax. Empty = no pre-chewing available.
+    ///
+    /// This deliberately measures a DIFFERENT, easier task ("can it fill a hole we
+    /// prepared") and is therefore never on by default.
+    prechew: &'static str,
     prompt: &'static str,
     /// Test body appended inside a `mod harness_checker` to verify the artifact.
     checker: &'static str,
@@ -70,6 +77,7 @@ struct RustTask {
 const RUST_TASKS: &[RustTask] = &[
     RustTask {
         name: "sum_even (from scratch)",
+        prechew: "",
         seed_lib: "",
         prompt: "In `src/lib.rs`, write a public function `sum_even(nums: &[i32]) -> i32` that \
                  returns the sum of the even numbers in the slice. Then run cargo test to make \
@@ -81,6 +89,7 @@ const RUST_TASKS: &[RustTask] = &[
     },
     RustTask {
         name: "fix is_even bug",
+        prechew: "",
         seed_lib: "// BUG: this returns true for ODD numbers.\npub fn is_even(n: i32) -> bool {\n    n % 2 == 1\n}\n",
         prompt: "The file `src/lib.rs` defines `is_even(n: i32) -> bool`, but it is WRONG — it \
                  returns true for ODD numbers. Read the file, fix the bug so it returns true \
@@ -94,6 +103,7 @@ const RUST_TASKS: &[RustTask] = &[
     },
     RustTask {
         name: "divide returning Option",
+        prechew: "",
         seed_lib: "",
         prompt: "In `src/lib.rs`, write a public function `divide(a: f64, b: f64) -> Option<f64>` \
                  that returns Some(a / b), or None when b is 0.0. Then run cargo test to make sure \
@@ -105,6 +115,7 @@ const RUST_TASKS: &[RustTask] = &[
     },
     RustTask {
         name: "Stack struct with impl",
+        prechew: "",
         seed_lib: "",
         prompt: "In `src/lib.rs`, define a public struct `Stack` holding a vector of i32, with a \
                  public `new()` constructor, and public methods `push(&mut self, x: i32)`, \
@@ -121,6 +132,7 @@ const RUST_TASKS: &[RustTask] = &[
     },
     RustTask {
         name: "count occurrences (HashMap)",
+        prechew: "",
         seed_lib: "",
         prompt: "In `src/lib.rs`, write a public function \
                  `count_occurrences(nums: &[i32]) -> std::collections::HashMap<i32, usize>` that \
@@ -138,6 +150,10 @@ const RUST_TASKS: &[RustTask] = &[
     //    the borrow checker). Single functions saturate; these should not.
     RustTask {
         name: "generic largest<T> with trait bounds",
+        prechew: "pub fn largest<T: PartialOrd + Copy>(list: &[T]) -> T {
+    todo!()
+}
+",
         seed_lib: "",
         prompt: "In `src/lib.rs`, write a public GENERIC function \
                  `largest<T: PartialOrd + Copy>(list: &[T]) -> T` returning the largest element of \
@@ -149,6 +165,7 @@ const RUST_TASKS: &[RustTask] = &[
     },
     RustTask {
         name: "trait with two impls",
+        prechew: "",
         seed_lib: "",
         prompt: "In `src/lib.rs`, define a public trait `Shape` with a method \
                  `area(&self) -> f64`. Then define public structs `Circle` (field `radius: f64`) \
@@ -164,6 +181,10 @@ const RUST_TASKS: &[RustTask] = &[
     },
     RustTask {
         name: "explicit lifetimes",
+        prechew: "pub fn longest<'a>(a: &'a str, b: &'a str) -> &'a str {
+    todo!()
+}
+",
         seed_lib: "",
         prompt: "In `src/lib.rs`, write a public function `longest` that takes two string slices \
                  with the SAME lifetime and returns the longer one (the first when equal length), \
@@ -176,6 +197,23 @@ const RUST_TASKS: &[RustTask] = &[
     },
     RustTask {
         name: "implement the Iterator trait",
+        prechew: "pub struct Countdown {
+    n: u32,
+}
+
+impl Countdown {
+    pub fn new(start: u32) -> Self {
+        todo!()
+    }
+}
+
+impl Iterator for Countdown {
+    type Item = u32;
+    fn next(&mut self) -> Option<u32> {
+        todo!()
+    }
+}
+",
         seed_lib: "",
         prompt: "In `src/lib.rs`, define a public struct `Countdown` holding a u32, with a public \
                  `new(start: u32)` constructor, and implement the standard `Iterator` trait for it \
@@ -189,6 +227,10 @@ const RUST_TASKS: &[RustTask] = &[
     },
     RustTask {
         name: "borrow checker: dedup in place",
+        prechew: "pub fn dedup_in_place(v: &mut Vec<i32>) {
+    todo!()
+}
+",
         seed_lib: "",
         prompt: "In `src/lib.rs`, write a public function `dedup_in_place(v: &mut Vec<i32>)` that \
                  removes duplicate values IN PLACE while preserving the order of first appearance \
@@ -203,6 +245,7 @@ const RUST_TASKS: &[RustTask] = &[
     },
     RustTask {
         name: "enum + match evaluator",
+        prechew: "",
         seed_lib: "",
         prompt: "In `src/lib.rs`, define a public enum `Op` with variants `Add`, `Sub`, `Mul` and \
                  `Div`, and a public function `apply(op: Op, a: f64, b: f64) -> Option<f64>` that \
@@ -217,6 +260,7 @@ const RUST_TASKS: &[RustTask] = &[
     },
     RustTask {
         name: "fizzbuzz (stresses quote escaping)",
+        prechew: "",
         seed_lib: "",
         prompt: "In `src/lib.rs`, write a public function `fizzbuzz(n: u32) -> String` returning \
                  Fizz when n is divisible by 3, Buzz when divisible by 5, FizzBuzz when divisible \
@@ -685,9 +729,28 @@ fn run_rust_task(cargo: &'static str, task: &RustTask) -> Result<(), String> {
     }
 }
 
+/// `AI_BENCH_PRECHEW=1`: deterministically hand the model the exact signature with a
+/// `todo!()` body, so it supplies the ALGORITHM and not the Rust syntax.
+///
+/// This is not another persuasion lever — it removes a class of difficulty
+/// mechanically. It therefore measures a **different, easier task**, and is off by
+/// default so ordinary numbers stay comparable. Reported separately.
+fn prechew_enabled() -> bool {
+    matches!(
+        std::env::var("AI_BENCH_PRECHEW").ok().as_deref(),
+        Some("1") | Some("true")
+    )
+}
+
 fn run_rust_task_once(cargo: &'static str, task: &RustTask) -> Result<(), String> {
     let task_text = task.prompt;
-    let ws = scaffold_crate(task.seed_lib)?;
+    let prechewing = prechew_enabled() && !task.prechew.is_empty();
+    let seed = if prechewing {
+        task.prechew
+    } else {
+        task.seed_lib
+    };
+    let ws = scaffold_crate(seed)?;
 
     let assistant = Arc::new(Mutex::new(crate::bench_util::bench_assistant()));
     let generator = make_generator(assistant);
@@ -728,7 +791,14 @@ fn run_rust_task_once(cargo: &'static str, task: &RustTask) -> Result<(), String
     let mut last_out = String::new();
     let mut passed = false;
     for round in 0..rounds {
-        let prompt = if round == 0 {
+        let prompt = if round == 0 && prechewing {
+            format!(
+                "`src/lib.rs` ALREADY CONTAINS the required signature(s) with `todo!()` bodies. \
+                 Do not change any signature — read the file and replace each `todo!()` with a \
+                 working implementation, then run cargo test.\n\nTask: {}",
+                task.prompt
+            )
+        } else if round == 0 {
             task.prompt.to_string()
         } else if critic_enabled() {
             // Feed the REVIEWER's findings instead of the raw compiler output.
@@ -757,6 +827,25 @@ fn run_rust_task_once(cargo: &'static str, task: &RustTask) -> Result<(), String
         if passed {
             break;
         }
+    }
+    if std::env::var("AGENTIC_DEBUG").is_ok() && !passed {
+        let src = std::fs::read_to_string(ws.join("src").join("lib.rs")).unwrap_or_default();
+        println!(
+            "    [dbg] final lib.rs: {} bytes, {} todo!() left
+----
+{}
+----",
+            src.len(),
+            src.matches("todo!").count(),
+            src.chars().take(900).collect::<String>()
+        );
+        println!(
+            "    [dbg] cargo said:
+----
+{}
+----",
+            last_out.chars().take(1400).collect::<String>()
+        );
     }
     let _ = std::fs::remove_dir_all(&ws);
 
