@@ -112,6 +112,60 @@ dependencies), so disk growth is not a concern in normal use.
 
 ## Log (newest first)
 
+### 2026-07-31 — trustworthy oracles, unfinished-work detection, and repair that actually works (harness @ V256–V257 / 0.2.209)
+
+**The oracles were audited first, and two were not competent.** Every Rust task is
+scored by appending an assert suite and running `cargo test`, which makes that suite
+an oracle — yet it had only ever been checked in one direction (a correct
+implementation passes). The new `checker_adequacy` category adds the direction that
+matters: each task also gets hand-written **mutants that must FAIL**.
+
+Two of the twelve were caught accepting knowingly-wrong code:
+
+| Oracle | Accepted | Why |
+|---|---|---|
+| `trait with two impls` | a circle computing `PI * r` | the only radius tested was **1.0**, where the bug equals the correct answer |
+| `explicit lifetimes` | `longest` that always returns its first argument | **both** cases had the answer in first position |
+
+Both fixed (radius 2; a case with the longer string second, comparing values not
+lengths). Adequacy then extended to the six multi-step oracles, which proved sound
+first time. **Total: 50/50.** llama3.1:8b still scores 10/12 under the stricter
+oracles, so its published number was not inflated.
+
+**Unfinished ≠ wrong.** `todo!()` type-checks, so a crate full of placeholders BUILDS
+and an agent that trusts the compiler declares victory — precisely what happened under
+pre-chewing. The harness now detects placeholders, re-queues the agent with a specific
+instruction, and reports the two outcomes distinctly instead of blaming the compiler
+for code that compiled perfectly and was merely half written. It turned an invisible
+failure into a measured one: **with pre-chewing, llama3.2:3b leaves placeholders in 8
+of 12 tasks.**
+
+**`AI_BENCH_AUTOFIX=1` — compiler-guided repair.** Applies rustc's
+`suggested_replacement` spans speculatively and keeps them only if the crate compiles
+**and the checker passes**. Verified on the two failures dissected in V255:
+
+- `dedup in place` — **FAIL → PASS**, applying `return` + `;`, both `MaybeIncorrect`,
+  which `cargo fix` refuses to apply at all.
+- `generic largest<T>` — **correctly rejected**. And this is the important one:
+  rustc marks that `+ std::cmp::Ord` suggestion **MachineApplicable**, so `cargo fix`
+  *would* have applied it, producing code that compiles and silently breaks the task's
+  f64 case. **Verifying by compilation is not merely insufficient, it is unsafe.**
+  Only running the tests caught it — which is exactly why the oracle audit had to
+  come first.
+
+**Net effect, stated plainly:** on llama3.2:3b across all 12 tasks the repair changes
+nothing (1/12 either way) — its failures are not the kind rustc can suggest a usable
+fix for. The 8B's full-set net effect could **not** be measured cleanly: it needs
+~11 GB resident and only 9.9 GB can be freed without killing system processes, so
+every full run carried a CPU-offload warning and was discarded. The mechanism claims
+above hold regardless, since they do not depend on generation speed.
+
+The knob stays **off by default**: with it on, a score measures "this model plus a
+repair tool", not the model. Accepted repairs are logged so a repaired pass is never
+mistaken for the model's own work.
+
+**Commits:** V256–V257 (0.2.208 → 0.2.209).
+
 ### 2026-07-29 — what the failures ACTUALLY are, and what "pre-chewing" should mean (harness @ V255 / 0.2.207)
 
 Instead of aggregate scores, this entry dissects the two tasks `llama3.1:8b` fails in
