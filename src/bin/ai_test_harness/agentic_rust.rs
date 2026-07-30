@@ -326,6 +326,183 @@ fn verify_crate(cargo: &str, ws: &Path, checker: &str) -> bool {
     verify_crate_verbose(cargo, ws, checker).0
 }
 
+// ─── Compiler-guided repair (AI_BENCH_AUTOFIX=1) ──────────────────────────────
+//
+// rustc emits its suggestions in structured form: each diagnostic child can carry a
+// `suggested_replacement` for a byte span, tagged with an applicability. `cargo fix`
+// applies only `MachineApplicable` ones, which in practice excludes most of what a
+// weak model gets wrong — both failures analysed in V255 were `MaybeIncorrect`.
+//
+// So this applies them SPECULATIVELY, including MaybeIncorrect, and keeps the result
+// only if the crate then compiles AND THE TESTS PASS. It asks the model nothing: it
+// is deterministic search over rustc's own advice with execution as the judge.
+//
+// Verifying by compilation alone would be wrong, and provably so — the V255 analysis
+// found rustc suggesting `+ Ord` on a generic bound, which compiles the signature and
+// breaks the task's f64 case. The tests are the only trustworthy acceptance criterion,
+// which is why `checker_adequacy` (V256) had to come first.
+
+#[derive(Debug)]
+struct Suggestion {
+    file: String,
+    /// Byte range in the original file.
+    start: usize,
+    end: usize,
+    replacement: String,
+    applicability: String,
+}
+
+/// Ask cargo for machine-readable diagnostics and collect every replacement it
+/// proposes, most specific first.
+fn collect_suggestions(cargo: &str, ws: &Path) -> Vec<Suggestion> {
+    let out = run_capture(
+        cargo,
+        &["build".to_string(), "--message-format=json".to_string()],
+        ws,
+        CARGO_TIMEOUT,
+    );
+    let mut found = Vec::new();
+    for line in out.lines() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
+            continue;
+        };
+        let Some(msg) = v.get("message") else {
+            continue;
+        };
+        let children = msg.get("children").and_then(|c| c.as_array());
+        for child in children.into_iter().flatten() {
+            for span in child
+                .get("spans")
+                .and_then(|s| s.as_array())
+                .into_iter()
+                .flatten()
+            {
+                let Some(rep) = span.get("suggested_replacement").and_then(|r| r.as_str()) else {
+                    continue;
+                };
+                let (Some(file), Some(start), Some(end)) = (
+                    span.get("file_name").and_then(|f| f.as_str()),
+                    span.get("byte_start").and_then(|b| b.as_u64()),
+                    span.get("byte_end").and_then(|b| b.as_u64()),
+                ) else {
+                    continue;
+                };
+                found.push(Suggestion {
+                    file: file.to_string(),
+                    start: start as usize,
+                    end: end as usize,
+                    replacement: rep.to_string(),
+                    applicability: span
+                        .get("suggestion_applicability")
+                        .and_then(|a| a.as_str())
+                        .unwrap_or("Unspecified")
+                        .to_string(),
+                });
+            }
+        }
+    }
+    found
+}
+
+/// Apply every suggestion for `src/lib.rs` at once (back-to-front so earlier byte
+/// offsets stay valid), then accept the edit only if the checker passes.
+///
+/// Returns true when the repair was kept.
+fn try_compiler_guided_repair(cargo: &str, ws: &Path, checker: &str) -> bool {
+    let lib = ws.join("src").join("lib.rs");
+    let Ok(original) = std::fs::read_to_string(&lib) else {
+        return false;
+    };
+
+    let mut sugg: Vec<Suggestion> = collect_suggestions(cargo, ws)
+        .into_iter()
+        .filter(|s| s.file.replace('\\', "/").ends_with("src/lib.rs"))
+        .filter(|s| s.start <= s.end && s.end <= original.len())
+        .collect();
+    if sugg.is_empty() {
+        return false;
+    }
+    // Apply from the end so each splice leaves preceding offsets untouched.
+    sugg.sort_by(|a, b| b.start.cmp(&a.start));
+
+    let mut patched = original.clone();
+    let mut applied = Vec::new();
+    for s in &sugg {
+        if s.end > patched.len()
+            || !patched.is_char_boundary(s.start)
+            || !patched.is_char_boundary(s.end)
+        {
+            continue;
+        }
+        patched.replace_range(s.start..s.end, &s.replacement);
+        applied.push(format!("{} ({})", s.replacement.trim(), s.applicability));
+    }
+    if applied.is_empty() || patched == original {
+        return false;
+    }
+
+    if std::fs::write(&lib, &patched).is_err() {
+        return false;
+    }
+    // The tests — not the compiler — decide whether this edit was real.
+    let (ok, _) = verify_crate_verbose(cargo, ws, checker);
+    if ok {
+        if std::env::var("AGENTIC_DEBUG").is_ok() {
+            println!(
+                "    [dbg] compiler-guided repair ACCEPTED: {}",
+                applied.join(", ")
+            );
+        }
+        true
+    } else {
+        let _ = std::fs::write(&lib, original); // reject: leave the model's code alone
+        if std::env::var("AGENTIC_DEBUG").is_ok() {
+            println!(
+                "    [dbg] compiler-guided repair rejected (tests still fail): {}",
+                applied.join(", ")
+            );
+        }
+        false
+    }
+}
+
+fn autofix_enabled() -> bool {
+    matches!(
+        std::env::var("AI_BENCH_AUTOFIX").ok().as_deref(),
+        Some("1") | Some("true")
+    )
+}
+
+/// Markers that mean "the model stopped before finishing", not "the model got it
+/// wrong". Detecting them matters because **the compiler is blind to them**:
+/// `todo!()` and `unimplemented!()` type-check as `!`, so `cargo build` reports
+/// success and an agent that trusts the compiler concludes it is done. That is
+/// exactly what happened under `AI_BENCH_PRECHEW` (V255): two `todo!()` left in
+/// place, a green build, and a confident agent.
+const INCOMPLETE_MARKERS: &[&str] = &["todo!", "unimplemented!"];
+
+/// What an unfinished artifact looks like: the marker and how many are left.
+fn incompleteness(src: &str) -> Option<(&'static str, usize)> {
+    for marker in INCOMPLETE_MARKERS {
+        let n = src.matches(marker).count();
+        if n > 0 {
+            return Some((marker, n));
+        }
+    }
+    None
+}
+
+/// Instruction handed back to the agent when it left the work unfinished. This is
+/// information the compiler could never have given it.
+fn unfinished_prompt(marker: &str, count: usize) -> String {
+    format!(
+        "Your implementation is INCOMPLETE: `src/lib.rs` still contains {count} \
+         `{marker}` placeholder(s). Note these COMPILE, so a successful `cargo build` \
+         does not mean the task is done. Read the file, replace every `{marker}` with \
+         a real working implementation, and run cargo test."
+    )
+}
+
 /// Same as [`verify_crate`] but also returns the cargo output, so a scaffolding
 /// loop can hand the compiler's own errors back to the model.
 fn verify_crate_verbose(cargo: &str, ws: &Path, checker: &str) -> (bool, String) {
@@ -798,6 +975,8 @@ fn run_rust_task_once(cargo: &'static str, task: &RustTask) -> Result<(), String
     let mut iters = 0usize;
     let mut last_out = String::new();
     let mut passed = false;
+    let mut unfinished: Option<(&'static str, usize)> = None;
+    let mut repaired = false;
     for round in 0..rounds {
         let prompt = if round == 0 && prechewing {
             format!(
@@ -808,6 +987,10 @@ fn run_rust_task_once(cargo: &'static str, task: &RustTask) -> Result<(), String
             )
         } else if round == 0 {
             task.prompt.to_string()
+        } else if let Some((marker, count)) = unfinished {
+            // Highest-priority feedback: the model stopped early. Say so plainly —
+            // the compiler said nothing because these placeholders type-check.
+            unfinished_prompt(marker, count)
         } else if critic_enabled() {
             // Feed the REVIEWER's findings instead of the raw compiler output.
             let code = std::fs::read_to_string(ws.join("src").join("lib.rs"))
@@ -832,6 +1015,18 @@ fn run_rust_task_once(cargo: &'static str, task: &RustTask) -> Result<(), String
         let (ok, out) = verify_crate_verbose(cargo, &ws, task.checker);
         passed = ok;
         last_out = out;
+        // Before spending another model round, see whether rustc's own suggestions
+        // repair it — accepted only if the CHECKER then passes, never on compilation.
+        if !passed && autofix_enabled() && try_compiler_guided_repair(cargo, &ws, task.checker) {
+            passed = true;
+            repaired = true;
+        }
+        // Detect an UNFINISHED artifact separately from a wrong one. The compiler
+        // cannot flag `todo!()`, so without this the retry round would hand the
+        // model a green build and nothing to act on.
+        unfinished = std::fs::read_to_string(ws.join("src").join("lib.rs"))
+            .ok()
+            .and_then(|src| incompleteness(&src));
         if passed {
             break;
         }
@@ -858,11 +1053,19 @@ fn run_rust_task_once(cargo: &'static str, task: &RustTask) -> Result<(), String
     let _ = std::fs::remove_dir_all(&ws);
 
     if passed {
+        if repaired && std::env::var("AGENTIC_DEBUG").is_ok() {
+            println!("    [dbg] task passed only AFTER compiler-guided repair");
+        }
         Ok(())
     } else {
-        Err(format!(
-            "cargo test failed after {rounds} round(s), {iters} agent iteration(s) — code did not compile or assertions failed"
-        ))
+        Err(match unfinished {
+            Some((marker, count)) => format!(
+                "artifact INCOMPLETE after {rounds} round(s), {iters} agent iteration(s) —                  {count} `{marker}` placeholder(s) left (these compile, so the agent saw a                  green build)"
+            ),
+            None => format!(
+                "cargo test failed after {rounds} round(s), {iters} agent iteration(s) —                  code did not compile or assertions failed"
+            ),
+        })
     }
 }
 
@@ -1211,4 +1414,22 @@ pub(crate) fn verify_snippet_with_checker(snippet: &str, checker: &str) -> bool 
     let passed = verify_crate(cargo, &ws, checker);
     let _ = std::fs::remove_dir_all(&ws);
     passed
+}
+
+/// Names of the multi-step Rust tasks, for adequacy drift-checking.
+pub(crate) const RUST_MULTI_TASK_NAMES: &[&str] = &[
+    "shapes: trait then impls then aggregate",
+    "stack: concrete then generic (must rewrite)",
+    "errors: Option then custom error type",
+    "builder pattern with validation",
+    "matrix ops accumulate",
+    "trait then generic over it",
+];
+
+/// The assert suite a multi-step task is scored with.
+pub(crate) fn rust_multi_task_checker(name: &str) -> Option<&'static str> {
+    RUST_MULTI_TASKS
+        .iter()
+        .find(|t| t.name == name)
+        .map(|t| t.checker)
 }
