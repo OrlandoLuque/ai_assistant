@@ -234,7 +234,7 @@ impl Iterator for Countdown {
                   assert_eq!(Countdown::new(5).sum::<u32>(), 15);\n    }\n",
     },
     RustTask {
-        name: "borrow checker: dedup in place",
+        name: "dedup preserving first-appearance order",
         prechew: "pub fn dedup_in_place(v: &mut Vec<i32>) {
     todo!()
 }
@@ -1383,7 +1383,7 @@ pub(crate) const RUST_TASK_NAMES: &[&str] = &[
     "trait with two impls",
     "explicit lifetimes",
     "implement the Iterator trait",
-    "borrow checker: dedup in place",
+    "dedup preserving first-appearance order",
     "enum + match evaluator",
     "fizzbuzz (stresses quote escaping)",
 ];
@@ -1432,4 +1432,18 @@ pub(crate) fn rust_multi_task_checker(name: &str) -> Option<&'static str> {
         .iter()
         .find(|t| t.name == name)
         .map(|t| t.checker)
+}
+
+/// Public wrappers so the test-generation category can reuse the same crate
+/// scaffolding, tool set and cargo probe rather than duplicating them.
+pub(crate) fn scaffold_crate_pub(seed_lib: &str) -> Result<std::path::PathBuf, String> {
+    scaffold_crate(seed_lib)
+}
+
+pub(crate) fn build_rust_tools_pub(ws: std::path::PathBuf, cargo: &'static str) -> ToolRegistry {
+    build_rust_tools(ws, cargo)
+}
+
+pub(crate) fn cargo_cmd_pub() -> Option<&'static str> {
+    cargo_cmd()
 }

@@ -22,17 +22,21 @@ use crate::agentic_rust::{rust_task_checker, verify_snippet_with_checker, RUST_T
 // battery.
 
 /// A task's oracle under test: one correct implementation and several wrong ones.
-struct Adequacy {
+///
+/// Also reused as the corpus for `agentic_test_gen`: the same reference/mutant pair
+/// that proves OUR checker competent is what a MODEL-written test suite is scored
+/// against.
+pub(crate) struct Adequacy {
     /// Must match a `RustTask::name` in `agentic_rust`.
-    task: &'static str,
+    pub(crate) task: &'static str,
     /// Correct implementation — the checker must accept it.
-    reference: &'static str,
+    pub(crate) reference: &'static str,
     /// (label, implementation) pairs that are plausible but WRONG — the checker
     /// must reject every one of them.
-    mutants: &'static [(&'static str, &'static str)],
+    pub(crate) mutants: &'static [(&'static str, &'static str)],
 }
 
-const ADEQUACY: &[Adequacy] = &[
+pub(crate) const ADEQUACY: &[Adequacy] = &[
     Adequacy {
         task: "sum_even (from scratch)",
         reference: "pub fn sum_even(nums: &[i32]) -> i32 { nums.iter().filter(|n| *n % 2 == 0).sum() }",
@@ -106,7 +110,7 @@ const ADEQUACY: &[Adequacy] = &[
         ],
     },
     Adequacy {
-        task: "borrow checker: dedup in place",
+        task: "dedup preserving first-appearance order",
         reference: "pub fn dedup_in_place(v: &mut Vec<i32>) {\n    let mut seen = std::collections::HashSet::new();\n    v.retain(|x| seen.insert(*x));\n}",
         mutants: &[
             // std `dedup` only removes CONSECUTIVE duplicates.

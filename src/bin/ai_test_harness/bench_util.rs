@@ -8,6 +8,10 @@
 //        ollama | llamacpp | lmstudio | localai | vllm | textgenwebui | koboldcpp
 //   AI_BENCH_MODEL     (default "llama3.2:3b")
 //   AI_BENCH_URL       (optional) overrides the provider's default endpoint
+//   AI_BENCH_TEMP      (default 0.5)  sampling temperature
+//   AI_BENCH_SEED      (default 42)   sampling seed; "none" to randomise
+//   AI_BENCH_REPEATS   (default 3)    runs per task; a single run is not a measurement
+//   AI_BENCH_NUM_CTX   (optional)     context window; shrink it to fit a big model fully on GPU
 //
 // e.g. run against llama.cpp's server:
 //   $env:AI_BENCH_PROVIDER="llamacpp"; $env:AI_BENCH_MODEL="qwen2.5-coder-7b"
@@ -43,15 +47,78 @@ pub(crate) fn bench_model() -> String {
     env_or("AI_BENCH_MODEL", "llama3.2:3b")
 }
 
-/// Sampling temperature (`AI_BENCH_TEMP`, default 0.0 for reproducibility).
-/// Only worth raising when deliberately measuring best-of-N style sampling,
+/// Sampling temperature (`AI_BENCH_TEMP`, default 0.5).
+///
+/// This used to default to 0.0, on the usual assumption that greedy decoding is
+/// how you get reproducible runs. That was wrong twice over:
+///
+/// * Reproducibility comes from [`bench_seed`], not from the temperature. With a
+///   fixed seed the output is byte-identical at any temperature (measured).
+/// * Near-greedy sampling *aborts* the llama.cpp runner on some inputs
+///   (`Assertion failed: found, llama-sampling.cpp`, Ollama 0.21.2). The request
+///   dies with the process, the client reports a connection failure, and the
+///   benchmark records it as a model failure. Measured on one task: crash at
+///   0.0/0.1/0.2/0.3, clean answer in seconds at 0.5.
+///
+/// So the default sits above the crashing band, and determinism is bought with
+/// the seed instead. Raise it deliberately when measuring best-of-N sampling,
 /// where identical samples would defeat the point.
 pub(crate) fn bench_temperature() -> f32 {
     std::env::var("AI_BENCH_TEMP")
         .ok()
         .and_then(|v| v.parse::<f32>().ok())
         .filter(|t| (0.0..=2.0).contains(t))
-        .unwrap_or(0.0)
+        .unwrap_or(0.5)
+}
+
+/// Sampling seed (`AI_BENCH_SEED`, default 42) — this is what makes a run
+/// reproducible.
+///
+/// Set `AI_BENCH_SEED=none` (or `off`) to let the backend randomise per request,
+/// which is what you want when measuring best-of-N or sampling variance.
+pub(crate) fn bench_seed() -> Option<u64> {
+    match std::env::var("AI_BENCH_SEED") {
+        Ok(v) if matches!(v.trim().to_lowercase().as_str(), "none" | "off" | "") => None,
+        Ok(v) => v.trim().parse::<u64>().ok().or(Some(42)),
+        Err(_) => Some(42),
+    }
+}
+
+/// How many times to repeat each task (`AI_BENCH_REPEATS`, default 3).
+///
+/// A pinned seed is not enough to make a live-model run reproducible: llama.cpp
+/// is not bitwise deterministic once server-side KV-cache reuse and batch
+/// splitting vary, so a knife-edge pass/fail verdict flips between runs
+/// (measured: 2 of 8 verdicts, with the total unchanged). One sample of a
+/// stochastic process is not a measurement.
+///
+/// Repeating turns each task into a **pass rate**, which is both honest and more
+/// informative than a boolean: "solves it every time" and "solves it sometimes"
+/// stop looking identical, and the flapping becomes visible instead of silently
+/// moving the total. Set 1 for a quick smoke ejecución.
+pub(crate) fn bench_repeats() -> usize {
+    std::env::var("AI_BENCH_REPEATS")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .unwrap_or(3)
+        .clamp(1, 10)
+}
+
+/// Explicit context window (`AI_BENCH_NUM_CTX`), else the library's auto-sizing.
+///
+/// Exists because the KV cache, not the weights, is what decides whether a model
+/// fits on the card: Ollama reserves it for **four** parallel sequences, so a 9 GB
+/// model at the default 8192 window asks for ~18 GB and silently loads part of
+/// itself onto CPU. A CPU-offloaded model does not merely run slower — it runs
+/// slow enough to hit request timeouts, which the benchmark then records as the
+/// model failing the task. Shrinking the window is what buys a full-GPU load for
+/// a bigger model; these tasks have prompts of ~2k tokens, so a smaller window
+/// costs nothing here. Always record the value used alongside the result.
+pub(crate) fn bench_num_ctx() -> Option<usize> {
+    std::env::var("AI_BENCH_NUM_CTX")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|n| *n > 0)
 }
 
 /// The endpoint URL the assistant will hit (explicit override, else the
@@ -73,19 +140,39 @@ fn bench_endpoint(provider: &AiProvider) -> String {
     }
 }
 
-/// Human-readable "provider/model" for report headers.
+/// Human-readable backend label for report headers.
+///
+/// Includes the sampling settings, because a result recorded in the lab notebook
+/// without them cannot be reproduced or compared against a later ejecución.
 pub(crate) fn bench_label() -> String {
-    format!("{}/{}", bench_provider().display_name(), bench_model())
+    let seed = match bench_seed() {
+        Some(s) => s.to_string(),
+        None => "random".to_string(),
+    };
+    let ctx = match bench_num_ctx() {
+        Some(n) => format!(" num_ctx={n}"),
+        None => String::new(),
+    };
+    format!(
+        "{}/{} temp={} seed={}{}",
+        bench_provider().display_name(),
+        bench_model(),
+        bench_temperature(),
+        seed,
+        ctx
+    )
 }
 
-/// A fresh assistant configured for the selected backend (temperature 0 for
-/// reproducibility).
+/// A fresh assistant configured for the selected backend, with a pinned seed so
+/// repeated runs are comparable.
 pub(crate) fn bench_assistant() -> AiAssistant {
     let provider = bench_provider();
     let endpoint = bench_endpoint(&provider);
     let mut a = AiAssistant::new();
     a.config.selected_model = bench_model();
     a.config.temperature = bench_temperature();
+    a.config.seed = bench_seed();
+    a.config.ollama_num_ctx = bench_num_ctx();
     // Point the right URL field at the endpoint. Only an explicit AI_BENCH_URL
     // (or a non-Ollama provider) changes anything from the defaults.
     match &provider {

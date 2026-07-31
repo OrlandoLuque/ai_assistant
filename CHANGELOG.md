@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v134 (2026-07-31) — V259: measure the noise instead of pretending it isn't there (0.2.211)
+
+### Changed
+- **`agentic_test_gen` now scores a pass RATE, not a boolean.** Each task runs
+  `AI_BENCH_REPEATS` times (default 3) and earns `passes/repeats`; tasks that are
+  inconsistent are listed explicitly under a `FLAKY` line instead of silently moving
+  the total. A single live-model run is one sample of a stochastic process — with the
+  verdict on a knife edge, two invocations of the same 12-task category disagreed.
+- **The repeats are interleaved** (pass 1 of every task, then pass 2), not run back to
+  back. Consecutive repeats of one task hit the backend with near-identical KV-cache
+  state, so they almost always agree and hide the very variance being measured:
+  back-to-back repeats reported *zero* flaky tasks while two separate invocations
+  disagreed on several. Eleven other tasks now pass through the server between one
+  task's samples.
+- **The corpus is no longer truncated**: all 12 `ADEQUACY` tasks run (was
+  `.take(8)`, a leftover cap from bringing the category up).
+- **Task renamed** `borrow checker: dedup in place` → `dedup preserving
+  first-appearance order`. It exercises no borrow-checker skill; what it actually
+  tests is knowing that `Vec::dedup` only removes *consecutive* duplicates and that
+  first-appearance order must survive. Log entries before 2026-07-31 use the old name.
+
 ## [Unreleased] - v133 (2026-07-31) — V258: `AiConfig::seed` for reproducible sampling (0.2.210)
 
 ### Added

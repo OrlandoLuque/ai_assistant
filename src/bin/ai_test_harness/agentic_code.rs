@@ -307,6 +307,19 @@ fn verify_file(py: &str, target: &Path, checker: &str) -> bool {
     ok
 }
 
+/// Prefix stamped on a reply when the BACKEND failed rather than the model. A task
+/// whose run contains this was never really attempted, and scoring it as a model
+/// failure would be a lie — categories surface it as an infrastructure error instead.
+pub(crate) const BACKEND_FAILURE_MARKER: &str = "[BACKEND-FAILURE] ";
+
+/// Did this agent run die because the backend fell over?
+pub(crate) fn hit_backend_failure(agent: &AutonomousAgent) -> bool {
+    agent
+        .conversation()
+        .iter()
+        .any(|m| m.content.starts_with(BACKEND_FAILURE_MARKER))
+}
+
 /// Extract the balanced `[..]` substring starting at byte offset `start`,
 /// respecting string quoting so brackets inside code content don't throw off the
 /// depth count. None if it never balances.
@@ -394,6 +407,18 @@ fn render_conversation(conv: &[LoopMessage]) -> String {
 /// so only the rendered transcript drives generation).
 pub(crate) type Generator = Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync>;
 
+/// Stable 64-bit fingerprint of a string (FNV-1a), for comparing prompts and
+/// replies across runs. Not a hash for security — just enough to tell "same
+/// text" from "different text" in a trace line.
+fn fingerprint(s: &str) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in s.as_bytes() {
+        h ^= u64::from(*b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
+
 pub(crate) fn make_generator(assistant: Arc<Mutex<ai_assistant::AiAssistant>>) -> Generator {
     Arc::new(move |conv: &[LoopMessage]| {
         let prompt = render_conversation(conv);
@@ -402,10 +427,30 @@ pub(crate) fn make_generator(assistant: Arc<Mutex<ai_assistant::AiAssistant>>) -
             Err(poisoned) => poisoned.into_inner(),
         };
         a.clear_conversation();
+        // AGENTIC_TRACE fingerprints each exchange so two runs can be compared
+        // turn by turn. A pinned seed only makes generation reproducible for an
+        // IDENTICAL prompt — when two runs diverge, this says whether the prompt
+        // had already drifted (harness state leaking in) or the same prompt came
+        // back different (the seed is not reaching the backend).
+        let trace = std::env::var("AGENTIC_TRACE").is_ok();
+        let prompt_fp = if trace { fingerprint(&prompt) } else { 0 };
         let reply = match a.generate_sync(prompt, "") {
             Ok(reply) => reply,
-            Err(e) => return format!("(generation error: {e})"),
+            Err(e) => return format!("{BACKEND_FAILURE_MARKER}{e}"),
         };
+        if trace {
+            println!(
+                "    [trace] prompt={:016x} reply={:016x}",
+                prompt_fp,
+                fingerprint(&reply)
+            );
+        }
+        // A dead backend must never be scored as a bad model. `generate_sync`
+        // reports transport failures as an Err, which previously became just another
+        // assistant turn saying "(generation error: …)" — indistinguishable from the
+        // model choosing to answer in prose. Tag it so callers can tell an
+        // INFRASTRUCTURE failure from a capability one.
+        //
         // Local models (especially mid-conversation) tend to emit the tool-call
         // array and then HALLUCINATE the rest of the transcript ("TOOL_RESULT: …",
         // more ASSISTANT turns). Keep only the first tool-call array so the agent
