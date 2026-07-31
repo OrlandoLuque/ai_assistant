@@ -21,6 +21,11 @@ that it "looks right"). The backend is configurable via env
 `src/bin/ai_test_harness/bench_util.rs`), so the same tasks target Ollama,
 llama.cpp, LM Studio, vLLM, … or a cloud provider.
 
+Sampling is pinned with `AI_BENCH_TEMP` (default **0.5**) and `AI_BENCH_SEED`
+(default **42**, or `none` to randomise). Do **not** set the temperature to 0 to
+chase determinism: the seed is what buys reproducibility, and near-greedy sampling
+crashes the llama.cpp runner outright — see the 2026-07-31 (2nd) entry.
+
 | Category | What it measures | Tasks |
 |---|---|---|
 | `code_gen_bench` | pass@1 on standalone functions: spec → code → run against checker. | 11 |
@@ -28,6 +33,7 @@ llama.cpp, LM Studio, vLLM, … or a cloud provider.
 | `agentic_multi` | multi-step iterative coding (build → extend → fix) on **one persistent workspace** (the agent's conversation carries across steps). | 10 (3–5 steps each) |
 | `agentic_rust` | same agentic loop, but in **Rust**: a throwaway cargo crate per task, verified with `cargo test` so the type/borrow checkers gate every answer. | 12 single-step |
 | `agentic_rust_multi` | multi-step Rust on one persistent crate (incl. refactoring a concrete type into a generic one). | 6 × 3 steps |
+| `agentic_test_gen` | **inverted**: the model gets a *correct* implementation and must write the test suite. Scored by mutation — its tests must accept the reference **and** kill every planted bug. Repeated, scored as a pass rate. | 12 |
 
 ## How to run
 
@@ -111,6 +117,222 @@ dependencies), so disk growth is not a concern in normal use.
 ---
 
 ## Log (newest first)
+
+### 2026-08-01 — test generation: the corpus completed, and repeats that actually sample the noise (harness @ V259 / 0.2.211)
+
+**What this category asks.** Every other category hands the model a spec and judges the
+implementation with *our* tests. This one inverts it: the model receives a **correct**
+implementation and must write the test suite, judged exactly the way we judge our own
+oracles — its suite must **accept the reference** *and* **kill every planted mutant**.
+Both halves matter. A suite that only checks the obvious case passes on broken code; a
+suite that invents requirements rejects correct code. Both are worthless, and a naive
+"did it write tests?" check would call both a success.
+
+This is the capability that decides whether an agent's self-verification means
+anything: an agent that writes weak tests runs them, sees green, and reports success on
+broken work.
+
+**Corpus completed** to all 12 `ADEQUACY` tasks (was `.take(8)`, a leftover cap).
+`borrow checker: dedup in place` was renamed to **`dedup preserving first-appearance
+order`** — it exercises no borrow-checker skill; what it tests is knowing that
+`Vec::dedup` only removes *consecutive* duplicates and that first-appearance order must
+survive. Entries above this date use the old name.
+
+#### The methodology fix, including the one I got wrong first
+
+A single run is not a measurement — the previous entry quantified ~±1 task of noise.
+So each task now runs `AI_BENCH_REPEATS` times (default 3) and scores `passes/repeats`,
+with inconsistent tasks listed under a `FLAKY` line.
+
+**The first attempt was wrong in a way that looked like success.** Running the three
+repeats back to back reported **zero flaky tasks** — every task scored exactly 1.00 or
+0.00, which reads as "the noise is gone". It wasn't: consecutive repeats of one task hit
+the backend with near-identical KV-cache state, so they are *correlated samples*. They
+agree with each other and hide precisely the variance being measured. Two separate
+invocations still disagreed (6.00 vs 5.67).
+
+Interleaving the repeats — pass 1 of every task, then pass 2 — puts eleven other tasks
+through the server between one task's samples. Same 36 runs, same cost, and the noise
+becomes visible:
+
+| repeat layout | flaky tasks surfaced |
+|---|---|
+| back to back | **0** |
+| interleaved | **4** and **6** (two measurements) |
+
+**Why not just make it deterministic?** Partly because we can't from the client side
+(the seed is spent; what remains is llama.cpp's floating-point non-associativity under
+varying cache reuse and batch splits). But mostly because we shouldn't: some of the
+flapping is the model sitting *at its limit* on that task. A deterministic backend would
+freeze the coin on one face — the task would look solid while the model actually solves
+it half the time. The rate is the more truthful number. Backend levers exist if true
+determinism is ever needed (`OLLAMA_NUM_PARALLEL=1`, or llama.cpp's server with
+`cache_prompt: false` and `-np 1`, which the harness already supports via
+`AI_BENCH_PROVIDER=llamacpp`), at the cost of re-evaluating every prompt in full.
+
+#### A harness defect found while measuring, which invalidated the first numbers
+
+Both models failed `explicit lifetimes` with "never produced a test file", which is a
+suspicious way for a 14B to fail a trivial task. It was ours, not theirs.
+
+The model's reply was a complete, well-formed tool call **except** that it wrote
+Rust's escape syntax inside a JSON string: `\u{0}` where JSON demands exactly four hex
+digits after `\u`. `serde_json` rejects the whole array, `parse_tool_calls` returns
+empty, and the agent loop treats an empty parse as "no tool calls — this is the final
+answer". So the call was dropped with **no error anywhere**: nothing was ever
+recognised as a call, so nothing could fail. From the outside it looks exactly like a
+model that did not try.
+
+Fixed in the library (V260): the response is repaired before parsing —
+`\u{XXXX}` transliterated to `\uXXXX`, stray control characters dropped, and
+backslashes introducing no valid escape dropped. Escaped backslashes (`C:\\tmp`) and
+valid `\uXXXX` survive untouched.
+
+Two things worth recording about the diagnosis, both mistakes:
+
+* The debug print truncated the reply at 500 characters while reporting its *full*
+  length, so a complete reply looked like a backend truncating mid-generation. It now
+  prints in full.
+* The first repair attempt dropped the control character but kept its backslash,
+  which orphaned it against the next quote (`\"` → `\\"`) and closed the string
+  early — one parse error traded for another. And a debug line measuring
+  `ai_assistant::parse_tool_calls` was measuring the **wrong parser**: that name is
+  re-exported from `unified_tools`, not from the agent loop.
+
+**The transliteration is deliberately not a favour to the model.** `\u{0}` means code
+point zero, so the repaired call writes a NUL where the model plainly meant `""` — and
+its own test then fails on correct code. That is a real model error and it is now
+scored as one. Deleting the escape instead would have quietly fixed the model's bug
+and flattered the result.
+
+**Numbers measured before V260 are not comparable**: any task where a model happened to
+emit `\u{…}` was recorded as "never produced a file", i.e. a harness defect counted as
+model incompetence. The pre-fix 7B measurements (7.00/12 and 6.00/12) and the pre-fix
+14B measurement (10.00/12) are superseded by the re-runs below.
+
+#### A second scoring defect, found the same way
+
+One 7B task had no result line at all. It had hit the **llama.cpp runner crash** — at
+temperature 0.5, which settles a question left open in the previous entry: 0.5 avoids
+the crash on the input that first exposed it, but is **not immunity**.
+
+Worse, the harness labelled such a run "excluded from the score" while still counting
+it as a failed attempt in the pass rate. A crashing runner therefore penalised
+whichever model happened to be loaded — the exact confusion the label exists to
+prevent. Crashed runs now leave the denominator (`passes/attempts`, not
+`passes/repeats`) and are reported separately as runs lost.
+
+#### Results
+
+All at temperature 0.5, seed 42, `num_ctx` 4096, 3 interleaved repeats, both models
+fully on GPU.
+
+| model | score | inconsistent tasks | runs lost to crashes |
+|---|---|---|---|
+| qwen2.5-coder:7b-instruct | **6.67 / 12** (7.33 on the preceding run) | 2–5 | 2 |
+| qwen2.5-coder:14b | **9.67 / 12** | 1 | 0 |
+
+The ~3-task gap is far outside the ±1 noise band, so this category **discriminates**.
+
+**Capability and consistency arrive together.** The 14B is decisive: ten tasks at 3/3,
+two at 0/3, one at 2/3. The 7B is smeared across 0/3, 1/3, 2/3 and 3/3 — which is what
+"at the limit of its competence" looks like when you measure it as a rate instead of
+flipping a coin once. That is the strongest argument yet for not chasing a deterministic
+backend: determinism would have frozen each of those coins on one face and reported the
+7B as reliable at tasks it solves a third of the time.
+
+**Failure modes, in order of frequency.** The dominant one is **inventing requirements**
+— asserting behaviour the implementation was never given, producing a suite that fails
+on correct code. Second is a suite too weak to kill its mutant (`assert!(true)` in
+spirit). Both models fail `dedup preserving first-appearance order` this second way:
+neither writes a case with *non-consecutive* duplicates, so both approve a `Vec::dedup`
+implementation that is wrong.
+
+Neither failure is visible to a "did it produce tests?" check, which is the whole point
+of scoring by mutation.
+
+### 2026-07-31 (2nd) — a "model failure" that was the backend crashing: temperature 0 aborts the llama.cpp runner
+
+**One of the two test-generation suites qwen2.5-coder:7b "failed" was not a model
+result at all.** `test-gen: count occurrences` failed 3/3 with the generation never
+returning. Once the crash is avoided the same model passes it **in 10.8 s**. The
+score was measuring our infrastructure.
+
+**The chain of refutations** (each hypothesis was tested and killed, in order):
+
+| Hypothesis | Test | Verdict |
+|---|---|---|
+| Backend is dead | `/api/chat`, short message | answers in **0.4 s** — alive |
+| Model loops forever | direct probe of the same prompt shape | **3 s**, 20 tokens, `done_reason: stop` |
+| Model is just slow (>120 s) | re-issue with a **600 s** ceiling | never returned, and the **GPU sat at 7 %** — nothing was generating |
+| `num_ctx` change forces a reload | recomputed both iterations | 8192 in both — no reload |
+| Aborted requests leak runner slots | `ollama stop`, fresh runner | crashes identically |
+
+**Root cause, from the Ollama server log** (`%LOCALAPPDATA%\Ollama\server.log`):
+
+```
+Assertion failed: found, file llama-sampling.cpp, line 660
+post predict ... wsarecv: forced interruption of an existing connection
+```
+
+The llama.cpp runner **aborts mid-request**. The socket dies with it, so the client
+reports a *send* failure (`Failed to send request to Ollama`) rather than a timeout —
+which is why this reads like a dead backend from the harness side.
+
+**The trigger is near-greedy sampling, and it is input-dependent.** Same body, same
+model, only `temperature` varied:
+
+| temperature | result |
+|---|---|
+| 0.0 / 0.1 / 0.2 / 0.3 | **runner crash** |
+| 0.5 / 0.7 | answers in 4–7 s |
+
+Sampler knobs do **not** avoid it: `top_k=1`, `top_p=1.0`, `repeat_penalty=1.0`, and
+all three together were each measured — every one still crashed. Only temperature
+matters.
+
+**Why this is awkward: our benchmarks run at temperature 0 *for* determinism**, which
+is exactly the crashing path. Raising the temperature alone buys stability at the cost
+of the property we wanted — measured, the same 8-suite category at 0.7 returned a
+*different* failing set than the run before it (`trait with two impls` passed,
+`count occurrences` and `explicit lifetimes` failed).
+
+**The fix that keeps both: a fixed `seed`.** At `temperature 0.5, seed 42` the output
+was **byte-identical across three runs** (1085 tokens, same hash). Blocker:
+`ollama_chat_options()` in `src/providers.rs` sends only `temperature` and `num_ctx`,
+never `seed` — the library cannot currently express reproducible sampling. Recorded as
+an API gap, not yet implemented.
+
+**Harness change.** This class of event is now reported as `BACKEND CRASH, not a model
+failure (excluded from the score)`, pointing at the server-log assertion. The previous
+wording claimed the ceiling meant "either a dead backend or a model that never
+terminated" — both refuted above, so it was wrong.
+
+**Lesson for the notebook:** when a local-model run fails with a request that never
+came back, read the backend's own log **before** recording it as a model result. A
+crash and an incompetent model are indistinguishable from the client side.
+
+**The fix, and what it did and did not buy.** `AiConfig::seed` now exists and is sent
+on every Ollama request path; the benchmark defaults changed from `temperature 0.0,
+no seed` to **`temperature 0.5, seed 42`** (`AI_BENCH_TEMP` / `AI_BENCH_SEED`, the
+latter accepts `none` to randomise). Report headers now carry both, because a logged
+result without its sampling settings cannot be reproduced. Verified with a new
+`AGENTIC_TRACE=1` mode that fingerprints every prompt and reply:
+
+* **Per task, it is now exactly reproducible.** Two runs of the same task produced
+  byte-identical prompts *and* replies at every turn.
+* **Across a multi-task run, it is not.** Two full runs of the 8-suite category still
+  diverged — starting at the very first generation, where an *identical* prompt
+  returned a different reply. Normalising the runner first (`ollama stop`) did not
+  close it either: **2 of 8 verdicts flipped** (`count occurrences` and `trait with two
+  impls` swapped), though the total held at 4/8 both times.
+
+The seed removes the *client-side* randomness, which is all it can do. What remains is
+llama.cpp's own numerical non-determinism: KV-cache prefix reuse and batch splitting
+differ with server state, the reduction order changes, and occasionally a logit
+tie flips. **So a single-run category score carries roughly ±1 task of noise**, and
+that applies retroactively to every single-run number in this notebook. Treat a
+one-task difference between two models as *no* difference.
 
 ### 2026-07-31 — trustworthy oracles, unfinished-work detection, and repair that actually works (harness @ V256–V257 / 0.2.209)
 

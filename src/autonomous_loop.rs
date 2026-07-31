@@ -1157,14 +1157,124 @@ impl AutonomousAgent {
 // parse_tool_calls
 // ============================================================================
 
+/// Repair the ways a local model's tool call comes back as invalid JSON, so a
+/// good call is not thrown away over a syntax slip.
+///
+/// When the parse fails the whole call is dropped and the agent looks like it
+/// never tried to use the tool at all — there is no error anywhere, because
+/// nothing was ever recognised as a call. Three malformations are handled:
+///
+/// * **Rust/Python-style `\u{XXXX}` where JSON demands `\uXXXX`.** Measured on
+///   qwen2.5-coder:14b: asked for an empty string argument it writes `\u{0}`,
+///   and its entire test-suite tool call is lost. Transliterated rather than
+///   deleted — the code point is unambiguous, and dropping it would edit the
+///   model's answer instead of repairing its syntax.
+/// * **Stray control characters**, which JSON forbids raw inside strings.
+/// * **Backslashes introducing no valid escape at all**, which are dropped.
+///
+/// The repairs must happen together: removing a control character but leaving
+/// its backslash orphans it against the following quote (`\"` → `\\"`), closing
+/// the string early and trading one parse error for another.
+///
+/// Tab, newline and carriage return survive: they are legal JSON whitespace
+/// between tokens, and models escape them correctly inside strings. Every edit
+/// here can only turn invalid JSON into valid JSON, never the reverse.
+fn repair_model_json(text: &str) -> std::borrow::Cow<'_, str> {
+    let is_stray_control = |c: char| c.is_control() && !matches!(c, '\t' | '\n' | '\r');
+    let mut chars = text.chars().peekable();
+    let mut needs_repair = false;
+    while let Some(c) = chars.next() {
+        if is_stray_control(c) {
+            needs_repair = true;
+            break;
+        }
+        if c == '\\' {
+            match chars.peek() {
+                // `\u` is only valid followed by exactly four hex digits, so it
+                // cannot be waved through the way the single-character escapes
+                // can — `\u{0}` is precisely the malformation being repaired.
+                Some('u') => {
+                    chars.next();
+                    let hex: String = chars.clone().take(4).collect();
+                    if hex.len() < 4 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+                        needs_repair = true;
+                        break;
+                    }
+                }
+                Some('"' | '\\' | '/' | 'b' | 'f' | 'n' | 'r' | 't') => {
+                    chars.next();
+                }
+                _ => {
+                    needs_repair = true;
+                    break;
+                }
+            }
+        }
+    }
+    if !needs_repair {
+        return std::borrow::Cow::Borrowed(text);
+    }
+
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if is_stray_control(c) {
+            continue;
+        }
+        if c == '\\' {
+            match chars.peek() {
+                // Rust/Python style `\u{XXXX}` where JSON demands `\uXXXX`.
+                // Transliterate rather than delete: the code point the model
+                // asked for is unambiguous, and silently dropping it would edit
+                // the model's answer instead of repairing its syntax.
+                Some('u') => {
+                    chars.next();
+                    if chars.peek() == Some(&'{') {
+                        chars.next();
+                        let hex: String =
+                            chars.by_ref().take_while(|c| *c != '}').take(8).collect();
+                        match u32::from_str_radix(&hex, 16) {
+                            Ok(cp) if cp <= 0xFFFF => out.push_str(&format!("\\u{cp:04x}")),
+                            // Astral planes need a surrogate pair; not worth it
+                            // for a malformed escape, so drop it.
+                            _ => {}
+                        }
+                    } else {
+                        out.push('\\');
+                        out.push('u');
+                    }
+                }
+                // A real escape: keep both halves, so `\\` stays an escaped
+                // backslash rather than becoming a quote-eating orphan.
+                Some('"' | '\\' | '/' | 'b' | 'f' | 'n' | 'r' | 't') => {
+                    out.push(c);
+                    if let Some(next) = chars.next() {
+                        out.push(next);
+                    }
+                }
+                // Introduces nothing valid: drop the backslash and let the next
+                // character stand on its own (or be dropped, if it is a control).
+                _ => {}
+            }
+            continue;
+        }
+        out.push(c);
+    }
+    std::borrow::Cow::Owned(out)
+}
+
 /// Parse tool calls from the LLM response text.
 ///
 /// Supports three formats (tried in order):
 /// 1. JSON array: `[{"name": "tool", "arguments": {"k": "v"}}]`
 /// 2. OpenAI-style: response contains `"tool_calls": [{"function": {"name": "x", "arguments": "..."}}]`
 /// 3. XML tool_use: `<tool_use><name>x</name><arguments>{"k":"v"}</arguments></tool_use>`
+///
+/// The text is repaired first — see [`repair_model_json`] — so a well-formed
+/// call is not lost to a syntax slip in the model's escaping.
 pub fn parse_tool_calls(response: &str) -> Vec<ParsedToolCall> {
-    let trimmed = response.trim();
+    let cleaned = repair_model_json(response);
+    let trimmed = cleaned.trim();
     if trimmed.is_empty() {
         return Vec::new();
     }
@@ -1736,6 +1846,61 @@ mod tests {
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].name, "search");
         assert_eq!(calls[0].arguments.get("query").unwrap(), "rust lang");
+    }
+
+    #[test]
+    fn test_parse_tool_calls_repairs_malformed_model_json() {
+        // Regression, measured on qwen2.5-coder:14b: asked for an empty string
+        // argument it writes Rust's `\u{0}` escape inside a JSON string, where
+        // JSON demands exactly four hex digits after `\u`. serde rejects it as an
+        // invalid escape, the parse fails, and the whole tool call vanishes — the
+        // agent looks like it never called the tool at all.
+        let input = r#"[{"name": "write_file", "arguments": {"path": "tests/t.rs", "content": "longest(\"\u{0}\", \"a\")"}}]"#;
+        let calls = parse_tool_calls(input);
+        assert_eq!(calls.len(), 1, "a stray escape must not lose the tool call");
+        assert_eq!(calls[0].name, "write_file");
+        assert_eq!(calls[0].arguments.get("path").unwrap(), "tests/t.rs");
+        // Transliterated to the JSON form, so the code point survives as asked.
+        assert_eq!(
+            calls[0].arguments.get("content").unwrap(),
+            "longest(\"\u{0}\", \"a\")"
+        );
+
+        // Multi-digit and uppercase forms of the same malformation.
+        let input = r#"[{"name": "x", "arguments": {"a": "caf\u{E9}"}}]"#;
+        let calls = parse_tool_calls(input);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].arguments.get("a").unwrap(), "café");
+
+        // Bare control characters, with no backslash involved.
+        let input = "[{\"name\": \"x\", \"arguments\": {\"a\": \"b\u{b}c\u{c}d\u{1b}e\"}}]";
+        let calls = parse_tool_calls(input);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].arguments.get("a").unwrap(), "bcde");
+
+        // A legitimately escaped backslash must survive intact — mangling it
+        // would corrupt every Windows path a model ever writes.
+        let input = r#"[{"name": "write_file", "arguments": {"path": "C:\\tmp\\t.rs"}}]"#;
+        let calls = parse_tool_calls(input);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].arguments.get("path").unwrap(), r"C:\tmp\t.rs");
+
+        // As must a valid \uXXXX escape.
+        let input = r#"[{"name": "x", "arguments": {"a": "caf\u00e9"}}]"#;
+        let calls = parse_tool_calls(input);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].arguments.get("a").unwrap(), "café");
+
+        // Whitespace that JSON allows between tokens is untouched.
+        let input = "[\n\t{\"name\": \"y\", \"arguments\": {}}\r\n]";
+        assert_eq!(parse_tool_calls(input).len(), 1);
+
+        // Well-formed input must come back byte-identical (no needless copy).
+        let clean = r#"[{"name": "search", "arguments": {"q": "a\nb"}}]"#;
+        assert!(matches!(
+            repair_model_json(clean),
+            std::borrow::Cow::Borrowed(_)
+        ));
     }
 
     // -----------------------------------------------------------------------

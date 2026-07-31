@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v135 (2026-08-01) — V260: a model's tool call no longer dies over its own escaping (0.2.212)
+
+### Fixed
+- **`parse_tool_calls` repairs malformed model JSON before parsing.** A single bad
+  escape made `serde_json` reject the whole array, so the call was dropped and the
+  agent looked like it had **never tried to use the tool** — no error was raised
+  anywhere, because nothing was ever recognised as a call. Three malformations are
+  now handled:
+  - **`\u{XXXX}`** (Rust/Python syntax) where JSON demands `\uXXXX`. Measured on
+    qwen2.5-coder:14b: asked for an empty string argument it writes `\u{0}` and its
+    entire test-suite tool call vanished. Transliterated to the JSON form rather
+    than deleted — the code point is unambiguous, and dropping it would edit the
+    model's answer instead of repairing its syntax.
+  - **Stray control characters**, which JSON forbids raw inside strings.
+  - **Backslashes introducing no valid escape**, which are dropped.
+
+  The repairs must happen together: removing a control character but leaving its
+  backslash orphans it against the following quote (`\"` → `\\"`), closing the
+  string early and trading one parse error for another.
+
+  Escaped backslashes (`C:\\tmp`) and valid `\uXXXX` escapes are preserved, and
+  well-formed input is returned borrowed, without a copy.
+
+### Changed
+- **Benchmark numbers recorded before this fix are not comparable.** Any task where
+  the model happened to emit `\u{…}` was scored as "never produced a file" — a
+  harness defect counted as model incompetence. The affected measurements are being
+  re-run; see `docs/MODEL_BENCHMARKS.md`.
+
 ## [Unreleased] - v134 (2026-07-31) — V259: measure the noise instead of pretending it isn't there (0.2.211)
 
 ### Changed
