@@ -294,10 +294,33 @@ fn ollama_chat_options(
              AiConfig.ollama_num_ctx (you have the VRAM) or reduce the context.",
         );
     }
-    serde_json::json!({
+    ollama_options_with_ctx(config, num_ctx)
+}
+
+/// Build the Ollama `options` object for an already-computed `num_ctx`.
+///
+/// Shared so every request path sends the same knobs — in particular `seed`,
+/// which is what makes a run reproducible.
+fn ollama_options_with_ctx(config: &AiConfig, num_ctx: usize) -> serde_json::Value {
+    let mut options = serde_json::json!({
         "temperature": config.temperature,
         "num_ctx": num_ctx,
-    })
+    });
+    apply_ollama_seed(&mut options, config);
+    options
+}
+
+/// Add `seed` to an Ollama `options` object when one is configured.
+///
+/// Kept as one rule for every Ollama request path (chat, streaming, vision, and
+/// the plugin transports in `provider_plugins`), because a seed that only
+/// reaches *some* of them would make reproducibility depend on which code path
+/// happened to serve the request. Omitted entirely when unset, so the backend
+/// keeps its own per-request randomisation.
+pub(crate) fn apply_ollama_seed(options: &mut serde_json::Value, config: &AiConfig) {
+    if let (Some(seed), Some(map)) = (config.seed, options.as_object_mut()) {
+        map.insert("seed".to_string(), serde_json::json!(seed));
+    }
 }
 
 /// Generate streaming response using Ollama API
@@ -623,7 +646,7 @@ pub fn generate_ollama_response_with_images(
         "model": config.selected_model,
         "messages": msg_array,
         "stream": false,
-        "options": { "temperature": config.temperature, "num_ctx": num_ctx },
+        "options": ollama_options_with_ctx(config, num_ctx),
     });
 
     let response = retry_with_config(config.retry_config.clone(), || {
@@ -2902,6 +2925,45 @@ mod tests {
         // But still clamped to the model's real window.
         assert_eq!(ollama_num_ctx("gemma2:9b", 100, Some(65_536)), 8_192);
         assert_eq!(ollama_num_ctx("qwen2.5:14b", 100, Some(32_768)), 32_768);
+    }
+
+    #[test]
+    fn test_ollama_options_seed() {
+        // Unset: the key must be absent, not sent as null or 0 — either would
+        // pin the backend to a fixed seed and silently kill the per-request
+        // randomisation callers get by default.
+        let mut cfg = AiConfig {
+            temperature: 0.7,
+            ..Default::default()
+        };
+        let opts = ollama_options_with_ctx(&cfg, 8192);
+        assert!(
+            opts.get("seed").is_none(),
+            "no seed configured must mean no `seed` key: {opts}"
+        );
+        assert!((opts["temperature"].as_f64().unwrap_or_default() - 0.7).abs() < 1e-6);
+        assert_eq!(opts["num_ctx"], 8192);
+
+        // Set: forwarded verbatim, alongside the other knobs.
+        cfg.seed = Some(42);
+        let opts = ollama_options_with_ctx(&cfg, 4096);
+        assert_eq!(opts["seed"], 42);
+        assert_eq!(opts["num_ctx"], 4096);
+
+        // Seed 0 is a legitimate seed, not "unset".
+        cfg.seed = Some(0);
+        assert_eq!(ollama_options_with_ctx(&cfg, 8192)["seed"], 0);
+
+        // The shared helper is what the plugin transports call, on an options
+        // object they built themselves.
+        let mut opts = serde_json::json!({ "temperature": 0.5 });
+        apply_ollama_seed(&mut opts, &cfg);
+        assert_eq!(opts["seed"], 0);
+
+        // A non-object options value must be left alone rather than panic.
+        let mut not_an_object = serde_json::json!("oops");
+        apply_ollama_seed(&mut not_an_object, &cfg);
+        assert_eq!(not_an_object, serde_json::json!("oops"));
     }
 
     #[test]

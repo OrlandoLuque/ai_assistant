@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v133 (2026-07-31) — V258: `AiConfig::seed` for reproducible sampling (0.2.210)
+
+### Added
+- **`AiConfig::seed: Option<u64>`** (+ `with_seed()`, config-file `[generation] seed`,
+  full TOML round-trip). Sent on every Ollama request path — chat, streaming, vision
+  and the three plugin transports — through one shared `apply_ollama_seed`, so
+  reproducibility cannot depend on which code path served the request. Unset by
+  default: the key is omitted entirely rather than sent as `0`, which would silently
+  pin every caller to a fixed seed.
+
+### Fixed
+- **A benchmark "model failure" that was the backend crashing.** Ollama's llama.cpp
+  runner *aborts* on some inputs when sampling is near-greedy (`Assertion failed:
+  found, llama-sampling.cpp:660`, Ollama 0.21.2). The runner dies mid-request, so the
+  client reports a send failure and the harness scored it as incompetence. Measured on
+  one task: crash at temperature 0.0/0.1/0.2/0.3, clean answer in seconds at 0.5;
+  `top_k`/`top_p`/`repeat_penalty` do not avoid it. The affected suite passes in 10.8 s
+  once the crash is gone.
+- **Benchmark defaults** moved from `temperature 0.0, no seed` to `temperature 0.5,
+  seed 42` (`AI_BENCH_TEMP` / `AI_BENCH_SEED`); report headers now include both, since
+  a logged result without its sampling settings is not reproducible. New
+  `AGENTIC_TRACE=1` fingerprints every prompt and reply, which is what proved the seed
+  reaches the backend (byte-identical turns across runs of the same task) — and that
+  multi-task runs still drift ~1 verdict from llama.cpp's own numerical
+  non-determinism. See `docs/MODEL_BENCHMARKS.md`.
+- `to_toml` / `parse_toml` are hand-rolled and were dropping the new field until tests
+  caught it; note they still drop `repeat_penalty`, `max_tokens` and `stop_sequences`
+  (pre-existing, and those are not wired to any backend either).
+
 ## [Unreleased] — V168–V251 condensed backfill (2026-06 → 2026-07, 0.2.120 → 0.2.203)
 
 This changelog and the `IMPROVEMENTS_V*` series lapsed after V167; the ~60

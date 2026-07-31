@@ -147,7 +147,7 @@ impl ProviderPlugin for OllamaProvider {
         let url = format!("{}/api/chat", self.base_url);
         let msgs = self.build_messages(messages, system_prompt);
 
-        let payload = serde_json::json!({
+        let mut payload = serde_json::json!({
             "model": config.selected_model,
             "messages": msgs,
             "stream": false,
@@ -155,6 +155,7 @@ impl ProviderPlugin for OllamaProvider {
                 "temperature": config.temperature,
             }
         });
+        crate::providers::apply_ollama_seed(&mut payload["options"], config);
 
         let resp = ureq::post(&url)
             .timeout(self.timeout)
@@ -181,7 +182,7 @@ impl ProviderPlugin for OllamaProvider {
         let url = format!("{}/api/chat", self.base_url);
         let msgs = self.build_messages(messages, system_prompt);
 
-        let payload = serde_json::json!({
+        let mut payload = serde_json::json!({
             "model": config.selected_model,
             "messages": msgs,
             "stream": true,
@@ -189,6 +190,7 @@ impl ProviderPlugin for OllamaProvider {
                 "temperature": config.temperature,
             }
         });
+        crate::providers::apply_ollama_seed(&mut payload["options"], config);
 
         let resp = ureq::post(&url)
             .timeout(self.timeout)
@@ -255,6 +257,8 @@ impl ProviderPlugin for OllamaProvider {
                 "temperature": config.temperature,
             }
         });
+
+        crate::providers::apply_ollama_seed(&mut payload["options"], config);
 
         if !tool_schemas.is_empty() {
             payload["tools"] = Value::Array(tool_schemas);

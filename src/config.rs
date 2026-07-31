@@ -243,6 +243,24 @@ pub struct AiConfig {
     /// always-available lexical term-overlap ranker.
     #[serde(default)]
     pub embedding_model: Option<String>,
+    /// Sampling seed, for **reproducible** generation.
+    ///
+    /// `None` (default) lets the backend pick a fresh seed per request, so the
+    /// same prompt can yield different completions. Setting a seed makes
+    /// sampling deterministic: the same prompt, model and options produce
+    /// byte-identical output across runs *at any temperature*.
+    ///
+    /// This is the right way to get reproducibility — reaching for
+    /// `temperature = 0.0` instead is both weaker (it only removes the sampling
+    /// randomness, not the seed's effect on tie-breaks) and, on some
+    /// Ollama/llama.cpp builds, actively dangerous: near-greedy sampling can
+    /// abort the runner mid-request (`Assertion failed: found` in
+    /// `llama-sampling.cpp`), which surfaces to the caller as a connection
+    /// failure. A fixed seed at a normal temperature avoids that path.
+    ///
+    /// Currently sent to Ollama; providers that do not accept a seed ignore it.
+    #[serde(default)]
+    pub seed: Option<u64>,
 }
 
 impl std::fmt::Debug for AiConfig {
@@ -278,6 +296,7 @@ impl std::fmt::Debug for AiConfig {
             )
             .field("ollama_num_ctx", &self.ollama_num_ctx)
             .field("embedding_model", &self.embedding_model)
+            .field("seed", &self.seed)
             .finish()
     }
 }
@@ -302,6 +321,7 @@ impl Default for AiConfig {
             mmproj_path: None,
             ollama_num_ctx: None,
             embedding_model: None,
+            seed: None,
         }
     }
 }
@@ -443,6 +463,15 @@ impl AiConfig {
         self
     }
 
+    /// Pin the sampling seed for reproducible generation (chainable).
+    ///
+    /// Prefer this over `temperature = 0.0` when you need repeatable output —
+    /// see [`seed`](Self::seed) for why.
+    pub fn with_seed(mut self, seed: u64) -> Self {
+        self.seed = Some(seed);
+        self
+    }
+
     /// Validate the configuration, catching mistakes that would otherwise only
     /// surface as confusing runtime failures:
     ///
@@ -506,6 +535,19 @@ mod tests {
         assert_eq!(cfg.max_history_messages, 10);
         // A local provider with a default URL validates cleanly.
         assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn test_config_seed_defaults_to_unset() {
+        // Default must stay random-per-request: pinning a seed by accident would
+        // make every caller's output silently repeat.
+        assert_eq!(AiConfig::default().seed, None);
+
+        let cfg = AiConfig::default().with_seed(42);
+        assert_eq!(cfg.seed, Some(42));
+        // A seed is orthogonal to temperature — reproducibility does not require
+        // giving up sampling.
+        assert!(cfg.with_temperature(0.5).validate().is_ok());
     }
 
     #[test]

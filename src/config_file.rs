@@ -227,6 +227,11 @@ pub struct GenerationConfig {
     /// Stop sequences
     #[serde(default)]
     pub stop_sequences: Vec<String>,
+
+    /// Sampling seed for reproducible generation. `None` (default) lets the
+    /// backend randomise per request. See [`crate::config::AiConfig::seed`].
+    #[serde(default)]
+    pub seed: Option<u64>,
 }
 
 fn default_temperature() -> f32 {
@@ -246,6 +251,7 @@ impl Default for GenerationConfig {
             repeat_penalty: None,
             max_tokens: None,
             stop_sequences: Vec::new(),
+            seed: None,
         }
     }
 }
@@ -818,6 +824,7 @@ impl ConfigFile {
             mmproj_path: None,
             ollama_num_ctx: None,
             embedding_model: None,
+            seed: self.generation.seed,
         }
     }
 
@@ -870,6 +877,7 @@ impl ConfigFile {
             generation: GenerationConfig {
                 temperature: config.temperature,
                 max_history: config.max_history_messages,
+                seed: config.seed,
                 ..Default::default()
             },
             ..Default::default()
@@ -930,6 +938,7 @@ impl ConfigFile {
                         "top_k" => config.generation.top_k = value.parse().ok(),
                         "repeat_penalty" => config.generation.repeat_penalty = value.parse().ok(),
                         "max_tokens" => config.generation.max_tokens = value.parse().ok(),
+                        "seed" => config.generation.seed = value.parse().ok(),
                         _ => {}
                     },
                     "rag" => match key {
@@ -1043,6 +1052,9 @@ impl ConfigFile {
         }
         if let Some(top_k) = self.generation.top_k {
             out.push_str(&format!("top_k = {}\n", top_k));
+        }
+        if let Some(seed) = self.generation.seed {
+            out.push_str(&format!("seed = {}\n", seed));
         }
         out.push('\n');
 
@@ -1850,6 +1862,24 @@ knowledge_enabled = true
         assert!(matches!(ai_config.provider, AiProvider::Ollama));
         assert_eq!(ai_config.selected_model, "phi3");
         assert_eq!(ai_config.temperature, 0.9);
+    }
+
+    #[test]
+    fn test_seed_survives_the_config_file_roundtrip() {
+        // A seed that is only honoured in-memory is useless: reproducibility has
+        // to survive being written to disk and read back.
+        let mut config = ConfigFile::default();
+        assert_eq!(config.generation.seed, None);
+        config.generation.seed = Some(42);
+
+        let toml = config.to_toml();
+        let parsed = ConfigFile::parse(&toml, ConfigFormat::Toml).unwrap();
+        assert_eq!(parsed.generation.seed, Some(42));
+        assert_eq!(parsed.to_ai_config().seed, Some(42));
+
+        // And back the other way, so the GUI/CLI can persist what it was given.
+        let ai = crate::config::AiConfig::default().with_seed(7);
+        assert_eq!(ConfigFile::from_ai_config(&ai).generation.seed, Some(7));
     }
 
     #[test]
