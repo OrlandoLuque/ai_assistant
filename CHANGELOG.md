@@ -55,6 +55,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tests is knowing that `Vec::dedup` only removes *consecutive* duplicates and that
   first-appearance order must survive. Log entries before 2026-07-31 use the old name.
 
+### Fixed
+- **A backend crash no longer deflates the model's score.** Such a run was labelled
+  "excluded from the score" while still being counted as a failed attempt in the pass
+  rate — so a crashing runner quietly penalised whichever model happened to be loaded,
+  the exact confusion the label exists to prevent. Crashed runs now leave the
+  denominator (`passes/attempts`, not `passes/repeats`) and are reported separately as
+  runs lost. Measured: qwen2.5-coder:7b-instruct lost `dedup preserving
+  first-appearance order` this way **at temperature 0.5** — so 0.5 avoids the runner
+  crash on the input that first exposed it, but is not immunity to it.
+
 ## [Unreleased] - v133 (2026-07-31) — V258: `AiConfig::seed` for reproducible sampling (0.2.210)
 
 ### Added
