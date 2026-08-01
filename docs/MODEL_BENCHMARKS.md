@@ -21,6 +21,10 @@ that it "looks right"). The backend is configurable via env
 `src/bin/ai_test_harness/bench_util.rs`), so the same tasks target Ollama,
 llama.cpp, LM Studio, vLLM, … or a cloud provider.
 
+For the concepts these measurements rest on — quantization and its naming, third-party
+quantizers, the KV cache as the real VRAM constraint, context compression and hardware
+number formats — see [LOCAL_MODELS.md](LOCAL_MODELS.md).
+
 Sampling is pinned with `AI_BENCH_TEMP` (default **0.5**) and `AI_BENCH_SEED`
 (default **42**, or `none` to randomise). Do **not** set the temperature to 0 to
 chase determinism: the seed is what buys reproducibility, and near-greedy sampling
