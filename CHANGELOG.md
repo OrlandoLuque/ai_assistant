@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v141 (2026-08-03) — V266: a function called `sha256_hex` that was not SHA-256 (0.2.218)
+
+### Security
+- **`IntegrityChecker` was not doing what its name, its docs, or its digest function
+  claimed.** The public doc said "HMAC-SHA256 based file integrity verification"; the
+  digest function was named `sha256_hex` and documented as "Simple SHA-256
+  implementation". The body was **FNV-1a** — non-cryptographic and trivially forgeable,
+  so the "tamper detection" caught accidental corruption and nothing else. Anyone able
+  to rewrite the protected file could recompute a matching digest by hand.
+  - Renamed to `content_digest_hex`; **real SHA-256** under the `security` feature
+    (which `full` includes, so the default build gets it), FNV only as the no-feature
+    fallback, and labelled as such.
+  - The docs now state plainly that it is **not an HMAC** in either case: with no
+    secret key, a digest stored beside the file it protects can be recomputed by
+    whoever can rewrite both. It raises the bar; it does not close the door.
+  - The adjacent `TODO: Replace with proper SHA-256 when ring/sha2 is added` had gone
+    stale — `sha2` is already a dependency.
+
+## [Unreleased] - v140 (2026-08-03) — V265: a `Drop` that promised to record and recorded nothing (0.2.217)
+
+### Fixed
+- **`HistogramTimer::drop` was an empty body** under a comment reading "Auto-observe on
+  drop if not explicitly called". The RAII guard the type exists for recorded nothing,
+  and a metric that is quietly absent is worse than one that is obviously broken. The
+  reason it could not simply be filled in was real — `observe` takes `self`, so `Drop`
+  runs straight after and would double-count — so `record()` is now idempotent behind an
+  `observed` flag. No test covered `Drop`; there is one now, asserting through `export()`
+  because that is what an operator actually sees.
+
+### Documented (not fixed)
+- **`FineTuningApi::upload_file` does not work against OpenAI**: it sends
+  `application/json` where `/files` requires `multipart/form-data`. The internal comment
+  had admitted this since the function was written, but nothing said so at the call site.
+  Implementing multipart is straightforward and cannot be *verified* without live
+  credentials — and shipping an unverified fix under a claim that it works is the exact
+  failure this codebase keeps auditing out. Stated in the doc comment; work queued.
+
 ## [Unreleased] - v139 (2026-08-03) — V264: the Python oracles were never audited (0.2.216)
 
 ### Added
