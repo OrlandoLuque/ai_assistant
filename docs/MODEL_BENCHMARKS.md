@@ -155,6 +155,24 @@ so they cannot rot again.
    wrongness for free; a Python assert list catches only what someone thought to write
    down. Expect the weakest oracles wherever the language does least for you.
 
+#### Re-measured with the fixed oracles — and the old conclusion survives
+
+| model | `code_gen_bench` pass@1, post-V264 |
+|---|---|
+| qwen2.5-coder:7b-instruct | **11/11** |
+| llama3.2:3b | **11/11** |
+
+So the weakness was **latent**: the oracles could have been satisfied by a wrong answer,
+but these models were not writing wrong answers — they wrote correct implementations and
+would have passed either way. The earlier finding that **`code_gen_bench` saturates from
+~3B upward** stands, and is now resting on checkers that have been shown to reject the
+obvious wrong answers rather than merely assumed to.
+
+Worth stating plainly, because it is the good outcome and the less memorable one: **a
+repaired instrument that changes none of the numbers has still earned its keep.** It
+converts "we believe this" into "we checked this", and it means the *next* model — the
+one that does write `s.split(' ')` — will be caught.
+
 ### 2026-08-03 — reading the shape instead of the total, and the bar a repair loop must clear (harness @ V263 / 0.2.215)
 
 Three lines were added to the `agentic_test_gen` summary. All are computed from
