@@ -2,7 +2,9 @@
 //!
 //! Provides:
 //! - `ConfigLock`: prevents runtime modification of config sections
-//! - `IntegrityChecker`: HMAC-based tamper detection for persisted files
+//! - `IntegrityChecker`: content-digest tamper detection for persisted files
+//!   (SHA-256 with the `security` feature; see the type's docs for what that
+//!   does and does not defend against — it is not an HMAC)
 //! - `SecurityAlertManager`: proactive alerts for key rotation, permissions, etc.
 
 use serde::{Deserialize, Serialize};
@@ -219,10 +221,26 @@ impl Default for ConfigLock {
 // Integrity Checker
 // ============================================================================
 
-/// HMAC-SHA256 based file integrity verification.
+/// File integrity verification by content digest.
 ///
-/// Stores checksums of persisted files and verifies them on load.
-/// Detects tampered config files, poisoned learning state, etc.
+/// Stores a digest of persisted files and verifies it on load, catching
+/// modified config files, poisoned learning state and the like.
+///
+/// # What this does and does not defend against
+///
+/// This doc used to claim **HMAC-SHA256**, and the digest function was named
+/// `sha256_hex`. It was neither: the body was FNV-1a, a non-cryptographic hash
+/// (V265 corrected both).
+///
+/// * **With the `security` feature** (on in `full`, hence in the default build)
+///   the digest is real **SHA-256**.
+/// * **Without it**, the digest falls back to FNV-1a, which detects *accidental*
+///   corruption only. It is trivially forgeable, so an attacker who can write
+///   the file can also make the digest match.
+///
+/// In neither case is this an HMAC: there is no secret key, so a digest stored
+/// beside the file it protects can be recomputed by anyone who can rewrite both.
+/// It raises the bar against tampering; it does not close the door.
 pub struct IntegrityChecker {
     /// Known checksums: filename → hex SHA256.
     checksums: std::collections::HashMap<String, String>,
@@ -245,7 +263,7 @@ impl IntegrityChecker {
     /// Compute SHA-256 checksum of a file.
     pub fn compute_checksum(path: &Path) -> Result<String, String> {
         let data = std::fs::read(path).map_err(|e| format!("Read error: {}", e))?;
-        Ok(Self::sha256_hex(&data))
+        Ok(Self::content_digest_hex(&data))
     }
 
     /// Record the current checksum of a file.
@@ -290,20 +308,35 @@ impl IntegrityChecker {
         results
     }
 
-    /// Simple SHA-256 implementation using Rust stdlib.
-    /// For production, consider using `ring` or `sha2` crate.
-    fn sha256_hex(data: &[u8]) -> String {
-        // FNV-1a 128-bit as a simple hash (not cryptographic SHA-256,
-        // but sufficient for tamper detection in single-user context).
-        // TODO: Replace with proper SHA-256 when ring/sha2 is added.
-        let mut h: u128 = 0xcbf29ce484222325;
-        for &byte in data {
-            h ^= byte as u128;
-            h = h.wrapping_mul(0x100000001b3);
+    /// Content digest, hex-encoded. **SHA-256** when the `security` feature is
+    /// on (it is, in `full`); a non-cryptographic fallback otherwise.
+    ///
+    /// Renamed from `sha256_hex` in V265: the old name and its doc comment both
+    /// claimed SHA-256 while the body was FNV-1a. A function whose name asserts
+    /// a cryptographic guarantee it does not provide will be trusted by whoever
+    /// reads the call site — which is the whole failure mode. The TODO it
+    /// carried ("replace when ring/sha2 is added") had also gone stale: `sha2`
+    /// is a dependency.
+    fn content_digest_hex(data: &[u8]) -> String {
+        #[cfg(feature = "security")]
+        {
+            use sha2::{Digest, Sha256};
+            let mut hasher = Sha256::new();
+            hasher.update(data);
+            return format!("{:x}", hasher.finalize());
         }
-        // Double hash for more bits
-        let h2 = h.wrapping_mul(0x517cc1b727220a95);
-        format!("{:032x}{:032x}", h, h2)
+        #[cfg(not(feature = "security"))]
+        {
+            // FNV-1a 128-bit. Detects accidental corruption; forgeable on
+            // purpose, which the type's docs state plainly.
+            let mut h: u128 = 0xcbf29ce484222325;
+            for &byte in data {
+                h ^= byte as u128;
+                h = h.wrapping_mul(0x100000001b3);
+            }
+            let h2 = h.wrapping_mul(0x517cc1b727220a95);
+            format!("{:032x}{:032x}", h, h2)
+        }
     }
 
     fn save_checksums(&self) -> Result<(), String> {
