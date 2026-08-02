@@ -151,30 +151,43 @@ fn cmd_start(args: &[String]) -> ExitCode {
     }
     println!();
 
-    match config.mode {
-        SharingMode::Provider | SharingMode::Both => {
-            println!("{}Listening for inference requests...{}", GREEN, RESET);
-        }
-        SharingMode::Gateway => {
-            println!("{}Gateway ready at localhost:8090{}", GREEN, RESET);
-        }
-    }
-
-    if config.mode == SharingMode::Both {
-        println!("{}Gateway ready at localhost:8090{}", GREEN, RESET);
-    }
-
+    // What this command genuinely does is validate the configuration and
+    // load-or-create the node identity above. It does NOT serve.
+    //
+    // It used to print "Listening for inference requests…" / "Gateway ready at
+    // localhost:8090" and "Press Ctrl+C to stop", then exit(0) immediately —
+    // nothing was ever bound to that port. Announcing a service that is not
+    // running is worse than not implementing it: the operator has no way to
+    // tell, and will find out from whatever depends on it.
     println!();
-    println!("{}Press Ctrl+C to stop.{}", DIM, RESET);
-
-    // In a real implementation, this would start async event loops.
-    // For now, just print status and exit.
+    println!(
+        "{}Configuration is valid and the node identity is ready.{}",
+        GREEN, RESET
+    );
+    println!(
+        "  {}!{} This command does NOT start a server — nothing is listening on \
+         {}. Run the async node with `ai_cluster_node` to actually serve.",
+        YELLOW,
+        RESET,
+        match config.mode {
+            SharingMode::Provider => "the provider endpoint",
+            _ => "localhost:8090",
+        }
+    );
     ExitCode::SUCCESS
 }
 
 fn cmd_stop() -> ExitCode {
-    println!("{}Stopping GPU sharing node...{}", YELLOW, RESET);
-    println!("{}Node stopped gracefully.{}", GREEN, RESET);
+    // Likewise: this used to report "Node stopped gracefully" unconditionally,
+    // having stopped nothing.
+    println!(
+        "{}Nothing to stop — `ai_gpu_share start` does not run a server.{}",
+        YELLOW, RESET
+    );
+    println!(
+        "  {}!{} If you started a node with `ai_cluster_node`, stop that process instead.",
+        DIM, RESET
+    );
     ExitCode::SUCCESS
 }
 

@@ -2,9 +2,17 @@
 //!
 //! Loads, caches, and queries a typed model catalog. Source format is
 //! the [models.dev](https://models.dev) `api.json` schema (or any
-//! compatible JSON), but the actual HTTP fetch is left to the caller —
-//! this module only handles parse + cache + lookup so it stays unit-testable
-//! offline.
+//! compatible JSON).
+//!
+//! The parse + cache + lookup half has no network dependency, so it stays
+//! unit-testable offline. **The HTTP fetch is in-crate too**, behind
+//! `models-dev-fetcher` (V138) — see the fetcher section at the bottom of this
+//! file. Off by default only so that callers wanting the parser alone do not
+//! pull in tokio and reqwest.
+//!
+//! (Until V263 this docstring still said the fetch was "left to the caller",
+//! which V138 had already made false. A stale doc that tells callers to build
+//! something the crate ships is worse than no doc.)
 //!
 //! Typical wiring:
 //!
