@@ -571,7 +571,22 @@ impl OpenAIFineTuneClient {
         self
     }
 
-    /// Upload a training file
+    /// Upload a training file.
+    ///
+    /// # Known limitation — this does not currently work against OpenAI
+    ///
+    /// OpenAI's `/files` endpoint requires **`multipart/form-data`**; this sends
+    /// `application/json` with the JSONL inline, so the request is rejected. The
+    /// comment below has admitted as much since the function was written, but
+    /// nothing said so at the call site — a caller found out from an opaque API
+    /// error instead.
+    ///
+    /// It is left in place rather than removed because everything around it
+    /// (dataset construction, `to_jsonl`, the response type) is correct and
+    /// tested; only the transport is wrong. Implementing multipart is
+    /// straightforward, but it cannot be *verified* without live credentials,
+    /// and shipping an unverified fix under a claim that it works is the exact
+    /// failure this codebase keeps auditing out.
     pub fn upload_file(
         &self,
         dataset: &TrainingDataset,

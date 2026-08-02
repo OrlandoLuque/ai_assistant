@@ -293,6 +293,7 @@ impl Histogram {
             histogram: self.clone(),
             labels: Vec::new(),
             start: Instant::now(),
+            observed: false,
         }
     }
 
@@ -307,6 +308,7 @@ impl Histogram {
             histogram: self.clone(),
             labels: label_vec,
             start: Instant::now(),
+            observed: false,
         }
     }
 
@@ -386,11 +388,23 @@ pub struct HistogramTimer {
     histogram: Histogram,
     labels: Vec<(String, String)>,
     start: Instant,
+    /// Guards against counting the same span twice: `observe` consumes the
+    /// timer, so `Drop` runs immediately afterwards and would otherwise record
+    /// a second observation.
+    observed: bool,
 }
 
 impl HistogramTimer {
-    /// Stop the timer and record observation
-    pub fn observe(self) {
+    /// Stop the timer and record the observation.
+    pub fn observe(mut self) {
+        self.record();
+    }
+
+    fn record(&mut self) {
+        if self.observed {
+            return;
+        }
+        self.observed = true;
         let elapsed = self.start.elapsed().as_secs_f64();
         let labels: Vec<_> = self
             .labels
@@ -402,9 +416,15 @@ impl HistogramTimer {
 }
 
 impl Drop for HistogramTimer {
+    /// Record the span if `observe` was never called, so a timer used as an RAII
+    /// guard still measures something.
+    ///
+    /// V264: this body used to be **empty**, under a comment promising exactly
+    /// this behaviour. Anyone relying on the guard — the reason the type exists —
+    /// silently recorded nothing, and a metric that is quietly absent is worse
+    /// than one that is obviously broken.
     fn drop(&mut self) {
-        // Auto-observe on drop if not explicitly called
-        // Note: This is a simplified implementation
+        self.record();
     }
 }
 
@@ -539,6 +559,45 @@ impl Default for AiMetricsRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn histogram_timer_records_on_drop_exactly_once() {
+        // Regression: `Drop` was an empty body under a comment promising to
+        // auto-observe. A timer used as an RAII guard — the reason the type
+        // exists — recorded nothing at all, and a metric that is quietly absent
+        // is worse than one that is obviously broken.
+        // Asserted through `export`, the only public view of the data — which
+        // also makes this a test of what an operator would actually see.
+        let count_line = |text: &str| -> u64 {
+            text.lines()
+                .find(|l| l.starts_with("test_timer_count"))
+                .and_then(|l| l.split_whitespace().last())
+                .and_then(|n| n.parse().ok())
+                .unwrap_or(0)
+        };
+
+        let h = Histogram::new("test_timer", "Test timer");
+        assert_eq!(count_line(&h.export()), 0);
+
+        // Dropped without calling observe: must still record.
+        {
+            let _t = h.start_timer();
+        }
+        assert_eq!(
+            count_line(&h.export()),
+            1,
+            "dropping a timer must record the span"
+        );
+
+        // Explicitly observed: must record once, not twice. `observe` consumes
+        // the timer, so `Drop` runs immediately afterwards.
+        h.start_timer().observe();
+        assert_eq!(
+            count_line(&h.export()),
+            2,
+            "observe() must not double-count with Drop"
+        );
+    }
 
     #[test]
     fn test_counter() {
