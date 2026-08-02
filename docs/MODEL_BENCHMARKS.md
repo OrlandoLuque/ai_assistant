@@ -122,6 +122,97 @@ dependencies), so disk growth is not a concern in normal use.
 
 ## Log (newest first)
 
+### 2026-08-03 — reading the shape instead of the total, and the bar a repair loop must clear (harness @ V263 / 0.2.215)
+
+Three lines were added to the `agentic_test_gen` summary. All are computed from
+data the repeats already produce, so they cost nothing and apply retroactively to
+any future sweep.
+
+**Distribution.** A total hides the shape: 6/12 can mean six tasks solved reliably
+and six never, or twelve solved half the time — different models to work with. On
+qwen2.5-coder:7b:
+
+```
+mean rate 0.44 (sd 0.44) — always 4, sometimes 3, never 5
+```
+
+The standard deviation equalling the mean is the signature of a **bimodal** model,
+and the always/sometimes/never split says it outright.
+
+**The blind-retry projection — the important one.**
+
+```
+blind-retry projection: 6.00 at k=2, 6.37 at k=3 (of 12)
+```
+
+Attempts are independent, so a task solved with probability `p` succeeds at least
+once in `k` tries with probability `1-(1-p)^k`. That is what **simply buying more
+lottery tickets** would score. It is therefore the bar any feedback-driven repair
+has to clear to have earned its complexity: **a repair loop that merely matches
+this number has proved the compiler output added nothing.**
+
+It also bounds the ceiling. A task at `p = 0` stays at 0 for every `k`, so retrying
+recovers the *inconsistent band* and nothing else. That is the sharp, quantified
+form of the earlier settled result that scaffolding does not create capability —
+and it retro-explains it: the identical "+1" that four separate levers produced on
+the 3B was almost certainly one flaky task getting a second chance, not a new
+capability.
+
+Measured here: **5.33 → ~6.4**, with five tasks no amount of retrying can move.
+
+**Failure modes.** Which way the suites are wrong is more actionable than how many:
+
+```
+4 rejected valid code, 1 too weak to catch the bug, 1 produced no tests, 2 backend crash
+```
+
+Counted across every task with at least one failing run, not only the tasks that
+failed outright — a task solved 2 times in 3 still failed once, and how it failed
+is the same evidence.
+
+#### Three models, and what the distribution says that a total does not
+
+| model | score | always / sometimes / never | mean (sd) | blind-retry k=3 | GPU |
+|---|---|---|---|---|---|
+| qwen2.5-coder:7b-instruct | 5.33–7.33 / 12 | 4 / 3 / 5 | 0.44 (0.44) | ~6.4 | 100 % |
+| qwen2.5-coder:14b | 9.67 / 12 | 10 / 1 / 1 | — | — | 100 % (`num_ctx` 4096) |
+| **qwen3-coder:30b** (MoE) | **11.50 / 12** | **11 / 1 / 0** | **0.96 (0.14)** | 11.88 | 73 % (27 % on CPU) |
+
+**The category discriminates cleanly across all three**, and the gaps are far outside
+the ±1 noise band.
+
+**Capability and consistency arrive together — now confirmed three times.** The 7B is
+smeared across 0/3, 1/3, 2/3 and 3/3; the 14B is nearly decisive; the 30B has
+**no task at `p = 0` at all**. Its blind-retry projection is 11.88, which is the
+clearest possible statement of where retry helps: there is almost nothing left for
+it to recover, because there is no band of incompetence — only one task on the edge.
+
+The 30B also solves **both tasks that defeated the other two** (`explicit lifetimes`
+and `dedup preserving first-appearance order`, 2/2 each), and it did so while a
+quarter of it ran on CPU, with **zero runs lost**.
+
+Two caveats on this row, both mattering:
+
+* Only **2 repeats** (the model is slow when offloaded), so its noise band is wider
+  than the others'.
+* **Its timings are contaminated** — this session was compiling during part of the
+  sweep (see below). No run was excluded and no generation timed out, so the *scores*
+  stand; the `SLOW` tags and per-task milliseconds do not.
+
+This strengthens the earlier finding from the Rust categories: **on a 16 GB card the
+30B MoE beats the dense 14B even while partly on CPU.** A mixture-of-experts activates
+only a few experts per token, so offload costs it far less than it would a dense model.
+
+#### A measurement hygiene note, learned the hard way again
+
+While a `qwen3-coder:30b` sweep was running, this session kept compiling and
+running the test suite. With **25 % of that model on CPU**, compilation steals the
+very cores its inference needs, inflating latencies and risking the client's 120 s
+ceiling — which would surface as excluded runs and a meaningless score. This is
+the CPU-offload trap from the 2026-07 entries, entered from the other side: not a
+badly loaded model, but a well-loaded model with a busy machine. **Do not build
+while measuring.**
+
 ### 2026-08-01 — test generation: the corpus completed, and repeats that actually sample the noise (harness @ V259 / 0.2.211)
 
 **What this category asks.** Every other category hands the model a spec and judges the

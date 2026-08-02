@@ -151,6 +151,34 @@ The levers, in order of impact on this machine:
 timeouts, which the benchmark then records as the model failing the task.** Three
 experiments were invalidated this way before `warn_if_cpu_offloaded()` existed.
 
+### What actually fits on 16 GB — measured
+
+| model | `num_ctx` | loaded | split |
+|---|---|---|---|
+| qwen2.5-coder:7b-instruct | 8192 | 8.2 GB | **100 % GPU** |
+| qwen2.5-coder:14b | 8192 | 18 GB | 25 % CPU / 75 % GPU |
+| qwen2.5-coder:14b | **4096** | 13 GB | **100 % GPU** |
+| qwen3-coder:30b | 4096 | 20 GB | 33 % CPU / 67 % GPU |
+| qwen3-coder:30b | 2048 | 19 GB | 27 % CPU / 73 % GPU |
+
+Note the 14B: **the same model, same quantization, goes from a third on CPU to
+entirely on GPU purely by halving the context.** That is the KV cache, not the
+weights, and it is why `AI_BENCH_NUM_CTX` exists.
+
+The 30B does not fit at any usable context — 19 GB against a 16 GB card even at
+2048. It is still worth running (a MoE activates only a few experts per token, so
+it tolerates offload better than a dense model would), but **the split must be
+recorded next to any score it produces**, and it cannot be compared head to head
+with a fully-resident model without that caveat.
+
+### And do not build while measuring
+
+The corollary, learned by walking into it: with part of a model on CPU, a
+compilation on the same machine steals the cores its inference needs. It inflates
+latency and can push generations into the client's 120 s ceiling, which surfaces
+as excluded runs and a meaningless score. Same trap as a badly loaded model,
+entered from the other side — a well-loaded model on a busy machine.
+
 ---
 
 ## 4. Context compression
@@ -195,6 +223,13 @@ because it recurs:
 **Practical consequence for us: on the Ollama / llama.cpp path TurboQuant is not
 available today**, and if it arrives it should be measured for throughput, not only for
 the memory it frees.
+
+And when it does arrive it is a **strategy, not a default** — the *last* lever on this
+list, not the first. Trading decode speed for cache memory only pays when it is the
+difference between a model fitting and not fitting; if the model already fits, it is a
+pure loss. The cheaper levers come first because they cost nothing in decode:
+`OLLAMA_NUM_PARALLEL=1` (4×) and then `q8_0` cache quantization (~2×). Reach for a
+technique like this to unlock a 30B at long context that otherwise will not load at all.
 
 ---
 
