@@ -494,9 +494,95 @@ pub(crate) fn tests_agentic_test_gen() -> CategoryResult {
             .join(", ");
         println!("  {} inconsistent across runs: {}", yellow("FLAKY"), list);
     }
+    print_distribution(&scored);
+    print_blind_retry_projection(&scored);
+    print_failure_modes(&last_failure);
 
     CategoryResult {
         name: "agentic_test_gen".to_string(),
         results,
     }
+}
+
+/// Where the model sits, not just what it totalled.
+///
+/// A single number hides the shape: 6/12 can mean six tasks solved reliably and
+/// six never, or twelve solved half the time. Those are different models to
+/// work with, and the middle band is where retrying might help.
+fn print_distribution(scored: &[f64]) {
+    if scored.is_empty() {
+        return;
+    }
+    let n = scored.len() as f64;
+    let mean = scored.iter().sum::<f64>() / n;
+    let variance = scored.iter().map(|s| (s - mean).powi(2)).sum::<f64>() / n;
+    let never = scored.iter().filter(|s| **s <= f64::EPSILON).count();
+    let always = scored.iter().filter(|s| **s >= 1.0 - f64::EPSILON).count();
+    let sometimes = scored.len() - never - always;
+    println!(
+        "  {} mean rate {:.2} (sd {:.2}) — always {}, sometimes {}, never {}",
+        bold(&cyan("∑")),
+        mean,
+        variance.sqrt(),
+        always,
+        sometimes,
+        never
+    );
+}
+
+/// What plain retrying would buy, before anyone builds a repair loop.
+///
+/// Attempts are independent, so a task solved with probability `p` succeeds at
+/// least once in `k` tries with probability `1-(1-p)^k`. That is the score a
+/// strategy of simply *buying more lottery tickets* would reach — and it is the
+/// bar any feedback-driven repair has to clear to have earned its complexity.
+/// Matching this number means the compiler output added nothing.
+///
+/// Note what it cannot move: a task at `p = 0` stays at 0 for any `k`. Retrying
+/// recovers the inconsistent band and nothing else, which is the sharp form of
+/// the settled result that scaffolding does not create capability.
+fn print_blind_retry_projection(scored: &[f64]) {
+    if scored.is_empty() {
+        return;
+    }
+    let project = |k: i32| -> f64 { scored.iter().map(|p| 1.0 - (1.0 - p).powi(k)).sum::<f64>() };
+    println!(
+        "  {} blind-retry projection: {:.2} at k=2, {:.2} at k=3 (of {}) — the bar a \
+         feedback-driven repair must beat",
+        bold(&cyan("∑")),
+        project(2),
+        project(3),
+        scored.len()
+    );
+}
+
+/// Which way the suites are wrong, which is more actionable than how many.
+///
+/// Counts every task that had **at least one** failing run, by its last
+/// failure — not only the tasks that failed outright. A task solved 2 times in 3
+/// still failed once, and how it failed is the same evidence.
+fn print_failure_modes(last_failure: &[Option<String>]) {
+    let (mut no_file, mut rejects_valid, mut too_weak, mut crashed, mut other) = (0, 0, 0, 0, 0);
+    for msg in last_failure.iter().flatten() {
+        match msg.as_str() {
+            m if m.starts_with(BACKEND_CRASH_PREFIX) => crashed += 1,
+            m if m.contains("never produced a test file") => no_file += 1,
+            m if m.contains("FAIL on correct code") => rejects_valid += 1,
+            m if m.contains("too weak") => too_weak += 1,
+            _ => other += 1,
+        }
+    }
+    if no_file + rejects_valid + too_weak + crashed + other == 0 {
+        return;
+    }
+    println!(
+        "  {} failure modes: {} rejected valid code, {} too weak to catch the bug, \
+         {} produced no tests, {} backend crash, {} other",
+        bold(&cyan("∑")),
+        rejects_valid,
+        too_weak,
+        no_file,
+        crashed,
+        other
+    );
 }
