@@ -122,6 +122,39 @@ dependencies), so disk growth is not a concern in normal use.
 
 ## Log (newest first)
 
+### 2026-08-03 (2nd) — the Python oracles were never audited, and four of eleven were incompetent (harness @ V264 / 0.2.216)
+
+`checker_adequacy` (V256) mutation-tested the **Rust** checkers and found two of twelve
+unable to reject a plausible wrong answer. The **Python** checkers are older and had
+never been audited at all. `python_adequacy` applies the same test, deliberately using
+the *same checker text and the same runner* the benchmark uses — re-implementing either
+would audit a copy rather than the thing.
+
+**5 of 33 checks failed, across four tasks.** Each accepted an implementation a model
+would plausibly write:
+
+| task | what slipped through |
+|---|---|
+| `has_close_elements` | **both** mutants: no input sat exactly *on* the threshold, so `<=` passed a strictly-less-than spec; and every close pair was adjacent, so comparing only neighbours passed |
+| `reverse_words` | every string had single spaces, so `s.split(' ')` — which differs from `s.split()` only on runs of whitespace — went unnoticed |
+| `is_prime` | 0 and 1 were covered but nothing negative, so guarding only `n in (0, 1)` reported −7 as prime |
+| `longest_common_subsequence` | LCS length coincidentally equalled the shared-character count in every case, so an implementation **ignoring order entirely** passed. `'ab'` vs `'ba'` separates them: LCS 1, shared characters 2 |
+
+The pattern is the same every time: **a missing separating case**. The inputs never
+distinguished right from almost-right.
+
+All four are fixed and the audit passes 33/33. It runs inside `--all` (now 692 tests),
+so they cannot rot again.
+
+**Two consequences.**
+
+1. **`code_gen_bench` scores from before V264 are not comparable.** A model could score
+   a task with a wrong answer, so those numbers contained noise of unknown size.
+2. **Python came out worse than Rust (4/11 vs 2/12), and that is not an accident.** Rust
+   tasks are gated by a compiler and `cargo test`, which reject whole classes of
+   wrongness for free; a Python assert list catches only what someone thought to write
+   down. Expect the weakest oracles wherever the language does least for you.
+
 ### 2026-08-03 — reading the shape instead of the total, and the bar a repair loop must clear (harness @ V263 / 0.2.215)
 
 Three lines were added to the `agentic_test_gen` summary. All are computed from

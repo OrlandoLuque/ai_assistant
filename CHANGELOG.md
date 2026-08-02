@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v139 (2026-08-03) — V264: the Python oracles were never audited (0.2.216)
+
+### Added
+- **`python_adequacy`** — mutation-tests the benchmark's own Python checkers, the way
+  `checker_adequacy` (V256) does for Rust. Uses the *same* checker text and runner the
+  benchmark uses; re-implementing either would audit a copy rather than the thing.
+
+### Fixed
+- **Four of eleven Python oracles accepted a plausible wrong answer** (5 of 33 checks):
+  - `has_close_elements` accepted **both** mutants — nothing sat exactly on the
+    threshold, so `<=` passed a strictly-less-than spec, and every close pair was
+    adjacent, so comparing only neighbours passed.
+  - `reverse_words` used single spaces throughout, so `s.split(' ')` went unnoticed.
+  - `is_prime` covered 0 and 1 but nothing negative, so `−7` came out prime.
+  - `longest_common_subsequence` — LCS length coincidentally equalled the
+    shared-character count in every case, so an implementation **ignoring order** passed.
+  All four now carry the separating case; the audit passes 33/33 and runs inside `--all`.
+
+### Changed
+- **`code_gen_bench` scores from before this are not comparable** — a model could score
+  a task with a wrong answer.
+
+## [Unreleased] - v138 (2026-08-03) — V263: aggregate statistics, and the bar a repair loop must clear (0.2.215)
+
+### Added
+- **Distribution line** (`mean rate 0.44 (sd 0.44) — always 4, sometimes 3, never 5`).
+  A total hides the shape: 6/12 can be six tasks solved reliably or twelve solved half
+  the time. Standard deviation equalling the mean is the signature of a bimodal model.
+- **Blind-retry projection** (`6.00 at k=2, 6.37 at k=3`). Attempts being independent, a
+  task solved with probability `p` succeeds at least once in `k` tries with probability
+  `1-(1-p)^k` — what simply *buying more lottery tickets* would score, and therefore
+  **the bar any feedback-driven repair must clear to have earned its complexity**. It
+  also bounds the ceiling: a task at `p = 0` stays there for every `k`, so retrying
+  recovers the inconsistent band and nothing else.
+- **Failure-mode histogram**, counted across every task with at least one failing run —
+  a task solved 2 times in 3 still failed once, and how it failed is the same evidence.
+
 ## [Unreleased] - v137 (2026-08-02) — V262: quarantine for unverifiable work, and its two auditors (0.2.214)
 
 ### Added
