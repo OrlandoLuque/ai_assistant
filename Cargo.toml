@@ -164,14 +164,16 @@ full = [
     # the core "just works" onboarding — fail with "requires the butler
     # feature", so it belongs in the default/product build.
     "butler",
-    # Self-correction = the stuck detector, the critique refiner and the
-    # verify->repair->retry loop (`work_repair`). Dep-free, and inert until a
-    # detector or verifier is actually configured, so it costs a `full` build
-    # nothing it does not ask for. It belongs here because an agent that cannot
-    # check and fix its own work is not a product-grade agent — and because
-    # keeping it out meant `ai_test_harness` would need it as an extra
-    # `required-features`, which silently drops the harness from CI's
-    # `--all-targets` clippy gate (the coverage hole fixed in V247).
+    # Self-correction = the `CorrectableTask` engine (V98-V100), the stuck
+    # detector, the critique refiner, and `machine_fix`. Dep-free, and inert
+    # until a detector or verifier is actually configured, so a `full` build
+    # gains capability without gaining behaviour. It belongs here because an
+    # agent that cannot check and fix its own work is not a product-grade
+    # agent — and because keeping it out meant `ai_test_harness` would need it
+    # as an extra `required-features`, which silently drops the harness from
+    # CI's `--all-targets` clippy gate (the coverage hole fixed in V247).
+    # V261: adding it put the subsystem under `-D warnings` for the first time
+    # and immediately exposed a validator that approved everything.
     "self-correction",
 ]
 

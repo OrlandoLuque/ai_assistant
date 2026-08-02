@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v136 (2026-08-01) — V261: self-correction under CI, and the validator that approved everything (0.2.213)
+
+### Added
+- **`self_correction::machine_fix`** — applies rustc-style `suggested_replacement`
+  spans, with the two details that carry its correctness: edits are spliced **back to
+  front** so each leaves the preceding offsets valid, and ranges that are out of bounds
+  or land mid-character are **skipped, not clamped**.
+- **`apply_if_verified`** encodes the rule that matters: a fix survives only if
+  verification passes afterwards. rustc marks some suggestions `MachineApplicable` that
+  are *wrong* — this project measured one (`+ Ord` on a generic bound, which compiled
+  and broke the task's `f64` case; `cargo fix` would have committed it). So
+  `Suggestion::applicability` is carried for reporting and deliberately never consulted.
+  `ai_test_harness` now calls this instead of keeping a private copy.
+
+### Changed
+- **`self-correction` joins `full`.** It was in no feature set CI builds, so an entire
+  subsystem had never been compiled under `-D warnings`. Dep-free and inert until a
+  detector or verifier is configured, so `full` gains capability, not behaviour.
+- Most of "move verify→repair→retry into the library" turned out to need no moving: the
+  framework has existed since V98–V100 (`CorrectableTask`, `SelfCorrectionEngine` with
+  budget and per-attempt token/cost/time records, `CodeCompileTask`, `cargo_run_tests`,
+  a ledger). Only the machine-fix step was genuinely missing.
+
+### Fixed
+- **`CodeCompileTask::validate` returned `Vec::new()` unconditionally** — a validator
+  that approved everything. The engine saw zero issues on the first attempt and stopped
+  with `AllPassed` whatever the compiler said, so an agent self-checking against it
+  would rubber-stamp broken work: the precise failure the module exists to prevent. The
+  comment in its place described the `&self`-vs-`FnMut` borrow problem and deferred the
+  fix; interior mutability was the answer, as the neighbouring `CodeCompileTaskCell`
+  already demonstrated. **No test caught it** — every existing one exercised `execute`,
+  `build_feedback` or `quality_score`, and none asserted that `validate` reports
+  anything. There is now one that does.
+- `assert!(result.total_tokens >= 0)` on an unsigned type: vacuous, could never fail.
+  Replaced with assertions about what the smoke test actually cares about.
+- A dead `MockTask` superseded by `PlannedMockTask`, a redundant clone, and an
+  `is_none()`/`return None` block. Also removed a throwaway `CodeCompileTask` —
+  closures and all — that the cell variant constructed solely to reuse one
+  string-building method, now a free function both share.
+
 ## [Unreleased] - v135 (2026-08-01) — V260: a model's tool call no longer dies over its own escaping (0.2.212)
 
 ### Fixed
