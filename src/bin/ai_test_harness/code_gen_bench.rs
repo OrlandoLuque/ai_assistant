@@ -33,9 +33,14 @@ const TASKS: &[CodeTask] = &[
         spec: "Define a function `has_close_elements(numbers, threshold)` that returns True if \
                 any two numbers in the list `numbers` are closer to each other than `threshold` \
                 (strictly less than), else False.",
+        // V264: the original three asserts caught neither of the two obvious wrong
+        // answers. Nothing sat exactly ON the threshold, so `<=` passed; and every
+        // close pair was adjacent, so comparing only neighbours passed too.
         checker: "assert has_close_elements([1.0, 2.0, 3.0], 0.5) == False\n\
                   assert has_close_elements([1.0, 2.8, 3.0, 4.0, 5.0], 0.3) == True\n\
-                  assert has_close_elements([], 1.0) == False\n",
+                  assert has_close_elements([], 1.0) == False\n\
+                  assert has_close_elements([1.0, 1.5], 0.5) == False\n\
+                  assert has_close_elements([1.0, 5.0, 1.2], 0.5) == True\n",
     },
     CodeTask {
         name: "sum_even_numbers",
@@ -50,19 +55,26 @@ const TASKS: &[CodeTask] = &[
         spec: "Define a function `reverse_words(s)` that returns the string `s` with the order \
                 of its whitespace-separated words reversed (single spaces between words in the \
                 result).",
+        // V264: every input had exactly single spaces, so `s.split(' ')` — which
+        // differs from `s.split()` only on runs of whitespace — passed unnoticed.
         checker: "assert reverse_words('hello world foo') == 'foo world hello'\n\
                   assert reverse_words('single') == 'single'\n\
-                  assert reverse_words('') == ''\n",
+                  assert reverse_words('') == ''\n\
+                  assert reverse_words('a  b') == 'b a'\n\
+                  assert reverse_words('  lead and trail  ') == 'trail and lead'\n",
     },
     CodeTask {
         name: "is_prime",
         spec: "Define a function `is_prime(n)` that returns True if the integer `n` is a prime \
                 number, else False. Numbers below 2 are not prime.",
+        // V264: 0 and 1 were covered but nothing negative, so an implementation
+        // guarding only `n in (0, 1)` reported -7 as prime and still passed.
         checker: "assert is_prime(2) == True\n\
                   assert is_prime(17) == True\n\
                   assert is_prime(1) == False\n\
                   assert is_prime(15) == False\n\
-                  assert is_prime(0) == False\n",
+                  assert is_prime(0) == False\n\
+                  assert is_prime(-7) == False\n",
     },
     CodeTask {
         name: "roman_to_int",
@@ -111,10 +123,14 @@ const TASKS: &[CodeTask] = &[
         spec: "Define a function `lcs(a, b)` that returns the LENGTH of the longest common \
                 subsequence of strings `a` and `b` (characters in order but not necessarily \
                 contiguous).",
+        // V264: in every original case the LCS length happened to equal the count
+        // of shared characters, so an implementation ignoring ORDER entirely
+        // passed. 'ab' vs 'ba' separates them: LCS is 1, shared characters are 2.
         checker: "assert lcs('abcde', 'ace') == 3\n\
                   assert lcs('abc', 'abc') == 3\n\
                   assert lcs('abc', 'def') == 0\n\
-                  assert lcs('AGGTAB', 'GXTXAYB') == 4\n",
+                  assert lcs('AGGTAB', 'GXTXAYB') == 4\n\
+                  assert lcs('ab', 'ba') == 1\n",
     },
     CodeTask {
         name: "int_to_roman",
@@ -293,4 +309,25 @@ pub(crate) fn tests_code_gen_bench() -> CategoryResult {
         name: "code_gen_bench".to_string(),
         results,
     }
+}
+
+// ── Exposed for `python_adequacy` (V264) ──────────────────────────────────────
+//
+// The oracle audit needs the very same checker text and the very same runner the
+// benchmark uses. Re-implementing either would audit a copy rather than the
+// thing, which is how an audit ends up agreeing with itself.
+
+/// First available Python interpreter, if any.
+pub(crate) fn python_cmd_pub() -> Option<&'static str> {
+    python_cmd()
+}
+
+/// Run `code` and report whether it exited 0.
+pub(crate) fn run_python_pub(py: &str, code: &str) -> Result<bool, String> {
+    run_python(py, code)
+}
+
+/// The assert suite for a task, by name.
+pub(crate) fn checker_for(task: &str) -> Option<&'static str> {
+    TASKS.iter().find(|t| t.name == task).map(|t| t.checker)
 }

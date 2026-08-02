@@ -422,6 +422,7 @@ mod features2;
 mod p2p;
 mod pipelines;
 mod precision;
+mod python_adequacy;
 mod rag_graph;
 mod real_e2e;
 mod resilience;
@@ -454,6 +455,7 @@ use crate::features2::*;
 use crate::p2p::*;
 use crate::pipelines::*;
 use crate::precision::*;
+use crate::python_adequacy::*;
 use crate::rag_graph::*;
 use crate::real_e2e::*;
 use crate::resilience::*;
@@ -758,6 +760,10 @@ fn all_categories() -> Vec<(&'static str, fn() -> CategoryResult)> {
         categories.push((
             "checker_adequacy",
             tests_checker_adequacy as fn() -> CategoryResult,
+        ));
+        categories.push((
+            "python_adequacy",
+            tests_python_adequacy as fn() -> CategoryResult,
         ));
         categories.push(("agentic_rust", tests_agentic_rust as fn() -> CategoryResult));
         categories.push((
