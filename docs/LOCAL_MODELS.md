@@ -171,11 +171,30 @@ Quantized Johnson–Lindenstrauss and PolarQuant, reported at ~6× cache compres
 ~8× faster attention, down to 3-bit cache without meaningful accuracy loss
 ([Google Research](https://research.google/blog/turboquant-redefining-ai-efficiency-with-extreme-compression/)).
 
-Adoption is uneven and this matters for us: **vLLM merged it; llama.cpp declined it**
-([llama.cpp discussion](https://github.com/ggml-org/llama.cpp/discussions/20969)), with a
-third-party implementation existing outside the tree
-([AmesianX/TurboQuant](https://github.com/AmesianX/TurboQuant)). So on the Ollama /
-llama.cpp path it is not available today.
+**Why it is in vLLM but not in llama.cpp — and it is not a rejection.** The upstream
+[discussion](https://github.com/ggml-org/llama.cpp/discussions/20969) shows no formal
+refusal; the work is **stalled at the fork stage**, with independent Metal, CUDA, Vulkan
+and CPU implementations living outside the tree (also
+[AmesianX/TurboQuant](https://github.com/AmesianX/TurboQuant)). The results are real —
+4–5× cache compression, one report of output identical to the f16 baseline on a 35B model
+at temperature 0, 262K context on multi-GPU.
+
+Two barriers keep it out: every backend needs its own implementation, and — the decisive
+one — **decode gets slower**, reported anywhere from 37% to 8× depending on hardware,
+pending fused attention kernels.
+
+That trade-off is exactly why the two engines diverge, and it is worth internalising
+because it recurs:
+
+* **vLLM** serves many concurrent long-context requests, where the KV cache is *the*
+  binding constraint (PagedAttention exists for this reason). Paying decode speed to fit
+  more sequences is a good trade.
+* **llama.cpp** serves one latency-sensitive local user. An 8× decode slowdown to save
+  memory the user may not be short of is a bad trade.
+
+**Practical consequence for us: on the Ollama / llama.cpp path TurboQuant is not
+available today**, and if it arrives it should be measured for throughput, not only for
+the memory it frees.
 
 ---
 
