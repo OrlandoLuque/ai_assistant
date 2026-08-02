@@ -527,7 +527,15 @@ mod tests {
         .with_knowledge(knowledge);
         let engine = SelfCorrectionEngine::with_defaults();
         let result = engine.run(task, "Who created Rust?");
-        assert!(result.total_tokens >= 0);
+        // `total_tokens >= 0` was asserted here, which is vacuous on an unsigned
+        // type — it could never fail and so tested nothing. Assert what the smoke
+        // test actually cares about instead: the engine ran, recorded the attempt,
+        // and reached one of its two acceptable end states.
+        assert!(
+            !result.attempts.is_empty(),
+            "the engine must record at least one attempt"
+        );
+        assert_eq!(result.task_name, "claim_verification");
         // Either succeeded (claim verified) or stopped on a budget/regression
         // — both are acceptable end states for this smoke test.
     }

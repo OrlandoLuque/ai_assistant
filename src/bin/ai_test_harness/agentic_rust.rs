@@ -342,15 +342,10 @@ fn verify_crate(cargo: &str, ws: &Path, checker: &str) -> bool {
 // breaks the task's f64 case. The tests are the only trustworthy acceptance criterion,
 // which is why `checker_adequacy` (V256) had to come first.
 
-#[derive(Debug)]
-struct Suggestion {
-    file: String,
-    /// Byte range in the original file.
-    start: usize,
-    end: usize,
-    replacement: String,
-    applicability: String,
-}
+/// The splicing rules (apply back to front, skip ranges that split a character)
+/// live in the library now — see `ai_assistant::self_correction::machine_fix`. Only the
+/// cargo-specific half, turning rustc's JSON into suggestions, stays here.
+use ai_assistant::self_correction::machine_fix::Suggestion;
 
 /// Ask cargo for machine-readable diagnostics and collect every replacement it
 /// proposes, most specific first.
@@ -414,32 +409,19 @@ fn try_compiler_guided_repair(cargo: &str, ws: &Path, checker: &str) -> bool {
         return false;
     };
 
-    let mut sugg: Vec<Suggestion> = collect_suggestions(cargo, ws)
+    let sugg: Vec<Suggestion> = collect_suggestions(cargo, ws)
         .into_iter()
         .filter(|s| s.file.replace('\\', "/").ends_with("src/lib.rs"))
-        .filter(|s| s.start <= s.end && s.end <= original.len())
         .collect();
-    if sugg.is_empty() {
+    let Some(patched) =
+        ai_assistant::self_correction::machine_fix::apply_suggestions(&original, &sugg)
+    else {
         return false;
-    }
-    // Apply from the end so each splice leaves preceding offsets untouched.
-    sugg.sort_by(|a, b| b.start.cmp(&a.start));
-
-    let mut patched = original.clone();
-    let mut applied = Vec::new();
-    for s in &sugg {
-        if s.end > patched.len()
-            || !patched.is_char_boundary(s.start)
-            || !patched.is_char_boundary(s.end)
-        {
-            continue;
-        }
-        patched.replace_range(s.start..s.end, &s.replacement);
-        applied.push(format!("{} ({})", s.replacement.trim(), s.applicability));
-    }
-    if applied.is_empty() || patched == original {
-        return false;
-    }
+    };
+    let applied: Vec<String> = sugg
+        .iter()
+        .map(|s| format!("{} ({})", s.replacement.trim(), s.applicability))
+        .collect();
 
     if std::fs::write(&lib, &patched).is_err() {
         return false;

@@ -137,6 +137,33 @@ pub type TestFn = Box<dyn FnMut(&str) -> TestRunResult + Send>;
 pub type CodeRegenerateFn =
     Box<dyn FnMut(&str, Option<&str>) -> Option<(String, usize, f64)> + Send>;
 
+/// The feedback prompt sent back to the model after a failed compile.
+///
+/// A free function because both compile tasks need exactly this text and
+/// nothing else: the cell variant used to build a whole throwaway
+/// `CodeCompileTask` — closures and all — just to call it.
+fn compile_feedback(user_intent: &str, prior_attempts: &[AttemptRecord]) -> String {
+    let mut lines = Vec::new();
+    lines.push(format!("Original task: {}", user_intent));
+    lines.push(String::new());
+    if let Some(last) = prior_attempts.last() {
+        lines.push(format!(
+            "Your previous submission failed with {} issue(s):",
+            last.issues.len()
+        ));
+        for issue in &last.issues {
+            lines.push(format!("  - {}", issue));
+        }
+    }
+    lines.push(String::new());
+    lines.push("Please regenerate the code, applying these rules:".to_string());
+    lines.push("  1. Fix every compiler error reported above.".to_string());
+    lines.push("  2. Do not introduce unrelated changes.".to_string());
+    lines.push("  3. Keep the public API unchanged unless the error requires it.".to_string());
+    lines.push("  4. Output ONLY the full corrected source file — no prose.".to_string());
+    lines.join("\n")
+}
+
 // ── CodeCompileTask ────────────────────────────────────────────────────────
 
 /// Retry loop for "code that compiles".
@@ -148,7 +175,7 @@ pub struct CodeCompileTask {
     user_prompt: String,
     initial_code: Option<String>,
     regenerate_fn: CodeRegenerateFn,
-    compile_fn: CompileFn,
+    compile_fn: std::cell::RefCell<CompileFn>,
     warnings_as_errors: bool,
 }
 
@@ -164,7 +191,7 @@ impl CodeCompileTask {
             user_prompt: user_prompt.into(),
             initial_code: Some(initial_code.into()),
             regenerate_fn,
-            compile_fn,
+            compile_fn: std::cell::RefCell::new(compile_fn),
             warnings_as_errors: false,
         }
     }
@@ -206,41 +233,33 @@ impl CorrectableTask for CodeCompileTask {
     }
 
     fn validate(&self, output: &Self::Output) -> Vec<Self::Issue> {
-        // SAFETY: compile_fn is FnMut, but the trait gives us `&self`. We
-        // wrap it in a RefCell-like dance via UnsafeCell? Simpler: move the
-        // mutability into `execute` by having compile_fn cache the last
-        // result. But that complicates the API. Instead we accept that
-        // `validate` runs compile — to satisfy borrow rules we take a
-        // `&mut self` alternative: shadow the trait.
+        // This used to return `Vec::new()` unconditionally, defeated by
+        // `validate(&self, …)` against an `FnMut` compile closure. The comment
+        // left behind described the borrow problem and deferred the fix, so the
+        // task shipped as a validator that **approved everything**: the engine
+        // saw zero issues on the first attempt and stopped with `AllPassed`,
+        // whatever the code did. An agent checking its own work against this
+        // would rubber-stamp it — the precise failure this whole module exists
+        // to prevent.
         //
-        // Since the trait takes `&self`, we use a blocking workaround:
-        // compile_fn is Box<dyn FnMut>; we clone from behind the Box via
-        // a small unsafe cast. Cleaner: swap compile_fn to Box<dyn Fn>
-        // (immutable closures). Refactor accordingly.
-        let _ = output;
-        Vec::new()
+        // Interior mutability is the answer, exactly as `CodeCompileTaskCell`
+        // already demonstrated.
+        let result = (self.compile_fn.borrow_mut())(output);
+        let mut issues = Vec::new();
+        if !result.ok {
+            issues.push(CompileIssue::Failed {
+                stderr: result.stderr.clone(),
+            });
+        } else if self.warnings_as_errors && result.stderr.to_lowercase().contains("warning") {
+            issues.push(CompileIssue::WarningsAsErrors {
+                stderr: result.stderr,
+            });
+        }
+        issues
     }
 
     fn build_feedback(&self, user_intent: &str, prior_attempts: &[AttemptRecord]) -> String {
-        let mut lines = Vec::new();
-        lines.push(format!("Original task: {}", user_intent));
-        lines.push(String::new());
-        if let Some(last) = prior_attempts.last() {
-            lines.push(format!(
-                "Your previous submission failed with {} issue(s):",
-                last.issues.len()
-            ));
-            for issue in &last.issues {
-                lines.push(format!("  - {}", issue));
-            }
-        }
-        lines.push(String::new());
-        lines.push("Please regenerate the code, applying these rules:".to_string());
-        lines.push("  1. Fix every compiler error reported above.".to_string());
-        lines.push("  2. Do not introduce unrelated changes.".to_string());
-        lines.push("  3. Keep the public API unchanged unless the error requires it.".to_string());
-        lines.push("  4. Output ONLY the full corrected source file — no prose.".to_string());
-        lines.join("\n")
+        compile_feedback(user_intent, prior_attempts)
     }
 
     fn quality_score(&self, _output: &Self::Output, issues: &[Self::Issue]) -> f64 {
@@ -335,17 +354,7 @@ impl CorrectableTask for CodeCompileTaskCell {
     }
 
     fn build_feedback(&self, user_intent: &str, prior_attempts: &[AttemptRecord]) -> String {
-        let task = CodeCompileTask {
-            user_prompt: self.user_prompt.clone(),
-            initial_code: None,
-            regenerate_fn: Box::new(|_, _| None),
-            compile_fn: Box::new(|_| CompileCheckResult {
-                ok: true,
-                stderr: String::new(),
-            }),
-            warnings_as_errors: self.warnings_as_errors,
-        };
-        task.build_feedback(user_intent, prior_attempts)
+        compile_feedback(user_intent, prior_attempts)
     }
 
     fn quality_score(&self, _output: &Self::Output, issues: &[Self::Issue]) -> f64 {
@@ -677,12 +686,49 @@ mod tests {
     }
 
     #[test]
+    fn compile_task_actually_reports_failures() {
+        // Regression. `validate` used to return `Vec::new()` unconditionally —
+        // a validator that approved everything, so the engine stopped on the
+        // first attempt with `AllPassed` no matter what the compiler said. An
+        // agent checking its own work against it would rubber-stamp broken
+        // code, which is the exact failure this module exists to prevent.
+        //
+        // Nothing in the suite caught it: every existing test exercised
+        // `execute`, `build_feedback` or `quality_score`, and none asserted that
+        // `validate` reports anything. Hence this one.
+        let task = CodeCompileTask::new(
+            "q",
+            "fn main() {}",
+            Box::new(|_, _| None),
+            always_fail_compile(),
+        );
+        let issues = task.validate(&"fn main() {}".to_string());
+        assert_eq!(issues.len(), 1, "a failing compile must produce an issue");
+        assert!(
+            matches!(issues[0], CompileIssue::Failed { .. }),
+            "{:?}",
+            issues[0]
+        );
+
+        let task = CodeCompileTask::new(
+            "q",
+            "fn main() {}",
+            Box::new(|_, _| None),
+            always_ok_compile(),
+        );
+        assert!(
+            task.validate(&"fn main() {}".to_string()).is_empty(),
+            "a clean compile must produce no issues"
+        );
+    }
+
+    #[test]
     fn test_compile_feedback_mentions_stderr() {
         let task = CodeCompileTask {
             user_prompt: "q".into(),
             initial_code: None,
             regenerate_fn: Box::new(|_, _| None),
-            compile_fn: always_fail_compile(),
+            compile_fn: std::cell::RefCell::new(always_fail_compile()),
             warnings_as_errors: false,
         };
         let prior = vec![AttemptRecord {
@@ -707,7 +753,7 @@ mod tests {
             user_prompt: "q".into(),
             initial_code: None,
             regenerate_fn: Box::new(|_, _| None),
-            compile_fn: always_ok_compile(),
+            compile_fn: std::cell::RefCell::new(always_ok_compile()),
             warnings_as_errors: false,
         };
         assert_eq!(task.quality_score(&String::new(), &[]), 1.0);

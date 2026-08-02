@@ -2624,7 +2624,7 @@ Let me process the results."#;
             },
         };
         assert_ne!(
-            canonical_action_key(&[a.clone()]),
+            canonical_action_key(std::slice::from_ref(&a)),
             canonical_action_key(&[b])
         );
         assert_eq!(canonical_action_key(&[a]), canonical_action_key(&[c]));

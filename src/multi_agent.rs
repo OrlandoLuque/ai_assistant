@@ -1949,9 +1949,7 @@ impl PatternRunner {
     ) -> Option<String> {
         use crate::stuck_detector::AgentObservation;
 
-        if self.stuck_detector.is_none() {
-            return None;
-        }
+        self.stuck_detector.as_ref()?;
 
         let obs = AgentObservation {
             step: self.transcript.len(),

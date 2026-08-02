@@ -320,7 +320,6 @@ impl SelfCorrectionEngine {
 mod tests {
     use super::super::*;
     use super::SelfCorrectionEngine;
-    use std::cell::RefCell;
 
     /// Issue type for mock tests.
     #[derive(Debug)]
@@ -338,65 +337,6 @@ mod tests {
     impl Issue for MockIssue {
         fn is_retryable(&self) -> bool {
             self.retryable
-        }
-    }
-
-    /// A mock task that returns a pre-recorded sequence of (output, issues,
-    /// quality) triples, one per attempt.
-    struct MockTask {
-        outputs: RefCell<Vec<(String, Vec<MockIssue>, f64, usize, f64)>>,
-    }
-
-    impl MockTask {
-        fn new(outputs: Vec<(String, Vec<MockIssue>, f64, usize, f64)>) -> Self {
-            Self {
-                outputs: RefCell::new(outputs),
-            }
-        }
-    }
-
-    impl CorrectableTask for MockTask {
-        type Output = String;
-        type Issue = MockIssue;
-
-        fn name(&self) -> &str {
-            "mock"
-        }
-
-        fn execute(
-            &mut self,
-            _feedback: Option<&str>,
-        ) -> Result<TaskOutcome<Self::Output>, TaskError> {
-            let (out, _issues, _q, tokens, cost) = self.outputs.borrow_mut().remove(0);
-            Ok(TaskOutcome {
-                output: out,
-                tokens_used: tokens,
-                cost_usd: cost,
-            })
-        }
-
-        fn validate(&self, _output: &Self::Output) -> Vec<Self::Issue> {
-            // Peek next issues by cloning from the same position as last
-            // remove — but since remove already popped, use a trick: store
-            // issues alongside output and re-use. Simpler: issues are keyed
-            // by the current state of outputs before removal.
-            // This method is called AFTER execute(), so the issues we want
-            // are for the most recent attempt. We stored them in `outputs[0]`
-            // before `execute` popped — so they're gone. Use a side-channel:
-            // the `MockTask` is designed so issues/quality are pre-computed
-            // and we return them from `validate` by re-inspecting state.
-            //
-            // For simplicity, the mock task in tests uses a separate wrapper
-            // below (`PlannedMockTask`) that decouples execute from validate.
-            vec![]
-        }
-
-        fn build_feedback(&self, _user_intent: &str, _prior_attempts: &[AttemptRecord]) -> String {
-            String::from("please fix")
-        }
-
-        fn quality_score(&self, _output: &Self::Output, _issues: &[Self::Issue]) -> f64 {
-            1.0
         }
     }
 

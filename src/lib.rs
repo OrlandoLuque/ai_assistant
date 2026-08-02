@@ -1047,6 +1047,13 @@ pub use autonomous_loop::{
     IterationOutcome, KnowledgeProvider,
 };
 
+// Aliased: the crate root already exports an unrelated `Suggestion` from the
+// recommendation generator.
+#[cfg(feature = "self-correction")]
+pub use self_correction::machine_fix::{
+    apply_if_verified, apply_suggestions, Suggestion as MachineSuggestion,
+};
+
 #[cfg(feature = "autonomous")]
 pub use mode_manager::{ModeManager, OperationMode};
 
