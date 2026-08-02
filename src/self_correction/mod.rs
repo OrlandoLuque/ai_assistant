@@ -28,6 +28,7 @@ pub mod code;
 pub mod engine;
 pub mod ledger;
 pub mod machine_fix;
+pub mod quarantine;
 pub mod research;
 pub mod safety;
 pub mod tool_call;
@@ -44,6 +45,7 @@ pub use code::{
 pub use engine::SelfCorrectionEngine;
 pub use ledger::{CorrectionLedger, LedgerEntry, LedgerError};
 pub use machine_fix::{apply_if_verified, apply_suggestions, Suggestion as MachineSuggestion};
+pub use quarantine::{Quarantine, QuarantineRecord};
 pub use research::{
     CitationIssue, CitationRegenerateFn, CitationValidateFn, CitationValidationResult,
     ResearchCitationTask,

@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.213"
+version = "0.2.214"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -389,6 +389,10 @@ acp = []
 # Run: cargo run --bin ai_acp_audit_gui --features gui-acp
 gui-acp = ["acp", "dep:eframe"]
 
+# V262: visual auditor for the self-correction review queue — the CLI
+# `ai_corrections` companion, promised by the module docs since V98.
+gui-corrections = ["self-correction", "dep:eframe"]
+
 # In-process local inference (V108 / Phase A.3) — base scaffolding only.
 # Surfaces backend trait, config builder, VRAM detection, GPU-layer auto-clamp.
 # Backend implementations live behind sub-features (local-inference-candle,
@@ -754,6 +758,21 @@ bench = false
 name = "ai_logs"
 path = "src/bin/ai_logs.rs"
 required-features = ["distributed-network"]
+bench = false
+
+# V262: auditor for the self-correction subsystem — the review queue of work the
+# engine could not verify, plus the JSONL run ledger. The module's own docs have
+# promised this binary since V98; it was never written.
+[[bin]]
+name = "ai_corrections"
+path = "src/bin/ai_corrections.rs"
+required-features = ["self-correction"]
+bench = false
+
+[[bin]]
+name = "ai_corrections_gui"
+path = "src/bin/ai_corrections_gui.rs"
+required-features = ["gui-corrections"]
 bench = false
 
 # V128 (C.7): backup/restore CLI — AES-256-GCM + Ed25519 + SHA-256 sidecar.

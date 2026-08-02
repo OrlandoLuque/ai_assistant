@@ -2,8 +2,16 @@
 //!
 //! Each call to `append` writes exactly one JSON object per line with the
 //! full run summary. The ledger is append-only; `read_all` scans the file
-//! and returns every entry. The auditor binary `ai_corrections` (V98 GUI
-//! companion: `ai_corrections_gui`) reads this format.
+//! and returns every entry.
+//!
+//! Read by `ai_corrections log`, with `ai_corrections_gui` as its visual
+//! companion. Those two were promised by this comment from V98 and only
+//! actually written in V262 — an audit trail nothing could read is not an
+//! audit trail.
+//!
+//! The ledger records what *happened*. For what is still *outstanding* — work
+//! the engine could not make correct, waiting on a human — see
+//! [`super::quarantine`].
 
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
