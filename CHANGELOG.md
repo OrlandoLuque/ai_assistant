@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v137 (2026-08-02) — V262: quarantine for unverifiable work, and its two auditors (0.2.214)
+
+### Added
+- **`self_correction::quarantine`** — the terminal state for "tried, could not fix it".
+  A run that exhausts its budget has produced a **known-not-verified** artifact;
+  returning it like any other result invites the caller to use it, and presenting
+  unfinished work as finished is the most damaging thing an agent can do because it
+  removes the signal that anything is wrong. So: **quarantine, never merge.**
+  - Two files per item (`<id>.json` evidence, `<id>.artifact`) rather than one embedded
+    blob — a reviewer should not need our tooling to read the code they are judging.
+  - `store` **refuses a successful run**: letting verified results in would turn the
+    review queue into a log, and a queue nobody can drain is a queue nobody reads.
+  - `resolve` **moves** rather than deletes; the record of what an agent could not do
+    is the material worth keeping.
+  - A malformed entry is skipped, not fatal — one truncated file must not hide the
+    rest of the queue.
+- **`ai_corrections`** and **`ai_corrections_gui`** (feature `gui-corrections`).
+  Both were promised by the `self_correction` module docs since **V98** and never
+  written: an audit trail nothing can read is not an audit trail. The CLI exits
+  non-zero when anything awaits review, so it can gate a pipeline.
+
+### Notes
+- A sweep for other unkept promises of this shape found none: every remaining `ai_*`
+  name cited in a comment but absent from `src/bin` is an FFI symbol. The wider audit
+  of deferred-by-comment debt (~160 "for simplicity" / "refactor accordingly" sites)
+  is tracked separately.
+
 ## [Unreleased] - v136 (2026-08-01) — V261: self-correction under CI, and the validator that approved everything (0.2.213)
 
 ### Added
