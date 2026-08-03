@@ -236,7 +236,17 @@ is the same evidence.
 |---|---|---|---|---|---|
 | qwen2.5-coder:7b-instruct | 5.33–7.33 / 12 | 4 / 3 / 5 | 0.44 (0.44) | ~6.4 | 100 % |
 | qwen2.5-coder:14b | 9.67 / 12 | 10 / 1 / 1 | — | — | 100 % (`num_ctx` 4096) |
-| **qwen3-coder:30b** (MoE) | **11.50 / 12** | **11 / 1 / 0** | **0.96 (0.14)** | 11.88 | 73 % (27 % on CPU) |
+| **qwen3-coder:30b** (MoE) | **11.00 / 12** | **11 / 0 / 1** | **0.92 (0.28)** | 11.00 | 73 % (27 % on CPU) |
+
+> The 30B row was re-measured at **3 repeats** to match the others (it was 2, which the
+> first version of this entry flagged as its weakest point). The score moved
+> 11.50 → 11.00 — inside the ±1 band — because `enum + match evaluator` went from 1/2 to
+> **0/3**: at two samples it looked borderline, at three it is a consistent failure.
+>
+> **Its blind-retry projection is 11.00 at k=2 *and* k=3 — identical to the score.**
+> That is the sharpest thing this metric can say: with no task in the middle band, every
+> task is either always solved or never solved, so **retrying buys literally nothing on
+> this model**. Do not build a retry loop for it; there is nothing there to recover.
 
 **The category discriminates cleanly across all three**, and the gaps are far outside
 the ±1 noise band.
@@ -251,13 +261,11 @@ The 30B also solves **both tasks that defeated the other two** (`explicit lifeti
 and `dedup preserving first-appearance order`, 2/2 each), and it did so while a
 quarter of it ran on CPU, with **zero runs lost**.
 
-Two caveats on this row, both mattering:
-
-* Only **2 repeats** (the model is slow when offloaded), so its noise band is wider
-  than the others'.
-* **Its timings are contaminated** — this session was compiling during part of the
-  sweep (see below). No run was excluded and no generation timed out, so the *scores*
-  stand; the `SLOW` tags and per-task milliseconds do not.
+One caveat remains on this row: **the first sweep's timings were contaminated** —
+this session was compiling during part of it. No run was excluded and nothing timed
+out, so the scores stood; the `SLOW` tags did not. The 3-repeat re-run above was done
+with nothing else building, so its timings are usable (and show the cost of offload:
+53–112 s per task, against ~40 s for the fully-resident 14B).
 
 This strengthens the earlier finding from the Rust categories: **on a 16 GB card the
 30B MoE beats the dense 14B even while partly on CPU.** A mixture-of-experts activates
