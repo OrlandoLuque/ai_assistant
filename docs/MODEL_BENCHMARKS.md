@@ -159,6 +159,7 @@ so they cannot rot again.
 
 | model | `code_gen_bench` pass@1, post-V264 |
 |---|---|
+| qwen2.5-coder:14b | **11/11** |
 | qwen2.5-coder:7b-instruct | **11/11** |
 | llama3.2:3b | **11/11** |
 
@@ -172,6 +173,14 @@ Worth stating plainly, because it is the good outcome and the less memorable one
 repaired instrument that changes none of the numbers has still earned its keep.** It
 converts "we believe this" into "we checked this", and it means the *next* model — the
 one that does write `s.split(' ')` — will be caught.
+
+#### Operational note: Ollama does not survive a suspend
+
+A scheduled sleep leaves the Ollama server down, and it does not come back on wake. The
+harness then reports `SKIP … backend not reachable` and the category passes as **0/0** —
+green, and measuring nothing. An unattended overnight sweep can therefore "succeed"
+having run zero tasks. Check `curl -s localhost:11434/api/tags` (or that the summary line
+shows a task count at all) before trusting an overnight result.
 
 ### 2026-08-03 — reading the shape instead of the total, and the bar a repair loop must clear (harness @ V263 / 0.2.215)
 
