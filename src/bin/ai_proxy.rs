@@ -1777,6 +1777,7 @@ mod audit {
     ///   `max_files` archives.
     /// - **No raw secrets**: callers are expected to hash API keys with
     ///   [`hash_api_key`] before putting them in `AuditEntry::key_hash`.
+    #[derive(Debug)]
     pub(super) struct AuditWriter {
         path: PathBuf,
         max_files: u32,
@@ -1784,6 +1785,7 @@ mod audit {
         inner: Mutex<Inner>,
     }
 
+    #[derive(Debug)]
     struct Inner {
         file: BufWriter<File>,
         current_size: u64,
