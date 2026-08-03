@@ -545,6 +545,47 @@ pub struct FineTuneEvent {
     pub message: String,
 }
 
+/// Build a `multipart/form-data` body with a text field and a file part.
+///
+/// Returns `(boundary, body)`. The caller sends the boundary in the
+/// `Content-Type` header, which is why it comes back rather than being buried.
+///
+/// Two details decide whether this is correct rather than merely plausible:
+///
+/// * **The boundary must not occur anywhere in the payload.** If it does, the
+///   receiver splits the file in the middle and the upload is silently wrong.
+///   A counter is appended until the candidate is absent from the content —
+///   cheap, and it removes the failure mode entirely rather than making it
+///   unlikely.
+/// * **CRLF everywhere, and the closing delimiter carries a trailing `--`.**
+///   RFC 7578 is strict here; servers reject bodies that use bare `\n`.
+///
+/// Deliberately a free function so the framing can be unit-tested without a
+/// network, an API key, or a client object.
+pub(crate) fn multipart_body(purpose: &str, filename: &str, content: &str) -> (String, Vec<u8>) {
+    let mut boundary = String::from("----ai-assistant-boundary");
+    let mut n = 0u32;
+    while content.contains(&boundary) {
+        n += 1;
+        boundary = format!("----ai-assistant-boundary-{n}");
+    }
+
+    let body = format!(
+        "--{b}\r\n\
+         Content-Disposition: form-data; name=\"purpose\"\r\n\
+         \r\n\
+         {purpose}\r\n\
+         --{b}\r\n\
+         Content-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n\
+         Content-Type: application/jsonl\r\n\
+         \r\n\
+         {content}\r\n\
+         --{b}--\r\n",
+        b = boundary
+    );
+    (boundary, body.into_bytes())
+}
+
 /// OpenAI Fine-tuning API client
 pub struct OpenAIFineTuneClient {
     api_key: String,
@@ -571,22 +612,21 @@ impl OpenAIFineTuneClient {
         self
     }
 
-    /// Upload a training file.
+    /// Upload a training file to OpenAI's `/files` endpoint.
     ///
-    /// # Known limitation — this does not currently work against OpenAI
+    /// # What is verified and what is not
     ///
-    /// OpenAI's `/files` endpoint requires **`multipart/form-data`**; this sends
-    /// `application/json` with the JSONL inline, so the request is rejected. The
-    /// comment below has admitted as much since the function was written, but
-    /// nothing said so at the call site — a caller found out from an opaque API
-    /// error instead.
+    /// Until V270 this sent `application/json` with the JSONL inline, which the
+    /// endpoint rejects — it requires `multipart/form-data`. It now builds a
+    /// correct multipart body via [`multipart_body`], which **is** unit-tested:
+    /// part headers, the CRLF framing, the closing delimiter, and that the
+    /// boundary never occurs inside the payload.
     ///
-    /// It is left in place rather than removed because everything around it
-    /// (dataset construction, `to_jsonl`, the response type) is correct and
-    /// tested; only the transport is wrong. Implementing multipart is
-    /// straightforward, but it cannot be *verified* without live credentials,
-    /// and shipping an unverified fix under a claim that it works is the exact
-    /// failure this codebase keeps auditing out.
+    /// What is **not** verified here is that OpenAI accepts it, because that
+    /// needs live credentials this project does not have. So: the body is
+    /// checked against the format RFC 7578 specifies; the round trip is not.
+    /// Treat a failure from this call as "check the request against the API
+    /// docs", not as "the format is known-good".
     pub fn upload_file(
         &self,
         dataset: &TrainingDataset,
@@ -600,14 +640,13 @@ impl OpenAIFineTuneClient {
             request = request.set("OpenAI-Organization", org);
         }
 
-        // For actual multipart upload, we'd need more complex handling
-        // This is a simplified version
+        let (boundary, body) = multipart_body("fine-tune", "training.jsonl", &jsonl);
         let response = request
-            .set("Content-Type", "application/json")
-            .send_json(ureq::json!({
-                "purpose": "fine-tune",
-                "file": jsonl,
-            }))
+            .set(
+                "Content-Type",
+                &format!("multipart/form-data; boundary={boundary}"),
+            )
+            .send_bytes(&body)
             .map_err(|e| FineTuneApiError::NetworkError(e.to_string()))?;
 
         let result: serde_json::Value = response
@@ -1248,6 +1287,87 @@ impl TrainingCallback for EarlyStoppingCallback {
 
     fn should_stop(&self) -> bool {
         self.should_stop
+    }
+}
+
+#[cfg(test)]
+mod multipart_tests {
+    use super::multipart_body;
+
+    /// Split a body on CRLF so the framing can be asserted line by line.
+    fn lines(body: &[u8]) -> Vec<String> {
+        String::from_utf8(body.to_vec())
+            .expect("body must be valid UTF-8")
+            .split("\r\n")
+            .map(|s| s.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn frames_both_parts_the_way_rfc_7578_requires() {
+        let (b, body) = multipart_body("fine-tune", "training.jsonl", "{\"a\":1}\n{\"a\":2}");
+        let l = lines(&body);
+
+        assert_eq!(l[0], format!("--{b}"));
+        assert_eq!(l[1], "Content-Disposition: form-data; name=\"purpose\"");
+        assert_eq!(
+            l[2], "",
+            "a blank line must separate part headers from data"
+        );
+        assert_eq!(l[3], "fine-tune");
+
+        assert_eq!(l[4], format!("--{b}"));
+        assert_eq!(
+            l[5],
+            "Content-Disposition: form-data; name=\"file\"; filename=\"training.jsonl\""
+        );
+        assert_eq!(l[6], "Content-Type: application/jsonl");
+        assert_eq!(l[7], "");
+
+        // The closing delimiter carries a trailing `--`; without it servers wait
+        // for more parts and time out.
+        let text = String::from_utf8(body.clone()).unwrap();
+        assert!(text.ends_with(&format!("--{b}--\r\n")), "{text}");
+    }
+
+    #[test]
+    fn uses_crlf_and_never_a_bare_newline_in_the_framing() {
+        let (_, body) = multipart_body("fine-tune", "f.jsonl", "no newlines here");
+        let text = String::from_utf8(body).unwrap();
+        // Every LF in a payload-free body must be preceded by a CR.
+        for (i, c) in text.char_indices() {
+            if c == '\n' {
+                assert_eq!(
+                    &text[i - 1..i],
+                    "\r",
+                    "bare LF at byte {i} — RFC 7578 requires CRLF and servers reject bare LF"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_boundary_never_appears_inside_the_payload() {
+        // The failure this guards against is silent: a boundary occurring in the
+        // content makes the receiver split the file mid-way, and the upload is
+        // accepted while being wrong.
+        let hostile = "line one\n----ai-assistant-boundary\nline two";
+        let (b, body) = multipart_body("fine-tune", "f.jsonl", hostile);
+        assert_ne!(b, "----ai-assistant-boundary");
+
+        let text = String::from_utf8(body).unwrap();
+        // The chosen boundary occurs only in the framing: opening, separator,
+        // and close — three times, never inside the payload.
+        assert_eq!(text.matches(&format!("--{b}")).count(), 3, "{text}");
+        // And the content survived verbatim.
+        assert!(text.contains(hostile));
+    }
+
+    #[test]
+    fn the_payload_is_carried_byte_for_byte() {
+        let content = "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}\n";
+        let (_, body) = multipart_body("fine-tune", "t.jsonl", content);
+        assert!(String::from_utf8(body).unwrap().contains(content));
     }
 }
 
