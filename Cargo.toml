@@ -172,8 +172,11 @@ full = [
     "hardware-detection",
     "hardware-nvml",
     "model-recommender",
-    # Butler = environment auto-detection (providers, hardware, project). It is
-    # dep-free (`autonomous = []`) and completes the recommender stack already
+    # Butler = environment auto-detection (providers, hardware, project). It
+    # pulls no external crates (it rides on `autonomous`, which since V269
+    # correctly declares `multi-agent` — this note used to say "dep-free
+    # (`autonomous = []`)", which stopped being true the moment that edge was
+    # declared) and completes the recommender stack already
     # in `full`. Without it the shipped CLIs' `scan` / `providers` commands —
     # the core "just works" onboarding — fail with "requires the butler
     # feature", so it belongs in the default/product build.
