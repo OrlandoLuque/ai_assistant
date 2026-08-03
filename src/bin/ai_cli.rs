@@ -3546,6 +3546,13 @@ fn cmd_quality(args: &[String]) -> ExitCode {
         }
     }
 
+    // Reachable under `full`, where several arms fall through to it. Under the
+    // minimum supported feature set every remaining arm returns, because the
+    // rest are cfg'd out — so the lint is correct for that build and wrong in
+    // general. Allowed rather than restructured: turning the match into an
+    // expression would mean rewriting ~100 lines of arms to satisfy a
+    // configuration-specific warning.
+    #[allow(unreachable_code)]
     ExitCode::SUCCESS
 }
 

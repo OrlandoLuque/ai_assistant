@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.218"
+version = "0.2.219"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -132,6 +132,20 @@ egui-widgets = ["egui"]
 # LM Studio, Kobold.cpp, LocalAI, text-gen-webui). For Ollama, the
 # module also exposes a Modelfile helper.
 auto-download = ["dep:sha2"]
+
+# Minimum supported feature set — the smallest combination the crate builds with:
+#
+#   tools, security, advanced-streaming, rag, adapters, analytics, embeddings, documents
+#
+# Verified in CI (`FEATURES_MIN`). Eight of the ninety-odd flags, so the crate is
+# genuinely reducible — but not to arbitrary subsets, because these eight are
+# interdependent. Dropping any one of them does not compile today; that is stated
+# here rather than left for a caller to discover.
+#
+# V267 added the CI job after finding the crate had stopped building below `full`
+# entirely: `prelude` re-exported a `security`-gated module unconditionally and
+# `server` used an `advanced-streaming`-gated one. Nothing caught it because every
+# CI feature set started from `full`.
 
 # Full feature set (includes everything except egui)
 full = [

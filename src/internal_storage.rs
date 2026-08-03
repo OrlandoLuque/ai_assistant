@@ -29,7 +29,11 @@
 
 use anyhow::{Context, Result};
 use serde::{de::DeserializeOwned, Serialize};
-use std::io::{Read, Write};
+use std::io::Read;
+// Only the gzip compressor writes; decompression (which uses `Read`) is needed
+// on every path that can encounter an already-compressed file.
+#[cfg(feature = "binary-storage")]
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// Detected storage format of a file or byte buffer.
@@ -302,6 +306,7 @@ fn deserialize_json<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
     serde_json::from_slice(bytes).context("Failed to deserialize JSON data")
 }
 
+#[cfg(feature = "binary-storage")]
 fn compress_gzip(data: &[u8]) -> Result<Vec<u8>> {
     let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
     encoder

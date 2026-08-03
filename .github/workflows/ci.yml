@@ -15,6 +15,17 @@ env:
   FEATURES_STD: "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing"
   # Heavy networking features (separate due to quinn/rustls deps)
   FEATURES_NETWORK: "full,distributed-network,p2p,gpu-sharing,server-axum,server-cluster"
+  # The smallest set the crate actually builds with (V267). Every other job here
+  # starts from `full`, so nothing was ever compiled BELOW it — and the crate had
+  # silently stopped building at anything smaller: `prelude` re-exported a
+  # `security`-gated module unconditionally, and `server` used an
+  # `advanced-streaming`-gated one. Both are the kind of break nobody notices,
+  # because nobody compiles that way. This job is what stops it recurring.
+  #
+  # It is a floor, not an aspiration: these eight are interdependent by design
+  # (see the note on `full` in Cargo.toml). Dropping one of them does not
+  # currently compile, and that is documented rather than pretended otherwise.
+  FEATURES_MIN: "tools,security,advanced-streaming,rag,adapters,analytics,embeddings,documents"
 
 jobs:
   check:
@@ -30,6 +41,8 @@ jobs:
         run: cargo check --features "$FEATURES_STD"
       - name: Check (network features)
         run: cargo check --features "$FEATURES_NETWORK"
+      - name: Check (minimum supported features)
+        run: cargo check --no-default-features --features "$FEATURES_MIN"
 
   test:
     name: Tests
@@ -72,6 +85,13 @@ jobs:
         # heavy quinn/rustls deps, so lint them here in a dedicated step —
         # --all-targets for the same reason as above.
         run: cargo clippy --features "$FEATURES_NETWORK" --all-targets -- -D warnings
+      - name: Run clippy (minimum supported features)
+        # Both sets above start from `full`, so nothing was linted BELOW it and
+        # the reduced build silently rotted: unconditional uses of `security`-
+        # and `advanced-streaming`-gated modules stopped it compiling at all,
+        # and three items were dead once their feature was absent. `cargo check`
+        # alone would not have caught the latter — they are warnings, not errors.
+        run: cargo clippy --no-default-features --features "$FEATURES_MIN" -- -D warnings
 
   fmt:
     name: Format

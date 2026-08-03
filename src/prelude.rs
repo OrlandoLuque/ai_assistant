@@ -29,7 +29,10 @@ pub use crate::server::{AiServer, AuthConfig, CorsConfig, ServerConfig, ServerHa
 // Providers
 pub use crate::providers::generate_response;
 
-// Guardrails
+// Guardrails. Gated to match the module itself, which lives behind `security` —
+// re-exporting it unconditionally meant the crate did not build without that
+// feature (V267).
+#[cfg(feature = "security")]
 pub use crate::guardrail_pipeline::{Guard, GuardAction, GuardStage, GuardrailPipeline};
 
 #[cfg(test)]

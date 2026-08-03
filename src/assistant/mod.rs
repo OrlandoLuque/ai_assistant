@@ -2,7 +2,10 @@
 
 use crate::error::{AiError, AiResult};
 use std::path::Path;
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver};
+// Only the vision fallback path takes a `Sender` directly.
+#[cfg(feature = "vision")]
+use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::thread;
 

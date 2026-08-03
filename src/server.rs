@@ -1294,6 +1294,7 @@ fn build_sse_response(sse_body: &str, extra_headers: &str) -> String {
 const WS_MAGIC_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 /// Read a single WebSocket frame from a stream (RFC 6455 §5.2).
+#[cfg(feature = "advanced-streaming")]
 fn read_ws_frame(stream: &mut dyn Read) -> std::io::Result<crate::websocket_streaming::WsFrame> {
     use crate::websocket_streaming::{WsFrame, WsOpcode};
 
@@ -1352,6 +1353,7 @@ fn read_ws_frame(stream: &mut dyn Read) -> std::io::Result<crate::websocket_stre
 }
 
 /// Write a WebSocket frame to a stream (server → client, unmasked per RFC 6455).
+#[cfg(feature = "advanced-streaming")]
 fn write_ws_frame(
     stream: &mut dyn Write,
     frame: &crate::websocket_streaming::WsFrame,
@@ -1386,6 +1388,7 @@ fn write_ws_frame(
 }
 
 /// Perform the WebSocket upgrade handshake (server side).
+#[cfg(feature = "advanced-streaming")]
 fn ws_handshake(
     stream: &mut dyn Write,
     headers: &[(String, String)],
@@ -1411,6 +1414,7 @@ fn ws_handshake(
 }
 
 /// Handle a WebSocket chat session after upgrade.
+#[cfg(feature = "advanced-streaming")]
 fn handle_ws_chat(
     stream: &mut dyn ReadWrite,
     assistant: &Arc<Mutex<AiAssistant>>,
@@ -1502,6 +1506,7 @@ fn handle_ws_chat(
 }
 
 /// Check whether an HTTP request is a WebSocket upgrade.
+#[cfg(feature = "advanced-streaming")]
 fn is_websocket_upgrade(headers: &[(String, String)]) -> bool {
     let has_upgrade = headers
         .iter()
@@ -2136,52 +2141,62 @@ fn handle_connection(
         return Ok(());
     }
 
-    // Check if this is a WebSocket upgrade request
-    let is_ws = (request.path == "/ws" || request.path == "/api/v1/ws")
-        && request.method == "GET"
-        && is_websocket_upgrade(&request.headers);
-    if is_ws {
-        // Security: validate Origin header before accepting WebSocket upgrade (H9)
-        let has_wildcard = config.cors.allowed_origins.iter().any(|o| o == "*");
-        if !has_wildcard && !config.cors.allowed_origins.is_empty() {
-            let ws_origin = request
-                .headers
-                .iter()
-                .find(|(k, _)| k == "origin")
-                .map(|(_, v)| v.as_str());
-            match ws_origin {
-                Some(o) if config.cors.allowed_origins.iter().any(|a| a == o) => { /* OK */ }
-                Some(o) => {
-                    let body = serde_json::to_string(&ErrorResponse {
-                        error: format!("Origin '{}' not allowed", sanitize_header_value(o)),
-                    })
-                    .unwrap_or_default();
-                    let response = format!(
+    // Check if this is a WebSocket upgrade request.
+    //
+    // The whole branch is gated: `websocket_streaming` lives behind
+    // `advanced-streaming`, and this used it unconditionally, so the crate did
+    // not build without that feature at all (V267). Without it the server simply
+    // never treats a request as an upgrade and falls through to the normal HTTP
+    // path — which is the honest behaviour, since it genuinely cannot speak
+    // WebSocket in that build.
+    #[cfg(feature = "advanced-streaming")]
+    {
+        let is_ws = (request.path == "/ws" || request.path == "/api/v1/ws")
+            && request.method == "GET"
+            && is_websocket_upgrade(&request.headers);
+        if is_ws {
+            // Security: validate Origin header before accepting WebSocket upgrade (H9)
+            let has_wildcard = config.cors.allowed_origins.iter().any(|o| o == "*");
+            if !has_wildcard && !config.cors.allowed_origins.is_empty() {
+                let ws_origin = request
+                    .headers
+                    .iter()
+                    .find(|(k, _)| k == "origin")
+                    .map(|(_, v)| v.as_str());
+                match ws_origin {
+                    Some(o) if config.cors.allowed_origins.iter().any(|a| a == o) => { /* OK */ }
+                    Some(o) => {
+                        let body = serde_json::to_string(&ErrorResponse {
+                            error: format!("Origin '{}' not allowed", sanitize_header_value(o)),
+                        })
+                        .unwrap_or_default();
+                        let response = format!(
                         "HTTP/1.1 403 Forbidden\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{}Connection: close\r\n\r\n{}",
                         body.len(), extra_headers, body
                     );
-                    log::info!(
-                        "[{}] WebSocket upgrade rejected: Origin '{}' not allowed",
-                        request_id,
-                        o
-                    );
-                    metrics.record_request("403", start.elapsed());
-                    stream.write_all(response.as_bytes())?;
-                    stream.flush()?;
-                    return Ok(());
+                        log::info!(
+                            "[{}] WebSocket upgrade rejected: Origin '{}' not allowed",
+                            request_id,
+                            o
+                        );
+                        metrics.record_request("403", start.elapsed());
+                        stream.write_all(response.as_bytes())?;
+                        stream.flush()?;
+                        return Ok(());
+                    }
+                    None => { /* No Origin header — allow (same-origin request) */ }
                 }
-                None => { /* No Origin header — allow (same-origin request) */ }
             }
+            log::info!(
+                "[{}] WebSocket upgrade {} → 101 ({:.1}ms)",
+                request_id,
+                request.path,
+                start.elapsed().as_secs_f64() * 1000.0
+            );
+            metrics.record_request("101", start.elapsed());
+            ws_handshake(stream, &request.headers, &extra_headers)?;
+            return handle_ws_chat(stream, assistant, config);
         }
-        log::info!(
-            "[{}] WebSocket upgrade {} → 101 ({:.1}ms)",
-            request_id,
-            request.path,
-            start.elapsed().as_secs_f64() * 1000.0
-        );
-        metrics.record_request("101", start.elapsed());
-        ws_handshake(stream, &request.headers, &extra_headers)?;
-        return handle_ws_chat(stream, assistant, config);
     }
 
     // Check if this is an SSE streaming request

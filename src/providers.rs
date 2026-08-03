@@ -752,6 +752,8 @@ pub fn generate_openai_compat_response_with_images(
 /// the keywords various forks use; it is intentionally permissive
 /// because false positives only soften the error message — they don't
 /// hide real failures.
+// Only consulted from the vision generation path.
+#[cfg(feature = "vision")]
 fn looks_like_mmproj_error(msg: &str) -> bool {
     let lower = msg.to_ascii_lowercase();
     let triggers = [
