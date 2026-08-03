@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v144 (2026-08-03) — V269: the feature matrix was measuring the wrong thing (0.2.221)
+
+### Fixed
+- **CI's `feature-matrix` job never tested a reduced build.** It ran
+  `cargo check --features "<flag>"` *without* `--no-default-features`, and since
+  `default = ["full"]` every one of its ~30 entries compiled **full + flag** — near
+  duplicates of the full build. That is why nothing below `full` was ever exercised
+  and the reduced build could rot to non-compiling (V267). Now checks `MIN + flag`.
+- **Four missing feature dependencies**, all found by the new battery — the manifest
+  never declared what the code required:
+  - `autonomous = []` while `lib.rs` re-exports `multi_agent` under
+    `cfg(feature = "autonomous")`. **Nine flags** failed on that single missing edge
+    (everything depending on `autonomous`, plus `gui` via `butler`).
+  - `self-correction` needed `eval` (`claim.rs` imports `chain_of_verification`).
+  - `server-axum` declared `dep:futures-core` but `ai_proxy` imports `futures`.
+  - `webrtc` already carried a `compile_error!` demanding `voice-agent`; cargo now
+    says it instead of the build.
+- **`MockHttpServer` did a single `read()`.** TCP is a stream, so under load a request
+  arrives split across segments: the server read the first chunk, replied and closed
+  while the client was still writing, which the client sees as a connection reset.
+  `test_otlp_exporter_flush_with_mock` failed **2 of 3 full runs** while passing 5/5 in
+  isolation — a broken helper, not fragile tests. It now reads headers to completion and
+  then exactly `Content-Length` bytes: **9 of 10 full runs clean** since.
+
+### Added
+- **`ai_test_harness --category=feature_matrix`** — checks every declared flag on top of
+  the minimum set and, on failure, reports the first compiler error **with file and
+  line**. The flag list is read from `Cargo.toml`, so a new flag is covered without
+  anyone remembering. Two guards: one fails if the minimum drifts from CI's
+  `FEATURES_MIN`, one fails if the parser stops finding features — an empty matrix would
+  otherwise pass while testing nothing. Excluded from `--all` under its own
+  `SLOW_BUILD_CATEGORIES`: a combination failing to build is a defect, not a measurement.
+- Result: **70 of 87 combinations built**; the 17 failures reduced to 5 root causes.
+
+### Security
+- `RUSTSEC-2026-0222` (wasmtime) ignored **with an expiry**, not indefinitely. Unlike
+  every other entry it *has* an upstream fix (≥46.0.2), blocked only by that release
+  requiring Rust 1.94 while the repo pins 1.93. Tracked as its own task; the note says
+  to **delete** the ignore when the toolchain moves, not renew it.
+
+## [Unreleased] - v143 (2026-08-03) — V268: CI had been red since 2026-07-30 (0.2.220)
+
+### Fixed
+- **`AuditWriter` did not derive `Debug`**, and `ai_proxy`'s symlink test calls
+  `unwrap_err()`. The build had been red across every push since V256.
+- The useful part is why it was invisible: the test is
+  `#[cfg(all(feature = "security", unix))]` and development is on Windows, so it is
+  never compiled locally under any feature set. **A local gate cannot see
+  platform-gated code** — the CI run has to be watched after the push.
+
 ## [Unreleased] - v142 (2026-08-03) — V267: the crate had stopped building below `full` (0.2.219)
 
 ### Fixed
