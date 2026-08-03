@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v145 (2026-08-04) — V270: `upload_file` sends real multipart (0.2.222)
+
+### Fixed
+- **`FineTuningApi::upload_file` could not work.** OpenAI's `/files` endpoint requires
+  `multipart/form-data`; it sent `application/json` with the JSONL inline. The internal
+  comment had admitted this since the function was written, but nothing said so at the
+  call site, so a caller met it as an opaque API error.
+
+### Added
+- **`multipart_body`** — a free function precisely so the framing is testable without a
+  network, an API key or a client object. Two details decide correctness, and both are
+  asserted:
+  - **The boundary must not occur inside the payload.** If it does the receiver splits
+    the file mid-way and the upload is *accepted while being wrong* — silent corruption.
+    A counter is appended until the candidate is absent from the content, removing the
+    failure mode rather than making it unlikely.
+  - **CRLF throughout, and a trailing `--` on the closing delimiter.** RFC 7578 is
+    strict; servers reject bare LF, and without the closing `--` they wait for more parts.
+
+### Notes
+- **What is not verified, stated in the doc comment**: that OpenAI *accepts* it. That
+  needs live credentials this project does not have. The body is checked against the
+  format the RFC specifies; the round trip is not. A failure from this call means "check
+  the request against the API docs", not "the format is known-good" — the honest middle
+  between shipping an unverified fix under a claim that it works, and leaving a function
+  that provably cannot.
+
 ## [Unreleased] - v144 (2026-08-03) — V269: the feature matrix was measuring the wrong thing (0.2.221)
 
 ### Fixed
