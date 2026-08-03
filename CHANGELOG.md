@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v142 (2026-08-03) — V267: the crate had stopped building below `full` (0.2.219)
+
+### Fixed
+- **Every CI feature set started from `full`, so nothing was ever compiled below it** —
+  and the reduced build had rotted to the point of not compiling at all:
+  - `prelude` re-exported `guardrail_pipeline` unconditionally; that module is behind
+    `security`.
+  - `server` used `websocket_streaming` unconditionally; that one is behind
+    `advanced-streaming`. The upgrade branch is now gated as a whole, so without the
+    feature the server never treats a request as an upgrade and falls through to normal
+    HTTP — honest, since it genuinely cannot speak WebSocket in that build.
+  - Three items were dead once their feature was absent (a `Sender` import,
+    `looks_like_mmproj_error`, `compress_gzip`). **`cargo check` alone would not have
+    caught these** — they are warnings, not errors.
+
+### Added
+- **`FEATURES_MIN` in CI**, both a `cargo check` and a clippy run with `-D warnings`:
+  `tools, security, advanced-streaming, rag, adapters, analytics, embeddings, documents`.
+  Eight of the ninety-odd flags — the crate **is** genuinely reducible, but not to
+  arbitrary subsets, since those eight are interdependent and dropping any one does not
+  compile. Documented in `Cargo.toml` rather than left for a caller to discover.
+
+### Notes
+- Same shape as V261, where adding `self-correction` to `full` put a subsystem under the
+  compiler for the first time since V98 and immediately exposed a validator that
+  approved everything. **Uncompiled code is where debt accumulates unseen** — check the
+  feature graph, not the comments.
+
 ## [Unreleased] - v141 (2026-08-03) — V266: a function called `sha256_hex` that was not SHA-256 (0.2.218)
 
 ### Security
