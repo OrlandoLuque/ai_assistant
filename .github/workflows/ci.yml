@@ -158,6 +158,17 @@ jobs:
       #                       reach >=0.41); build-time XML of trusted
       #                       wayland protocol files only, no direct use in
       #                       src/. Revisit when wayland-scanner bumps it.
+      #   RUSTSEC-2026-0222 - wasmtime "stores can mix up type indices between
+      #                       engines". UNLIKE the others this one HAS a fix
+      #                       upstream (>=46.0.2), but every patched release
+      #                       requires Rust 1.94 via cranelift, and this repo
+      #                       pins 1.93. Bumping the toolchain across ~523k
+      #                       lines is a deliberate decision, not a side effect
+      #                       of a CI fix, so it is tracked separately. CVSS 3.8
+      #                       (local, high privileges, user interaction) and only
+      #                       reachable behind the opt-in `skill-forge` feature,
+      #                       which is not in `full`. REMOVE this ignore the
+      #                       moment the toolchain moves.
       #   RUSTSEC-2026-0192 — ttf-parser unmaintained (no safe upgrade;
       #                       transitive via egui/epaint/ab_glyph). DoS-
       #                       class only; cargo-deny denies unmaintained,
@@ -173,7 +184,8 @@ jobs:
             --ignore RUSTSEC-2026-0187 \
             --ignore RUSTSEC-2026-0194 \
             --ignore RUSTSEC-2026-0195 \
-            --ignore RUSTSEC-2026-0192
+            --ignore RUSTSEC-2026-0192 \
+            --ignore RUSTSEC-2026-0222
 
   feature-matrix:
     name: Feature Matrix (${{ matrix.features }})
@@ -228,10 +240,20 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: feature-${{ hashFiles('Cargo.lock') }}-${{ strategy.job-index }}
+      # V269: these used to run WITHOUT --no-default-features. Since
+      # `default = ["full"]`, every entry compiled full + flag — thirty jobs that
+      # were near-duplicates of the full build, which is why nothing below `full`
+      # was ever exercised and the reduced build rotted until it did not compile
+      # (V267). Now each flag is checked on top of the documented minimum, which
+      # is what this job always claimed to do.
+      #
+      # `ai_test_harness --category=feature_matrix` runs the same check locally
+      # over EVERY declared flag, reading the list from Cargo.toml so a new flag
+      # is covered without anyone remembering to add it here.
       - name: Check ${{ matrix.features }}
-        run: cargo check --features "${{ matrix.features }}"
+        run: cargo check --no-default-features --features "$FEATURES_MIN,${{ matrix.features }}"
       - name: Test ${{ matrix.features }}
-        run: cargo test --features "${{ matrix.features }}" --lib
+        run: cargo test --no-default-features --features "$FEATURES_MIN,${{ matrix.features }}" --lib
 
   binaries:
     name: Binary Compilation

@@ -299,13 +299,44 @@ impl MockHttpServer {
                             .set_read_timeout(Some(std::time::Duration::from_secs(5)))
                             .ok();
 
-                        // Read HTTP request
-                        let mut buf = vec![0u8; 8192];
-                        let n = match std::io::Read::read(&mut stream, &mut buf) {
-                            Ok(n) => n,
-                            Err(_) => continue,
+                        // Read the WHOLE request: headers, then exactly
+                        // Content-Length bytes of body.
+                        //
+                        // This used to be a single `read()`. TCP is a stream, so
+                        // under load a request arrives split across segments —
+                        // the server would read the first chunk, reply, and close
+                        // while the client was still writing, which the client
+                        // sees as a connection reset. That made
+                        // `test_otlp_exporter_flush_with_mock` and
+                        // `test_mock_server_post_streaming` fail intermittently
+                        // (measured: 2 of 3 full runs) while passing 5/5 in
+                        // isolation — a broken helper, not fragile tests.
+                        let mut raw: Vec<u8> = Vec::with_capacity(8192);
+                        let mut chunk = [0u8; 4096];
+                        let request_str = loop {
+                            let n = match std::io::Read::read(&mut stream, &mut chunk) {
+                                Ok(0) => break String::from_utf8_lossy(&raw).to_string(),
+                                Ok(n) => n,
+                                Err(_) => break String::from_utf8_lossy(&raw).to_string(),
+                            };
+                            raw.extend_from_slice(&chunk[..n]);
+
+                            let text = String::from_utf8_lossy(&raw);
+                            let Some(head_end) = text.find("\r\n\r\n") else {
+                                continue; // headers still incomplete
+                            };
+                            // Content-Length decides how much body to expect; a
+                            // request without one carries no body.
+                            let want: usize = text[..head_end]
+                                .lines()
+                                .find(|l| l.to_ascii_lowercase().starts_with("content-length:"))
+                                .and_then(|l| l.split(':').nth(1))
+                                .and_then(|v| v.trim().parse().ok())
+                                .unwrap_or(0);
+                            if raw.len() >= head_end + 4 + want {
+                                break text.to_string();
+                            }
                         };
-                        let request_str = String::from_utf8_lossy(&buf[..n]).to_string();
 
                         // Parse method, path, body
                         let lines: Vec<&str> = request_str.split("\r\n").collect();

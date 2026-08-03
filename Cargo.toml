@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.220"
+version = "0.2.221"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -235,7 +235,10 @@ wasm = ["dep:web-sys", "dep:js-sys", "dep:wasm-bindgen", "dep:getrandom"]
 
 # Autonomous agent: policy, sandbox, OS tools, autonomous loop, profiles, user interaction,
 # task board, interactive commands, mode manager
-autonomous = []
+# V269: lib.rs re-exports multi_agent under cfg(feature = "autonomous"), so this
+# always needed multi-agent — it just never said so. Nine flags failed to build on
+# that one missing edge: everything depending on autonomous, plus gui via butler.
+autonomous = ["multi-agent"]
 
 # Scheduler: cron-like task scheduling + event-driven triggers
 scheduler = ["autonomous"]
@@ -358,7 +361,9 @@ hitl = []
 
 # WebRTC voice transport: real-time voice with SDP, ICE, RTP
 # Not in 'full' by default — heavy networking. Opt-in: --features webrtc
-webrtc = ["dep:tokio"]
+# V269: the code already carried a compile_error! telling the caller to add
+# voice-agent. Declaring the dependency makes cargo say it instead of the build.
+webrtc = ["dep:tokio", "voice-agent"]
 
 # Agent DevTools: debugging, profiling, execution replay for agents
 # Not in 'full' by default — development-only. Opt-in: --features devtools
@@ -471,7 +476,7 @@ gui-pro = [
 
 # axum-based HTTP server: production-ready async, HTTP/2, native WS/SSE, tower middleware
 # Not in 'full' — opt-in. Replaces std::net::TcpListener server with axum framework.
-server-axum = ["dep:axum", "dep:axum-extra", "dep:tower", "dep:tower-http", "dep:tokio", "dep:async-stream", "dep:futures-core", "dep:reqwest", "dep:toml", "dep:parking_lot", "dep:bytes"]
+server-axum = ["dep:axum", "dep:axum-extra", "dep:tower", "dep:tower-http", "dep:tokio", "dep:async-stream", "dep:futures-core", "dep:futures", "dep:reqwest", "dep:toml", "dep:parking_lot", "dep:bytes"]
 
 # axum TLS (HTTPS via rustls, separate from server-tls which is for the std server)
 server-axum-tls = ["server-axum", "dep:axum-server", "dep:rustls", "dep:rustls-pemfile"]
@@ -542,7 +547,9 @@ prompt-breeder = [
 # ledger, auditor binaries. Ships `ClaimVerificationTask` wrapping CoVe +
 # faithfulness + quality gates. Not in 'full' — opt-in. Use:
 # --features self-correction
-self-correction = []
+# V269: self_correction::claim imports crate::chain_of_verification, which is gated
+# behind eval. Invisible while this feature was only ever enabled inside full.
+self-correction = ["eval"]
 
 # V128 (C.7): explicit feature stubs for optional deps that other code
 # gates on directly via `#[cfg(feature = "<name>")]`. Cargo used to

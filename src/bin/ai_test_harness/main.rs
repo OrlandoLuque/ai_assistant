@@ -416,6 +416,7 @@ mod code_gen_bench;
 #[cfg(feature = "containers")]
 mod containers;
 mod eval;
+mod feature_matrix;
 mod features;
 mod features2;
 #[cfg(feature = "p2p")]
@@ -449,6 +450,7 @@ use crate::code_gen_bench::*;
 #[cfg(feature = "containers")]
 use crate::containers::*;
 use crate::eval::*;
+use crate::feature_matrix::*;
 use crate::features::*;
 use crate::features2::*;
 #[cfg(feature = "p2p")]
@@ -483,8 +485,22 @@ const BENCHMARK_CATEGORIES: &[&str] = &[
     "agentic_test_gen",
 ];
 
+/// Categories excluded from `--all` because each one shells out to `cargo` and
+/// takes minutes, not milliseconds.
+///
+/// Deliberately separate from [`BENCHMARK_CATEGORIES`]: those are excluded because
+/// their result depends on which MODEL is configured and belongs in the lab
+/// notebook. These are ordinary pass/fail gates — just slow ones. Conflating the
+/// two would imply a feature combination failing to build is a measurement rather
+/// than a defect.
+const SLOW_BUILD_CATEGORIES: &[&str] = &["feature_matrix"];
+
 fn is_benchmark_category(name: &str) -> bool {
     BENCHMARK_CATEGORIES.contains(&name)
+}
+
+fn is_slow_build_category(name: &str) -> bool {
+    SLOW_BUILD_CATEGORIES.contains(&name)
 }
 
 fn all_categories() -> Vec<(&'static str, fn() -> CategoryResult)> {
@@ -764,6 +780,10 @@ fn all_categories() -> Vec<(&'static str, fn() -> CategoryResult)> {
         categories.push((
             "python_adequacy",
             tests_python_adequacy as fn() -> CategoryResult,
+        ));
+        categories.push((
+            "feature_matrix",
+            tests_feature_matrix as fn() -> CategoryResult,
         ));
         categories.push(("agentic_rust", tests_agentic_rust as fn() -> CategoryResult));
         categories.push((
@@ -1626,6 +1646,12 @@ fn main() {
                     name,
                     yellow("[benchmark — excluded from --all]")
                 );
+            } else if is_slow_build_category(name) {
+                println!(
+                    "  - {} {}",
+                    name,
+                    yellow("[slow build check — excluded from --all]")
+                );
             } else {
                 println!("  - {}", name);
             }
@@ -1662,9 +1688,13 @@ fn main() {
         // Benchmarks measure the configured model, not the code — see
         // BENCHMARK_CATEGORIES. Keeping them here made --all fail purely because
         // the default model is weak.
+        //
+        // Slow build checks are excluded for a different reason: they are real
+        // gates, but each shells out to `cargo` and takes minutes, which would
+        // turn `--all` from a 90-second habit into an hour-long chore nobody runs.
         let regression: Vec<(&str, fn() -> CategoryResult)> = categories
             .iter()
-            .filter(|(name, _)| !is_benchmark_category(name))
+            .filter(|(name, _)| !is_benchmark_category(name) && !is_slow_build_category(name))
             .cloned()
             .collect();
         if !json_output {
