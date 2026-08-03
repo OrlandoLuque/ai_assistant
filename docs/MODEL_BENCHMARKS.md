@@ -122,6 +122,34 @@ dependencies), so disk growth is not a concern in normal use.
 
 ## Log (newest first)
 
+### 2026-08-04 — the 14B is not "dominated": that verdict rested on a premise `num_ctx` removed
+
+An earlier entry concluded `qwen2.5-coder:14b` was **dominated** by the 30B MoE, on the
+argument that both loaded at ~18 GB and spilled to CPU, so the MoE was strictly better
+at the same footprint. **That premise is gone.** At `num_ctx` 4096 the 14B loads at
+13 GB, **100 % on GPU** — the KV cache, not the weights, was what pushed it over
+(V269 / LOCAL_MODELS §3). So the comparison had to be re-run with both models measured
+the same way, on the same six tasks, rather than inherited from a 3-task set.
+
+| model | `agentic_rust_multi` | wall clock | GPU |
+|---|---|---|---|
+| qwen2.5-coder:14b, `num_ctx` 4096 | 5 / 6 | **235 s** | **100 %** |
+| qwen3-coder:30b, `num_ctx` 2048 | **6 / 6** | 554 s | 73 % (27 % on CPU) |
+
+The 30B solves exactly the task the 14B fails (`errors: Option then custom error type`,
+where the 14B lost state across edits — the multi-step failure mode). It is also
+**2.4× slower**.
+
+**What this does and does not establish.** One task in six is precisely the ±1 noise
+band measured for this kind of pass/fail scoring, and these are single runs with no
+repeats. So the defensible statement is *"the 30B is at least as good"*, not *"the 30B
+is better"* — a rank ordering on a one-task gap from one run each is exactly the
+over-reading this notebook exists to prevent.
+
+What is solid: **"dominated" is wrong now.** The 14B is the fast, fully-resident option;
+the 30B is the quality pick when the extra 2.4× is affordable. Settling the capability
+question properly needs repeats on both — queued rather than guessed.
+
 ### 2026-08-03 (2nd) — the Python oracles were never audited, and four of eleven were incompetent (harness @ V264 / 0.2.216)
 
 `checker_adequacy` (V256) mutation-tested the **Rust** checkers and found two of twelve
