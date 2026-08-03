@@ -26,6 +26,12 @@ use std::process::Command;
 // Slow by nature — one cargo invocation per flag. Excluded from `--all`; run it
 // deliberately with `--category=feature_matrix`, optionally narrowed with
 // `--filter=<substring>`.
+//
+// IT REPORTS WHAT *THIS* PLATFORM BUILDS. Development here is Windows and CI is
+// ubuntu, so the two can legitimately disagree — a flag whose C dependency
+// generates different bindings per target will differ, and a `#[cfg(unix)]` path
+// is never compiled here at all (which is exactly how CI stayed red for days in
+// V268). A failure seen locally is a lead, not a verdict, until CI agrees.
 
 /// The smallest set that builds. Must stay in step with `FEATURES_MIN` in
 /// `.github/workflows/ci.yml`; `min_set_matches_ci` below fails if they drift.
