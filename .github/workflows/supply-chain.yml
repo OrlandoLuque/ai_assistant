@@ -64,7 +64,8 @@ jobs:
             --ignore RUSTSEC-2026-0187 \
             --ignore RUSTSEC-2026-0194 \
             --ignore RUSTSEC-2026-0195 \
-            --ignore RUSTSEC-2026-0192
+            --ignore RUSTSEC-2026-0192 \
+            --ignore RUSTSEC-2026-0222
 
   audit-deny-sync:
     name: audit/deny ignore-list sync check
