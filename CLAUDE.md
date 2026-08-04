@@ -2,10 +2,18 @@
 
 ## Inicio de sesión — OBLIGATORIO
 Al iniciar cada nueva sesión de trabajo, **lee estos archivos ANTES de hacer cualquier otra cosa**:
-1. `memory/modus-operandi.md` — workflow, reglas de calidad, checklist de implementación
-2. El último `docs/IMPROVEMENTS_V*.md` (el de número más alto) — estado actual del roadmap
+1. `docs/modus-operandi.md` — workflow, reglas de calidad, checklist de implementación
+2. `CHANGELOG.md` (las entradas de cabecera) — **el estado actual**: qué se hizo en las
+   últimas versiones y por qué
+3. Si la sesión va de medir modelos: `docs/MODEL_BENCHMARKS.md` (resultados, con fecha y
+   backend) y `docs/LOCAL_MODELS.md` (cuantización, KV cache, qué cabe en la tarjeta)
 
 Esto te da el contexto completo: dónde estamos, qué se ha hecho, cómo trabajamos.
+
+> **Los `docs/IMPROVEMENTS_V*.md` son histórico, no estado.** La serie se detuvo en
+> **V167** (0.2.119) y el trabajo posterior — más de cien versiones — vive en el
+> `CHANGELOG.md`. Leer «el de número más alto» daba una foto de marzo de 2026 como si
+> fuera la actual, que es exactamente el error que esta sección debe evitar.
 
 ## Sobre el Proyecto
 - **Librería Rust** para integración con LLMs locales y cloud

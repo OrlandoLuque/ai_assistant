@@ -7,10 +7,14 @@ It contains ONLY project-specific rules, state, and patterns.
 
 When starting a new session, say:
 ```
-Continúa con el desarrollo del proyecto. Lee docs/modus-operandi.md y el último docs/IMPROVEMENTS_V*.md para saber dónde estamos.
+Continúa con el desarrollo del proyecto. Lee docs/modus-operandi.md y la cabecera del CHANGELOG.md para saber dónde estamos.
 ```
 
-## Current state (updated 2026-03-15)
+**Not** «el último `docs/IMPROVEMENTS_V*.md`»: that series stopped at V167 (0.2.119) and
+everything since lives in `CHANGELOG.md`, so the highest-numbered file describes March 2026,
+not today. The list below is history for the same reason — it is not maintained past V167.
+
+## Current state (updated 2026-03-15 — history; see CHANGELOG.md for anything after V167)
 
 - **Roadmap v1–v10**: ALL COMPLETE
 - **Roadmap v11–v37**: ALL COMPLETE (v35 partial — Blocks E+G1+I done, B-D-F-G2-G3-H pending)
