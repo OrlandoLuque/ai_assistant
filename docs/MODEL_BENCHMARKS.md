@@ -175,10 +175,20 @@ overturned by a seed change), the aggregate ordering 7B < 14B < 30B, and every f
 the harness itself. What needs re-measuring is anything resting on a *specific task* being
 at 0 or 1.
 
-**The fix (V275):** the effective seed is now `base + repeat index`, so three repeats are
-three seeds. The sweep stays exactly reproducible — the sequence is deterministic given the
-base — while the repeats finally vary the dimension that mattered most. Labels now read
-`seed=42..44` rather than `seed=42`, because "seed=42" had become a half-truth.
+**The fix (V275):** each repeat now strides the base seed, so three repeats are three
+seeds. The sweep stays exactly reproducible — the sequence is deterministic given the base —
+while the repeats finally vary the dimension that mattered most. Labels read `seed=42x3`
+rather than `seed=42`, because "seed=42" had become a half-truth. The stride is the
+golden-ratio constant rather than `+1`: seeds 42, 43 and 44 all failed `ledger` while 1234
+passed it 3/3, and although three samples cannot show that adjacent seeds are correlated,
+repeats landing in one neighbourhood is the exact failure this change exists to remove.
+
+**And a limit worth stating, since it bit once already:** re-run at the strided seeds,
+`ledger` came out **0/3 again**. Pooling every observation to date (12 runs) puts p nearer
+**0.33**, with a wide per-seed spread. Varying the seed makes the samples independent; it
+does not make three of them enough to characterise a single task. Read a per-task 0/3 as
+"probably low", never as "never" — the aggregate over ten tasks is what three repeats are
+actually sized for.
 
 **The lesson, in one line:** *reproducible* and *independent* are different properties, and
 pinning a seed buys the first by destroying the second.

@@ -101,9 +101,14 @@ pub(crate) fn bench_seed() -> Option<u64> {
 //     state, which is real variance, but the seed dimension stayed frozen — and it turned
 //     out to dominate: within seed 1234 the task is 3/3, within seed 42 it is 0/3.
 //
-// So the effective seed is `base + repeat index`. The sweep stays exactly reproducible
-// (the sequence of seeds is deterministic given the base) while the repeats finally vary
-// the thing that mattered most.
+// So each repeat strides the base seed (see [`effective_seed`]). The sweep stays exactly
+// reproducible — the sequence is deterministic given the base — while the repeats finally
+// vary the thing that mattered most.
+//
+// Note what this does NOT buy: three draws still cannot pin down one task's p. Re-run at
+// the strided seeds, `ledger` came out 0/3 again, and pooling every observation to date
+// (12 runs) puts p nearer 0.33 with a large per-seed spread. Varying the seed makes the
+// samples independent; it does not make three of them enough to call a single task.
 static REPEAT_INDEX: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Called by the repeat loop before each pass; see [`effective_seed`].
@@ -111,13 +116,20 @@ pub(crate) fn set_repeat_index(i: u64) {
     REPEAT_INDEX.store(i, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// The seed actually sent to the backend: the base seed offset by the repeat index, so
+/// The seed actually sent to the backend: the base seed strided by the repeat index, so
 /// three repeats are three different seeds rather than the same one three times.
 ///
-/// `None` (randomise) stays `None` — there is nothing to offset.
+/// The stride is the golden-ratio constant rather than `+1`, which is insurance rather
+/// than a demonstrated fix: seeds 42, 43 and 44 all failed `ledger` while 1234 passed it
+/// 3/3, and while three samples cannot show that adjacent seeds are correlated, a
+/// benchmark whose repeats might land in one neighbourhood is exactly the failure this
+/// whole change exists to remove. Spreading them costs nothing and keeps the sequence
+/// deterministic, so the sweep is still reproducible from the base alone.
+///
+/// `None` (randomise) stays `None` — there is nothing to stride.
 pub(crate) fn effective_seed() -> Option<u64> {
     let i = REPEAT_INDEX.load(std::sync::atomic::Ordering::Relaxed);
-    bench_seed().map(|s| s.wrapping_add(i))
+    bench_seed().map(|s| s.wrapping_add(i.wrapping_mul(0x9E37_79B9_7F4A_7C15)))
 }
 
 /// How many times to repeat each task (`AI_BENCH_REPEATS`, default 3).
@@ -181,10 +193,10 @@ fn bench_endpoint(provider: &AiProvider) -> String {
 /// Includes the sampling settings, because a result recorded in the lab notebook
 /// without them cannot be reproduced or compared against a later ejecución.
 pub(crate) fn bench_label() -> String {
-    // The base seed AND the span the repeats will walk, because "seed=42" alone would
-    // now be a half-truth: run 2 uses 43, run 3 uses 44.
+    // The base seed AND how many draws it stands for, because "seed=42" alone would now
+    // be a half-truth: each repeat strides the base to a different seed.
     let seed = match bench_seed() {
-        Some(s) if bench_repeats() > 1 => format!("{}..{}", s, s + bench_repeats() as u64 - 1),
+        Some(s) if bench_repeats() > 1 => format!("{}x{}", s, bench_repeats()),
         Some(s) => s.to_string(),
         None => "random".to_string(),
     };
@@ -402,20 +414,25 @@ mod seed_tests {
     fn the_effective_seed_walks_with_the_repeat_index() {
         std::env::set_var("AI_BENCH_SEED", "42");
         set_repeat_index(0);
-        assert_eq!(effective_seed(), Some(42));
+        assert_eq!(effective_seed(), Some(42), "pass 0 is the base seed itself");
+
         set_repeat_index(1);
-        assert_eq!(effective_seed(), Some(43));
+        let one = effective_seed().unwrap();
         set_repeat_index(2);
-        assert_eq!(
-            effective_seed(),
-            Some(44),
-            "three repeats must be three seeds, not one seed three times"
+        let two = effective_seed().unwrap();
+        assert_ne!(one, 42);
+        assert_ne!(two, 42);
+        assert_ne!(one, two, "three repeats must be three seeds");
+        // Strided, not adjacent: repeats must not land in one neighbourhood.
+        assert!(
+            one.abs_diff(42) > 1000 && two.abs_diff(one) > 1000,
+            "seeds {one} and {two} are too close to the base to count as spread"
         );
 
         // Deterministic: the same pass of the same sweep always draws the same seed,
         // so the run stays reproducible even though the repeats now vary.
         set_repeat_index(1);
-        assert_eq!(effective_seed(), Some(43));
+        assert_eq!(effective_seed(), Some(one));
 
         // Randomised stays randomised; there is nothing to offset.
         std::env::set_var("AI_BENCH_SEED", "none");
