@@ -132,6 +132,57 @@ dependencies), so disk growth is not a concern in normal use.
 
 ## Log (newest first)
 
+### 2026-08-04 (5th) — RETRACTION: "never solves it" was one unlucky seed, and repeats never varied the seed
+
+**Every "never" in the four entries below is unsafe, and two specific claims are wrong.**
+
+The trigger was a reader's instinct — *the 14B failing all three runs sounds like a bug* —
+so `ledger: an infallible API becomes fallible` was re-run at other seeds. qwen2.5-coder:14b,
+`num_ctx` 4096, three repeats per seed:
+
+| seed | result |
+|---|---|
+| 42 (the published sweep) | **0/3** |
+| 7 | 1/3 |
+| 1234 | **3/3** |
+
+Pooled, p ≈ **0.44**. Not a capability boundary — an ordinary flaky task, drawn three times
+from the one seed where it happened to lose.
+
+**Two independent mistakes met to produce that verdict:**
+
+1. **0 of 3 was read as p = 0.** At p ≈ 0.44 a run of three failures comes up about 17 % of
+   the time, and after 0/3 the 97.5 % upper bound on p is ~0.6 (rule of three). Three
+   samples cannot separate "never" from "sometimes"; the distribution line said `never 2`
+   and it was believed.
+2. **The repeats never sampled the seed.** Interleaving decorrelates KV-cache state — real
+   variance, and worth catching — but the seed stayed frozen at 42 for every repeat. It
+   turned out to dominate everything the interleaving was catching: *within* seed 1234 the
+   task is 3/3, *within* seed 42 it is 0/3.
+
+**What this retracts, precisely:**
+
+- *"`state machine` and `ledger` are a capability boundary for the 14B, not a flaky band"* —
+  **wrong for `ledger`** (p ≈ 0.44), and unverified for `state machine`, which was measured
+  the same way.
+- *"blind retry buys nothing on those tasks"* — **wrong**. It was computed from p̂ = 0, and
+  at p ≈ 0.44 retrying recovers the task about 82 % of the time at k = 3.
+- *"the 7B beats the 14B on `ledger`"* — the direction may hold, but both sides were single
+  seeds, so the effect size means nothing yet.
+
+**What survives:** the saturation results (11/11 and 12/12 with sd 0.00 are not going to be
+overturned by a seed change), the aggregate ordering 7B < 14B < 30B, and every finding about
+the harness itself. What needs re-measuring is anything resting on a *specific task* being
+at 0 or 1.
+
+**The fix (V275):** the effective seed is now `base + repeat index`, so three repeats are
+three seeds. The sweep stays exactly reproducible — the sequence is deterministic given the
+base — while the repeats finally vary the dimension that mattered most. Labels now read
+`seed=42..44` rather than `seed=42`, because "seed=42" had become a half-truth.
+
+**The lesson, in one line:** *reproducible* and *independent* are different properties, and
+pinning a seed buys the first by destroying the second.
+
 ### 2026-08-04 (4th) — re-baseline at 3 repeats: half the suite is saturated, and rank is not a total order
 
 V272 moved four categories onto rate scoring but their published numbers were still

@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v150 (2026-08-04) — V275: the repeats now vary the seed, because pinning it destroyed independence (0.2.227)
+
+### Fixed
+- **Three repeats at a fixed seed were not three samples.** `AI_BENCH_SEED` pinned the
+  seed for every repeat, so the repeat loop sampled KV-cache/batching noise (which
+  interleaving was built to decorrelate) and never sampled the seed at all. Measured on
+  `ledger: an infallible API becomes fallible` with qwen2.5-coder:14b:
+
+  | seed | result |
+  |---|---|
+  | 42 | 0/3 |
+  | 7 | 1/3 |
+  | 1234 | 3/3 |
+
+  Pooled p ≈ 0.44. The published entry had recorded "0/3, never solves it, a capability
+  boundary" — one unlucky seed read as a property of the model. The seed dimension
+  dominated everything the interleaving was catching.
+
+  The effective seed is now `base + repeat index`. The sweep stays exactly reproducible
+  (the sequence is deterministic given the base) while the repeats vary what matters.
+  Labels read `seed=42..44` instead of `seed=42`, since the old form had become a
+  half-truth.
+
+### Changed
+- **`agentic_rust_multi` can use compiler-guided repair** (`AI_BENCH_AUTOFIX=1`, off by
+  default like every lever). The single-step runner has had it since V255; multi-step
+  never did. Wired now because there is a measured case for it: the 14B's failures on
+  `ledger` were `Ok((` — an unclosed delimiter, logic otherwise correct, never repaired
+  across four steps of running `cargo test`. That is the class rustc points straight at,
+  which makes it the sharpest available test of whether scaffolding that *repairs* can do
+  what scaffolding that merely *re-rolls* provably cannot.
+
+### Docs
+- The lab notebook carries an explicit retraction: every "never" recorded from three
+  same-seed repeats is unsafe, and the specific claims that rested on p̂ = 0 are marked
+  wrong. What survives (saturation, aggregate ordering, the harness findings) is listed
+  separately from what needs re-measuring.
+
 ## [Unreleased] - v149 (2026-08-04) — V274: a dead backend invalidates the sweep instead of skipping it (0.2.226)
 
 ### Fixed

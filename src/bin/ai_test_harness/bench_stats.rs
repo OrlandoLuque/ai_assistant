@@ -85,6 +85,11 @@ pub(crate) fn run_interleaved<T>(
         .collect();
 
     for pass in 0..repeats {
+        // Each pass draws with a different seed. Interleaving alone decorrelates
+        // KV-cache state, but at a fixed seed the repeats never sampled the seed —
+        // and measured on one task the seed swung the result from 0/3 to 3/3, which
+        // is far more than the cache noise the interleaving was built to catch.
+        crate::bench_util::set_repeat_index(pass as u64);
         for (i, item) in items.iter().enumerate() {
             let t0 = std::time::Instant::now();
             // Caught for the same reason `run_test` catches it: one panicking task must

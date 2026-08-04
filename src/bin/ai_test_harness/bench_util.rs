@@ -71,8 +71,8 @@ pub(crate) fn bench_temperature() -> f32 {
         .unwrap_or(0.5)
 }
 
-/// Sampling seed (`AI_BENCH_SEED`, default 42) — this is what makes a run
-/// reproducible.
+/// Base sampling seed (`AI_BENCH_SEED`, default 42). See [`effective_seed`] for the
+/// value actually sent, which varies per repeat.
 ///
 /// Set `AI_BENCH_SEED=none` (or `off`) to let the backend randomise per request,
 /// which is what you want when measuring best-of-N or sampling variance.
@@ -82,6 +82,42 @@ pub(crate) fn bench_seed() -> Option<u64> {
         Ok(v) => v.trim().parse::<u64>().ok().or(Some(42)),
         Err(_) => Some(42),
     }
+}
+
+// ─── The seed must VARY across repeats, or the repeats are not samples ────────
+//
+// Measured 2026-08-04 on `ledger: an infallible API becomes fallible`, qwen2.5-coder:14b:
+//
+//   seed 42   -> 0/3        seed 7 -> 1/3        seed 1234 -> 3/3
+//
+// Pooled that is p ~ 0.44, and the entry that recorded "0/3, never solves it, a capability
+// boundary" was reading one unlucky seed as a property of the model. Two separate mistakes
+// met there:
+//
+//   * 0 of 3 does not mean p = 0. At p = 0.44 you draw 0/3 about 17 % of the time, and the
+//     97.5 % upper bound on p after 0/3 is ~0.6 (rule of three). Three samples cannot
+//     distinguish "never" from "sometimes".
+//   * repeats at a FIXED seed do not sample the seed. Interleaving decorrelates KV-cache
+//     state, which is real variance, but the seed dimension stayed frozen — and it turned
+//     out to dominate: within seed 1234 the task is 3/3, within seed 42 it is 0/3.
+//
+// So the effective seed is `base + repeat index`. The sweep stays exactly reproducible
+// (the sequence of seeds is deterministic given the base) while the repeats finally vary
+// the thing that mattered most.
+static REPEAT_INDEX: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Called by the repeat loop before each pass; see [`effective_seed`].
+pub(crate) fn set_repeat_index(i: u64) {
+    REPEAT_INDEX.store(i, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The seed actually sent to the backend: the base seed offset by the repeat index, so
+/// three repeats are three different seeds rather than the same one three times.
+///
+/// `None` (randomise) stays `None` — there is nothing to offset.
+pub(crate) fn effective_seed() -> Option<u64> {
+    let i = REPEAT_INDEX.load(std::sync::atomic::Ordering::Relaxed);
+    bench_seed().map(|s| s.wrapping_add(i))
 }
 
 /// How many times to repeat each task (`AI_BENCH_REPEATS`, default 3).
@@ -145,7 +181,10 @@ fn bench_endpoint(provider: &AiProvider) -> String {
 /// Includes the sampling settings, because a result recorded in the lab notebook
 /// without them cannot be reproduced or compared against a later ejecución.
 pub(crate) fn bench_label() -> String {
+    // The base seed AND the span the repeats will walk, because "seed=42" alone would
+    // now be a half-truth: run 2 uses 43, run 3 uses 44.
     let seed = match bench_seed() {
+        Some(s) if bench_repeats() > 1 => format!("{}..{}", s, s + bench_repeats() as u64 - 1),
         Some(s) => s.to_string(),
         None => "random".to_string(),
     };
@@ -163,15 +202,16 @@ pub(crate) fn bench_label() -> String {
     )
 }
 
-/// A fresh assistant configured for the selected backend, with a pinned seed so
-/// repeated runs are comparable.
+/// A fresh assistant configured for the selected backend, seeded from
+/// [`effective_seed`] so that each repeat is a different draw rather than the same
+/// one over again.
 pub(crate) fn bench_assistant() -> AiAssistant {
     let provider = bench_provider();
     let endpoint = bench_endpoint(&provider);
     let mut a = AiAssistant::new();
     a.config.selected_model = bench_model();
     a.config.temperature = bench_temperature();
-    a.config.seed = bench_seed();
+    a.config.seed = effective_seed();
     a.config.ollama_num_ctx = bench_num_ctx();
     // Point the right URL field at the endpoint. Only an explicit AI_BENCH_URL
     // (or a non-Ollama provider) changes anything from the defaults.
@@ -350,5 +390,39 @@ mod backend_liveness_tests {
             backend_died_mid_sweep(),
             "a recovery does not retroactively measure the skipped categories"
         );
+    }
+}
+
+#[cfg(test)]
+mod seed_tests {
+    use super::*;
+
+    /// One test: the repeat index is global state, and Rust runs tests in parallel.
+    #[test]
+    fn the_effective_seed_walks_with_the_repeat_index() {
+        std::env::set_var("AI_BENCH_SEED", "42");
+        set_repeat_index(0);
+        assert_eq!(effective_seed(), Some(42));
+        set_repeat_index(1);
+        assert_eq!(effective_seed(), Some(43));
+        set_repeat_index(2);
+        assert_eq!(
+            effective_seed(),
+            Some(44),
+            "three repeats must be three seeds, not one seed three times"
+        );
+
+        // Deterministic: the same pass of the same sweep always draws the same seed,
+        // so the run stays reproducible even though the repeats now vary.
+        set_repeat_index(1);
+        assert_eq!(effective_seed(), Some(43));
+
+        // Randomised stays randomised; there is nothing to offset.
+        std::env::set_var("AI_BENCH_SEED", "none");
+        set_repeat_index(2);
+        assert_eq!(effective_seed(), None);
+
+        std::env::remove_var("AI_BENCH_SEED");
+        set_repeat_index(0);
     }
 }

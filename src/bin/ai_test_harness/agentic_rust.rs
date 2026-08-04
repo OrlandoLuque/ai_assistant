@@ -1369,7 +1369,29 @@ fn run_rust_multi_task(cargo: &'static str, task: &RustMultiTask) -> Result<(), 
     // that most needs the artifact: "lost state or broke compilation across edits" does
     // not say WHICH, and this runner was the only agentic one with no debug dump — so
     // diagnosing it meant reproducing the whole sequence by hand.
-    let (passed, cargo_out) = verify_crate_verbose(cargo, &ws, task.checker);
+    let (mut passed, cargo_out) = verify_crate_verbose(cargo, &ws, task.checker);
+
+    // `AI_BENCH_AUTOFIX=1`: rustc's own suggestions, applied speculatively and kept only
+    // if the CHECKER then passes. Off by default, like every other lever, so plain
+    // numbers stay comparable.
+    //
+    // Wired here because of a measured case, not a hunch. On `ledger`, qwen2.5-coder:14b
+    // produced logically CORRECT code and failed on `Ok((` — an unclosed delimiter it
+    // never repaired across four steps of running `cargo test`. That is not a reasoning
+    // failure and no amount of retrying fixes it (the task sits at p = 0, where the
+    // blind-retry projection is flat by construction). It is exactly the class rustc
+    // points straight at, so it is the sharpest available test of whether scaffolding
+    // that REPAIRS — rather than scaffolding that merely re-rolls — can move a task off
+    // zero. The single-step runner has had this since V255; multi-step never did.
+    let mut repaired = false;
+    if !passed && autofix_enabled() && try_compiler_guided_repair(cargo, &ws, task.checker) {
+        passed = true;
+        repaired = true;
+    }
+    if repaired && std::env::var("AGENTIC_DEBUG").is_ok() {
+        println!("    [dbg] multi-step task passed only AFTER compiler-guided repair");
+    }
+
     if !passed && std::env::var("AGENTIC_DEBUG").is_ok() {
         let src = std::fs::read_to_string(ws.join("src").join("lib.rs")).unwrap_or_default();
         println!(
