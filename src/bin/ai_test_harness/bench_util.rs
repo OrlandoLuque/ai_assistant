@@ -247,9 +247,48 @@ pub(crate) fn warn_if_cpu_offloaded() {
     }
 }
 
+// ─── Did the backend die MID-SWEEP? ──────────────────────────────────────────
+//
+// Skipping a category when there is no backend is deliberate: it is what lets the
+// battery run on a machine with no GPU, and in CI. But the two states below are not
+// the same thing, and until V274 the harness reported them identically:
+//
+//   * never reachable  → nothing was measurable here; skipping is the right answer.
+//   * reachable, then not → the sweep is INVALID. Whatever came after the daemon died
+//     was not measured, and every remaining category prints SKIP.
+//
+// Measured on 2026-08-04: Ollama degraded through a five-category sweep (5 of 30 runs
+// ending in BACKEND CRASH) and then the process died. The next category printed
+// `ALL 0 TESTS PASSED [1 skipped]` and the run exited 0. Every piece was individually
+// correct and the summary was a lie.
+static BACKEND_SEEN_UP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static BACKEND_DIED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// True when the backend answered earlier in this run and has since stopped answering.
+pub(crate) fn backend_died_mid_sweep() -> bool {
+    BACKEND_DIED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Whether the configured backend's endpoint accepts a TCP connection (so the
 /// category can skip gracefully when the server isn't running, e.g. in CI).
+///
+/// Also records the up→down transition; see [`backend_died_mid_sweep`].
 pub(crate) fn backend_reachable() -> bool {
+    record_probe(probe_backend())
+}
+
+/// The transition rule, separated from the socket so it can be tested.
+fn record_probe(up: bool) -> bool {
+    use std::sync::atomic::Ordering::Relaxed;
+    if up {
+        BACKEND_SEEN_UP.store(true, Relaxed);
+    } else if BACKEND_SEEN_UP.load(Relaxed) {
+        BACKEND_DIED.store(true, Relaxed);
+    }
+    up
+}
+
+fn probe_backend() -> bool {
     use std::net::ToSocketAddrs;
     let ep = bench_endpoint(&bench_provider());
     let hostport = ep
@@ -266,4 +305,50 @@ pub(crate) fn backend_reachable() -> bool {
         .and_then(|mut it| it.next())
         .and_then(|a| std::net::TcpStream::connect_timeout(&a, Duration::from_secs(2)).ok())
         .is_some()
+}
+
+#[cfg(test)]
+mod backend_liveness_tests {
+    use super::*;
+    use std::sync::atomic::Ordering::Relaxed;
+
+    fn reset() {
+        BACKEND_SEEN_UP.store(false, Relaxed);
+        BACKEND_DIED.store(false, Relaxed);
+    }
+
+    /// One test, not three: the state is global, and Rust runs tests in parallel, so
+    /// separate cases would race each other through the same two atomics.
+    #[test]
+    fn only_an_up_then_down_transition_invalidates_the_sweep() {
+        // Never reachable: legitimate skip (no GPU, CI). Not an invalid sweep.
+        reset();
+        assert!(!record_probe(false));
+        assert!(!record_probe(false));
+        assert!(
+            !backend_died_mid_sweep(),
+            "a backend that was never up cannot have died"
+        );
+
+        // Up throughout: nothing to report.
+        reset();
+        record_probe(true);
+        record_probe(true);
+        assert!(!backend_died_mid_sweep());
+
+        // Up, then gone: everything measured after this point is missing, and the run
+        // must say so rather than print ALL 0 TESTS PASSED.
+        reset();
+        record_probe(true);
+        record_probe(false);
+        assert!(backend_died_mid_sweep());
+
+        // And it stays flagged even if the daemon comes back: the categories that
+        // skipped in between were still not measured.
+        record_probe(true);
+        assert!(
+            backend_died_mid_sweep(),
+            "a recovery does not retroactively measure the skipped categories"
+        );
+    }
 }

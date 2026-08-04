@@ -923,7 +923,13 @@ fn print_summary(results: &[CategoryResult]) {
         bold("───────────────────────────────────────────────────────")
     );
     let total = total_passed + total_failed;
-    let overall = if total_failed == 0 {
+    // A sweep whose backend died is not a passing sweep, whatever the counters say: the
+    // categories after the death printed SKIP and measured nothing. Saying so here rather
+    // than only in the exit code, because the summary is what people read.
+    let died = crate::bench_util::backend_died_mid_sweep();
+    let overall = if died {
+        red("SWEEP INVALID: the backend died part-way through")
+    } else if total_failed == 0 {
         green(&format!("ALL {} TESTS PASSED", total))
     } else {
         red(&format!("{}/{} TESTS FAILED", total_failed, total))
@@ -963,6 +969,26 @@ fn print_summary(results: &[CategoryResult]) {
                 }
             }
         }
+        println!();
+    }
+
+    if died {
+        let skipped_cats: Vec<&str> = results
+            .iter()
+            .filter(|c| c.total_active() == 0 && c.skipped() > 0)
+            .map(|c| c.name.as_str())
+            .collect();
+        println!(
+            "{} the backend answered earlier in this run and then stopped. Everything after \
+             that point printed SKIP and was NOT measured{}. Restart it and re-run; do not \
+             record these numbers.",
+            red("SWEEP INVALID:"),
+            if skipped_cats.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", skipped_cats.join(", "))
+            }
+        );
         println!();
     }
 }
@@ -1819,5 +1845,12 @@ fn main() {
     }
 
     let failed: usize = results.iter().map(|r| r.failed()).sum();
+    // Exit 2, not 1: a caller that only checks "did it fail" already treats this as bad,
+    // and a caller driving a sweep can tell "the model lost tasks" (1) apart from "the
+    // measurement never happened" (2) — which need opposite responses. Only the second
+    // means re-run.
+    if crate::bench_util::backend_died_mid_sweep() {
+        std::process::exit(2);
+    }
     std::process::exit(if failed == 0 { 0 } else { 1 });
 }

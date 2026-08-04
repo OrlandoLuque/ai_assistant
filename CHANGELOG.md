@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v149 (2026-08-04) — V274: a dead backend invalidates the sweep instead of skipping it (0.2.226)
+
+### Fixed
+- **A sweep whose backend died reported `ALL 0 TESTS PASSED` and exited 0.** Skipping a
+  category when there is no backend is deliberate — it is what lets the battery run on a
+  machine with no GPU, and in CI. But two different situations were being reported
+  identically:
+  - *never reachable* — nothing was measurable; skipping is right;
+  - *reachable, then not* — the sweep is *invalid*: everything after the death printed
+    SKIP and was not measured.
+
+  Observed on 2026-08-04: Ollama degraded through a five-category sweep (5 of 30 runs
+  ending in `BACKEND CRASH`) and then the process died. The next category printed
+  `ALL 0 TESTS PASSED [1 skipped]` and the run exited 0. Every individual piece was
+  correct and the summary was a lie.
+
+  `backend_reachable` now records the up→down transition. On it the run prints
+  `SWEEP INVALID`, names the categories that were never measured, and **exits 2** —
+  distinct from 1, so a caller can tell "the model lost tasks" (re-read the numbers)
+  from "the measurement never happened" (re-run it). A recovery does not clear the flag:
+  the categories that skipped in between are still unmeasured.
+
+  Verified end to end against a backend that accepts exactly one connection and then
+  stops listening — the transition, deterministically, with no GPU and no race against a
+  sleep.
+
 ## [Unreleased] - v148 (2026-08-04) — V273: multi-step tasks that invalidate earlier work (0.2.225)
 
 ### Added
