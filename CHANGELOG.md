@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v146 (2026-08-04) — V271: one way to score a live model (0.2.223)
+
+### Added
+- **`bench_stats`** — the repeat/rate machinery `agentic_test_gen` grew in V263, lifted
+  out of it so every model-measuring category scores the same way instead of each
+  growing its own slightly-different copy. It holds the interleaved repeat loop,
+  `RepeatedOutcome`, and the summary block (distribution, blind-retry projection,
+  failure modes). Six unit tests pin the decisions that are easy to get wrong and
+  impossible to notice afterwards: a run lost to the backend leaves the **denominator**,
+  and the repeats are **interleaved** rather than run back to back.
+  - The failure-mode table is now the caller's, because "wrong" differs per category —
+    a test suite that rejects valid code and a multi-step task that broke compilation
+    are not the same diagnosis — and it says out loud that it counts *tasks by their
+    last failure*, not runs.
+- **A `LOST` line when the backend ate part of the sweep.** `1/1` and `3/3` both print
+  `score=1.00`, so a run in which a third of the attempts never completed looked
+  identical to a clean one. It is now stated once, in runs, next to the total. This is
+  not hypothetical: the 30B measured below lost 4 of its 18 runs.
+
+### Changed
+- **`agentic_rust_multi` scores a pass rate over repeats**, like `agentic_test_gen`.
+  Six tasks judged once each is what produced "the 14B is dominated" and then its
+  retraction: a one-task gap between two models sits inside the ±1 noise band of single
+  runs, so the category could not tell a real difference from a coin landing the same
+  way twice. Re-measured with repeats, both models are at ceiling — see
+  [MODEL_BENCHMARKS.md](docs/MODEL_BENCHMARKS.md).
+
+### Fixed
+- **A step whose generation never returned was scored as a model failure.** The
+  multi-step loop swallowed `agent.run` errors into the iteration count, so a backend
+  that fell over mid-task — the llama.cpp sampler abort diagnosed in V258 — came out as
+  "lost state or broke compilation across edits", blaming the model for infrastructure.
+  It now leaves the denominator with a `BACKEND CRASH` label, as in the other categories.
+
+### Docs
+- `CLAUDE.md`'s mandatory session-start block pointed at `memory/modus-operandi.md` (a
+  path that does not exist; it is `docs/modus-operandi.md`) and at "the highest-numbered
+  `docs/IMPROVEMENTS_V*.md`" — a series that stopped at V167, so the instruction whose
+  whole job is to establish *where we are* was handing out a picture of March 2026.
+  Now: modus operandi, the CHANGELOG head, and MODEL_BENCHMARKS/LOCAL_MODELS for
+  measurement sessions.
+- `AI_BENCH_NUM_CTX` was documented in LOCAL_MODELS but missing from the harness knob
+  tables (MD and web), where it matters most — it is the knob that decides whether a
+  model fits in VRAM at all.
+
 ## [Unreleased] - v145 (2026-08-04) — V270: `upload_file` sends real multipart (0.2.222)
 
 ### Fixed

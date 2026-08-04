@@ -157,13 +157,19 @@ experiments were invalidated this way before `warn_if_cpu_offloaded()` existed.
 |---|---|---|---|
 | qwen2.5-coder:7b-instruct | 8192 | 8.2 GB | **100 % GPU** |
 | qwen2.5-coder:14b | 8192 | 18 GB | 25 % CPU / 75 % GPU |
-| qwen2.5-coder:14b | **4096** | 13 GB | **100 % GPU** |
+| qwen2.5-coder:14b | **4096** | 13 GB | **100 % GPU** (5 % CPU when the desktop is busy) |
 | qwen3-coder:30b | 4096 | 20 GB | 33 % CPU / 67 % GPU |
-| qwen3-coder:30b | 2048 | 19 GB | 27 % CPU / 73 % GPU |
+| qwen3-coder:30b | 2048 | 19 GB | 27 % CPU / 73 % GPU (33 % when the desktop is busy) |
 
 Note the 14B: **the same model, same quantization, goes from a third on CPU to
 entirely on GPU purely by halving the context.** That is the KV cache, not the
 weights, and it is why `AI_BENCH_NUM_CTX` exists.
+
+The parenthesised numbers are the same models measured again on 2026-08-04 with a few
+hundred MB more of the card in use by the desktop. **The split is not a property of the
+model, it is decided at load time against whatever VRAM is free then** — so read this
+table as "fits when the card is quiet", and check `ollama ps` for the run you are about
+to trust rather than assuming last week's placement.
 
 The 30B does not fit at any usable context — 19 GB against a 16 GB card even at
 2048. It is still worth running (a MoE activates only a few experts per token, so

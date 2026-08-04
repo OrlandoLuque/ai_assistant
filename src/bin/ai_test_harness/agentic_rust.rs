@@ -1224,6 +1224,20 @@ fn run_rust_multi_task(cargo: &'static str, task: &RustMultiTask) -> Result<(), 
         }
     }
 
+    // A step whose generation never came back says nothing about the model, and
+    // scoring it as a failure would blame the model for the runner falling over
+    // (the llama.cpp sampler abort — see `agentic_test_gen`). The loop above
+    // swallows `agent.run` errors into the iteration count, so the conversation is
+    // the only place that evidence survives.
+    if crate::agentic_code::hit_backend_failure(&agent) {
+        let _ = std::fs::remove_dir_all(&ws);
+        return Err(format!(
+            "{}, not a model failure (this run leaves the denominator) — a step's \
+             generation never returned; check the backend log.",
+            crate::bench_stats::BACKEND_CRASH_PREFIX
+        ));
+    }
+
     let passed = verify_crate(cargo, &ws, task.checker);
     let _ = std::fs::remove_dir_all(&ws);
 
@@ -1273,20 +1287,34 @@ pub(crate) fn tests_agentic_rust_multi() -> CategoryResult {
     println!("  backend: {}", crate::bench_util::bench_label());
     crate::bench_util::warn_if_cpu_offloaded();
 
-    for task in RUST_MULTI_TASKS {
-        results.push(run_test(&format!("rust multi: {}", task.name), || {
-            run_rust_multi_task(cargo, task)
-        }));
-    }
+    // Scored as a pass RATE over interleaved repeats, like `agentic_test_gen`.
+    //
+    // Six tasks judged once each is what produced "the 14B is dominated" and then
+    // its retraction: a one-task gap between two models is inside the ±1 noise band
+    // of single runs, so the category could not tell a real difference from a coin
+    // landing the same way twice. See `bench_stats`.
+    let repeats = crate::bench_util::bench_repeats();
+    let tasks: Vec<&RustMultiTask> = RUST_MULTI_TASKS
+        .iter()
+        .filter(|t| crate::should_run(&format!("rust multi: {}", t.name)))
+        .collect();
+    let outcomes = crate::bench_stats::run_interleaved(
+        &tasks,
+        |t| format!("rust multi: {}", t.name),
+        repeats,
+        |t| run_rust_multi_task(cargo, t),
+    );
 
-    let solved = results.iter().filter(|r| r.passed && !r.skipped).count();
-    let total = results.iter().filter(|r| !r.skipped).count();
-    println!(
-        "  {} agentic_rust_multi solved: {}/{} (cargo-verified, backend={})",
-        bold(&cyan("∑")),
-        solved,
-        total,
-        crate::bench_util::bench_label()
+    results.extend(crate::bench_stats::to_results(&outcomes, repeats));
+    crate::bench_stats::print_summary(
+        "agentic_rust_multi",
+        "tasks carried across every step (cargo-verified)",
+        &[(
+            "cargo test failed after",
+            "lost state or broke compilation across steps",
+        )],
+        &outcomes,
+        repeats,
     );
 
     CategoryResult {

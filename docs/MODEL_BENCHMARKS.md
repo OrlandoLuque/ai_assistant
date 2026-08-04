@@ -14,7 +14,7 @@ we learned.
 
 ## What's measured
 
-Three harness categories, all **execution-verified** (the code the model produces
+Six harness categories, all **execution-verified** (the code the model produces
 is actually run against `assert` checkers — a PASS means the artifact *works*, not
 that it "looks right"). The backend is configurable via env
 (`AI_BENCH_PROVIDER` / `AI_BENCH_MODEL` / `AI_BENCH_URL` — see
@@ -36,7 +36,7 @@ crashes the llama.cpp runner outright — see the 2026-07-31 (2nd) entry.
 | `agentic_code` | a live model drives the built-in `AutonomousAgent` over workspace tools (`write_file`, `read_file`, `run_python`, `list_dir`, `run_command`) to build & fix code in a temp workspace. | 5 single-step |
 | `agentic_multi` | multi-step iterative coding (build → extend → fix) on **one persistent workspace** (the agent's conversation carries across steps). | 10 (3–5 steps each) |
 | `agentic_rust` | same agentic loop, but in **Rust**: a throwaway cargo crate per task, verified with `cargo test` so the type/borrow checkers gate every answer. | 12 single-step |
-| `agentic_rust_multi` | multi-step Rust on one persistent crate (incl. refactoring a concrete type into a generic one). | 6 × 3 steps |
+| `agentic_rust_multi` | multi-step Rust on one persistent crate (incl. refactoring a concrete type into a generic one). Repeated, scored as a pass rate. | 6 × 3 steps |
 | `agentic_test_gen` | **inverted**: the model gets a *correct* implementation and must write the test suite. Scored by mutation — its tests must accept the reference **and** kill every planted bug. Repeated, scored as a pass rate. | 12 |
 
 ## How to run
@@ -68,6 +68,13 @@ Scaffolding knobs, all off by default so plain runs stay comparable:
 `AI_BENCH_SCAFFOLD=n` (verify→retry rounds), `AI_BENCH_SAMPLES=n` + `AI_BENCH_TEMP`
 (best-of-N), `AI_BENCH_KNOWLEDGE=1` (idiom injection), `AI_BENCH_CRITIC=1`
 (multi-agent reviewer).
+
+Two knobs that are *not* scaffolding and belong in every entry's header, because a
+result means nothing without them: `AI_BENCH_REPEATS=n` (runs per task, default **3**,
+scored as a pass rate — the categories that use it are noted in the table above) and
+`AI_BENCH_NUM_CTX=n` (context window; shrinking it is what decides whether a big model
+fits entirely in VRAM — see [LOCAL_MODELS.md](LOCAL_MODELS.md)). Both appear in the
+`backend=` label the harness prints, so they end up in the log automatically.
 
 ## How to read / caveats
 
@@ -121,6 +128,45 @@ dependencies), so disk growth is not a concern in normal use.
 ---
 
 ## Log (newest first)
+
+### 2026-08-04 (2nd) — 14B vs 30B, settled with repeats: both at ceiling, and the set is spent
+
+The previous entry left a one-task gap (14B 5/6, 30B 6/6) and said explicitly that one
+task in six, from single runs, is the ±1 noise band — not a result. `agentic_rust_multi`
+now scores a pass rate over interleaved repeats (V271), so the question is answerable.
+Same binary, same session, `AI_BENCH_REPEATS=3`, `ollama stop` between models:
+
+| Model | `num_ctx` | Placement | Score | Runs scored | Wall clock (3 passes) |
+|---|---|---|---|---|---|
+| `qwen2.5-coder:14b` | 4096 | 5 % / 95 % CPU/GPU, 13 GB | **6.00/6** (mean 1.00, sd 0.00) | 18/18 | **636 s** |
+| `qwen3-coder:30b` (MoE) | 2048 | 33 % / 67 % CPU/GPU, 19 GB | **6.00/6** (mean 1.00, sd 0.00) | 14/18 | 2 113 s |
+
+**The gap was noise.** The 14B solved every task in all three passes, including
+`errors: Option then custom error type`, the one it "failed" last night. The 30B was not
+better; it was luckier once, and it is **3.3× slower** on the same six tasks.
+
+**The 30B lost 4 of its 18 runs to backend crashes** (2 on `stack: concrete then generic`,
+1 each on `errors` and `builder`), which is why its score rests on 14 runs. This is the
+first time the crash accounting mattered on a real sweep: had those four counted as
+failures, the 30B would have "scored" 4.33/6 and the entry would have recorded a
+capability difference that does not exist. The `LOST` line exists because `1/1` and `3/3`
+both print `score=1.00`.
+
+**Practical verdict for multi-step Rust on a 16 GB card:** `qwen2.5-coder:14b` at
+`num_ctx` 4096. Fully-enough resident, three times faster, zero runs lost. The 30B keeps
+its edge in `agentic_test_gen` (11.00/12 vs 9.67), which is a harder category — that is
+where the two models still separate.
+
+**And the set is spent.** A category where the mid-size model is right *every single time*
+(sd 0.00, no task in the middle band) cannot rank models any more, and its blind-retry
+projection equals its score, so there is nothing to recover either. Harder multi-step
+tasks are queued: more steps, and refactors that invalidate an earlier decision rather
+than extend it.
+
+**Two smaller notes.** The 14B loaded at 5 % CPU tonight, not the 100 % GPU recorded
+earlier at the same `num_ctx` — the split depends on what else holds VRAM *at load time*,
+so treat "100 % GPU at 4096" as "fits when the desktop is quiet", not as a constant. And
+the 30B ran at 33 % CPU vs 27 % before, for the same reason.
 
 ### 2026-08-04 — the 14B is not "dominated": that verdict rested on a premise `num_ctx` removed
 
