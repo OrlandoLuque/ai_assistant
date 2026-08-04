@@ -87,7 +87,24 @@ pub(crate) fn run_interleaved<T>(
     for pass in 0..repeats {
         for (i, item) in items.iter().enumerate() {
             let t0 = std::time::Instant::now();
-            let outcome = run_one(item);
+            // Caught for the same reason `run_test` catches it: one panicking task must
+            // not take down a sweep that has already spent an hour of GPU time. These
+            // categories used to go through `run_test` and inherited this; the rate
+            // loop has to provide it itself. (Needs a panic=unwind profile.)
+            let outcome =
+                match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_one(item))) {
+                    Ok(r) => r,
+                    Err(panic) => {
+                        let msg = if let Some(s) = panic.downcast_ref::<&str>() {
+                            s.to_string()
+                        } else if let Some(s) = panic.downcast_ref::<String>() {
+                            s.clone()
+                        } else {
+                            "unknown panic".to_string()
+                        };
+                        Err(format!("PANIC: {msg}"))
+                    }
+                };
             out[i].elapsed_ms += t0.elapsed().as_secs_f64() * 1000.0;
             match outcome {
                 Ok(()) => {
@@ -185,10 +202,11 @@ pub(crate) fn print_summary(
     }
     let earned: f64 = rates.iter().sum();
     println!(
-        "  {} {category}: {:.2}/{} {unit} — pass rate over {repeats} runs each (backend={})",
+        "  {} {category}: {:.2}/{} {unit} — pass rate over {repeats} run{} each (backend={})",
         bold(&cyan("∑")),
         earned,
         rates.len(),
+        if repeats == 1 { "" } else { "s" },
         crate::bench_util::bench_label()
     );
 
@@ -384,6 +402,28 @@ mod tests {
         let three_runs = outcome("u", 3, 3, 0);
         assert_eq!(one_run.rate(), three_runs.rate());
         assert_eq!(one_run.crashes + three_runs.crashes, 2);
+    }
+
+    #[test]
+    fn a_panicking_task_fails_that_run_and_the_sweep_continues() {
+        // Without this the first panic would abort a sweep that may already have spent
+        // an hour of GPU time, losing every result gathered so far.
+        let items = vec![0usize, 1];
+        let out = run_interleaved(
+            &items,
+            |i| format!("t{i}"),
+            2,
+            |i| {
+                if *i == 0 {
+                    panic!("boom");
+                }
+                Ok(())
+            },
+        );
+        assert_eq!(out[0].passes, 0);
+        assert_eq!(out[0].attempts, 2, "a panic is evidence, not a lost run");
+        assert!(out[0].last_failure.as_deref().unwrap().contains("boom"));
+        assert_eq!(out[1].passes, 2, "the other task still ran, both passes");
     }
 
     #[test]

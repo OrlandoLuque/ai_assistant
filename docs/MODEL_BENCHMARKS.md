@@ -30,14 +30,17 @@ Sampling is pinned with `AI_BENCH_TEMP` (default **0.5**) and `AI_BENCH_SEED`
 chase determinism: the seed is what buys reproducibility, and near-greedy sampling
 crashes the llama.cpp runner outright — see the 2026-07-31 (2nd) entry.
 
+**All six are repeated and scored as a pass rate** (`AI_BENCH_REPEATS`, default 3) since
+V272 — a single live-model run is one sample, not a measurement.
+
 | Category | What it measures | Tasks |
 |---|---|---|
 | `code_gen_bench` | pass@1 on standalone functions: spec → code → run against checker. | 11 |
 | `agentic_code` | a live model drives the built-in `AutonomousAgent` over workspace tools (`write_file`, `read_file`, `run_python`, `list_dir`, `run_command`) to build & fix code in a temp workspace. | 5 single-step |
 | `agentic_multi` | multi-step iterative coding (build → extend → fix) on **one persistent workspace** (the agent's conversation carries across steps). | 10 (3–5 steps each) |
 | `agentic_rust` | same agentic loop, but in **Rust**: a throwaway cargo crate per task, verified with `cargo test` so the type/borrow checkers gate every answer. | 12 single-step |
-| `agentic_rust_multi` | multi-step Rust on one persistent crate (incl. refactoring a concrete type into a generic one). Repeated, scored as a pass rate. | 6 × 3 steps |
-| `agentic_test_gen` | **inverted**: the model gets a *correct* implementation and must write the test suite. Scored by mutation — its tests must accept the reference **and** kill every planted bug. Repeated, scored as a pass rate. | 12 |
+| `agentic_rust_multi` | multi-step Rust on one persistent crate (incl. refactoring a concrete type into a generic one). | 6 × 3 steps |
+| `agentic_test_gen` | **inverted**: the model gets a *correct* implementation and must write the test suite. Scored by mutation — its tests must accept the reference **and** kill every planted bug. | 12 |
 
 ## How to run
 

@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v147 (2026-08-04) — V272: every model-measuring category now scores a rate (0.2.224)
+
+### Changed
+- **`code_gen_bench`, `agentic_code`, `agentic_multi` and `agentic_rust` moved onto
+  `bench_stats`**, joining the two categories that already scored a rate. All six
+  live-model categories now repeat (`AI_BENCH_REPEATS`, default 3), report the
+  distribution and the blind-retry projection, and drop backend crashes from the
+  denominator. Before this, four of the six still reported a single run — a coin toss
+  printed to three significant figures — and V271 had just shown what that costs: a
+  one-task "difference" between two models that repeats dissolved entirely.
+  - Cost: a full `--benchmarks` sweep now takes 3× as long. That is the price of the
+    number meaning something, and it does not touch CI — these categories have been
+    excluded from `--all` (the regression gate) since V262.
+
+### Fixed
+- **Three more runners scored a fallen-over backend as the model being wrong.**
+  `agentic_code`, `agentic_multi` and `agentic_rust` all swallowed `agent.run`'s error
+  into an iteration count, exactly as `agentic_rust_multi` did (fixed in V271), and
+  `code_gen_bench` mapped a failed generation to a plain error string. All four now
+  emit the `BACKEND CRASH` label and leave the denominator.
+  - In `agentic_rust` the check runs **only when the task failed**: a run that produced
+    working code despite one round dying is real evidence, and discarding it would throw
+    away a success.
+  - Best-of-N wrapped the label in "all N independent samples failed; last: …", which
+    hid it from the prefix match. It now passes the crash through unwrapped.
+- **A panicking task no longer aborts a whole sweep.** These categories inherited
+  `catch_unwind` from `run_test`; the rate loop replaced that and did not provide it, so
+  a single panic could have thrown away an hour of GPU time. `run_interleaved` catches
+  it and scores that run as a failure, like `run_test` always did.
+
 ## [Unreleased] - v146 (2026-08-04) — V271: one way to score a live model (0.2.223)
 
 ### Added

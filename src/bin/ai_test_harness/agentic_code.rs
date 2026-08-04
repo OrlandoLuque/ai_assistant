@@ -663,6 +663,17 @@ fn run_one_task(py: &'static str, task: &AgenticTask) -> Result<(), String> {
         Err(_) => MAX_ITERS,
     };
 
+    // The backend falling over is not evidence about the model: `agent.run`'s error is
+    // swallowed into the iteration count above, so the conversation is where it survives.
+    if hit_backend_failure(&agent) {
+        let _ = std::fs::remove_dir_all(&workspace);
+        return Err(format!(
+            "{}, not a model failure (this run leaves the denominator) — the generation \
+             never returned; check the backend log.",
+            crate::bench_stats::BACKEND_CRASH_PREFIX
+        ));
+    }
+
     let target = safe_join(&workspace, task.target)?;
     let passed = verify_file(py, &target, task.checker);
     let _ = std::fs::remove_dir_all(&workspace);
@@ -710,20 +721,25 @@ pub(crate) fn tests_agentic_code() -> CategoryResult {
     println!("  backend: {}", crate::bench_util::bench_label());
     crate::bench_util::warn_if_cpu_offloaded();
 
-    for task in TASKS {
-        results.push(run_test(&format!("agentic: {}", task.name), || {
-            run_one_task(py, task)
-        }));
-    }
+    let repeats = crate::bench_util::bench_repeats();
+    let tasks: Vec<&AgenticTask> = TASKS
+        .iter()
+        .filter(|t| crate::should_run(&format!("agentic: {}", t.name)))
+        .collect();
+    let outcomes = crate::bench_stats::run_interleaved(
+        &tasks,
+        |t| format!("agentic: {}", t.name),
+        repeats,
+        |task| run_one_task(py, task),
+    );
 
-    let solved = results.iter().filter(|r| r.passed && !r.skipped).count();
-    let total = results.iter().filter(|r| !r.skipped).count();
-    println!(
-        "  {} agentic_code solved: {}/{} (tool-driven, execution-verified, backend={})",
-        bold(&cyan("∑")),
-        solved,
-        total,
-        crate::bench_util::bench_label()
+    results.extend(crate::bench_stats::to_results(&outcomes, repeats));
+    crate::bench_stats::print_summary(
+        "agentic_code",
+        "tasks (tool-driven, execution-verified)",
+        &[("artifact failed checker", "artifact was there but wrong")],
+        &outcomes,
+        repeats,
     );
 
     CategoryResult {
@@ -1062,6 +1078,19 @@ fn run_multi_task(py: &'static str, task: &MultiStepTask) -> Result<(), String> 
         }
     }
 
+    // As in the single-step runner: a step whose generation never returned says nothing
+    // about the model, and must not be recorded as it losing state.
+    if hit_backend_failure(&agent) {
+        if !debug {
+            let _ = std::fs::remove_dir_all(&workspace);
+        }
+        return Err(format!(
+            "{}, not a model failure (this run leaves the denominator) — a step's \
+             generation never returned; check the backend log.",
+            crate::bench_stats::BACKEND_CRASH_PREFIX
+        ));
+    }
+
     let target = safe_join(&workspace, task.target)?;
     let passed = verify_file(py, &target, task.checker);
     if !debug {
@@ -1114,20 +1143,25 @@ pub(crate) fn tests_agentic_multi() -> CategoryResult {
     println!("  backend: {}", crate::bench_util::bench_label());
     crate::bench_util::warn_if_cpu_offloaded();
 
-    for task in MULTI_TASKS {
-        results.push(run_test(&format!("multi: {}", task.name), || {
-            run_multi_task(py, task)
-        }));
-    }
+    let repeats = crate::bench_util::bench_repeats();
+    let tasks: Vec<&MultiStepTask> = MULTI_TASKS
+        .iter()
+        .filter(|t| crate::should_run(&format!("multi: {}", t.name)))
+        .collect();
+    let outcomes = crate::bench_stats::run_interleaved(
+        &tasks,
+        |t| format!("multi: {}", t.name),
+        repeats,
+        |task| run_multi_task(py, task),
+    );
 
-    let solved = results.iter().filter(|r| r.passed && !r.skipped).count();
-    let total = results.iter().filter(|r| !r.skipped).count();
-    println!(
-        "  {} agentic_multi solved: {}/{} (multi-step, execution-verified, backend={})",
-        bold(&cyan("∑")),
-        solved,
-        total,
-        crate::bench_util::bench_label()
+    results.extend(crate::bench_stats::to_results(&outcomes, repeats));
+    crate::bench_stats::print_summary(
+        "agentic_multi",
+        "tasks (multi-step, execution-verified)",
+        &[("lost state across edits", "lost state across the steps")],
+        &outcomes,
+        repeats,
     );
 
     CategoryResult {

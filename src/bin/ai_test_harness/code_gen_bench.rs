@@ -266,43 +266,59 @@ pub(crate) fn tests_code_gen_bench() -> CategoryResult {
     let py = py.unwrap();
     crate::bench_util::warn_if_cpu_offloaded();
 
-    for task in TASKS {
-        results.push(run_test(
-            &format!("code-gen: {} (pass@1)", task.name),
-            || {
-                let mut a = crate::bench_util::bench_assistant();
-                let prompt = format!(
-                    "Write Python 3 code for the following. Output ONLY the code inside a single \
-                     ```python code block, with no explanation and no example usage.\n\n{}",
-                    task.spec
-                );
-                let resp = a.generate_sync(prompt, "").map_err(|e| e.to_string())?;
-                let code = extract_code(&resp);
-                let program = format!(
-                    "{code}\n\n# --- checker ---\n{}\nprint('OK')\n",
-                    task.checker
-                );
-                match run_python(py, &program) {
-                    Ok(true) => Ok(()),
-                    Ok(false) => Err(format!(
-                        "generated code failed its checker. code:\n{:.500}",
-                        code
-                    )),
-                    Err(e) => Err(format!("could not run python: {e}")),
-                }
-            },
-        ));
-    }
+    // pass@1 is a probability, so it is measured over repeats and reported as a rate —
+    // the same machinery every other live-model category uses. See `bench_stats`.
+    let repeats = crate::bench_util::bench_repeats();
+    let tasks: Vec<&CodeTask> = TASKS
+        .iter()
+        .filter(|t| crate::should_run(&format!("code-gen: {} (pass@1)", t.name)))
+        .collect();
+    let outcomes = crate::bench_stats::run_interleaved(
+        &tasks,
+        |t| format!("code-gen: {} (pass@1)", t.name),
+        repeats,
+        |task| {
+            let mut a = crate::bench_util::bench_assistant();
+            let prompt = format!(
+                "Write Python 3 code for the following. Output ONLY the code inside a single \
+                 ```python code block, with no explanation and no example usage.\n\n{}",
+                task.spec
+            );
+            // A generation that never came back is the backend failing, not the model
+            // being wrong, so it leaves the denominator instead of scoring a zero.
+            let resp = a.generate_sync(prompt, "").map_err(|e| {
+                format!(
+                    "{}, not a model failure (this run leaves the denominator) — the \
+                     generation never returned: {e}",
+                    crate::bench_stats::BACKEND_CRASH_PREFIX
+                )
+            })?;
+            let code = extract_code(&resp);
+            let program = format!(
+                "{code}\n\n# --- checker ---\n{}\nprint('OK')\n",
+                task.checker
+            );
+            match run_python(py, &program) {
+                Ok(true) => Ok(()),
+                Ok(false) => Err(format!(
+                    "generated code failed its checker. code:\n{:.500}",
+                    code
+                )),
+                Err(e) => Err(format!("could not run python: {e}")),
+            }
+        },
+    );
 
-    // Summary line: pass@1 across the suite.
-    let solved = results.iter().filter(|r| r.passed && !r.skipped).count();
-    let total = results.iter().filter(|r| !r.skipped).count();
-    println!(
-        "  {} code_gen_bench pass@1: {}/{} (execution-verified, backend={})",
-        bold(&cyan("∑")),
-        solved,
-        total,
-        crate::bench_util::bench_label()
+    results.extend(crate::bench_stats::to_results(&outcomes, repeats));
+    crate::bench_stats::print_summary(
+        "code_gen_bench pass@1",
+        "tasks (execution-verified)",
+        &[
+            ("failed its checker", "code ran but was wrong"),
+            ("could not run python", "the interpreter would not run it"),
+        ],
+        &outcomes,
+        repeats,
     );
 
     CategoryResult {

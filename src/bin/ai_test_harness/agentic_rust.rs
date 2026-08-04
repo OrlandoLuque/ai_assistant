@@ -887,7 +887,9 @@ fn run_rust_task(cargo: &'static str, task: &RustTask) -> Result<(), String> {
             Err(e) => last_err = e,
         }
     }
-    if samples > 1 {
+    // The crash label is detected by PREFIX, so wrapping it in "all N samples failed"
+    // would hide it and the lost run would be scored as the model being wrong.
+    if samples > 1 && !last_err.starts_with(crate::bench_stats::BACKEND_CRASH_PREFIX) {
         Err(format!(
             "all {samples} independent samples failed; last: {last_err}"
         ))
@@ -1032,7 +1034,18 @@ fn run_rust_task_once(cargo: &'static str, task: &RustTask) -> Result<(), String
             last_out.chars().take(1400).collect::<String>()
         );
     }
+    let backend_died = crate::agentic_code::hit_backend_failure(&agent);
     let _ = std::fs::remove_dir_all(&ws);
+
+    // Checked only when the task did NOT pass: a run that produced working code despite
+    // a failed round is real evidence, and discarding it would throw away a success.
+    if !passed && backend_died {
+        return Err(format!(
+            "{}, not a model failure (this run leaves the denominator) — a generation \
+             never returned; check the backend log.",
+            crate::bench_stats::BACKEND_CRASH_PREFIX
+        ));
+    }
 
     if passed {
         if repaired && std::env::var("AGENTIC_DEBUG").is_ok() {
@@ -1357,20 +1370,31 @@ pub(crate) fn tests_agentic_rust() -> CategoryResult {
     println!("  backend: {}", crate::bench_util::bench_label());
     crate::bench_util::warn_if_cpu_offloaded();
 
-    for task in RUST_TASKS {
-        results.push(run_test(&format!("rust: {}", task.name), || {
-            run_rust_task(cargo, task)
-        }));
-    }
+    let repeats = crate::bench_util::bench_repeats();
+    let tasks: Vec<&RustTask> = RUST_TASKS
+        .iter()
+        .filter(|t| crate::should_run(&format!("rust: {}", t.name)))
+        .collect();
+    let outcomes = crate::bench_stats::run_interleaved(
+        &tasks,
+        |t| format!("rust: {}", t.name),
+        repeats,
+        |task| run_rust_task(cargo, task),
+    );
 
-    let solved = results.iter().filter(|r| r.passed && !r.skipped).count();
-    let total = results.iter().filter(|r| !r.skipped).count();
-    println!(
-        "  {} agentic_rust solved: {}/{} (cargo-verified, backend={})",
-        bold(&cyan("∑")),
-        solved,
-        total,
-        crate::bench_util::bench_label()
+    results.extend(crate::bench_stats::to_results(&outcomes, repeats));
+    crate::bench_stats::print_summary(
+        "agentic_rust",
+        "tasks (cargo-verified)",
+        &[
+            ("artifact INCOMPLETE", "left a placeholder that compiles"),
+            (
+                "cargo test failed",
+                "did not compile or the assertions failed",
+            ),
+        ],
+        &outcomes,
+        repeats,
     );
 
     CategoryResult {

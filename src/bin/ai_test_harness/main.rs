@@ -408,7 +408,6 @@ mod agentic_rust;
 #[cfg(all(feature = "autonomous", feature = "tools"))]
 mod agentic_test_gen;
 mod basics;
-#[cfg(all(feature = "autonomous", feature = "tools"))]
 mod bench_stats;
 mod bench_util;
 mod chains;
