@@ -39,7 +39,7 @@ V272 — a single live-model run is one sample, not a measurement.
 | `agentic_code` | a live model drives the built-in `AutonomousAgent` over workspace tools (`write_file`, `read_file`, `run_python`, `list_dir`, `run_command`) to build & fix code in a temp workspace. | 5 single-step |
 | `agentic_multi` | multi-step iterative coding (build → extend → fix) on **one persistent workspace** (the agent's conversation carries across steps). | 10 (3–5 steps each) |
 | `agentic_rust` | same agentic loop, but in **Rust**: a throwaway cargo crate per task, verified with `cargo test` so the type/borrow checkers gate every answer. | 12 single-step |
-| `agentic_rust_multi` | multi-step Rust on one persistent crate (incl. refactoring a concrete type into a generic one). | 6 × 3 steps |
+| `agentic_rust_multi` | multi-step Rust on one persistent crate. Six **additive** tasks (each step adds to the last) plus four where a late step **invalidates** an earlier one — a rename whose callers must be re-pointed, an enum variant that breaks an existing match, an infallible API that becomes fallible. | 10 (3–5 steps each) |
 | `agentic_test_gen` | **inverted**: the model gets a *correct* implementation and must write the test suite. Scored by mutation — its tests must accept the reference **and** kill every planted bug. | 12 |
 
 ## How to run
@@ -131,6 +131,58 @@ dependencies), so disk growth is not a concern in normal use.
 ---
 
 ## Log (newest first)
+
+### 2026-08-04 (3rd) — the multi-step set discriminates again: four tasks that INVALIDATE earlier work
+
+The entry below closed with "the set is spent": the 14B scored 6.00/6, sd 0.00, on the six
+multi-step Rust tasks, so the category could no longer rank anything. The diagnosis was
+that all six are **additive** — every step adds to what the last one built, so a model
+that can write each piece in isolation passes without ever revisiting a decision.
+
+Four tasks were added where a late step **invalidates** an earlier one:
+
+| task | what the late step breaks |
+|---|---|
+| counter: rename a method and re-point its callers | `add` becomes `bump` and starts returning a value; every call site must change |
+| state machine: a new variant breaks the old match | a third enum variant makes an existing match non-exhaustive and changes the cycle |
+| ledger: an infallible API becomes fallible | `push` starts returning `Result`; `apply` must stop at the first failure |
+| scores: concrete function becomes generic over a late trait | a concrete `best(&[Player])` must become `best<T: Scored>` |
+
+Their oracles were **audited before any model saw them** (12 mutants, reference must pass
+and every mutant must fail — the `checker_adequacy` category). The audit paid for itself
+immediately: `count_running` counting *everything that is not Idle* passed the first
+version of its checker, because the test slice happened to contain no `Paused`. The
+separating case was missing — the same shape as every weak oracle found in V256 and V264.
+
+**Result — qwen2.5-coder:14b, num_ctx 4096, 3 repeats over the widened 10-task set: 7.67/10,
+mean 0.77, sd 0.40 — always 7, sometimes 1, never 2.** The category ranks again. The two it
+never solves (0/3 each, consistent across every run) are both invalidation tasks, and the
+debug dumps say why:
+
+- **state machine** — by step 4 it had **dropped the `#[derive(...)]` the first step asked
+  for**, so the crate does not even compile (`==` on an enum with no `PartialEq`). Losing
+  an instruction from step 1 by step 4 is exactly the capability the category exists to
+  measure.
+- **ledger** — the logic is **right** (negatives rejected, `apply` stops at the first one,
+  `sum` goes through `entries`), and it fails on `Ok(()` — an unclosed delimiter, written
+  twice and never repaired despite four steps of being told to run `cargo test`.
+
+Neither is a broken task: both were reproduced against a reference implementation that
+passes. Note also what the projection says — with both tasks at p = 0, blind retry projects
+only 7.89 at k=2 and 7.96 at k=3, i.e. it recovers a third of one task and nothing else.
+This is a capability boundary, not a flaky band.
+
+**And a caveat on the entry below.** In this sweep one of the SIX ORIGINAL tasks —
+`errors: Option then custom error type` — came out 2/3, where the previous sweep had it at
+3/3 with the whole set at sd 0.00. Three repeats is enough to stop single runs lying; it is
+not enough to make a sweep exactly reproducible. Read "6.00/6, sd 0.00" as "at the ceiling
+within measurement noise", not as a constant — the same reason a one-task gap between two
+models could not be trusted in the first place.
+
+**One confound was removed before publishing this number.** The new prompts said "a public
+function `next(s: State) -> State`" where the older tasks say "a public **free** function",
+and the model put everything inside an `impl` block. The wording was aligned and the
+sweep re-run, so the figure above is measured against the wording now in the tree.
 
 ### 2026-08-04 (2nd) — 14B vs 30B, settled with repeats: both at ceiling, and the set is spent
 

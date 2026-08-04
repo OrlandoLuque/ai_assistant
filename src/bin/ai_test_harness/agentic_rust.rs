@@ -1196,6 +1196,120 @@ const RUST_MULTI_TASKS: &[RustMultiTask] = &[
                   let empty: Vec<Player> = vec![];\n        \
                   assert_eq!(best(&empty), None);\n    }\n",
     },
+    // ── The four below are the harder set (V273) ────────────────────────────────
+    //
+    // The six above stopped separating models: measured at three repeats, the 14B and
+    // the 30B both score 6.00/6 with sd 0.00. They are all ADDITIVE — every step adds
+    // to what the last one built, so a model that can write each piece in isolation
+    // passes without ever revisiting a decision.
+    //
+    // These four are not additive. In each, a late step INVALIDATES an earlier one: a
+    // method is renamed and its callers must be re-pointed, an enum grows a variant that
+    // makes an existing match non-exhaustive, a signature becomes fallible so every call
+    // site has to handle it. That is the capability the category claims to measure —
+    // carrying state across edits — and the additive set never asked for it.
+    RustMultiTask {
+        name: "counter: rename a method and re-point its callers",
+        steps: &[
+            "In `src/lib.rs`, define a public struct `Counter` with a public field `total: i32`, \
+             a public `new()` starting at zero, and a public method `add(&mut self, n: i32)` that \
+             adds n to the total. Run cargo test.",
+            "Add a public FREE function (not a method) `sum_all(cs: &mut [Counter], n: i32)` that calls `add` with n \
+             on every counter in the slice. Keep `Counter` as it is. Run cargo test.",
+            "Add a public free function `largest(cs: &[Counter]) -> i32` returning the biggest total, \
+             or zero when the slice is empty. Keep everything. Run cargo test.",
+            "Now RENAME `add` to `bump` and make it RETURN the new total: \
+             `bump(&mut self, n: i32) -> i32`. Every existing caller must be updated so the crate \
+             still compiles — and `sum_all` must change to `sum_all(cs: &mut [Counter], n: i32) \
+             -> i32`, returning the sum of the totals `bump` gave back. Run cargo test.",
+        ],
+        checker: "    #[test]\n    fn check() {\n        \
+                  let mut c = Counter::new();\n        \
+                  assert_eq!(c.bump(3), 3);\n        \
+                  assert_eq!(c.bump(2), 5);\n        \
+                  let mut cs = vec![Counter::new(), Counter::new()];\n        \
+                  cs[0].bump(5);\n        \
+                  assert_eq!(sum_all(&mut cs, 10), 25);\n        \
+                  assert_eq!(cs[0].total, 15);\n        \
+                  assert_eq!(largest(&cs), 15);\n        \
+                  let none: Vec<Counter> = vec![];\n        \
+                  assert_eq!(largest(&none), 0);\n    }\n",
+    },
+    RustMultiTask {
+        name: "state machine: a new variant breaks the old match",
+        steps: &[
+            "In `src/lib.rs`, define a public enum `State` with variants `Idle` and `Running`, \
+             deriving Debug, Clone, Copy and PartialEq, and a public FREE function (not a \
+             method) `next(s: State) -> State` where Idle becomes Running and Running becomes Idle. \
+             Run cargo test.",
+            "Add a public free function `run_n(s: State, n: usize) -> State` that applies `next` n \
+             times. Keep everything. Run cargo test.",
+            "Add a THIRD variant `Paused`, and change the transitions: Idle becomes Running, \
+             Running becomes Paused, Paused becomes Running. The existing match must be made \
+             exhaustive again and `run_n` must keep working. Run cargo test.",
+            "Add a public free function `count_running(states: &[State]) -> usize` returning how many \
+             of them are Running. Keep everything. Run cargo test.",
+        ],
+        checker: "    #[test]\n    fn check() {\n        \
+                  assert_eq!(next(State::Idle), State::Running);\n        \
+                  assert_eq!(next(State::Running), State::Paused);\n        \
+                  assert_eq!(next(State::Paused), State::Running);\n        \
+                  assert_eq!(run_n(State::Idle, 3), State::Running);\n        \
+                  assert_eq!(run_n(State::Idle, 0), State::Idle);\n        \
+                  assert_eq!(count_running(&[State::Running, State::Idle, State::Paused, State::Running]), 2);\n    }\n",
+    },
+    RustMultiTask {
+        name: "ledger: an infallible API becomes fallible",
+        steps: &[
+            "In `src/lib.rs`, define a public struct `Ledger` holding a private Vec<i32>, with a \
+             public `new()`, a public `push(&mut self, v: i32)` and a public `sum(&self) -> i32`. \
+             Run cargo test.",
+            "Add a public FREE function (not a method) `apply(l: &mut Ledger, vs: &[i32])` that pushes every value in \
+             the slice. Keep `Ledger` as it is. Run cargo test.",
+            "Add a public method `entries(&self) -> &[i32]` exposing the values, and rewrite `sum` \
+             so it goes through `entries` instead of touching the field directly. Run cargo test.",
+            "Now `push` must REJECT negative values: change it to \
+             `push(&mut self, v: i32) -> Result<(), i32>`, returning Err with the offending value \
+             and storing nothing in that case. `apply` must become \
+             `apply(l: &mut Ledger, vs: &[i32]) -> Result<(), i32>` and STOP at the first negative, \
+             keeping everything pushed before it. Every caller must compile. Run cargo test.",
+        ],
+        checker: "    #[test]\n    fn check() {\n        \
+                  let mut l = Ledger::new();\n        \
+                  assert!(l.push(4).is_ok());\n        \
+                  assert_eq!(l.push(-1), Err(-1));\n        \
+                  assert_eq!(l.entries(), &[4]);\n        \
+                  assert_eq!(l.sum(), 4);\n        \
+                  let mut m = Ledger::new();\n        \
+                  assert!(apply(&mut m, &[1, 2, 3]).is_ok());\n        \
+                  assert_eq!(m.sum(), 6);\n        \
+                  assert_eq!(apply(&mut m, &[5, -2, 7]), Err(-2));\n        \
+                  assert_eq!(m.entries(), &[1, 2, 3, 5]);\n    }\n",
+    },
+    RustMultiTask {
+        name: "scores: concrete function becomes generic over a late trait",
+        steps: &[
+            "In `src/lib.rs`, define a public struct `Player` with a public field `pts: i32` and a \
+             public `new(pts: i32)` constructor, plus a public free function \
+             `best(items: &[Player]) -> i32` returning the highest `pts`, or zero when empty. \
+             Run cargo test.",
+            "Add a public trait `Scored` with a method `score(&self) -> i32`, and implement it for \
+             `Player` (returning `pts`). Leave `best` alone for now. Run cargo test.",
+            "Add a public struct `Team` with a public field `total: i32`, a public \
+             `new(total: i32)` constructor, and an implementation of `Scored`. Run cargo test.",
+            "Now make `best` GENERIC: `best<T: Scored>(items: &[T]) -> i32`, using `score` rather \
+             than the field, so it works for both `Player` and `Team`. Run cargo test.",
+            "Add a public free function `ranked<T: Scored>(items: &[T]) -> Vec<i32>` returning every \
+             score sorted from highest to lowest. Keep everything. Run cargo test.",
+        ],
+        checker: "    #[test]\n    fn check() {\n        \
+                  assert_eq!(best(&[Player::new(3), Player::new(9)]), 9);\n        \
+                  assert_eq!(best(&[Team::new(4)]), 4);\n        \
+                  let empty: Vec<Player> = vec![];\n        \
+                  assert_eq!(best(&empty), 0);\n        \
+                  assert_eq!(ranked(&[Player::new(1), Player::new(5), Player::new(3)]), vec![5, 3, 1]);\n        \
+                  assert_eq!(Team::new(2).score(), 2);\n    }\n",
+    },
 ];
 
 fn run_rust_multi_task(cargo: &'static str, task: &RustMultiTask) -> Result<(), String> {
@@ -1251,7 +1365,24 @@ fn run_rust_multi_task(cargo: &'static str, task: &RustMultiTask) -> Result<(), 
         ));
     }
 
-    let passed = verify_crate(cargo, &ws, task.checker);
+    // `_verbose` rather than `verify_crate`, because a multi-step failure is the one
+    // that most needs the artifact: "lost state or broke compilation across edits" does
+    // not say WHICH, and this runner was the only agentic one with no debug dump — so
+    // diagnosing it meant reproducing the whole sequence by hand.
+    let (passed, cargo_out) = verify_crate_verbose(cargo, &ws, task.checker);
+    if !passed && std::env::var("AGENTIC_DEBUG").is_ok() {
+        let src = std::fs::read_to_string(ws.join("src").join("lib.rs")).unwrap_or_default();
+        println!(
+            "    [dbg] final lib.rs after {} steps ({} bytes):\n----\n{}\n----",
+            task.steps.len(),
+            src.len(),
+            src.chars().take(1600).collect::<String>()
+        );
+        println!(
+            "    [dbg] cargo said:\n----\n{}\n----",
+            cargo_out.chars().take(1600).collect::<String>()
+        );
+    }
     let _ = std::fs::remove_dir_all(&ws);
 
     if passed {
@@ -1407,20 +1538,14 @@ pub(crate) fn tests_agentic_rust() -> CategoryResult {
 
 /// Names of every single-step Rust task, so adequacy entries cannot silently
 /// drift away from the tasks they claim to cover.
-pub(crate) const RUST_TASK_NAMES: &[&str] = &[
-    "sum_even (from scratch)",
-    "fix is_even bug",
-    "divide returning Option",
-    "Stack struct with impl",
-    "count occurrences (HashMap)",
-    "generic largest<T> with trait bounds",
-    "trait with two impls",
-    "explicit lifetimes",
-    "implement the Iterator trait",
-    "dedup preserving first-appearance order",
-    "enum + match evaluator",
-    "fizzbuzz (stresses quote escaping)",
-];
+///
+/// DERIVED from `RUST_TASKS` rather than typed out again. It used to be a
+/// hand-maintained copy, and the copy is the drift: adding four multi-step tasks
+/// in V273 left the twin list untouched, so the adequacy check reported that every
+/// task had an audited oracle while four of them had none.
+pub(crate) fn rust_task_names() -> Vec<&'static str> {
+    RUST_TASKS.iter().map(|t| t.name).collect()
+}
 
 /// The assert suite a given task is scored with.
 pub(crate) fn rust_task_checker(name: &str) -> Option<&'static str> {
@@ -1450,15 +1575,11 @@ pub(crate) fn verify_snippet_with_checker(snippet: &str, checker: &str) -> bool 
     passed
 }
 
-/// Names of the multi-step Rust tasks, for adequacy drift-checking.
-pub(crate) const RUST_MULTI_TASK_NAMES: &[&str] = &[
-    "shapes: trait then impls then aggregate",
-    "stack: concrete then generic (must rewrite)",
-    "errors: Option then custom error type",
-    "builder pattern with validation",
-    "matrix ops accumulate",
-    "trait then generic over it",
-];
+/// Names of the multi-step Rust tasks, for adequacy drift-checking. Derived, for the
+/// reason given on [`rust_task_names`].
+pub(crate) fn rust_multi_task_names() -> Vec<&'static str> {
+    RUST_MULTI_TASKS.iter().map(|t| t.name).collect()
+}
 
 /// The assert suite a multi-step task is scored with.
 pub(crate) fn rust_multi_task_checker(name: &str) -> Option<&'static str> {

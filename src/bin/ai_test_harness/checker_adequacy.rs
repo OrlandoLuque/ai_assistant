@@ -1,6 +1,6 @@
 use super::*;
 
-use crate::agentic_rust::{rust_task_checker, verify_snippet_with_checker, RUST_TASK_NAMES};
+use crate::agentic_rust::{rust_task_checker, rust_task_names, verify_snippet_with_checker};
 
 // ─── Are the benchmark's own checkers competent oracles? ──────────────────────
 //
@@ -167,7 +167,7 @@ pub(crate) fn tests_checker_adequacy() -> CategoryResult {
     // would quietly test nothing.
     results.push(run_test("adequacy: every entry names a real task", || {
         for a in ADEQUACY {
-            if !RUST_TASK_NAMES.contains(&a.task) {
+            if !rust_task_names().contains(&a.task) {
                 return Err(format!("no Rust task named {:?}", a.task));
             }
         }
@@ -274,6 +274,46 @@ const SCORE_BEST_FIRST: &str = "pub trait Score { fn score(&self) -> i32; }\npub
 
 const SCORE_TEAM_FIRST: &str = "pub trait Score { fn score(&self) -> i32; }\npub struct Player { pub points: i32 }\nimpl Player { pub fn new(points: i32) -> Self { Player { points } } }\nimpl Score for Player { fn score(&self) -> i32 { self.points } }\npub struct Team { pub members: Vec<Player> }\nimpl Team { pub fn new(members: Vec<Player>) -> Self { Team { members } } }\nimpl Score for Team { fn score(&self) -> i32 { self.members.first().map(|m| m.score()).unwrap_or(0) } }\npub fn best<T: Score>(items: &[T]) -> Option<i32> { items.iter().map(|i| i.score()).max() }";
 
+// ── Oracles for the harder set (V273) ────────────────────────────────────────
+//
+// Written BEFORE any model was measured against those tasks, and the audit earned
+// its keep immediately: `count_running` counting "everything that is not Idle"
+// passed the first version of its checker, because the test slice happened to hold
+// no `Paused`. The separating case was missing, which is the same shape as every
+// weak oracle found in V256 and V264.
+
+const COUNTER_OK: &str = "pub struct Counter { pub total: i32 }\nimpl Counter {\n    pub fn new() -> Self { Counter { total: 0 } }\n    pub fn bump(&mut self, n: i32) -> i32 { self.total += n; self.total }\n}\npub fn sum_all(cs: &mut [Counter], n: i32) -> i32 { cs.iter_mut().map(|c| c.bump(n)).sum() }\npub fn largest(cs: &[Counter]) -> i32 { cs.iter().map(|c| c.total).max().unwrap_or(0) }";
+
+const COUNTER_BUMP_RETURNS_N: &str = "pub struct Counter { pub total: i32 }\nimpl Counter {\n    pub fn new() -> Self { Counter { total: 0 } }\n    pub fn bump(&mut self, n: i32) -> i32 { self.total += n; n }\n}\npub fn sum_all(cs: &mut [Counter], n: i32) -> i32 { cs.iter_mut().map(|c| c.bump(n)).sum() }\npub fn largest(cs: &[Counter]) -> i32 { cs.iter().map(|c| c.total).max().unwrap_or(0) }";
+
+const COUNTER_SUM_ALL_IGNORES_TOTALS: &str = "pub struct Counter { pub total: i32 }\nimpl Counter {\n    pub fn new() -> Self { Counter { total: 0 } }\n    pub fn bump(&mut self, n: i32) -> i32 { self.total += n; self.total }\n}\npub fn sum_all(cs: &mut [Counter], n: i32) -> i32 { for c in cs.iter_mut() { c.bump(n); } n * 2 }\npub fn largest(cs: &[Counter]) -> i32 { cs.iter().map(|c| c.total).max().unwrap_or(0) }";
+
+const COUNTER_LARGEST_EMPTY_MIN: &str = "pub struct Counter { pub total: i32 }\nimpl Counter {\n    pub fn new() -> Self { Counter { total: 0 } }\n    pub fn bump(&mut self, n: i32) -> i32 { self.total += n; self.total }\n}\npub fn sum_all(cs: &mut [Counter], n: i32) -> i32 { cs.iter_mut().map(|c| c.bump(n)).sum() }\npub fn largest(cs: &[Counter]) -> i32 { cs.iter().map(|c| c.total).max().unwrap_or(i32::MIN) }";
+
+const STATE_OK: &str = "#[derive(Debug, Clone, Copy, PartialEq)]\npub enum State { Idle, Running, Paused }\npub fn next(s: State) -> State {\n    match s { State::Idle => State::Running, State::Running => State::Paused, State::Paused => State::Running }\n}\npub fn run_n(s: State, n: usize) -> State { let mut c = s; for _ in 0..n { c = next(c); } c }\npub fn count_running(states: &[State]) -> usize { states.iter().filter(|s| **s == State::Running).count() }";
+
+const STATE_OLD_TRANSITIONS: &str = "#[derive(Debug, Clone, Copy, PartialEq)]\npub enum State { Idle, Running, Paused }\npub fn next(s: State) -> State {\n    match s { State::Idle => State::Running, State::Running => State::Idle, State::Paused => State::Running }\n}\npub fn run_n(s: State, n: usize) -> State { let mut c = s; for _ in 0..n { c = next(c); } c }\npub fn count_running(states: &[State]) -> usize { states.iter().filter(|s| **s == State::Running).count() }";
+
+const STATE_RUN_N_IGNORES_N: &str = "#[derive(Debug, Clone, Copy, PartialEq)]\npub enum State { Idle, Running, Paused }\npub fn next(s: State) -> State {\n    match s { State::Idle => State::Running, State::Running => State::Paused, State::Paused => State::Running }\n}\npub fn run_n(s: State, _n: usize) -> State { next(s) }\npub fn count_running(states: &[State]) -> usize { states.iter().filter(|s| **s == State::Running).count() }";
+
+const STATE_COUNTS_NON_IDLE: &str = "#[derive(Debug, Clone, Copy, PartialEq)]\npub enum State { Idle, Running, Paused }\npub fn next(s: State) -> State {\n    match s { State::Idle => State::Running, State::Running => State::Paused, State::Paused => State::Running }\n}\npub fn run_n(s: State, n: usize) -> State { let mut c = s; for _ in 0..n { c = next(c); } c }\npub fn count_running(states: &[State]) -> usize { states.iter().filter(|s| **s != State::Idle).count() }";
+
+const LEDGER_OK: &str = "pub struct Ledger { values: Vec<i32> }\nimpl Ledger {\n    pub fn new() -> Self { Ledger { values: Vec::new() } }\n    pub fn push(&mut self, v: i32) -> Result<(), i32> { if v < 0 { return Err(v); } self.values.push(v); Ok(()) }\n    pub fn entries(&self) -> &[i32] { &self.values }\n    pub fn sum(&self) -> i32 { self.entries().iter().sum() }\n}\npub fn apply(l: &mut Ledger, vs: &[i32]) -> Result<(), i32> { for v in vs { l.push(*v)?; } Ok(()) }";
+
+const LEDGER_STORES_THEN_ERRS: &str = "pub struct Ledger { values: Vec<i32> }\nimpl Ledger {\n    pub fn new() -> Self { Ledger { values: Vec::new() } }\n    pub fn push(&mut self, v: i32) -> Result<(), i32> { self.values.push(v); if v < 0 { return Err(v); } Ok(()) }\n    pub fn entries(&self) -> &[i32] { &self.values }\n    pub fn sum(&self) -> i32 { self.entries().iter().sum() }\n}\npub fn apply(l: &mut Ledger, vs: &[i32]) -> Result<(), i32> { for v in vs { l.push(*v)?; } Ok(()) }";
+
+const LEDGER_APPLY_SKIPS: &str = "pub struct Ledger { values: Vec<i32> }\nimpl Ledger {\n    pub fn new() -> Self { Ledger { values: Vec::new() } }\n    pub fn push(&mut self, v: i32) -> Result<(), i32> { if v < 0 { return Err(v); } self.values.push(v); Ok(()) }\n    pub fn entries(&self) -> &[i32] { &self.values }\n    pub fn sum(&self) -> i32 { self.entries().iter().sum() }\n}\npub fn apply(l: &mut Ledger, vs: &[i32]) -> Result<(), i32> { for v in vs { let _ = l.push(*v); } Ok(()) }";
+
+const LEDGER_APPLY_ROLLS_BACK: &str = "pub struct Ledger { values: Vec<i32> }\nimpl Ledger {\n    pub fn new() -> Self { Ledger { values: Vec::new() } }\n    pub fn push(&mut self, v: i32) -> Result<(), i32> { if v < 0 { return Err(v); } self.values.push(v); Ok(()) }\n    pub fn entries(&self) -> &[i32] { &self.values }\n    pub fn sum(&self) -> i32 { self.entries().iter().sum() }\n}\npub fn apply(l: &mut Ledger, vs: &[i32]) -> Result<(), i32> {\n    let before = l.values.clone();\n    for v in vs { if l.push(*v).is_err() { l.values = before; return Err(*v); } }\n    Ok(())\n}";
+
+const SCORES_OK: &str = "pub trait Scored { fn score(&self) -> i32; }\npub struct Player { pub pts: i32 }\nimpl Player { pub fn new(pts: i32) -> Self { Player { pts } } }\nimpl Scored for Player { fn score(&self) -> i32 { self.pts } }\npub struct Team { pub total: i32 }\nimpl Team { pub fn new(total: i32) -> Self { Team { total } } }\nimpl Scored for Team { fn score(&self) -> i32 { self.total } }\npub fn best<T: Scored>(items: &[T]) -> i32 { items.iter().map(|i| i.score()).max().unwrap_or(0) }\npub fn ranked<T: Scored>(items: &[T]) -> Vec<i32> {\n    let mut v: Vec<i32> = items.iter().map(|i| i.score()).collect();\n    v.sort_by(|a, b| b.cmp(a));\n    v\n}";
+
+const SCORES_RANKED_ASCENDING: &str = "pub trait Scored { fn score(&self) -> i32; }\npub struct Player { pub pts: i32 }\nimpl Player { pub fn new(pts: i32) -> Self { Player { pts } } }\nimpl Scored for Player { fn score(&self) -> i32 { self.pts } }\npub struct Team { pub total: i32 }\nimpl Team { pub fn new(total: i32) -> Self { Team { total } } }\nimpl Scored for Team { fn score(&self) -> i32 { self.total } }\npub fn best<T: Scored>(items: &[T]) -> i32 { items.iter().map(|i| i.score()).max().unwrap_or(0) }\npub fn ranked<T: Scored>(items: &[T]) -> Vec<i32> {\n    let mut v: Vec<i32> = items.iter().map(|i| i.score()).collect();\n    v.sort();\n    v\n}";
+
+const SCORES_BEST_FIRST: &str = "pub trait Scored { fn score(&self) -> i32; }\npub struct Player { pub pts: i32 }\nimpl Player { pub fn new(pts: i32) -> Self { Player { pts } } }\nimpl Scored for Player { fn score(&self) -> i32 { self.pts } }\npub struct Team { pub total: i32 }\nimpl Team { pub fn new(total: i32) -> Self { Team { total } } }\nimpl Scored for Team { fn score(&self) -> i32 { self.total } }\npub fn best<T: Scored>(items: &[T]) -> i32 { items.first().map(|i| i.score()).unwrap_or(0) }\npub fn ranked<T: Scored>(items: &[T]) -> Vec<i32> {\n    let mut v: Vec<i32> = items.iter().map(|i| i.score()).collect();\n    v.sort_by(|a, b| b.cmp(a));\n    v\n}";
+
+const SCORES_TEAM_ZERO: &str = "pub trait Scored { fn score(&self) -> i32; }\npub struct Player { pub pts: i32 }\nimpl Player { pub fn new(pts: i32) -> Self { Player { pts } } }\nimpl Scored for Player { fn score(&self) -> i32 { self.pts } }\npub struct Team { pub total: i32 }\nimpl Team { pub fn new(total: i32) -> Self { Team { total } } }\nimpl Scored for Team { fn score(&self) -> i32 { 0 } }\npub fn best<T: Scored>(items: &[T]) -> i32 { items.iter().map(|i| i.score()).max().unwrap_or(0) }\npub fn ranked<T: Scored>(items: &[T]) -> Vec<i32> {\n    let mut v: Vec<i32> = items.iter().map(|i| i.score()).collect();\n    v.sort_by(|a, b| b.cmp(a));\n    v\n}";
+
 const MULTI_ADEQUACY: &[MultiAdequacy] = &[
     MultiAdequacy {
         task: "shapes: trait then impls then aggregate",
@@ -318,20 +358,108 @@ const MULTI_ADEQUACY: &[MultiAdequacy] = &[
             ("a team scores like its first member", SCORE_TEAM_FIRST),
         ],
     },
+    MultiAdequacy {
+        task: "counter: rename a method and re-point its callers",
+        reference: COUNTER_OK,
+        mutants: &[
+            // Misreads "return the new total" as "return what was added" — the
+            // rename half done.
+            (
+                "bump returns n instead of the total",
+                COUNTER_BUMP_RETURNS_N,
+            ),
+            // Calls the renamed method but ignores what it now gives back, which is
+            // the whole point of the last step.
+            (
+                "sum_all ignores the returned totals",
+                COUNTER_SUM_ALL_IGNORES_TOTALS,
+            ),
+            (
+                "largest on an empty slice is i32::MIN",
+                COUNTER_LARGEST_EMPTY_MIN,
+            ),
+        ],
+    },
+    MultiAdequacy {
+        task: "state machine: a new variant breaks the old match",
+        reference: STATE_OK,
+        mutants: &[
+            // Added the variant to satisfy the compiler but kept the old cycle —
+            // exactly the shortcut the task is there to catch.
+            (
+                "the old two-state transition survives",
+                STATE_OLD_TRANSITIONS,
+            ),
+            (
+                "run_n applies next once regardless of n",
+                STATE_RUN_N_IGNORES_N,
+            ),
+            (
+                "count_running counts everything not Idle",
+                STATE_COUNTS_NON_IDLE,
+            ),
+        ],
+    },
+    MultiAdequacy {
+        task: "ledger: an infallible API becomes fallible",
+        reference: LEDGER_OK,
+        mutants: &[
+            (
+                "push stores the value and then reports it",
+                LEDGER_STORES_THEN_ERRS,
+            ),
+            (
+                "apply skips negatives instead of stopping",
+                LEDGER_APPLY_SKIPS,
+            ),
+            (
+                "apply undoes what it pushed before failing",
+                LEDGER_APPLY_ROLLS_BACK,
+            ),
+        ],
+    },
+    MultiAdequacy {
+        task: "scores: concrete function becomes generic over a late trait",
+        reference: SCORES_OK,
+        mutants: &[
+            ("ranked sorts ascending", SCORES_RANKED_ASCENDING),
+            ("best returns the first score", SCORES_BEST_FIRST),
+            ("a team always scores zero", SCORES_TEAM_ZERO),
+        ],
+    },
 ];
 
 /// Adequacy for the multi-step oracles, appended to the same category so one run
 /// answers "are ALL our Rust oracles competent?".
 fn multi_adequacy_results() -> Vec<TestResult> {
-    use crate::agentic_rust::{rust_multi_task_checker, RUST_MULTI_TASK_NAMES};
+    use crate::agentic_rust::{rust_multi_task_checker, rust_multi_task_names};
     let mut results = Vec::new();
 
     results.push(run_test(
         "adequacy: every multi-step entry names a real task",
         || {
             for a in MULTI_ADEQUACY {
-                if !RUST_MULTI_TASK_NAMES.contains(&a.task) {
+                if !rust_multi_task_names().contains(&a.task) {
                     return Err(format!("no multi-step task named {:?}", a.task));
+                }
+            }
+            Ok(())
+        },
+    ));
+
+    // And the other direction, which is the one that actually bites: an entry naming
+    // a dead task is loud (it tests nothing and says so), whereas a TASK WITH NO ENTRY
+    // is silent — it scores models against an oracle nobody ever checked. V273 added
+    // four tasks and this check is what makes "…and their oracles" non-optional.
+    results.push(run_test(
+        "adequacy: every multi-step task has an audited oracle",
+        || {
+            for name in rust_multi_task_names() {
+                if !MULTI_ADEQUACY.iter().any(|a| a.task == name) {
+                    return Err(format!(
+                        "multi-step task {name:?} has no adequacy entry — its checker has \
+                         never been shown to reject a wrong implementation"
+                    ));
                 }
             }
             Ok(())

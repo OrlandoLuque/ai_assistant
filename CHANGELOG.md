@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v148 (2026-08-04) — V273: multi-step tasks that invalidate earlier work (0.2.225)
+
+### Added
+- **Four `agentic_rust_multi` tasks where a late step invalidates an earlier one** — a
+  rename whose call sites must be re-pointed, an enum variant that makes an existing
+  match non-exhaustive, an infallible API that becomes fallible, a concrete function that
+  must become generic over a trait defined after it. The existing six are all *additive*:
+  each step adds to the last, so a model that can write every piece in isolation passes
+  without ever revisiting a decision — which is how the category came to score 6.00/6 with
+  sd 0.00 and stop ranking anything (V271).
+- **Their oracles, audited before any model saw them** — twelve mutants across the four,
+  in `checker_adequacy`. The audit earned its keep on the first run: `count_running`
+  counting *everything that is not Idle* passed the first version of its checker, because
+  the test slice happened to contain no `Paused`. A missing separating case, the same
+  shape as every weak oracle found in V256 and V264.
+- **A debug dump for the multi-step Rust runner** (`AGENTIC_DEBUG=1`) — it was the only
+  agentic runner without one, so "lost state or broke compilation across edits" could not
+  be told apart from a broken task without reproducing the whole sequence by hand. It is
+  what identified both failures below.
+
+### Fixed
+- **The adequacy check only ran in one direction.** It verified that every entry names a
+  real task — the loud failure — but not that every task HAS an entry, which is the silent
+  one: a task with no oracle is scored against a checker nobody ever validated. Both
+  directions now run.
+- **The task-name lists were hand-maintained copies of the task tables**, and that copy is
+  the drift: adding four tasks left `RUST_MULTI_TASK_NAMES` untouched, so the new coverage
+  check reported full coverage while four tasks had no oracle at all. Both lists are now
+  derived from the tables they describe.
+- **Prompt wording confound.** The new tasks said "a public function `next(s: State) ->
+  State`" where the older ones say "a public **free** function", and the model duly put
+  everything inside an `impl` block. Aligned, and the sweep re-run so the published figure
+  matches the wording in the tree.
+
 ## [Unreleased] - v147 (2026-08-04) — V272: every model-measuring category now scores a rate (0.2.224)
 
 ### Changed
