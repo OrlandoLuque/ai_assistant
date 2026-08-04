@@ -132,6 +132,61 @@ dependencies), so disk growth is not a concern in normal use.
 
 ## Log (newest first)
 
+### 2026-08-04 (4th) — re-baseline at 3 repeats: half the suite is saturated, and rank is not a total order
+
+V272 moved four categories onto rate scoring but their published numbers were still
+single-run. Re-measured properly (qwen2.5-coder:14b, `num_ctx` 4096, `AI_BENCH_REPEATS=3`),
+plus a 7B floor on the widened multi-step set:
+
+| category | 14B @ 3 repeats | shape |
+|---|---|---|
+| `code_gen_bench` | **11.00/11** | always 11, sd 0.00 — **saturated** |
+| `agentic_rust` | **12.00/12** | always 12, sd 0.00 — **saturated** |
+| `agentic_multi` | 9.50/10 | always 9, sometimes 1 (5 of 30 runs lost to the backend) |
+| `agentic_code` | 4.00/5 | always 4, **never 1** |
+| `agentic_rust_multi` | 7.67/10 | always 7, sometimes 1, never 2 |
+
+**Two of six categories no longer say anything about a capable model.** Single-function
+generation and single-step Rust are both perfect with zero variance, so against anything
+≥14B they cost wall clock and return no information. Run them to place small models; skip
+them when comparing serious ones. The signal lives in the multi-step categories, in the one
+`agentic_code` task the 14B never solves, and in `agentic_test_gen`.
+
+#### The floor, and a result that breaks the ordering
+
+`agentic_rust_multi` (widened, 10 tasks) across three models, same tasks and verifier:
+
+| model | score | shape | runs lost | blind-retry k=3 |
+|---|---|---|---|---|
+| `qwen2.5-coder:7b-instruct` | 6.67/10 (mean 0.67, sd 0.39) | always 5, **sometimes 3**, never 2 | 5/30 | **7.71** |
+| `qwen2.5-coder:14b` | 7.67/10 (mean 0.77, sd 0.40) | always 7, sometimes 1, never 2 | 0/30 | 7.96 |
+| `qwen3-coder:30b` | 9.50/10 (mean 0.95, sd 0.15) | always 9, sometimes 1, **never 0** | 3/30 | 9.88 |
+
+The aggregate ordering is clean, and **the per-task ordering is not**: the 7B solves
+`ledger: an infallible API becomes fallible` **3/3**, a task the 14B fails **0/3**. The 14B's
+failure there is not reasoning — it emits `Ok(()`, an unclosed delimiter, and never repairs
+it across four steps of running `cargo test`. A bigger model losing a task to an emission
+quirk is exactly what a single aggregate number hides, and it is why "just pick the bigger
+model" is advice, not a law. Check the per-task lines before believing a ranking.
+
+Note also what the projections are for. The 7B has **three tasks in the middle band**, so
+blind retry would take it from 6.67 to ~7.71 — a whole task recovered. The 14B gains 0.29
+and the 30B 0.38. **Retrying pays for a model at its limit and is close to free money
+wasted on a capable one**, which is the sharp form of the settled result that scaffolding
+does not create capability.
+
+#### The backend died mid-sweep, and the harness said "ALL 0 TESTS PASSED"
+
+Ollama degraded through the sweep (5 of 30 `agentic_multi` runs ended in `BACKEND CRASH`,
+across 4 tasks) and then the daemon **died outright**. The next category found it
+unreachable, printed `SKIP`, and the run exited 0 with `ALL 0 TESTS PASSED [1 skipped]`.
+
+Every piece is individually right — skipping when there is no backend is what lets the
+battery run on a machine with no GPU — but **the combination lies**: a sweep of N
+categories whose daemon dies in the second produces N-1 silent skips and a green summary.
+Queued as a fix: if the backend WAS reachable at the start, a later "unreachable" skip is
+not a skip, it is an invalid sweep, and it must exit non-zero with a banner.
+
 ### 2026-08-04 (3rd) — the multi-step set discriminates again: four tasks that INVALIDATE earlier work
 
 The entry below closed with "the set is spent": the 14B scored 6.00/6, sd 0.00, on the six
