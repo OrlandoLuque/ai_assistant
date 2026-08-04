@@ -184,6 +184,27 @@ function `next(s: State) -> State`" where the older tasks say "a public **free**
 and the model put everything inside an `impl` block. The wording was aligned and the
 sweep re-run, so the figure above is measured against the wording now in the tree.
 
+#### And the 30B, on the same widened set: 9.50/10 — it solves BOTH tasks the 14B never does
+
+| model | score | distribution | runs scored | wall clock |
+|---|---|---|---|---|
+| `qwen2.5-coder:14b` (num_ctx 4096) | 7.67/10 (mean 0.77, sd 0.40) | always 7, sometimes 1, **never 2** | 30/30 | 938 s |
+| `qwen3-coder:30b` (num_ctx 2048) | **9.50/10** (mean 0.95, sd 0.15) | always 9, sometimes 1, **never 0** | 27/30 | 2 758 s |
+
+`state machine` and `ledger` — the two the 14B fails 0/3 — the 30B solves **3/3 each**. That
+is a capability difference held across three runs on both sides, not a one-task gap between
+two single runs, and it is exactly what the additive six could not show: on those, the two
+models were indistinguishable at the ceiling.
+
+So the earlier verdict stands but sharpens. **The 14B is the fast pick** — 2.9× quicker
+here, fully resident, no runs lost — and it is enough for work that only ever *adds*. **The
+30B is the one to reach for when an edit invalidates earlier code**, which is what real
+refactoring is. Its own weak spot in this sweep was the late-generic task at 1/2, and it
+again lost runs to the runner aborting (3 of 30, across 3 tasks).
+
+Note the projections: 9.75/9.88 for the 30B (one flaky task, so retrying recovers a little)
+against 7.89/7.96 for the 14B (two tasks at p = 0, which no amount of retrying moves).
+
 ### 2026-08-04 (2nd) — 14B vs 30B, settled with repeats: both at ceiling, and the set is spent
 
 The previous entry left a one-task gap (14B 5/6, 30B 6/6) and said explicitly that one
