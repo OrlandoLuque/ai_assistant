@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v157 (2026-09-02) — V282: wiring a new module in, and a race in the audit itself (0.2.234)
+
+### Added
+- **`agentic_edit` task: "add a module and wire it in".** Writing `mean()` is trivial;
+  the step models skip is `pub mod stats;` in `lib.rs`. A file nobody declares is
+  invisible to the compiler — the crate still builds, the seeded tests still pass, and
+  the module simply is not there. Its mutation case is exactly that: `src/stats.rs`
+  present and undeclared must score *not done*, with gate 1 staying green.
+
+### Fixed
+- **The audit's own tests raced each other.** They each build a crate called `task`, and
+  `scaffold_crate` deliberately points every crate at ONE shared cargo target directory —
+  a large win when the category runs tasks in sequence, a race when `cargo test` runs the
+  audits in parallel: same package name, different sources, one set of artifacts. It
+  surfaced as a seed crate "failing its own tests" with an error from a *different*
+  task's test file, which reads like a wiring bug and is not one. The tests that build
+  crates now take a mutex.
+
+Six tasks, ten mutation cases.
+
 ## [Unreleased] - v156 (2026-09-02) — V281: an editing task whose bug no test catches (0.2.233)
 
 ### Added

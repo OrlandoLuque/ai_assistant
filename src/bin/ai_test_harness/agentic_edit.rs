@@ -354,6 +354,30 @@ const EDIT_TASKS: &[EditTask] = &[
                   assert_eq!(crate::version::compare(\"1.2.0\", \"1.10.0\"), Ordering::Less);\n    }\n",
     },
     EditTask {
+        name: "add a module and wire it in",
+        files: &[
+            ("src/lib.rs", LIB_RS),
+            ("src/format.rs", FORMAT_RS),
+            ("src/parser.rs", PARSER_RS),
+            ("src/tally.rs", TALLY_RS),
+            ("src/version.rs", VERSION_RS),
+            ("tests/existing.rs", TESTS_RS),
+        ],
+        // Writing the function is trivial; the step models skip is `pub mod stats;` in
+        // lib.rs. A new file nobody declares is invisible to the compiler, and the
+        // failure is silent in the sense that matters: the crate still builds, and the
+        // module simply is not there.
+        prompt: "Add a new module `stats` to this crate, in its own file, with one public \
+                 function `mean(values: &[f64]) -> f64` returning the arithmetic mean, or \
+                 0.0 for an empty slice. Make sure it is reachable from outside the crate \
+                 as `stats::mean`, keep everything else as it is, and do not break the \
+                 existing tests. Run cargo test.",
+        checker: "    #[test]\n    fn check() {\n        \
+                  assert!((crate::stats::mean(&[1.0, 2.0, 3.0]) - 2.0).abs() < 1e-9);\n        \
+                  assert!((crate::stats::mean(&[5.0]) - 5.0).abs() < 1e-9);\n        \
+                  assert!((crate::stats::mean(&[]) - 0.0).abs() < 1e-9);\n    }\n",
+    },
+    EditTask {
         name: "delete the dead one, keep the live one",
         files: &[
             ("src/lib.rs", LIB_RS),
@@ -580,11 +604,21 @@ pub(crate) fn tests_agentic_edit() -> CategoryResult {
 mod tests {
     use super::*;
 
+    /// Serialises the tests below. They each build a crate called `task`, and
+    /// `scaffold_crate` deliberately points every one of them at ONE shared cargo
+    /// target directory — which is a large speed win when the category runs its tasks
+    /// in sequence, and a race when `cargo test` runs these in parallel: same package
+    /// name, different sources, one set of build artifacts. It surfaced as a seed crate
+    /// "failing its own tests" with an error from a DIFFERENT task's test file, which
+    /// reads like a wiring bug and is not one.
+    static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// The seeded crate must arrive GREEN, or gate 1 accuses the model of breaking
     /// something that was already broken. Cheap to assert, and impossible to notice
     /// otherwise until a whole sweep reports "broke untouched code" for every task.
     #[test]
     fn every_task_seeds_a_crate_whose_tests_already_pass() {
+        let _guard = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
         let Some(cargo) = crate::agentic_rust::cargo_cmd_pub() else {
             return; // no cargo here; the category skips too
         };
@@ -640,6 +674,7 @@ mod tests {
     /// make this whole category report one number for two opposite problems.
     #[test]
     fn the_two_gates_accept_a_real_fix_and_reject_the_plausible_wrong_ones() {
+        let _guard = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
         if crate::agentic_rust::cargo_cmd_pub().is_none() {
             return;
         }
@@ -735,9 +770,34 @@ mod tests {
             "truncating to the shorter version makes 1.2 == 1.2.1, which is not a fix"
         );
 
-        // Task 5 (delete the dead one). Deleting the LIVE function instead — the
+        // Task 5 (add a module and wire it in). The failure worth catching is writing
+        // src/stats.rs and never declaring it: the crate still compiles, the seeded
+        // tests still pass, and the module simply does not exist. Gate 1 stays green
+        // and gate 2 must be the one that fires.
+        let wire_task = &EDIT_TASKS[4];
+        {
+            let cargo = crate::agentic_rust::cargo_cmd_pub().expect("cargo");
+            let mut files: Vec<(&str, &str)> = wire_task.files.to_vec();
+            files.push((
+                "src/stats.rs",
+                "pub fn mean(values: &[f64]) -> f64 {\n    if values.is_empty() {\n        return 0.0;\n    }\n    values.iter().sum::<f64>() / values.len() as f64\n}\n",
+            ));
+            let ws = crate::agentic_rust::scaffold_crate_files(&files).expect("scaffold");
+            let verdict = match judge(cargo, &ws, wire_task) {
+                EditOutcome::Solved => "solved",
+                EditOutcome::BrokeExisting(_) => "broke",
+                EditOutcome::NotDone(_) => "not-done",
+            };
+            let _ = std::fs::remove_dir_all(&ws);
+            assert_eq!(
+                verdict, "not-done",
+                "a module file that lib.rs never declares is not a wired-in module"
+            );
+        }
+
+        // Task 6 (delete the dead one). Deleting the LIVE function instead — the
         // failure of picking by name resemblance rather than by usage.
-        let dead_task = &EDIT_TASKS[4];
+        let dead_task = &EDIT_TASKS[5];
         let killed_the_wrong_one = TALLY_DEAD_RS.replace(
             "/// The item that appears most often, or None when there is nothing to count.\npub fn most_common(items: &[String]) -> Option<String> {\n    let m = counts(items);\n    m.into_iter().max_by_key(|(_, n)| *n).map(|(k, _)| k)\n}\n\n",
             "",
