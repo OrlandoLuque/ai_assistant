@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v158 (2026-09-02) — V283: two more editing tasks, and a benchmark that gave two answers to the same question (0.2.235)
+
+### Fixed
+- **The editing seeds shared one cargo target directory, and the verdicts moved.** Every
+  seed crate is called `task`, and `scaffold_crate` points them all at a single set of
+  build artifacts — fine for the other Rust categories, whose crates all start from the
+  same empty `lib.rs`, and not fine here, where each task has a different module set. The
+  same mutant was judged *broke* on one run and *not done* on the next. **A benchmark that
+  answers differently to the same question is worse than one that is consistently wrong**,
+  because the inconsistency is invisible in a single sweep. `scaffold_crate_files` now
+  gives each crate its own target dir; they have no dependencies, so it costs a second.
+- Found because an expected verdict failed once and then passed unchanged — the kind of
+  result worth chasing rather than re-running until it agrees with you.
+
+### Added
+- **`agentic_edit` task: "make a panicking function fallible"** — `parse_size` multiplies
+  unchecked, so a huge value overflows. The mutation case is `saturating_mul`: it stops
+  the panic and answers `u64::MAX`, which is a *wrong size* rather than a refusal.
+- **`agentic_edit` task: "two modules, one shared helper"** — the same padding logic lives
+  in two modules and the model has to notice they are the same thing. Deleting the
+  duplicate without re-pointing its caller registers as breaking the crate, not as
+  deduplicating it.
+- The audit now prints *why* each mutant was judged as it was. An unexpected verdict is
+  usually the mutant failing to compile rather than the oracle misjudging it, and from the
+  outside those look identical.
+
+Eight tasks, fourteen mutation cases.
+
 ## [Unreleased] - v157 (2026-09-02) — V282: wiring a new module in, and a race in the audit itself (0.2.234)
 
 ### Added

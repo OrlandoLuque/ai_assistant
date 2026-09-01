@@ -1642,6 +1642,18 @@ pub(crate) fn scaffold_crate_files(files: &[(&str, &str)]) -> Result<std::path::
         }
         std::fs::write(&path, contents).map_err(|e| e.to_string())?;
     }
+
+    // Own target directory, unlike `scaffold_crate`'s shared one. Every crate here is
+    // called `task` and they differ STRUCTURALLY — different module sets, different test
+    // files — so sharing one set of build artifacts between them produced verdicts that
+    // changed between identical runs: the same mutant judged "broke" once and "not done"
+    // the next time, which in a benchmark is worse than being wrong consistently. These
+    // crates have no dependencies, so a private target dir costs a second, not a build.
+    let cfg = format!(
+        "[build]\ntarget-dir = \"{}\"\n",
+        ws.join("_target").to_string_lossy().replace('\\', "\\\\")
+    );
+    std::fs::write(ws.join(".cargo").join("config.toml"), cfg).map_err(|e| e.to_string())?;
     Ok(ws)
 }
 

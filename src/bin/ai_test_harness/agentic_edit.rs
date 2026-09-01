@@ -186,6 +186,21 @@ pub fn summarise(items: &[String]) -> Summary {
         },
     }
 }
+
+/// The most common item, padded for a fixed-width column.
+pub fn padded_top(items: &[String], width: usize) -> String {
+    // Second copy of `format::pad_right`. Deliberate: the deduplication task needs two
+    // implementations that are the same thing under different names, so that noticing
+    // they ARE the same is the work.
+    let s = summarise(items).top;
+    let len = s.chars().count();
+    if len >= width {
+        return s;
+    }
+    let mut out = s;
+    out.extend(std::iter::repeat_n(' ', width - len));
+    out
+}
 "#;
 
 const LIB_WITH_REPORT_RS: &str =
@@ -212,6 +227,7 @@ fn report_summarises_the_most_common_item() {
     assert_eq!(s.top, "a");
     assert_eq!(s.total, 3);
     assert_eq!(report::summarise(&[]).top, "");
+    assert_eq!(report::padded_top(&items, 4), "a   ");
 }
 
 #[test]
@@ -398,6 +414,57 @@ const EDIT_TASKS: &[EditTask] = &[
                   assert_eq!(crate::tally::most_common(&items), Some(\"a\".to_string()));\n        \
                   let src = include_str!(\"tally.rs\");\n        \
                   assert!(!src.contains(\"fn most_common_slow\"), \"the dead function is still there\");\n    }\n",
+    },
+    EditTask {
+        name: "make a panicking function fallible",
+        files: &[
+            ("src/lib.rs", LIB_RS),
+            ("src/format.rs", FORMAT_RS),
+            ("src/parser.rs", PARSER_RS),
+            ("src/tally.rs", TALLY_RS),
+            ("src/version.rs", VERSION_RS),
+            ("tests/existing.rs", TESTS_RS),
+        ],
+        // Changing a return type ripples: `parse_size` is called from the seeded tests,
+        // which the model may not touch — so the only way through is a signature the
+        // existing assertions still satisfy. `Option<u64>` -> `Result<u64, String>`
+        // would break them; the task asks for the one change that does not.
+        prompt: "`parser::parse_size` currently multiplies without checking, so a huge \
+                 value such as 999999999999999999mb overflows and panics in debug builds. \
+                 Make it return None for values that would overflow, instead of panicking. \
+                 Keep the signature and every existing behaviour exactly as they are, and \
+                 do not break the existing tests. Run cargo test.",
+        checker: "    #[test]\n    fn check() {\n        \
+                  assert_eq!(crate::parser::parse_size(\"999999999999999999mb\"), None);\n        \
+                  assert_eq!(crate::parser::parse_size(\"18446744073709551615kb\"), None);\n        \
+                  assert_eq!(crate::parser::parse_size(\"2kb\"), Some(2048));\n        \
+                  assert_eq!(crate::parser::parse_size(\"1mb\"), Some(1024 * 1024));\n        \
+                  assert_eq!(crate::parser::parse_size(\"10b\"), Some(10));\n    }\n",
+    },
+    EditTask {
+        name: "two modules, one shared helper",
+        files: &[
+            ("src/lib.rs", LIB_WITH_REPORT_RS),
+            ("src/format.rs", FORMAT_RS),
+            ("src/parser.rs", PARSER_RS),
+            ("src/tally.rs", TALLY_RS),
+            ("src/version.rs", VERSION_RS),
+            ("src/report.rs", REPORT_RS),
+            ("tests/existing.rs", TESTS_WITH_REPORT_RS),
+        ],
+        // Deduplication across files: the same padding logic exists in two modules, and
+        // the model must notice they are the same thing before it can remove one. Doing
+        // it by deleting the duplicate without re-pointing its user breaks the crate.
+        prompt: "Two modules in this crate each contain their own copy of the same \
+                 right-padding logic. Remove the duplication: keep one implementation, \
+                 have the other module use it, and leave the public behaviour of both \
+                 modules exactly as it is. Do not break the existing tests. Run cargo test.",
+        checker: "    #[test]\n    fn check() {\n        \
+                  assert_eq!(crate::format::pad_right(\"ab\", 4), \"ab  \");\n        \
+                  let items: Vec<String> = [\"a\", \"b\", \"a\"].iter().map(|s| s.to_string()).collect();\n        \
+                  assert_eq!(crate::report::padded_top(&items, 4), \"a   \");\n        \
+                  let src = include_str!(\"report.rs\");\n        \
+                  assert!(!src.contains(\"repeat_n\"), \"report.rs still pads on its own\");\n    }\n",
     },
 ];
 
@@ -659,10 +726,27 @@ mod tests {
             })
             .collect();
         let ws = crate::agentic_rust::scaffold_crate_files(&files).expect("scaffold");
+        // Print WHY, not just the verdict: an unexpected verdict here is usually the
+        // mutant failing to compile rather than the oracle misjudging it, and those look
+        // identical from the outside. Visible with `cargo test -- --nocapture`.
         let verdict = match judge(cargo, &ws, task) {
             EditOutcome::Solved => "solved",
-            EditOutcome::BrokeExisting(_) => "broke",
-            EditOutcome::NotDone(_) => "not-done",
+            EditOutcome::BrokeExisting(out) => {
+                println!(
+                    "    [audit] {} / {path}: BROKE — {}",
+                    task.name,
+                    first_failure_line(&out)
+                );
+                "broke"
+            }
+            EditOutcome::NotDone(out) => {
+                println!(
+                    "    [audit] {} / {path}: NOT DONE — {}",
+                    task.name,
+                    first_failure_line(&out)
+                );
+                "not-done"
+            }
         };
         let _ = std::fs::remove_dir_all(&ws);
         verdict
@@ -810,6 +894,43 @@ mod tests {
         // And deleting nothing is not solving it either.
         assert_eq!(
             judge_with(dead_task, "src/tally.rs", TALLY_DEAD_RS),
+            "not-done"
+        );
+
+        // Task 7 (overflow). `saturating_mul` is the tempting one-word fix: it stops the
+        // panic and returns u64::MAX, which is a WRONG size rather than a refusal. The
+        // task asks for None, so this must not pass.
+        let overflow_task = &EDIT_TASKS[6];
+        let saturating = PARSER_RS
+            .replace("Some(n * 1024)", "Some(n.saturating_mul(1024))")
+            .replace(
+                "Some(n * 1024 * 1024)",
+                "Some(n.saturating_mul(1024).saturating_mul(1024))",
+            );
+        assert_ne!(saturating, PARSER_RS);
+        assert_eq!(
+            judge_with(overflow_task, "src/parser.rs", &saturating),
+            "not-done",
+            "saturating to u64::MAX answers with a wrong size instead of refusing"
+        );
+
+        // Task 8 (deduplicate). Deleting the duplicate without giving its caller a
+        // replacement takes the crate down — a break, not a missing change.
+        let dedup_task = &EDIT_TASKS[7];
+        let deleted_not_moved = REPORT_RS
+            .split("/// The most common item, padded for a fixed-width column.")
+            .next()
+            .unwrap()
+            .to_string();
+        assert!(deleted_not_moved.len() < REPORT_RS.len());
+        assert_eq!(
+            judge_with(dedup_task, "src/report.rs", &deleted_not_moved),
+            "broke",
+            "removing the duplicate without replacing it is not deduplication"
+        );
+        // And leaving both copies in place is simply not done.
+        assert_eq!(
+            judge_with(dedup_task, "src/report.rs", REPORT_RS),
             "not-done"
         );
     }
