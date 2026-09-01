@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v155 (2026-09-02) — V280: `agentic_edit` grows to four tasks, and the audit caught a task that measured nothing (0.2.232)
+
+### Added
+- **Two more editing tasks**, both shaped so the hard part is the *existing* code:
+  - **change a signature and re-point its callers** — trivial in isolation, and only
+    difficult because something the prompt never mentions already depends on it;
+  - **delete the dead one, keep the live one** — two near-identical names, one used and
+    one not. Picking by resemblance instead of by usage takes the crate down, and gate 1
+    says so.
+
+### Fixed
+- **The signature task did not measure what it claimed.** The unmentioned caller
+  interpolated the value (`format!("{top}")`), and `Display` is implemented for both
+  `String` and `&String` — so changing the signature and leaving the caller untouched
+  kept compiling, and the mutation audit scored it *solved*. "Re-point the callers" was
+  asking nobody to re-point anything. The caller now stores the value in an owned field,
+  which is what makes the dependency real.
+- **And its checker accepted doing nothing at all.** `.map(|s| s.to_string())` compiles
+  against the old return type and the new one alike. The checker now binds the result to
+  an explicit `Option<&String>`, so the type annotation *is* the assertion.
+
+Both were found by mutation-testing the oracle before a model ever saw it — the same
+discipline that caught the weak checker in V273, and the reason these tasks ship as
+measurements rather than as hopes.
+
 ## [Unreleased] - v154 (2026-09-02) — V279: `whisper-local` never said it needs libclang (0.2.231)
 
 ### Docs

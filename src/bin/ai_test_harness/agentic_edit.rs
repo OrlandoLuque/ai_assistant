@@ -157,6 +157,101 @@ fn version_compare_orders_releases() {
 }
 "#;
 
+// A caller the task never mentions. `most_common` looks like a one-line change until
+// you notice something already depends on its return TYPE.
+//
+// The first version of this file interpolated the value — `format!("{top}")` — and the
+// oracle audit caught that immediately: `Display` is implemented for both `String` and
+// `&String`, so the caller kept compiling and the "re-point the callers" task never
+// asked anyone to re-point anything. Storing it in an owned field is what makes the
+// dependency real: with `Option<&String>`, `Summary { top }` stops compiling until the
+// caller clones.
+const REPORT_RS: &str = r#"use crate::tally;
+
+/// The headline figure for a run, kept for later.
+pub struct Summary {
+    pub top: String,
+    pub total: usize,
+}
+
+pub fn summarise(items: &[String]) -> Summary {
+    match tally::most_common(items) {
+        Some(top) => Summary {
+            top,
+            total: items.len(),
+        },
+        None => Summary {
+            top: String::new(),
+            total: 0,
+        },
+    }
+}
+"#;
+
+const LIB_WITH_REPORT_RS: &str =
+    "pub mod format;\npub mod parser;\npub mod report;\npub mod tally;\npub mod version;\n";
+
+const TESTS_WITH_REPORT_RS: &str = r#"use task::*;
+
+#[test]
+fn pad_right_pads_and_leaves_long_strings_alone() {
+    assert_eq!(format::pad_right("ab", 4), "ab  ");
+    assert_eq!(format::pad_right("abcde", 3), "abcde");
+}
+
+#[test]
+fn parse_size_handles_the_known_units() {
+    assert_eq!(parser::parse_size("2kb"), Some(2048));
+    assert_eq!(parser::parse_size("nonsense"), None);
+}
+
+#[test]
+fn report_summarises_the_most_common_item() {
+    let items: Vec<String> = ["a", "b", "a"].iter().map(|s| s.to_string()).collect();
+    let s = report::summarise(&items);
+    assert_eq!(s.top, "a");
+    assert_eq!(s.total, 3);
+    assert_eq!(report::summarise(&[]).top, "");
+}
+
+#[test]
+fn version_compare_orders_releases() {
+    assert_eq!(version::compare("1.2.0", "1.10.0"), std::cmp::Ordering::Less);
+}
+"#;
+
+// Same crate with one function nobody calls, sitting next to a near-identical name
+// that everything does. Deleting by resemblance rather than by usage breaks it.
+const TALLY_DEAD_RS: &str = r#"use std::collections::HashMap;
+
+/// Count how many times each item appears.
+pub fn counts(items: &[String]) -> HashMap<String, usize> {
+    let mut m = HashMap::new();
+    for i in items {
+        *m.entry(i.clone()).or_insert(0) += 1;
+    }
+    m
+}
+
+/// The item that appears most often, or None when there is nothing to count.
+pub fn most_common(items: &[String]) -> Option<String> {
+    let m = counts(items);
+    m.into_iter().max_by_key(|(_, n)| *n).map(|(k, _)| k)
+}
+
+/// Quadratic version kept around from an earlier iteration. Nothing calls it.
+pub fn most_common_slow(items: &[String]) -> Option<String> {
+    let mut best: Option<(String, usize)> = None;
+    for a in items {
+        let n = items.iter().filter(|b| *b == a).count();
+        if best.as_ref().is_none_or(|(_, bn)| n > *bn) {
+            best = Some((a.clone(), n));
+        }
+    }
+    best.map(|(k, _)| k)
+}
+"#;
+
 const EDIT_TASKS: &[EditTask] = &[
     EditTask {
         name: "find and fix the reported panic",
@@ -200,6 +295,59 @@ const EDIT_TASKS: &[EditTask] = &[
                   assert_eq!(crate::parser::parse_size(\"1gb\"), Some(1024 * 1024 * 1024));\n        \
                   assert_eq!(crate::parser::parse_size(\"2kb\"), Some(2048));\n        \
                   assert_eq!(crate::parser::parse_size(\"nonsense\"), None);\n    }\n",
+    },
+    EditTask {
+        name: "change a signature and re-point its callers",
+        files: &[
+            ("src/lib.rs", LIB_WITH_REPORT_RS),
+            ("src/format.rs", FORMAT_RS),
+            ("src/parser.rs", PARSER_RS),
+            ("src/tally.rs", TALLY_RS),
+            ("src/version.rs", VERSION_RS),
+            ("src/report.rs", REPORT_RS),
+            ("tests/existing.rs", TESTS_WITH_REPORT_RS),
+        ],
+        // The invalidation flavour, in an editing setting: the change is trivial in
+        // isolation and only hard because something ELSE already calls it. `report.rs`
+        // is the caller, and the model is not told it exists.
+        prompt: "The function `tally::most_common` returns an owned String, which forces a \
+                 clone on every call. Change it to return a borrowed value instead, so that \
+                 it hands back a reference into the input rather than a copy, and update \
+                 everything in this crate that calls it so the crate still compiles. Do not \
+                 break the existing tests. Run cargo test.",
+        // The type annotation IS the assertion: it only compiles if the signature
+        // actually changed. Without it, `.map(|s| s.to_string())` accepts both the old
+        // `Option<String>` and the new `Option<&String>`, so a model that changed
+        // nothing at all would pass.
+        checker: "    #[test]\n    fn check() {\n        \
+                  let items: Vec<String> = [\"x\", \"y\", \"x\"].iter().map(|s| s.to_string()).collect();\n        \
+                  let got: Option<&String> = crate::tally::most_common(&items);\n        \
+                  assert_eq!(got.map(|s| s.as_str()), Some(\"x\"));\n        \
+                  let none: Vec<String> = vec![];\n        \
+                  let empty: Option<&String> = crate::tally::most_common(&none);\n        \
+                  assert!(empty.is_none());\n    }\n",
+    },
+    EditTask {
+        name: "delete the dead one, keep the live one",
+        files: &[
+            ("src/lib.rs", LIB_RS),
+            ("src/format.rs", FORMAT_RS),
+            ("src/parser.rs", PARSER_RS),
+            ("src/tally.rs", TALLY_DEAD_RS),
+            ("src/version.rs", VERSION_RS),
+            ("tests/existing.rs", TESTS_RS),
+        ],
+        // Two near-identical names, one used and one not. Deleting by name-similarity
+        // instead of by usage takes the crate down, and gate 1 says so.
+        prompt: "This crate has accumulated an unused public function in one of its modules \
+                 — nothing in the crate or its tests calls it. Find it and delete it. Leave \
+                 everything that IS used exactly as it is, and do not break the existing \
+                 tests. Run cargo test.",
+        checker: "    #[test]\n    fn check() {\n        \
+                  let items: Vec<String> = [\"a\", \"b\", \"a\"].iter().map(|s| s.to_string()).collect();\n        \
+                  assert_eq!(crate::tally::most_common(&items), Some(\"a\".to_string()));\n        \
+                  let src = include_str!(\"tally.rs\");\n        \
+                  assert!(!src.contains(\"fn most_common_slow\"), \"the dead function is still there\");\n    }\n",
     },
 ];
 
@@ -515,6 +663,50 @@ mod tests {
         assert_ne!(decimal_gb, PARSER_RS);
         assert_eq!(
             judge_with(extend_task, "src/parser.rs", &decimal_gb),
+            "not-done"
+        );
+
+        // Task 3 (borrow instead of clone). The case that matters is DOING NOTHING:
+        // without the type annotation in the checker, `.map(|s| s.to_string())` accepts
+        // the old signature and the new one alike, so an untouched crate scored as
+        // solved. It must read as "not done".
+        let borrow_task = &EDIT_TASKS[2];
+        assert_eq!(
+            judge_with(borrow_task, "src/tally.rs", TALLY_RS),
+            "not-done",
+            "leaving most_common untouched must not count as changing its signature"
+        );
+        // And changing it without updating the caller in report.rs takes the crate
+        // down — which is a break, not a missing change.
+        let borrowed_only = TALLY_RS.replace(
+            "pub fn most_common(items: &[String]) -> Option<String> {\n    let m = counts(items);\n    m.into_iter().max_by_key(|(_, n)| *n).map(|(k, _)| k)\n}",
+            "pub fn most_common(items: &[String]) -> Option<&String> {\n    let m = counts(items);\n    let top = m.into_iter().max_by_key(|(_, n)| *n).map(|(k, _)| k)?;\n    items.iter().find(|i| **i == top)\n}",
+        );
+        assert_ne!(
+            borrowed_only, TALLY_RS,
+            "the borrowed variant did not apply"
+        );
+        assert_eq!(
+            judge_with(borrow_task, "src/tally.rs", &borrowed_only),
+            "broke",
+            "changing the signature and leaving the caller behind is a break"
+        );
+
+        // Task 4 (delete the dead one). Deleting the LIVE function instead — the
+        // failure of picking by name resemblance rather than by usage.
+        let dead_task = &EDIT_TASKS[3];
+        let killed_the_wrong_one = TALLY_DEAD_RS.replace(
+            "/// The item that appears most often, or None when there is nothing to count.\npub fn most_common(items: &[String]) -> Option<String> {\n    let m = counts(items);\n    m.into_iter().max_by_key(|(_, n)| *n).map(|(k, _)| k)\n}\n\n",
+            "",
+        );
+        assert_ne!(killed_the_wrong_one, TALLY_DEAD_RS);
+        assert_eq!(
+            judge_with(dead_task, "src/tally.rs", &killed_the_wrong_one),
+            "broke"
+        );
+        // And deleting nothing is not solving it either.
+        assert_eq!(
+            judge_with(dead_task, "src/tally.rs", TALLY_DEAD_RS),
             "not-done"
         );
     }
