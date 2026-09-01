@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.230"
+version = "0.2.231"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -386,8 +386,15 @@ chaos-testing = []
 # Not in 'full' by default — requires network access and LLM providers. Opt-in: --features eval-suite
 eval-suite = ["eval"]
 
-# Local Whisper STT: offline speech-to-text via whisper.cpp bindings
+# Local Whisper STT: offline speech-to-text via whisper.cpp bindings.
 # Not in 'full' by default — heavy native C++ dep. Opt-in: --features whisper-local
+#
+# BUILD PREREQUISITE: libclang, same as `local-inference-llama-cpp` below —
+# whisper-rs-sys generates its bindings with bindgen. Without LLVM installed
+# (`LIBCLANG_PATH`, or `LLVM\bin` on PATH) the build script panics with
+# "Unable to find libclang", which reads like a broken dependency rather than a
+# missing tool. It was documented for the llama.cpp feature and not for this one;
+# hitting it on a fresh machine is what turned that omission up.
 whisper-local = ["dep:whisper-rs", "audio"]
 
 # Desktop GUI application: eframe + egui widgets + file dialogs + Butler + RAG + graph viz

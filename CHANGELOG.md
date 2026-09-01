@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v154 (2026-09-02) — V279: `whisper-local` never said it needs libclang (0.2.231)
+
+### Docs
+- **The `whisper-local` feature documented its weight but not its prerequisite.**
+  `whisper-rs-sys` generates bindings with bindgen, so the build needs libclang — exactly
+  like `local-inference-llama-cpp`, which *does* say so. Without LLVM on the machine the
+  build script panics with `Unable to find libclang`, which reads like a broken dependency
+  rather than a missing tool.
+- Found by enabling the feature on a machine that never had LLVM installed. It also
+  corrects the standing note on that feature's build failure (N27): the recorded symptom —
+  an overflow inside the generated bindings — is what you get *after* libclang is present,
+  so the two are separate problems and only the second is still open.
+
 ## [Unreleased] - v153 (2026-09-02) — V278: `agentic_edit`, because writing code and editing it are different skills (0.2.230)
 
 ### Added
