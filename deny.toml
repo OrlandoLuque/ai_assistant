@@ -30,6 +30,17 @@ db-urls = ["https://github.com/rustsec/advisory-db"]
 # verifies these are still relevant; the runbook
 # `docs/runbooks/rustsec-handling.md` is the policy.
 ignore = [
+    # webbrowser 0.8.15: on Unix, a hostile `BROWSER` environment variable can
+    # inject arguments into the spawned browser command. Fixed upstream in
+    # 1.2.2, which we cannot reach: the crate is transitive via
+    # egui-winit 0.27.2, and that pins `^0.8`. Reaching 1.x means upgrading the
+    # whole egui stack (0.27 is several breaking releases behind), which is a
+    # piece of work, not a lock bump. Unix-only, and it needs an attacker who
+    # already controls the process environment; the egui features are not in
+    # `full`. Same blocker as RUSTSEC-2026-0192 below.
+    # Re-check by: when the egui stack is upgraded past 0.27 (tracked as N37) —
+    # then DELETE this entry, do not renew it.
+    "RUSTSEC-2026-0257",
     # RUSTSEC-2026-0222 (wasmtime) was here. It said to DELETE the entry rather
     # than renew it once the toolchain moved, and V276 moved it: Rust 1.98 and
     # wasmtime 46, so the advisory is fixed rather than ignored. Left as a note

@@ -1621,6 +1621,30 @@ pub(crate) fn build_rust_tools_pub(ws: std::path::PathBuf, cargo: &'static str) 
     build_rust_tools(ws, cargo)
 }
 
+/// Scaffold a crate of SEVERAL files, for the editing category.
+///
+/// Every other category seeds a single `src/lib.rs`, which is enough when the task is
+/// to write code. It is not enough to measure EDITING: half of that skill is finding
+/// which file to touch, and a one-file crate hands the answer over for free. Paths are
+/// relative to the crate root (`src/parser.rs`, `tests/existing.rs`, …) and their parent
+/// directories are created as needed.
+pub(crate) fn scaffold_crate_files(files: &[(&str, &str)]) -> Result<std::path::PathBuf, String> {
+    let ws = scaffold_crate("")?;
+    for (rel, contents) in files {
+        // Reject absolute paths and traversal: these strings are ours, not a model's,
+        // but the scaffolding is one `include!` away from being fed untrusted input.
+        if std::path::Path::new(rel).is_absolute() || rel.contains("..") {
+            return Err(format!("illegal seed path: {rel}"));
+        }
+        let path = ws.join(rel);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        std::fs::write(&path, contents).map_err(|e| e.to_string())?;
+    }
+    Ok(ws)
+}
+
 pub(crate) fn cargo_cmd_pub() -> Option<&'static str> {
     cargo_cmd()
 }

@@ -64,7 +64,8 @@ jobs:
             --ignore RUSTSEC-2026-0187 \
             --ignore RUSTSEC-2026-0194 \
             --ignore RUSTSEC-2026-0195 \
-            --ignore RUSTSEC-2026-0192
+            --ignore RUSTSEC-2026-0192 \
+            --ignore RUSTSEC-2026-0257
 
   audit-deny-sync:
     name: audit/deny ignore-list sync check
@@ -79,11 +80,18 @@ jobs:
         # other.
         run: |
           set -euo pipefail
+          # Match the ENTRIES, not every mention of an ID. The naive version
+          # grepped the whole file, so prose counted: V276 deleted an ignore and
+          # left a comment saying which one, and this job read that comment as a
+          # still-present entry and reported drift against the file that had no
+          # such comment. An ignore list you cannot write about is not the goal.
           extract_yaml() {
-            grep -oE 'RUSTSEC-[0-9]+-[0-9]+' "$1" | sort -u
+            grep -oE '^[[:space:]]*--ignore[[:space:]]+RUSTSEC-[0-9]+-[0-9]+' "$1" \
+              | grep -oE 'RUSTSEC-[0-9]+-[0-9]+' | sort -u
           }
           extract_toml() {
             sed -n '/\[advisories\]/,/^\[/p' "$1" \
+              | grep -oE '^[[:space:]]*"RUSTSEC-[0-9]+-[0-9]+"' \
               | grep -oE 'RUSTSEC-[0-9]+-[0-9]+' | sort -u
           }
           ci_list=$(extract_yaml .github/workflows/ci.yml)

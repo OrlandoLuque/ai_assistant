@@ -163,6 +163,12 @@ jobs:
       #    pinned. V276 moved the pin to 1.98 and wasmtime to 46, so the entry
       #    was DELETED rather than renewed — which is what its own note said to
       #    do the moment the toolchain moved.)
+      #   RUSTSEC-2026-0257 — webbrowser: hostile $BROWSER can inject arguments
+      #                       into the spawned command (Unix only). Fixed in
+      #                       1.2.2, unreachable: transitive via egui-winit
+      #                       0.27.2, which pins ^0.8. Needs the egui stack
+      #                       upgraded past 0.27 — same blocker as 0192 below.
+      #                       DELETE this ignore when that lands (N37).
       #   RUSTSEC-2026-0192 — ttf-parser unmaintained (no safe upgrade;
       #                       transitive via egui/epaint/ab_glyph). DoS-
       #                       class only; cargo-deny denies unmaintained,
@@ -178,7 +184,8 @@ jobs:
             --ignore RUSTSEC-2026-0187 \
             --ignore RUSTSEC-2026-0194 \
             --ignore RUSTSEC-2026-0195 \
-            --ignore RUSTSEC-2026-0192
+            --ignore RUSTSEC-2026-0192 \
+            --ignore RUSTSEC-2026-0257
 
   feature-matrix:
     name: Feature Matrix (${{ matrix.features }})

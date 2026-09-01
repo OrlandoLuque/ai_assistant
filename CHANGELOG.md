@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v152 (2026-09-02) — V277: two advisories that landed while nobody was looking (0.2.229)
+
+### Security
+- **RUSTSEC-2026-0258 (`h2`, 17 Aug) fixed**: unbounded empty DATA frames, a DoS.
+  Transitive via hyper (bollard, reqwest), so a lock bump was enough: **0.4.13 → 0.4.19**.
+- **RUSTSEC-2026-0257 (`webbrowser`, 29 Jul) ignored, with a trigger.** A hostile
+  `$BROWSER` can inject arguments into the spawned command on Unix. Fixed upstream in
+  1.2.2 and **unreachable from here**: the crate arrives via `egui-winit 0.27.2`, which
+  pins `^0.8`, so getting the fix means upgrading the whole egui stack (queued as N37).
+  Unix-only, requires an attacker who already controls the environment, and the egui
+  features are not in `full`. Same blocker as the ttf-parser entry.
+- Both advisories were published **during the four weeks between sessions** — the CI red
+  was not caused by the V276 toolchain bump, which is why Supply Chain was already
+  failing on the commit before it.
+
+### Fixed
+- **The ignore-list sync check counted prose as entries.** It grepped whole files for
+  `RUSTSEC-\d+-\d+`, so V276's note recording *which* advisory had been deleted read as a
+  still-present entry — and drifted against the file that carried no such note. It now
+  matches the entries themselves (`--ignore …` lines in YAML, quoted items in TOML). An
+  ignore list you cannot write about is not the goal; the check exists to catch an
+  advisory silenced in one place and not another.
+
 ## [Unreleased] - v151 (2026-09-01) — V276: toolchain 1.93 → 1.98, and the RUSTSEC ignore is deleted rather than renewed (0.2.228)
 
 ### Security
