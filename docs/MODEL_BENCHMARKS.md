@@ -14,7 +14,7 @@ we learned.
 
 ## What's measured
 
-Six harness categories, all **execution-verified** (the code the model produces
+Seven harness categories, all **execution-verified** (the code the model produces
 is actually run against `assert` checkers — a PASS means the artifact *works*, not
 that it "looks right"). The backend is configurable via env
 (`AI_BENCH_PROVIDER` / `AI_BENCH_MODEL` / `AI_BENCH_URL` — see
@@ -30,7 +30,7 @@ Sampling is pinned with `AI_BENCH_TEMP` (default **0.5**) and `AI_BENCH_SEED`
 chase determinism: the seed is what buys reproducibility, and near-greedy sampling
 crashes the llama.cpp runner outright — see the 2026-07-31 (2nd) entry.
 
-**All six are repeated and scored as a pass rate** (`AI_BENCH_REPEATS`, default 3) since
+**All seven are repeated and scored as a pass rate** (`AI_BENCH_REPEATS`, default 3) since
 V272 — a single live-model run is one sample, not a measurement.
 
 | Category | What it measures | Tasks |
@@ -40,6 +40,7 @@ V272 — a single live-model run is one sample, not a measurement.
 | `agentic_multi` | multi-step iterative coding (build → extend → fix) on **one persistent workspace** (the agent's conversation carries across steps). | 10 (3–5 steps each) |
 | `agentic_rust` | same agentic loop, but in **Rust**: a throwaway cargo crate per task, verified with `cargo test` so the type/borrow checkers gate every answer. | 12 single-step |
 | `agentic_rust_multi` | multi-step Rust on one persistent crate. Six **additive** tasks (each step adds to the last) plus four where a late step **invalidates** an earlier one — a rename whose callers must be re-pointed, an enum variant that breaks an existing match, an infallible API that becomes fallible. | 10 (3–5 steps each) |
+| `agentic_edit` | the model gets an EXISTING crate (four modules plus a passing test suite) and a change request that states the symptom, never the file. Two gates, scored apart: the seeded tests must still pass, and the requested change must be there. | 2 |
 | `agentic_test_gen` | **inverted**: the model gets a *correct* implementation and must write the test suite. Scored by mutation — its tests must accept the reference **and** kill every planted bug. | 12 |
 
 ## How to run

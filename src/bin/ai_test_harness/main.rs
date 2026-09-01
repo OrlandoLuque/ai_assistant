@@ -404,6 +404,8 @@ mod macros;
 #[cfg(all(feature = "autonomous", feature = "tools"))]
 mod agentic_code;
 #[cfg(all(feature = "autonomous", feature = "tools"))]
+mod agentic_edit;
+#[cfg(all(feature = "autonomous", feature = "tools"))]
 mod agentic_rust;
 #[cfg(all(feature = "autonomous", feature = "tools"))]
 mod agentic_test_gen;
@@ -439,6 +441,8 @@ mod replay;
 
 #[cfg(all(feature = "autonomous", feature = "tools"))]
 use crate::agentic_code::*;
+#[cfg(all(feature = "autonomous", feature = "tools"))]
+use crate::agentic_edit::*;
 #[cfg(all(feature = "autonomous", feature = "tools"))]
 use crate::agentic_rust::*;
 #[cfg(all(feature = "autonomous", feature = "tools"))]
@@ -482,6 +486,7 @@ const BENCHMARK_CATEGORIES: &[&str] = &[
     "agentic_multi",
     "agentic_rust",
     "agentic_rust_multi",
+    "agentic_edit",
     "code_gen_bench",
     "agentic_test_gen",
 ];
@@ -795,6 +800,7 @@ fn all_categories() -> Vec<(&'static str, fn() -> CategoryResult)> {
             "agentic_test_gen",
             tests_agentic_test_gen as fn() -> CategoryResult,
         ));
+        categories.push(("agentic_edit", tests_agentic_edit as fn() -> CategoryResult));
     }
 
     categories

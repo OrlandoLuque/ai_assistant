@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v153 (2026-09-02) — V278: `agentic_edit`, because writing code and editing it are different skills (0.2.230)
+
+### Added
+- **`agentic_edit`**, a benchmark category where the model is handed an existing crate
+  and a change request. Every other agentic category starts from an empty `src/lib.rs`,
+  which measures *writing* — and the single-step versions of that are saturated (12/12
+  from 7B up). Two things a one-file scaffold cannot measure:
+  - **Localisation.** The task states the symptom, never the file. The seed crate has
+    four modules plus a test suite, so the model has to read before it writes.
+  - **Not breaking things.** The crate arrives with passing tests covering code the task
+    never mentions. Regenerating a file wholesale — the classic failure of a model that
+    would rather rewrite than edit — is caught by construction.
+- **Two gates, run separately on purpose.** One `cargo test` could answer both at once,
+  and that is exactly what would make the result useless: "broke something else" and
+  "never made the change" would arrive as the same failure, and they call for opposite
+  responses. They are measured apart and reported apart in the failure-mode table.
+- **`scaffold_crate_files`** — multi-file seed crates, which the category needs and no
+  previous one had.
+
+### Testing
+- **The oracle was mutation-tested before any model was scored against it**, per the rule
+  that produced V273's catch. Three of the four cases are ones a plain length assertion
+  would have waved through:
+  - the correct fix passes **both** gates;
+  - `saturating_sub`, which stops the panic but still returns more characters than asked
+    for — *not done*, not solved;
+  - deleting the ellipsis to satisfy the length rule — *broke the crate*, because that
+    behaviour was already documented and tested;
+  - a 1000-based gigabyte where every other unit in the crate is 1024-based — *not done*.
+- Two further guards: the seed crate must arrive **green** (otherwise gate 1 blames the
+  model for a break that was already there), and the bug the first task describes must
+  really be present (otherwise every model passes it for free).
+
 ## [Unreleased] - v152 (2026-09-02) — V277: two advisories that landed while nobody was looking (0.2.229)
 
 ### Security
