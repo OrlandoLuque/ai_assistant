@@ -231,12 +231,14 @@ impl CostTracker {
 
     /// Get average tokens per request
     pub fn average_tokens(&self) -> (usize, usize) {
-        if self.request_count == 0 {
-            (0, 0)
-        } else {
+        {
             (
-                self.total_input_tokens / self.request_count,
-                self.total_output_tokens / self.request_count,
+                self.total_input_tokens
+                    .checked_div(self.request_count)
+                    .unwrap_or(0),
+                self.total_output_tokens
+                    .checked_div(self.request_count)
+                    .unwrap_or(0),
             )
         }
     }

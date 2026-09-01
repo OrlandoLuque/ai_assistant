@@ -775,7 +775,7 @@ impl PlanStore {
     /// List all plans (sorted by updated_at descending).
     pub fn list(&self) -> Vec<&TaskPlan> {
         let mut plans: Vec<&TaskPlan> = self.plans.values().collect();
-        plans.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        plans.sort_by_key(|e| std::cmp::Reverse(e.updated_at));
         plans
     }
 

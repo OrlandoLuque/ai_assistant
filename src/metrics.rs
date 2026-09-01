@@ -343,7 +343,7 @@ impl MetricsTracker {
             .iter()
             .map(|(k, v)| (k.clone(), *v))
             .collect();
-        top_sources.sort_by(|a, b| b.1.cmp(&a.1));
+        top_sources.sort_by_key(|e| std::cmp::Reverse(e.1));
         top_sources.truncate(5);
 
         RagQualityMetrics {

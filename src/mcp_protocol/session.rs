@@ -148,7 +148,7 @@ impl SessionMcpManager {
 
         // Top topics by frequency
         let mut freq_vec: Vec<(String, usize)> = word_freq.into_iter().collect();
-        freq_vec.sort_by(|a, b| b.1.cmp(&a.1));
+        freq_vec.sort_by_key(|e| std::cmp::Reverse(e.1));
         let key_topics: Vec<String> = freq_vec.into_iter().take(5).map(|(word, _)| word).collect();
 
         // Decisions: messages containing decision-related keywords

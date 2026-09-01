@@ -515,7 +515,7 @@ impl AiAssistant {
                 "send_message",
                 HitlHashMap::new(),
                 "ai_assistant",
-                format!("User message: {}; LLM response: {}", message, &response),
+                format!("User message: {}; LLM response: {}", message, response),
                 ImpactLevel::Low,
             );
 

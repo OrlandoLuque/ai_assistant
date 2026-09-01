@@ -941,7 +941,7 @@ impl ContextCompiler {
         let total_tokens = self.total_tokens();
         let utilization = self.utilization();
 
-        let compiled_segments: Vec<ContextSegment> = self.segments.drain(..).collect();
+        let compiled_segments: Vec<ContextSegment> = std::mem::take(&mut self.segments);
 
         for alloc in self.allocations.values_mut() {
             alloc.current_tokens = 0;

@@ -1554,7 +1554,9 @@ mod inner {
         /// Convert raw bytes to PCM16 samples (little-endian).
         fn bytes_to_samples(bytes: &[u8]) -> Vec<i16> {
             bytes
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|pair| i16::from_le_bytes([pair[0], pair[1]]))
                 .collect()
         }

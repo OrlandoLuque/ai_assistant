@@ -704,7 +704,7 @@ impl Dht {
         match self.config.cache.eviction_policy {
             EvictionPolicy::Lru => candidates.sort_by_key(|(_, la, _, _)| *la), // oldest access first
             EvictionPolicy::Lrw => candidates.sort_by_key(|(_, _, ca, _)| *ca), // oldest creation first
-            EvictionPolicy::LargestFirst => candidates.sort_by(|a, b| b.3.cmp(&a.3)), // largest first
+            EvictionPolicy::LargestFirst => candidates.sort_by_key(|e| std::cmp::Reverse(e.3)), // largest first
         }
 
         // Evict until under limits

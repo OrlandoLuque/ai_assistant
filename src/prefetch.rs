@@ -252,7 +252,7 @@ impl Prefetcher {
         }
 
         // Sort by priority and deduplicate
-        candidates.sort_by(|a, b| b.priority.cmp(&a.priority));
+        candidates.sort_by_key(|e| std::cmp::Reverse(e.priority));
         candidates.dedup_by(|a, b| a.query == b.query);
         candidates.truncate(self.config.max_prefetch_items);
 

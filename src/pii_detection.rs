@@ -364,7 +364,7 @@ impl PiiDetector {
         let mut all_detections = chosen;
 
         // Sort by start position descending for proper replacement
-        all_detections.sort_by(|a, b| b.start.cmp(&a.start));
+        all_detections.sort_by_key(|e| std::cmp::Reverse(e.start));
 
         // Apply redactions. Defensive guard: never panic on a malformed span.
         // Redaction is a security function, so a bad offset (off a char

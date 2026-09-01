@@ -454,11 +454,12 @@ impl DataSourceClient {
         max_pages: usize,
     ) -> Result<PaginatedResponse> {
         let mut all_items = Vec::new();
-        let mut page: usize = 1;
         let mut pages_fetched: usize = 0;
         let mut has_more = false;
 
-        for _ in 0..max_pages {
+        // The page number IS the loop counter; keeping a separate `mut page` alongside
+        // `for _ in 0..max_pages` meant two things that had to stay in step by hand.
+        for page in (1usize..).take(max_pages) {
             let page_str = page.to_string();
             let size_str = page_size.to_string();
             let params: Vec<(&str, &str)> = vec![(page_param, &page_str), (size_param, &size_str)];
@@ -471,7 +472,6 @@ impl DataSourceClient {
             if count < page_size {
                 break;
             }
-            page += 1;
             if pages_fetched >= max_pages {
                 has_more = true;
                 break;
@@ -926,10 +926,9 @@ impl DataSourceClient {
         }
         let (scheme, base_rest) = if let Some(rest) = base.strip_prefix("https://") {
             ("https", rest)
-        } else if let Some(rest) = base.strip_prefix("http://") {
-            ("http", rest)
         } else {
-            return None;
+            let rest = base.strip_prefix("http://")?;
+            ("http", rest)
         };
         // Scheme-relative: //host/path
         if let Some(hostpath) = location.strip_prefix("//") {

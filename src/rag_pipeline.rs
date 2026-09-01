@@ -1187,7 +1187,7 @@ impl RagPipeline {
             let parent_count = processed.len() - child_count;
             debug.log_step(RagDebugStep::ParentDocument {
                 child_matches: child_count,
-                parent_docs_retrieved: parent_count.max(0) as usize,
+                parent_docs_retrieved: parent_count as usize,
                 duration_ms: start.elapsed().as_millis() as u64,
             });
         }
@@ -1399,7 +1399,7 @@ impl RagPipeline {
                 "Extract only the parts relevant to answering: \"{}\"\n\n\
                  Text: {}\n\n\
                  Relevant extract (be concise):",
-                query, &chunk.content
+                query, chunk.content
             );
 
             match llm.generate(&prompt, self.config.compression_target_tokens) {

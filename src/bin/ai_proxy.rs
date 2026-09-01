@@ -3356,6 +3356,13 @@ async fn gateway_chat_handler(State(ctx): State<GatewayContext>, req: Request) -
 /// V149 F1: success tuple now carries the backend address so the caller
 /// can attach `x-mesh-served-by`. Err responses inject the header inline
 /// before being returned.
+// The `Err` variant here is axum's own `Response`, and Rust 1.98's
+// `clippy::result_large_err` flags it at 128 bytes. Boxing it — the lint's suggested
+// fix — would add an allocation to all ten error paths and force both callers to
+// unbox before returning, purely to satisfy a threshold aimed at *accidentally* large
+// error types. This one is deliberate: an early return from a proxy handler IS an HTTP
+// response, which is exactly how axum handlers are written everywhere else in this file.
+#[allow(clippy::result_large_err)]
 #[cfg(feature = "security")]
 async fn forward_core(
     state: &ProxyState,

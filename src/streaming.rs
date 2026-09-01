@@ -375,11 +375,9 @@ impl StreamMetrics {
 
     /// Get average chunk size
     pub fn avg_chunk_size(&self) -> usize {
-        if self.chunks_produced > 0 {
-            self.bytes_produced / self.chunks_produced
-        } else {
-            0
-        }
+        self.bytes_produced
+            .checked_div(self.chunks_produced)
+            .unwrap_or(0)
     }
 }
 

@@ -470,10 +470,8 @@ impl RemoteMcpClient {
         // Extract host portion
         let after_scheme = if let Some(rest) = value.strip_prefix("http://") {
             rest
-        } else if let Some(rest) = value.strip_prefix("https://") {
-            rest
         } else {
-            return None;
+            value.strip_prefix("https://")?
         };
         let host = after_scheme
             .split('/')

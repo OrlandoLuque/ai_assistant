@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v151 (2026-09-01) — V276: toolchain 1.93 → 1.98, and the RUSTSEC ignore is deleted rather than renewed (0.2.228)
+
+### Security
+- **RUSTSEC-2026-0222 (wasmtime) is fixed, not ignored.** It was the only entry on the
+  ignore list with an upstream fix available; the fix needed a newer toolchain than the
+  repo pinned, so it was tracked as a deliberate decision rather than a CI patch. Both
+  moved: **Rust 1.93 → 1.98** and **wasmtime 45 → 46.0.3**, and the ignore was **deleted**
+  from all three places it lived (`deny.toml`, `ci.yml`, `supply-chain.yml`) — the repo's
+  own audit/deny sync check exists because a previous change updated only two of the three.
+  Verified by compiling the `skill-forge` feature, which is what pulls wasmtime in.
+
+### Changed
+- **Toolchain pin moved in all five files that carried it** (`rust-toolchain.toml` plus
+  four workflows, 17 pins).
+- **42 new lints from five toolchain versions, all fixed rather than silenced.** Of these
+  `cargo clippy --fix` could apply only a handful; the rest were marked *MaybeIncorrect*
+  and needed doing by hand:
+  - **36 × `unnecessary_sort_by`** — every one a *descending* sort
+    (`sort_by(|a, b| b.x.cmp(&a.x))`), rewritten to `sort_by_key(|e| Reverse(e.x))` with
+    `std::cmp::Reverse` fully qualified, so thirty-odd files did not each grow an import.
+  - **2 × `chunks_exact_to_as_chunks`** in the base64 codec — `as_chunks::<N>()` hands the
+    loop a `&[u8; N]`, so the indexings inside are checked at compile time instead of at
+    runtime.
+  - **3 × `manual_checked_ops`** → `checked_div`, and **1 × `explicit_counter_loop`** where
+    a hand-maintained `page` counter ran alongside the loop index and had to be kept in
+    step by hand.
+- **One deliberate exception, documented at the site**: `clippy::result_large_err` on
+  `ai_proxy::forward_core`, whose `Err` variant is axum's own `Response`. Boxing it would
+  add an allocation to ten error paths to satisfy a threshold aimed at accidentally large
+  error types; here an early return from a proxy handler *is* an HTTP response.
+
+### Fixed
+- **A sandbox test asserted that a failure always writes to stderr.** On Windows `bash`
+  resolves to `C:\Windows\System32\bash.exe`, the WSL launcher, which without an installed
+  distribution exits 1 and prints to **stdout**, leaving stderr empty — so an ordinary
+  machine failed a test whose actual intent (per its own comment) was "the backend must not
+  panic and must report something". The assertion now accepts either stream and says what
+  it means: it fails only when the backend fails *silently*.
+
 ## [Unreleased] - v150 (2026-08-04) — V275: the repeats now vary the seed, because pinning it destroyed independence (0.2.227)
 
 ### Fixed

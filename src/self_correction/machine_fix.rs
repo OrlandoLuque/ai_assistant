@@ -61,7 +61,7 @@ pub fn apply_suggestions(source: &str, suggestions: &[Suggestion]) -> Option<Str
     if ordered.is_empty() {
         return None;
     }
-    ordered.sort_by(|a, b| b.start.cmp(&a.start));
+    ordered.sort_by_key(|e| std::cmp::Reverse(e.start));
 
     let mut patched = source.to_string();
     let mut applied = 0usize;

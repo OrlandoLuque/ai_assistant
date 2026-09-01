@@ -33,7 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@1.93.0
+      - uses: dtolnay/rust-toolchain@1.98.0
       - uses: Swatinem/rust-cache@v2
       - name: Check (lightweight features)
         run: cargo check --features full
@@ -49,7 +49,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@1.93.0
+      - uses: dtolnay/rust-toolchain@1.98.0
       - uses: Swatinem/rust-cache@v2
       - name: Run unit tests
         run: cargo test --features "$FEATURES_STD" --lib
@@ -61,7 +61,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@1.93.0
+      - uses: dtolnay/rust-toolchain@1.98.0
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
@@ -98,7 +98,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@1.93.0
+      - uses: dtolnay/rust-toolchain@1.98.0
         with:
           components: rustfmt
       - name: Check formatting
@@ -132,7 +132,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@1.93.0
+      - uses: dtolnay/rust-toolchain@1.98.0
       - uses: Swatinem/rust-cache@v2
         with:
           key: cargo-audit
@@ -158,17 +158,11 @@ jobs:
       #                       reach >=0.41); build-time XML of trusted
       #                       wayland protocol files only, no direct use in
       #                       src/. Revisit when wayland-scanner bumps it.
-      #   RUSTSEC-2026-0222 - wasmtime "stores can mix up type indices between
-      #                       engines". UNLIKE the others this one HAS a fix
-      #                       upstream (>=46.0.2), but every patched release
-      #                       requires Rust 1.94 via cranelift, and this repo
-      #                       pins 1.93. Bumping the toolchain across ~523k
-      #                       lines is a deliberate decision, not a side effect
-      #                       of a CI fix, so it is tracked separately. CVSS 3.8
-      #                       (local, high privileges, user interaction) and only
-      #                       reachable behind the opt-in `skill-forge` feature,
-      #                       which is not in `full`. REMOVE this ignore the
-      #                       moment the toolchain moves.
+      #   (RUSTSEC-2026-0222 was here. It was the only entry with an upstream
+      #    fix, held back because the fix needed a newer toolchain than the repo
+      #    pinned. V276 moved the pin to 1.98 and wasmtime to 46, so the entry
+      #    was DELETED rather than renewed — which is what its own note said to
+      #    do the moment the toolchain moved.)
       #   RUSTSEC-2026-0192 — ttf-parser unmaintained (no safe upgrade;
       #                       transitive via egui/epaint/ab_glyph). DoS-
       #                       class only; cargo-deny denies unmaintained,
@@ -184,8 +178,7 @@ jobs:
             --ignore RUSTSEC-2026-0187 \
             --ignore RUSTSEC-2026-0194 \
             --ignore RUSTSEC-2026-0195 \
-            --ignore RUSTSEC-2026-0192 \
-            --ignore RUSTSEC-2026-0222
+            --ignore RUSTSEC-2026-0192
 
   feature-matrix:
     name: Feature Matrix (${{ matrix.features }})
@@ -236,7 +229,7 @@ jobs:
           - "integrity-check"
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@1.93.0
+      - uses: dtolnay/rust-toolchain@1.98.0
       - uses: Swatinem/rust-cache@v2
         with:
           key: feature-${{ hashFiles('Cargo.lock') }}-${{ strategy.job-index }}
@@ -260,7 +253,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@1.93.0
+      - uses: dtolnay/rust-toolchain@1.98.0
       - uses: Swatinem/rust-cache@v2
       - name: Build ai_cli
         run: cargo build --bin ai_cli --features "full,diagnostic-logging"
@@ -286,7 +279,7 @@ jobs:
     # any failure, so this step gates merges.
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@1.93.0
+      - uses: dtolnay/rust-toolchain@1.98.0
       - uses: Swatinem/rust-cache@v2
       - name: Build ai_test_harness
         run: cargo build --bin ai_test_harness --features "full,browser"
@@ -301,7 +294,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@1.93.0
+      - uses: dtolnay/rust-toolchain@1.98.0
         with:
           components: llvm-tools-preview
       - uses: taiki-e/install-action@cargo-llvm-cov
@@ -325,7 +318,7 @@ jobs:
     continue-on-error: false
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@1.93.0
+      - uses: dtolnay/rust-toolchain@1.98.0
       - uses: Swatinem/rust-cache@v2
       - name: Run benchmarks
         id: bench
@@ -402,7 +395,7 @@ jobs:
     needs: [check, test, clippy, fmt, binaries]
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@1.93.0
+      - uses: dtolnay/rust-toolchain@1.98.0
       - uses: Swatinem/rust-cache@v2
       - name: Run full test suite
         run: cargo test --features "$FEATURES_STD" --lib

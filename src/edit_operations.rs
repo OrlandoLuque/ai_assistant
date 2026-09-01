@@ -340,7 +340,7 @@ impl EditBuilder {
     pub fn build(mut self) -> Vec<Edit> {
         // Sort by offset descending so we can apply from end to start
         // This prevents offset invalidation
-        self.edits.sort_by(|a, b| b.offset.cmp(&a.offset));
+        self.edits.sort_by_key(|e| std::cmp::Reverse(e.offset));
         self.edits
     }
 

@@ -484,7 +484,7 @@ impl LiteratureReviewPipeline {
         // Statistics table
         let mut stats = String::from("| Category | Papers | Avg Citations |\n|---|---|---|\n");
         let mut sorted_cats: Vec<_> = categories.iter().collect();
-        sorted_cats.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+        sorted_cats.sort_by_key(|e| std::cmp::Reverse(e.1.len()));
 
         for (cat, indices) in &sorted_cats {
             let avg_cit = if indices.is_empty() {
@@ -562,7 +562,7 @@ impl LiteratureReviewPipeline {
 
         // Group by category
         let mut sorted_cats: Vec<_> = categories.iter().collect();
-        sorted_cats.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+        sorted_cats.sort_by_key(|e| std::cmp::Reverse(e.1.len()));
 
         for (cat, indices) in sorted_cats {
             let mut content = String::new();

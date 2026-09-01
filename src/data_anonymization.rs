@@ -182,7 +182,7 @@ impl DataAnonymizer {
         }
 
         // Sort detections by position (reverse order for replacement)
-        detections.sort_by(|a, b| b.start.cmp(&a.start));
+        detections.sort_by_key(|e| std::cmp::Reverse(e.start));
 
         // Apply replacements
         for detection in &detections {
@@ -192,7 +192,7 @@ impl DataAnonymizer {
         }
 
         // Re-sort for output
-        detections.sort_by(|a, b| a.start.cmp(&b.start));
+        detections.sort_by_key(|a| a.start);
 
         AnonymizationResult {
             original: text.to_string(),

@@ -910,10 +910,20 @@ mod tests {
         // Execute safe code — the actual execution depends on the interpreter
         // being available, but the backend should not panic.
         let result = backend.execute(&Language::Bash, "echo hello");
-        // On systems with bash, exit_code should be 0
-        // On systems without bash, there will be an error in stderr
-        // Either way, it should not panic.
-        assert!(result.exit_code == 0 || !result.stderr.is_empty());
+        // On systems with bash, exit_code should be 0.
+        // On systems without a usable bash, the failure must at least be VISIBLE
+        // somewhere — but not necessarily on stderr, which is what this assertion
+        // used to assume. On Windows `bash` resolves to C:\Windows\System32\bash.exe,
+        // the WSL launcher: with no distribution installed it exits 1 and prints
+        // "no installed distributions" on STDOUT, leaving stderr empty. That is a
+        // perfectly ordinary machine, and the old assertion called it a failure.
+        // What the test actually cares about (see the comment above) is that the
+        // backend does not panic and reports something a caller could act on.
+        assert!(
+            result.exit_code == 0 || !result.stderr.is_empty() || !result.stdout.is_empty(),
+            "the process backend failed silently: exit {} with both streams empty",
+            result.exit_code
+        );
     }
 
     // -- language_key helper --

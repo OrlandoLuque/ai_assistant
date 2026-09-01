@@ -202,7 +202,7 @@ impl ConsistencyChecker {
         }
 
         // Sort by count (descending)
-        groups.sort_by(|a, b| b.count.cmp(&a.count));
+        groups.sort_by_key(|e| std::cmp::Reverse(e.count));
 
         groups
     }

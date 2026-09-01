@@ -150,7 +150,7 @@ impl TopicMatcher {
 
         // Sort by frequency descending, take top N
         let mut words: Vec<(String, usize)> = freq.into_iter().collect();
-        words.sort_by(|a, b| b.1.cmp(&a.1));
+        words.sort_by_key(|e| std::cmp::Reverse(e.1));
         words
             .into_iter()
             .take(self.config.max_keywords)

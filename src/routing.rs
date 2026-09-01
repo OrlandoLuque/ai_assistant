@@ -660,7 +660,7 @@ impl ModelRouter {
             .filter(|(_, score)| *score > 0)
             .collect();
 
-        scored.sort_by(|a, b| b.1.cmp(&a.1));
+        scored.sort_by_key(|e| std::cmp::Reverse(e.1));
         scored
     }
 

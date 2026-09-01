@@ -810,7 +810,7 @@ impl TopicDetector {
         }
 
         let mut sorted: Vec<_> = word_counts.into_iter().collect();
-        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        sorted.sort_by_key(|e| std::cmp::Reverse(e.1));
         sorted.truncate(top_n);
         sorted
     }
@@ -895,7 +895,7 @@ pub fn cluster_topics_by_embedding(messages: &[&str], threshold: f32) -> Vec<(St
             }
         }
         let mut sorted_words: Vec<_> = word_counts.into_iter().collect();
-        sorted_words.sort_by(|a, b| b.1.cmp(&a.1));
+        sorted_words.sort_by_key(|e| std::cmp::Reverse(e.1));
         let label: String = sorted_words
             .iter()
             .take(3)
@@ -1323,7 +1323,7 @@ impl EmoticonDetector {
         ];
 
         // Sort by length descending for longest-match-first
-        emoticons.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        emoticons.sort_by_key(|e| std::cmp::Reverse(e.0.len()));
 
         // Unicode emoji → category
         let emoji_categories = vec![

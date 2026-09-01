@@ -338,7 +338,7 @@ impl AgentOrchestrator {
             .map(|(id, t)| (id.clone(), t.priority))
             .collect();
 
-        pending_tasks.sort_by(|a, b| b.1.cmp(&a.1));
+        pending_tasks.sort_by_key(|e| std::cmp::Reverse(e.1));
 
         // Get idle agents (sorted for deterministic assignment)
         let mut idle_agents: Vec<_> = self

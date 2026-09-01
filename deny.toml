@@ -30,17 +30,11 @@ db-urls = ["https://github.com/rustsec/advisory-db"]
 # verifies these are still relevant; the runbook
 # `docs/runbooks/rustsec-handling.md` is the policy.
 ignore = [
-    # wasmtime: "stores can mix up type indices between engines".
-    # UNLIKE every other entry here, this one HAS an upstream fix
-    # (>= 46.0.2). Every patched release needs Rust 1.94 via cranelift
-    # and this repo pins 1.93, so the real fix is a toolchain bump —
-    # a deliberate decision across ~523k lines, not something to slip
-    # into a CI repair. CVSS 3.8: local, high privileges, requires user
-    # interaction; and only reachable behind the opt-in `skill-forge`
-    # feature, which is not in `full`.
-    # Re-check by: whenever the toolchain moves to 1.94 — then DELETE
-    # this entry and bump wasmtime, do not renew it.
-    "RUSTSEC-2026-0222",
+    # RUSTSEC-2026-0222 (wasmtime) was here. It said to DELETE the entry rather
+    # than renew it once the toolchain moved, and V276 moved it: Rust 1.98 and
+    # wasmtime 46, so the advisory is fixed rather than ignored. Left as a note
+    # because "the ignore list got shorter" is the outcome this policy exists
+    # to produce, and it is worth being able to see it happened.
     # bincode 1.x unmaintained. We use it for snapshot serialization
     # and a 2.x migration is non-trivial (positional schema, breaking
     # for on-disk caches).

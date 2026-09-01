@@ -839,7 +839,7 @@ impl AutonomousAgent {
             });
 
             // 5d. Process results in original parsed order.
-            for (tc, result) in parsed.iter().zip(results.into_iter()) {
+            for (tc, result) in parsed.iter().zip(results) {
                 match result {
                     Ok(output) => {
                         self.tools_called_log.push(tc.name.clone());

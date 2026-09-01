@@ -409,7 +409,7 @@ impl FaithfulnessScorer {
             .iter()
             .filter(|r| !r.verdict.is_grounded())
             .collect();
-        sorted.sort_by(|a, b| b.claim.position.cmp(&a.claim.position));
+        sorted.sort_by_key(|e| std::cmp::Reverse(e.claim.position));
 
         for result in sorted {
             let claim_text = &result.claim.text;

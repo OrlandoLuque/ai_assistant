@@ -565,7 +565,7 @@ impl AntiHallucinationPipeline {
 
         // Process in reverse order to preserve positions
         let mut ungrounded: Vec<_> = processed_claims.iter().filter(|c| !c.grounded).collect();
-        ungrounded.sort_by(|a, b| b.position.cmp(&a.position));
+        ungrounded.sort_by_key(|e| std::cmp::Reverse(e.position));
 
         for claim in ungrounded {
             let marked = self.config.mark_format.replace("{}", &claim.text);

@@ -832,7 +832,7 @@ impl TranslationAnalyzer {
             ("en", english_score),
         ];
 
-        scores.sort_by(|a, b| b.1.cmp(&a.1));
+        scores.sort_by_key(|e| std::cmp::Reverse(e.1));
 
         if let Some((lang, score)) = scores.first() {
             if *score >= 2 {

@@ -134,7 +134,7 @@ impl ConversationSummarizer {
             .filter(|(_, count)| *count >= 2)
             .collect();
 
-        topics.sort_by(|a, b| b.1.cmp(&a.1));
+        topics.sort_by_key(|e| std::cmp::Reverse(e.1));
         topics.into_iter().take(5).map(|(word, _)| word).collect()
     }
 

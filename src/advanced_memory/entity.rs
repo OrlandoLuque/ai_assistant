@@ -348,7 +348,7 @@ impl EntityStore {
             .collect();
 
         // Sort by mention_count descending (most relevant first)
-        results.sort_by(|a, b| b.mention_count.cmp(&a.mention_count));
+        results.sort_by_key(|e| std::cmp::Reverse(e.mention_count));
 
         if let Some(limit) = q.limit {
             results.truncate(limit);

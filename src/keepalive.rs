@@ -436,8 +436,8 @@ impl KeepaliveManager {
             }
         }
 
-        if stats.latency_samples > 0 {
-            stats.avg_latency_ms = stats.total_latency_ms / stats.latency_samples;
+        if let Some(avg) = stats.total_latency_ms.checked_div(stats.latency_samples) {
+            stats.avg_latency_ms = avg;
         }
 
         stats

@@ -688,7 +688,7 @@ impl LogReader {
         }
 
         let mut result: Vec<TraceSummary> = traces.into_values().collect();
-        result.sort_by(|a, b| b.last_timestamp_ms.cmp(&a.last_timestamp_ms));
+        result.sort_by_key(|e| std::cmp::Reverse(e.last_timestamp_ms));
         Ok(result)
     }
 }

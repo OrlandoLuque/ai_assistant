@@ -1523,7 +1523,7 @@ impl OutputPiiGuard {
         }
 
         // Sort descending by start position so we can replace from end to start.
-        spans.sort_by(|a, b| b.0.cmp(&a.0));
+        spans.sort_by_key(|e| std::cmp::Reverse(e.0));
 
         // Deduplicate overlapping spans.
         spans.dedup_by(|a, b| a.0 >= b.0 && a.1 <= b.1);

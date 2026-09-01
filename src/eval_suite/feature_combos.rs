@@ -2591,7 +2591,7 @@ mod tests {
                     })
                     .filter(|(hits, _)| *hits > 0)
                     .collect();
-                scored.sort_by(|a, b| b.0.cmp(&a.0));
+                scored.sort_by_key(|e| std::cmp::Reverse(e.0));
                 let results: Vec<RetrievedChunk> = scored
                     .into_iter()
                     .take(limit)

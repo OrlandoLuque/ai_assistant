@@ -1654,7 +1654,9 @@ pub fn assess_enrollment_quality(audio_bytes: &[u8], sample_rate: u32) -> (f32, 
 
     // Check RMS level (is it too quiet or silent?)
     let samples: Vec<i16> = audio_bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| i16::from_le_bytes([pair[0], pair[1]]))
         .collect();
 

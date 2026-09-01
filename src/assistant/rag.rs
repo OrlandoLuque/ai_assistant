@@ -766,7 +766,7 @@ impl AiAssistant {
         }
 
         let mut result: Vec<_> = frequency.into_iter().collect();
-        result.sort_by(|a, b| b.1.cmp(&a.1));
+        result.sort_by_key(|e| std::cmp::Reverse(e.1));
         result
     }
 

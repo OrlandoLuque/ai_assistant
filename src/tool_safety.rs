@@ -466,7 +466,7 @@ impl SnapshotStore {
             .collect();
 
         // LIFO order — reverse chronological
-        to_rollback.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        to_rollback.sort_by_key(|e| std::cmp::Reverse(e.timestamp));
 
         let mut count = 0;
         for snapshot in &to_rollback {

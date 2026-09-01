@@ -499,7 +499,7 @@ impl ContentModerator {
     fn filter_content(&self, text: &str, flags: &[ModerationFlag]) -> String {
         let mut result = text.to_string();
         let mut sorted_flags = flags.to_vec();
-        sorted_flags.sort_by(|a, b| b.start.cmp(&a.start));
+        sorted_flags.sort_by_key(|e| std::cmp::Reverse(e.start));
 
         for flag in sorted_flags {
             let replacement = format!("[{}]", flag.category.display_name().to_uppercase());

@@ -191,7 +191,8 @@ impl FallbackChain {
     pub fn add_provider(mut self, provider: FallbackProvider) -> Self {
         let name = provider.name.clone();
         self.providers.push(provider);
-        self.providers.sort_by(|a, b| b.priority.cmp(&a.priority));
+        self.providers
+            .sort_by_key(|e| std::cmp::Reverse(e.priority));
 
         self.states
             .write()

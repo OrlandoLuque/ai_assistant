@@ -224,7 +224,7 @@ impl BackupManager {
         }
 
         // Sort by creation time (newest first)
-        backups.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        backups.sort_by_key(|e| std::cmp::Reverse(e.created_at));
 
         Ok(backups)
     }
@@ -1061,9 +1061,11 @@ fn base64_encode(data: &[u8]) -> String {
     const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
     let mut result = String::new();
-    let mut chunks = data.chunks_exact(3);
+    // `as_chunks` rather than `chunks_exact(3)`: the chunk arrives as `&[u8; 3]`, so
+    // the three indexings below are checked at compile time instead of at runtime.
+    let (chunks, remainder) = data.as_chunks::<3>();
 
-    for chunk in chunks.by_ref() {
+    for chunk in chunks {
         let n = (chunk[0] as u32) << 16 | (chunk[1] as u32) << 8 | chunk[2] as u32;
         result.push(ALPHABET[(n >> 18) as usize & 63] as char);
         result.push(ALPHABET[(n >> 12) as usize & 63] as char);
@@ -1071,7 +1073,6 @@ fn base64_encode(data: &[u8]) -> String {
         result.push(ALPHABET[n as usize & 63] as char);
     }
 
-    let remainder = chunks.remainder();
     if !remainder.is_empty() {
         let mut n = (remainder[0] as u32) << 16;
         result.push(ALPHABET[(n >> 18) as usize & 63] as char);
@@ -1107,9 +1108,10 @@ fn base64_decode(data: &str) -> Result<Vec<u8>> {
 
     let chars: Vec<u8> = data.chars().filter_map(decode_char).collect();
 
-    let mut chunks = chars.chunks_exact(4);
+    // As in `base64_encode`: a `&[u8; 4]` makes the four indexings compile-time safe.
+    let (chunks, remainder) = chars.as_chunks::<4>();
 
-    for chunk in chunks.by_ref() {
+    for chunk in chunks {
         let n = (chunk[0] as u32) << 18
             | (chunk[1] as u32) << 12
             | (chunk[2] as u32) << 6
@@ -1119,7 +1121,6 @@ fn base64_decode(data: &str) -> Result<Vec<u8>> {
         result.push(n as u8);
     }
 
-    let remainder = chunks.remainder();
     if remainder.len() >= 2 {
         let n = (remainder[0] as u32) << 18
             | (remainder[1] as u32) << 12

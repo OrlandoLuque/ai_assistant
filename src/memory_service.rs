@@ -383,7 +383,7 @@ fn recall_by_tags(store: &EpisodicStore, tags: &[String], top_k: usize) -> Vec<E
         .filter(|(overlap, _)| *overlap > 0)
         .collect();
 
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.sort_by_key(|e| std::cmp::Reverse(e.0));
 
     scored
         .iter()

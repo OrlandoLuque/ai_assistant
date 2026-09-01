@@ -159,7 +159,7 @@ impl ChatSessionStore {
     /// Get sessions sorted by last update (newest first)
     pub fn sessions_by_date(&self) -> Vec<&ChatSession> {
         let mut sessions: Vec<_> = self.sessions.iter().collect();
-        sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        sessions.sort_by_key(|e| std::cmp::Reverse(e.updated_at));
         sessions
     }
 

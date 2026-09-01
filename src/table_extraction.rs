@@ -562,10 +562,9 @@ impl TableExtractor {
 
         let column_count = if !headers.is_empty() {
             headers.len()
-        } else if let Some(first) = rows.first() {
-            first.len()
         } else {
-            return None;
+            let first = rows.first()?;
+            first.len()
         };
 
         Some(ExtractedTable {
@@ -682,10 +681,9 @@ impl TableExtractor {
 
         let column_count = if !headers.is_empty() {
             headers.len()
-        } else if let Some(first) = rows.first() {
-            first.len()
         } else {
-            return None;
+            let first = rows.first()?;
+            first.len()
         };
 
         Some(ExtractedTable {

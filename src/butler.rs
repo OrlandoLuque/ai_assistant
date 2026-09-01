@@ -1847,7 +1847,7 @@ impl<'a> ButlerAdvisor<'a> {
         self.check_observability(&mut recommendations);
 
         // Sort by priority descending (Critical first)
-        recommendations.sort_by(|a, b| b.priority.cmp(&a.priority));
+        recommendations.sort_by_key(|e| std::cmp::Reverse(e.priority));
 
         let summary = Self::compute_summary(&recommendations);
         AdvisorReport {

@@ -591,12 +591,12 @@ fn cmd_config_check(path: &str) -> ExitCode {
                 | ai_assistant::AiProvider::Gemini
                 | ai_assistant::AiProvider::Groq
                 | ai_assistant::AiProvider::DeepSeek
-                | ai_assistant::AiProvider::Mistral => {
-                    if config.api_key.is_empty() {
-                        warnings.push(
-                            "  - Cloud provider selected but api_key is empty (will try env vars)",
-                        );
-                    }
+                | ai_assistant::AiProvider::Mistral
+                    if config.api_key.is_empty() =>
+                {
+                    warnings.push(
+                        "  - Cloud provider selected but api_key is empty (will try env vars)",
+                    );
                 }
                 _ => {}
             }
