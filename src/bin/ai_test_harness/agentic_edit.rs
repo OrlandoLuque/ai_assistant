@@ -328,6 +328,32 @@ const EDIT_TASKS: &[EditTask] = &[
                   assert!(empty.is_none());\n    }\n",
     },
     EditTask {
+        name: "fix an edge case the tests never covered",
+        files: &[
+            ("src/lib.rs", LIB_RS),
+            ("src/format.rs", FORMAT_RS),
+            ("src/parser.rs", PARSER_RS),
+            ("src/tally.rs", TALLY_RS),
+            ("src/version.rs", VERSION_RS),
+            ("tests/existing.rs", TESTS_RS),
+        ],
+        // `parse(a).cmp(&parse(b))` on vectors of different length: [1,2] sorts before
+        // [1,2,0] because a prefix is Less. The seeded tests all compare versions with
+        // the same number of parts, so nothing catches it — which is the point. The
+        // model cannot lean on a failing test to find this one.
+        prompt: "Comparing versions with a different number of parts is wrong in this \
+                 crate: a version like 1.2 is treated as OLDER than 1.2.0, when the two \
+                 mean the same release. Find it and fix it so that missing trailing parts \
+                 count as zero. Keep every existing comparison behaving as it does now, \
+                 and do not break the existing tests. Run cargo test.",
+        checker: "    #[test]\n    fn check() {\n        \
+                  use std::cmp::Ordering;\n        \
+                  assert_eq!(crate::version::compare(\"1.2\", \"1.2.0\"), Ordering::Equal);\n        \
+                  assert_eq!(crate::version::compare(\"1.2\", \"1.2.1\"), Ordering::Less);\n        \
+                  assert_eq!(crate::version::compare(\"1.3\", \"1.2.9\"), Ordering::Greater);\n        \
+                  assert_eq!(crate::version::compare(\"1.2.0\", \"1.10.0\"), Ordering::Less);\n    }\n",
+    },
+    EditTask {
         name: "delete the dead one, keep the live one",
         files: &[
             ("src/lib.rs", LIB_RS),
@@ -692,9 +718,26 @@ mod tests {
             "changing the signature and leaving the caller behind is a break"
         );
 
-        // Task 4 (delete the dead one). Deleting the LIVE function instead — the
+        // Task 4 (version edge case). The likeliest wrong fix is to TRUNCATE both sides
+        // to the shorter length instead of padding the shorter one with zeros: it makes
+        // 1.2 == 1.2.0 (the reported symptom) while quietly making 1.2 == 1.2.1 as well.
+        // A checker that only tested the reported case would wave it through, which is
+        // why the separating case is in there.
+        let version_task = &EDIT_TASKS[3];
+        let truncating = VERSION_RS.replace(
+            "    parse(a).cmp(&parse(b))",
+            "    let (mut x, mut y) = (parse(a), parse(b));\n    let n = x.len().min(y.len());\n    x.truncate(n);\n    y.truncate(n);\n    x.cmp(&y)",
+        );
+        assert_ne!(truncating, VERSION_RS);
+        assert_eq!(
+            judge_with(version_task, "src/version.rs", &truncating),
+            "not-done",
+            "truncating to the shorter version makes 1.2 == 1.2.1, which is not a fix"
+        );
+
+        // Task 5 (delete the dead one). Deleting the LIVE function instead — the
         // failure of picking by name resemblance rather than by usage.
-        let dead_task = &EDIT_TASKS[3];
+        let dead_task = &EDIT_TASKS[4];
         let killed_the_wrong_one = TALLY_DEAD_RS.replace(
             "/// The item that appears most often, or None when there is nothing to count.\npub fn most_common(items: &[String]) -> Option<String> {\n    let m = counts(items);\n    m.into_iter().max_by_key(|(_, n)| *n).map(|(k, _)| k)\n}\n\n",
             "",

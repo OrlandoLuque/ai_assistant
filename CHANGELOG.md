@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v156 (2026-09-02) — V281: an editing task whose bug no test catches (0.2.233)
+
+### Added
+- **`agentic_edit` task 4: "fix an edge case the tests never covered".** `version::compare`
+  compares `Vec<u64>`, so `1.2` sorts *before* `1.2.0` — a prefix is Less. Every seeded
+  test compares versions with the same number of parts, so nothing fails and the model
+  cannot lean on a red test to find it. Reading the description against the code is the
+  whole task.
+- Its mutation case is the one that matters: **truncating both sides to the shorter
+  length** makes `1.2 == 1.2.0` — the reported symptom — while quietly making
+  `1.2 == 1.2.1` as well. A checker that only tested the reported case would pass it, so
+  the separating case is in the checker.
+
+Five tasks, nine mutation cases. Still short of the ten-task floor this project set for
+ranking models (V241), so it is an instrument under construction, not a leaderboard yet.
+
 ## [Unreleased] - v155 (2026-09-02) — V280: `agentic_edit` grows to four tasks, and the audit caught a task that measured nothing (0.2.232)
 
 ### Added
