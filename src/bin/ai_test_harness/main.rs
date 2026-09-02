@@ -425,6 +425,12 @@ mod features2;
 #[cfg(feature = "p2p")]
 mod p2p;
 mod pipelines;
+// Staged for the planning category (N33), which is what will call it. Compiled under
+// `cfg(test)` only until then: the module is exercised by its own tests today, and
+// shipping it into the binary with no caller would be dead code — an error under the
+// repo's -D warnings policy, and rightly so.
+#[cfg(test)]
+mod plan_check;
 mod precision;
 mod python_adequacy;
 mod rag_graph;

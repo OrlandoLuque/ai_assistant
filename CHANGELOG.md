@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v160 (2026-09-02) — V285: the cheap half of judging a plan (0.2.237)
+
+### Added
+- **`plan_check`** — the mechanical half of the planning category (N33), which will score a
+  plan by **executing** it. Execution is the judgement that cannot be argued with, and it
+  costs minutes of model time per plan; these checks cost nothing and reject the plans that
+  would waste it:
+  - it names files the crate does not have → the plan is about a different repo;
+  - a step has no way of telling whether it worked → "done" would be an opinion;
+  - a step edits a file that only a *later* step creates → the order is impossible.
+- **None of these say the plan is good**, and that separation is the point: a vague plan is
+  perfectly executable and reaches nothing. A category that merged the two would report one
+  number for "could be followed" and "was worth following".
+
+### Notes on the shape
+- A step declares what it **creates** separately from what it **edits**. The first draft had
+  a single `files` list, and the tests caught what that costs: with one list, "names a file
+  the crate does not have" and "makes a new file" are the same event, so the unknown-file
+  check could never fire. It is also the better contract to ask a model for.
+- Compiled under `cfg(test)` until the category that calls it exists. Shipping a module with
+  no caller is dead code, which this repo's `-D warnings` policy treats as an error — and
+  V277 had just demonstrated that by turning CI red for exactly that reason.
+
 ## [Unreleased] - v159 (2026-09-02) — V284: `agentic_edit` reaches ten tasks (0.2.236)
 
 ### Added
