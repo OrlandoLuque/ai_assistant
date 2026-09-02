@@ -254,6 +254,12 @@ fn print_usage() {
     );
     println!("    --max-results <N>              Max results (default: 10)");
     println!("    --bibtex                       Output in BibTeX format");
+    println!("    --index <db>                   Also ingest the papers into a RAG index");
+    println!(
+        "  research ask <question>        Query an index built with --index (no model needed)"
+    );
+    println!("    --index <db>                   The index to ask (required)");
+    println!("    --top-k <N>                    Passages to return (default: 5)");
     println!(
         "  research review <topic>        Literature review across providers (no model needed)"
     );
@@ -3357,10 +3363,14 @@ fn cmd_research(args: &[String]) -> ExitCode {
     if args.first().map(|s| s.as_str()) == Some("review") {
         return cmd_research_review(&args[1..]);
     }
+    if args.first().map(|s| s.as_str()) == Some("ask") {
+        return cmd_research_ask(&args[1..]);
+    }
 
     let mut providers = vec!["arxiv".to_string(), "semantic_scholar".to_string()];
     let mut max_results: usize = 10;
     let mut bibtex = false;
+    let mut index_path: Option<String> = None;
     let mut query_parts: Vec<String> = Vec::new();
 
     let mut i = 0;
@@ -3375,6 +3385,10 @@ fn cmd_research(args: &[String]) -> ExitCode {
                 max_results = args[i].parse().unwrap_or(10);
             }
             "--bibtex" => bibtex = true,
+            "--index" if i + 1 < args.len() => {
+                i += 1;
+                index_path = Some(args[i].clone());
+            }
             other => query_parts.push(other.to_string()),
         }
         i += 1;
@@ -3418,27 +3432,40 @@ fn cmd_research(args: &[String]) -> ExitCode {
         println!("  Found {} papers", papers.len());
     };
 
+    // Collected across providers so that `--index` ingests one batch: the same paper found
+    // twice lands on one DOI key, and doing it per-provider would report it as two.
+    let mut collected: Vec<ai_assistant::academic_search::AcademicPaper> = Vec::new();
+
     for provider_name in &providers {
         println!("--- {} ---", provider_name);
         match provider_name.as_str() {
             "arxiv" => {
                 let provider = ai_assistant::academic_search::ArxivProvider::new();
                 match provider.search_papers(&query, &config) {
-                    Ok(papers) => display_papers(&papers, bibtex),
+                    Ok(papers) => {
+                        display_papers(&papers, bibtex);
+                        collected.extend(papers);
+                    }
                     Err(e) => println!("  Error: {}", e),
                 }
             }
             "scholar" | "semantic_scholar" => {
                 let provider = ai_assistant::academic_search::SemanticScholarProvider::new();
                 match provider.search_papers(&query, &config) {
-                    Ok(papers) => display_papers(&papers, bibtex),
+                    Ok(papers) => {
+                        display_papers(&papers, bibtex);
+                        collected.extend(papers);
+                    }
                     Err(e) => println!("  Error: {}", e),
                 }
             }
             "pubmed" => {
                 let provider = ai_assistant::academic_search::PubMedProvider::new();
                 match provider.search_papers(&query, &config) {
-                    Ok(papers) => display_papers(&papers, bibtex),
+                    Ok(papers) => {
+                        display_papers(&papers, bibtex);
+                        collected.extend(papers);
+                    }
                     Err(e) => println!("  Error: {}", e),
                 }
             }
@@ -3451,7 +3478,144 @@ fn cmd_research(args: &[String]) -> ExitCode {
         }
     }
 
+    match index_path {
+        Some(path) => ingest_into_index(&path, &collected),
+        None => ExitCode::SUCCESS,
+    }
+}
+
+/// `--index <db>` — put what the search found into a RAG database so it can be asked.
+///
+/// Search and RAG were two subsystems that never met: you could find fifty papers and be
+/// left holding a list. This is the seam, and it is a CLI flag rather than a separate
+/// command because ingesting is something you want to do *to the search you just ran*.
+#[cfg(all(feature = "research", feature = "rag"))]
+fn ingest_into_index(
+    path: &str,
+    papers: &[ai_assistant::academic_search::AcademicPaper],
+) -> ExitCode {
+    if papers.is_empty() {
+        println!("\nNothing to index: no papers were found.");
+        return ExitCode::SUCCESS;
+    }
+
+    let db = match ai_assistant::rag::RagDb::open(std::path::Path::new(path)) {
+        Ok(db) => db,
+        Err(e) => {
+            eprintln!("\nError: could not open the index at {}: {}", path, e);
+            return ExitCode::from(1);
+        }
+    };
+
+    let report = ai_assistant::research_rag::ingest_papers(&db, papers);
+    println!("\nIndexed into {}:", path);
+    println!("  Papers seen:  {}", report.total());
+    println!(
+        "  Indexed:      {} ({} chunks)",
+        report.indexed, report.chunks
+    );
+    // Not a failure: re-running the same search is the normal way to reach this line.
+    println!("  Already there:{:>3}", report.skipped);
+    if !report.failed.is_empty() {
+        println!("  Failed:       {}", report.failed.len());
+        for (key, why) in &report.failed {
+            println!("    {}: {}", key, why);
+        }
+        return ExitCode::from(1);
+    }
+    println!(
+        "\nAsk it with: ai_cli research ask \"<question>\" --index {}",
+        path
+    );
     ExitCode::SUCCESS
+}
+
+/// `research ask <question> --index <db>` — the other half of `--index`.
+///
+/// Retrieval only, no model: it returns the passages the index considers relevant. That is
+/// deliberate — it makes the ingestion inspectable on a machine with no LLM, and answers
+/// the question the whole bridge exists for ("what did those papers say about X?") without
+/// putting a generation step between the user and the evidence.
+#[cfg(all(feature = "research", feature = "rag"))]
+fn cmd_research_ask(args: &[String]) -> ExitCode {
+    let mut index_path: Option<String> = None;
+    let mut top_k: usize = 5;
+    let mut question_parts: Vec<String> = Vec::new();
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--index" if i + 1 < args.len() => {
+                i += 1;
+                index_path = Some(args[i].clone());
+            }
+            "--top-k" if i + 1 < args.len() => {
+                i += 1;
+                top_k = args[i].parse().unwrap_or(5);
+            }
+            other => question_parts.push(other.to_string()),
+        }
+        i += 1;
+    }
+
+    let Some(path) = index_path else {
+        eprintln!("Usage: ai_cli research ask <question> --index <db> [--top-k N]");
+        return ExitCode::from(1);
+    };
+    if question_parts.is_empty() {
+        eprintln!("Error: research ask requires a question");
+        return ExitCode::from(1);
+    }
+    let question = question_parts.join(" ");
+
+    let db = match ai_assistant::rag::RagDb::open(std::path::Path::new(&path)) {
+        Ok(db) => db,
+        Err(e) => {
+            eprintln!("Error: could not open the index at {}: {}", path, e);
+            return ExitCode::from(1);
+        }
+    };
+
+    // A generous token budget: the caller is reading the passages, not feeding them to a
+    // context window, so truncating them here would only hide evidence.
+    match db.search_knowledge(&question, 8000, top_k) {
+        Ok(chunks) if chunks.is_empty() => {
+            println!("No passages matched \"{}\" in {}.", question, path);
+            ExitCode::SUCCESS
+        }
+        Ok(chunks) => {
+            println!("{} passage(s) for \"{}\":\n", chunks.len(), question);
+            for (idx, chunk) in chunks.iter().enumerate() {
+                println!("{}. [{}] {}", idx + 1, chunk.source, chunk.section);
+                println!("{}\n", chunk.content.trim());
+            }
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("Error querying the index: {}", e);
+            ExitCode::from(1)
+        }
+    }
+}
+
+/// Same reasoning as `ingest_into_index`: without `rag` there is no index, and silence
+/// would be worse than a refusal.
+#[cfg(all(feature = "research", not(feature = "rag")))]
+fn cmd_research_ask(_args: &[String]) -> ExitCode {
+    eprintln!("Error: 'research ask' needs the `rag` feature, which this build does not have.");
+    ExitCode::from(1)
+}
+
+/// Without `rag` there is no index to write to. Refusing loudly beats the alternative:
+/// the flag loop treats any unrecognised word as part of the query, so a silently-dropped
+/// `--index` would search for the phrase instead and report success.
+#[cfg(all(feature = "research", not(feature = "rag")))]
+fn ingest_into_index(
+    _path: &str,
+    _papers: &[ai_assistant::academic_search::AcademicPaper],
+) -> ExitCode {
+    eprintln!("\nError: --index needs the `rag` feature, which this build does not have.");
+    ExitCode::from(1)
 }
 
 /// `research review <topic>` — the literature-review pipeline.

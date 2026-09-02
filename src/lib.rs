@@ -1593,8 +1593,14 @@ pub mod bibtex;
 pub mod literature_review;
 #[cfg(feature = "research")]
 pub mod mcp_research_tools;
+// Bridge from found papers to the RAG index. Gated on `research` alone rather than on
+// `all(research, rag)`: the key derivation and the document rendering are useful (and
+// tested) without an index, and only `ingest_papers` needs `rag`. Gating the whole module
+// would make it vanish from a `research`-only build for no reason.
 #[cfg(feature = "research")]
 pub mod paper_metadata;
+#[cfg(feature = "research")]
+pub mod research_rag;
 
 // =============================================================================
 // EVAL FEATURE

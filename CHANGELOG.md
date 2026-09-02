@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v164 (2026-09-03) — V289: los papers encontrados ya se pueden preguntar (0.2.241)
+
+### Added
+- **`research_rag`** — el puente entre dos subsistemas que nunca se hablaron. Podías
+  encontrar cincuenta papers y quedarte con una lista; esto los mete en el índice RAG para
+  poder *preguntarles* después, que es lo que convierte una búsqueda bibliográfica en algo
+  con lo que se trabaja.
+  - `paper_source_key` — **el DOI es la clave cuando lo hay**. `RagDb::index_document`
+    indexa por `source`, así que una clave estable es lo que hace que ingerir el mismo
+    paper dos veces no haga nada en lugar de duplicarlo. El DOI es el único identificador
+    que sobrevive a encontrar el paper por otro proveedor: arXiv y Semantic Scholar dan
+    ids distintos y el mismo DOI. Normalizado (mayúsculas, prefijos `doi:` y
+    `https://doi.org/`); luego la URL; luego un id *cualificado por proveedor* — uno
+    desnudo dejaría que dos proveedores que usan `12345` se pisaran el paper.
+  - `paper_to_document` — autores, año, venue, DOI y campos van **dentro** del texto. El
+    índice guarda trozos; «quién escribió el paper de 2024 sobre X» no se puede responder
+    desde un trozo que solo contiene el abstract.
+  - `ingest_papers` — que falle un paper no pierde los otros cuarenta y nueve.
+    `IngestReport` separa `skipped` de `failed`: repetir una búsqueda salta todo lo que no
+    ha cambiado, y ese es el camino normal, no un error.
+- **`ai_cli research <query> --index <db>`** — ingiere lo que la búsqueda acaba de
+  encontrar. Se acumula entre proveedores y se ingiere en un lote, para que un paper
+  encontrado dos veces se cuente una.
+- **`ai_cli research ask <question> --index <db> [--top-k N]`** — la otra mitad. Ingerir en
+  un índice que nadie puede leer habría dejado el mismo hueco del que trata el puente.
+  Solo recuperación, sin modelo: devuelve los pasajes, así que funciona en una máquina sin
+  LLM y no mete un paso de generación entre el usuario y la evidencia.
+
+### Verified
+- 8 tests, uno de ellos contra un `RagDb` real en vez de afirmar sobre mis propias claves:
+  ingerir dos papers, repetir (0 indexados, 2 saltados) y luego el mismo paper tal como lo
+  devolvería Semantic Scholar — cae en la clave del DOI y **no** se archiva una segunda vez
+  bajo el id del proveedor.
+- De punta a punta contra la API real de arXiv: 5 papers → 10 trozos; repetir → 5 saltados;
+  `research ask "literature review automation"` devuelve el abstract del paper correcto.
+
+### Notes
+- Los papers que devolvió arXiv no traen DOI, así que las claves cayeron a la URL — el
+  respaldo previsto, ejercitado de verdad en la primera ejecución.
+- Misma clave con distinto renderizado (la forma del DOI y la línea `Source:` cambian entre
+  proveedores) **reindexa** en lugar de saltar: `index_document` borra antes los trozos
+  viejos, así que queda un documento reescrito, nunca dos.
+- `ingest_papers` va detrás de `cfg(feature = "rag")` dentro de un módulo con `research`;
+  la derivación de la clave y el renderizado no necesitan `rag` y siguen disponibles sin él.
+
 ## [Unreleased] - v163 (2026-09-03) — V288: `ai_cli research review` (0.2.240)
 
 ### Added
