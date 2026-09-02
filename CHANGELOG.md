@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v161 (2026-09-02) — V286: reading a plan out of what a model actually replies (0.2.238)
+
+### Added
+- **`plan_check::parse_plan`** — pulls the structured plan out of a model's reply, with two
+  rules that decide what the category ends up measuring:
+  - **Malformed JSON is not repaired.** The same rule the tool-call parser follows: a model
+    that cannot emit the requested format has failed at the format, and patching its output
+    would credit it with a skill it does not have.
+  - **Missing fields become empty, never invented.** A step with no `verify` arrives with an
+    empty one so `check_plan` can catch it. Had the parser supplied a sensible default, the
+    unverifiable-step check could never fire and would be decoration.
+- Prose around the array is accepted — models explain before they answer, and refusing that
+  would measure obedience to formatting rather than planning. The scan tries every `[`
+  because an explanation can contain brackets of its own.
+- "No plan in the reply" and "a plan with no steps" stay different failures: collapsing them
+  would hide a model that ignored the request behind one that planned nothing.
+
+Twelve tests. Still `cfg(test)`-only until the category that calls it exists.
+
 ## [Unreleased] - v160 (2026-09-02) — V285: the cheap half of judging a plan (0.2.237)
 
 ### Added

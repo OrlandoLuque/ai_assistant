@@ -136,6 +136,117 @@ pub(crate) fn check_plan(steps: &[PlanStep], existing: &[String]) -> Vec<PlanFau
     faults
 }
 
+/// Pull a plan out of whatever the model replied with.
+///
+/// Two rules, both deliberate:
+///
+/// * **Malformed JSON is not repaired.** Same rule the tool-call parser follows: a model
+///   that cannot emit the requested format has failed at the format, and patching its
+///   output would inflate the score for a skill it does not have.
+/// * **Missing fields become empty, never invented.** A step with no `verify` arrives with
+///   an empty one and is caught by [`check_plan`] — if the parser supplied a plausible
+///   default here, the check for unverifiable steps could never fire. The parser's job is
+///   to read, not to improve.
+///
+/// Prose around the array is fine: models preface plans with an explanation, and refusing
+/// that would measure obedience to formatting rather than planning.
+pub(crate) fn parse_plan(reply: &str) -> Result<Vec<PlanStep>, String> {
+    let value = first_plan_array(reply)
+        .ok_or_else(|| "no JSON array of plan steps in the reply".to_string())?;
+    let arr = value.as_array().ok_or("not an array")?;
+
+    let mut steps = Vec::with_capacity(arr.len());
+    for (i, item) in arr.iter().enumerate() {
+        let obj = item
+            .as_object()
+            .ok_or_else(|| format!("step {} is not an object", i + 1))?;
+        let text = |key: &str| -> String {
+            obj.get(key)
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string()
+        };
+        let list = |key: &str| -> Vec<String> {
+            obj.get(key)
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|e| e.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        steps.push(PlanStep {
+            action: text("action"),
+            creates: list("creates"),
+            edits: list("edits"),
+            verify: text("verify"),
+        });
+    }
+    Ok(steps)
+}
+
+/// The first balanced `[..]` that parses AND looks like plan steps. Scanning every `[`
+/// rather than the first one matters because an explanation can easily contain brackets
+/// before the plan begins.
+fn first_plan_array(s: &str) -> Option<serde_json::Value> {
+    for (start, c) in s.char_indices() {
+        if c != '[' {
+            continue;
+        }
+        let Some(cand) = balanced_array_at(s, start) else {
+            continue;
+        };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&cand) else {
+            continue;
+        };
+        let looks_like_plan = v
+            .as_array()
+            .map(|a| {
+                !a.is_empty()
+                    && a.iter()
+                        .any(|e| e.get("action").is_some() || e.get("verify").is_some())
+            })
+            .unwrap_or(false);
+        if looks_like_plan {
+            return Some(v);
+        }
+    }
+    None
+}
+
+/// Balanced `[..]` from `start`, respecting string quoting so a bracket inside a path or
+/// a command does not throw off the depth count.
+fn balanced_array_at(s: &str, start: usize) -> Option<String> {
+    let mut depth = 0i32;
+    let mut in_str = false;
+    let mut escaped = false;
+    for (i, c) in s.char_indices().skip_while(|&(i, _)| i < start) {
+        if in_str {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match c {
+            '"' => in_str = true,
+            '[' => depth += 1,
+            ']' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(s[start..=i].to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 /// Paths compare on `/` regardless of what the model wrote: a plan that says
 /// `src\parser.rs` on Windows means the same file as `src/parser.rs`, and rejecting it
 /// would be scoring the separator rather than the plan.
@@ -259,6 +370,52 @@ mod tests {
             check_plan(&plan, &crate_files()).is_empty(),
             "rejecting a Windows separator would score the separator, not the plan"
         );
+    }
+
+    #[test]
+    fn a_plan_is_read_out_of_a_reply_that_also_contains_prose() {
+        // Models explain before they answer. Refusing that would measure obedience to
+        // formatting rather than planning — and the explanation here even contains a
+        // bracket before the plan starts, which is why the scan tries every `[`.
+        let reply = r#"Sure. I looked at src/parser.rs [the unit table] and here is the plan:
+[
+  {"action": "add the gb unit", "edits": ["src/parser.rs"], "verify": "cargo test"},
+  {"action": "cover it", "creates": ["tests/gb.rs"], "verify": "cargo test"}
+]
+That should do it."#;
+        let plan = parse_plan(reply).expect("a plan");
+        assert_eq!(plan.len(), 2);
+        assert_eq!(plan[0].edits, vec!["src/parser.rs".to_string()]);
+        assert_eq!(plan[1].creates, vec!["tests/gb.rs".to_string()]);
+        assert!(plan[0].creates.is_empty());
+    }
+
+    #[test]
+    fn a_missing_verify_survives_parsing_so_the_check_can_catch_it() {
+        // The parser must not improve the plan. If a sensible default were supplied
+        // here, `MissingVerification` could never fire and the check would be decorative.
+        let reply = r#"[{"action": "tidy the parser", "edits": ["src/parser.rs"]}]"#;
+        let plan = parse_plan(reply).expect("a plan");
+        assert_eq!(plan[0].verify, "");
+        assert_eq!(
+            check_plan(&plan, &crate_files()),
+            vec![PlanFault::MissingVerification { step: 0 }]
+        );
+    }
+
+    #[test]
+    fn malformed_json_is_a_failure_rather_than_something_to_repair() {
+        // Same rule as the tool-call parser: a model that cannot emit the format has
+        // failed at the format, and patching it would inflate the score.
+        let reply = r#"[{"action": "do it", "edits": ["src/parser.rs",}]"#;
+        assert!(parse_plan(reply).is_err());
+    }
+
+    #[test]
+    fn a_reply_with_no_plan_at_all_is_an_error_not_an_empty_plan() {
+        // "No steps" and "no answer" are different failures; collapsing them would hide
+        // a model that ignored the request behind one that planned nothing.
+        assert!(parse_plan("I would start by reading the parser module.").is_err());
     }
 
     #[test]
