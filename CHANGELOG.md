@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v162 (2026-09-03) — V287: academic search now says when it is being throttled (0.2.239)
+
+### Fixed
+- **`AcademicSearchError::RateLimit` existed from the start and nothing ever constructed
+  it.** All six HTTP call sites in `academic_search.rs` collapsed `ureq` errors into
+  `Network(..)`, so a 429 reached the caller as *"Network error: http status 429"* —
+  indistinguishable from the connection being down. The error type promised a distinction
+  the code never made, which is the same defect class V270 swept for.
+- It matters more here than it sounds: arXiv, Semantic Scholar and NCBI all throttle by
+  default (NCBI allows 3 req/s without a key), so the *first* thing a wide search does is
+  get throttled — and the message sent the user looking at their network instead of at
+  their request rate.
+
+### Added
+- **Backoff with retry on 429/503**, honouring `Retry-After` when the server sends it —
+  ignoring that header is how a client gets banned rather than throttled. Exponential
+  otherwise (1s, 2s, 4s…), capped at 30s, because a server asking for ten minutes is
+  telling us to come back later, not to block the caller for ten minutes.
+- **A `User-Agent` with a contact URL.** NCBI and OpenAlex both give anonymous clients a
+  much lower quota, so this is a rate-limit setting as much as a courtesy.
+- The retry *decision* is a pure function (`retry_delay`) precisely so it can be tested
+  without a network or a clock: five tests cover which statuses retry, that the delay
+  grows, that `Retry-After` wins, that an unparseable one (an HTTP date) falls back
+  instead of failing, and that nothing waits longer than the cap.
+
 ## [Unreleased] - v161 (2026-09-02) — V286: reading a plan out of what a model actually replies (0.2.238)
 
 ### Added

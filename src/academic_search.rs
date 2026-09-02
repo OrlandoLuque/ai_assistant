@@ -244,6 +244,92 @@ impl std::fmt::Display for AcademicSearchError {
 impl std::error::Error for AcademicSearchError {}
 
 // =============================================================================
+// Rate limiting
+// =============================================================================
+//
+// `AcademicSearchError::RateLimit` existed from the start and **nothing ever
+// constructed it**: every call site collapsed `ureq` errors into `Network(..)`, so a
+// 429 reached the caller as "Network error: http status 429" — indistinguishable from
+// the connection being down. That matters more here than it sounds. arXiv, Semantic
+// Scholar and NCBI all throttle by default (NCBI: 3 req/s without a key), so the FIRST
+// thing a wide search does is get throttled, and the message sent the user looking at
+// their network instead of at their request rate.
+//
+// The retry decision is a pure function on purpose: it is the part worth testing, and
+// testing it must not require a network or a clock.
+
+/// Identifies us to the academic APIs. NCBI and OpenAlex both ask for a contact in the
+/// User-Agent and give anonymous clients a much lower quota, so this is a rate-limit
+/// setting as much as a courtesy.
+const USER_AGENT: &str = "AIAssistant/1.0 (+https://github.com/OrlandoLuque/ai_assistant)";
+
+/// Longest a single backoff will wait. A server asking for ten minutes via
+/// `Retry-After` is telling us to come back later, not to block the caller.
+const MAX_BACKOFF: Duration = Duration::from_secs(30);
+
+/// How long to wait before retrying, or `None` when the response is not worth retrying.
+///
+/// * **429 / 503** are retryable: the server is asking us to slow down.
+/// * A `Retry-After` header wins over our own guess — it is the server saying how long,
+///   and ignoring it is how a client gets banned rather than throttled.
+/// * Everything else (200, 404, 400…) returns `None`: retrying a bad query just sends
+///   the same bad query again.
+///
+/// How many times a throttled request is retried before giving up.
+const MAX_ATTEMPTS: u32 = 3;
+
+/// Perform a GET, retrying while the server says we are going too fast.
+///
+/// `build` is called afresh for each attempt because a `ureq::Request` is consumed by
+/// `call()`. On giving up, the error is [`AcademicSearchError::RateLimit`] and **not**
+/// `Network` — the whole point is that the caller can tell "slow down" from "no route to
+/// host", and act differently.
+fn get_with_retry(
+    build: impl Fn() -> ureq::Request,
+) -> Result<ureq::Response, AcademicSearchError> {
+    let mut attempt = 0u32;
+    loop {
+        match build().call() {
+            Ok(resp) => return Ok(resp),
+            Err(ureq::Error::Status(code, resp)) => {
+                let retry_after = resp.header("Retry-After").map(|s| s.to_string());
+                match retry_delay(code, retry_after.as_deref(), attempt) {
+                    Some(delay) if attempt + 1 < MAX_ATTEMPTS => {
+                        std::thread::sleep(delay);
+                        attempt += 1;
+                    }
+                    Some(_) => {
+                        return Err(AcademicSearchError::RateLimit(format!(
+                            "still throttled (HTTP {code}) after {MAX_ATTEMPTS} attempts — \
+                             slow down, or set an API key for a higher quota"
+                        )))
+                    }
+                    None => {
+                        return Err(AcademicSearchError::Network(format!("http status {code}")))
+                    }
+                }
+            }
+            Err(e) => return Err(AcademicSearchError::Network(e.to_string())),
+        }
+    }
+}
+
+/// `attempt` is 0-based, so the delays grow 1s, 2s, 4s… capped at [`MAX_BACKOFF`].
+fn retry_delay(status: u16, retry_after: Option<&str>, attempt: u32) -> Option<Duration> {
+    if status != 429 && status != 503 {
+        return None;
+    }
+    // `Retry-After` is either seconds or an HTTP date; only the numeric form is worth
+    // parsing here, and a malformed one falls back to the exponential guess rather than
+    // failing — the server still said "too fast", which is the part that matters.
+    if let Some(secs) = retry_after.and_then(|v| v.trim().parse::<u64>().ok()) {
+        return Some(Duration::from_secs(secs).min(MAX_BACKOFF));
+    }
+    let backoff = Duration::from_secs(1u64 << attempt.min(6));
+    Some(backoff.min(MAX_BACKOFF))
+}
+
+// =============================================================================
 // Provider Trait
 // =============================================================================
 
@@ -396,11 +482,12 @@ impl AcademicSearchProvider for ArxivProvider {
 
         let url = self.build_url(query, config);
 
-        let response = ureq::get(&url)
-            .timeout(config.timeout)
-            .set("User-Agent", "AIAssistant/1.0 (academic search)")
-            .call()
-            .map_err(|e| AcademicSearchError::Network(e.to_string()))?;
+        let timeout = config.timeout;
+        let response = get_with_retry(|| {
+            ureq::get(&url)
+                .timeout(timeout)
+                .set("User-Agent", USER_AGENT)
+        })?;
 
         let xml = response
             .into_string()
@@ -423,10 +510,11 @@ impl AcademicSearchProvider for ArxivProvider {
     fn get_paper(&self, id: &str) -> Result<AcademicPaper, AcademicSearchError> {
         let url = format!("{}?id_list={}", self.base_url, urlencoding::encode(id));
 
-        let response = ureq::get(&url)
-            .timeout(Duration::from_secs(10))
-            .call()
-            .map_err(|e| AcademicSearchError::Network(e.to_string()))?;
+        let response = get_with_retry(|| {
+            ureq::get(&url)
+                .timeout(Duration::from_secs(10))
+                .set("User-Agent", USER_AGENT)
+        })?;
 
         let xml = response
             .into_string()
@@ -601,10 +689,7 @@ impl AcademicSearchProvider for SemanticScholarProvider {
             fields,
         );
 
-        let response = self
-            .build_request(&url, config.timeout)
-            .call()
-            .map_err(|e| AcademicSearchError::Network(e.to_string()))?;
+        let response = get_with_retry(|| self.build_request(&url, config.timeout))?;
 
         let text = response
             .into_string()
@@ -644,10 +729,7 @@ impl AcademicSearchProvider for SemanticScholarProvider {
             fields,
         );
 
-        let response = self
-            .build_request(&url, Duration::from_secs(10))
-            .call()
-            .map_err(|e| AcademicSearchError::Network(e.to_string()))?;
+        let response = get_with_retry(|| self.build_request(&url, Duration::from_secs(10)))?;
 
         let text = response
             .into_string()
@@ -668,10 +750,7 @@ impl AcademicSearchProvider for SemanticScholarProvider {
             fields,
         );
 
-        let response = self
-            .build_request(&url, Duration::from_secs(15))
-            .call()
-            .map_err(|e| AcademicSearchError::Network(e.to_string()))?;
+        let response = get_with_retry(|| self.build_request(&url, Duration::from_secs(15)))?;
 
         let text = response
             .into_string()
@@ -703,10 +782,7 @@ impl AcademicSearchProvider for SemanticScholarProvider {
             fields,
         );
 
-        let response = self
-            .build_request(&url, Duration::from_secs(15))
-            .call()
-            .map_err(|e| AcademicSearchError::Network(e.to_string()))?;
+        let response = get_with_retry(|| self.build_request(&url, Duration::from_secs(15)))?;
 
         let text = response
             .into_string()
@@ -787,10 +863,11 @@ impl PubMedProvider {
             max_results,
         ));
 
-        let response = ureq::get(&url)
-            .timeout(timeout)
-            .call()
-            .map_err(|e| AcademicSearchError::Network(e.to_string()))?;
+        let response = get_with_retry(|| {
+            ureq::get(&url)
+                .timeout(timeout)
+                .set("User-Agent", USER_AGENT)
+        })?;
 
         let text = response
             .into_string()
@@ -829,10 +906,11 @@ impl PubMedProvider {
             self.base_url, ids_param,
         ));
 
-        let response = ureq::get(&url)
-            .timeout(timeout)
-            .call()
-            .map_err(|e| AcademicSearchError::Network(e.to_string()))?;
+        let response = get_with_retry(|| {
+            ureq::get(&url)
+                .timeout(timeout)
+                .set("User-Agent", USER_AGENT)
+        })?;
 
         let xml = response
             .into_string()
@@ -1395,5 +1473,61 @@ mod tests {
         let pm = PubMedProvider::new();
         assert_eq!(pm.name(), "PubMed");
         assert_eq!(pm.source(), AcademicSource::PubMed);
+    }
+}
+
+#[cfg(test)]
+mod rate_limit_tests {
+    use super::*;
+
+    #[test]
+    fn only_throttling_statuses_are_retried() {
+        // Retrying a 404 or a 400 just sends the same bad request again; the point of
+        // the backoff is to wait out a server asking us to slow down, nothing else.
+        assert!(retry_delay(429, None, 0).is_some());
+        assert!(retry_delay(503, None, 0).is_some());
+        assert!(retry_delay(200, None, 0).is_none());
+        assert!(retry_delay(404, None, 0).is_none());
+        assert!(retry_delay(400, None, 0).is_none());
+        assert!(retry_delay(500, None, 0).is_none());
+    }
+
+    #[test]
+    fn the_delay_grows_with_each_attempt() {
+        let first = retry_delay(429, None, 0).unwrap();
+        let second = retry_delay(429, None, 1).unwrap();
+        let third = retry_delay(429, None, 2).unwrap();
+        assert!(
+            second > first && third > second,
+            "{first:?} {second:?} {third:?}"
+        );
+    }
+
+    #[test]
+    fn retry_after_wins_over_our_own_guess() {
+        // The server saying "come back in 7 seconds" is information we do not have.
+        // Ignoring it is how a client gets banned rather than throttled.
+        assert_eq!(retry_delay(429, Some("7"), 0), Some(Duration::from_secs(7)));
+        assert_eq!(
+            retry_delay(429, Some("  7 "), 0),
+            Some(Duration::from_secs(7)),
+            "a padded header value is still a number"
+        );
+    }
+
+    #[test]
+    fn a_retry_after_we_cannot_parse_falls_back_instead_of_failing() {
+        // `Retry-After` may be an HTTP date. We do not parse those, but the server still
+        // said "too fast" — which is the part that decides whether to wait at all.
+        let delay = retry_delay(429, Some("Wed, 21 Oct 2026 07:28:00 GMT"), 0);
+        assert_eq!(delay, Some(Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn no_wait_is_longer_than_the_cap() {
+        // A server asking for ten minutes is telling us to come back later, not to block
+        // the caller for ten minutes.
+        assert_eq!(retry_delay(429, Some("600"), 0), Some(MAX_BACKOFF));
+        assert_eq!(retry_delay(429, None, 20), Some(MAX_BACKOFF));
     }
 }
