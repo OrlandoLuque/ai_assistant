@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v163 (2026-09-03) — V288: `ai_cli research review` (0.2.240)
+
+### Added
+- **`ai_cli research review <topic>`** — the literature-review pipeline, which existed in
+  the library (`literature_review.rs`: `quick`/`systematic` presets, Markdown output,
+  BibTeX entries) and was reachable only from Rust or over MCP. Someone using the binary
+  had no way to know the most capable part of the research subsystem was there.
+  - `--mode quick|systematic`, `--providers`, `--out <file.md>`, `--bibtex`.
+  - **No model is involved**: the pipeline searches and structures, so it runs on a
+    machine with no local LLM.
+- Verified end to end against arXiv: 10 papers, 1 841 words, grouped by year with
+  citation and abstract.
+
+### Notes
+- `research <query>` is untouched — the subcommand is dispatched *before* the flag loop,
+  because that loop treats every non-flag word as part of the query and would otherwise
+  have quietly searched for the phrase "review …".
+- No providers resolved is an error, not an empty review. A review built from zero
+  providers "succeeds" and returns nothing, which reads as *"there is no literature on
+  this topic"* — the worst possible way to fail.
+
 ## [Unreleased] - v162 (2026-09-03) — V287: academic search now says when it is being throttled (0.2.239)
 
 ### Fixed

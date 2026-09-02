@@ -254,6 +254,15 @@ fn print_usage() {
     );
     println!("    --max-results <N>              Max results (default: 10)");
     println!("    --bibtex                       Output in BibTeX format");
+    println!(
+        "  research review <topic>        Literature review across providers (no model needed)"
+    );
+    println!("    --mode quick|systematic        Depth preset (default: quick)");
+    println!(
+        "    --providers <list>             Providers: arxiv, scholar, pubmed (comma-separated)"
+    );
+    println!("    --out <file.md>                Write the review to a file instead of stdout");
+    println!("    --bibtex                       Also print BibTeX entries for the papers");
     println!("  quality <subcommand>           Quality gate operations");
     println!("    gates list                     List configured quality gates");
     println!("    gates check <text>             Run quality gates on text");
@@ -3340,6 +3349,15 @@ fn cmd_verify(args: &[String]) -> ExitCode {
 
 #[cfg(feature = "research")]
 fn cmd_research(args: &[String]) -> ExitCode {
+    // `research review <topic>` runs the literature-review pipeline; anything else keeps
+    // the original behaviour of `research <query>`, which people already have in scripts.
+    // Dispatching on the first token before the flag loop matters: that loop treats every
+    // non-flag word as part of the query, so without this `research review foo` would
+    // quietly search for the phrase "review foo".
+    if args.first().map(|s| s.as_str()) == Some("review") {
+        return cmd_research_review(&args[1..]);
+    }
+
     let mut providers = vec!["arxiv".to_string(), "semantic_scholar".to_string()];
     let mut max_results: usize = 10;
     let mut bibtex = false;
@@ -3431,6 +3449,118 @@ fn cmd_research(args: &[String]) -> ExitCode {
                 );
             }
         }
+    }
+
+    ExitCode::SUCCESS
+}
+
+/// `research review <topic>` — the literature-review pipeline.
+///
+/// It existed in the library (`literature_review.rs`, with `quick` and `systematic`
+/// presets, Markdown output and BibTeX entries) and was reachable only from Rust or over
+/// MCP. Someone using the binary had no way to know it was there, which made the most
+/// capable part of the research subsystem effectively invisible.
+///
+/// No model is involved: the pipeline searches and structures. That is worth knowing
+/// because it means this runs on a machine with no local LLM.
+#[cfg(feature = "research")]
+fn cmd_research_review(args: &[String]) -> ExitCode {
+    use ai_assistant::literature_review::{LiteratureReviewConfig, LiteratureReviewPipeline};
+
+    let mut systematic = false;
+    let mut providers = vec!["arxiv".to_string(), "semantic_scholar".to_string()];
+    let mut out_path: Option<String> = None;
+    let mut want_bibtex = false;
+    let mut topic_parts: Vec<String> = Vec::new();
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--mode" if i + 1 < args.len() => {
+                i += 1;
+                systematic = args[i].eq_ignore_ascii_case("systematic");
+            }
+            "--providers" if i + 1 < args.len() => {
+                i += 1;
+                providers = args[i].split(',').map(|s| s.trim().to_string()).collect();
+            }
+            "--out" if i + 1 < args.len() => {
+                i += 1;
+                out_path = Some(args[i].clone());
+            }
+            "--bibtex" => want_bibtex = true,
+            other => topic_parts.push(other.to_string()),
+        }
+        i += 1;
+    }
+
+    if topic_parts.is_empty() {
+        eprintln!("Usage: ai_cli research review <topic> [--mode quick|systematic]");
+        eprintln!("                              [--providers arxiv,scholar,pubmed]");
+        eprintln!("                              [--out review.md] [--bibtex]");
+        return ExitCode::from(1);
+    }
+    let topic = topic_parts.join(" ");
+
+    let mut engine = ai_assistant::academic_search::AcademicSearchEngine::new();
+    let mut wired = 0usize;
+    for name in &providers {
+        match name.as_str() {
+            "arxiv" => {
+                engine.add_provider(Box::new(ai_assistant::academic_search::ArxivProvider::new()));
+                wired += 1;
+            }
+            "scholar" | "semantic_scholar" => {
+                engine.add_provider(Box::new(
+                    ai_assistant::academic_search::SemanticScholarProvider::new(),
+                ));
+                wired += 1;
+            }
+            "pubmed" => {
+                engine.add_provider(Box::new(
+                    ai_assistant::academic_search::PubMedProvider::new(),
+                ));
+                wired += 1;
+            }
+            other => eprintln!("Unknown provider '{other}'. Available: arxiv, scholar, pubmed"),
+        }
+    }
+    // Refuse rather than produce an empty review: a review with no providers "succeeds"
+    // and returns nothing, which reads as "no literature on this topic".
+    if wired == 0 {
+        eprintln!("Error: no usable providers, nothing to review");
+        return ExitCode::from(1);
+    }
+
+    let config = if systematic {
+        LiteratureReviewConfig::systematic()
+    } else {
+        LiteratureReviewConfig::quick()
+    };
+    let review = LiteratureReviewPipeline::new(engine, config).execute(&topic);
+    let markdown = review.to_markdown();
+
+    match out_path {
+        Some(path) => match std::fs::write(&path, &markdown) {
+            Ok(()) => println!(
+                "Review written to {path} — {} papers, {} words",
+                review.papers.len(),
+                review.total_word_count()
+            ),
+            Err(e) => {
+                eprintln!("Error writing {path}: {e}");
+                return ExitCode::from(1);
+            }
+        },
+        None => println!("{markdown}"),
+    }
+
+    if want_bibtex {
+        println!("\n% --- BibTeX ---");
+        println!(
+            "{}",
+            ai_assistant::bibtex::BibGenerator::generate(&review.bib_entries())
+        );
     }
 
     ExitCode::SUCCESS
