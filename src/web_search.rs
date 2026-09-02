@@ -1546,12 +1546,8 @@ impl SearchProvider for AcademicSearchAdapter {
             AcademicSource::ArXiv => Box::new(ArxivProvider::new()),
             AcademicSource::SemanticScholar => Box::new(SemanticScholarProvider::new()),
             AcademicSource::PubMed => Box::new(PubMedProvider::new()),
-            _ => {
-                return Err(SearchError::Network(format!(
-                    "Provider {} not yet supported",
-                    self.source
-                )))
-            }
+            AcademicSource::OpenAlex => Box::new(OpenAlexProvider::new()),
+            AcademicSource::CrossRef => Box::new(CrossrefProvider::new()),
         };
 
         let papers = provider

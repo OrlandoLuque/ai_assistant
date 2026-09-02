@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v165 (2026-09-03) — V290: OpenAlex y Crossref, los dos que faltaban (0.2.242)
+
+### Added
+- **`OpenAlexProvider`** — ~250 M trabajos de todas las disciplinas, el sucesor del
+  Microsoft Academic Graph. Las tres fuentes que había cubren un hueco cada una (arXiv son
+  preprints, PubMed es biomedicina, Semantic Scholar estrangula sin clave); esta es la
+  general. Y es la única de las cuatro que dice qué *referencia* un paper sin una segunda
+  búsqueda.
+  - **`reconstruct_inverted_abstract`** — OpenAlex no puede redistribuir los abstracts como
+    prosa, así que envía `{"palabra": [posiciones]}` y deja el rearmado al cliente. Sin
+    esto, *todos* los papers de OpenAlex llegan sin abstract, que es casi todo lo que hace
+    que un paper valga la pena indexar. Verificado contra datos reales: el abstract del
+    survey de RAG (2312.10997) sale entero y legible.
+  - Lee `topics` y, si no hay, los `concepts` deprecados; `title` es anulable en su esquema
+    y cae a `display_name` en vez de descartar el registro.
+- **`CrossrefProvider`** — el registro de DOIs. Si un paper tiene DOI, aquí está su ficha
+  autoritativa; a cambio su relevancia es peor que la de OpenAlex y a muchos trabajos les
+  falta el abstract.
+  - Los títulos vienen en array y a veces con la primera entrada vacía; los abstracts vienen
+    en JATS XML y se limpian antes de indexar; las fechas son `[[2024, 5, 1]]` y `[[null]]`
+    cuando no se sabe, que no puede convertirse en el año 0.
+  - Los autores institucionales traen `name` sin `given`/`family`. Descartarlos perdería
+    los papers de consorcio enteros.
+  - **`get_citations` devuelve error, no una lista vacía.** Crossref no aloja quién cita a
+    quién (eso es Event Data / OpenCitations). Una lista vacía se lee como «a este paper no
+    lo cita nadie», que es otra respuesta y es falsa.
+- Los dos filtran por año **en el servidor**. Filtrar en cliente significa pedir diez
+  resultados y quedarse con tres, que es como una búsqueda acotada por años devuelve casi
+  nada sin que se note.
+- `--mailto` (o `OPENALEX_MAILTO` / `CROSSREF_MAILTO`) mete las peticiones en el *polite
+  pool* de ambas APIs: no es cortesía, es la diferencia entre ir estrangulado o no.
+
+### Changed
+- **`resolve_academic_provider` en el CLI, una sola vez.** `research <query>` y
+  `research review <topic>` llevaban cada uno su copia del mismo `match`, así que añadir un
+  proveedor eran dos ediciones y los dos mensajes de error listaban conjuntos distintos.
+- `web_search.rs` construía los proveedores con un `_ =>` que decía «not yet supported»
+  para estos dos. Ahora el `match` es exhaustivo: si mañana se añade una fuente al enum, el
+  compilador obliga a cablearla en vez de dejarla caer en el brazo genérico.
+- Los esquemas MCP de `search_papers` y `get_paper_metadata` ya los listan.
+
+### Verified
+- 12 tests nuevos (45 en el módulo), todos sobre las formas que devuelven las APIs de
+  verdad y **sin red**: el parseo es lo que estos proveedores *son*, el HTTP son cuatro
+  líneas alrededor.
+- En vivo contra las dos APIs: `--providers openalex` y `--providers crossref` devuelven
+  papers con DOI, año y venue; los dos juntos con `--index` ingirieron 10 papers → 17
+  trozos.
+
 ## [Unreleased] - v164 (2026-09-03) — V289: los papers encontrados ya se pueden preguntar (0.2.241)
 
 ### Added

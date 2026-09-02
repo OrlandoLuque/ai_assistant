@@ -250,7 +250,7 @@ fn print_usage() {
     println!("    --json                         Output JSON status");
     println!("  research <query>               Search academic papers (requires research feature)");
     println!(
-        "    --providers <list>             Providers: arxiv, scholar, pubmed (comma-separated)"
+        "    --providers <list>             arxiv, scholar, pubmed, openalex, crossref (comma-sep.)"
     );
     println!("    --max-results <N>              Max results (default: 10)");
     println!("    --bibtex                       Output in BibTeX format");
@@ -265,7 +265,7 @@ fn print_usage() {
     );
     println!("    --mode quick|systematic        Depth preset (default: quick)");
     println!(
-        "    --providers <list>             Providers: arxiv, scholar, pubmed (comma-separated)"
+        "    --providers <list>             arxiv, scholar, pubmed, openalex, crossref (comma-sep.)"
     );
     println!("    --out <file.md>                Write the review to a file instead of stdout");
     println!("    --bibtex                       Also print BibTeX entries for the papers");
@@ -3353,6 +3353,34 @@ fn cmd_verify(args: &[String]) -> ExitCode {
 // research — academic paper search (V88, gated)
 // =============================================================================
 
+/// Printed whenever a provider name is not recognised. One constant so the list cannot
+/// drift out of step with [`resolve_academic_provider`] — it did, twice, before the two
+/// copies of this mapping were collapsed into one.
+#[cfg(feature = "research")]
+const AVAILABLE_PROVIDERS: &str =
+    "Available: arxiv, scholar, pubmed, openalex, crossref (openalex is the broadest)";
+
+/// Name → provider, in one place.
+///
+/// `research <query>` and `research review <topic>` each used to carry their own copy of
+/// this match, so adding a provider meant editing both and the error messages listed
+/// different sets. Returning `None` rather than a default keeps "unknown provider" a
+/// visible outcome instead of a silent substitution.
+#[cfg(feature = "research")]
+fn resolve_academic_provider(
+    name: &str,
+) -> Option<Box<dyn ai_assistant::academic_search::AcademicSearchProvider>> {
+    use ai_assistant::academic_search as ac;
+    match name.trim().to_lowercase().as_str() {
+        "arxiv" => Some(Box::new(ac::ArxivProvider::new())),
+        "scholar" | "semantic_scholar" | "s2" => Some(Box::new(ac::SemanticScholarProvider::new())),
+        "pubmed" => Some(Box::new(ac::PubMedProvider::new())),
+        "openalex" => Some(Box::new(ac::OpenAlexProvider::new())),
+        "crossref" | "cross_ref" => Some(Box::new(ac::CrossrefProvider::new())),
+        _ => None,
+    }
+}
+
 #[cfg(feature = "research")]
 fn cmd_research(args: &[String]) -> ExitCode {
     // `research review <topic>` runs the literature-review pipeline; anything else keeps
@@ -3407,8 +3435,8 @@ fn cmd_research(args: &[String]) -> ExitCode {
     println!("  BibTeX:      {}", bibtex);
     println!();
 
-    // Use providers to search
-    use ai_assistant::academic_search::AcademicSearchProvider;
+    // No trait import needed: `resolve_academic_provider` hands back a `Box<dyn …>`, and
+    // its methods are callable through the trait object.
     let mut config = ai_assistant::academic_search::AcademicSearchConfig::default();
     config.max_results = max_results;
 
@@ -3438,43 +3466,16 @@ fn cmd_research(args: &[String]) -> ExitCode {
 
     for provider_name in &providers {
         println!("--- {} ---", provider_name);
-        match provider_name.as_str() {
-            "arxiv" => {
-                let provider = ai_assistant::academic_search::ArxivProvider::new();
-                match provider.search_papers(&query, &config) {
-                    Ok(papers) => {
-                        display_papers(&papers, bibtex);
-                        collected.extend(papers);
-                    }
-                    Err(e) => println!("  Error: {}", e),
-                }
+        let Some(provider) = resolve_academic_provider(provider_name) else {
+            println!("  Unknown provider '{provider_name}'. {AVAILABLE_PROVIDERS}");
+            continue;
+        };
+        match provider.search_papers(&query, &config) {
+            Ok(papers) => {
+                display_papers(&papers, bibtex);
+                collected.extend(papers);
             }
-            "scholar" | "semantic_scholar" => {
-                let provider = ai_assistant::academic_search::SemanticScholarProvider::new();
-                match provider.search_papers(&query, &config) {
-                    Ok(papers) => {
-                        display_papers(&papers, bibtex);
-                        collected.extend(papers);
-                    }
-                    Err(e) => println!("  Error: {}", e),
-                }
-            }
-            "pubmed" => {
-                let provider = ai_assistant::academic_search::PubMedProvider::new();
-                match provider.search_papers(&query, &config) {
-                    Ok(papers) => {
-                        display_papers(&papers, bibtex);
-                        collected.extend(papers);
-                    }
-                    Err(e) => println!("  Error: {}", e),
-                }
-            }
-            other => {
-                println!(
-                    "  Unknown provider '{}'. Available: arxiv, scholar, pubmed",
-                    other
-                );
-            }
+            Err(e) => println!("  Error: {}", e),
         }
     }
 
@@ -3660,7 +3661,9 @@ fn cmd_research_review(args: &[String]) -> ExitCode {
 
     if topic_parts.is_empty() {
         eprintln!("Usage: ai_cli research review <topic> [--mode quick|systematic]");
-        eprintln!("                              [--providers arxiv,scholar,pubmed]");
+        eprintln!(
+            "                              [--providers arxiv,scholar,pubmed,openalex,crossref]"
+        );
         eprintln!("                              [--out review.md] [--bibtex]");
         return ExitCode::from(1);
     }
@@ -3669,24 +3672,12 @@ fn cmd_research_review(args: &[String]) -> ExitCode {
     let mut engine = ai_assistant::academic_search::AcademicSearchEngine::new();
     let mut wired = 0usize;
     for name in &providers {
-        match name.as_str() {
-            "arxiv" => {
-                engine.add_provider(Box::new(ai_assistant::academic_search::ArxivProvider::new()));
+        match resolve_academic_provider(name) {
+            Some(provider) => {
+                engine.add_provider(provider);
                 wired += 1;
             }
-            "scholar" | "semantic_scholar" => {
-                engine.add_provider(Box::new(
-                    ai_assistant::academic_search::SemanticScholarProvider::new(),
-                ));
-                wired += 1;
-            }
-            "pubmed" => {
-                engine.add_provider(Box::new(
-                    ai_assistant::academic_search::PubMedProvider::new(),
-                ));
-                wired += 1;
-            }
-            other => eprintln!("Unknown provider '{other}'. Available: arxiv, scholar, pubmed"),
+            None => eprintln!("Unknown provider '{name}'. {AVAILABLE_PROVIDERS}"),
         }
     }
     // Refuse rather than produce an empty review: a review with no providers "succeeds"

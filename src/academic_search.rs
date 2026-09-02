@@ -34,9 +34,9 @@ pub enum AcademicSource {
     SemanticScholar,
     /// PubMed / NCBI
     PubMed,
-    /// CrossRef (reserved for Batch 2)
+    /// Crossref — the DOI registry; authoritative metadata, weaker discovery
     CrossRef,
-    /// OpenAlex (reserved for Batch 2)
+    /// OpenAlex — ~250 M works across every discipline
     OpenAlex,
 }
 
@@ -1068,6 +1068,659 @@ impl AcademicSearchProvider for PubMedProvider {
 }
 
 // =============================================================================
+// OpenAlex Provider
+// =============================================================================
+
+/// OpenAlex search provider (REST/JSON).
+///
+/// API docs: <https://docs.openalex.org/>
+/// Rate limit: 100 000 calls/day, 10/s. Sending a contact address puts the request in
+/// the "polite pool", which is both faster and the difference between being throttled
+/// and not — hence [`OpenAlexProvider::with_mailto`].
+///
+/// Why it is worth having alongside the other three: OpenAlex is the successor to
+/// Microsoft Academic Graph and indexes ~250 M works across every discipline, where arXiv
+/// is preprints, PubMed is biomedicine and Semantic Scholar throttles hard without a key.
+/// It is also the only one of the four that will tell you what a paper *references*
+/// without a second lookup.
+pub struct OpenAlexProvider {
+    base_url: String,
+    mailto: Option<String>,
+}
+
+impl OpenAlexProvider {
+    pub fn new() -> Self {
+        Self {
+            base_url: "https://api.openalex.org".to_string(),
+            mailto: std::env::var("OPENALEX_MAILTO").ok(),
+        }
+    }
+
+    /// Join the polite pool. OpenAlex asks for a contact address and gives anonymous
+    /// clients a slower, more aggressively throttled path.
+    pub fn with_mailto(mut self, email: &str) -> Self {
+        self.mailto = Some(email.to_string());
+        self
+    }
+
+    /// `&mailto=…` when we have one, empty otherwise — appended to an URL that always
+    /// already has a query string.
+    fn mailto_param(&self) -> String {
+        match &self.mailto {
+            Some(m) => format!("&mailto={}", urlencoding::encode(m)),
+            None => String::new(),
+        }
+    }
+
+    fn build_request(&self, url: &str, timeout: Duration) -> ureq::Request {
+        ureq::get(url)
+            .timeout(timeout)
+            .set("User-Agent", USER_AGENT)
+    }
+
+    /// `https://openalex.org/W2741809807` → `W2741809807`.
+    ///
+    /// OpenAlex ids are full URLs everywhere they appear. Storing the URL as the paper id
+    /// would make every later lookup build `.../works/https://openalex.org/W…`, so the
+    /// short form is what goes in `AcademicPaper::id`.
+    fn short_id(id: &str) -> &str {
+        id.rsplit('/').next().unwrap_or(id)
+    }
+
+    fn parse_paper(json: &serde_json::Value) -> Option<AcademicPaper> {
+        let full_id = json.get("id")?.as_str()?;
+        // `title` is nullable in OpenAlex; `display_name` carries the same string and is
+        // the field their own docs steer you to.
+        let title = json
+            .get("title")
+            .and_then(|t| t.as_str())
+            .or_else(|| json.get("display_name").and_then(|t| t.as_str()))?;
+        if title.is_empty() {
+            return None;
+        }
+
+        let mut paper =
+            AcademicPaper::new(Self::short_id(full_id), title, AcademicSource::OpenAlex);
+
+        paper.url = Some(full_id.to_string());
+        paper.year = json
+            .get("publication_year")
+            .and_then(|y| y.as_u64())
+            .map(|y| y as u16);
+        paper.citation_count = json
+            .get("cited_by_count")
+            .and_then(|c| c.as_u64())
+            .map(|c| c as u32);
+
+        if let Some(doi) = json.get("doi").and_then(|d| d.as_str()) {
+            paper.doi = Some(doi.to_string());
+            paper
+                .external_ids
+                .insert("DOI".to_string(), doi.to_string());
+        }
+        if let Some(ids) = json.get("ids").and_then(|i| i.as_object()) {
+            for (k, v) in ids {
+                if let Some(val) = v.as_str() {
+                    paper.external_ids.insert(k.clone(), val.to_string());
+                }
+            }
+        }
+
+        paper.abstract_text = json
+            .get("abstract_inverted_index")
+            .and_then(reconstruct_inverted_abstract);
+
+        // The venue moved to `primary_location.source` in the v2 schema; `host_venue` is
+        // the older name and is still present on some records.
+        paper.venue = json
+            .get("primary_location")
+            .and_then(|l| l.get("source"))
+            .and_then(|s| s.get("display_name"))
+            .or_else(|| json.get("host_venue").and_then(|v| v.get("display_name")))
+            .and_then(|v| v.as_str())
+            .filter(|v| !v.is_empty())
+            .map(|v| v.to_string());
+
+        if let Some(loc) = json.get("primary_location") {
+            paper.pdf_url = loc
+                .get("pdf_url")
+                .and_then(|u| u.as_str())
+                .map(|u| u.to_string());
+        }
+
+        if let Some(authorships) = json.get("authorships").and_then(|a| a.as_array()) {
+            paper.authors = authorships
+                .iter()
+                .filter_map(|a| {
+                    let author = a.get("author")?;
+                    let name = author.get("display_name")?.as_str()?;
+                    let mut out = Author::new(name);
+                    if let Some(id) = author.get("id").and_then(|i| i.as_str()) {
+                        out = out.with_id(Self::short_id(id));
+                    }
+                    // Institutions is an array because a person can hold several posts;
+                    // the first is the one that gets printed in a citation.
+                    if let Some(inst) = a
+                        .get("institutions")
+                        .and_then(|i| i.as_array())
+                        .and_then(|i| i.first())
+                        .and_then(|i| i.get("display_name"))
+                        .and_then(|i| i.as_str())
+                    {
+                        out = out.with_affiliation(inst);
+                    }
+                    Some(out)
+                })
+                .collect();
+        }
+
+        // `topics` is the current taxonomy, `concepts` the deprecated one. Reading both
+        // means records written under either schema still get fields of study.
+        for key in ["topics", "concepts"] {
+            if !paper.fields_of_study.is_empty() {
+                break;
+            }
+            if let Some(items) = json.get(key).and_then(|c| c.as_array()) {
+                paper.fields_of_study = items
+                    .iter()
+                    .filter_map(|c| c.get("display_name").and_then(|n| n.as_str()))
+                    .map(|s| s.to_string())
+                    .collect();
+            }
+        }
+
+        Some(paper)
+    }
+
+    /// Turn a `filter=` value into papers. Both citations and references end up here.
+    fn works_by_filter(
+        &self,
+        filter: &str,
+        limit: usize,
+    ) -> Result<Vec<AcademicPaper>, AcademicSearchError> {
+        let url = format!(
+            "{}/works?filter={}&per-page={}{}",
+            self.base_url,
+            urlencoding::encode(filter),
+            limit.min(200),
+            self.mailto_param(),
+        );
+        let response = get_with_retry(|| self.build_request(&url, Duration::from_secs(15)))?;
+        let text = response
+            .into_string()
+            .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
+        let json: serde_json::Value =
+            serde_json::from_str(&text).map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
+
+        Ok(json
+            .get("results")
+            .and_then(|r| r.as_array())
+            .map(|items| items.iter().filter_map(Self::parse_paper).collect())
+            .unwrap_or_default())
+    }
+}
+
+/// Rebuild an abstract from OpenAlex's inverted index.
+///
+/// OpenAlex cannot redistribute abstracts as prose, so it ships
+/// `{"word": [position, …], …}` and leaves reassembly to the client. Without this, every
+/// OpenAlex paper arrives with no abstract — which is most of what makes a paper worth
+/// indexing.
+///
+/// Positions are absolute, so a gap in them means a word we were not given; the result is
+/// simply the words we do have, in order. Reconstruction is lossy in that one respect and
+/// there is nothing to be done about it — the alternative is no abstract at all.
+fn reconstruct_inverted_abstract(index: &serde_json::Value) -> Option<String> {
+    let map = index.as_object()?;
+    let mut positioned: Vec<(u64, &str)> = Vec::new();
+    for (word, positions) in map {
+        for pos in positions.as_array()? {
+            if let Some(p) = pos.as_u64() {
+                positioned.push((p, word.as_str()));
+            }
+        }
+    }
+    if positioned.is_empty() {
+        return None;
+    }
+    positioned.sort_by_key(|(p, _)| *p);
+    let text = positioned
+        .into_iter()
+        .map(|(_, w)| w)
+        .collect::<Vec<_>>()
+        .join(" ");
+    Some(text)
+}
+
+impl Default for OpenAlexProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AcademicSearchProvider for OpenAlexProvider {
+    fn search_papers(
+        &self,
+        query: &str,
+        config: &AcademicSearchConfig,
+    ) -> Result<Vec<AcademicPaper>, AcademicSearchError> {
+        if query.trim().is_empty() {
+            return Err(AcademicSearchError::InvalidQuery(
+                "Query cannot be empty".to_string(),
+            ));
+        }
+
+        // The year filter goes to the server, not to a `retain` afterwards: filtering
+        // client-side means asking for ten results and keeping three, which is how a
+        // year-restricted search quietly returns almost nothing.
+        let filter = config
+            .year_range
+            .map(|(from, to)| format!("&filter=publication_year:{from}-{to}"))
+            .unwrap_or_default();
+        let sort = match config.sort_by {
+            SortField::Relevance => "",
+            SortField::Date => "&sort=publication_date:desc",
+            SortField::Citations => "&sort=cited_by_count:desc",
+        };
+        let url = format!(
+            "{}/works?search={}&per-page={}{}{}{}",
+            self.base_url,
+            urlencoding::encode(query),
+            config.max_results.min(200),
+            filter,
+            sort,
+            self.mailto_param(),
+        );
+
+        let response = get_with_retry(|| self.build_request(&url, config.timeout))?;
+        let text = response
+            .into_string()
+            .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
+        let json: serde_json::Value =
+            serde_json::from_str(&text).map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
+
+        Ok(json
+            .get("results")
+            .and_then(|r| r.as_array())
+            .map(|items| items.iter().filter_map(Self::parse_paper).collect())
+            .unwrap_or_default())
+    }
+
+    /// Accepts an OpenAlex id (`W2741809807`) or a DOI — OpenAlex resolves both on the
+    /// same path, which makes this the cheapest way to turn a DOI into full metadata.
+    fn get_paper(&self, id: &str) -> Result<AcademicPaper, AcademicSearchError> {
+        let key = if id.starts_with("10.") {
+            format!("https://doi.org/{id}")
+        } else {
+            id.to_string()
+        };
+        let url = format!(
+            "{}/works/{}?{}",
+            self.base_url,
+            key,
+            self.mailto_param().trim_start_matches('&'),
+        );
+        let response = get_with_retry(|| self.build_request(&url, Duration::from_secs(10)))?;
+        let text = response
+            .into_string()
+            .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
+        let json: serde_json::Value =
+            serde_json::from_str(&text).map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
+
+        Self::parse_paper(&json).ok_or(AcademicSearchError::NoResults)
+    }
+
+    fn get_citations(&self, paper_id: &str) -> Result<Vec<AcademicPaper>, AcademicSearchError> {
+        self.works_by_filter(&format!("cites:{}", Self::short_id(paper_id)), 100)
+    }
+
+    /// Two calls, not one: the work carries its `referenced_works` as ids, and the ids
+    /// have to be resolved to get titles. The alternative — returning bare ids — would
+    /// hand the caller something they cannot read.
+    fn get_references(&self, paper_id: &str) -> Result<Vec<AcademicPaper>, AcademicSearchError> {
+        let url = format!(
+            "{}/works/{}?select=referenced_works{}",
+            self.base_url,
+            Self::short_id(paper_id),
+            self.mailto_param(),
+        );
+        let response = get_with_retry(|| self.build_request(&url, Duration::from_secs(15)))?;
+        let text = response
+            .into_string()
+            .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
+        let json: serde_json::Value =
+            serde_json::from_str(&text).map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
+
+        let ids: Vec<&str> = json
+            .get("referenced_works")
+            .and_then(|r| r.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(Self::short_id))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        // OpenAlex ORs a filter list with `|`. Capped at 50 because the filter travels in
+        // the URL and a heavily-cited paper would otherwise build one servers reject.
+        let batch: Vec<&str> = ids.into_iter().take(50).collect();
+        self.works_by_filter(&format!("openalex:{}", batch.join("|")), 50)
+    }
+
+    fn name(&self) -> &str {
+        "OpenAlex"
+    }
+
+    fn source(&self) -> AcademicSource {
+        AcademicSource::OpenAlex
+    }
+}
+
+// =============================================================================
+// Crossref Provider
+// =============================================================================
+
+/// Crossref search provider (REST/JSON).
+///
+/// API docs: <https://api.crossref.org/swagger-ui/index.html>
+/// Rate limit: unmetered in the polite pool (contact address), throttled without one.
+///
+/// Crossref is the DOI registry itself: if a paper has a DOI, Crossref has the
+/// authoritative record for it. That makes it the right provider for *filling in* a paper
+/// you already have a DOI for, and a weaker one for open-ended discovery — its relevance
+/// ranking is worse than OpenAlex's, and it holds no abstracts for a large share of works.
+pub struct CrossrefProvider {
+    base_url: String,
+    mailto: Option<String>,
+}
+
+impl CrossrefProvider {
+    pub fn new() -> Self {
+        Self {
+            base_url: "https://api.crossref.org".to_string(),
+            mailto: std::env::var("CROSSREF_MAILTO").ok(),
+        }
+    }
+
+    /// Join the polite pool — see [`OpenAlexProvider::with_mailto`], same bargain.
+    pub fn with_mailto(mut self, email: &str) -> Self {
+        self.mailto = Some(email.to_string());
+        self
+    }
+
+    fn mailto_param(&self) -> String {
+        match &self.mailto {
+            Some(m) => format!("&mailto={}", urlencoding::encode(m)),
+            None => String::new(),
+        }
+    }
+
+    fn build_request(&self, url: &str, timeout: Duration) -> ureq::Request {
+        ureq::get(url)
+            .timeout(timeout)
+            .set("User-Agent", USER_AGENT)
+    }
+
+    fn parse_paper(json: &serde_json::Value) -> Option<AcademicPaper> {
+        let doi = json.get("DOI")?.as_str()?.to_string();
+        // Crossref puts titles in an array — a work can carry several — and sometimes an
+        // empty one. The first non-empty entry is the title.
+        let title = first_nonempty_string(json.get("title"))?;
+
+        let mut paper = AcademicPaper::new(&doi, &title, AcademicSource::CrossRef);
+        paper.doi = Some(doi.clone());
+        paper.external_ids.insert("DOI".to_string(), doi.clone());
+        paper.url = json
+            .get("URL")
+            .and_then(|u| u.as_str())
+            .map(|u| u.to_string())
+            .or(Some(format!("https://doi.org/{doi}")));
+
+        paper.year = ["published", "issued", "published-print", "published-online"]
+            .iter()
+            .find_map(|k| json.get(*k).and_then(date_parts_year));
+
+        paper.venue = first_nonempty_string(json.get("container-title"));
+        paper.citation_count = json
+            .get("is-referenced-by-count")
+            .and_then(|c| c.as_u64())
+            .map(|c| c as u32);
+
+        paper.abstract_text = json
+            .get("abstract")
+            .and_then(|a| a.as_str())
+            .map(strip_jats)
+            .filter(|s| !s.is_empty());
+
+        if let Some(authors) = json.get("author").and_then(|a| a.as_array()) {
+            paper.authors = authors
+                .iter()
+                .filter_map(|a| {
+                    // Institutional authors have `name` and no given/family, and dropping
+                    // them would silently lose consortium papers.
+                    let name = match (
+                        a.get("given").and_then(|g| g.as_str()),
+                        a.get("family").and_then(|f| f.as_str()),
+                    ) {
+                        (Some(given), Some(family)) => format!("{given} {family}"),
+                        (None, Some(family)) => family.to_string(),
+                        _ => a.get("name").and_then(|n| n.as_str())?.to_string(),
+                    };
+                    let mut out = Author::new(&name);
+                    if let Some(orcid) = a.get("ORCID").and_then(|o| o.as_str()) {
+                        out = out.with_id(orcid);
+                    }
+                    if let Some(aff) = a
+                        .get("affiliation")
+                        .and_then(|f| f.as_array())
+                        .and_then(|f| f.first())
+                        .and_then(|f| f.get("name"))
+                        .and_then(|f| f.as_str())
+                    {
+                        out = out.with_affiliation(aff);
+                    }
+                    Some(out)
+                })
+                .collect();
+        }
+
+        if let Some(subjects) = json.get("subject").and_then(|s| s.as_array()) {
+            paper.fields_of_study = subjects
+                .iter()
+                .filter_map(|s| s.as_str().map(|s| s.to_string()))
+                .collect();
+        }
+
+        Some(paper)
+    }
+}
+
+/// Crossref returns several string fields as arrays (`title`, `container-title`). Take the
+/// first entry that actually holds text.
+fn first_nonempty_string(value: Option<&serde_json::Value>) -> Option<String> {
+    match value {
+        Some(serde_json::Value::Array(items)) => items
+            .iter()
+            .filter_map(|v| v.as_str())
+            .map(str::trim)
+            .find(|s| !s.is_empty())
+            .map(|s| s.to_string()),
+        Some(serde_json::Value::String(s)) if !s.trim().is_empty() => Some(s.trim().to_string()),
+        _ => None,
+    }
+}
+
+/// Read the year out of Crossref's `{"date-parts": [[2024, 5, 1]]}`.
+///
+/// The inner array can be `[year]`, `[year, month]` or `[year, month, day]`, and an
+/// unknown date is `[[null]]` — so this reads position 0 and refuses anything else.
+fn date_parts_year(value: &serde_json::Value) -> Option<u16> {
+    value
+        .get("date-parts")?
+        .as_array()?
+        .first()?
+        .as_array()?
+        .first()?
+        .as_u64()
+        .map(|y| y as u16)
+}
+
+/// Crossref abstracts arrive as JATS XML (`<jats:p>…</jats:p>`). Indexing the tags would
+/// put markup in the retrieval text, so they are stripped to plain prose.
+fn strip_jats(xml: &str) -> String {
+    let mut out = String::with_capacity(xml.len());
+    let mut in_tag = false;
+    for ch in xml.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            c if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    // Tag boundaries leave runs of whitespace where the markup used to be.
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+impl Default for CrossrefProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AcademicSearchProvider for CrossrefProvider {
+    fn search_papers(
+        &self,
+        query: &str,
+        config: &AcademicSearchConfig,
+    ) -> Result<Vec<AcademicPaper>, AcademicSearchError> {
+        if query.trim().is_empty() {
+            return Err(AcademicSearchError::InvalidQuery(
+                "Query cannot be empty".to_string(),
+            ));
+        }
+
+        // Server-side year filter, same reasoning as OpenAlex.
+        let filter = config
+            .year_range
+            .map(|(from, to)| {
+                format!("&filter=from-pub-date:{from}-01-01,until-pub-date:{to}-12-31")
+            })
+            .unwrap_or_default();
+        let sort = match config.sort_by {
+            SortField::Relevance => "",
+            SortField::Date => "&sort=published&order=desc",
+            SortField::Citations => "&sort=is-referenced-by-count&order=desc",
+        };
+        let url = format!(
+            "{}/works?query={}&rows={}{}{}{}",
+            self.base_url,
+            urlencoding::encode(query),
+            config.max_results.min(1000),
+            filter,
+            sort,
+            self.mailto_param(),
+        );
+
+        let response = get_with_retry(|| self.build_request(&url, config.timeout))?;
+        let text = response
+            .into_string()
+            .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
+        let json: serde_json::Value =
+            serde_json::from_str(&text).map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
+
+        Ok(json
+            .get("message")
+            .and_then(|m| m.get("items"))
+            .and_then(|i| i.as_array())
+            .map(|items| items.iter().filter_map(Self::parse_paper).collect())
+            .unwrap_or_default())
+    }
+
+    fn get_paper(&self, id: &str) -> Result<AcademicPaper, AcademicSearchError> {
+        let url = format!("{}/works/{}", self.base_url, id);
+        let response = get_with_retry(|| self.build_request(&url, Duration::from_secs(10)))?;
+        let text = response
+            .into_string()
+            .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
+        let json: serde_json::Value =
+            serde_json::from_str(&text).map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
+
+        json.get("message")
+            .and_then(Self::parse_paper)
+            .ok_or(AcademicSearchError::NoResults)
+    }
+
+    /// Crossref has no citing-works endpoint — that data lives in Crossref Event Data and
+    /// OpenCitations, not here. This says so instead of returning an empty list, because
+    /// an empty list reads as "nobody cites this paper", which is a different and wrong
+    /// answer.
+    fn get_citations(&self, _paper_id: &str) -> Result<Vec<AcademicPaper>, AcademicSearchError> {
+        Err(AcademicSearchError::ProviderUnavailable(
+            "Crossref does not expose citing works; use OpenAlex or Semantic Scholar".to_string(),
+        ))
+    }
+
+    /// References come embedded in the work record, but only as DOIs plus whatever
+    /// unstructured text the publisher deposited — so these papers are thinner than a
+    /// search result. Entries without a DOI are dropped: there is nothing to look them up
+    /// by later.
+    fn get_references(&self, paper_id: &str) -> Result<Vec<AcademicPaper>, AcademicSearchError> {
+        let url = format!("{}/works/{}", self.base_url, paper_id);
+        let response = get_with_retry(|| self.build_request(&url, Duration::from_secs(15)))?;
+        let text = response
+            .into_string()
+            .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
+        let json: serde_json::Value =
+            serde_json::from_str(&text).map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
+
+        let refs = json
+            .get("message")
+            .and_then(|m| m.get("reference"))
+            .and_then(|r| r.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|r| {
+                        let doi = r.get("DOI")?.as_str()?;
+                        let title = r
+                            .get("article-title")
+                            .or_else(|| r.get("volume-title"))
+                            .and_then(|t| t.as_str())
+                            .unwrap_or(doi);
+                        let mut paper = AcademicPaper::new(doi, title, AcademicSource::CrossRef);
+                        paper.doi = Some(doi.to_string());
+                        paper.url = Some(format!("https://doi.org/{doi}"));
+                        paper.year = r
+                            .get("year")
+                            .and_then(|y| y.as_str())
+                            .and_then(|y| y.parse().ok());
+                        paper.venue = r
+                            .get("journal-title")
+                            .and_then(|j| j.as_str())
+                            .map(|j| j.to_string());
+                        Some(paper)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Ok(refs)
+    }
+
+    fn name(&self) -> &str {
+        "Crossref"
+    }
+
+    fn source(&self) -> AcademicSource {
+        AcademicSource::CrossRef
+    }
+}
+
+// =============================================================================
 // Multi-provider Search Engine
 // =============================================================================
 
@@ -1529,5 +2182,228 @@ mod rate_limit_tests {
         // the caller for ten minutes.
         assert_eq!(retry_delay(429, Some("600"), 0), Some(MAX_BACKOFF));
         assert_eq!(retry_delay(429, None, 20), Some(MAX_BACKOFF));
+    }
+
+    // =========================================================================
+    // OpenAlex
+    // =========================================================================
+    //
+    // Parsing is what these providers *are* — the HTTP call is four lines around it. So
+    // the tests feed the parsers the shapes the real APIs return, taken from their docs,
+    // and never touch the network.
+
+    #[test]
+    fn an_openalex_abstract_is_rebuilt_from_its_inverted_index() {
+        // OpenAlex cannot redistribute prose abstracts, so it ships word -> positions and
+        // leaves reassembly to the client. Without this every OpenAlex paper would arrive
+        // with no abstract at all.
+        let index = serde_json::json!({
+            "Despite": [0],
+            "growing": [1],
+            "interest": [2],
+            "in": [3, 6],
+            "Open": [4, 7],
+            "Access": [5, 8],
+        });
+        assert_eq!(
+            reconstruct_inverted_abstract(&index).as_deref(),
+            Some("Despite growing interest in Open Access in Open Access")
+        );
+    }
+
+    #[test]
+    fn a_word_appearing_twice_lands_in_both_places() {
+        // The whole point of the inverted index is that positions are a list. Taking only
+        // the first would drop every repeated word and quietly shorten the abstract.
+        let index = serde_json::json!({ "the": [0, 2], "cat": [1], "hat": [3] });
+        assert_eq!(
+            reconstruct_inverted_abstract(&index).as_deref(),
+            Some("the cat the hat")
+        );
+    }
+
+    #[test]
+    fn an_absent_or_empty_inverted_index_is_no_abstract_rather_than_an_empty_one() {
+        assert_eq!(reconstruct_inverted_abstract(&serde_json::json!({})), None);
+        assert_eq!(
+            reconstruct_inverted_abstract(&serde_json::json!(null)),
+            None
+        );
+    }
+
+    #[test]
+    fn openalex_ids_are_shortened_because_they_arrive_as_urls() {
+        // Storing the URL would make every later lookup build
+        // `.../works/https://openalex.org/W…`.
+        assert_eq!(
+            OpenAlexProvider::short_id("https://openalex.org/W2741809807"),
+            "W2741809807"
+        );
+        assert_eq!(OpenAlexProvider::short_id("W2741809807"), "W2741809807");
+    }
+
+    #[test]
+    fn an_openalex_work_parses_into_a_paper() {
+        let work = serde_json::json!({
+            "id": "https://openalex.org/W2741809807",
+            "doi": "https://doi.org/10.7717/peerj.4375",
+            "title": "The state of OA",
+            "publication_year": 2018,
+            "cited_by_count": 1234,
+            "abstract_inverted_index": { "A": [0], "study": [1] },
+            "primary_location": {
+                "source": { "display_name": "PeerJ" },
+                "pdf_url": "https://peerj.com/articles/4375.pdf"
+            },
+            "authorships": [{
+                "author": { "id": "https://openalex.org/A123", "display_name": "Heather Piwowar" },
+                "institutions": [{ "display_name": "Impactstory" }]
+            }],
+            "topics": [{ "display_name": "Scholarly Communication" }],
+            "ids": { "mag": "2741809807" }
+        });
+
+        let paper = OpenAlexProvider::parse_paper(&work).expect("parses");
+        assert_eq!(paper.id, "W2741809807");
+        assert_eq!(paper.title, "The state of OA");
+        assert_eq!(paper.year, Some(2018));
+        assert_eq!(paper.citation_count, Some(1234));
+        assert_eq!(paper.venue.as_deref(), Some("PeerJ"));
+        assert_eq!(paper.abstract_text.as_deref(), Some("A study"));
+        assert_eq!(
+            paper.doi.as_deref(),
+            Some("https://doi.org/10.7717/peerj.4375")
+        );
+        assert_eq!(paper.authors.len(), 1);
+        assert_eq!(paper.authors[0].author_id.as_deref(), Some("A123"));
+        assert_eq!(paper.authors[0].affiliation.as_deref(), Some("Impactstory"));
+        assert_eq!(paper.fields_of_study, vec!["Scholarly Communication"]);
+        assert_eq!(paper.source, AcademicSource::OpenAlex);
+    }
+
+    #[test]
+    fn an_openalex_work_with_a_null_title_falls_back_to_display_name() {
+        // `title` is nullable in their schema; treating that as "no paper" would drop
+        // records that are perfectly usable.
+        let work = serde_json::json!({
+            "id": "https://openalex.org/W1",
+            "title": null,
+            "display_name": "A Work With No Title Field",
+        });
+        let paper = OpenAlexProvider::parse_paper(&work).expect("parses");
+        assert_eq!(paper.title, "A Work With No Title Field");
+    }
+
+    #[test]
+    fn openalex_reads_the_deprecated_concepts_when_there_are_no_topics() {
+        let work = serde_json::json!({
+            "id": "https://openalex.org/W1",
+            "display_name": "Old record",
+            "concepts": [{ "display_name": "Computer Science" }],
+        });
+        let paper = OpenAlexProvider::parse_paper(&work).expect("parses");
+        assert_eq!(paper.fields_of_study, vec!["Computer Science"]);
+    }
+
+    // =========================================================================
+    // Crossref
+    // =========================================================================
+
+    #[test]
+    fn crossref_titles_are_arrays_and_may_be_empty() {
+        assert_eq!(
+            first_nonempty_string(Some(&serde_json::json!(["A Title"]))).as_deref(),
+            Some("A Title")
+        );
+        // An empty first entry is common; taking it blindly gives a titleless paper.
+        assert_eq!(
+            first_nonempty_string(Some(&serde_json::json!(["", "The Real One"]))).as_deref(),
+            Some("The Real One")
+        );
+        assert_eq!(first_nonempty_string(Some(&serde_json::json!([]))), None);
+        assert_eq!(first_nonempty_string(None), None);
+    }
+
+    #[test]
+    fn a_crossref_date_can_be_year_only_or_unknown() {
+        assert_eq!(
+            date_parts_year(&serde_json::json!({"date-parts": [[2024, 5, 1]]})),
+            Some(2024)
+        );
+        assert_eq!(
+            date_parts_year(&serde_json::json!({"date-parts": [[2024]]})),
+            Some(2024)
+        );
+        // `[[null]]` is how Crossref says it does not know. It must not become year 0.
+        assert_eq!(
+            date_parts_year(&serde_json::json!({"date-parts": [[null]]})),
+            None
+        );
+    }
+
+    #[test]
+    fn a_jats_abstract_is_stripped_to_prose() {
+        // Indexing the markup would put `<jats:p>` in the retrieval text.
+        let jats = "<jats:p>We show that <jats:italic>X</jats:italic> holds.</jats:p>";
+        assert_eq!(strip_jats(jats), "We show that X holds.");
+    }
+
+    #[test]
+    fn a_crossref_work_parses_into_a_paper() {
+        let work = serde_json::json!({
+            "DOI": "10.7717/peerj.4375",
+            "title": ["The state of OA"],
+            "container-title": ["PeerJ"],
+            "is-referenced-by-count": 1234,
+            "abstract": "<jats:p>A study.</jats:p>",
+            "issued": { "date-parts": [[2018, 2, 13]] },
+            "URL": "https://doi.org/10.7717/peerj.4375",
+            "subject": ["General Medicine"],
+            "author": [
+                { "given": "Heather", "family": "Piwowar", "ORCID": "0000-0003-1613-5981" },
+                { "name": "The Consortium" }
+            ]
+        });
+
+        let paper = CrossrefProvider::parse_paper(&work).expect("parses");
+        assert_eq!(paper.id, "10.7717/peerj.4375");
+        assert_eq!(paper.title, "The state of OA");
+        assert_eq!(paper.year, Some(2018));
+        assert_eq!(paper.venue.as_deref(), Some("PeerJ"));
+        assert_eq!(paper.abstract_text.as_deref(), Some("A study."));
+        assert_eq!(paper.citation_count, Some(1234));
+        // An institutional author has `name` and no given/family. Dropping it would lose
+        // consortium papers entirely.
+        assert_eq!(paper.authors.len(), 2);
+        assert_eq!(paper.authors[0].name, "Heather Piwowar");
+        assert_eq!(paper.authors[1].name, "The Consortium");
+        assert_eq!(paper.source, AcademicSource::CrossRef);
+    }
+
+    #[test]
+    fn a_crossref_work_without_a_doi_is_not_a_paper() {
+        // The DOI is Crossref's whole identity and this crate's dedup key. A record
+        // without one cannot be filed anywhere.
+        let work = serde_json::json!({ "title": ["Orphan"] });
+        assert!(CrossrefProvider::parse_paper(&work).is_none());
+    }
+
+    #[test]
+    fn crossref_refuses_citations_instead_of_returning_none() {
+        // An empty list would read as "nobody cites this paper" — a different, wrong
+        // answer. Crossref simply does not host that data.
+        let provider = CrossrefProvider::new();
+        assert!(matches!(
+            provider.get_citations("10.1/x"),
+            Err(AcademicSearchError::ProviderUnavailable(_))
+        ));
+    }
+
+    #[test]
+    fn the_new_providers_report_their_own_source() {
+        assert_eq!(OpenAlexProvider::new().source(), AcademicSource::OpenAlex);
+        assert_eq!(CrossrefProvider::new().source(), AcademicSource::CrossRef);
+        assert_eq!(OpenAlexProvider::new().name(), "OpenAlex");
+        assert_eq!(CrossrefProvider::new().name(), "Crossref");
     }
 }

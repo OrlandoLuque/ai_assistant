@@ -115,7 +115,7 @@ impl ResearchToolRegistry {
                     },
                     "providers": {
                         "type": "array",
-                        "items": { "type": "string", "enum": ["arxiv", "semantic_scholar", "pubmed"] },
+                        "items": { "type": "string", "enum": ["arxiv", "semantic_scholar", "pubmed", "openalex", "crossref"] },
                         "description": "Which providers to search (default: all)"
                     },
                     "max_results": {
@@ -142,17 +142,17 @@ impl ResearchToolRegistry {
     fn get_paper_metadata_tool() -> ResearchTool {
         ResearchTool {
             name: "get_paper_metadata".to_string(),
-            description: "Get detailed metadata for a specific paper by its ID (arXiv ID, Semantic Scholar ID, or PMID).".to_string(),
+            description: "Get detailed metadata for a specific paper by its ID (arXiv ID, Semantic Scholar ID, PMID, OpenAlex ID, or DOI).".to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "paper_id": {
                         "type": "string",
-                        "description": "Paper ID (e.g., '2301.01234' for arXiv, PMID for PubMed)"
+                        "description": "Paper ID (e.g., '2301.01234' for arXiv, PMID for PubMed, 'W2741809807' or a DOI for OpenAlex, a DOI for Crossref)"
                     },
                     "provider": {
                         "type": "string",
-                        "enum": ["arxiv", "semantic_scholar", "pubmed"],
+                        "enum": ["arxiv", "semantic_scholar", "pubmed", "openalex", "crossref"],
                         "description": "Which provider to query"
                     }
                 },
