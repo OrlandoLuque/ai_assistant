@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v159 (2026-09-02) — V284: `agentic_edit` reaches ten tasks (0.2.236)
+
+### Added
+- **"move a function and keep the old path working"** — relocating `truncate` into a new
+  module while every existing caller keeps using the old path. The trap is moving without
+  leaving a `pub use` behind, which orphans them; gate 1 is what insists on it.
+- **"widen an argument without touching the callers"** — `pad_right` must accept a `String`
+  as well as a `&str`, with every current call site compiling *as written*. The mutation
+  case is taking `String` by value: it satisfies the new call and breaks the ones the task
+  said not to touch.
+
+Ten tasks, sixteen mutation cases — over the floor this project set for ranking models
+(V241: a set of six reversed a ranking that ten did not), so the category can now be used
+for what it was built for rather than only as a battery.
+
+**Still unmeasured**: this machine has no dedicated GPU. Everything above is verified by
+cargo — seeds arrive green, described bugs are really present, and every checker is
+mutation-tested — but no model has yet been scored against it.
+
 ## [Unreleased] - v158 (2026-09-02) — V283: two more editing tasks, and a benchmark that gave two answers to the same question (0.2.235)
 
 ### Fixed

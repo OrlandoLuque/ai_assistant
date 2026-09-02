@@ -466,6 +466,54 @@ const EDIT_TASKS: &[EditTask] = &[
                   let src = include_str!(\"report.rs\");\n        \
                   assert!(!src.contains(\"repeat_n\"), \"report.rs still pads on its own\");\n    }\n",
     },
+    EditTask {
+        name: "move a function and keep the old path working",
+        files: &[
+            ("src/lib.rs", LIB_RS),
+            ("src/format.rs", FORMAT_RS),
+            ("src/parser.rs", PARSER_RS),
+            ("src/tally.rs", TALLY_RS),
+            ("src/version.rs", VERSION_RS),
+            ("tests/existing.rs", TESTS_RS),
+        ],
+        // Relocating code while keeping the old path alive: the seeded tests all call
+        // `format::truncate`, so a straight move breaks them. `pub use` is the answer,
+        // and gate 1 is what insists on it.
+        prompt: "Move `truncate` out of the `format` module into a new module called \
+                 `text`, so that `text::truncate` works. Callers that still use the old \
+                 path `format::truncate` must keep working exactly as before — do not \
+                 break the existing tests. Run cargo test.",
+        checker: "    #[test]\n    fn check() {\n        \
+                  assert_eq!(crate::text::truncate(\"hello\", 10), \"hello\");\n        \
+                  assert_eq!(crate::text::truncate(\"hello world\", 8), \"hello...\");\n        \
+                  assert_eq!(crate::format::truncate(\"hello world\", 8), \"hello...\");\n        \
+                  let src = include_str!(\"format.rs\");\n        \
+                  assert!(!src.contains(\"chars().take\"), \"format.rs still implements it\");\n    }\n",
+    },
+    EditTask {
+        name: "widen an argument without touching the callers",
+        files: &[
+            ("src/lib.rs", LIB_RS),
+            ("src/format.rs", FORMAT_RS),
+            ("src/parser.rs", PARSER_RS),
+            ("src/tally.rs", TALLY_RS),
+            ("src/version.rs", VERSION_RS),
+            ("tests/existing.rs", TESTS_RS),
+        ],
+        // Generics that must stay source-compatible. The seeded tests pass `&str`
+        // literals; a signature taking `String` or `impl Into<String>` compiles for some
+        // of them and not others, so the model has to pick the bound that keeps every
+        // existing call site working untouched.
+        prompt: "`format::pad_right` only accepts a string slice. Widen it so it also \
+                 accepts a String directly, without changing any existing call site — \
+                 every current caller passes a slice and must keep compiling exactly as \
+                 written. Keep the behaviour identical and do not break the existing \
+                 tests. Run cargo test.",
+        checker: "    #[test]\n    fn check() {\n        \
+                  assert_eq!(crate::format::pad_right(\"ab\", 4), \"ab  \");\n        \
+                  assert_eq!(crate::format::pad_right(String::from(\"ab\"), 4), \"ab  \");\n        \
+                  assert_eq!(crate::format::pad_right(\"abcde\", 3), \"abcde\");\n    }\n",
+    },
 ];
 
 /// What went wrong, kept apart because the two failures mean opposite things.
@@ -932,6 +980,36 @@ mod tests {
         assert_eq!(
             judge_with(dedup_task, "src/report.rs", REPORT_RS),
             "not-done"
+        );
+
+        // Task 9 (move it, keep the old path). Moving without leaving a re-export behind
+        // is the whole trap: `text::truncate` exists, every existing caller is gone.
+        let move_task = &EDIT_TASKS[8];
+        let moved_no_reexport = FORMAT_RS
+            .split("/// Shorten `s` so the result is never longer than `max` characters,")
+            .nth(1)
+            .and_then(|rest| rest.split_once("/// Pad `s` on the right"))
+            .map(|(_, pad)| format!("/// Pad `s` on the right{pad}"))
+            .expect("splitting format.rs");
+        assert!(!moved_no_reexport.contains("fn truncate"));
+        assert_eq!(
+            judge_with(move_task, "src/format.rs", &moved_no_reexport),
+            "broke",
+            "moving without a re-export orphans every existing caller"
+        );
+
+        // Task 10 (widen the argument). Taking `String` by value is the wrong widening:
+        // it accepts the new call and breaks every existing one.
+        let widen_task = &EDIT_TASKS[9];
+        let by_value = FORMAT_RS.replace(
+            "pub fn pad_right(s: &str, width: usize) -> String {\n    let len = s.chars().count();",
+            "pub fn pad_right(s: String, width: usize) -> String {\n    let len = s.chars().count();",
+        );
+        assert_ne!(by_value, FORMAT_RS);
+        assert_eq!(
+            judge_with(widen_task, "src/format.rs", &by_value),
+            "broke",
+            "widening to String by value breaks the callers it was told not to touch"
         );
     }
 
