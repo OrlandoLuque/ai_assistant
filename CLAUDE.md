@@ -112,7 +112,41 @@ Esto te da el contexto completo: dónde estamos, qué se ha hecho, cómo trabaja
 | Pro | multi-agent, security, analytics, eval, vision | Pago |
 | Enterprise | distributed, p2p, autonomous, scheduler, browser | Personalizado |
 
+## PARADA OBLIGATORIA — licencias, visibilidad y cualquier cosa con efecto legal
+
+**Nada de esto se toca sin (a) petición explícita del autor y (b) confirmación suya después
+de que le expliques qué hace y qué no se puede deshacer.** No basta con que «se deduzca» de
+un objetivo que te haya dado. Si te pide una meta («protege esto», «corta la exposición»,
+«limpia aquello»), tu trabajo es **enumerar los mecanismos y preguntar cuál**, no elegir uno.
+
+Entra aquí, como mínimo:
+
+- **Licencias**: `LICENSE`, `LICENSE-*`, los campos `license` / `license-file` de
+  `Cargo.toml`, cabeceras de copyright, avisos de terceros, `NOTICE`, `CLA.md`.
+  **Nunca añadas un fichero de licencia «por convención»** — así entraron `LICENSE-MIT` y
+  `LICENSE-APACHE` en febrero de 2026, dentro de un commit de 271 ficheros, y estuvieron en
+  la historia pública seis meses. Este proyecto es **PolyForm Noncommercial 1.0.0**; MIT y
+  Apache-2.0 son de `ai_assistant_core`, que es otro crate.
+- **Visibilidad de repositorios**: público ↔ privado, en este repo o en cualquier otro.
+  Cambiarla borra estrellas y desacopla forks, y volver atrás **no** los recupera.
+- **Reescrituras de historia y force-push**: `filter-repo`, `filter-branch`, `push --force`,
+  borrado de ramas o tags. Cambian todos los SHA y no siempre logran lo que parecen: GitHub
+  sigue sirviendo los objetos viejos por SHA exacto hasta que su Soporte haga GC.
+- **Publicación y distribución**: crates.io, releases, paquetes, subir artefactos, hacer
+  público un repo o una página.
+- **Terceros y datos**: CLA, DPIA, textos de privacidad, condiciones de uso, cualquier cosa
+  que afirme algo sobre datos personales o sobre derechos de otros.
+- **Afirmaciones legales en documentación**: qué licencia aplica, qué se puede o no hacer con
+  el código, si algo se distribuyó o no. Si una frase de este tipo está desfasada, **dilo y
+  propón la corrección**; corregir un hecho verificable (con la evidencia delante) es
+  aceptable, redefinir la estrategia no lo es nunca.
+
+Precedente que originó esta regla (2026-09-03): «corta por ahora la exposición futura» se
+interpretó como poner el repositorio en privado. Costó 2 de 3 estrellas y desacopló el fork
+de un tercero, ninguna de las dos cosas recuperable. Lo que el autor quería era otra cosa.
+
 ## Reglas para Claude Code
+0. **Lee la PARADA OBLIGATORIA de arriba antes de tocar licencias, visibilidad o historia.**
 1. **NUNCA modificar código sin permiso explícito** — el autor es muy protector con su trabajo
 2. El código ha sido desarrollado iterativamente con Claude (prompts del autor + generación asistida)
 3. Respetar la estructura modular existente basada en feature flags de Cargo
