@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v168 (2026-09-03) — V293: cerrar la serie IMPROVEMENTS e indexar `docs/` (0.2.245)
+
+### Added
+- **`docs/README.md`** — índice de los 198 ficheros de `docs/`. 154 son
+  `IMPROVEMENTS_V*.md`; sin un índice, encontrar lo actual entre ellos es cuestión de
+  suerte. Dice qué leer primero, qué guía cubre qué subsistema, qué documentos son
+  auditorías con fecha, y qué comprobaciones automáticas mantienen honesto todo esto.
+
+### Changed
+- **La serie `IMPROVEMENTS_V*` queda cerrada explícitamente.** `IMPROVEMENTS_V167.md` abre
+  ahora con una cabecera que dice que es el último, de marzo de 2026 y 0.2.119, y remite al
+  `CHANGELOG.md`. Se cierra en vez de dejarla apagarse porque su modo de fallo es concreto
+  y ya mordió dos veces: quien busca «dónde estamos» abre el de número más alto, encuentra
+  un documento coherente y bien escrito, y lo toma por hoy. Un documento no necesita ser
+  incorrecto para engañar; le basta con ser encontrable y no llevar fecha.
+- **Las cifras de `CLAUDE.md` estaban desfasadas** y ahora llevan la fecha de medición:
+  540K líneas (decía 523K), 559 ficheros fuente (500), 9 753 tests (9.600+), 95 flags (93).
+  Añadido el número de binarios, que no estaba.
+- **`CLAUDE.md` decía que el proyecto no está publicado en ningún sitio, «ni GitHub
+  público».** El repositorio es PÚBLICO, con 3 estrellas y 1 fork (verificado hoy con
+  `gh repo view`). La línea está corregida: la licencia PolyForm sigue prohibiendo el uso
+  comercial, pero el código es legible por cualquiera y ya se bifurcó una vez, y cualquier
+  decisión sobre PI tiene que partir de ese hecho. Si la intención era mantenerlo privado,
+  lo que hay que cambiar es la visibilidad, no la frase.
+
+### Fixed — web
+- Las cifras de cabecera del sitio anunciaban 8 400+ tests, 500 ficheros fuente, 520K LoC y
+  «90+ feature flags», y `feature_matrix.html` seguía diciendo v0.2.109 de junio.
+  Actualizadas a lo medido hoy. Las cifras que aparecen **dentro** de las entradas de
+  changelog por versión (5963 tests, 285 ficheros) se dejan como estaban: son el registro
+  de lo que fue cada release y actualizarlas lo falsearía.
+
 ## [Unreleased] - v167 (2026-09-03) — V292: una puerta que impide volver a documentar comandos falsos (0.2.244)
 
 ### Added

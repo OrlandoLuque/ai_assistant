@@ -1,5 +1,27 @@
 # IMPROVEMENTS_V167 — split `assistant.rs` into `impl` submodules
 
+> **This is the last file of the series.** It was written in March 2026 at
+> 0.2.119. Everything after it — more than 120 versions — lives in
+> [`../CHANGELOG.md`](../CHANGELOG.md), which is the current state of the project.
+>
+> The series is closed on purpose rather than left to trail off. Its failure mode
+> was specific and it bit twice: someone looking for "where are we?" opens the
+> highest-numbered `IMPROVEMENTS_V*.md`, gets a coherent, well-written snapshot of
+> March, and treats it as today. A document does not have to be wrong to mislead —
+> it only has to be findable and undated.
+>
+> **Where to look instead**
+>
+> | Question | File |
+> |---|---|
+> | What changed, and why, version by version | `CHANGELOG.md` (newest first) |
+> | How we work — workflow, quality gates, checklist | `docs/modus-operandi.md` |
+> | What a subsystem does today | its own `docs/GUIDE_*.md` |
+> | Model measurements, with date and backend | `docs/MODEL_BENCHMARKS.md` |
+>
+> These files (V1–V167) are kept as a record of how the codebase got here. Read
+> them as history. Do not read them as state.
+
 **Version:** 0.2.118 → 0.2.119
 **Scope:** `src/assistant.rs` → `src/assistant/`
 **Feature:** none new
