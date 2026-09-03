@@ -68,14 +68,21 @@ Esto te da el contexto completo: dónde estamos, qué se ha hecho, cómo trabaja
 - **MIT/Apache-2.0 es de `ai_assistant_core`, no de este proyecto.** Ese crate aparte lleva
   `license = "MIT OR Apache-2.0"` en su `Cargo.toml` y sus dos ficheros de licencia. Es
   deliberado y no hay nada que corregir ahí. **Este** repositorio es PolyForm y solo PolyForm.
-- **Matiz histórico** (verificado 2026-09-03 con `git log`, antes decía «nunca fueron
-  distribuidas públicamente»): este repositorio **sí llevó** `LICENSE-MIT` y `LICENSE-APACHE`
-  durante **un día** — los añadió `9daa953` (21/02/2026) y los quitó `eb2ccdc` (22/02/2026),
-  y ambos commits son alcanzables desde `origin/master`, que hoy es público. Es decir: quien
-  haga checkout de ese rango obtiene aquella foto bajo MIT/Apache. Lo expuesto es esa versión
-  de febrero (209 ficheros, 2 431 tests), no las 540K líneas de hoy, y una concesión MIT no se
-  revoca cambiando la licencia después. Ya hay un fork, así que reescribir la historia no
-  recuperaría nada — solo rompería los clones. Se anota como hecho, no como problema abierto.
+- **Matiz histórico** (verificado 2026-09-03 con `git log` y `gh repo view`): la línea decía
+  «nunca fueron distribuidas públicamente». Los hechos, en orden:
+  - `9daa953` (21/02/2026) añadió `LICENSE-MIT` y `LICENSE-APACHE` dentro de un commit de
+    **271 ficheros y 98 124 líneas** — entraron como andamiaje, no como decisión; MIT/Apache
+    es el par por defecto de un crate de Rust.
+  - `eb2ccdc` (22/02/2026) los quitó y puso PolyForm. **Un día de ventana.**
+  - **El repositorio de GitHub se creó el 11/03/2026**, dos semanas y media después. Es decir:
+    el repo público **nunca ha presentado MIT/Apache como su licencia** — su `LICENSE` ha sido
+    PolyForm desde el primer día que existe. Los dos ficheros solo son alcanzables haciendo
+    checkout de commits de febrero, que se subieron con el resto de la historia.
+  - Hay un fork público, `janreges/ai_assistant` (15/03/2026), con esa historia completa.
+
+  Así que la frase original era casi correcta en el espíritu y falsa en la letra. Se deja el
+  detalle por escrito para que cualquier decisión de PI parta de los hechos y no haya que
+  volver a reconstruirlos.
 - **Opción futura**: Considerar publicar un módulo básico pequeño (solo providers) bajo MIT en crates.io como módulo open-source bajo MIT/Apache-2.0
 
 ### Monetización
