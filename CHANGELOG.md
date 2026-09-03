@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v166 (2026-09-03) — V291: la web documentaba comandos que no existen (0.2.243)
+
+### Fixed — documentación
+Repasando `guide_research.html` para añadir los dos proveedores nuevos aparecieron **tres
+líneas de comando inventadas y un bloque de configuración entero que no existe**. No es un
+detalle de estilo: alguien que copiara cualquiera de ellas se habría encontrado con que el
+CLI se traga la bandera desconocida como parte de la consulta y «funciona» devolviendo otra
+cosa.
+
+- `research ... --output results.bib` — `--output` no existe; `--bibtex` escribe a la
+  salida estándar y se redirige.
+- `research ... --review --depth standard --format systematic` — la sintaxis real es
+  `research review <tema> --mode quick|systematic --out fichero.md`.
+- `research ... --faithfulness --quality-gates` — esas banderas son de `ai_cli verify`, no
+  de `research`. La página vendía «cada afirmación de la revisión verificada contra los
+  papers fuente», que con ese comando no ocurre.
+- El bloque `[research]` de `config.toml` listaba siete claves que `ResearchFileConfig` no
+  tiene (`default_depth`, `enable_faithfulness`, `arxiv_enabled`, `arxiv_interval_ms`…).
+  Sustituido por el esquema real.
+- El ejemplo de Rust usaba un campo `query` que la config no tiene y esperaba un
+  `generate_review(&config).await` que no existe (la API es síncrona y se llama `execute`).
+- «deduplicados por título + autor» y «proveedores consultados en paralelo»: ninguna de las
+  dos es cierta. Se deduplica por DOI y se consultan en serie.
+
+### Added
+- **`examples/literature_review.rs`** — el snippet de la web, pero como ejemplo de verdad.
+  CI lo compila en cada push, así que no puede volver a divergir como diverge un trozo de
+  HTML. Ejecutado en vivo: 199 papers encontrados entre arXiv y OpenAlex, 50 incluidos,
+  4 258 palabras, 69 secciones, y su `.bib`.
+- **`docs/RESEARCH_SUBSYSTEM.md`** — inventario del subsistema de investigación con su
+  tamaño real por módulo (6 794 líneas, 143 tests), las decisiones de diseño que lo
+  sostienen y **un apartado de lo que NO está hecho**, porque un inventario que solo lista
+  aciertos no sirve para nada.
+
+### Changed
+- La web ya documenta los cinco proveedores, el *polite pool* de OpenAlex/Crossref, el
+  backoff ante 429 y los tres comandos nuevos (`--index`, `research ask`, `research review`).
+
 ## [Unreleased] - v165 (2026-09-03) — V290: OpenAlex y Crossref, los dos que faltaban (0.2.242)
 
 ### Added

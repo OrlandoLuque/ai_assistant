@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.242"
+version = "0.2.243"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -121,7 +121,8 @@ server-tls = ["dep:rustls", "dep:rustls-pemfile"]
 # `dep:` only, the crate compiled but AES-256-GCM returned EncryptionFailed.
 rag = ["rusqlite", "aes-gcm"]
 
-# Research: academic search APIs (arXiv, Semantic Scholar, PubMed), BibTeX, literature review
+# Research: academic search APIs (arXiv, Semantic Scholar, PubMed, OpenAlex, Crossref),
+# BibTeX, literature review, and the bridge that ingests found papers into the RAG index.
 research = []
 
 # egui widgets for chat UI
@@ -1033,6 +1034,10 @@ required-features = ["rag"]
 [[example]]
 name = "knowledge_graph"
 required-features = ["rag"]
+
+[[example]]
+name = "literature_review"
+required-features = ["research"]
 
 [[example]]
 name = "mcp_server"
