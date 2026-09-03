@@ -65,7 +65,17 @@ Esto te da el contexto completo: dónde estamos, qué se ha hecho, cómo trabaja
 - **Licencia elegida**: **PolyForm Noncommercial 1.0.0** (decidida 2026-02-22)
 - **Efecto**: Prohíbe TODO uso comercial sin licencia negociada. Solo permite uso personal, académico, investigación.
 - **Archivos**: `LICENSE` (PolyForm Noncommercial), `Cargo.toml` usa `license-file = "LICENSE"`
-- **Licencias anteriores** (MIT/Apache-2.0) eliminadas — nunca fueron distribuidas públicamente
+- **MIT/Apache-2.0 es de `ai_assistant_core`, no de este proyecto.** Ese crate aparte lleva
+  `license = "MIT OR Apache-2.0"` en su `Cargo.toml` y sus dos ficheros de licencia. Es
+  deliberado y no hay nada que corregir ahí. **Este** repositorio es PolyForm y solo PolyForm.
+- **Matiz histórico** (verificado 2026-09-03 con `git log`, antes decía «nunca fueron
+  distribuidas públicamente»): este repositorio **sí llevó** `LICENSE-MIT` y `LICENSE-APACHE`
+  durante **un día** — los añadió `9daa953` (21/02/2026) y los quitó `eb2ccdc` (22/02/2026),
+  y ambos commits son alcanzables desde `origin/master`, que hoy es público. Es decir: quien
+  haga checkout de ese rango obtiene aquella foto bajo MIT/Apache. Lo expuesto es esa versión
+  de febrero (209 ficheros, 2 431 tests), no las 540K líneas de hoy, y una concesión MIT no se
+  revoca cambiando la licencia después. Ya hay un fork, así que reescribir la historia no
+  recuperaría nada — solo rompería los clones. Se anota como hecho, no como problema abierto.
 - **Opción futura**: Considerar publicar un módulo básico pequeño (solo providers) bajo MIT en crates.io como módulo open-source bajo MIT/Apache-2.0
 
 ### Monetización
