@@ -68,21 +68,27 @@ Esto te da el contexto completo: dónde estamos, qué se ha hecho, cómo trabaja
 - **MIT/Apache-2.0 es de `ai_assistant_core`, no de este proyecto.** Ese crate aparte lleva
   `license = "MIT OR Apache-2.0"` en su `Cargo.toml` y sus dos ficheros de licencia. Es
   deliberado y no hay nada que corregir ahí. **Este** repositorio es PolyForm y solo PolyForm.
-- **Matiz histórico** (verificado 2026-09-03 con `git log` y `gh repo view`): la línea decía
-  «nunca fueron distribuidas públicamente». Los hechos, en orden:
-  - `9daa953` (21/02/2026) añadió `LICENSE-MIT` y `LICENSE-APACHE` dentro de un commit de
-    **271 ficheros y 98 124 líneas** — entraron como andamiaje, no como decisión; MIT/Apache
-    es el par por defecto de un crate de Rust.
-  - `eb2ccdc` (22/02/2026) los quitó y puso PolyForm. **Un día de ventana.**
-  - **El repositorio de GitHub se creó el 11/03/2026**, dos semanas y media después. Es decir:
-    el repo público **nunca ha presentado MIT/Apache como su licencia** — su `LICENSE` ha sido
-    PolyForm desde el primer día que existe. Los dos ficheros solo son alcanzables haciendo
-    checkout de commits de febrero, que se subieron con el resto de la historia.
-  - Hay un fork público, `janreges/ai_assistant` (15/03/2026), con esa historia completa.
-
-  Así que la frase original era casi correcta en el espíritu y falsa en la letra. Se deja el
-  detalle por escrito para que cualquier decisión de PI parta de los hechos y no haya que
-  volver a reconstruirlos.
+- **Historia limpiada el 2026-09-03.** `LICENSE-MIT` y `LICENSE-APACHE` estuvieron en la
+  historia de ESTE repositorio y ya no están. Lo ocurrido, por si vuelve a salir el tema:
+  - El commit `9daa953` (21/02/2026) los metió dentro de un cambio de **271 ficheros y
+    98 124 líneas** — andamiaje, no decisión: MIT/Apache es el par por defecto de un crate
+    de Rust. `eb2ccdc` (22/02/2026) los quitó y puso PolyForm. **Un día de ventana**, y solo
+    3 commits de 670 llegaron a contenerlos.
+  - **El repositorio de GitHub se creó el 11/03/2026**, dos semanas y media más tarde, así
+    que el repo público **nunca presentó MIT/Apache como su licencia**: su `LICENSE` ha sido
+    PolyForm desde el primer día que existe.
+  - Se reescribió la historia con `git-filter-repo` (`--invert-paths`) y force-push. Los dos
+    commits son ahora `44f95a5` y `5b5abf6`. Verificado: 670 commits antes y después, y el
+    **árbol de `master` idéntico** (`ca61fdc1…`) — no se perdió una línea de código. Copia de
+    seguridad previa en un bundle completo antes de tocar nada.
+  - **Lo que la reescritura NO consigue, y conviene no olvidarlo:** GitHub mantiene los
+    objetos viejos accesibles por SHA exacto hasta que su Soporte haga recolección de basura
+    (comprobado: `9daa953` seguía resolviendo por API después del force-push). Y el fork
+    `janreges/ai_assistant` conserva la historia antigua completa. Ninguna de las dos cosas
+    se arregla desde aquí.
+  - Ese fork quedó **desacoplado** (repo público independiente, sin relación con este) por un
+    cambio de visibilidad accidental el mismo día; el código está intacto. Ver la memoria
+    `feedback_never_change_repo_visibility`.
 - **Opción futura**: Considerar publicar un módulo básico pequeño (solo providers) bajo MIT en crates.io como módulo open-source bajo MIT/Apache-2.0
 
 ### Monetización
