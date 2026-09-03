@@ -2,16 +2,17 @@
 
 ## Why This Matters
 
-Searching for academic papers is tedious. You open arXiv, Semantic Scholar, and
-PubMed in separate tabs. You copy-paste titles into a spreadsheet. You manually
+Searching for academic papers is tedious. You open arXiv, Semantic Scholar,
+PubMed, OpenAlex and Crossref in separate tabs. You copy-paste titles into a spreadsheet. You manually
 cross-reference citations. You format BibTeX by hand, fixing broken entries one
 by one. And when you finally ask an LLM to summarize the literature, you have
 no way to know whether it invented a citation that does not exist.
 
-`ai_assistant` eliminates all of that. One command searches three academic APIs
-simultaneously, generates a structured literature review, exports valid BibTeX,
-and -- critically -- **verifies its own output against the source papers** using
-the anti-hallucination pipeline. No other framework does this.
+`ai_assistant` removes most of that. One command searches five academic APIs,
+deduplicates by DOI, generates a structured literature review and exports valid
+BibTeX -- with no model involved at any step. Verifying claims against the source
+papers is a separate command (`ai_cli verify`) that does use a model; the two are
+not chained automatically today.
 
 ---
 
@@ -40,32 +41,38 @@ the anti-hallucination pipeline. No other framework does this.
 **What**: Search academic papers and generate a literature review in one command.
 
 **Why**: A researcher preparing a related-work section should not have to
-manually query three different APIs, deduplicate results, and format references.
+manually query five different APIs, deduplicate results, and format references.
 
 **How**:
 
 ```bash
-# Search across all providers, filter to recent papers
-cargo run --bin ai_cli --features "full,research" -- research \
+# Search across providers
+cargo run --bin ai_cli --features "full" -- research \
     "transformer attention mechanisms" \
-    --providers arxiv,scholar,pubmed \
-    --max-results 20 \
-    --year-range 2020-2026
+    --providers arxiv,scholar,pubmed,openalex,crossref \
+    --max-results 20
 
-# Generate a full literature review with BibTeX and anti-hallucination checks
-cargo run --bin ai_cli --features "full,research" -- research \
+# Generate a literature review, Markdown plus BibTeX
+cargo run --bin ai_cli --features "full" -- research review \
     "reinforcement learning from human feedback" \
-    --review \
-    --format systematic \
-    --bibtex \
-    --faithfulness \
-    --quality-gates
+    --mode systematic \
+    --out review.md \
+    --bibtex
+
+# Or index what you found and ask it afterwards
+cargo run --bin ai_cli --features "full" -- research \
+    "reinforcement learning from human feedback" --index papers.db
+cargo run --bin ai_cli --features "full" -- research ask \
+    "which of them evaluate on human preferences?" --index papers.db
 ```
 
-The second command does everything: searches papers, filters by relevance,
-synthesizes a structured review, generates a BibTeX bibliography, scores the
-output for faithfulness, and applies quality gates to reject hallucinated
-citations. Copy, paste, run.
+The review command searches, deduplicates by DOI, groups the papers and writes a
+structured Markdown document with a BibTeX bibliography. **No model is involved**,
+so it runs on a machine with no local LLM and no API key.
+
+To *verify* claims against sources — faithfulness scoring, CoVe, quality gates —
+use `ai_cli verify`, which is a separate command and does need a model. See
+[GUIDE_ANTI_HALLUCINATION.md](GUIDE_ANTI_HALLUCINATION.md).
 
 ---
 
@@ -97,6 +104,7 @@ All research types are gated with `#[cfg(feature = "research")]`.
 default_providers = ["arxiv", "semantic_scholar"]
 default_max_results = 20
 default_bibliography_format = "bibtex"
+# Available: arxiv, semantic_scholar, pubmed, openalex, crossref
 # API keys via env vars (recommended) or config:
 # semantic_scholar_api_key = "..."
 # ncbi_api_key = "..."
@@ -113,13 +121,15 @@ export NCBI_API_KEY="your-key-here"
 
 ## 3. Academic Search Providers
 
-**What**: Three academic search providers are available today, with two more
-reserved for Batch 2. All implement the `AcademicSearchProvider` trait.
+**What**: Five academic search providers, all implementing the
+`AcademicSearchProvider` trait and all returning the same `AcademicPaper`.
 
 **Why**: No single database covers all of science. arXiv dominates computer
 science preprints, PubMed covers biomedical literature, and Semantic Scholar
-provides citation graphs that neither of the others offer. Querying all three
-from a unified interface eliminates the "tab-switching" problem.
+provides citation graphs that neither of the others offer. OpenAlex is the
+general one -- ~250M works across every discipline -- and Crossref is the DOI
+registry itself. Querying them from a unified interface eliminates the
+"tab-switching" problem.
 
 **How**:
 
@@ -128,8 +138,8 @@ from a unified interface eliminates the "tab-switching" problem.
 | **arXiv** | Atom/XML | None | 3s between requests | CS, Physics, Math preprints |
 | **Semantic Scholar** | REST/JSON | Optional API key | 100 req/5min (free), 1/s with key | CS papers with citation graph |
 | **PubMed** | E-utilities XML | Optional API key | 3 req/s (10 with key) | Biomedical, life sciences |
-| CrossRef | *(reserved Batch 2)* | | | DOI resolution, metadata |
-| OpenAlex | *(reserved Batch 2)* | | | Open scholarly metadata |
+| **OpenAlex** | REST/JSON | Contact address (polite pool) | 100k/day, 10/s | Everything -- ~250M works, all disciplines |
+| **Crossref** | REST/JSON | Contact address (polite pool) | Unmetered in the polite pool | Authoritative metadata for any DOI |
 
 ### Provider Selection
 
@@ -146,9 +156,9 @@ cargo run --bin ai_cli --features "full,research" -- research \
     --max-results 10
 
 # Search all available providers
-cargo run --bin ai_cli --features "full,research" -- research \
+cargo run --bin ai_cli --features "full" -- research \
     "large language models safety alignment" \
-    --providers arxiv,scholar,pubmed \
+    --providers arxiv,scholar,pubmed,openalex,crossref \
     --max-results 20
 ```
 
@@ -160,6 +170,13 @@ cargo run --bin ai_cli --features "full,research" -- research \
   higher quotas.
 - **PubMed**: Works without a key (3 requests per second). With `NCBI_API_KEY`,
   rate limit increases to 10 requests per second.
+- **OpenAlex / Crossref**: no key, but `OPENALEX_MAILTO` and `CROSSREF_MAILTO`
+  put requests in the *polite pool*. That is a much higher quota, not a courtesy.
+
+A 429 or 503 from any of them is retried with exponential backoff honouring the
+server's `Retry-After` header, and if it keeps failing the error says **rate
+limited** rather than "network error" -- the distinction between "you are going
+too fast" and "there is no route to the host".
 
 ---
 
@@ -220,52 +237,61 @@ pipeline accessible from a terminal.
 ### Basic Search
 
 ```bash
-cargo run --bin ai_cli --features "full,research" -- research \
+cargo run --bin ai_cli --features "full" -- research \
     "transformer attention mechanisms" \
-    --providers arxiv,scholar,pubmed \
-    --max-results 20 \
-    --year-range 2020-2026
+    --providers arxiv,scholar,pubmed,openalex,crossref \
+    --max-results 20
 ```
 
-This searches all three providers for papers about transformer attention
-mechanisms published between 2020 and 2026, returning up to 20 results.
+Up to 20 results per provider, normalised to one paper type and deduplicated by
+DOI. Year filtering is available through the Rust API
+(`AcademicSearchConfig::year_range`, applied server-side by OpenAlex and
+Crossref) but is not exposed as a CLI flag.
 
 ### Literature Review with BibTeX
 
 ```bash
-cargo run --bin ai_cli --features "full,research" -- research \
+cargo run --bin ai_cli --features "full" -- research review \
     "RLHF reinforcement learning" \
-    --review \
-    --format systematic \
-    --bibtex
+    --mode systematic \
+    --out review.md --bibtex
 ```
 
-This runs the full literature review pipeline: search, filter, synthesize a
-systematic review, and export citations in BibTeX format.
+Search, group, structure, and a BibTeX bibliography. `review` is a subcommand,
+dispatched before the flag loop — which matters, because that loop treats any
+non-flag word as part of the query and would otherwise search for the phrase
+"review RLHF reinforcement learning".
 
 ### Single-Provider Search
 
 ```bash
-cargo run --bin ai_cli --features "full,research" -- research \
+cargo run --bin ai_cli --features "full" -- research \
     "CRISPR gene editing" \
     --providers pubmed \
     --max-results 10
 ```
 
-### Verified Review (with Anti-Hallucination)
+### Index the Results and Ask Them
 
 ```bash
-cargo run --bin ai_cli --features "full,research" -- research \
+cargo run --bin ai_cli --features "full" -- research \
     "reinforcement learning from human feedback" \
-    --review \
-    --format systematic \
-    --bibtex \
-    --faithfulness \
-    --quality-gates
+    --providers openalex --index papers.db
+
+cargo run --bin ai_cli --features "full" -- research ask \
+    "which of them evaluate on human preferences?" \
+    --index papers.db --top-k 5
 ```
 
-See [Section 9: Anti-Hallucination Integration](#9-anti-hallucination-integration)
-for details on what `--faithfulness` and `--quality-gates` do.
+Papers are keyed by DOI, so re-running the search re-indexes nothing and the same
+paper found through two providers is filed once.
+
+### Verifying Claims Against Sources
+
+That is `ai_cli verify`, a different command with its own flags
+(`--faithfulness`, `--cove`, `--quality-gates`), and unlike everything above it
+does need a model. See
+[Section 9: Anti-Hallucination Integration](#9-anti-hallucination-integration).
 
 ---
 
@@ -283,7 +309,7 @@ minutes while maintaining academic standards.
 
 The pipeline has five stages:
 
-1. **Search** -- Query all configured providers in parallel.
+1. **Search** -- Query each configured provider in turn, deduplicating by DOI.
 2. **Filter** -- Remove duplicates (using `external_ids` cross-reference),
    apply year range, sort by citation count when available.
 3. **Synthesize** -- Use a local or cloud LLM to write a structured review
@@ -496,21 +522,29 @@ Claims that fail verification are revised or removed from the final output.
 
 ### CLI Usage
 
+The anti-hallucination flags live on `ai_cli verify`, which runs a one-shot query
+through the pipeline (optionally grounded with `--knowledge <file>`). It is not a
+mode of `research`, and unlike `research` it needs a model:
+
 ```bash
-cargo run --bin ai_cli --features "full,research" -- research \
-    "reinforcement learning from human feedback" \
-    --review \
-    --format systematic \
-    --bibtex \
+cargo run --bin ai_cli --features "full" -- verify \
+    "When was RLHF introduced, and by whom?" \
+    --knowledge review.md \
     --faithfulness \
+    --cove \
     --quality-gates
 ```
 
-- `--faithfulness` enables the FaithfulnessScorer (Layer 1) and CoVe (Layer 3).
+- `--faithfulness` enables the FaithfulnessScorer (Layer 1) and `--cove` adds
+  Chain-of-Verification (Layer 3).
 - `--quality-gates` enables the quality gate checks (Layer 2).
 
-Both flags can be used independently, but using them together provides the
-strongest verification.
+Each can be used independently; together they give the strongest verification.
+
+**The two halves are not wired together yet.** `research review` produces a
+document and `verify` checks claims, but nothing runs the second over the output
+of the first automatically — you pass the claims yourself. Earlier versions of
+this guide showed a single command doing both. That command never existed.
 
 ### Why This Matters
 
@@ -756,24 +790,43 @@ This section is for developers evaluating frameworks.
 ## Appendix: Complete CLI Reference
 
 ```
-ai_cli research <query> [OPTIONS]
+ai_cli research <query> [OPTIONS]           Search academic papers
 
 ARGUMENTS:
   <query>              The research topic or search query
 
 OPTIONS:
-  --providers <LIST>   Comma-separated list: arxiv, scholar, pubmed
-                       Default: arxiv,scholar
-  --max-results <N>    Maximum papers to retrieve per provider
-                       Default: 20
-  --year-range <RANGE> Filter by publication year (e.g., 2020-2026)
-  --review             Generate a literature review (not just search)
-  --format <STYLE>     Review style: narrative, systematic, annotated, comparative
-                       Default: narrative
-  --bibtex             Export citations in BibTeX format
-  --faithfulness       Enable FaithfulnessScorer + CoVe verification
-  --quality-gates      Enable quality gate checks on review output
+  --providers <LIST>   Comma-separated: arxiv, scholar, pubmed, openalex, crossref
+                       Default: arxiv,semantic_scholar
+  --max-results <N>    Maximum papers per provider (default: 10)
+  --bibtex             Print the results as BibTeX on stdout
+  --index <DB>         Also ingest the papers into a RAG database
+
+
+ai_cli research review <topic> [OPTIONS]    Literature review (no model needed)
+
+OPTIONS:
+  --mode quick|systematic   Depth preset (default: quick)
+  --providers <LIST>        Same list as above
+  --out <FILE.md>           Write the Markdown here (default: stdout)
+  --bibtex                  Append the BibTeX bibliography
+
+
+ai_cli research ask <question> [OPTIONS]    Query an index built with --index
+
+OPTIONS:
+  --index <DB>         The index to ask (required)
+  --top-k <N>          Passages to return (default: 5)
 ```
+
+**What is deliberately not here.** There is no `--review` flag (the review is a
+subcommand), no `--format` (it is `--mode`, and it selects a preset rather than a
+style), no `--year-range`, no `--output`, and no `--faithfulness` /
+`--quality-gates` — those two belong to `ai_cli verify`, which is a different
+command that takes a claim and checks it. Earlier versions of this guide
+documented all five; none of them ever existed, and because the flag loop treats
+an unrecognised word as part of the query, a copy-pasted command "worked" while
+silently searching for the wrong thing.
 
 ---
 

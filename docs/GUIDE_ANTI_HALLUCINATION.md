@@ -560,6 +560,11 @@ Quality gates can be integrated into your CI/CD pipeline to gate deployments.
 If your LLM-powered feature fails the faithfulness gate during integration
 tests, the build fails -- just like a unit test failure.
 
+`--exit-code-on-fail` is what makes that true, and it is opt-in: without it the
+gate result is printed and the process still exits 0, which is fine
+interactively and useless in CI. It was documented here before it existed (V292),
+so a pipeline copied from this page would have gone green on every failure.
+
 ```bash
 # Run quality gates as a CI check
 cargo run --bin ai_cli --features full -- verify \

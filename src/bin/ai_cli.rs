@@ -240,6 +240,7 @@ fn print_usage() {
     println!("    --faithfulness                 Enable faithfulness scoring");
     println!("    --cove                         Enable Chain-of-Verification");
     println!("    --quality-gates                Run quality gates on output");
+    println!("    --exit-code-on-fail            Exit 1 when a quality gate fails (for CI)");
     println!(
         "  vision-check [options]         Pre-flight vision pipeline (transport+model+mmproj)"
     );
@@ -2835,6 +2836,7 @@ fn cmd_verify(args: &[String]) -> ExitCode {
     let mut faithfulness = false;
     let mut cove = false;
     let mut quality_gates = false;
+    let mut exit_code_on_fail = false;
     let mut knowledge_path: Option<String> = None;
     let mut prompt_parts: Vec<String> = Vec::new();
     let mut image_paths: Vec<String> = Vec::new();
@@ -2885,6 +2887,7 @@ fn cmd_verify(args: &[String]) -> ExitCode {
             "--faithfulness" => faithfulness = true,
             "--cove" => cove = true,
             "--quality-gates" => quality_gates = true,
+            "--exit-code-on-fail" => exit_code_on_fail = true,
             "--knowledge" => {
                 i += 1;
                 if i >= args.len() {
@@ -3328,6 +3331,13 @@ fn cmd_verify(args: &[String]) -> ExitCode {
                 for f in &gate_result.failing_gates {
                     println!("  FAILED: {}", f);
                 }
+                // Reporting a failure and exiting 0 makes the gate unusable from CI:
+                // the step goes green and the pipeline carries on. Opt-in, because
+                // scripts that already parse the output would break on a new exit code.
+                if exit_code_on_fail {
+                    eprintln!("Quality gates failed and --exit-code-on-fail was given; exiting 1.");
+                    return ExitCode::from(1);
+                }
             }
         }
     }
@@ -3340,6 +3350,7 @@ fn cmd_verify(args: &[String]) -> ExitCode {
             faithfulness,
             cove,
             quality_gates,
+            exit_code_on_fail,
             knowledge,
             user_prompt,
         );

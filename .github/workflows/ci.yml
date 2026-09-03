@@ -127,6 +127,23 @@ jobs:
       - name: Run feature/dep drift checker
         run: python3 scripts/check_feature_dep_drift.py --manifest Cargo.toml --root src
 
+  documented-cli:
+    name: Documented CLI
+    runs-on: ubuntu-latest
+    # V292: fail if docs show an `ai_cli` command line the binary would not accept.
+    # A wrong flag does not error — the flag loops end in a catch-all that folds any
+    # unrecognised word into the positional argument — so a copy-pasted command
+    # "works" and answers a different question. The research guide carried five
+    # invented flags, two belonging to another command, and a sub-subcommand that
+    # never existed, directly under the words "Copy, paste, run".
+    #
+    # Only docs/ is checked here: the website lives in its own repository and is
+    # covered by running the same script locally with that path.
+    steps:
+      - uses: actions/checkout@v5
+      - name: Run documented-CLI checker
+        run: python3 scripts/check_documented_cli.py $(ls docs/*.md | grep -v IMPROVEMENTS_V)
+
   audit:
     name: Security Audit
     runs-on: ubuntu-latest

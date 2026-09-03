@@ -116,7 +116,7 @@ knowledge document still fits the small window.
 
 ## 5. The conversation-quality harness — and what each test means
 
-`ai_cli qa [--provider/--model/--url/--num-ctx/--profile]` runs a set of
+`ai_cli qa [--provider/--model/--url/--num-ctx/--temperature]` runs a set of
 multi-turn *scenarios* against a real model. Each scenario is a sequence of
 turns driven through **one** `AiAssistant`, so multi-turn context is genuinely
 exercised — turn N can be asked about a fact stated in turn 1. Scoring is

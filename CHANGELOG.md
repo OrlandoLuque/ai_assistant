@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v167 (2026-09-03) — V292: una puerta que impide volver a documentar comandos falsos (0.2.244)
+
+### Added
+- **`scripts/check_documented_cli.py`** — falla si cualquier documento enseña una línea
+  `ai_cli` que el binario no aceptaría. Es la puerta que convierte el hallazgo de V291 en
+  algo que no puede repetirse en silencio.
+  - **Por qué no es cosmético**: los bucles de banderas del CLI acaban en un
+    `other => query_parts.push(...)`, así que una bandera inventada **no da error** — se
+    dobla dentro del argumento posicional. `research "difusión" --output x.bib` busca la
+    frase *«difusión --output x.bib»*, imprime resultados y sale con 0. Quien copie y
+    pegue obtiene una respuesta plausible y equivocada, sin nada que se lo indique.
+  - Resuelve las banderas **por subcomando**, recorriendo su función y las funciones
+    locales que llama. Esa precisión es el punto: una regla laxa de «¿existe la bandera en
+    algún sitio del CLI?» es exactamente la que dejó pasar `research --output`, porque
+    `--output` existe… en otro comando.
+  - Entiende sub-subcomandos (`research ask --top-k`, `benchmark run --limit`) y las dos
+    formas de despacho anidado que usa el CLI.
+  - Excluye `docs/IMPROVEMENTS_V*.md`: son registro histórico, y reescribirlos para que
+    cuadren con el CLI de hoy falsearía el registro.
+  - **`ALLOWED` está vacía a propósito.** Un borrador anterior necesitaba dos excepciones
+    (`cost --snapshot`, `butler --intent`); ambas desaparecieron al arreglar el resolutor
+    en vez de silenciarlas. Se prefiere arreglar el resolutor a engordar la lista.
+- **Nuevo job `documented-cli` en CI**, junto a los otros dos gates de Python.
+- **`ai_cli verify --exit-code-on-fail`** — la puerta de calidad ya podía **fallar**, pero
+  el proceso salía con 0 igualmente, así que el paso de CI se ponía verde y la tubería
+  seguía. `GUIDE_ANTI_HALLUCINATION.md` documentaba esta bandera desde antes de que
+  existiera y prometía que «la build falla, como un test unitario». Ahora es verdad. Es
+  opcional para no romper scripts que ya parsean la salida.
+
+### Fixed — documentación
+- `docs/GUIDE_RESEARCH.md`: el apéndice «Complete CLI Reference» documentaba `--review`,
+  `--format`, `--year-range`, `--faithfulness` y `--quality-gates` sobre `research`.
+  Ninguna existe ahí; las dos últimas son de `verify`. Reescrito con los tres subcomandos
+  reales y una nota de qué **no** hay y por qué.
+- `docs/USE_CASES.md` y `use_cases.html`: el mismo bloque inventado, más `--year-range`.
+- `guide_research.html`: un cuarto bloque («Combined Pipeline — One Command») que la
+  primera pasada no vio porque el `ai_cli` estaba en otra línea del `<pre>`. Lo encontró
+  el script recién escrito, en su primera ejecución.
+- `docs/LOCAL_MODELS_CONTEXT_AND_QA.md`: `ai_cli qa --profile` — `--profile` es de `query`.
+
+### Notes
+- Dos fallos del propio script antes de dar por buena su salida: no unía las
+  continuaciones de línea en ficheros CRLF (que es donde vivían los bloques largos) y se
+  quedaba con la *última* definición de una función declarada dos veces bajo `cfg`
+  opuestos — leía el stub de `cmd_research_ask`, que no parsea banderas, y por eso daba
+  por inventadas todas las suyas. Un verificador que se cree sin comprobar es un
+  instrumento que miente, que es la lección de `feedback_diagnose_before_fixing`.
+
 ## [Unreleased] - v166 (2026-09-03) — V291: la web documentaba comandos que no existen (0.2.243)
 
 ### Fixed — documentación

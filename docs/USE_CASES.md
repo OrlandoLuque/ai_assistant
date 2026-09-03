@@ -423,22 +423,27 @@ in BibTeX format.
 **Commands.**
 
 ```bash
-# 1. Search across arXiv, Semantic Scholar, and PubMed
-cargo run --bin ai_cli --features "full,research" -- research \
+# 1. Search across the five providers
+cargo run --bin ai_cli --features "full" -- research \
     "transformer attention mechanisms" \
-    --providers arxiv,scholar,pubmed \
-    --max-results 20 \
-    --year-range 2020-2026
+    --providers arxiv,scholar,pubmed,openalex,crossref \
+    --max-results 20
 
-# 2. Generate a full literature review with BibTeX bibliography
-cargo run --bin ai_cli --features "full,research" -- research \
+# 2. Generate a literature review with its BibTeX bibliography.
+#    `review` is a subcommand, and no model is involved.
+cargo run --bin ai_cli --features "full" -- research review \
     "reinforcement learning from human feedback" \
-    --review \
-    --format systematic \
-    --bibtex
+    --mode systematic \
+    --out review.md --bibtex
 
-# 3. Import an existing .bib file into the knowledge base
-# (via MCP tool or programmatically)
+# 3. Index what was found, then ask it
+cargo run --bin ai_cli --features "full" -- research \
+    "reinforcement learning from human feedback" --index papers.db
+cargo run --bin ai_cli --features "full" -- research ask \
+    "which of them evaluate on human preferences?" --index papers.db
+
+# 4. Import an existing .bib file into the knowledge base
+# (MCP tool `import_bibtex`, or `BibParser` from Rust -- no CLI subcommand)
 ```
 
 **Required features.** `full`, `research`.
