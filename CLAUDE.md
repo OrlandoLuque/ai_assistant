@@ -35,7 +35,12 @@ Esto te da el contexto completo: dónde estamos, qué se ha hecho, cómo trabaja
 - **Binarios**: 40 declarados en `Cargo.toml`
 
 ## Módulos Principales
-- Multi-proveedor LLM (18): Ollama, LM Studio, OpenAI, Anthropic, Gemini, Azure OpenAI, Bedrock, Groq, Together AI, Fireworks, DeepSeek, Mistral, Perplexity, OpenRouter, HuggingFace, LocalAI, Kobold.cpp, text-gen-webui
+- Multi-proveedor LLM — **19 con nombre propio** más el genérico `OpenAICompatible`
+  (`AiProvider` en `src/config.rs`, verificado 2026-09-03): Ollama, LM Studio,
+  text-gen-webui, Kobold.cpp, LocalAI, llama.cpp, vLLM, OpenAI, Anthropic, Gemini,
+  Bedrock, Groq, Together, Fireworks, DeepSeek, Mistral, Perplexity, OpenRouter,
+  Azure OpenAI. *(Antes decía 18 e incluía HuggingFace, que no es una variante del enum;
+  faltaban llama.cpp y vLLM.)*
 - RAG 5 niveles: Self-RAG, CRAG, Graph RAG, RAPTOR — 7 backends vector DB
 - Multi-agente: 5 roles, orquestación, memoria compartida
 - Agente autónomo: 5 niveles autonomía, scheduler cron, browser automation (CDP)
