@@ -414,11 +414,15 @@ pub use events::{
     LoggingHandler, TimestampedEvent,
 };
 
+// `register_config_tools` takes an `mcp_protocol::McpServer`, so it only exists
+// when `tools` does. Re-exported separately rather than from the list below.
+#[cfg(feature = "tools")]
+pub use config_file::register_config_tools;
 pub use config_file::{
-    default_config_path, load_config, register_config_tools, save_config,
-    CacheConfig as FileCacheConfig, ConfigFile, ConfigFormat, ConfigValidationError, ConfigWatcher,
-    ContainersConfig, GenerationConfig, HybridConfig, LoggingConfig, ProviderConfig, RagFileConfig,
-    ReloadResult, ReloadScope, SecurityConfig, UrlConfig,
+    default_config_path, load_config, save_config, CacheConfig as FileCacheConfig, ConfigFile,
+    ConfigFormat, ConfigValidationError, ConfigWatcher, ContainersConfig, GenerationConfig,
+    HybridConfig, LoggingConfig, ProviderConfig, RagFileConfig, ReloadResult, ReloadScope,
+    SecurityConfig, UrlConfig,
 };
 
 pub use memory_management::{
@@ -2073,17 +2077,20 @@ pub use routing::{
     ModelCapabilityProfile, ModelRequirements, ModelRouter, RoutingDecision, TaskType,
 };
 
+// Same as `register_config_tools`: it registers on an `McpServer`, so it only
+// exists when `tools` does.
+#[cfg(feature = "tools")]
+pub use advanced_routing::register_routing_tools;
 pub use advanced_routing::{
-    merge_and_compile_nfas, register_routing_tools, AdaptivePerQueryRouter, AdvancedRoutingError,
-    ArmFeedback, ArmVisibility, BanditArm, BanditConfig, BanditNfaSynthesizer, BanditRouter,
-    BanditSnapshot, BanditStrategy, BetaParams, ContextSnapshot, ContextualDiscovery,
-    ContextualObservation, DfaRouter, DfaSnapshot, DfaState, DiscoveredSplit,
-    DiscoveryConfig as RoutingDiscoveryConfig, DomainSplit, EnsembleRouter,
-    EnsembleStrategy as RoutingEnsembleStrategy, FeatureDimension, FeatureImportance, ModelTier,
-    NfaDfaCompiler, NfaRouter, NfaRuleBuilder, NfaSnapshot, NfaState, NfaSymbol, PipelineConfig,
-    PipelineSnapshot, QueryFeatureExtractor, QueryFeatures, RewardPolicy, RoutingContext,
-    RoutingDag, RoutingDagNode, RoutingDagNodeType, RoutingOutcome, RoutingPipeline,
-    RoutingPreferences, RoutingVoter, SnapshotFormat, SubRouterVote,
+    merge_and_compile_nfas, AdaptivePerQueryRouter, AdvancedRoutingError, ArmFeedback,
+    ArmVisibility, BanditArm, BanditConfig, BanditNfaSynthesizer, BanditRouter, BanditSnapshot,
+    BanditStrategy, BetaParams, ContextSnapshot, ContextualDiscovery, ContextualObservation,
+    DfaRouter, DfaSnapshot, DfaState, DiscoveredSplit, DiscoveryConfig as RoutingDiscoveryConfig,
+    DomainSplit, EnsembleRouter, EnsembleStrategy as RoutingEnsembleStrategy, FeatureDimension,
+    FeatureImportance, ModelTier, NfaDfaCompiler, NfaRouter, NfaRuleBuilder, NfaSnapshot, NfaState,
+    NfaSymbol, PipelineConfig, PipelineSnapshot, QueryFeatureExtractor, QueryFeatures,
+    RewardPolicy, RoutingContext, RoutingDag, RoutingDagNode, RoutingDagNodeType, RoutingOutcome,
+    RoutingPipeline, RoutingPreferences, RoutingVoter, SnapshotFormat, SubRouterVote,
 };
 
 #[cfg(feature = "eval-suite")]

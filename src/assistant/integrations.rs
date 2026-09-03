@@ -561,6 +561,7 @@ impl AiAssistant {
     ///
     /// # Errors
     /// Returns `AiError` if the URL is empty or the connection fails.
+    #[cfg(feature = "tools")]
     pub fn connect_mcp_server(&mut self, server_url: &str) -> Result<(), crate::error::AiError> {
         use crate::mcp_client::{McpClientConfig, RemoteMcpClient};
 
@@ -605,6 +606,7 @@ impl AiAssistant {
     ///
     /// # Arguments
     /// * `server_url` - The MCP server URL to query for tools
+    #[cfg(feature = "tools")]
     pub fn list_mcp_tools(&self, server_url: &str) -> Vec<String> {
         use crate::mcp_client::{McpClientConfig, RemoteMcpClient};
 

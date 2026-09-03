@@ -15,6 +15,10 @@ mod contextual;
 mod distributed;
 mod ensemble;
 mod hierarchical;
+// Nothing in here exists without MCP: the whole module registers tools on an
+// `mcp_protocol::McpServer`, which lives behind `tools`. Gating the module is
+// cleaner than gating its one public function and then its tests one by one.
+#[cfg(feature = "tools")]
 mod mcp_tools;
 mod pipeline;
 
@@ -26,6 +30,7 @@ pub use contextual::*;
 pub use distributed::*;
 pub use ensemble::*;
 pub use hierarchical::*;
+#[cfg(feature = "tools")]
 pub use mcp_tools::*;
 pub use pipeline::*;
 

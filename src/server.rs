@@ -289,6 +289,7 @@ pub struct ServerConfig {
     pub rate_limiter: Option<Arc<ServerRateLimiter>>,
     /// Guardrail pipeline (built automatically when enrichment.enable_guardrails is true).
     #[serde(skip)]
+    #[cfg(feature = "security")]
     pub guardrail_pipeline: Option<Arc<Mutex<crate::guardrail_pipeline::GuardrailPipeline>>>,
     /// Cost budget manager (built automatically when enrichment.cost.enabled is true).
     #[serde(skip)]
@@ -766,6 +767,7 @@ impl Default for ServerConfig {
             enrichment: EnrichmentConfig::default(),
             tls: None,
             rate_limiter: None,
+            #[cfg(feature = "security")]
             guardrail_pipeline: None,
             budget_manager: None,
             trust_proxy: false,
@@ -1579,12 +1581,14 @@ impl AiServer {
 
     /// Initialize all enrichment subsystems (guardrails, budget manager).
     fn init_enrichment(config: ServerConfig) -> ServerConfig {
+        #[cfg(feature = "security")]
         let config = Self::init_guardrail_pipeline(config);
         Self::init_budget_manager(config)
     }
 
     /// Build a `GuardrailPipeline` if enrichment.enable_guardrails is set.
     /// Uses individual guard toggles from `enrichment.guardrails`.
+    #[cfg(feature = "security")]
     fn init_guardrail_pipeline(mut config: ServerConfig) -> ServerConfig {
         if config.enrichment.enable_guardrails && config.guardrail_pipeline.is_none() {
             use crate::guardrail_pipeline::{
@@ -2203,6 +2207,7 @@ fn handle_connection(
     let is_sse = request.path == "/chat/stream" || request.path == "/api/v1/chat/stream";
 
     // Check if this is an OpenAI-compatible streaming request
+    #[cfg_attr(not(feature = "adapters"), allow(unused_variables))]
     let is_openai_stream = (request.path == "/v1/chat/completions"
         || request.path == "/api/v1/chat/completions")
         && request.method == "POST"
@@ -2211,6 +2216,7 @@ fn handle_connection(
             || request.body.contains("\"stream\": true")
             || request.body.contains("\"stream\" : true"));
 
+    #[cfg(feature = "adapters")]
     if is_openai_stream {
         match handle_openai_chat_completions_stream(&request, assistant, config) {
             Ok(sse_body) => {
@@ -2444,6 +2450,7 @@ fn route_request_with_config(
             handle_get_session(id, assistant)
         }
         // OpenAI-compatible endpoints
+        #[cfg(feature = "adapters")]
         ("POST", "/v1/chat/completions") | ("POST", "/api/v1/chat/completions") => {
             // Streaming is handled in handle_connection; non-streaming falls here
             handle_openai_chat_completions(request, assistant, config)
@@ -2911,6 +2918,9 @@ fn handle_delete_session(id: &str, assistant: &Arc<Mutex<AiAssistant>>) -> (Stri
 // ============================================================================
 
 /// Build an OpenAI-format error response body.
+///
+/// Only the OpenAI-compatible handlers call it, and those need `adapters`.
+#[cfg(feature = "adapters")]
 fn openai_error_json(message: &str, error_type: &str, code: &str) -> String {
     serde_json::to_string(&serde_json::json!({
         "error": {
@@ -2923,6 +2933,7 @@ fn openai_error_json(message: &str, error_type: &str, code: &str) -> String {
 }
 
 /// Handle `POST /v1/chat/completions` — non-streaming.
+#[cfg(feature = "adapters")]
 fn handle_openai_chat_completions(
     request: &HttpRequest,
     assistant: &Arc<Mutex<AiAssistant>>,
@@ -3190,6 +3201,7 @@ fn handle_openai_chat_completions(
 }
 
 /// Handle `POST /v1/chat/completions` with `stream: true` — returns SSE body.
+#[cfg(feature = "adapters")]
 fn handle_openai_chat_completions_stream(
     request: &HttpRequest,
     assistant: &Arc<Mutex<AiAssistant>>,

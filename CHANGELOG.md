@@ -5,6 +5,57 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v169 (2026-09-03) — V294: la librería ya compila sin ninguna feature (0.2.246)
+
+### Fixed
+La tarea decía «la feature `research` sola no compila — arrastra `mcp_protocol` y `metrics`
+sin declararlo». **Era falso, y comprobarlo cambió el arreglo entero**: `cargo check
+--no-default-features` **sin ninguna feature** daba los mismos 57 errores. `research` no
+tenía nada que ver. Declarar aristas entre features (`research = ["tools", …]`) habría
+tapado el síntoma y hecho que `research` arrastrase media crate para nada.
+
+El problema real es la clase de bug de V267 otra vez: **código que se compila siempre
+referenciaba módulos que sí están tras un flag**. Arreglado gateando los *usos*, que es lo
+correcto cuando el que sobra es el que referencia:
+
+- `advanced_routing::mcp_tools` — el módulo entero registra herramientas sobre un
+  `McpServer`; va tras `tools`.
+- `register_config_tools`, `register_cost_tools` y sus dos re-exports en `lib.rs` — mismo
+  motivo, y los llamadores ya estaban dentro de funciones `cfg(tools)`.
+- `AiAssistant::metrics` y `assistant/metrics.rs` — tras `analytics`.
+- `connect_mcp_server` / `list_mcp_tools` — tras `tools`.
+- `rag_available` en `assistant/context.rs` — par `cfg`/`cfg(not(...))` con respaldo a
+  `false`, que es el estilo que ya usaba el propio fichero dos líneas más abajo.
+- `server.rs`: los dos handlers compatibles con OpenAI (y sus brazos de router) tras
+  `adapters`, y el campo `guardrail_pipeline` de `ServerConfig` más su inicializador tras
+  `security`.
+
+### Added
+- **`required-features` para `ai_cli` y `ai_assistant_cli`.** Usan `RagTierStore` y
+  `AiAssistant::metrics`, así que no pueden construirse sin `rag` y `analytics`.
+  Declararlo hace que `cargo build` sin features los **omita** en vez de fallar, que es
+  para lo que existe el campo.
+
+### Verified
+- `--no-default-features`: **0 errores** (antes 57).
+- `--features research` sola: **0 errores** — la pregunta que originó todo esto.
+- `FEATURES_MIN` (los 8 documentados): 0.
+- Clippy `-D warnings --all-targets` en los **dos** conjuntos de CI: limpio.
+- 7 005 tests de la librería: 0 fallos.
+
+### Notes — lo que queda, que es de OTRA clase
+Con la base arreglada aparece el segundo problema, y ahí **sí** toca declarar aristas en el
+manifiesto, porque el código de la feature A necesita de verdad a la B:
+
+- `rag` sola → 19 errores: usa `crate::embeddings` y `crate::metrics`.
+- `analytics` sola → 4: usa `crate::embeddings`.
+- `tools` sola → 17: `mcp_task_tools.rs` usa `rusqlite`, que entra con `rag`.
+- `adapters` sola → 14: el bloque de guardrails **dentro** del handler de OpenAI. Este no
+  es una arista de manifiesto sino un gate que falta dentro; se arregla como los de arriba.
+
+Registrado en la tarea con el diagnóstico por feature en vez de arreglarlo a medias: cada
+arista que se declara cambia lo que un consumidor se lleva, y eso se decide despierto.
+
 ## [Unreleased] - v168 (2026-09-03) — V293: cerrar la serie IMPROVEMENTS e indexar `docs/` (0.2.245)
 
 ### Added

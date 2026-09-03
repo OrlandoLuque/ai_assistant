@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.245"
+version = "0.2.246"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -878,11 +878,16 @@ bench = false
 name = "ai_cli"
 path = "src/bin/ai_cli.rs"
 bench = false
+# Usa `RagTierStore`, asi que no puede construirse sin `rag`. Declararlo aqui
+# es lo que hace que `cargo build` sin features lo omita en vez de fallar.
+required-features = ["rag"]
 
 [[bin]]
 name = "ai_assistant_cli"
 path = "src/bin/ai_assistant_cli.rs"
 bench = false
+# Lee `AiAssistant::metrics`, que vive tras `analytics`.
+required-features = ["analytics"]
 
 [[bin]]
 name = "ai_assistant_standalone"

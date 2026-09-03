@@ -762,6 +762,7 @@ impl CostMiddleware for DefaultCostMiddleware {
 ///
 /// All tools are read-only and return aggregated data (no per-request detail
 /// exposed to prevent information leakage — S7 mitigation).
+#[cfg(feature = "tools")]
 pub fn register_cost_tools(
     server: &mut crate::mcp_protocol::server::McpServer,
     dashboard: std::sync::Arc<std::sync::Mutex<CostDashboard>>,

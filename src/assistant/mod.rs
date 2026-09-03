@@ -378,6 +378,7 @@ pub struct AiAssistant {
     pub last_knowledge_usage: Option<KnowledgeUsage>,
 
     /// Metrics tracker for conversation quality analysis
+    #[cfg(feature = "analytics")]
     pub metrics: crate::metrics::MetricsTracker,
 
     /// Cached detected context size for the current model
@@ -612,6 +613,9 @@ mod execution;
 mod integrations;
 mod memory;
 mod messaging;
+// Every method in here returns a `crate::metrics::*` type, so the module has
+// nothing to offer without `analytics`.
+#[cfg(feature = "analytics")]
 mod metrics;
 mod models;
 #[cfg(feature = "rag")]
@@ -670,6 +674,7 @@ impl AiAssistant {
             knowledge_usage_history: Vec::new(),
             #[cfg(feature = "rag")]
             last_knowledge_usage: None,
+            #[cfg(feature = "analytics")]
             metrics: crate::metrics::MetricsTracker::new("default"),
             detected_context_size: None,
             detected_context_model: None,

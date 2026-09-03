@@ -1520,6 +1520,7 @@ impl ConfigWatcher {
 /// - `config.validate` — check current configuration for errors
 /// - `config.get_provider_url` — get the URL for a specific provider
 /// - `config.can_write` — check whether write access is enabled
+#[cfg(feature = "tools")]
 pub fn register_config_tools(
     server: &mut crate::mcp_protocol::McpServer,
     config: Arc<Mutex<AiConfig>>,

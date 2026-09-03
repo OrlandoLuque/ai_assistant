@@ -356,7 +356,10 @@ impl AiAssistant {
             .saturating_sub(conversation_tokens)
             .saturating_sub(response_reserve);
 
+        #[cfg(feature = "rag")]
         let rag_available = self.rag_db.is_some();
+        #[cfg(not(feature = "rag"))]
+        let rag_available = false;
         let memory_available = self.memory_manager.is_some();
         #[cfg(feature = "advanced-memory")]
         let procedural_available = self.procedural_store.is_some();
