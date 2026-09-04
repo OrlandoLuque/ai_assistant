@@ -70,8 +70,21 @@ Documentation drifts silently, so some of it is enforced:
   found to document five flags that never existed: a wrong flag does not error, it
   is folded into the positional argument, so the command "works" and answers a
   different question.
+- `scripts/check_openapi_routes.py` — fails when the embedded server serves a route
+  that `/openapi.json` does not declare, or declares one it does not serve. The spec
+  is what a third party generates their client from, and the failure is silent in one
+  direction: a hidden endpoint never errors, the generated client simply lacks it.
+- `scripts/check_binaries_documented.py` — [`BINARIES.md`](BINARIES.md) and
+  `Cargo.toml` must agree on which binaries exist, the stated total must be right, and
+  no row may link to a page that is not there. The page calls itself the authoritative
+  inventory and had been listing 26 of 41.
 - `scripts/check_feature_dep_drift.py` — `dep:X` vs feature `X` in `Cargo.toml`.
 - `scripts/check_deprecation_policy.py` — every `#[deprecated]` carries `since` and `note`.
+- `scripts/check_bench_budget.py` — benchmark budgets.
 
-All three run in CI. If you add a claim here that can be checked mechanically,
-prefer adding the check to trusting the prose.
+All six run in CI. `scripts/check_release_ready.py` is the seventh checker in
+`scripts/` and is **not** wired to CI — it is a pre-release manual step.
+
+This list said "all three" until V307, while five were already running. If you add a
+claim here that can be checked mechanically, prefer adding the check to trusting the
+prose — and then remember that this paragraph is itself prose.
