@@ -5,6 +5,63 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v180 (2026-09-05) — V305: el servidor MCP deja de ser una demo y pasa a ser un binario (0.2.257)
+
+### El problema
+`examples/mcp_server.rs` se llamaba «servidor MCP» y no servía nada. Construía un
+`McpServer`, le registraba una herramienta del tiempo inventada — 22 °C para la ciudad que
+le pidieras —, le pasaba dos peticiones escritas por él mismo e imprimía las respuestas.
+**Nunca leía un byte de stdin**, así que ningún cliente podía conectarse. Demostraba la
+API; el transporte no existía.
+
+### Added
+- **`ai_mcp_server`**, binario real: JSON-RPC 2.0 delimitado por líneas sobre **stdio**,
+  que es el transporte que lanzan Claude Desktop, Claude Code y el resto del ecosistema.
+  Registra los conjuntos de herramientas de verdad de la librería: **18 herramientas** en
+  la build completa (tareas, configuración, benchmarks, conocimiento).
+- `--list-tools` para auditar qué sirve sin levantar una sesión; `--db` para el almacén
+  de tareas; `--allow-config-writes`, que está **apagado por defecto**.
+- `McpServer::handle_stream_message`, que devuelve `Option<String>`.
+
+### La pieza que faltaba, y por qué es un `Option`
+`handle_message` devuelve `String` **siempre**. Pero JSON-RPC 2.0 dice que una
+*notificación* — una petición sin `id` — **no debe contestarse**, y todo cliente MCP
+envía `notifications/initialized` justo después de `initialize`. Un bucle de stdio
+construido sobre `handle_message` habría escrito ahí una trama que el cliente no está
+leyendo, y la desincronización aparece más tarde y en otro sitio.
+
+El tipo es lo que arregla eso: `None` significa «no contestes», algo que `String` no puede
+decir. La notificación **sí se ejecuta** — la spec dice sin respuesta, no sin efecto — y
+un mensaje que no parsea **no** es una notificación: decidir que lo era exigiría haberlo
+parseado, así que recibe su error con `id` nulo, como manda la spec. Tragárselo dejaría al
+cliente esperando una respuesta que no llega nunca.
+
+### stdout es del protocolo
+Bajo stdio, **cualquier byte en stdout que no sea una trama JSON-RPC corrompe la sesión**.
+Un `println!` suelto, una barra de progreso, un aviso de una dependencia: el síntoma es
+«el servidor se ha desconectado», lejos de la causa. Aquí todo lo humano — ayuda incluida,
+por si un cliente pasa `--help` — va a **stderr**.
+
+Eso convierte a **N52 en un fallo de protocolo, no en ruido cosmético**: `pdf-extract`
+escribe «Unicode mismatch» directo a stdout. Por eso este binario **no** registra las
+herramientas de documentos, y el motivo está escrito en su cabecera en vez de quedar como
+una ausencia inexplicada.
+
+### Verified
+- 7 tests del binario y 3 de la librería. El bucle `serve` acepta cualquier
+  `BufRead`/`Write`, así que las tramas se prueban sobre buffers en memoria: un bucle de
+  stdio que solo se puede ejercitar lanzando el proceso es un bucle cuyos fallos de
+  framing los encuentra el usuario.
+- Y el binario de verdad, contra un apretón de manos completo: 4 mensajes de entrada,
+  **3 respuestas** — la notificación no obtuvo réplica —, 18 herramientas listadas y
+  stdout con JSON válido y nada más.
+- `clippy --features full --all-targets -D warnings` limpio.
+
+### Lo que sigue pendiente
+Las herramientas de `research` no entran: usan `dispatch_tool`, un segundo sistema de
+herramientas que convive con el registro de `McpServer`. Consolidarlos es N39, y meterlas
+a la fuerza aquí habría sido dar por hecha una decisión de diseño que aún no está tomada.
+
 ## [Unreleased] - v179 (2026-09-05) — V304: `/api/chat` y `/api/generate`, y el dialecto de Ollama queda completo (0.2.256)
 
 ### Added

@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.256"
+version = "0.2.257"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -792,6 +792,14 @@ bench = false
 name = "kpkg_tool"
 path = "src/bin/kpkg_tool.rs"
 required-features = ["rag"]
+bench = false
+
+[[bin]]
+# The MCP server as a real binary. `examples/mcp_server.rs` demonstrates the API against
+# canned requests; this one is the stdio transport a client can actually launch.
+name = "ai_mcp_server"
+path = "src/bin/ai_mcp_server.rs"
+required-features = ["tools"]
 bench = false
 
 [[bin]]

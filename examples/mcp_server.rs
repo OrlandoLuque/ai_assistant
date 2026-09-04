@@ -1,8 +1,19 @@
-//! MCP (Model Context Protocol) server example.
+//! MCP (Model Context Protocol) **API demo** — not a server you can connect to.
 //!
 //! Run with: cargo run --example mcp_server --features tools
 //!
-//! Demonstrates creating an MCP server with tools and resources.
+//! This shows how to build an `McpServer` and register a tool, a resource and a prompt.
+//! It then hands the server two requests it wrote itself and prints the answers. Nothing
+//! reads stdin, so no client can talk to it: the weather tool below returns a hardcoded
+//! 22 °C for whatever city you name.
+//!
+//! **For a real server, use the `ai_mcp_server` binary.** It speaks newline-delimited
+//! JSON-RPC over stdio — the transport MCP clients actually launch — and registers the
+//! library's real tool sets (tasks, config, benchmarks, knowledge) instead of a fake one:
+//!
+//! ```text
+//! cargo run --bin ai_mcp_server --features tools -- --list-tools
+//! ```
 
 use ai_assistant::mcp_protocol::McpToolAnnotation;
 use ai_assistant::{McpRequest, McpResource, McpResourceContent, McpServer, McpTool};

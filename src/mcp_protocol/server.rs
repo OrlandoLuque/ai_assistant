@@ -305,11 +305,71 @@ impl McpServer {
             }
         }
     }
+
+    /// Handle one message from a stream transport (stdio, pipes, sockets).
+    ///
+    /// Returns `None` when the message is a **notification** — a well-formed request that
+    /// carries no `id`. JSON-RPC 2.0 forbids answering those, and [`Self::handle_message`]
+    /// cannot express it because it always returns a string. A stdio server that echoes a
+    /// reply to `notifications/initialized` is putting a frame on the wire that the client
+    /// never asked for and, depending on the client, is not prepared to read.
+    ///
+    /// The notification still *runs*: the spec says no reply, not no effect.
+    ///
+    /// A message that fails to parse is **not** treated as a notification. It cannot be —
+    /// deciding it was one requires having parsed it. Per the spec it gets an error
+    /// response with a null `id`, which is what this returns.
+    pub fn handle_stream_message(&self, message: &str) -> Option<String> {
+        let is_notification = serde_json::from_str::<McpRequest>(message)
+            .map(|r| r.id.is_none())
+            .unwrap_or(false);
+        let reply = self.handle_message(message);
+        if is_notification {
+            None
+        } else {
+            Some(reply)
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_notification_gets_no_reply_but_still_runs() {
+        // JSON-RPC 2.0: a request without `id` is a notification and MUST NOT be
+        // answered. `handle_message` cannot say that — it always returns a string — so a
+        // stdio transport built on it would write an unrequested frame.
+        let server = McpServer::new("test", "1.0");
+        let notification = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
+        assert_eq!(server.handle_stream_message(notification), None);
+        // The same message through the older entry point does produce a reply, which is
+        // exactly the difference this method exists for.
+        assert!(!server.handle_message(notification).is_empty());
+    }
+
+    #[test]
+    fn a_request_with_an_id_is_still_answered() {
+        let server = McpServer::new("test", "1.0");
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
+        let reply = server
+            .handle_stream_message(request)
+            .expect("a request with an id must be answered");
+        assert!(reply.contains("\"id\":1"), "reply was {reply}");
+    }
+
+    #[test]
+    fn unparseable_input_is_answered_not_swallowed() {
+        // Not a notification: deciding it was one would require having parsed it. The
+        // spec says an error response with a null id, and swallowing it would leave the
+        // client waiting for a reply that never comes.
+        let server = McpServer::new("test", "1.0");
+        let reply = server
+            .handle_stream_message("{ this is not json")
+            .expect("a parse error must be reported, not swallowed");
+        assert!(reply.contains("-32700"), "reply was {reply}");
+    }
 
     #[test]
     fn tools_list_out_of_range_cursor_no_panic() {
