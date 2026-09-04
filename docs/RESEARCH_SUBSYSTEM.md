@@ -7,7 +7,7 @@
 > propio apartado al final, porque un inventario que solo lista aciertos no sirve para
 > nada.
 >
-> Fecha: 3 de septiembre de 2026 · versión 0.2.242 · feature flag `research`
+> Fecha: 4 de septiembre de 2026 · versión 0.2.248 · feature flag `research`
 
 ---
 
@@ -30,9 +30,10 @@ lenguaje para la parte de buscar y estructurar.
 | `literature_review.rs` | La tubería de revisión bibliográfica | 862 | 20 |
 | `mcp_research_tools.rs` | Las seis herramientas expuestas por MCP | 460 | 11 |
 | `research_rag.rs` | El puente papers → índice RAG | 298 | 8 |
-| **Total** | | **6 794** | **143** |
+| `paper_fulltext.rs` | Descarga el PDF y lo convierte en texto | 329 | 7 |
+| **Total** | | **7 123** | **150** |
 
-Sobre un total de ~523 000 líneas y 9 600+ tests en la librería entera.
+Sobre un total de 540 000 líneas y 9 750+ tests en la librería entera.
 
 ---
 
@@ -120,13 +121,35 @@ papers y quedarse con una lista. `research_rag.rs` los mete en el índice:
 - Un fallo no pierde el lote: el informe separa «ya estaba» de «falló», que son cosas
   distintas.
 
+## 5b. Texto completo — leer el paper, no solo su ficha *(V296)*
+
+`paper_fulltext.rs` descarga el PDF de un paper y lo convierte en texto, y con
+`--fulltext` se indexa el artículo entero. La diferencia medida: **229 trozos frente a ~2
+por paper** con solo abstracts. Y se nota al preguntar — «montaje experimental» devuelve la
+sección de método, que nunca está en el abstract.
+
+Las tres decisiones son la misma: **negarse a adivinar**.
+
+- **La mayoría de resultados no tienen PDF.** Lo rellenan arXiv y OpenAlex; Crossref y
+  PubMed casi nunca. Se cuenta aparte, porque «no hay PDF abierto» y «la descarga falló»
+  piden reacciones distintas.
+- **Un muro de pago responde 200 OK con HTML.** El código de estado no dice nada. Se
+  comprueban los bytes mágicos `%PDF-`: darle un formulario de login a un parser de PDF
+  produce basura *plausible*, que es peor que saltarlo.
+- **Un «paper» puede ser cientos de megas.** Tope de 32 MB, sobre los bytes leídos y no
+  sobre el `Content-Length`, que es una pista y no una garantía.
+
+Se indexa con la **misma clave** que la ruta de abstracts, así que ejecutar primero la
+pasada barata y luego esta es una mejora segura, no una duplicación.
+
 ## 6. Superficie de uso
 
 **CLI** (`ai_cli`, sin modelo para nada de esto):
 
 ```
 ai_cli research <query> --providers openalex,crossref --max-results 10 --bibtex
-ai_cli research <query> --index papers.db          # ingiere lo encontrado
+ai_cli research <query> --index papers.db          # ingiere abstracts
+ai_cli research <query> --index papers.db --fulltext  # ingiere el paper entero
 ai_cli research ask "<pregunta>" --index papers.db # pregunta al índice
 ai_cli research review <tema> --mode systematic --out revision.md --bibtex
 ```
@@ -151,9 +174,9 @@ Esto importa tanto como lo anterior:
   Están cableados al bucle de agente (`agent_wiring.rs`) y se orquestan como cualquier
   otro rol, pero no hay un «revisor por pares» que coja un borrador y lo devuelva anotado
   de principio a fin.
-- **No hay descarga ni parseo de PDF dentro del subsistema.** `paper_metadata` trabaja
-  sobre texto; convertir el PDF es cosa del módulo de documentos y no está encadenado con
-  la búsqueda.
+- ~~**No hay descarga ni parseo de PDF dentro del subsistema.**~~ **Hecho en V296**
+  (`paper_fulltext.rs`): descarga el PDF, lo convierte a texto y lo indexa con la misma
+  clave, así que *mejora* lo ya indexado en vez de duplicarlo. Ver más abajo.
 - **La síntesis de la revisión es estructural, no interpretativa.** Agrupa, ordena y cita;
   no argumenta. Para argumentar hace falta un modelo, y esa parte no está atada a la
   tubería.
@@ -166,11 +189,12 @@ Esto importa tanto como lo anterior:
 ## Cómo verificar cualquier afirmación de este documento
 
 Todo lo anterior tiene tests y casi todo se ha ejercitado contra las APIs reales, no solo
-contra ejemplos guardados. Los 143 tests corren con:
+contra ejemplos guardados. Los 150 tests corren con:
 
 ```
 cargo test --features "full" --lib academic_search
 cargo test --features "full" --lib research_rag
+cargo test --features "full" --lib paper_fulltext
 cargo test --features "full" --lib literature_review
 cargo test --features "full" --lib bibtex
 ```
