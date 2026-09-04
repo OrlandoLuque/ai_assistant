@@ -47,6 +47,28 @@ La primera versión de esta entrada se escribió pasando el texto en línea a `b
 nombres de fichero. Revertido y rehecho desde un fichero, que es exactamente la regla que
 ya estaba escrita y que me salté.
 
+### Seguimiento: tres CI rojos esta noche, ninguno por el código
+V304 y V306 fallaron en CI y ninguno era culpa del commit. Los tres fallos son el mismo,
+siempre bajando el árbol de `lance*` (que `lancedb` arrastra entero):
+
+```
+warning: spurious network error: failed to get successful HTTP response
+         from https://index.crates.io/la/nc/lance-file, got 503
+error: transfer too slow: failed to transfer more than 10 bytes in 30s
+```
+
+El segundo es **cargo abortando por su propio `http.low-speed-limit`**: 10 bytes/s durante
+30 s, el valor por defecto. En un runner que comparte ancho de banda con todo lo demás de
+la máquina eso es un gatillo de pelo, y tira el job entero por un atasco que se habría
+despejado solo. `CARGO_NET_RETRY=10`, `CARGO_HTTP_LOW_SPEED_LIMIT=5` y
+`CARGO_HTTP_TIMEOUT=120` en los tres workflows — `ci.yml`, `release.yml` y
+`supply-chain.yml`, porque los tres descargan lo mismo.
+
+No cuesta nada cuando la red va bien, y quita un modo de fallo que no tiene que ver con el
+código. Que importa por una razón concreta: **un build rojo cuya causa es el registro es
+peor que uno lento**, porque te enseña a relanzar sin leer — y el día que el fallo sea de
+verdad, también lo relanzas.
+
 ## [Unreleased] - v181 (2026-09-05) — V306: el inventario de binarios decía 26 de 41, y el release se publicaba con binarios de menos (0.2.258)
 
 ### El inventario

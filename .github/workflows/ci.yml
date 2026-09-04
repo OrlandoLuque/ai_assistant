@@ -11,6 +11,22 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # V307: crates.io transfer settings. Three CI runs in one night died here, always
+  # while fetching the `lance*` tree (lancedb pulls a large one), with exactly two
+  # errors: HTTP 503 from index.crates.io, and
+  #   "transfer too slow: failed to transfer more than 10 bytes in 30s"
+  #
+  # That second one is cargo's own `http.low-speed-limit` giving up — 10 bytes/s over
+  # 30 s, the default. On a runner sharing bandwidth with everything else on the box
+  # that is a hair trigger, and it aborts the whole job over a stall that would have
+  # cleared. Raising the window and the retry count costs nothing when the network is
+  # fine and removes a failure mode that has nothing to do with the code.
+  #
+  # A red build whose cause is the registry is worse than a slow one: it trains you to
+  # re-run without reading, and the day the failure is real you re-run that too.
+  CARGO_NET_RETRY: 10
+  CARGO_HTTP_LOW_SPEED_LIMIT: 5
+  CARGO_HTTP_TIMEOUT: 120
   # Standard test set — covers core + all lightweight opt-in features
   FEATURES_STD: "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing"
   # Heavy networking features (separate due to quinn/rustls deps)

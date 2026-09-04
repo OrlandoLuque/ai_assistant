@@ -30,6 +30,14 @@ permissions:
   contents: write       # softprops/action-gh-release needs write
   id-token: write       # cosign keyless needs OIDC token
 
+env:
+  # V307: same crates.io transfer settings as ci.yml. See the comment there: cargo's
+  # default `http.low-speed-limit` (10 bytes/s over 30 s) aborts jobs over transient
+  # registry stalls. A release that fails for that reason is worse than a slow one.
+  CARGO_NET_RETRY: 10
+  CARGO_HTTP_LOW_SPEED_LIMIT: 5
+  CARGO_HTTP_TIMEOUT: 120
+
 jobs:
   build:
     name: Build ${{ matrix.target }}
