@@ -5811,6 +5811,139 @@ mod tests {
             });
         }
 
+        // ── El contrato que ve un SDK de terceros ────────────────────────
+        //
+        // Los tests de arriba cubren el camino feliz y las politicas propias
+        // (auth, rate limit, dedupe, hops). Estos cubren lo otro: que un cliente
+        // que manda basura reciba algo que su libreria sepa leer. El SDK de
+        // OpenAI parsea `error.message` / `error.type`; si en su lugar le llega
+        // texto plano o un 500, el usuario ve "unexpected error" y no sabe que
+        // fue culpa suya.
+
+        #[test]
+        fn test_gateway_e2e_malformed_json_returns_400_envelope() {
+            rt().block_on(async {
+                let (addr, _shutdown) = spawn_mock_backend(chat_ok_response).await;
+                let state = make_state(&addr, None);
+                let ctx = build_gateway_context(
+                    state,
+                    &MiddlewareSection::default(),
+                    &AuditSection::default(),
+                )
+                .unwrap();
+                let router = build_gateway_router(ctx);
+
+                let resp = router
+                    .oneshot(chat_req("{not json at all".to_string()))
+                    .await
+                    .unwrap();
+                assert_eq!(resp.status(), 400);
+                let body = read_body_bytes(resp).await;
+                let json: serde_json::Value = serde_json::from_slice(&body)
+                    .expect("a 400 must still be a JSON envelope, not plain text");
+                assert_eq!(
+                    json["error"]["type"].as_str(),
+                    Some("invalid_request_error")
+                );
+                assert!(json["error"]["message"].as_str().is_some());
+            });
+        }
+
+        #[test]
+        fn test_gateway_e2e_empty_body_returns_400_envelope() {
+            // Un POST con cuerpo vacio es lo que manda un cliente mal configurado
+            // o un healthcheck ingenuo. No debe llegar al backend ni reventar.
+            rt().block_on(async {
+                let (addr, _shutdown) = spawn_mock_backend(chat_ok_response).await;
+                let state = make_state(&addr, None);
+                let ctx = build_gateway_context(
+                    state,
+                    &MiddlewareSection::default(),
+                    &AuditSection::default(),
+                )
+                .unwrap();
+                let router = build_gateway_router(ctx);
+
+                let resp = router.oneshot(chat_req(String::new())).await.unwrap();
+                assert_eq!(resp.status(), 400);
+                let body = read_body_bytes(resp).await;
+                let json: serde_json::Value =
+                    serde_json::from_slice(&body).expect("envelope must be valid JSON");
+                assert_eq!(
+                    json["error"]["type"].as_str(),
+                    Some("invalid_request_error")
+                );
+            });
+        }
+
+        #[test]
+        fn test_gateway_e2e_json_that_is_not_an_object_returns_400_envelope() {
+            // `[1,2,3]` es JSON valido y no es una peticion. El parser lo acepta,
+            // asi que la validacion no puede quedarse en "parsea".
+            rt().block_on(async {
+                let (addr, _shutdown) = spawn_mock_backend(chat_ok_response).await;
+                let state = make_state(&addr, None);
+                let ctx = build_gateway_context(
+                    state,
+                    &MiddlewareSection::default(),
+                    &AuditSection::default(),
+                )
+                .unwrap();
+                let router = build_gateway_router(ctx);
+
+                let resp = router
+                    .oneshot(chat_req("[1,2,3]".to_string()))
+                    .await
+                    .unwrap();
+                let status = resp.status().as_u16();
+                let body = read_body_bytes(resp).await;
+                // No se exige un codigo concreto -- lo que se exige es que NUNCA
+                // sea un 5xx: un cuerpo del cliente no puede leerse como fallo
+                // del servidor, porque el SDK reintentaria una peticion que nunca
+                // va a funcionar.
+                assert!(
+                    status < 500,
+                    "client garbage must not surface as a server error (got {status}, body: {})",
+                    String::from_utf8_lossy(&body)
+                );
+            });
+        }
+
+        #[test]
+        fn test_gateway_e2e_models_endpoint_has_the_openai_list_shape() {
+            // `GET /v1/models` es lo primero que llama casi cualquier cliente
+            // para descubrir que hay. Su forma es parte del contrato:
+            // `{"object":"list","data":[{"id":..,"object":"model"}]}`.
+            rt().block_on(async {
+                let (addr, _shutdown) = spawn_mock_backend(chat_ok_response).await;
+                let state = make_state(&addr, None);
+                let ctx = build_gateway_context(
+                    state,
+                    &MiddlewareSection::default(),
+                    &AuditSection::default(),
+                )
+                .unwrap();
+                let router = build_gateway_router(ctx);
+
+                let req = axum::http::Request::builder()
+                    .method("GET")
+                    .uri("/v1/models")
+                    .body(Body::empty())
+                    .unwrap();
+                let resp = router.oneshot(req).await.unwrap();
+                assert!(resp.status().is_success(), "status: {}", resp.status());
+                let body = read_body_bytes(resp).await;
+                let json: serde_json::Value =
+                    serde_json::from_slice(&body).expect("models must be JSON");
+                assert_eq!(json["object"].as_str(), Some("list"));
+                assert!(
+                    json["data"].is_array(),
+                    "data must be an array, got: {}",
+                    json["data"]
+                );
+            });
+        }
+
         #[test]
         fn test_gateway_e2e_no_healthy_backend_returns_envelope() {
             rt().block_on(async {

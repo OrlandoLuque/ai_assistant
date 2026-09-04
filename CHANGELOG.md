@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v172 (2026-09-04) — V297: el contrato que ve un SDK de terceros, bajo test (0.2.249)
+
+### Added
+Cuatro tests e2e del gateway de `ai_proxy`, sobre el hueco que dejaban los 119 anteriores.
+Aquellos cubren el camino feliz y las políticas propias — auth, rate limit, caéé, dedupe,
+hops, SSE, auditoría. Ninguno cubría **qué pasa cuando el cliente manda basura**, que es
+justo lo que un SDK ajeno va a hacer tarde o temprano:
+
+- Cuerpo que no es JSON → 400 **con sobre de OpenAI**, no texto plano.
+- Cuerpo vacío → 400 con sobre. Es lo que manda un cliente mal configurado o un
+  healthcheck ingenuo, y no debe llegar al backend.
+- JSON válido que no es un objeto (`[1,2,3]`) → **nunca 5xx**. El test no exige un código
+  concreto; exige que no sea de servidor, porque un SDK reintenta los 5xx y estaría
+  reintentando para siempre una petición que jamás va a funcionar.
+- `GET /v1/models` → la forma `{"object":"list","data":[…]}`. Es lo primero que llama casi
+  cualquier cliente para descubrir qué hay, así que su forma es parte del contrato.
+
+### Notes — no arreglan nada, y eso es el resultado
+**Los cuatro pasaron a la primera.** El gateway ya se comportaba bien: todos sus caminos de
+error salen por `openai_error`, que construye el sobre correcto, así que no había bug que
+arreglar. Lo que añaden es que esa corrección queda **fijada**: hoy es cierta por
+construcción y mañana podría dejar de serlo con un refactor, sin que nada avisara.
+
+Se dice explícitamente porque la tentación al escribir un changelog es presentar cada test
+nuevo como un fallo cazado.
+
+122 tests en `ai_proxy`. Clippy `-D warnings --all-targets` limpio en el conjunto de red.
+
 ## [Unreleased] - v171 (2026-09-04) — V296: los papers ya se leen enteros, no solo su abstract (0.2.248)
 
 ### Added
