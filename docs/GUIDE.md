@@ -3195,7 +3195,16 @@ handler.handle_message(r#"{"type":"stream_end","id":"msg_1"}"#)?;
 
 ## 61. MCP Protocol
 
-**What**: Implementation of Anthropic's Model Context Protocol (MCP, version 2024-11-05) over JSON-RPC 2.0. Provides both a server side (register tools, resources, and prompts) and a client side (call tools, read resources, retrieve prompts from remote MCP servers).
+**What**: Implementation of Anthropic's Model Context Protocol over JSON-RPC 2.0. The
+server negotiates **2025-03-26** (`MCP_VERSION`) and falls back to 2024-11-05
+(`MCP_VERSION_PREVIOUS`) for older clients — this line used to name the fallback as if it
+were the current version. Provides both a server side (register tools, resources, and
+prompts) and a client side (call tools, read resources, retrieve prompts from remote MCP
+servers).
+
+To actually **run** a server, use the `ai_mcp_server` binary: JSON-RPC over stdio, the
+transport MCP clients launch. `examples/mcp_server.rs` demonstrates the API and never
+reads stdin. See [BINARIES.md](BINARIES.md#ai_mcp_server-v305).
 
 ### MCP Server
 
