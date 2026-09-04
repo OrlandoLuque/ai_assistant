@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v176 (2026-09-05) — V301: la especificación OpenAPI ocultaba diez endpoints reales (0.2.253)
+
+### Fixed
+Diferenciando las rutas de `server.rs` contra las que declara la spec que servimos en
+`/openapi.json`: **16 declaradas frente a 25 servidas.** Diez endpoints que el servidor
+lleva sirviendo desde siempre no aparecían en ninguna parte.
+
+Es **el espejo del desfase del CLI de V291**: allí la documentación prometía comandos que no
+existían, aquí la especificación calla endpoints que sí. La consecuencia es distinta y
+tampoco es inocua — quien genere un cliente desde nuestra spec obtiene una API con agujeros
+y **no tiene forma de saberlo**.
+
+Añadidos, con esquemas leídos de los manejadores y no inventados:
+- `/sessions` (GET) y `/sessions/{id}` (GET, DELETE)
+- `/hardware` (GET)
+- `/benchmarks` (GET)
+- `/recommend-model` (POST) — **documentado como dependiente de la feature
+  `model-recommender`**, porque una spec que esconde que un endpoint solo existe en algunos
+  builds engaña igual que una que lo inventa.
+- Y los alias `/api/v1/` de `models`, `chat/completions`, `ws`, `sessions`, `hardware`,
+  `benchmarks` y `recommend-model`. El servidor sirve **todas** las rutas con ese prefijo;
+  la spec solo reconocía seis.
+
+### Notes — por qué los tests no lo cazaron
+`test_server_api_spec_has_all_endpoints` enumera rutas a mano. Eso solo comprueba que estén
+las que alguien **se acordó** de añadir, y por construcción no puede detectar lo contrario:
+que exista una ruta servida que la spec no declara. Un test que solo sabe lo que ya sabías
+no descubre nada. La comprobación mecánica que sí lo hace va aparte, en V302.
+
+16 tests del módulo en verde. Clippy `-D warnings --all-targets` limpio.
+
 ## [Unreleased] - v175 (2026-09-04) — V300: el banco dependía de `rustdoc`, y un antivirus lo probó (0.2.252)
 
 ### Fixed — la causa real de la inestabilidad de N53

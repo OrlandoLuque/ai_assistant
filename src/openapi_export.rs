@@ -1038,6 +1038,118 @@ pub fn generate_server_api_spec() -> serde_json::Value {
         }
     });
 
+    // ── Endpoints the server has always served and the spec never declared ──────
+    //
+    // Found by diffing the routes in `server.rs` against the paths below: ten of them
+    // were missing. It is the mirror image of the documented-CLI drift fixed in V291 —
+    // there the docs promised more than existed, here the spec promised less. The
+    // consequence is different but not harmless: anyone generating a client from this
+    // spec silently gets an API with holes in it, and has no way to know.
+
+    let sessions_path = serde_json::json!({
+        "get": {
+            "summary": "List conversation sessions",
+            "operationId": "listSessions",
+            "tags": ["sessions"],
+            "responses": {
+                "200": {
+                    "description": "The sessions currently held in memory",
+                    "content": { "application/json": { "schema": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": { "type": "string" },
+                                "messages": { "type": "integer", "description": "Number of messages in the session" }
+                            }
+                        }
+                    } } }
+                }
+            }
+        }
+    });
+
+    let session_by_id_path = serde_json::json!({
+        "get": {
+            "summary": "Get one session",
+            "operationId": "getSession",
+            "tags": ["sessions"],
+            "parameters": [ { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } } ],
+            "responses": {
+                "200": { "description": "The session" },
+                "404": { "description": "No session with that id" }
+            }
+        },
+        "delete": {
+            "summary": "Delete a session",
+            "operationId": "deleteSession",
+            "tags": ["sessions"],
+            "parameters": [ { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } } ],
+            "responses": {
+                "200": { "description": "Deleted" },
+                "404": { "description": "No session with that id" }
+            }
+        }
+    });
+
+    let hardware_path = serde_json::json!({
+        "get": {
+            "summary": "Detected hardware",
+            "description": "CPU, RAM and GPU as detected on the host, cached after the first probe.",
+            "operationId": "getHardware",
+            "tags": ["server"],
+            "responses": {
+                "200": {
+                    "description": "Hardware report",
+                    "content": { "application/json": { "schema": { "type": "object" } } }
+                }
+            }
+        }
+    });
+
+    let benchmarks_path = serde_json::json!({
+        "get": {
+            "summary": "List available benchmarks",
+            "operationId": "listBenchmarks",
+            "tags": ["server"],
+            "responses": {
+                "200": {
+                    "description": "The benchmark catalogue",
+                    "content": { "application/json": { "schema": {
+                        "type": "object",
+                        "properties": {
+                            "total": { "type": "integer" },
+                            "benchmarks": { "type": "array", "items": { "type": "object" } }
+                        }
+                    } } }
+                }
+            }
+        }
+    });
+
+    let recommend_model_path = serde_json::json!({
+        "post": {
+            "summary": "Recommend a model for this machine",
+            "description": "Only present when the crate is built with the `model-recommender` feature; otherwise the route answers 404. Stated here because a spec that hides a build-dependent endpoint is as misleading as one that invents it.",
+            "operationId": "recommendModel",
+            "tags": ["models"],
+            "requestBody": {
+                "required": false,
+                "content": { "application/json": { "schema": {
+                    "type": "object",
+                    "properties": {
+                        "request": { "type": "object", "description": "RecommendationRequest — constraints such as task and VRAM budget" },
+                        "registry_path": { "type": "string", "description": "Optional path to a local models.dev registry" }
+                    }
+                } } }
+            },
+            "responses": {
+                "200": { "description": "Ranked recommendations" },
+                "404": { "description": "Built without the `model-recommender` feature" }
+            }
+        }
+    });
+
     serde_json::json!({
         "openapi": "3.0.0",
         "info": {
@@ -1061,6 +1173,7 @@ pub fn generate_server_api_spec() -> serde_json::Value {
             { "name": "models", "description": "Model management" },
             { "name": "config", "description": "Server configuration" },
             { "name": "server", "description": "Health, metrics and metadata" },
+            { "name": "sessions", "description": "Conversation session management" },
             { "name": "streaming", "description": "WebSocket and SSE streaming" }
         ],
         "paths": {
@@ -1072,12 +1185,27 @@ pub fn generate_server_api_spec() -> serde_json::Value {
             "/metrics": metrics_path,
             "/ws": ws_path,
             "/openapi.json": openapi_path,
+            "/sessions": sessions_path,
+            "/sessions/{id}": session_by_id_path,
+            "/hardware": hardware_path,
+            "/benchmarks": benchmarks_path,
+            "/recommend-model": recommend_model_path,
             "/v1/chat/completions": openai_chat_completions_path,
             "/v1/models": openai_models_path,
             "/api/v1/health": health_path,
             "/api/v1/chat": chat_path,
             "/api/v1/chat/stream": chat_stream_path,
             "/api/v1/config": config_path,
+            // The `/api/v1/` prefix is served for every route, so the spec has to say so
+            // too — a client that only reads the spec would think the prefixed forms of
+            // these five do not exist.
+            "/api/v1/models": models_path,
+            "/api/v1/chat/completions": openai_chat_completions_path,
+            "/api/v1/ws": ws_path,
+            "/api/v1/sessions": sessions_path,
+            "/api/v1/hardware": hardware_path,
+            "/api/v1/benchmarks": benchmarks_path,
+            "/api/v1/recommend-model": recommend_model_path,
             "/api/v1/metrics": metrics_path,
             "/api/v1/openapi.json": openapi_path
         },
