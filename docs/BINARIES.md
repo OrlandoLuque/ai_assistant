@@ -104,6 +104,20 @@ Two things about it are worth knowing before you extend it:
 `examples/mcp_server.rs` is *not* this. It demonstrates the API against two requests it
 writes itself and never reads stdin.
 
+**Verified end to end**, not just unit-tested. Six messages into the real binary over a
+pipe, five replies out — the `notifications/initialized` correctly got none:
+
+| in | out |
+|----|-----|
+| `initialize` | negotiated `2025-03-26` |
+| `notifications/initialized` | *(nothing, as the spec requires)* |
+| `tools/call` &rarr; `task_create` | a task actually written to SQLite |
+| `tools/call` &rarr; `task_list` | reads the same task back — state persists across calls |
+| `tools/call` &rarr; a tool that does not exist | JSON-RPC `-32601`, not a crash |
+| `resources/list` | `[]` — this build registers none |
+
+stdout carried nothing but valid JSON frames; the diagnostics went to stderr.
+
 
 ### CLI & REPL
 
