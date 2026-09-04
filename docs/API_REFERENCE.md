@@ -1,11 +1,16 @@
 # API Reference — ai_assistant HTTP Server
 
-> Version: v29 (2026-03-06)
+> Version: v30 (2026-09-05)
 >
 > Base URL: `http://localhost:8090` (default)
 >
 > All endpoints are available with and without the `/api/v1/` prefix.
 > Both `/health` and `/api/v1/health` route to the same handler.
+>
+> **One exception**: the three [Ollama-compatible endpoints](#ollama-compatible-endpoints)
+> are served *only* at their literal paths (`/api/tags`, `/api/chat`, `/api/generate`),
+> with no `/api/v1/` alias. That is deliberate — the tools those routes exist for look
+> for the exact path Ollama uses, so a prefixed alias would be of no use to them.
 
 ---
 
@@ -33,6 +38,10 @@
 - [OpenAI-Compatible Endpoints](#openai-compatible-endpoints)
   - [POST /v1/chat/completions](#post-v1chatcompletions)
   - [GET /v1/models](#get-v1models)
+- [Ollama-Compatible Endpoints](#ollama-compatible-endpoints)
+  - [GET /api/tags](#get-apitags)
+  - [POST /api/chat](#post-apichat)
+  - [POST /api/generate](#post-apigenerate)
 - [Enrichment Pipeline](#enrichment-pipeline)
 
 ---
@@ -549,6 +558,136 @@ List available models in OpenAI format.
     }
   ]
 }
+```
+
+---
+
+## Ollama-Compatible Endpoints
+
+These three endpoints speak **Ollama's** wire dialect, so a tool that believes it is
+talking to a local Ollama daemon can be pointed at this server instead and work without
+knowing anything about it. Many tools hardcode `localhost:11434` and these exact paths.
+
+> **Served at the literal path only.** Unlike every other endpoint, these have **no**
+> `/api/v1/` alias, because the tools they exist for look for the exact Ollama path.
+
+> **The answer is not incremental.** All three respond with a **single NDJSON line
+> carrying `done: true`**. That is exactly right for `stream: false` (one JSON object),
+> and it is a valid one-element stream for the `stream: true` that Ollama defaults to —
+> but the whole answer arrives at once. A client that paints tokens as they land will
+> work, and will paint them all in one frame.
+
+> **`model` is accepted and ignored.** The server answers with the model it is configured
+> with, and reports that model in the response. It does not switch models per request.
+
+### GET /api/tags
+
+List the available models in Ollama's format.
+
+**Response**: `200 OK`
+
+```json
+{
+  "models": [
+    {
+      "name": "llama3:latest",
+      "model": "llama3:latest",
+      "modified_at": "2026-09-05T12:00:00Z",
+      "size": 4661211808,
+      "digest": "",
+      "details": {
+        "family": "llama",
+        "parameter_size": "8B",
+        "quantization_level": "Q4_K_M"
+      }
+    }
+  ]
+}
+```
+
+`size` is an **integer byte count**, as Ollama specifies. The library's internal
+`ModelInfo::size` is a display string (`"7.0 GB"`); it is converted here, and when the
+string cannot be parsed the field is **omitted** rather than guessed. Emitting `0` would
+have told the client the model is empty — a confident, wrong answer where silence is the
+correct one.
+
+---
+
+### POST /api/chat
+
+**Request Body**:
+
+```json
+{
+  "model": "llama3",
+  "messages": [
+    {"role": "system", "content": "You are a helpful assistant."},
+    {"role": "user", "content": "What is Rust?"}
+  ],
+  "stream": false
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|---------|-----------|
+| `model` | string | No | Accepted and ignored (see the note above) |
+| `messages` | array | Yes | `{role, content}` objects; at least one `user` turn is required |
+| `stream` | boolean | No | Accepted; the response shape is the same either way |
+
+**Response**: `200 OK`, `Content-Type: application/x-ndjson`
+
+```json
+{"model":"llama3","created_at":"2026-09-05T12:00:00Z","message":{"role":"assistant","content":"Rust is..."},"done":true,"done_reason":"stop"}
+```
+
+**Errors**:
+- `400` — Body could not be parsed, or `messages` contains no `user` turn
+- `422` — A message exceeds the server's configured maximum length
+- `504` — Generation timed out
+
+---
+
+### POST /api/generate
+
+Single-prompt completion. Same response shape and same caveats as `/api/chat`, with the
+text in `response` rather than `message.content`.
+
+**Request Body**:
+
+```json
+{
+  "model": "llama3",
+  "prompt": "What is Rust?",
+  "system": "You are a helpful assistant.",
+  "stream": false
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|---------|-----------|
+| `model` | string | No | Accepted and ignored |
+| `prompt` | string | Yes | The prompt |
+| `system` | string | No | System prompt |
+| `stream` | boolean | No | Accepted; the response shape is the same either way |
+
+**Response**: `200 OK`, `Content-Type: application/x-ndjson`
+
+```json
+{"model":"llama3","created_at":"2026-09-05T12:00:00Z","response":"Rust is...","done":true,"done_reason":"stop"}
+```
+
+**Errors**:
+- `400` — Body could not be parsed, or `prompt` is missing
+- `422` — The prompt exceeds the server's configured maximum length
+- `504` — Generation timed out
+
+**Pointing an existing tool at this server**:
+
+```bash
+# The tool believes this is Ollama.
+export OLLAMA_HOST=http://localhost:8090
+curl http://localhost:8090/api/tags
+curl -X POST http://localhost:8090/api/generate   -d '{"model":"llama3","prompt":"What is Rust?","stream":false}'
 ```
 
 ---
