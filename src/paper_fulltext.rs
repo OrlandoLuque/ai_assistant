@@ -141,12 +141,29 @@ mod extract {
     use crate::document_parsing::{DocumentFormat, DocumentParser};
 
     /// Turn PDF bytes into plain text.
+    ///
+    /// The parse runs inside `catch_unwind` because the underlying PDF library
+    /// **panics** on some real-world files rather than returning an error. Verified,
+    /// not assumed: upgrading `pdf-extract` 0.7 → 0.12 was tried here and 0.12 panicked
+    /// with `missing unicode map and encoding` on a paper that 0.7 parsed fine. The
+    /// upgrade was reverted, but the lesson stands for any version — these bytes come
+    /// off the open internet, and one malformed file must not take down a run that is
+    /// reading forty papers.
+    ///
+    /// This only works because every profile in `Cargo.toml` sets `panic = "unwind"`;
+    /// under `panic = "abort"` the process dies before the handler sees anything.
     pub fn pdf_to_text(bytes: &[u8]) -> Result<String, AcademicSearchError> {
-        let parser = DocumentParser::new(Default::default());
-        let parsed = parser
-            .parse_bytes(bytes, DocumentFormat::Pdf)
-            .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
-        Ok(parsed.text)
+        let parsed = std::panic::catch_unwind(|| {
+            let parser = DocumentParser::new(Default::default());
+            parser.parse_bytes(bytes, DocumentFormat::Pdf)
+        });
+        match parsed {
+            Ok(Ok(doc)) => Ok(doc.text),
+            Ok(Err(e)) => Err(AcademicSearchError::Parse(e.to_string())),
+            Err(_) => Err(AcademicSearchError::Parse(
+                "the PDF parser panicked on this file".to_string(),
+            )),
+        }
     }
 
     /// Fetch a paper's PDF and return its text.
@@ -307,6 +324,22 @@ mod tests {
             fetch_pdf("   ", std::time::Duration::from_secs(1)),
             Err(AcademicSearchError::InvalidQuery(_))
         ));
+    }
+
+    /// La propiedad que importa no es "parsea bien" sino "vuelve". Un PDF con la
+    /// cabecera correcta y el cuerpo destrozado es exactamente lo que llega de la web,
+    /// y la libreria de terceros puede responder con un Err o con un panic segun la
+    /// version. Las dos cosas deben acabar en `Err`, nunca en un proceso muerto que se
+    /// lleve por delante los otros treinta y nueve papers de la ejecucion.
+    #[cfg(feature = "documents")]
+    #[test]
+    fn a_corrupt_pdf_returns_an_error_instead_of_killing_the_run() {
+        let mut bytes = b"%PDF-1.7
+"
+        .to_vec();
+        bytes.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF].repeat(64));
+        let result = pdf_to_text(&bytes);
+        assert!(result.is_err(), "corrupt input must not parse cleanly");
     }
 
     #[test]

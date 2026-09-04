@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v173 (2026-09-04) — V298: un PDF roto ya no se lleva por delante la ejecución (0.2.250)
+
+### Fixed
+`pdf_to_text` corre ahora dentro de `catch_unwind`, porque **la librería de PDF panica** con
+algunos ficheros reales en vez de devolver un error. Sin eso, un solo PDF malformado mataba
+una ejecución de `research --fulltext` que estuviera leyendo cuarenta papers — justo lo que
+V296 prometía evitar cuando decía «que falle uno no pierde los otros».
+
+Solo funciona porque todos los perfiles de `Cargo.toml` fijan `panic = "unwind"`; con
+`panic = "abort"` el proceso muere antes de que el manejador vea nada. Esa dependencia entre
+una decisión de perfil y una garantía de comportamiento queda escrita en el propio código,
+no deducible.
+
+### Verified, y el hallazgo va al revés de lo esperado
+La tarea #52 proponía subir `pdf-extract` (0.7 → 0.12) para quitar el ruido que escribe a la
+salida estándar. **Se probó y la 0.12 es peor**: compila sin cambios de API, pero *panica*
+con `missing unicode map and encoding` sobre un paper que la 0.7 procesa sin problema.
+Revertido a 0.7.12.
+
+Es decir: el arreglo obvio empeoraba las cosas, y la forma de saberlo fue ejecutarlo. El
+ruido en stdout sigue ahí y sigue siendo cosmético; el panic no lo era.
+
+- Test nuevo: un PDF con cabecera correcta y cuerpo destrozado — lo que llega de la web —
+  debe acabar en `Err`, nunca en un proceso muerto. La propiedad bajo test no es «parsea
+  bien» sino **«vuelve»**.
+- 8 tests en el módulo. Clippy `-D warnings --all-targets` limpio.
+
 ## [Unreleased] - v172 (2026-09-04) — V297: el contrato que ve un SDK de terceros, bajo test (0.2.249)
 
 ### Added
