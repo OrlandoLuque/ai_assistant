@@ -1150,6 +1150,34 @@ pub fn generate_server_api_spec() -> serde_json::Value {
         }
     });
 
+    let ollama_tags_path = serde_json::json!({
+        "get": {
+            "summary": "List models (Ollama dialect)",
+            "description": "The model list in Ollama's wire format, so tooling that hardcodes Ollama's API can point at this server unchanged. Deliberately not offered under an /api/v1/ prefix: such tooling looks for this exact path. `size` is omitted rather than guessed when the underlying value is not a parseable byte count.",
+            "operationId": "listModelsOllama",
+            "tags": ["models"],
+            "responses": {
+                "200": {
+                    "description": "Models in Ollama's format",
+                    "content": { "application/json": { "schema": {
+                        "type": "object",
+                        "properties": {
+                            "models": { "type": "array", "items": {
+                                "type": "object",
+                                "properties": {
+                                    "name": { "type": "string" },
+                                    "model": { "type": "string", "description": "Repeats `name`; Ollama clients read either" },
+                                    "modified_at": { "type": "string" },
+                                    "size": { "type": "integer", "format": "int64", "description": "Bytes. Absent when not known." }
+                                }
+                            } }
+                        }
+                    } } }
+                }
+            }
+        }
+    });
+
     serde_json::json!({
         "openapi": "3.0.0",
         "info": {
@@ -1192,6 +1220,7 @@ pub fn generate_server_api_spec() -> serde_json::Value {
             "/recommend-model": recommend_model_path,
             "/v1/chat/completions": openai_chat_completions_path,
             "/v1/models": openai_models_path,
+            "/api/tags": ollama_tags_path,
             "/api/v1/health": health_path,
             "/api/v1/chat": chat_path,
             "/api/v1/chat/stream": chat_stream_path,

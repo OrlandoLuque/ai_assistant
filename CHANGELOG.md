@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v178 (2026-09-05) — V303: `GET /api/tags`, el primer trozo del dialecto de Ollama (0.2.255)
+
+### Added
+- **`GET /api/tags`** — la lista de modelos en el formato de cable de **Ollama**. El motivo
+  de hablar su dialecto además del de OpenAI: muchísimas herramientas fijan
+  `localhost:11434` y estas rutas exactas, así que servirlas permite apuntarlas a este
+  servidor sin que sepan nada de él.
+- Servido **sin** prefijo `/api/v1/`, a diferencia de todo lo demás. Es deliberado: esas
+  herramientas buscan la ruta literal, y un alias prefijado no les sirve de nada.
+
+### La trampa, que es de tipos
+`ModelInfo::size` es un `Option<String>` de presentación (`"7.0 GB"`); Ollama especifica
+`size` como **entero de bytes**. Emitir la cadena habría sido JSON válido y **incorrecto** —
+un cliente que haga aritmética con ese campo obtiene un error de tipo con suerte, y una
+barbaridad sin ella.
+
+`ollama_size_bytes` lo convierte (B, KB/KiB, MB, GB, TB) y devuelve `None` cuando no
+entiende la cadena; entonces **el campo se omite**. Omitir algo que el cliente sabe manejar
+es seguro; mentir sobre su tipo no. Poner `0` habría sido lo peor de todo: decirle que el
+modelo está vacío, una respuesta segura de sí misma y falsa donde el silencio era correcto.
+
+### Verified
+- 3 tests: conversión de unidades, omisión de lo no parseable, y la forma de la respuesta
+  — incluido que `size`, **si aparece**, sea numérico.
+- La lista nunca sale vacía: sin catálogo descargado informa del modelo configurado, para
+  que el cliente descubra algo utilizable en vez de un catálogo vacío.
+- **La puerta de V302 me cazó a mí**: añadí la ruta y CI habría fallado por no declararla en
+  la spec. Declarada; 28 rutas, todas servidas y declaradas. Un gate que solo pilla a los
+  demás no vale; éste pilló a quien lo escribió, una hora después de escribirlo.
+
+### Notes
+Queda el resto del dialecto — `/api/chat` y `/api/generate`, con su streaming NDJSON, que no
+es SSE. Van aparte porque son superficie de generación y merecen sus propios tests.
+
 ## [Unreleased] - v177 (2026-09-05) — V302: una puerta que compara la spec con las rutas de verdad (0.2.254)
 
 ### Added

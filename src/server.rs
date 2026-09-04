@@ -2456,6 +2456,9 @@ fn route_request_with_config(
             handle_openai_chat_completions(request, assistant, config)
         }
         ("GET", "/v1/models") | ("GET", "/api/v1/models") => handle_openai_models(assistant),
+        // Ollama-dialect endpoints. Deliberately NOT under /api/v1/: tooling that speaks
+        // Ollama hardcodes these exact paths, so a prefixed alias would be useless to it.
+        ("GET", "/api/tags") => handle_ollama_tags(assistant),
         // Versioned routes — same handlers, /api/v1/ prefix (items 5.1, 5.2)
         ("GET", "/api/v1/health") => handle_health(assistant, metrics),
         ("POST", "/api/v1/chat") => handle_chat(request, assistant, config),
@@ -3513,6 +3516,77 @@ fn handle_openai_chat_completions_stream(
 }
 
 /// Handle `GET /v1/models` — OpenAI-compatible model listing.
+/// Parse a human-readable model size (`"7.0 GB"`) into bytes.
+///
+/// Exists because of a contract mismatch worth being careful about: `ModelInfo::size` is
+/// an `Option<String>` for display, while Ollama's `/api/tags` specifies `size` as an
+/// **integer count of bytes**. Emitting `"7.0 GB"` there would be valid JSON and wrong —
+/// a client doing arithmetic on it gets a type error at best and nonsense at worst.
+///
+/// Returns `None` when the string is not a size we understand, and the caller then omits
+/// the field entirely. Omitting a field a client can handle is safe; lying about its type
+/// is not.
+fn ollama_size_bytes(size: &Option<String>) -> Option<u64> {
+    let s = size.as_ref()?.trim();
+    let (num, unit) = s.split_at(s.find(|c: char| c.is_alphabetic())?);
+    let value: f64 = num.trim().parse().ok()?;
+    let factor: f64 = match unit.trim().to_ascii_uppercase().as_str() {
+        "B" => 1.0,
+        "KB" | "KIB" => 1024.0,
+        "MB" | "MIB" => 1024.0 * 1024.0,
+        "GB" | "GIB" => 1024.0 * 1024.0 * 1024.0,
+        "TB" | "TIB" => 1024.0 * 1024.0 * 1024.0 * 1024.0,
+        _ => return None,
+    };
+    let bytes = value * factor;
+    if bytes.is_finite() && bytes >= 0.0 {
+        Some(bytes as u64)
+    } else {
+        None
+    }
+}
+
+/// `GET /api/tags` — the model list in **Ollama's** dialect.
+///
+/// The point of speaking Ollama's wire format as well as OpenAI's: a great deal of
+/// tooling hardcodes `localhost:11434` and these paths. Serving them means those tools can
+/// point at this server without knowing anything about it.
+fn handle_ollama_tags(assistant: &Arc<Mutex<AiAssistant>>) -> (String, String) {
+    let ass = assistant.lock().unwrap_or_else(|e| e.into_inner());
+
+    let entry = |name: &str, size: &Option<String>, modified: &Option<String>| {
+        let mut m = serde_json::json!({
+            // Ollama repeats the name under `model`; clients read either.
+            "name": name,
+            "model": name,
+            "modified_at": modified.clone().unwrap_or_default(),
+        });
+        if let Some(bytes) = ollama_size_bytes(size) {
+            m["size"] = serde_json::json!(bytes);
+        }
+        m
+    };
+
+    let models: Vec<serde_json::Value> = ass
+        .available_models
+        .iter()
+        .map(|m| entry(&m.name, &m.size, &m.modified_at))
+        .collect();
+
+    // Same fallback as the OpenAI endpoint: with no fetched list, at least report the
+    // model actually configured, so a client discovers something it can then use.
+    let models = if models.is_empty() {
+        vec![entry(&ass.config.selected_model, &None, &None)]
+    } else {
+        models
+    };
+
+    (
+        "200 OK".to_string(),
+        serde_json::to_string(&serde_json::json!({ "models": models })).unwrap_or_default(),
+    )
+}
+
 fn handle_openai_models(assistant: &Arc<Mutex<AiAssistant>>) -> (String, String) {
     let ass = assistant.lock().unwrap_or_else(|e| e.into_inner());
     let models: Vec<serde_json::Value> = ass
@@ -5807,6 +5881,54 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
             "stream": stream,
         })
         .to_string()
+    }
+
+    // ── Ollama dialect ───────────────────────────────────────────────────────
+
+    #[test]
+    fn ollama_size_is_parsed_into_bytes() {
+        // Ollama specifies `size` as an integer of bytes; we store a display string.
+        // Getting this wrong means emitting `"7.0 GB"` where a client expects a number.
+        assert_eq!(ollama_size_bytes(&Some("1 B".to_string())), Some(1));
+        assert_eq!(ollama_size_bytes(&Some("4 KB".to_string())), Some(4096));
+        assert_eq!(
+            ollama_size_bytes(&Some("7.0 GB".to_string())),
+            Some(7 * 1024 * 1024 * 1024)
+        );
+        // Ollama's own listings use GiB-style units interchangeably.
+        assert_eq!(
+            ollama_size_bytes(&Some("2 MiB".to_string())),
+            Some(2 * 1024 * 1024)
+        );
+    }
+
+    #[test]
+    fn an_unparseable_size_is_omitted_rather_than_guessed() {
+        // The alternative — defaulting to 0 — would tell a client the model is empty,
+        // which is a confident wrong answer where silence is a correct one.
+        assert_eq!(ollama_size_bytes(&None), None);
+        assert_eq!(ollama_size_bytes(&Some(String::new())), None);
+        assert_eq!(ollama_size_bytes(&Some("huge".to_string())), None);
+        assert_eq!(ollama_size_bytes(&Some("7.0 parsecs".to_string())), None);
+    }
+
+    #[test]
+    fn ollama_tags_returns_the_documented_shape() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let (status, body) = handle_ollama_tags(&assistant);
+        assert!(status.starts_with("200"), "status: {status}");
+        let json: serde_json::Value = serde_json::from_str(&body).expect("valid JSON");
+        let models = json["models"].as_array().expect("models must be an array");
+        // Never empty: with no fetched list it still reports the configured model, so a
+        // client discovers something usable instead of an empty catalogue.
+        assert!(!models.is_empty(), "body: {body}");
+        // Ollama repeats the name under `model`; clients in the wild read either one.
+        assert!(models[0]["name"].is_string());
+        assert_eq!(models[0]["model"], models[0]["name"]);
+        // If `size` is present at all it must be a number, never the display string.
+        if let Some(size) = models[0].get("size") {
+            assert!(size.is_number(), "size must be bytes, got {size}");
+        }
     }
 
     #[test]
