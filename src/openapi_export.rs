@@ -1150,6 +1150,92 @@ pub fn generate_server_api_spec() -> serde_json::Value {
         }
     });
 
+    // The Ollama generation endpoints. Both answer a SINGLE NDJSON line with
+    // `done: true` — valid for `stream: false` and a valid one-element stream for the
+    // default `stream: true`, but not incremental. Said in the spec because a client that
+    // renders tokens as they arrive would otherwise discover it in production.
+    let ollama_chat_path = serde_json::json!({
+        "post": {
+            "summary": "Chat completion (Ollama dialect)",
+            "description": "Ollama's /api/chat. The answer is one NDJSON line with `done: true`: correct for stream:false, and a valid single-element stream for the default stream:true — but the whole answer arrives at once, it is not delivered incrementally.",
+            "operationId": "chatOllama",
+            "tags": ["chat"],
+            "requestBody": {
+                "required": true,
+                "content": { "application/json": { "schema": {
+                    "type": "object",
+                    "required": ["messages"],
+                    "properties": {
+                        "model": { "type": "string", "description": "Accepted and ignored: the server answers with its configured model, reported in the response." },
+                        "messages": { "type": "array", "items": {
+                            "type": "object",
+                            "properties": {
+                                "role": { "type": "string", "enum": ["system", "user", "assistant"] },
+                                "content": { "type": "string" }
+                            }
+                        } },
+                        "stream": { "type": "boolean" }
+                    }
+                } } }
+            },
+            "responses": {
+                "200": { "description": "The completion", "content": { "application/json": { "schema": {
+                    "type": "object",
+                    "properties": {
+                        "model": { "type": "string" },
+                        "created_at": { "type": "string" },
+                        "message": { "type": "object", "properties": {
+                            "role": { "type": "string" },
+                            "content": { "type": "string" }
+                        } },
+                        "done": { "type": "boolean" },
+                        "done_reason": { "type": "string" }
+                    }
+                } } } },
+                "400": { "description": "Unparseable body, or no user turn in `messages`" },
+                "422": { "description": "Message longer than the configured maximum" },
+                "504": { "description": "Generation timed out" }
+            }
+        }
+    });
+
+    let ollama_generate_path = serde_json::json!({
+        "post": {
+            "summary": "Single-prompt completion (Ollama dialect)",
+            "description": "Ollama's /api/generate. Same single-line NDJSON answer and the same non-incremental caveat as /api/chat.",
+            "operationId": "generateOllama",
+            "tags": ["chat"],
+            "requestBody": {
+                "required": true,
+                "content": { "application/json": { "schema": {
+                    "type": "object",
+                    "required": ["prompt"],
+                    "properties": {
+                        "model": { "type": "string", "description": "Accepted and ignored; see /api/chat." },
+                        "prompt": { "type": "string" },
+                        "system": { "type": "string" },
+                        "stream": { "type": "boolean" }
+                    }
+                } } }
+            },
+            "responses": {
+                "200": { "description": "The completion", "content": { "application/json": { "schema": {
+                    "type": "object",
+                    "properties": {
+                        "model": { "type": "string" },
+                        "created_at": { "type": "string" },
+                        "response": { "type": "string" },
+                        "done": { "type": "boolean" },
+                        "done_reason": { "type": "string" }
+                    }
+                } } } },
+                "400": { "description": "Unparseable body or missing `prompt`" },
+                "422": { "description": "Prompt longer than the configured maximum" },
+                "504": { "description": "Generation timed out" }
+            }
+        }
+    });
+
     let ollama_tags_path = serde_json::json!({
         "get": {
             "summary": "List models (Ollama dialect)",
@@ -1221,6 +1307,8 @@ pub fn generate_server_api_spec() -> serde_json::Value {
             "/v1/chat/completions": openai_chat_completions_path,
             "/v1/models": openai_models_path,
             "/api/tags": ollama_tags_path,
+            "/api/chat": ollama_chat_path,
+            "/api/generate": ollama_generate_path,
             "/api/v1/health": health_path,
             "/api/v1/chat": chat_path,
             "/api/v1/chat/stream": chat_stream_path,

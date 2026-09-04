@@ -2459,6 +2459,8 @@ fn route_request_with_config(
         // Ollama-dialect endpoints. Deliberately NOT under /api/v1/: tooling that speaks
         // Ollama hardcodes these exact paths, so a prefixed alias would be useless to it.
         ("GET", "/api/tags") => handle_ollama_tags(assistant),
+        ("POST", "/api/chat") => handle_ollama_chat(request, assistant, config),
+        ("POST", "/api/generate") => handle_ollama_generate(request, assistant, config),
         // Versioned routes — same handlers, /api/v1/ prefix (items 5.1, 5.2)
         ("GET", "/api/v1/health") => handle_health(assistant, metrics),
         ("POST", "/api/v1/chat") => handle_chat(request, assistant, config),
@@ -3543,6 +3545,238 @@ fn ollama_size_bytes(size: &Option<String>) -> Option<u64> {
         Some(bytes as u64)
     } else {
         None
+    }
+}
+
+/// Run one generation to completion and return the text.
+///
+/// Shared by both Ollama-dialect generation endpoints so the timeout, the cancellation
+/// case and the error case are decided once. `Err` carries an already-formed
+/// `(status, body)` so the caller does not re-invent the failure shapes.
+fn ollama_generate_blocking(
+    assistant: &Arc<Mutex<AiAssistant>>,
+    prompt: String,
+    system: &str,
+) -> Result<(String, String), (String, String)> {
+    let mut ass = assistant.lock().unwrap_or_else(|e| e.into_inner());
+    ass.send_message_with_notes(prompt, "", system, "");
+    let model = ass.config.selected_model.clone();
+
+    let start = Instant::now();
+    loop {
+        if start.elapsed() > std::time::Duration::from_secs(300) {
+            return Err((
+                "504 Gateway Timeout".to_string(),
+                serde_json::to_string(
+                    &serde_json::json!({ "error": "generation timed out after 300s" }),
+                )
+                .unwrap_or_default(),
+            ));
+        }
+        match ass.poll_response() {
+            Some(crate::messages::AiResponse::Complete(text)) => return Ok((model, text)),
+            // A cancelled generation still produced text, and Ollama has no "partial"
+            // state on the wire — it is returned as the answer with `done: true`, which
+            // is what actually happened.
+            Some(crate::messages::AiResponse::Cancelled(partial)) => return Ok((model, partial)),
+            Some(crate::messages::AiResponse::Error(e)) => {
+                return Err((
+                    "500 Internal Server Error".to_string(),
+                    serde_json::to_string(&serde_json::json!({ "error": e })).unwrap_or_default(),
+                ))
+            }
+            Some(_) => continue,
+            None => std::thread::sleep(std::time::Duration::from_millis(10)),
+        }
+    }
+}
+
+/// An RFC 3339 timestamp for `created_at`, which Ollama sends as a string.
+fn ollama_timestamp() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    // Formatted by hand rather than pulling a date crate in for one field. Clients treat
+    // this as an opaque string; what matters is that it is a plausible RFC 3339 instant.
+    let days = secs / 86_400;
+    let rem = secs % 86_400;
+    let (y, m, d) = civil_from_days(days as i64);
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        y,
+        m,
+        d,
+        rem / 3600,
+        (rem % 3600) / 60,
+        rem % 60
+    )
+}
+
+/// Days since the Unix epoch → (year, month, day). Howard Hinnant's civil_from_days.
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+/// `POST /api/chat` — chat completion in **Ollama's** dialect.
+///
+/// The body is answered as a **single NDJSON line with `done: true`**. That is correct for
+/// `stream: false` (a lone JSON object) and is also a valid one-element stream for the
+/// default `stream: true`, because Ollama's streaming format is newline-delimited JSON
+/// where the last object carries `done`.
+///
+/// What it is **not** is incremental: the whole answer arrives at once. Said plainly rather
+/// than implied, because a client that shows tokens as they arrive will simply show them
+/// all at the end, and that is better discovered here than in production.
+fn handle_ollama_chat(
+    request: &HttpRequest,
+    assistant: &Arc<Mutex<AiAssistant>>,
+    config: &ServerConfig,
+) -> (String, String) {
+    let body: serde_json::Value = match serde_json::from_str(&request.body) {
+        Ok(v) => v,
+        Err(e) => {
+            log::debug!("ollama /api/chat JSON parse error: {e}");
+            return (
+                "400 Bad Request".to_string(),
+                serde_json::to_string(
+                    &serde_json::json!({ "error": "invalid JSON in request body" }),
+                )
+                .unwrap_or_default(),
+            );
+        }
+    };
+
+    // Ollama takes the conversation in `messages`; the last user turn is the prompt and
+    // any `system` turns become the system prompt.
+    let messages = body.get("messages").and_then(|m| m.as_array());
+    let Some(messages) = messages.filter(|m| !m.is_empty()) else {
+        return (
+            "400 Bad Request".to_string(),
+            serde_json::to_string(&serde_json::json!({ "error": "`messages` is required and must be a non-empty array" }))
+                .unwrap_or_default(),
+        );
+    };
+
+    let system: String = messages
+        .iter()
+        .filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
+        .filter_map(|m| m.get("content").and_then(|c| c.as_str()))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let prompt = messages
+        .iter()
+        .rev()
+        .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))
+        .and_then(|m| m.get("content").and_then(|c| c.as_str()))
+        .unwrap_or_default()
+        .to_string();
+
+    if prompt.is_empty() {
+        return (
+            "400 Bad Request".to_string(),
+            serde_json::to_string(
+                &serde_json::json!({ "error": "no user message found in `messages`" }),
+            )
+            .unwrap_or_default(),
+        );
+    }
+    if prompt.len() > config.max_message_length {
+        return (
+            "422 Unprocessable Entity".to_string(),
+            serde_json::to_string(&serde_json::json!({
+                "error": format!("message too long: {} characters (max {})", prompt.len(), config.max_message_length)
+            }))
+            .unwrap_or_default(),
+        );
+    }
+
+    match ollama_generate_blocking(assistant, prompt, &system) {
+        Ok((model, text)) => (
+            "200 OK".to_string(),
+            serde_json::to_string(&serde_json::json!({
+                "model": model,
+                "created_at": ollama_timestamp(),
+                "message": { "role": "assistant", "content": text },
+                "done": true,
+                "done_reason": "stop",
+            }))
+            .unwrap_or_default(),
+        ),
+        Err(e) => e,
+    }
+}
+
+/// `POST /api/generate` — single-prompt completion in **Ollama's** dialect.
+///
+/// Same single-line NDJSON answer as [`handle_ollama_chat`], and the same caveat about it
+/// not being incremental.
+fn handle_ollama_generate(
+    request: &HttpRequest,
+    assistant: &Arc<Mutex<AiAssistant>>,
+    config: &ServerConfig,
+) -> (String, String) {
+    let body: serde_json::Value = match serde_json::from_str(&request.body) {
+        Ok(v) => v,
+        Err(e) => {
+            log::debug!("ollama /api/generate JSON parse error: {e}");
+            return (
+                "400 Bad Request".to_string(),
+                serde_json::to_string(
+                    &serde_json::json!({ "error": "invalid JSON in request body" }),
+                )
+                .unwrap_or_default(),
+            );
+        }
+    };
+
+    let prompt = body
+        .get("prompt")
+        .and_then(|p| p.as_str())
+        .unwrap_or_default()
+        .to_string();
+    if prompt.is_empty() {
+        return (
+            "400 Bad Request".to_string(),
+            serde_json::to_string(&serde_json::json!({ "error": "`prompt` is required" }))
+                .unwrap_or_default(),
+        );
+    }
+    if prompt.len() > config.max_message_length {
+        return (
+            "422 Unprocessable Entity".to_string(),
+            serde_json::to_string(&serde_json::json!({
+                "error": format!("prompt too long: {} characters (max {})", prompt.len(), config.max_message_length)
+            }))
+            .unwrap_or_default(),
+        );
+    }
+
+    let system = body.get("system").and_then(|s| s.as_str()).unwrap_or("");
+
+    match ollama_generate_blocking(assistant, prompt, system) {
+        Ok((model, text)) => (
+            "200 OK".to_string(),
+            serde_json::to_string(&serde_json::json!({
+                "model": model,
+                "created_at": ollama_timestamp(),
+                "response": text,
+                "done": true,
+                "done_reason": "stop",
+            }))
+            .unwrap_or_default(),
+        ),
+        Err(e) => e,
     }
 }
 
@@ -5929,6 +6163,98 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         if let Some(size) = models[0].get("size") {
             assert!(size.is_number(), "size must be bytes, got {size}");
         }
+    }
+
+    /// Build a request for the Ollama generation endpoints.
+    fn ollama_req(path: &str, body: &str) -> HttpRequest {
+        HttpRequest {
+            method: "POST".to_string(),
+            path: path.to_string(),
+            headers: Vec::new(),
+            body: body.to_string(),
+        }
+    }
+
+    #[test]
+    fn ollama_chat_rejects_malformed_bodies_without_reaching_the_model() {
+        // Every one of these must be answered from the request alone. Reaching the model
+        // would block the test on a provider that is not running — and, in production,
+        // would spend a generation on a request that was never valid.
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let config = ServerConfig::default();
+
+        for (body, why) in [
+            ("{not json", "unparseable body"),
+            (r#"{"model":"m"}"#, "no messages field"),
+            (r#"{"model":"m","messages":[]}"#, "empty messages"),
+            (
+                r#"{"model":"m","messages":[{"role":"system","content":"hi"}]}"#,
+                "no user turn",
+            ),
+        ] {
+            let (status, out) =
+                handle_ollama_chat(&ollama_req("/api/chat", body), &assistant, &config);
+            assert!(status.starts_with("400"), "{why}: status was {status}");
+            let json: serde_json::Value =
+                serde_json::from_str(&out).expect("errors must be JSON too");
+            assert!(json["error"].is_string(), "{why}: {out}");
+        }
+    }
+
+    #[test]
+    fn ollama_generate_requires_a_prompt() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let config = ServerConfig::default();
+        for body in ["{not json", "{}", r#"{"model":"m","prompt":""}"#] {
+            let (status, _) =
+                handle_ollama_generate(&ollama_req("/api/generate", body), &assistant, &config);
+            assert!(status.starts_with("400"), "body {body} gave {status}");
+        }
+    }
+
+    #[test]
+    fn ollama_endpoints_enforce_the_message_length_limit() {
+        // Same limit as the other entry points. Without it the Ollama dialect would be a
+        // way around a guard the rest of the server applies.
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let config = ServerConfig::default();
+        let huge = "x".repeat(config.max_message_length + 1);
+
+        let body = serde_json::json!({
+            "model": "m",
+            "messages": [ { "role": "user", "content": huge } ]
+        })
+        .to_string();
+        let (status, _) = handle_ollama_chat(&ollama_req("/api/chat", &body), &assistant, &config);
+        assert!(status.starts_with("422"), "chat: {status}");
+
+        let body = serde_json::json!({ "model": "m", "prompt": "x".repeat(config.max_message_length + 1) })
+            .to_string();
+        let (status, _) =
+            handle_ollama_generate(&ollama_req("/api/generate", &body), &assistant, &config);
+        assert!(status.starts_with("422"), "generate: {status}");
+    }
+
+    #[test]
+    fn the_ollama_timestamp_is_a_plausible_rfc3339_instant() {
+        // `created_at` is an opaque string to clients, but emitting something that is not
+        // a date at all would break any that try to parse it.
+        let ts = ollama_timestamp();
+        assert_eq!(ts.len(), 20, "{ts}");
+        assert!(ts.ends_with('Z'), "{ts}");
+        let year: i32 = ts[..4].parse().expect("year");
+        assert!((2020..2100).contains(&year), "implausible year in {ts}");
+        assert_eq!(&ts[4..5], "-");
+        assert_eq!(&ts[10..11], "T");
+    }
+
+    #[test]
+    fn civil_from_days_matches_known_dates() {
+        // The date maths is hand-rolled, so it gets pinned against dates whose answer is
+        // known independently — including a leap day, which is where such code breaks.
+        assert_eq!(civil_from_days(0), (1970, 1, 1));
+        assert_eq!(civil_from_days(19_723), (2024, 1, 1));
+        assert_eq!(civil_from_days(19_782), (2024, 2, 29));
     }
 
     #[test]

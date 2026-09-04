@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v179 (2026-09-05) — V304: `/api/chat` y `/api/generate`, y el dialecto de Ollama queda completo (0.2.256)
+
+### Added
+- **`POST /api/chat`** y **`POST /api/generate`** en el dialecto de **Ollama**, que cierran
+  lo empezado en V303 con `GET /api/tags`. Con las tres, una herramienta que apunte a este
+  servidor creyendo que habla con Ollama lista modelos y genera sin saber nada de nosotros.
+- Ambas sin prefijo `/api/v1/`, por la misma razón que `/api/tags`: esas herramientas
+  buscan la ruta literal.
+- El campo `model` de la petición **se acepta y se ignora**: el servidor responde con el
+  modelo que tiene configurado, y lo dice en la respuesta. Ignorarlo en silencio sin
+  declararlo habría sido lo mismo que mentir; está escrito en la spec.
+
+### Lo que NO hace, dicho en la spec y no sólo aquí
+La respuesta es **una sola línea NDJSON con `done: true`**. Eso es correcto para
+`stream: false` — un único objeto JSON — y es un stream válido de un elemento para el
+`stream: true` que Ollama trae por defecto. Lo que **no** es, es incremental: la respuesta
+entera llega de golpe.
+
+La diferencia importa para quien pinta tokens según caen, así que está en la
+`description` de las dos rutas en `/openapi.json`, no sólo en este fichero. Un tercero
+genera su cliente de la spec, no del CHANGELOG; enterarse de esto en producción por
+sorpresa es exactamente lo que la puerta de V302 existe para evitar.
+
+### La puerta de V302 volvió a hacer su trabajo
+Añadí las dos rutas al router y `check_openapi_routes.py` falló en el acto:
+`SERVED BUT NOT IN THE SPEC`. Es la segunda vez en dos versiones que me caza a mí — lo
+cual es la prueba de que hacía falta, porque el fallo que previene (servir algo que la
+spec no declara) no da ningún síntoma por sí solo.
+
+### Verified
+- 4 tests nuevos (cuerpo malformado rechazado sin llegar al modelo, `prompt` obligatorio,
+  el límite de longitud aplicado en las dos rutas, y el timestamp RFC3339); 217 en `server::`
+- `check_openapi_routes.py`: 30 rutas, todas declaradas y todas servidas
+- `clippy --features full --all-targets -D warnings` limpio
+
 ## [Unreleased] - v178 (2026-09-05) — V303: `GET /api/tags`, el primer trozo del dialecto de Ollama (0.2.255)
 
 ### Added
