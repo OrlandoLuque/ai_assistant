@@ -40,9 +40,24 @@ desde V277 y por la misma razón. Cuesta **6 segundos** sobre 63 — estos crate
 dependencias.
 
 ### Verified
-- `checker_adequacy`: 66/67 → **67/67**.
-- Batería completa: **694/694**, 0 fallos.
+- Batería completa en el momento del commit: **694/694**, 0 fallos.
 - Clippy `-D warnings --all-targets` limpio.
+
+### CORRECCIÓN (misma noche, un par de horas después)
+**El aislamiento del target dir NO arregló la inestabilidad.** Este apartado decía
+«`checker_adequacy`: 66/67 → 67/67», y ese 67/67 fue **una ejecución afortunada**, no una
+reparación. Corriendo el mismo binario tres veces seguidas después: **1, 3 y 7 fallos**,
+todos en el bloque `[multi]` y todos «accepts a correct impl». Va a peor con cada
+ejecución, lo que apunta a algo que se acumula y que el target privado no cubre.
+
+Lo que SÍ queda arreglado de V299, y es lo importante, es el **instrumento**: el tri-estado
+distingue «el checker rechazó» de «no se pudo ejecutar», y gracias a él se sabe que estos
+fallos son `Ok(false)` — cargo corre y las aserciones fallan de verdad — y no un problema de
+toolchain. Sin ese cambio, esta misma investigación habría seguido persiguiendo un fantasma.
+
+Queda abierto en la tarea N53 con el estado real. Se corrige aquí en vez de reescribir la
+entrada porque el registro de lo que se creyó y resultó falso vale más que uno que solo
+recoja aciertos.
 
 ## [Unreleased] - v173 (2026-09-04) — V298: un PDF roto ya no se lleva por delante la ejecución (0.2.250)
 
