@@ -261,7 +261,8 @@ impl std::error::Error for AcademicSearchError {}
 /// Identifies us to the academic APIs. NCBI and OpenAlex both ask for a contact in the
 /// User-Agent and give anonymous clients a much lower quota, so this is a rate-limit
 /// setting as much as a courtesy.
-const USER_AGENT: &str = "AIAssistant/1.0 (+https://github.com/OrlandoLuque/ai_assistant)";
+pub(crate) const USER_AGENT: &str =
+    "AIAssistant/1.0 (+https://github.com/OrlandoLuque/ai_assistant)";
 
 /// Longest a single backoff will wait. A server asking for ten minutes via
 /// `Retry-After` is telling us to come back later, not to block the caller.
@@ -284,7 +285,7 @@ const MAX_ATTEMPTS: u32 = 3;
 /// `call()`. On giving up, the error is [`AcademicSearchError::RateLimit`] and **not**
 /// `Network` — the whole point is that the caller can tell "slow down" from "no route to
 /// host", and act differently.
-fn get_with_retry(
+pub(crate) fn get_with_retry(
     build: impl Fn() -> ureq::Request,
 ) -> Result<ureq::Response, AcademicSearchError> {
     let mut attempt = 0u32;

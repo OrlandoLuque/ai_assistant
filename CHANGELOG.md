@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v171 (2026-09-04) — V296: los papers ya se leen enteros, no solo su abstract (0.2.248)
+
+### Added
+- **`paper_fulltext`** — descarga el PDF de un paper y lo convierte en texto. Cierra el
+  primer punto del apartado «Lo que NO está hecho» de `docs/RESEARCH_SUBSYSTEM.md`:
+  `paper_metadata` ya sabía sacar estructura de un texto y `document_parsing` ya sabía
+  convertir un PDF, pero **nada unía ninguna de las dos cosas con un resultado de
+  búsqueda**. El subsistema podía *encontrar* un paper y no leerlo nunca.
+- **`ai_cli research <query> --index <db> --fulltext`** — indexa el paper entero en lugar
+  del abstract. Con la **misma clave de origen**, así que es una *mejora* de lo ya
+  indexado, no un duplicado: `index_document` borra los trozos anteriores de esa fuente.
+
+### Las tres decisiones, y las tres son negarse a adivinar
+- **La mayoría de resultados no tienen PDF.** `pdf_url` lo rellenan arXiv y OpenAlex, y es
+  `None` en casi todo Crossref y PubMed. Eso no es un fallo y no se cuenta como tal: hay un
+  contador aparte, porque «no hay PDF abierto» y «la descarga se rompió» piden reacciones
+  distintas.
+- **Un muro de pago responde 200 OK con HTML.** El código de estado no dice nada. Se
+  comprueban los bytes mágicos `%PDF-` antes de parsear nada: darle un formulario de login
+  a un parser de PDF produce basura plausible, que es peor que saltarlo limpiamente.
+- **Un «paper» puede ser cientos de megas** de material suplementario. Tope de 32 MB,
+  aplicado sobre los bytes leídos y no sobre el `Content-Length`, que es una pista y no
+  una garantía.
+
+El *fetch* reutiliza `get_with_retry` de `academic_search` (ahora `pub(crate)`), para que un
+servidor estrangulado se trate igual aquí que en el resto y no por una segunda copia que
+diverja.
+
+### Verified
+- 7 tests nuevos sin red, sobre el caso que importa: un PDF de verdad, una página de login,
+  basura delante del marcador, cuerpo vacío, y que el marcador **no** se busca por todo el
+  fichero (4 KB de relleno seguidos de `%PDF-` no es un PDF).
+- En vivo contra OpenAlex: **5 papers, 363 801 caracteres, 229 trozos** indexados — frente a
+  ~2 trozos por paper con solo abstracts.
+- Y la prueba de que sirve: preguntar «experimental setup GPU hardware» devuelve la
+  sección «5 Experimental Setup» del paper de FLARE, contenido que **solo existe en el
+  cuerpo** y nunca en el abstract.
+- 7 012 tests, 0 fallos. Clippy `-D warnings --all-targets` limpio.
+
+### Notes
+- `pdf-extract` escribe avisos de «Unicode mismatch» directamente a la salida estándar al
+  parsear. Es ruido de una dependencia de terceros, ensucia la salida del CLI y no lo
+  arregla nada de lo nuestro; anotado como tarea aparte en vez de silenciado a la brava.
+
 ## [Unreleased] - v170 (2026-09-04) — V295: cada feature compila sola (0.2.247)
 
 Cierra la segunda mitad de V294. Aquella arregló «código siempre-compilado que referencia

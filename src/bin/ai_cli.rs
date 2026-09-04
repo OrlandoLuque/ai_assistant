@@ -256,6 +256,7 @@ fn print_usage() {
     println!("    --max-results <N>              Max results (default: 10)");
     println!("    --bibtex                       Output in BibTeX format");
     println!("    --index <db>                   Also ingest the papers into a RAG index");
+    println!("    --fulltext                     With --index: download each PDF and index the whole paper");
     println!(
         "  research ask <question>        Query an index built with --index (no model needed)"
     );
@@ -3410,6 +3411,7 @@ fn cmd_research(args: &[String]) -> ExitCode {
     let mut max_results: usize = 10;
     let mut bibtex = false;
     let mut index_path: Option<String> = None;
+    let mut fulltext = false;
     let mut query_parts: Vec<String> = Vec::new();
 
     let mut i = 0;
@@ -3428,6 +3430,7 @@ fn cmd_research(args: &[String]) -> ExitCode {
                 i += 1;
                 index_path = Some(args[i].clone());
             }
+            "--fulltext" => fulltext = true,
             other => query_parts.push(other.to_string()),
         }
         i += 1;
@@ -3491,8 +3494,13 @@ fn cmd_research(args: &[String]) -> ExitCode {
     }
 
     match index_path {
-        Some(path) => ingest_into_index(&path, &collected),
-        None => ExitCode::SUCCESS,
+        Some(path) => ingest_into_index(&path, &collected, fulltext),
+        None => {
+            if fulltext {
+                eprintln!("Note: --fulltext does nothing without --index.");
+            }
+            ExitCode::SUCCESS
+        }
     }
 }
 
@@ -3505,6 +3513,7 @@ fn cmd_research(args: &[String]) -> ExitCode {
 fn ingest_into_index(
     path: &str,
     papers: &[ai_assistant::academic_search::AcademicPaper],
+    fulltext: bool,
 ) -> ExitCode {
     if papers.is_empty() {
         println!("\nNothing to index: no papers were found.");
@@ -3519,7 +3528,30 @@ fn ingest_into_index(
         }
     };
 
-    let report = ai_assistant::research_rag::ingest_papers(&db, papers);
+    let report = if fulltext {
+        // Same source key as the abstract-only path, so this *upgrades* whatever is
+        // already indexed instead of duplicating it.
+        let (ingest, full) = ai_assistant::paper_fulltext::ingest_papers_fulltext(
+            &db,
+            papers,
+            std::time::Duration::from_secs(60),
+        );
+        println!("\nFull text:");
+        println!("  Read:         {} ({} chars)", full.extracted, full.chars);
+        // Closed access is the normal state of most literature, not an error. Reported
+        // apart from real failures so the two are never confused.
+        println!("  No open PDF:  {}", full.no_pdf_url);
+        println!("  Paywalled:    {}", full.not_a_pdf);
+        if full.too_large > 0 {
+            println!("  Too large:    {}", full.too_large);
+        }
+        for (key, why) in &full.failed {
+            println!("  Failed {}: {}", key, why);
+        }
+        ingest
+    } else {
+        ai_assistant::research_rag::ingest_papers(&db, papers)
+    };
     println!("\nIndexed into {}:", path);
     println!("  Papers seen:  {}", report.total());
     println!(
@@ -3625,6 +3657,7 @@ fn cmd_research_ask(_args: &[String]) -> ExitCode {
 fn ingest_into_index(
     _path: &str,
     _papers: &[ai_assistant::academic_search::AcademicPaper],
+    _fulltext: bool,
 ) -> ExitCode {
     eprintln!("\nError: --index needs the `rag` feature, which this build does not have.");
     ExitCode::from(1)

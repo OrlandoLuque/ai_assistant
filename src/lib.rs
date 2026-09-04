@@ -1605,6 +1605,10 @@ pub mod mcp_research_tools;
 pub mod paper_metadata;
 #[cfg(feature = "research")]
 pub mod research_rag;
+// Fetching a paper's PDF needs no other feature; turning it into text needs `documents`
+// and indexing it needs `rag`, so those two parts are gated inside rather than here.
+#[cfg(feature = "research")]
+pub mod paper_fulltext;
 
 // =============================================================================
 // EVAL FEATURE
