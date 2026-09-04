@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.246"
+version = "0.2.247"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -67,7 +67,9 @@ multi-agent = []
 security = ["dep:sha2"]
 
 # Analytics: metrics, telemetry, engagement tracking, conversation analytics
-analytics = []
+# `analysis.rs` usa `crate::embeddings` para agrupar conversaciones por similitud,
+# asi que la arista es real y no una comodidad.
+analytics = ["embeddings"]
 
 # Vision/Multimodal support
 vision = []
@@ -81,10 +83,13 @@ advanced-streaming = []
 # External API adapters: OpenAI, Anthropic, HuggingFace.
 # NOTE (V76): marker feature retained — it is used as a label by the
 # `adapters_demo` example (see [[example]] section). No cfg gates in src/.
-adapters = []
+# Cada adaptador (Gemini, los plugins de proveedor) IMPLEMENTA `tools::ProviderPlugin`.
+# No es un uso opcional: sin `tools` no existe el trait que definen.
+adapters = ["tools"]
 
 # Tool calling: MCP protocol, agentic loops, function calling
-tools = []
+# `mcp_task_tools.rs` persiste las tareas en SQLite directamente.
+tools = ["rusqlite"]
 
 # Document parsing: EPUB, DOCX, HTML, PDF, feeds, tables
 # NOTE: references the `pdf-extract` FEATURE (not `dep:pdf-extract`) so the
@@ -119,7 +124,10 @@ server-tls = ["dep:rustls", "dep:rustls-pemfile"]
 # NOTE: references the `aes-gcm` FEATURE (not `dep:aes-gcm`) so that the
 # cfg(feature = "aes-gcm") gates in content_encryption.rs light up. With
 # `dep:` only, the crate compiled but AES-256-GCM returned EncryptionFailed.
-rag = ["rusqlite", "aes-gcm"]
+# `RagDb` usa `embeddings::LocalEmbedder` y `metrics::SearchCache` (de `analytics`),
+# y los paquetes de conocimiento cifrados son ficheros zip. Declarado tras comprobar
+# cada uno con `cargo check --no-default-features --features rag`.
+rag = ["rusqlite", "aes-gcm", "embeddings", "analytics", "zip"]
 
 # Research: academic search APIs (arXiv, Semantic Scholar, PubMed, OpenAlex, Crossref),
 # BibTeX, literature review, and the bridge that ingests found papers into the RAG index.

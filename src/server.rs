@@ -3009,6 +3009,7 @@ fn handle_openai_chat_completions(
     }
 
     // -- Input guardrails --
+    #[cfg(feature = "security")]
     if config.enrichment.enable_guardrails {
         if let Some(ref pipeline) = config.guardrail_pipeline {
             let mut gp = pipeline.lock().unwrap_or_else(|e| e.into_inner());
@@ -3040,7 +3041,9 @@ fn handle_openai_chat_completions(
     }
 
     // -- RAG enrichment --
+    #[cfg_attr(not(feature = "rag"), allow(unused_mut))]
     let mut knowledge_context = String::new();
+    #[cfg(feature = "rag")]
     {
         let mut ass = assistant.lock().unwrap_or_else(|e| e.into_inner());
         if config.enrichment.enable_rag {
@@ -3126,6 +3129,7 @@ fn handle_openai_chat_completions(
     drop(ass); // release assistant lock before output guardrails
 
     // -- Output guardrails --
+    #[cfg(feature = "security")]
     let final_text = if config.enrichment.enable_guardrails {
         if let Some(ref pipeline) = config.guardrail_pipeline {
             let mut gp = pipeline.lock().unwrap_or_else(|e| e.into_inner());
@@ -3160,6 +3164,8 @@ fn handle_openai_chat_completions(
     } else {
         response_text
     };
+    #[cfg(not(feature = "security"))]
+    let final_text = response_text;
 
     let prompt_tokens = crate::context::estimate_tokens(&user_message)
         + crate::context::estimate_tokens(&system_prompt)
@@ -3275,6 +3281,7 @@ fn handle_openai_chat_completions_stream(
     }
 
     // -- Input guardrails --
+    #[cfg(feature = "security")]
     if config.enrichment.enable_guardrails {
         if let Some(ref pipeline) = config.guardrail_pipeline {
             let mut gp = pipeline.lock().unwrap_or_else(|e| e.into_inner());
@@ -3306,7 +3313,9 @@ fn handle_openai_chat_completions_stream(
     }
 
     // -- RAG enrichment --
+    #[cfg_attr(not(feature = "rag"), allow(unused_mut))]
     let mut knowledge_context = String::new();
+    #[cfg(feature = "rag")]
     {
         let mut ass = assistant.lock().unwrap_or_else(|e| e.into_inner());
         if config.enrichment.enable_rag {
@@ -3392,6 +3401,7 @@ fn handle_openai_chat_completions_stream(
     drop(ass); // release assistant lock before output guardrails
 
     // -- Output guardrails --
+    #[cfg(feature = "security")]
     let full_text = if config.enrichment.enable_guardrails {
         if let Some(ref pipeline) = config.guardrail_pipeline {
             let mut gp = pipeline.lock().unwrap_or_else(|e| e.into_inner());

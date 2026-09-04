@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v170 (2026-09-04) — V295: cada feature compila sola (0.2.247)
+
+Cierra la segunda mitad de V294. Aquella arregló «código siempre-compilado que referencia
+módulos gateados» y dejó apuntado que quedaba **otra clase distinta**: el código de la
+feature A necesitando de verdad a la B. Aquí van las dos cosas que faltaban.
+
+### Changed — aristas declaradas en el manifiesto
+Cada una comprobada con `cargo check --no-default-features --features <X>` antes de
+escribirla, no deducida:
+
+- `analytics = ["embeddings"]` — `analysis.rs` agrupa conversaciones por similitud.
+- `tools = ["rusqlite"]` — `mcp_task_tools.rs` persiste las tareas en SQLite.
+- `adapters = ["tools"]` — cada adaptador **implementa** `tools::ProviderPlugin`. No es un
+  uso opcional: sin `tools` no existe el trait que definen.
+- `rag = [… , "embeddings", "analytics", "zip"]` — `RagDb` usa `LocalEmbedder` y
+  `metrics::SearchCache`, y los paquetes de conocimiento cifrados son ficheros zip.
+
+Se referencian **features**, no `dep:`. Es el bug que rompió AES-256-GCM y el PDF en V152 y
+hay una `zip = ["dep:zip"]` declarada justo para eso. Verificado con
+`scripts/check_feature_dep_drift.py`: *82 cfg contra 95 definiciones, sin drift*.
+
+**Lo que esto cambia para un consumidor:** quien pida `rag` se lleva ahora también
+`embeddings`, `analytics` y `zip`. No es capacidad nueva — es que ya los necesitaba y el
+manifiesto no lo decía, así que el build fallaba en vez de resolverlo. En `full` no cambia
+nada porque los tres ya estaban.
+
+### Fixed — los gates que faltaban dentro de los handlers de OpenAI
+V294 gateó los dos handlers en `adapters` y con eso el build de cero features quedó limpio,
+pero por dentro seguían asumiendo `rag` y `security`:
+
+- Los dos bloques `// -- RAG enrichment --`, tras `rag`.
+- Los dos de `// -- Input guardrails --` y los dos de `// -- Output guardrails --`, tras
+  `security`. Los de salida son expresiones asignadas a una variable, así que van con el par
+  `cfg`/`cfg(not(...))`; donde el respaldo es la propia variable se omite el segundo brazo,
+  porque un `let x = x;` dispara `clippy::redundant_locals`.
+- `knowledge_context` lleva `cfg_attr(not(feature = "rag"), allow(unused_mut))`: sin RAG
+  nadie lo escribe.
+
+### Verified
+- **Cada feature a solas**: `research`, `rag`, `tools`, `security`, `analytics`, `adapters`,
+  `embeddings`, `documents` → **0 errores** cada una. Antes fallaban cuatro de las ocho.
+- Cero features: 0. `FEATURES_MIN`: 0.
+- Clippy `-D warnings --all-targets` en los dos conjuntos de CI: limpio.
+- 7 005 tests: 0 fallos.
+
 ## [Unreleased] - v169 (2026-09-03) — V294: la librería ya compila sin ninguna feature (0.2.246)
 
 ### Fixed
