@@ -127,6 +127,19 @@ jobs:
       - name: Run feature/dep drift checker
         run: python3 scripts/check_feature_dep_drift.py --manifest Cargo.toml --root src
 
+  openapi-routes:
+    name: OpenAPI vs routes
+    runs-on: ubuntu-latest
+    # V302: fail when the embedded server serves a route that /openapi.json does not
+    # declare, or declares one it does not serve. The spec is a contract -- it is what a
+    # third party generates their client from -- and the failure is silent in one
+    # direction: a hidden endpoint never errors, the generated client simply lacks it.
+    # V301 found ten such endpoints; this script found eleven.
+    steps:
+      - uses: actions/checkout@v5
+      - name: Run OpenAPI route checker
+        run: python3 scripts/check_openapi_routes.py
+
   documented-cli:
     name: Documented CLI
     runs-on: ubuntu-latest

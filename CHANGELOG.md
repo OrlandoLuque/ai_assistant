@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v177 (2026-09-05) — V302: una puerta que compara la spec con las rutas de verdad (0.2.254)
+
+### Added
+- **`scripts/check_openapi_routes.py`** + job `openapi-routes` en CI. Falla si el servidor
+  sirve una ruta que `/openapi.json` no declara, **o al revés**.
+
+**La asimetría es la razón de existir.** Una spec que promete endpoints inexistentes falla
+ruidosamente la primera vez que un cliente llama a uno. Una que **esconde** endpoints que sí
+existen no falla nunca: el cliente generado simplemente no los tiene, y nadie — ni nosotros
+ni quien lo use — tiene forma de enterarse. Ese es el fallo silencioso que V301 destapó.
+
+**Probada contra el commit anterior al arreglo**, que es lo único que distingue un
+verificador de un adorno: encuentra **11 desajustes**, uno más que el diff manual con el que
+se hizo V301 — se me había escapado `/api/v1/ws`. Un verificador que solo sabe decir «OK» no
+vale nada; éste sabe decir «no», y se comprobó.
+
+### Notes
+- Lee las rutas de los brazos `("MÉTODO", "/ruta")` de `server.rs` y las declaradas del mapa
+  `"paths"`. Ambas cosas como texto, así que una ruta registrada de otra forma es invisible:
+  `/ws` y `/api/v1/ws` son exactamente ese caso (el upgrade WebSocket se decide antes del
+  match) y están en `SERVED_ELSEWHERE` **con el motivo escrito**, no tapadas.
+- Es el tercer gate de esta familia, junto a `check_documented_cli.py` (V292) y
+  `check_feature_dep_drift.py` (V154). Los tres nacen del mismo patrón: un contrato que se
+  puede comprobar mecánicamente no debe quedarse en prosa que alguien recuerda actualizar.
+
 ## [Unreleased] - v176 (2026-09-05) — V301: la especificación OpenAPI ocultaba diez endpoints reales (0.2.253)
 
 ### Fixed
