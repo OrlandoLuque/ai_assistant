@@ -22,6 +22,9 @@
   - [GET /config](#get-config)
   - [POST /config](#post-config)
   - [GET /metrics](#get-metrics)
+  - [GET /hardware](#get-hardware)
+  - [GET /benchmarks](#get-benchmarks)
+  - [POST /recommend-model](#post-recommend-model)
   - [GET /sessions](#get-sessions)
   - [GET /sessions/{id}](#get-sessionsid)
   - [DELETE /sessions/{id}](#delete-sessionsid)
@@ -321,6 +324,71 @@ ai_server_requests_by_status{status="5xx"} 14
 # TYPE ai_server_request_duration_seconds_total counter
 ai_server_request_duration_seconds_total 45.123456
 ```
+
+---
+
+### GET /hardware
+
+CPU, RAM and GPU as detected on the host. Probed once and cached, so repeated calls are
+cheap and report the same thing.
+
+**Response**: `200 OK`
+
+```json
+{ "cpu_cores": 16, "ram_gb": 32, "gpus": [ { "name": "NVIDIA RTX 4080 SUPER", "vram_gb": 16 } ] }
+```
+
+---
+
+### GET /benchmarks
+
+The benchmark catalogue this build knows about.
+
+**Response**: `200 OK`
+
+```json
+{ "total": 7, "benchmarks": [ { "id": "truthfulqa", "name": "TruthfulQA" } ] }
+```
+
+---
+
+### POST /recommend-model
+
+Rank models against this machine's hardware and a set of constraints.
+
+**Only present when the crate is built with the `model-recommender` feature.** Without it
+the route answers `404`, like any unknown path — worth knowing before you build a client
+around it.
+
+**Request**: both fields optional.
+
+```json
+{ "request": { "task": "coding", "max_vram_gb": 16 }, "registry_path": "./models.dev.json" }
+```
+
+**Response**: `200 OK` with the ranked recommendations, or `404` if the feature is absent.
+
+---
+
+### GET /openapi.json
+
+The OpenAPI 3.0 specification for this server, generated at runtime — so it describes the
+build you are actually talking to.
+
+**Response**: `200 OK` with `Content-Type: application/json`
+
+Since V302 a CI gate compares this document against the server's routing table in both
+directions, so it cannot drift from what is really served. It had: ten endpoints were
+missing until V301.
+
+---
+
+### GET /ws
+
+WebSocket endpoint for bidirectional chat streaming. Send an HTTP request with the usual
+upgrade headers; the server switches protocols before the normal routing runs.
+
+**Response**: `101 Switching Protocols`, or `400` if the upgrade headers are absent.
 
 ---
 
