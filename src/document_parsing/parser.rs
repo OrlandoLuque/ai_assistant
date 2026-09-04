@@ -755,6 +755,33 @@ impl DocumentParser {
     /// - Attempts to detect and filter headers/footers
     /// - Tracks page numbers for each section
     /// - Normalizes whitespace for readability
+    ///
+    /// # This writes to stdout, and you cannot stop it
+    ///
+    /// `pdf-extract` 0.7.12 carries **eleven `println!` calls** in `src/lib.rs` — not
+    /// one. They fire on ordinary, parseable files: unicode-map mismatches, unknown
+    /// glyph names, missing widths, encoding fallbacks. There is no feature flag and no
+    /// `log` integration to turn them off; the crate simply treats stdout as its
+    /// diagnostic channel. Counted against 0.7.12, the version pinned in `Cargo.toml`.
+    ///
+    /// **Do not call this from a process whose stdout carries structured data.** On the
+    /// CLI it is cosmetic noise. On a stdio transport it is a protocol violation: a
+    /// `println!` between two JSON-RPC frames desynchronises the peer, and the symptom
+    /// ("the server disconnected") shows up nowhere near the cause. This is why
+    /// `ai_mcp_server` does not register document tools.
+    ///
+    /// Fixing it properly is issue N52 and none of the routes are free:
+    /// - **Redirect fd 1** around the call — needs `unsafe` plus a Windows dependency
+    ///   (`libc` is unix-only here), and the redirect is *process-wide*: a concurrent
+    ///   thread writing real output during a parse would have it swallowed.
+    /// - **Parse in a subprocess** — correct, but a whole new execution mode for one
+    ///   noisy dependency.
+    /// - **Patch upstream or vendor a fork** — the actual fix; the prints belong on
+    ///   stderr or behind `log`.
+    ///
+    /// Upgrading is not the answer: 0.12 was tried and panicked with
+    /// `missing unicode map and encoding` on a paper 0.7 parsed fine (see
+    /// `paper_fulltext::pdf_to_text`).
     #[cfg(feature = "pdf-extract")]
     fn parse_pdf(&self, data: &[u8]) -> Result<ParsedDocument> {
         use pdf_extract::extract_text_from_mem;

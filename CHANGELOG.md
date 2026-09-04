@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v182 (2026-09-05) — V307: el umbral de PII no estaba mal, lo estaba la máquina; y `pdf-extract` no imprime una línea, imprime once (0.2.259)
+
+### N54 cerrado: no era una regresión
+`stress_performance` fallaba el presupuesto de detección de PII con **2,5-3,0 s contra
+2 s**, y llevaba semanas leyéndose como una regresión de rendimiento. Había una tentación
+permanente de subir el umbral.
+
+No era una regresión: era **Malwarebytes** escaneando los accesos a fichero del binario de
+test. Con las exclusiones del directorio de build puestas, el mismo test da **659, 782,
+803 y 833 ms** en cuatro ejecuciones — un margen de 2,4x bajo el mismo umbral, sin tocarlo.
+Los 8 tests de la categoría pasan.
+
+Subirlo a 3 s habría escondido una ralentización real de 4x **y** habría dejado al test
+ciego a cualquier regresión de verdad hasta ese tamaño. El arreglo estaba fuera del
+repositorio. La lección queda escrita en `docs/TESTING.md`, porque volverá a morder: ante
+un presupuesto de reloj que empieza a fallar, sospecha del entorno antes que del código, y
+**nunca relajes el umbral para poner verde un test rojo**.
+
+### N52 medido: son once, no una
+El ticket decía «`pdf-extract` escribe *Unicode mismatch* a stdout». Contados en 0.7.12:
+**once `println!`** en `src/lib.rs` — mismatches del mapa unicode, nombres de glifo
+desconocidos, anchuras que faltan, saltos a la codificación de respaldo. Disparan con
+ficheros normales y parseables. No hay feature que los apague ni integración con `log`:
+el crate trata stdout como su canal de diagnóstico.
+
+La parte de **protocolo** ya está cerrada desde V305 — `ai_mcp_server` no registra las
+herramientas de documentos —; queda el ruido en el CLI. Las tres rutas quedan escritas en
+la documentación de `parse_pdf`, con su coste cada una: redirigir el descriptor 1 necesita
+`unsafe` más una dependencia de Windows y **es un redirect de proceso**, así que un hilo
+concurrente perdería su salida; un subproceso es una modalidad de ejecución nueva; y
+parchear upstream es el arreglo real. Subir de versión no es la respuesta: 0.12 paniquea
+donde 0.7 lee bien.
+
+La decisión es del autor; lo que cambia es que ahora es una decisión informada y no un
+ticket de una línea.
+
+### Nota de método
+La primera versión de esta entrada se escribió pasando el texto en línea a `bash -c`, que
+**ejecutó lo que había entre backticks** y dejó el CHANGELOG con huecos donde iban los
+nombres de fichero. Revertido y rehecho desde un fichero, que es exactamente la regla que
+ya estaba escrita y que me salté.
+
 ## [Unreleased] - v181 (2026-09-05) — V306: el inventario de binarios decía 26 de 41, y el release se publicaba con binarios de menos (0.2.258)
 
 ### El inventario

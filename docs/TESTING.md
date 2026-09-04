@@ -254,6 +254,24 @@ The test harness is a standalone binary that tests the `ai_assistant` crate's pu
 
 **P2P (feature=p2p)**: p2p_nat, p2p_reputation, p2p_manager
 
+### `stress_performance` and your antivirus
+
+`stress_performance` asserts wall-clock budgets (`perf_budget_ms`, ×3 under CI). Those
+budgets measure the machine as much as the code, and the loudest confound is real-time
+antivirus scanning.
+
+Measured on this project: the PII detection test ran at **2.5–3.0 s against a 2 s
+budget** and failed for weeks. It was read as a performance regression and there was a
+standing temptation to raise the threshold. It was not a regression — it was Malwarebytes
+scanning the test binary's file access. After adding build-directory exclusions the same
+test runs at **659, 782, 803, 833 ms** across four runs: a 2.4× margin under the same
+unchanged budget.
+
+The lesson generalises past this one test: **when a wall-clock budget starts failing,
+suspect the environment before the code, and never relax the threshold to make a red test
+green.** Raising it to 3 s would have hidden the real 4× slowdown *and* blinded the test
+to any genuine regression up to that size. The correct fix was outside the repository.
+
 ### P2P Testing
 
 The P2P module requires the `p2p` feature flag (which also activates `distributed`). P2P tests are designed to work without real network access.
