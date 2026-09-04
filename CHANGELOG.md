@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v175 (2026-09-04) — V300: el banco dependía de `rustdoc`, y un antivirus lo probó (0.2.252)
+
+### Fixed — la causa real de la inestabilidad de N53
+`verify_crate_verbose` ejecutaba `cargo test` a secas. Eso corre también los **doctests**, y
+en una máquina sin `rustdoc` cargo sale con código 1 **después de que todas las aserciones
+hayan pasado**:
+
+```
+test result: ok. 1 passed; 0 failed
+error: the 'rustdoc.exe' binary ... is not applicable to this toolchain
+error: doctest failed
+```
+
+Leído como veredicto, eso es «el modelo se equivocó» — o, en `checker_adequacy`, «nuestro
+propio oráculo rechaza su implementación de referencia». Ninguna de las dos era cierta.
+
+Ahora es `cargo test --lib`. **Es lo correcto por sí mismo**, no un parche para esta
+máquina: lo que se verifica es el módulo de tests que añadimos al crate, y los doctests
+nunca fueron la intención. El banco deja de depender de un componente que no necesita.
+
+### Cómo se encontró, que es la parte que importa
+V299 dejó el diagnóstico en «inestable, no sé por qué» tras descartar target dir compartido,
+disco y basura en temp. Lo que lo resolvió fue **dejar de adivinar y propagar la salida real
+de cargo al mensaje de fallo** — tres líneas de cambio que contestaron en un minuto lo que
+tres hipótesis no habían contestado en una hora.
+
+El autor confirmó después el porqué del síntoma: **Malwarebytes había puesto `rustdoc.exe`
+en cuarentena.** De ahí que fuera intermitente y fuera a peor.
+
+### Alcance — ninguna medición registrada está contaminada
+`verify_crate_verbose` es también el verificador con el que se **puntean los modelos**, así
+que la pregunta obligada era si hay resultados falseados en `MODEL_BENCHMARKS.md`. No los
+hay: todas las mediciones son del **1–4 de agosto** en la máquina de la RTX 4080, y en ésta
+no se ha corrido ningún benchmark de modelo porque Ollama está aparcado por falta de GPU.
+Además, si aquella máquina hubiera tenido el problema habrían fallado **todas** las tareas,
+no algunas; los resultados discriminan entre modelos con puntuaciones sensatas.
+
+### Verified
+- `checker_adequacy`: **67/67 tres ejecuciones seguidas**. Antes: 1, 3 y 7 fallos.
+- Clippy `-D warnings --all-targets` limpio.
+
 ## [Unreleased] - v174 (2026-09-04) — V299: la auditoría de oráculos podía aprobar sin ejecutarse (0.2.251)
 
 Encontrado corriendo `ai_test_harness --all` para verificar los cambios de grafo de features

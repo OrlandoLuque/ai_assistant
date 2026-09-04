@@ -23,6 +23,26 @@ use crate::agentic_rust::{
 // categories this measures OUR CODE, not a model, so it belongs in the regression
 // battery.
 
+/// Last few meaningful lines of a cargo run, for a failure message.
+///
+/// The full output is thousands of lines of build chatter; what identifies the problem
+/// is the end — the `error[E0xxx]` or the `assertion failed`. Keeping it short matters
+/// because this goes into a test report that someone reads at a glance.
+fn tail(out: &str) -> String {
+    let lines: Vec<&str> = out
+        .lines()
+        .filter(|l| {
+            let t = l.trim();
+            !t.is_empty() && !t.starts_with("Compiling") && !t.starts_with("Finished")
+        })
+        .collect();
+    let start = lines.len().saturating_sub(12);
+    lines[start..].join(
+        "
+",
+    )
+}
+
 /// A task's oracle under test: one correct implementation and several wrong ones.
 ///
 /// Also reused as the corpus for `agentic_test_gen`: the same reference/mutant pair
@@ -185,12 +205,12 @@ pub(crate) fn tests_checker_adequacy() -> CategoryResult {
             &format!("adequacy: {} accepts a correct impl", a.task),
             || {
                 match verify_snippet_with_checker_checked(a.reference, checker) {
-                    Ok(true) => Ok(()),
-                    Ok(false) => Err(
+                    Ok((true, _)) => Ok(()),
+                    Ok((false, out)) => Err(format!(
                         "the checker REJECTED a correct implementation — it is too strict \
-                         or simply wrong"
-                            .to_string(),
-                    ),
+                         or simply wrong. cargo said:\n{}",
+                        tail(&out)
+                    )),
                     // Not a verdict about the checker. Still a failure, because an
                     // adequacy run that did not execute has audited nothing.
                     Err(why) => Err(format!(
@@ -205,8 +225,8 @@ pub(crate) fn tests_checker_adequacy() -> CategoryResult {
                 &format!("adequacy: {} rejects mutant ({})", a.task, label),
                 || {
                     match verify_snippet_with_checker_checked(mutant, checker) {
-                        Ok(false) => Ok(()),
-                        Ok(true) => Err(format!(
+                        Ok((false, _)) => Ok(()),
+                        Ok((true, _)) => Err(format!(
                             "the checker ACCEPTED a knowingly wrong implementation ({label}) — \
                              as an oracle it is too weak to score models or to authorise \
                              automated repair"
@@ -484,8 +504,11 @@ fn multi_adequacy_results() -> Vec<TestResult> {
         results.push(run_test(
             &format!("adequacy[multi]: {} accepts a correct impl", a.task),
             || match verify_snippet_with_checker_checked(a.reference, checker) {
-                Ok(true) => Ok(()),
-                Ok(false) => Err("the checker REJECTED a correct implementation".to_string()),
+                Ok((true, _)) => Ok(()),
+                Ok((false, out)) => Err(format!(
+                    "the checker REJECTED a correct implementation. cargo said:\n{}",
+                    tail(&out)
+                )),
                 Err(why) => Err(format!(
                     "COULD NOT VERIFY (this says nothing about the checker): {why}"
                 )),
@@ -495,8 +518,8 @@ fn multi_adequacy_results() -> Vec<TestResult> {
             results.push(run_test(
                 &format!("adequacy[multi]: {} rejects mutant ({})", a.task, label),
                 || match verify_snippet_with_checker_checked(mutant, checker) {
-                    Ok(false) => Ok(()),
-                    Ok(true) => Err(format!(
+                    Ok((false, _)) => Ok(()),
+                    Ok((true, _)) => Err(format!(
                         "the checker ACCEPTED a knowingly wrong implementation ({label})"
                     )),
                     Err(why) => Err(format!(

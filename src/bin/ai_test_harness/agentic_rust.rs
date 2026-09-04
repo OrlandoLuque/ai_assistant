@@ -491,9 +491,25 @@ fn verify_crate_verbose(cargo: &str, ws: &Path, checker: &str) -> (bool, String)
     if std::fs::write(&lib, &full).is_err() {
         return (false, "could not write src/lib.rs".to_string());
     }
+    // `--lib` and not a bare `cargo test`: what we are verifying is the checker module
+    // appended above, which lives in the lib target. A bare `cargo test` ALSO runs
+    // doctests, and that made the verdict depend on `rustdoc` being installed — on a
+    // toolchain without it (observed here: components are cargo/clippy/rust-std/rustc/
+    // rustfmt, no rustdoc) cargo exits non-zero *after every assertion has passed*:
+    //
+    //     test result: ok. 1 passed; 0 failed
+    //     error: the 'rustdoc.exe' binary ... is not applicable to this toolchain
+    //     error: doctest failed
+    //
+    // Read as a verdict, that is "the model got it wrong" — or, in `checker_adequacy`,
+    // "our own oracle rejects its own reference implementation". Neither was true.
     let out = run_capture(
         cargo,
-        &["test".to_string(), "--quiet".to_string()],
+        &[
+            "test".to_string(),
+            "--lib".to_string(),
+            "--quiet".to_string(),
+        ],
         ws,
         CARGO_TIMEOUT,
     );
@@ -1595,7 +1611,7 @@ pub(crate) fn cargo_available() -> bool {
 pub(crate) fn verify_snippet_with_checker_checked(
     snippet: &str,
     checker: &str,
-) -> Result<bool, String> {
+) -> Result<(bool, String), String> {
     let Some(cargo) = cargo_cmd() else {
         return Err("no cargo on PATH".to_string());
     };
@@ -1624,7 +1640,11 @@ pub(crate) fn verify_snippet_with_checker_checked(
             .unwrap_or("cargo produced no exit code")
             .to_string());
     }
-    Ok(passed)
+    // The output travels with the verdict. Discarding it on `Ok(false)` is what made
+    // the checker_adequacy flake opaque: "the checker REJECTED a correct implementation"
+    // says nothing about WHY, and the difference between a compile error and a failed
+    // assertion is the whole diagnosis.
+    Ok((passed, out))
 }
 
 /// Names of the multi-step Rust tasks, for adequacy drift-checking. Derived, for the
