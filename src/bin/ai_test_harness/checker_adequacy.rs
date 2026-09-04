@@ -1,6 +1,8 @@
 use super::*;
 
-use crate::agentic_rust::{rust_task_checker, rust_task_names, verify_snippet_with_checker};
+use crate::agentic_rust::{
+    rust_task_checker, rust_task_names, verify_snippet_with_checker_checked,
+};
 
 // ─── Are the benchmark's own checkers competent oracles? ──────────────────────
 //
@@ -182,14 +184,18 @@ pub(crate) fn tests_checker_adequacy() -> CategoryResult {
         results.push(run_test(
             &format!("adequacy: {} accepts a correct impl", a.task),
             || {
-                if verify_snippet_with_checker(a.reference, checker) {
-                    Ok(())
-                } else {
-                    Err(
+                match verify_snippet_with_checker_checked(a.reference, checker) {
+                    Ok(true) => Ok(()),
+                    Ok(false) => Err(
                         "the checker REJECTED a correct implementation — it is too strict \
                          or simply wrong"
                             .to_string(),
-                    )
+                    ),
+                    // Not a verdict about the checker. Still a failure, because an
+                    // adequacy run that did not execute has audited nothing.
+                    Err(why) => Err(format!(
+                        "COULD NOT VERIFY (this says nothing about the checker): {why}"
+                    )),
                 }
             },
         ));
@@ -198,14 +204,19 @@ pub(crate) fn tests_checker_adequacy() -> CategoryResult {
             results.push(run_test(
                 &format!("adequacy: {} rejects mutant ({})", a.task, label),
                 || {
-                    if verify_snippet_with_checker(mutant, checker) {
-                        Err(format!(
+                    match verify_snippet_with_checker_checked(mutant, checker) {
+                        Ok(false) => Ok(()),
+                        Ok(true) => Err(format!(
                             "the checker ACCEPTED a knowingly wrong implementation ({label}) — \
                              as an oracle it is too weak to score models or to authorise \
                              automated repair"
-                        ))
-                    } else {
-                        Ok(())
+                        )),
+                        // Critical: this used to be indistinguishable from catching the
+                        // mutant, so a broken toolchain made every mutant test pass.
+                        Err(why) => Err(format!(
+                            "COULD NOT VERIFY mutant ({label}) — the mutant was NOT caught, \
+                             the check never ran: {why}"
+                        )),
                     }
                 },
             ));
@@ -472,25 +483,26 @@ fn multi_adequacy_results() -> Vec<TestResult> {
         };
         results.push(run_test(
             &format!("adequacy[multi]: {} accepts a correct impl", a.task),
-            || {
-                if verify_snippet_with_checker(a.reference, checker) {
-                    Ok(())
-                } else {
-                    Err("the checker REJECTED a correct implementation".to_string())
-                }
+            || match verify_snippet_with_checker_checked(a.reference, checker) {
+                Ok(true) => Ok(()),
+                Ok(false) => Err("the checker REJECTED a correct implementation".to_string()),
+                Err(why) => Err(format!(
+                    "COULD NOT VERIFY (this says nothing about the checker): {why}"
+                )),
             },
         ));
         for (label, mutant) in a.mutants {
             results.push(run_test(
                 &format!("adequacy[multi]: {} rejects mutant ({})", a.task, label),
-                || {
-                    if verify_snippet_with_checker(mutant, checker) {
-                        Err(format!(
-                            "the checker ACCEPTED a knowingly wrong implementation ({label})"
-                        ))
-                    } else {
-                        Ok(())
-                    }
+                || match verify_snippet_with_checker_checked(mutant, checker) {
+                    Ok(false) => Ok(()),
+                    Ok(true) => Err(format!(
+                        "the checker ACCEPTED a knowingly wrong implementation ({label})"
+                    )),
+                    Err(why) => Err(format!(
+                        "COULD NOT VERIFY mutant ({label}) — the mutant was NOT caught, \
+                             the check never ran: {why}"
+                    )),
                 },
             ));
         }

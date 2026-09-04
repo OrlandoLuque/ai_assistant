@@ -320,12 +320,6 @@ fn scaffold_crate(seed_lib: &str) -> Result<std::path::PathBuf, String> {
     Ok(ws)
 }
 
-/// Append the checker as a test module to whatever the model wrote and run
-/// `cargo test`: exit 0 means it compiled AND the assertions passed.
-fn verify_crate(cargo: &str, ws: &Path, checker: &str) -> bool {
-    verify_crate_verbose(cargo, ws, checker).0
-}
-
 // ─── Compiler-guided repair (AI_BENCH_AUTOFIX=1) ──────────────────────────────
 //
 // rustc emits its suggestions in structured form: each diagnostic child can carry a
@@ -1585,16 +1579,61 @@ pub(crate) fn cargo_available() -> bool {
 /// Compile `snippet` with `checker` appended and report whether the tests pass.
 /// This is the same oracle the benchmark applies to model output, so adequacy is
 /// measured against the real thing rather than a copy of it.
-pub(crate) fn verify_snippet_with_checker(snippet: &str, checker: &str) -> bool {
+/// Run `checker` against `snippet` and say what happened, **distinguishing a verdict
+/// from a non-run**.
+///
+/// `Ok(true)` the checker accepted, `Ok(false)` it rejected, `Err(why)` the check never
+/// executed — no cargo, scaffolding failed, or the build was killed on timeout.
+///
+/// The distinction is the whole point. This function used to return a bare `bool` and
+/// collapse all three into `false`, which made `checker_adequacy` draw two wrong
+/// conclusions from an infrastructure hiccup: the "accepts a correct impl" case reported
+/// "the checker is too strict or simply wrong" when nothing had run, and — far worse —
+/// every "rejects mutant" case **silently passed**, because a toolchain that never ran
+/// looks exactly like a mutant being caught. An audit of our oracles that reports success
+/// because it did not execute is the one failure mode it must not have.
+pub(crate) fn verify_snippet_with_checker_checked(
+    snippet: &str,
+    checker: &str,
+) -> Result<bool, String> {
     let Some(cargo) = cargo_cmd() else {
-        return false;
+        return Err("no cargo on PATH".to_string());
     };
-    let Ok(ws) = scaffold_crate(snippet) else {
-        return false;
-    };
-    let passed = verify_crate(cargo, &ws, checker);
+    let ws = scaffold_crate(snippet).map_err(|e| format!("could not scaffold the crate: {e}"))?;
+    // Private target dir, overriding `scaffold_crate`'s shared one. Adequacy runs 67
+    // checks in a row, every crate is called `task`, and the sources differ only in
+    // their bodies — so a shared artifact cache makes cargo reuse a stale build and the
+    // verdict depends on what ran before. Observed exactly that: `ledger` passed alone
+    // and failed inside the full category. Same reasoning as `scaffold_crate_files`, and
+    // it costs a second here because these crates have no dependencies.
+    let cfg = format!(
+        "[build]\ntarget-dir = \"{}\"\n",
+        ws.join("_target").to_string_lossy().replace('\\', "\\\\")
+    );
+    std::fs::write(ws.join(".cargo").join("config.toml"), cfg)
+        .map_err(|e| format!("could not isolate the target dir: {e}"))?;
+    let (passed, out) = verify_crate_verbose(cargo, &ws, checker);
     let _ = std::fs::remove_dir_all(&ws);
-    passed
+    // `run_capture` prefixes real completions with `exit_code=`. Anything else means the
+    // process failed to launch or was killed on timeout, which is not a verdict about
+    // the code.
+    if !out.starts_with("exit_code=") {
+        return Err(out
+            .lines()
+            .next()
+            .unwrap_or("cargo produced no exit code")
+            .to_string());
+    }
+    Ok(passed)
+}
+
+/// Boolean form, kept for callers that genuinely cannot act on the difference.
+///
+/// Treats "could not run" as a rejection, which is the safe direction only when the
+/// caller is scoring a model — never when auditing an oracle.
+#[allow(dead_code)]
+pub(crate) fn verify_snippet_with_checker(snippet: &str, checker: &str) -> bool {
+    verify_snippet_with_checker_checked(snippet, checker).unwrap_or(false)
 }
 
 /// Names of the multi-step Rust tasks, for adequacy drift-checking. Derived, for the

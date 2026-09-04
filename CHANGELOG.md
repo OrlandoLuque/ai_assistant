@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v174 (2026-09-04) — V299: la auditoría de oráculos podía aprobar sin ejecutarse (0.2.251)
+
+Encontrado corriendo `ai_test_harness --all` para verificar los cambios de grafo de features
+de V294/V295: **693/694**, con `checker_adequacy > ledger: accepts a correct impl` en rojo.
+Aislado con `--filter=ledger` **pasaba**. Un test inestable en la puerta de regresión, que es
+peor que uno que falla siempre: erosiona la confianza en la propia puerta.
+
+### Fixed — el instrumento no distinguía dos cosas muy distintas
+`verify_snippet_with_checker` devolvía un `bool` que colapsaba **tres** situaciones en
+`false`: el checker rechazó el código, no hay cargo, o el build murió por timeout. De ahí
+salían dos conclusiones falsas:
+
+- «accepts a correct impl» informaba de que **«el checker es demasiado estricto o
+  simplemente está mal»** cuando en realidad no se había ejecutado nada.
+- Y lo grave: cada caso «rejects mutant» **pasaba en silencio**, porque un toolchain que no
+  corrió es indistinguible de un mutante cazado. Una auditoría de nuestros propios oráculos
+  que informa de éxito porque no se ejecutó es el único fallo que no se puede permitir.
+
+Ahora es `Result<bool, String>`: `Ok(true)` aceptó, `Ok(false)` rechazó, `Err` no se ejecutó
+— y `Err` es **fallo** en los dos sentidos, con el mensaje diciendo que no dice nada sobre
+el checker. La señal viene de que `run_capture` solo prefija `exit_code=` cuando el proceso
+terminó de verdad.
+
+### Fixed — y con el instrumento arreglado, el fallo real
+Con el tri-estado, el mensaje pasó a ser concluyente: `Ok(false)`, cargo **sí** había
+corrido. No era infraestructura. La causa es el bug de V277 otra vez: `scaffold_crate`
+comparte un único `_target` entre tareas, **todos los crates se llaman `task`**, y las 67
+comprobaciones seguidas hacen que cargo reutilice un artefacto obsoleto. De ahí que el
+veredicto dependa de qué corrió antes.
+
+La verificación de oráculos usa ahora un target dir propio, igual que `scaffold_crate_files`
+desde V277 y por la misma razón. Cuesta **6 segundos** sobre 63 — estos crates no tienen
+dependencias.
+
+### Verified
+- `checker_adequacy`: 66/67 → **67/67**.
+- Batería completa: **694/694**, 0 fallos.
+- Clippy `-D warnings --all-targets` limpio.
+
 ## [Unreleased] - v173 (2026-09-04) — V298: un PDF roto ya no se lleva por delante la ejecución (0.2.250)
 
 ### Fixed
