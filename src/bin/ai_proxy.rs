@@ -5609,6 +5609,22 @@ mod tests {
                     r3.headers().get("x-reason").and_then(|v| v.to_str().ok()),
                     Some("rate_limit")
                 );
+                // `Retry-After` is the part a client actually acts on: the OpenAI SDKs
+                // (and most HTTP clients) read it to time their backoff, and without it
+                // they fall back to a guess. It was being set and never asserted, so a
+                // refactor could have dropped it and every test would still have passed
+                // while third-party retry behaviour silently degraded.
+                let retry_after = r3
+                    .headers()
+                    .get("retry-after")
+                    .and_then(|v| v.to_str().ok())
+                    .expect("a 429 must carry Retry-After");
+                let secs: u64 = retry_after
+                    .parse()
+                    .unwrap_or_else(|_| panic!("Retry-After must be seconds, got {retry_after:?}"));
+                // Zero would tell a client to retry immediately, which is the one thing a
+                // rate limiter must not say.
+                assert!(secs >= 1, "Retry-After must be at least 1s, got {secs}");
             });
         }
 
