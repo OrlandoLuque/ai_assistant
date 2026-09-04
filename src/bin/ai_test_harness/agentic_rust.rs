@@ -1627,15 +1627,6 @@ pub(crate) fn verify_snippet_with_checker_checked(
     Ok(passed)
 }
 
-/// Boolean form, kept for callers that genuinely cannot act on the difference.
-///
-/// Treats "could not run" as a rejection, which is the safe direction only when the
-/// caller is scoring a model — never when auditing an oracle.
-#[allow(dead_code)]
-pub(crate) fn verify_snippet_with_checker(snippet: &str, checker: &str) -> bool {
-    verify_snippet_with_checker_checked(snippet, checker).unwrap_or(false)
-}
-
 /// Names of the multi-step Rust tasks, for adequacy drift-checking. Derived, for the
 /// reason given on [`rust_task_names`].
 pub(crate) fn rust_multi_task_names() -> Vec<&'static str> {
