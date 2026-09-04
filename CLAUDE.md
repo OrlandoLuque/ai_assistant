@@ -32,7 +32,10 @@ Esto te da el contexto completo: dónde estamos, qué se ha hecho, cómo trabaja
   de ese hecho. Si la intención era mantenerlo privado, hay que cambiar la visibilidad, no
   la frase.
 - **Feature flags**: 95 (multi-agent, security, analytics, rag, distributed, autonomous, gui-pro, audio-io, gpu-sharing, research, etc.). El conjunto mínimo soportado son ocho, documentado en `Cargo.toml` y verificado en CI.
-- **Binarios**: 40 declarados en `Cargo.toml`
+- **Binarios**: 41 declarados en `Cargo.toml` (V305 añadió `ai_mcp_server`). El inventario
+  es `docs/BINARIES.md`, y desde V305 CI comprueba que coincide con el manifiesto: decía 26
+  de 41, y una página que se llama a sí misma exhaustiva y va al 60 % contesta «no existe»
+  con seguridad a preguntas sobre quince binarios que sí existen.
 
 ## Módulos Principales
 - Multi-proveedor LLM — **19 con nombre propio** más el genérico `OpenAICompatible`

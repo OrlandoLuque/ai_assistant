@@ -46,7 +46,17 @@ cargo build --release --bin ai_assistant_cli --features "full,butler"
 
 ## Included Binaries
 
-All 26 binaries ship in the release zip. See `docs/BINARIES.md` for full per-binary documentation.
+The crate declares **41** binaries; `docs/BINARIES.md` is the full inventory, checked
+against `Cargo.toml` in CI.
+
+The release archive ships **14 of them**: the headless ones, listed in
+`.github/workflows/release.yml`. The desktop GUIs are excluded on purpose — they pull
+`eframe` and need system libraries that would have to be present on the target machine.
+This line used to read "all 26 binaries ship in the release zip", which was wrong about
+the count and wrong about what ships: someone downloading it looking for `ai_gui` would
+not find it, and nothing told them why.
+
+The table below is a selection, not the inventory.
 
 | Binary | Description |
 |--------|-------------|
@@ -78,6 +88,7 @@ All 26 binaries ship in the release zip. See `docs/BINARIES.md` for full per-bin
 | `ai_feedback_gui` | Feedback Loop dashboard (sinks, drops, retractions) — `feedback-loop + gui-pro` |
 | `ai_breeder` | PromptBreeder V97 auditor CLI (list-runs, show-run, ledger-verify, export, compare) — `prompt-breeder` |
 | `ai_breeder_gui` | PromptBreeder V97 dashboard (population, lineage, ledger, fitness timeline) — `prompt-breeder + gui-pro` |
+| `ai_mcp_server` | MCP server over stdio (JSON-RPC 2.0) — point Claude Desktop or any MCP client at it — `tools` |
 
 ## Features
 

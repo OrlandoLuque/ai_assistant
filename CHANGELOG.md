@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v181 (2026-09-05) — V306: el inventario de binarios decía 26 de 41, y el release se publicaba con binarios de menos (0.2.258)
+
+### El inventario
+`docs/BINARIES.md` abre diciendo que es «the authoritative inventory of **every**
+executable binary shipped by the crate». Listaba **26 de 41**. A la pregunta «¿existe ese
+binario?» contestaba **que no, con seguridad**, para quince que sí existen — entre ellos
+los auditores de ACP, los de local-inference, los de autocorrección y `ai_backup`.
+
+Una página exhaustiva al 60 % es peor que no tener página: sin ella buscas en
+`Cargo.toml`; con ella te fías.
+
+- Añadidas las quince filas que faltaban, con sus `required-features` reales sacadas del
+  manifiesto y su propósito sacado de la cabecera de cada binario, no inventado.
+- Las filas nuevas **no llevan enlace**, porque esas páginas no existen. Enlazar a un
+  fichero ausente es como se consigue que un inventario parezca completo sin serlo.
+- `scripts/check_binaries_documented.py` en CI comprueba cuatro cosas: que todo `[[bin]]`
+  está en la tabla, que la tabla no documenta binarios que nadie puede compilar, que el
+  total declarado coincide, y que ningún enlace apunta a una página inexistente.
+
+La puerta se probó **mutando**: las cuatro propiedades verificadas por separado, más un
+control con una edición inocua que no debe disparar. Un comprobador que solo se ha
+ejecutado contra la entrada correcta no ha demostrado separar nada.
+
+### El release, que es peor
+El workflow construye los binarios uno a uno y el que fallaba se saltaba con
+`|| { echo WARN; continue; }`. **El release se publicaba igual.** Un aviso en un log que
+nadie lee no es una señal: el zip habría llevado menos binarios de los que dice, y el
+primero en enterarse habría sido quien lo descargó.
+
+Ahora los fallos se acumulan y el paso termina en error nombrándolos todos —
+uno roto se reporta junto a los demás en vez de esconderlos. Es el mismo patrón que
+V274 arregló en los barridos: **degradar en silencio es la avería, no el síntoma**.
+`ai_mcp_server` entra en la lista del release, que pasa a 14 binarios.
+
+### El README
+Decía «All 26 binaries ship in the release zip», con una tabla de 28. Falso en el número
+y falso en la afirmación: el archivo lleva **14**, sólo los headless, y las GUI quedan
+fuera a propósito porque arrastran `eframe` y bibliotecas de sistema. Quien lo descargara
+buscando `ai_gui` no lo encontraría y nada le explicaba por qué. Ahora lo dice.
+
+### Verified
+- Las tres puertas de documentación en verde: 41 binarios, 45 ficheros de CLI, 30 rutas.
+- `release.yml` y `ci.yml` parsean como YAML válido (16 jobs).
+- Web: `binaries.html` pasa de 37 a 40 más el interno, sin anclas rotas ni enlaces a
+  páginas inexistentes, y la sección MCP queda junto a Servers en el índice.
+
 ## [Unreleased] - v180 (2026-09-05) — V305: el servidor MCP deja de ser una demo y pasa a ser un binario (0.2.257)
 
 ### El problema

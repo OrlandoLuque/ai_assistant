@@ -5,11 +5,21 @@ shipped by the `ai_assistant` crate. It is kept in lockstep with the
 companion page
 [`ai_assistant-website/binaries.html`](../../ai_assistant-website/binaries.html).
 
-> **Total binaries: 26** (V96 added 6 auditors: `ai_skills`/`_gui`, `ai_prompt_synth`/`_gui`, `ai_feedback`/`_gui`)
+> **Total binaries: 41**
 >
 > Each binary is a first-class consumer of the library and is gated behind
 > the feature flags listed below. Binaries with `required-features` that
 > are not satisfied by your current build are simply skipped by Cargo.
+>
+> This count is checked against `Cargo.toml` by
+> [`scripts/check_binaries_documented.py`](../scripts/check_binaries_documented.py)
+> in CI. It used to say **26**, which had been wrong for fifteen binaries and
+> for a long time — a page that calls itself the authoritative inventory and is
+> 60 % complete is worse than no page, because it answers "does that binary
+> exist?" with a confident no. Rows 27–41 are the ones it was missing.
+>
+> Rows without a link have no dedicated page yet. The link is omitted rather
+> than pointed at a file that is not there.
 
 ## Summary table
 
@@ -43,8 +53,57 @@ Each binary has a dedicated page in [`docs/binaries/`](binaries/) — click the 
 | 24 | [`ai_prompt_synth_gui`](binaries/ai_prompt_synth_gui.md) **(V96)** | Self-Learning | `prompt-synthesis`, `gui-pro` | Fragment Synthesis dashboard |
 | 25 | [`ai_feedback`](binaries/ai_feedback.md) **(V96)** | Self-Learning | `feedback-loop` | Feedback Loop auditor CLI |
 | 26 | [`ai_feedback_gui`](binaries/ai_feedback_gui.md) **(V96)** | Self-Learning | `feedback-loop`, `gui-pro` | Feedback Loop dashboard |
+| 27 | `ai_corrections` | Self-Learning | `self-correction` | Audits the self-correction run ledger and the review queue |
+| 28 | `ai_corrections_gui` | Self-Learning | `gui-corrections` | Visual auditor for the self-correction review queue |
+| 29 | `ai_breeder` | Self-Learning | `prompt-breeder` | PromptBreeder auditor CLI |
+| 30 | `ai_breeder_gui` | Self-Learning | `prompt-breeder`, `gui-pro` | PromptBreeder auditor GUI |
+| 31 | `ai_recipes` | Self-Learning | — | Recipes auditor CLI |
+| 32 | `ai_recipes_gui` | Self-Learning | `gui-recipes` | Visual auditor for recipe definitions |
+| 33 | `ai_acp` | Server | `acp` | Agent Client Protocol server (JSON-RPC over stdio) |
+| 34 | `ai_acp_audit` | Testing | `acp` | Checks SLO compliance of `ai_acp serve` logs (exit 1 on breach) |
+| 35 | `ai_acp_audit_gui` | GUI | `gui-acp` | Visual auditor for ACP SLO log files |
+| 36 | `ai_local_infer` | Media | `local-inference` | Drives the in-process `Backend` trait; streams chunks, logs SLO records |
+| 37 | `ai_local_infer_audit` | Testing | `local-inference` | Checks SLO compliance of `ai_local_infer` records |
+| 38 | `ai_local_infer_audit_gui` | GUI | `gui-local-inference` | Visual auditor for local-inference SLO logs |
+| 39 | `ai_backup` | Setup & Ops | `backup` | Encrypted, signed backup archives (create / restore / verify) |
+| 40 | `mock_llama_server` | Testing | `vision` | Stand-in for `llama-server` used by `embedded_server` integration tests |
+| 41 | `ai_mcp_server` **(V305)** | Server | `tools` | MCP server over stdio (JSON-RPC 2.0) — the real transport, not the example |
 
 ## Detailed descriptions
+
+### MCP
+
+#### `ai_mcp_server` (V305)
+
+An MCP server over **stdio**, speaking newline-delimited JSON-RPC 2.0 — the transport
+Claude Desktop, Claude Code and the rest of the MCP ecosystem use to launch a local
+server. It registers the library's real tool sets (tasks, config, benchmarks, knowledge):
+18 tools in a full build.
+
+```bash
+cargo run --bin ai_mcp_server --features tools -- --list-tools
+```
+
+Registering it with a client:
+
+```json
+{ "mcpServers": { "ai_assistant": { "command": "ai_mcp_server", "args": [] } } }
+```
+
+Two things about it are worth knowing before you extend it:
+
+- **stdout belongs to the protocol.** Anything written there that is not a JSON-RPC frame
+  desynchronises the client, and the symptom ("the server disconnected") appears nowhere
+  near the cause. Every human-facing byte — `--help` included — goes to stderr. This is
+  also why the document tools are not registered: `pdf-extract` writes to stdout.
+- **Notifications get no reply.** A JSON-RPC request without an `id` must not be answered,
+  and every client sends `notifications/initialized`. `McpServer::handle_stream_message`
+  returns `Option<String>` for exactly this; `handle_message` returns `String` and cannot
+  express it.
+
+`examples/mcp_server.rs` is *not* this. It demonstrates the API against two requests it
+writes itself and never reads stdin.
+
 
 ### CLI & REPL
 

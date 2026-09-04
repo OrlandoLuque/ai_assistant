@@ -83,20 +83,31 @@ jobs:
           BINS=(
             ai_cli ai_setup ai_logs ai_jobs ai_backup ai_local_infer
             ai_recipes ai_acp ai_proxy ai_breeder ai_feedback
-            ai_acp_audit ai_local_infer_audit
+            ai_acp_audit ai_local_infer_audit ai_mcp_server
           )
           # Build each binary individually with the features it
           # requires. `cargo build --bins` would refuse on missing
           # required-features; explicit per-bin invocations skip the
           # ones that aren't compilable for the current feature set.
+          #
+          # V305: a failed build used to `continue` with a WARN and the release
+          # shipped anyway. A warning in a log nobody reads is not a signal: the
+          # zip would silently contain fewer binaries than it claims, and the
+          # first person to find out would be whoever downloaded it. Failures are
+          # collected and the step fails at the end, so one broken binary is
+          # reported alongside the others rather than hiding the rest.
+          FAILED=()
           for bin in "${BINS[@]}"; do
             echo "== building $bin"
             cargo build --release --target ${{ matrix.target }} \
-              --features "full" --bin "$bin" || {
-                echo "WARN: $bin failed to build with --features full on ${{ matrix.target }} — skipping"
-                continue
-              }
+              --features "full" --bin "$bin" || FAILED+=("$bin")
           done
+          if [ ${#FAILED[@]} -ne 0 ]; then
+            echo "::error::${#FAILED[@]} of ${#BINS[@]} binaries failed to build on ${{ matrix.target }}: ${FAILED[*]}"
+            echo "Refusing to publish an archive that is missing binaries it claims to ship."
+            exit 1
+          fi
+          echo "All ${#BINS[@]} binaries built for ${{ matrix.target }}."
 
       - name: Stage binaries
         shell: bash

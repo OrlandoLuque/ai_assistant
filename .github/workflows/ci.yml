@@ -157,6 +157,20 @@ jobs:
       - name: Run documented-CLI checker
         run: python3 scripts/check_documented_cli.py $(ls docs/*.md | grep -v IMPROVEMENTS_V)
 
+  binaries-documented:
+    name: Binary inventory
+    runs-on: ubuntu-latest
+    # V305: fail when docs/BINARIES.md and Cargo.toml disagree about which binaries
+    # exist. The page opens by calling itself "the authoritative inventory of every
+    # executable binary shipped by the crate" and had been listing 26 of 41 — asked
+    # "does that binary exist?", it answered a confident no for fifteen of them.
+    # Also fails on a row linking to a page that is not there, so the inventory
+    # cannot be completed by pointing at files that do not exist.
+    steps:
+      - uses: actions/checkout@v5
+      - name: Run binary-inventory checker
+        run: python3 scripts/check_binaries_documented.py
+
   audit:
     name: Security Audit
     runs-on: ubuntu-latest
