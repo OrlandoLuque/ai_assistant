@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v183 (2026-09-05) — V308: los dos endpoints de compatibilidad publicaban un modelo llamado «» (0.2.260)
+
+### Cómo apareció
+Los tests de V303/V304 llamaban al handler directamente y pasaban. Levanté el servidor y
+le hice `curl`, que es lo que hace un tercero:
+
+```
+GET /api/tags   → {"models":[{"model":"","modified_at":"","name":""}]}
+GET /v1/models  → {"data":[{"created":0,"id":"","object":"model",...}]}
+GET /models     → []
+```
+
+El endpoint **nativo** lo tenía bien. Los dos de compatibilidad publicaban **un modelo
+cuyo identificador es la cadena vacía**. Un cliente lo lista, lo selecciona y falla en
+otro sitio, lejos de aquí.
+
+### El test no se perdió el fallo: lo exigía
+`ollama_tags_returns_the_documented_shape` afirmaba `!models.is_empty()` y que
+`name` fuera una cadena. **`""` cumple las dos.** El comentario decía «never empty: with
+no fetched list it still reports the configured model» — describía el bug como si fuera la
+funcionalidad. Reescrito para fijar el nombre esperado, no su tipo.
+
+### La causa, y una incoherencia mía
+El fallback existe para que un cliente descubra algo usable cuando no hay lista traída del
+proveedor. Pero `selected_model` **puede estar vacío**, y nadie lo comprobaba. Ahora el
+fallback solo dispara si hay algo que ofrecer; si no, lista vacía. «No tengo nada» es
+verdad y es accionable; «tengo un modelo que se llama nada» no es ninguna de las dos.
+
+El mismo bug estaba en `/v1/models`, que es de donde copié el de `/api/tags` en V303.
+Arreglados los dos.
+
+Y `modified_at` emitía `""` cuando no se sabía. Eso es exactamente la mentira que evité en
+el campo de al lado: en V303 escribí que poner `0` en `size` sería «una respuesta segura de
+sí misma y falsa donde el silencio era correcto», y acto seguido puse la cadena vacía en un
+campo especificado como instante RFC3339. Ahora se omite. Inventar «ahora» habría sido peor
+todavía: eso no es un valor que falta, es un valor fabricado.
+
+### La lección, que es sobre los tests y no sobre el código
+Un test que llama al handler comprueba el handler. **No comprueba el servicio.** Este fallo
+necesitaba un socket, un puerto y `curl` para salir, y estaba en la primera respuesta de la
+primera ruta que un cliente pide.
+
+### Verified
+- 6 tests de `server::ollama*` más el nuevo `no_model_means_an_empty_catalogue_not_a_model_named_nothing`,
+  que cubre los dos endpoints y fija `selected_model` explícitamente para no depender de si
+  esta máquina tiene fichero de configuración.
+- Por HTTP real contra el binario reconstruido: `/api/tags` → `{"models":[]}`,
+  `/v1/models` → `{"data":[],...}`, `/models` → `[]`. Los tres coinciden.
+- `/openapi.json` servido: 31 rutas, con `/api/chat`, `/api/generate` y `/api/tags`.
+
 ## [Unreleased] - v182 (2026-09-05) — V307: el umbral de PII no estaba mal, lo estaba la máquina; y `pdf-extract` no imprime una línea, imprime once (0.2.259)
 
 ### N54 cerrado: no era una regresión

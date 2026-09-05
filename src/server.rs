@@ -3793,10 +3793,18 @@ fn handle_ollama_tags(assistant: &Arc<Mutex<AiAssistant>>) -> (String, String) {
             // Ollama repeats the name under `model`; clients read either.
             "name": name,
             "model": name,
-            "modified_at": modified.clone().unwrap_or_default(),
         });
         if let Some(bytes) = ollama_size_bytes(size) {
             m["size"] = serde_json::json!(bytes);
+        }
+        // Omitted when unknown, for the same reason `size` is: this field is specified
+        // as an RFC3339 instant, and `""` does not parse as one. It used to emit the
+        // empty string — the identical mistake that emitting `0` for `size` would have
+        // been, made in the field right next to the one where it was avoided.
+        // Substituting "now" would be worse still: that is not a missing value, it is
+        // an invented one.
+        if let Some(ts) = modified.as_ref().filter(|s| !s.is_empty()) {
+            m["modified_at"] = serde_json::json!(ts);
         }
         m
     };
@@ -3807,9 +3815,14 @@ fn handle_ollama_tags(assistant: &Arc<Mutex<AiAssistant>>) -> (String, String) {
         .map(|m| entry(&m.name, &m.size, &m.modified_at))
         .collect();
 
-    // Same fallback as the OpenAI endpoint: with no fetched list, at least report the
-    // model actually configured, so a client discovers something it can then use.
-    let models = if models.is_empty() {
+    // With no fetched list, fall back to the configured model so a client discovers
+    // something it can then use — but only if there IS one. `selected_model` can be
+    // empty, and this used to emit an entry named `""`: a client would list a model
+    // called nothing, try to use it, and fail somewhere else entirely. An empty list
+    // says "I have nothing to offer", which is both true and actionable. The native
+    // `/models` endpoint already got this right; this is the compatibility layer
+    // catching up with it.
+    let models = if models.is_empty() && !ass.config.selected_model.is_empty() {
         vec![entry(&ass.config.selected_model, &None, &None)]
     } else {
         models
@@ -3836,8 +3849,12 @@ fn handle_openai_models(assistant: &Arc<Mutex<AiAssistant>>) -> (String, String)
         })
         .collect();
 
-    // If no fetched models, at least return the selected model
-    let data = if models.is_empty() {
+    // If no fetched models, at least return the selected model — but only when there
+    // is one. `selected_model` can be empty, and this used to emit `{"id": ""}`, so a
+    // client generated from the OpenAI spec would list a model named nothing. Same bug
+    // as the Ollama `/api/tags` fallback, which was copied from here; the native
+    // `/models` endpoint never had it, because it has no fallback to get wrong.
+    let data = if models.is_empty() && !ass.config.selected_model.is_empty() {
         vec![serde_json::json!({
             "id": ass.config.selected_model,
             "object": "model",
@@ -6149,20 +6166,71 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
     #[test]
     fn ollama_tags_returns_the_documented_shape() {
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        // Pin the configured model rather than inheriting whatever this machine has:
+        // the fallback's behaviour is the thing under test, so it must not depend on
+        // whether a config file happens to exist.
+        assistant
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .config
+            .selected_model = "llama3".to_string();
+
         let (status, body) = handle_ollama_tags(&assistant);
         assert!(status.starts_with("200"), "status: {status}");
         let json: serde_json::Value = serde_json::from_str(&body).expect("valid JSON");
         let models = json["models"].as_array().expect("models must be an array");
-        // Never empty: with no fetched list it still reports the configured model, so a
-        // client discovers something usable instead of an empty catalogue.
-        assert!(!models.is_empty(), "body: {body}");
+        // With no fetched list it reports the configured model, so a client discovers
+        // something usable.
+        assert_eq!(models.len(), 1, "body: {body}");
+        assert_eq!(models[0]["name"], "llama3");
         // Ollama repeats the name under `model`; clients in the wild read either one.
-        assert!(models[0]["name"].is_string());
         assert_eq!(models[0]["model"], models[0]["name"]);
         // If `size` is present at all it must be a number, never the display string.
         if let Some(size) = models[0].get("size") {
             assert!(size.is_number(), "size must be bytes, got {size}");
         }
+        // Unknown `modified_at` is omitted, not emitted as "". The field is specified
+        // as an RFC3339 instant and the empty string is not one — the same reasoning
+        // that makes an unparseable `size` disappear rather than become 0.
+        if let Some(ts) = models[0].get("modified_at") {
+            let s = ts.as_str().unwrap_or_default();
+            assert!(!s.is_empty(), "modified_at present but empty: {body}");
+        }
+    }
+
+    #[test]
+    fn no_model_means_an_empty_catalogue_not_a_model_named_nothing() {
+        // Regression, found by curling the running server rather than by calling the
+        // handler: with no fetched models AND no configured model, both compatibility
+        // endpoints emitted one entry whose identifier was the empty string. A client
+        // would list a model called nothing, select it, and fail somewhere unrelated.
+        //
+        // The previous version of `ollama_tags_returns_the_documented_shape` asserted
+        // `!models.is_empty()` and `name.is_string()`. The empty string satisfies both,
+        // so the test did not miss this — it required it.
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        assistant
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .config
+            .selected_model = String::new();
+
+        let (_, body) = handle_ollama_tags(&assistant);
+        let json: serde_json::Value = serde_json::from_str(&body).expect("valid JSON");
+        assert_eq!(
+            json["models"].as_array().map(|a| a.len()),
+            Some(0),
+            "an unnamed model is worse than no model: {body}"
+        );
+
+        // Same bug, same fix, in the endpoint the Ollama one was copied from.
+        let (_, body) = handle_openai_models(&assistant);
+        let json: serde_json::Value = serde_json::from_str(&body).expect("valid JSON");
+        assert_eq!(
+            json["data"].as_array().map(|a| a.len()),
+            Some(0),
+            "an unnamed model is worse than no model: {body}"
+        );
     }
 
     /// Build a request for the Ollama generation endpoints.
