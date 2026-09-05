@@ -611,6 +611,17 @@ string cannot be parsed the field is **omitted** rather than guessed. Emitting `
 have told the client the model is empty — a confident, wrong answer where silence is the
 correct one.
 
+`modified_at` follows the same rule: it is an RFC3339 instant, and it is **omitted** when
+unknown rather than sent as `""`, which does not parse as one. (Until V308 it did send the
+empty string — the same mistake as `size: 0`, made in the field next to the one where it
+was avoided.)
+
+**When there are no models at all, `models` is `[]`.** It does not contain a placeholder.
+Until V308 this endpoint — and `GET /v1/models` — fell back to the configured model
+without checking that one was configured, so both could return a single entry whose name
+was the empty string. A client would list a model called nothing, select it, and fail
+somewhere unrelated.
+
 ---
 
 ### POST /api/chat
