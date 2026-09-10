@@ -5,6 +5,64 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v184 (2026-09-10) — V309: las tres opciones «con LLM» de `faithfulness` ya llaman al LLM (0.2.261)
+
+### Cómo apareció
+
+Revisando si el subsistema de anti-alucinaciones estaba terminado. La respuesta corta era
+que no, y la larga es peor: `quality_gates.rs` no se tocaba desde el commit que lo creó
+(2026-04-16), y `faithfulness.rs` ofrecía tres opciones que prometían una llamada al modelo
+y devolvían la heurística barata **sin decirlo**.
+
+### Corregido
+
+- **`NliMethod::LlmNli` hacía Jaccard.** `evaluate_llm_nli` llamaba a
+  `evaluate_word_overlap` con un `// For now, fall back to word overlap`. Es una variante
+  pública del enum, seleccionable, despachada de verdad: quien la elegía creyendo comprar
+  precisión recibía el mismo número que la opción gratuita, sin gastar nada y sin forma de
+  notarlo. Ahora manda un prompt real y parsea el veredicto.
+  - La contradicción se comprueba **antes** que la implicación, porque «not entailed»
+    contiene «entailed» y buscar la implicación primero convierte cada negativa en un
+    aprobado.
+- **`DecompositionMethod::LlmDecomposition` partía por frases.** Ahora pide al modelo una
+  afirmación por línea, con lo que una sola frase puede dar dos claims — que es justo lo
+  que el partido por frases no puede hacer.
+- **`VerifyThenMark`, `VerifyThenOmit` y `Ask` eran las tres `Mark`.** Un `_ =>` con
+  «Default to Mark for now» las absorbía. Las dos primeras piden ahora una segunda opinión
+  al modelo (la primera pasada solo preguntó si el *contexto recuperado* respalda la
+  afirmación, y una afirmación puede ser cierta y no estar en los trozos recuperados: ese
+  falso positivo es la razón de existir de la estrategia). `Ask` va por un callback de
+  confirmación.
+  - El `match` es **exhaustivo y sin comodín**, a propósito: una variante nueva debe
+    romper la compilación aquí en vez de heredar comportamiento ajeno. Ese `_ =>` es
+    exactamente cómo tres estrategias pasaron meses actuando como una cuarta.
+
+### Añadido
+
+- **`FaithfulnessScorer::with_llm_verifier`** — mismo patrón que
+  `chain_of_verification::ChainOfVerification`, que ya lo tenía bien: un closure
+  `Fn(&str) -> Option<String>`. La librería no elige proveedor, modelo ni transporte.
+- **`with_confirmation`** para `Ask`.
+- **`FaithfulnessReport::degraded`** — lo que se pidió y no se pudo dar, en los términos
+  del que llama: sin verificador, presupuesto agotado, o una respuesta que no nombra
+  veredicto. Vacío significa que el informe es exactamente lo que pedía la configuración.
+  **Este campo es el arreglo de fondo**: la alternativa es lo que hacía antes, que era
+  aceptar `LlmNli` y devolver un número de otra cosa.
+- **`FaithfulnessReport::llm_calls_used`** y **`FaithfulnessConfig::max_llm_calls`**
+  (por defecto 10). El tope existe porque muerde, y un tope que muerde en silencio es
+  precisamente cómo un método barato acaba reportado como caro: cuando salta, se nombra.
+- **12 tests** para las rutas nuevas. Uno de ellos comprueba que el veredicto del LLM
+  **difiere** del que daría el solapamiento de palabras — si coincidieran, el test no
+  distinguiría una ruta LLM real del fallback silencioso de antes.
+- `FaithfulnessReport` pasa a `#[non_exhaustive]`, que le faltaba desde V39.
+
+### Documentación
+
+- `GUIDE_ANTI_HALLUCINATION.md` vendía las tres opciones sin decir que hacía falta un
+  modelo, y su tabla comparativa presumía de «LLM call budget cap: Yes» mientras las rutas
+  LLM no existían. Nueva sección «Supplying the LLM», y las dos entradas de la tabla de
+  métodos remiten a ella.
+
 ## [Unreleased] - v183 (2026-09-05) — V308: los dos endpoints de compatibilidad publicaban un modelo llamado «» (0.2.260)
 
 ### Cómo apareció

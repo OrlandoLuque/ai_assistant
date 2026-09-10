@@ -81,7 +81,7 @@ That is exactly what `ai_assistant` provides.
 | Quality gates (CI/CD-ready) | 5 metrics, 3 actions | No | No |
 | MCP tool integration | 3 tools | N/A | N/A |
 | HTTP API with risk headers | Yes | No | No |
-| LLM call budget cap | Yes | No | No |
+| LLM call budget cap | Yes, and it reports when it bites | No | No |
 | Prompt injection protection in claims | Yes | No | No |
 | Zero-cost faithfulness option | WordOverlap | No | No |
 
@@ -180,7 +180,9 @@ statements that can be independently verified.
 
 **How.** Two methods are available:
 - `SentenceSplit` -- zero-cost sentence boundary detection
-- `LlmDecomposition` -- uses one LLM call for precise claim extraction
+- `LlmDecomposition` -- uses one LLM call for precise claim extraction.
+  Requires `FaithfulnessScorer::with_llm_verifier`; see
+  [Supplying the LLM](#supplying-the-llm) below.
 
 **Example.** The sentence "Paris, the capital of France, has a population of
 2.1 million" becomes two claims: "Paris is the capital of France" and "Paris
@@ -197,7 +199,36 @@ Language Inference (NLI). The result is one of three verdicts:
 
 **How.** Two methods:
 - `WordOverlap` -- Jaccard similarity, zero LLM calls, good for fast filtering
-- `LlmNli` -- one LLM call per batch, higher accuracy
+- `LlmNli` -- one LLM call per claim, higher accuracy. Requires
+  `FaithfulnessScorer::with_llm_verifier`; see [Supplying the LLM](#supplying-the-llm).
+
+### Supplying the LLM
+
+`LlmNli`, `LlmDecomposition` and the `VerifyThenMark` / `VerifyThenOmit`
+strategies all need a model, and the library never picks one for you. Attach it
+with a callback:
+
+```rust
+let scorer = FaithfulnessScorer::new(config)
+    .with_llm_verifier(|prompt| my_assistant.generate_sync(prompt, "").ok());
+```
+
+**Without a verifier those options fall back to the cheap method, and the report
+says so.** Two fields carry that:
+
+- `report.llm_calls_used` -- what was actually spent.
+- `report.degraded` -- everything that was *requested but not delivered*: no
+  verifier attached, budget exhausted, or a reply that named no verdict. Empty
+  means the report is exactly what the configuration asked for.
+
+Check `degraded` before trusting a score. Until V309 these options silently ran
+the cheap method, so a caller selecting `LlmNli` got a word-overlap number and
+had no way to tell -- which is precisely what these two fields now make
+impossible.
+
+`config.max_llm_calls` (default 10) caps the spend for one `score()` call.
+Claims past the cap are scored by word overlap and the cap names itself in
+`degraded`.
 
 ### Step 6: Grounded Generation Check
 

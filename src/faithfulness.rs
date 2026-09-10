@@ -10,8 +10,22 @@
 //! Two NLI methods are available:
 //!
 //! - **`WordOverlap`**: Zero-cost Jaccard word overlap. Fast but imprecise.
-//! - **`LlmNli`**: LLM-based entailment check. One call per claim batch.
-//!   More accurate but costs one LLM call.
+//! - **`LlmNli`**: LLM-based entailment check, one call per claim.
+//!   More accurate, and it costs what it says.
+//!
+//! # The LLM has to be supplied
+//!
+//! `LlmNli`, [`DecompositionMethod::LlmDecomposition`] and the verify-then-*
+//! strategies all need a model, and this module never picks one: attach it with
+//! [`FaithfulnessScorer::with_llm_verifier`], the same shape
+//! [`crate::chain_of_verification`] uses.
+//!
+//! **Without a verifier those options fall back to the cheap method and say so in
+//! [`FaithfulnessReport::degraded`].** That field is not decoration. Until V309
+//! selecting `LlmNli` silently ran Jaccard word overlap — same number, no LLM call,
+//! no way for the caller to tell — which made the more expensive-sounding option a
+//! lie. Anything that had to fall back is now named there, and
+//! [`FaithfulnessReport::llm_calls_used`] says what was actually spent.
 //!
 //! # Usage
 //!
@@ -31,6 +45,17 @@
 use serde::{Deserialize, Serialize};
 
 use crate::anti_hallucination::UngroundedClaimStrategy;
+
+/// Confidence recorded for a verdict the model stated outright.
+///
+/// Deliberately a constant: the model returned a *label*, not a probability, and
+/// turning a label into a calibrated-looking number is the fake precision this
+/// module exists to remove. High, because a decisive answer is worth more than a
+/// word-overlap ratio — but never 1.0, which would claim certainty nobody has.
+const LLM_NLI_CONFIDENCE: f64 = 0.9;
+
+/// How many context chunks to cite as evidence for one claim.
+const MAX_SUPPORTING_CHUNKS: usize = 3;
 
 // ============================================================================
 // NLI types
@@ -149,6 +174,13 @@ pub struct FaithfulnessConfig {
     /// Word overlap threshold below which a claim is contradicted.
     /// (Only applies when source explicitly contradicts.)
     pub word_overlap_contradiction_threshold: f64,
+    /// Ceiling on LLM calls for one `score()`, across decomposition, NLI and
+    /// verify-then-* strategies.
+    ///
+    /// Claims beyond the budget are evaluated with word overlap, and the report
+    /// says so in [`FaithfulnessReport::degraded`] — running out of budget is a
+    /// result the caller has to be able to see, not a silent downgrade.
+    pub max_llm_calls: usize,
 }
 
 impl Default for FaithfulnessConfig {
@@ -160,6 +192,7 @@ impl Default for FaithfulnessConfig {
             ungrounded_strategy: UngroundedClaimStrategy::Mark,
             word_overlap_entailment_threshold: 0.3,
             word_overlap_contradiction_threshold: 0.05,
+            max_llm_calls: 10,
         }
     }
 }
@@ -179,6 +212,7 @@ pub struct ClaimFaithfulness {
 
 /// Complete faithfulness report for a response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct FaithfulnessReport {
     /// Per-claim faithfulness results.
     pub claims: Vec<ClaimFaithfulness>,
@@ -193,6 +227,22 @@ pub struct FaithfulnessReport {
     pub neutral_count: usize,
     /// Response text with ungrounded claims processed per strategy.
     pub processed_text: String,
+    /// LLM calls actually spent producing this report.
+    ///
+    /// Zero with [`NliMethod::WordOverlap`] and no verifier attached, which is
+    /// the zero-cost path the module advertises.
+    pub llm_calls_used: usize,
+    /// Anything that was **requested but not delivered**, in the caller's terms.
+    ///
+    /// Empty means the report is exactly what the configuration asked for. A
+    /// non-empty entry means some step fell back to a cheaper method — no
+    /// verifier attached, budget exhausted, or an answer that could not be
+    /// parsed — and the score must be read as that cheaper method's.
+    ///
+    /// This field exists because the alternative is what this module used to do:
+    /// accept `LlmNli`, run Jaccard word overlap, and return a number the caller
+    /// believed came from an LLM.
+    pub degraded: Vec<String>,
 }
 
 impl FaithfulnessReport {
@@ -233,18 +283,117 @@ impl FaithfulnessReport {
 /// against the source context using the configured NLI method.
 pub struct FaithfulnessScorer {
     config: FaithfulnessConfig,
+    /// Optional LLM callback. Required by [`NliMethod::LlmNli`],
+    /// [`DecompositionMethod::LlmDecomposition`] and the verify-then-* strategies;
+    /// without it those options fall back and say so in
+    /// [`FaithfulnessReport::degraded`].
+    llm_fn: Option<Box<dyn Fn(&str) -> Option<String>>>,
+    /// Optional confirmation callback for [`UngroundedClaimStrategy::Ask`].
+    /// Returns true to keep the claim, false to drop it.
+    confirm_fn: Option<Box<dyn Fn(&str) -> bool>>,
+}
+
+/// Tracks LLM spend within one `score()` call and records what had to degrade.
+///
+/// Both halves belong together on purpose: the only reason to cap spend is that
+/// the cap will sometimes bite, and a cap that bites silently is how a cheaper
+/// method ends up reported as an expensive one.
+struct LlmBudget {
+    used: usize,
+    max: usize,
+    degraded: Vec<String>,
+}
+
+impl LlmBudget {
+    fn new(max: usize) -> Self {
+        Self {
+            used: 0,
+            max,
+            degraded: Vec::new(),
+        }
+    }
+
+    /// Charge one call, or refuse when the budget is spent.
+    fn charge(&mut self) -> bool {
+        if self.used >= self.max {
+            self.note(format!(
+                "LLM budget of {} call(s) exhausted; remaining claims scored by word overlap",
+                self.max
+            ));
+            return false;
+        }
+        self.used += 1;
+        true
+    }
+
+    /// Record a degradation once, however many claims hit it — a per-claim list
+    /// would bury the one line the caller needs under fifty copies of itself.
+    fn note(&mut self, reason: String) {
+        if !self.degraded.contains(&reason) {
+            self.degraded.push(reason);
+        }
+    }
 }
 
 impl FaithfulnessScorer {
     /// Create a new scorer with the given configuration.
+    ///
+    /// Without [`with_llm_verifier`](Self::with_llm_verifier) the LLM-backed
+    /// options degrade to their cheap equivalents and report it.
     pub fn new(config: FaithfulnessConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            llm_fn: None,
+            confirm_fn: None,
+        }
+    }
+
+    /// Attach the LLM used by `LlmNli`, `LlmDecomposition` and the
+    /// verify-then-* strategies.
+    ///
+    /// The callback receives a prompt and returns the model's reply, so the
+    /// library never picks a provider, a model or a transport — the same shape
+    /// [`crate::chain_of_verification::ChainOfVerification::with_llm_verifier`]
+    /// uses.
+    ///
+    /// ```rust
+    /// use ai_assistant::faithfulness::*;
+    ///
+    /// let mut config = FaithfulnessConfig::default();
+    /// config.nli_method = NliMethod::LlmNli;
+    ///
+    /// // A real caller would forward this to their assistant.
+    /// let scorer = FaithfulnessScorer::new(config)
+    ///     .with_llm_verifier(|_prompt| Some("Entailed".to_string()));
+    ///
+    /// let report = scorer.score("Rust is a systems language.", &["Rust is a systems language."]);
+    /// assert!(report.degraded.is_empty(), "nothing had to fall back");
+    /// assert_eq!(report.llm_calls_used, 1);
+    /// ```
+    pub fn with_llm_verifier<F>(mut self, f: F) -> Self
+    where
+        F: Fn(&str) -> Option<String> + 'static,
+    {
+        self.llm_fn = Some(Box::new(f));
+        self
+    }
+
+    /// Attach the prompt used by [`UngroundedClaimStrategy::Ask`]. Return true
+    /// to keep an ungrounded claim, false to drop it.
+    pub fn with_confirmation<F>(mut self, f: F) -> Self
+    where
+        F: Fn(&str) -> bool + 'static,
+    {
+        self.confirm_fn = Some(Box::new(f));
+        self
     }
 
     /// Score faithfulness of `response` against `context` chunks.
     pub fn score(&self, response: &str, context: &[&str]) -> FaithfulnessReport {
+        let mut budget = LlmBudget::new(self.config.max_llm_calls);
+
         // Step 1: Decompose response into atomic claims
-        let claims = self.decompose(response);
+        let claims = self.decompose(response, &mut budget);
 
         if claims.is_empty() {
             return FaithfulnessReport {
@@ -254,6 +403,8 @@ impl FaithfulnessScorer {
                 contradicted_count: 0,
                 neutral_count: 0,
                 processed_text: response.to_string(),
+                llm_calls_used: budget.used,
+                degraded: budget.degraded,
             };
         }
 
@@ -266,7 +417,7 @@ impl FaithfulnessScorer {
         for claim in claims {
             let (verdict, confidence, supporting) = match self.config.nli_method {
                 NliMethod::WordOverlap => self.evaluate_word_overlap(&claim, context),
-                NliMethod::LlmNli => self.evaluate_llm_nli(&claim, context),
+                NliMethod::LlmNli => self.evaluate_llm_nli(&claim, context, &mut budget),
             };
 
             match verdict {
@@ -291,7 +442,7 @@ impl FaithfulnessScorer {
         };
 
         // Step 3: Build processed text
-        let processed_text = self.apply_strategy(response, &results);
+        let processed_text = self.apply_strategy(response, &results, context, &mut budget);
 
         FaithfulnessReport {
             claims: results,
@@ -300,19 +451,88 @@ impl FaithfulnessScorer {
             contradicted_count: contradicted,
             neutral_count: neutral,
             processed_text,
+            llm_calls_used: budget.used,
+            degraded: budget.degraded,
         }
     }
 
     /// Decompose response text into atomic claims.
-    fn decompose(&self, text: &str) -> Vec<AtomicClaim> {
+    fn decompose(&self, text: &str, budget: &mut LlmBudget) -> Vec<AtomicClaim> {
         match self.config.decomposition_method {
             DecompositionMethod::SentenceSplit => Self::sentence_split(text),
-            DecompositionMethod::LlmDecomposition => {
-                // LLM decomposition would require an LLM call.
-                // For now, fall back to sentence split.
-                Self::sentence_split(text)
-            }
+            DecompositionMethod::LlmDecomposition => self.llm_decompose(text, budget),
         }
+    }
+
+    /// Ask the model to split the text into atomic claims, one per line.
+    ///
+    /// Falls back to sentence splitting — and records why — when there is no
+    /// verifier, the budget is spent, or the reply yields nothing usable.
+    fn llm_decompose(&self, text: &str, budget: &mut LlmBudget) -> Vec<AtomicClaim> {
+        let Some(ref llm) = self.llm_fn else {
+            budget.note(
+                "LlmDecomposition requested without an LLM verifier; used sentence splitting"
+                    .to_string(),
+            );
+            return Self::sentence_split(text);
+        };
+        if !budget.charge() {
+            return Self::sentence_split(text);
+        }
+
+        let prompt = format!(
+            "Break the following text into atomic factual claims: single, independently \
+             checkable assertions. Output one claim per line, with no numbering, no bullets \
+             and no commentary.\n\nText:\n{text}"
+        );
+        let Some(reply) = llm(&prompt) else {
+            budget.note(
+                "the LLM returned nothing for decomposition; used sentence splitting".to_string(),
+            );
+            return Self::sentence_split(text);
+        };
+
+        let claims = Self::claims_from_lines(&reply, text);
+        if claims.is_empty() {
+            budget.note(
+                "the LLM's decomposition had no usable lines; used sentence splitting".to_string(),
+            );
+            return Self::sentence_split(text);
+        }
+        claims
+    }
+
+    /// Turn one-claim-per-line model output into [`AtomicClaim`]s.
+    ///
+    /// Positions are resolved by locating each claim in the original text, because
+    /// the ungrounded strategies splice by position and the model may reword what
+    /// it returns. A claim that cannot be located keeps length 0, which the
+    /// splicing code treats as "nothing to replace" rather than corrupting an
+    /// unrelated span.
+    fn claims_from_lines(reply: &str, original: &str) -> Vec<AtomicClaim> {
+        let mut claims = Vec::new();
+        for line in reply.lines() {
+            // Strip the numbering and bullets the prompt asked it not to add.
+            let text = line
+                .trim()
+                .trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ')')
+                .trim_start_matches(['-', '*', '•'])
+                .trim();
+            if text.len() < 3 {
+                continue;
+            }
+            let (position, length) = match original.find(text) {
+                Some(p) => (p, text.len()),
+                None => (0, 0),
+            };
+            claims.push(AtomicClaim {
+                text: text.to_string(),
+                position,
+                length,
+                source_sentence: text.to_string(),
+            });
+        }
+        claims
     }
 
     /// Split text into sentences as atomic claims.
@@ -388,20 +608,114 @@ impl FaithfulnessScorer {
         }
     }
 
-    /// Evaluate a claim using LLM-based NLI (stub — requires LLM provider).
+    /// Evaluate a claim by asking the model whether the context entails it.
+    ///
+    /// Falls back to word overlap — recording why — when there is no verifier,
+    /// the budget is spent, or the reply names no verdict. The fallback is the
+    /// point of the `degraded` list: this used to happen unconditionally and
+    /// silently, so `LlmNli` was word overlap wearing a more expensive name.
     fn evaluate_llm_nli(
         &self,
         claim: &AtomicClaim,
         context: &[&str],
+        budget: &mut LlmBudget,
     ) -> (NliVerdict, f64, Vec<String>) {
-        // LLM NLI would send a prompt like:
-        //   "Given context: {context}\nClaim: {claim}\nIs the claim Entailed, Contradicted, or Neutral?"
-        // For now, fall back to word overlap.
-        self.evaluate_word_overlap(claim, context)
+        let Some(ref llm) = self.llm_fn else {
+            budget.note(
+                "LlmNli requested without an LLM verifier; scored by word overlap".to_string(),
+            );
+            return self.evaluate_word_overlap(claim, context);
+        };
+        if context.is_empty() {
+            // Nothing to entail against; the cheap path already answers this
+            // correctly and an LLM call would only cost money to agree.
+            return self.evaluate_word_overlap(claim, context);
+        }
+        if !budget.charge() {
+            return self.evaluate_word_overlap(claim, context);
+        }
+
+        let prompt = format!(
+            "Decide whether the reference context supports the claim.\n\n\
+             Reference context:\n{}\n\n\
+             Claim: \"{}\"\n\n\
+             Answer with exactly one word: Entailed, Contradicted, or Neutral.",
+            context.join("\n"),
+            claim.text
+        );
+
+        let Some(reply) = llm(&prompt) else {
+            budget.note("the LLM returned nothing for NLI; scored by word overlap".to_string());
+            return self.evaluate_word_overlap(claim, context);
+        };
+
+        let lower = reply.to_lowercase();
+        // Contradiction first: "not entailed" contains "entailed", so testing for
+        // entailment first would read a denial as agreement.
+        let verdict = if lower.contains("contradict") {
+            Some(NliVerdict::Contradicted)
+        } else if lower.contains("entail") || lower.contains("support") {
+            Some(NliVerdict::Entailed)
+        } else if lower.contains("neutral") || lower.contains("unsupported") {
+            Some(NliVerdict::Neutral)
+        } else {
+            None
+        };
+
+        match verdict {
+            // The confidence is a fixed constant, not a probability: the model
+            // returned a label, and dressing a label up as a calibrated number
+            // is the kind of fake precision this module exists to remove.
+            Some(v) => (
+                v,
+                LLM_NLI_CONFIDENCE,
+                self.supporting_chunks(claim, context),
+            ),
+            None => {
+                budget.note(format!(
+                    "the LLM's NLI reply named no verdict ({:?}); scored by word overlap",
+                    reply.chars().take(40).collect::<String>()
+                ));
+                self.evaluate_word_overlap(claim, context)
+            }
+        }
+    }
+
+    /// Context chunks worth citing for a claim, by overlap, so an LLM verdict
+    /// still points at its evidence.
+    fn supporting_chunks(&self, claim: &AtomicClaim, context: &[&str]) -> Vec<String> {
+        let claim_words = words_set(&claim.text);
+        if claim_words.is_empty() {
+            return Vec::new();
+        }
+        let mut scored: Vec<(f64, &str)> = context
+            .iter()
+            .filter_map(|chunk| {
+                let chunk_words = words_set(chunk);
+                let union = claim_words.union(&chunk_words).count() as f64;
+                if union == 0.0 {
+                    return None;
+                }
+                let score = claim_words.intersection(&chunk_words).count() as f64 / union;
+                (score > 0.0).then_some((score, *chunk))
+            })
+            .collect();
+        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        scored
+            .into_iter()
+            .take(MAX_SUPPORTING_CHUNKS)
+            .map(|(_, chunk)| chunk.to_string())
+            .collect()
     }
 
     /// Apply the configured ungrounded strategy to build processed text.
-    fn apply_strategy(&self, original: &str, results: &[ClaimFaithfulness]) -> String {
+    fn apply_strategy(
+        &self,
+        original: &str,
+        results: &[ClaimFaithfulness],
+        context: &[&str],
+        budget: &mut LlmBudget,
+    ) -> String {
         let mut processed = original.to_string();
 
         // Process in reverse order to preserve positions
@@ -438,18 +752,107 @@ impl FaithfulnessScorer {
                         processed.replace_range(start..end, &footnote);
                     }
                 }
-                _ => {
-                    // VerifyThenMark, VerifyThenOmit, Ask — require async verification
-                    // Default to Mark for now
+                // Give the claim a second chance before acting on it: the first
+                // pass judged it against the retrieved context only, and a claim
+                // can be true without that context containing it.
+                UngroundedClaimStrategy::VerifyThenMark
+                | UngroundedClaimStrategy::VerifyThenOmit => {
+                    let survived = self.second_opinion(claim_text, context, budget);
                     if let Some(start) = processed.find(claim_text) {
-                        let marked = format!("[unverified] {}", claim_text);
-                        processed.replace_range(start..start + claim_text.len(), &marked);
+                        let end = start + claim_text.len();
+                        if survived {
+                            // Verified after all — leave it exactly as written.
+                        } else if self.config.ungrounded_strategy
+                            == UngroundedClaimStrategy::VerifyThenOmit
+                        {
+                            processed.replace_range(start..end, "");
+                        } else {
+                            let marked = format!("[unverified] {}", claim_text);
+                            processed.replace_range(start..end, &marked);
+                        }
                     }
                 }
+                UngroundedClaimStrategy::Ask => {
+                    let keep = match self.confirm_fn {
+                        Some(ref ask) => ask(claim_text),
+                        None => {
+                            budget.note(
+                                "Ask requested without a confirmation callback; marked instead"
+                                    .to_string(),
+                            );
+                            true
+                        }
+                    };
+                    if let Some(start) = processed.find(claim_text) {
+                        let end = start + claim_text.len();
+                        if keep {
+                            let marked = format!("[unverified] {}", claim_text);
+                            processed.replace_range(start..end, &marked);
+                        } else {
+                            processed.replace_range(start..end, "");
+                        }
+                    }
+                } // Deliberately exhaustive, with no catch-all: a variant added later
+                  // must break the build here rather than silently inherit someone
+                  // else's behaviour. A `_ =>` arm is exactly how the three
+                  // verify-then-* strategies spent months quietly acting as `Mark`.
             }
         }
 
         processed
+    }
+
+    /// Ask the model whether an ungrounded claim is true anyway.
+    ///
+    /// This is the "verify" in verify-then-mark: the NLI pass only asked whether
+    /// the *retrieved context* supports the claim, and a claim can be perfectly
+    /// true while absent from the chunks that happened to be retrieved. Marking
+    /// those is the false positive the strategy exists to avoid.
+    ///
+    /// Returns true when the claim survives. With no verifier it returns false —
+    /// the conservative direction: without a second opinion the first one stands,
+    /// so the claim gets marked exactly as before.
+    fn second_opinion(&self, claim: &str, context: &[&str], budget: &mut LlmBudget) -> bool {
+        let Some(ref llm) = self.llm_fn else {
+            budget.note(format!(
+                "{} requested without an LLM verifier; no second opinion, claims stay ungrounded",
+                self.config.ungrounded_strategy.display_name()
+            ));
+            return false;
+        };
+        if !budget.charge() {
+            return false;
+        }
+
+        let prompt = if context.is_empty() {
+            format!(
+                "Is the following statement factually correct? Answer with exactly one word, \
+                 Yes or No.\n\nStatement: \"{claim}\""
+            )
+        } else {
+            format!(
+                "The reference context does not clearly support the statement below. Using your \
+                 own knowledge, is the statement nonetheless factually correct? Answer with \
+                 exactly one word, Yes or No.\n\nReference context:\n{}\n\nStatement: \"{claim}\"",
+                context.join("\n")
+            )
+        };
+
+        let Some(reply) = llm(&prompt) else {
+            budget.note(
+                "the LLM returned nothing for verification; claims stay ungrounded".to_string(),
+            );
+            return false;
+        };
+
+        // "No" is a substring of plenty of words ("nonetheless", "not"), so match
+        // the negative on a trimmed token rather than anywhere in the reply.
+        let lower = reply.trim().to_lowercase();
+        let first = lower
+            .split(|c: char| !c.is_alphabetic())
+            .find(|w| !w.is_empty())
+            .unwrap_or("");
+        matches!(first, "yes" | "true" | "correct" | "supported")
     }
 
     /// Get the current configuration.
@@ -790,6 +1193,8 @@ mod tests {
             contradicted_count: 0,
             neutral_count: 1,
             processed_text: String::new(),
+            llm_calls_used: 0,
+            degraded: Vec::new(),
         };
         assert!(report.meets_threshold(0.7));
         assert!(!report.meets_threshold(0.9));
@@ -827,6 +1232,8 @@ mod tests {
             contradicted_count: 1,
             neutral_count: 0,
             processed_text: String::new(),
+            llm_calls_used: 0,
+            degraded: Vec::new(),
         };
         assert_eq!(report.contradicted_claims().len(), 1);
         assert_eq!(report.neutral_claims().len(), 0);
@@ -904,6 +1311,8 @@ mod tests {
             contradicted_count: 0,
             neutral_count: 1,
             processed_text: String::new(),
+            llm_calls_used: 0,
+            degraded: Vec::new(),
         };
         assert!((report.grounding_ratio() - 0.75).abs() < f64::EPSILON);
     }
@@ -958,5 +1367,236 @@ mod tests {
         assert_eq!(r.total_tokens, 0);
         assert_eq!(r.visual_density, 0.0);
         assert!(!r.has_visual_grounding);
+    }
+}
+
+#[cfg(test)]
+mod llm_path_tests {
+    //! The LLM-backed options must either do the expensive thing or admit they
+    //! did not. Silence is the bug these tests exist to prevent: before V309 all
+    //! three ran the cheap method and reported nothing.
+    use super::*;
+    use std::cell::RefCell;
+
+    /// A scorer whose "model" answers with a fixed reply.
+    fn scorer_with(config: FaithfulnessConfig, reply: &'static str) -> FaithfulnessScorer {
+        FaithfulnessScorer::new(config).with_llm_verifier(move |_| Some(reply.to_string()))
+    }
+
+    #[test]
+    fn llm_nli_without_a_verifier_says_it_fell_back() {
+        let mut config = FaithfulnessConfig::default();
+        config.nli_method = NliMethod::LlmNli;
+
+        let report = FaithfulnessScorer::new(config).score("Rust is fast.", &["Rust is fast."]);
+
+        assert_eq!(report.llm_calls_used, 0, "there was no LLM to call");
+        assert!(
+            report.degraded.iter().any(|d| d.contains("LlmNli")),
+            "the caller asked for LlmNli and got word overlap; that must be in the report, got {:?}",
+            report.degraded
+        );
+    }
+
+    #[test]
+    fn llm_nli_with_a_verifier_spends_calls_and_degrades_nothing() {
+        let mut config = FaithfulnessConfig::default();
+        config.nli_method = NliMethod::LlmNli;
+
+        let report =
+            scorer_with(config, "Entailed").score("Rust is fast.", &["Rust is a fast language."]);
+
+        assert_eq!(report.llm_calls_used, 1);
+        assert!(report.degraded.is_empty(), "got {:?}", report.degraded);
+        assert_eq!(report.entailed_count, 1);
+    }
+
+    #[test]
+    fn the_llm_verdict_beats_word_overlap() {
+        // The whole reason to pay for an LLM: the claim shares almost no words
+        // with the context, so word overlap calls it ungrounded and the model
+        // says it is entailed. If the two agreed here, the test could not tell a
+        // real LLM path from the old silent fallback.
+        let mut config = FaithfulnessConfig::default();
+        config.nli_method = NliMethod::LlmNli;
+        let context = &["The capital of France is Paris."];
+        let claim = "Paris serves as the French seat of government.";
+
+        let cheap = FaithfulnessScorer::new(FaithfulnessConfig::default()).score(claim, context);
+        assert_eq!(
+            cheap.entailed_count, 0,
+            "word overlap should miss this one, else the test proves nothing"
+        );
+
+        let rich = scorer_with(config, "Entailed").score(claim, context);
+        assert_eq!(rich.entailed_count, 1);
+        assert_eq!(rich.claims[0].confidence, LLM_NLI_CONFIDENCE);
+    }
+
+    #[test]
+    fn a_reply_naming_no_verdict_falls_back_and_reports_it() {
+        let mut config = FaithfulnessConfig::default();
+        config.nli_method = NliMethod::LlmNli;
+
+        let report = scorer_with(config, "I am not sure about that, sorry")
+            .score("Rust is fast.", &["Rust is fast."]);
+
+        assert_eq!(
+            report.llm_calls_used, 1,
+            "the call was still made and paid for"
+        );
+        assert!(
+            report.degraded.iter().any(|d| d.contains("no verdict")),
+            "got {:?}",
+            report.degraded
+        );
+    }
+
+    #[test]
+    fn a_denial_is_not_read_as_agreement() {
+        // "not entailed" contains "entailed"; matching entailment first would
+        // turn every denial into a pass.
+        let mut config = FaithfulnessConfig::default();
+        config.nli_method = NliMethod::LlmNli;
+
+        let report = scorer_with(config, "Contradicted - the context says otherwise")
+            .score("Rust is slow.", &["Rust is fast."]);
+
+        assert_eq!(report.contradicted_count, 1);
+        assert_eq!(report.entailed_count, 0);
+    }
+
+    #[test]
+    fn the_budget_caps_spend_and_names_itself_when_it_bites() {
+        let mut config = FaithfulnessConfig::default();
+        config.nli_method = NliMethod::LlmNli;
+        config.max_llm_calls = 2;
+
+        let report = scorer_with(config, "Entailed").score(
+            "One is true. Two is true. Three is true. Four is true.",
+            &["Everything here is true."],
+        );
+
+        assert_eq!(report.llm_calls_used, 2, "the cap must hold");
+        assert!(
+            report.degraded.iter().any(|d| d.contains("budget")),
+            "claims past the cap were scored differently; say so. got {:?}",
+            report.degraded
+        );
+    }
+
+    #[test]
+    fn verify_then_omit_removes_only_what_the_second_opinion_rejects() {
+        let mut config = FaithfulnessConfig::default();
+        config.ungrounded_strategy = UngroundedClaimStrategy::VerifyThenOmit;
+
+        // The model vouches for the ungrounded claim, so it must survive intact.
+        let kept = scorer_with(config.clone(), "Yes").score(
+            "Water boils at 100C.",
+            &["Completely unrelated reference material."],
+        );
+        assert!(
+            kept.processed_text.contains("Water boils"),
+            "a verified claim must not be removed: {:?}",
+            kept.processed_text
+        );
+        assert!(!kept.processed_text.contains("[unverified]"));
+
+        // And when the model refuses to vouch, it goes.
+        let dropped = scorer_with(config, "No").score(
+            "Water boils at 12C.",
+            &["Completely unrelated reference material."],
+        );
+        assert!(
+            !dropped.processed_text.contains("Water boils"),
+            "an unverified claim should have been omitted: {:?}",
+            dropped.processed_text
+        );
+    }
+
+    #[test]
+    fn verify_then_mark_without_a_verifier_keeps_the_old_behaviour_and_admits_it() {
+        // Conservative direction: with no second opinion the first one stands, so
+        // the claim is marked exactly as before, but the caller is told that the
+        // "verify" half never ran.
+        let mut config = FaithfulnessConfig::default();
+        config.ungrounded_strategy = UngroundedClaimStrategy::VerifyThenMark;
+
+        let report =
+            FaithfulnessScorer::new(config).score("Water boils at 100C.", &["Unrelated material."]);
+
+        assert!(report.processed_text.contains("[unverified]"));
+        assert!(
+            report.degraded.iter().any(|d| d.contains("second opinion")),
+            "got {:?}",
+            report.degraded
+        );
+    }
+
+    #[test]
+    fn ask_routes_through_the_confirmation_callback() {
+        let mut config = FaithfulnessConfig::default();
+        config.ungrounded_strategy = UngroundedClaimStrategy::Ask;
+        let seen = std::rc::Rc::new(RefCell::new(Vec::new()));
+        let recorder = std::rc::Rc::clone(&seen);
+
+        let report = FaithfulnessScorer::new(config)
+            .with_confirmation(move |claim| {
+                recorder.borrow_mut().push(claim.to_string());
+                false // reject it
+            })
+            .score("Water boils at 12C.", &["Unrelated material."]);
+
+        assert_eq!(seen.borrow().len(), 1, "the user was asked exactly once");
+        assert!(
+            !report.processed_text.contains("Water boils"),
+            "a rejected claim must be dropped: {:?}",
+            report.processed_text
+        );
+    }
+
+    #[test]
+    fn llm_decomposition_uses_the_model_and_splits_finer_than_sentences() {
+        let mut config = FaithfulnessConfig::default();
+        config.decomposition_method = DecompositionMethod::LlmDecomposition;
+
+        // One sentence, two claims, which sentence splitting cannot produce.
+        let report = scorer_with(config, "Rust is fast\nRust is memory safe").score(
+            "Rust is fast and memory safe.",
+            &["Rust is fast and memory safe."],
+        );
+
+        assert_eq!(report.claims.len(), 2, "got {:?}", report.claims);
+        assert_eq!(report.llm_calls_used, 1);
+        assert!(report.degraded.is_empty(), "got {:?}", report.degraded);
+    }
+
+    #[test]
+    fn llm_decomposition_without_a_verifier_falls_back_and_reports_it() {
+        let mut config = FaithfulnessConfig::default();
+        config.decomposition_method = DecompositionMethod::LlmDecomposition;
+
+        let report =
+            FaithfulnessScorer::new(config).score("A is true. B is true.", &["A is true."]);
+
+        assert_eq!(report.claims.len(), 2, "sentence split still ran");
+        assert!(
+            report
+                .degraded
+                .iter()
+                .any(|d| d.contains("LlmDecomposition")),
+            "got {:?}",
+            report.degraded
+        );
+    }
+
+    #[test]
+    fn the_cheap_path_stays_free_and_clean() {
+        // The default configuration must spend nothing and report nothing: the
+        // zero-cost promise is the other half of being honest about cost.
+        let report = FaithfulnessScorer::default().score("Rust is fast.", &["Rust is fast."]);
+
+        assert_eq!(report.llm_calls_used, 0);
+        assert!(report.degraded.is_empty(), "got {:?}", report.degraded);
     }
 }
