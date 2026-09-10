@@ -890,7 +890,16 @@ fn test_tesseract_backend_not_available() {
     assert_eq!(backend.name(), "tesseract");
     let result = backend.recognize(&[128u8; 35], 5, 7);
     assert_eq!(result.average_confidence, 0.0);
-    assert!(result.full_text.contains("binary not available"));
+    // Was `assert!(result.full_text.contains("binary not available"))`, which
+    // pinned the defect V311 removed: the backend put its own diagnostic into
+    // the field that holds *what the image said*, so anything indexing OCR
+    // output stored that sentence as page content. Reading nothing must look
+    // like nothing.
+    assert!(
+        result.full_text.is_empty(),
+        "a backend that read nothing must not return text: {:?}",
+        result.full_text
+    );
     assert!(backend.supports_format(&ImageFormat::Gif));
     assert_eq!(backend.confidence_threshold(), 0.0);
 }
