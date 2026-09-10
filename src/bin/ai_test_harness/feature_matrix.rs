@@ -47,6 +47,172 @@ const SKIP: &[(&str, &str)] = &[
     ),
 ];
 
+/// Features deliberately absent from CI's matrix, each with the reason.
+///
+/// The list exists so that "not in CI" is a decision someone wrote down rather
+/// than an accident nobody noticed. `whisper-local` is the case that prompted
+/// it: a declared feature that **no CI job has ever compiled**, so neither its
+/// breakage nor its repair would have shown up anywhere.
+#[cfg(test)]
+const NOT_IN_CI: &[(&str, &str)] = &[
+    ("default", "alias for `full`"),
+    ("full", "the baseline every other job builds on"),
+    (
+        "whisper-local",
+        "needs libclang on the runner, and currently fails on Windows/MSVC: \
+         whisper-rs-sys' bindgen emits glibc types (_IO_FILE, _G_fpos_t) that \
+         overflow a layout assert. See N27; workaround is WHISPER_DONT_GENERATE_BINDINGS",
+    ),
+    (
+        "local-inference-llama-cpp",
+        "needs libclang on the runner, same bindgen prerequisite",
+    ),
+    ("gui", "brings windowing deps; not worth runner time"),
+    ("gui-pro", "as `gui`"),
+    ("egui-widgets", "as `gui`"),
+    ("audio-io", "needs host audio devices"),
+    ("video-io", "needs host video devices"),
+    (
+        "webrtc",
+        "heavy native stack, covered by `voice-agent` in practice",
+    ),
+    (
+        "vector-lancedb",
+        "heavy native dep; the other vector backends cover the trait",
+    ),
+    ("aws-bedrock", "needs AWS credentials"),
+    ("server-tls", "needs PEM material at build time"),
+    (
+        "ffi",
+        "produces cdylib/staticlib only; nothing to type-check beyond the lib",
+    ),
+];
+
+/// The members of `full`, which CI builds in its check / clippy / test jobs via
+/// `FEATURES_STD`. A feature inside `full` is compiled by CI even when it has no
+/// matrix entry of its own, and counting it as uncovered would be false.
+#[cfg(test)]
+fn full_members(manifest: &str) -> Vec<String> {
+    let Some(start) = manifest.find(
+        "
+full = [",
+    ) else {
+        return Vec::new();
+    };
+    let Some(end) = manifest[start..].find(
+        "
+]",
+    ) else {
+        return Vec::new();
+    };
+    manifest[start..start + end]
+        .lines()
+        .filter_map(|l| {
+            let t = l.trim();
+            if t.starts_with('#') {
+                return None;
+            }
+            let t = t.trim_start_matches("full = [").trim();
+            let t = t.trim_end_matches(',').trim();
+            let t = t.trim_matches('"');
+            (!t.is_empty()
+                && t.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+            .then(|| t.to_string())
+        })
+        .collect()
+}
+
+/// Declared features that **no CI job compiles today**, recorded so the number
+/// cannot grow unnoticed.
+///
+/// This is a ratchet, not an excuse list: every name here is a real gap awaiting
+/// a decision (put it in CI, or drop the feature). What the test enforces is
+/// that a *new* feature cannot join them silently — which is exactly how
+/// `whisper-local` came to be declared, shipped and never built by anything.
+///
+/// Shrinking this list is the goal; growing it must be deliberate.
+#[cfg(test)]
+const UNCOVERED_BACKLOG: &[&str] = &[
+    // Platform-specific: the Linux runner cannot build these at all.
+    "hardware-rocm",
+    "hardware-metal",
+    // Implicit dependency features, enabled transitively by `documents` / `rag`,
+    // which CI does build — listed because nothing exercises them on their own.
+    "aes-gcm",
+    "zip",
+    "pdf-extract",
+    // Genuinely uncovered. Each needs triage.
+    "wasm",
+    "vector-pgvector",
+    "code-sandbox",
+    "cloud-connectors",
+    "prompt-fragments",
+    "stall-detection",
+    "stall-detection-llm",
+    "sub-agents",
+    "acp",
+    "local-inference",
+    "local-inference-candle",
+    "embeddings-local",
+    "redis-backend",
+    "skill-forge",
+    "prompt-synthesis",
+    "feedback-loop",
+    "prompt-breeder",
+    // GUI variants: windowing deps, same reason as `gui` itself.
+    "gui-logs",
+    "gui-recipes",
+    "gui-acp",
+    "gui-corrections",
+    "gui-local-inference",
+];
+
+/// Every feature name CI compiles: the matrix entries plus the `FEATURES_*`
+/// environment sets used by the check, clippy and test jobs.
+#[cfg(test)]
+fn ci_matrix_features(ci_yml: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut in_matrix = false;
+    for line in ci_yml.lines() {
+        let t = line.trim();
+        // The env blocks are feature sets CI really builds too: the check,
+        // clippy and test jobs run against FEATURES_STD and FEATURES_NETWORK,
+        // so a feature named there is compiled even with no matrix entry.
+        for key in ["FEATURES_STD:", "FEATURES_NETWORK:", "FEATURES_MIN:"] {
+            if let Some(rest) = t.strip_prefix(key) {
+                for name in rest.trim().trim_matches('"').split(',') {
+                    let name = name.trim();
+                    if !name.is_empty() {
+                        out.push(name.to_string());
+                    }
+                }
+            }
+        }
+        if t.starts_with("features:") {
+            in_matrix = true;
+            continue;
+        }
+        if !in_matrix {
+            continue;
+        }
+        // The list is `- "a"` / `- "a,b"`; anything else ends it.
+        let Some(rest) = t.strip_prefix("- ") else {
+            if !t.is_empty() && !t.starts_with('#') {
+                in_matrix = false;
+            }
+            continue;
+        };
+        for name in rest.trim().trim_matches('"').split(',') {
+            let name = name.trim();
+            if !name.is_empty() {
+                out.push(name.to_string());
+            }
+        }
+    }
+    out
+}
+
 /// Every feature name declared in `[features]`.
 ///
 /// Parsed from the manifest so the matrix cannot silently fall behind the crate.
@@ -260,6 +426,87 @@ serde = \"1\"
             line.contains(MIN),
             "MIN here and FEATURES_MIN in ci.yml have drifted apart.\n  here: {MIN}\n  ci:   {line}"
         );
+    }
+
+    /// Every declared feature is either built by CI or excluded on purpose.
+    ///
+    /// The gap this closes: `whisper-local` is declared in `Cargo.toml`, is not
+    /// in CI's matrix, and is excluded from release builds — so **no job has
+    /// ever compiled it**, and nothing would have said so. The harness's own
+    /// matrix derives from the manifest and does cover it, but that category is
+    /// excluded from `--all` because it shells out to cargo per feature.
+    ///
+    /// This test does not force anything into CI. It forces the *decision* to be
+    /// written down, so a feature added tomorrow cannot fall out of CI silently.
+    #[test]
+    fn every_declared_feature_is_built_by_ci_or_excluded_on_purpose() {
+        let manifest = std::fs::read_to_string("Cargo.toml").unwrap_or_default();
+        let ci = std::fs::read_to_string(".github/workflows/ci.yml").unwrap_or_default();
+        if manifest.is_empty() || ci.is_empty() {
+            return; // not running from the repo root
+        }
+
+        let built: BTreeSet<String> = ci_matrix_features(&ci).into_iter().collect();
+        assert!(
+            built.len() > 20,
+            "only {} features parsed out of ci.yml — the workflow layout changed and this \
+             test would pass while checking nothing",
+            built.len()
+        );
+
+        let min_members: BTreeSet<&str> = MIN.split(',').collect();
+        let excused: BTreeSet<&str> = NOT_IN_CI.iter().map(|(n, _)| *n).collect();
+        // Membership of `full` counts as coverage: CI's check, clippy and test
+        // jobs all build FEATURES_STD, which starts from `full`.
+        let in_full: BTreeSet<String> = full_members(&manifest).into_iter().collect();
+        assert!(
+            in_full.len() > 10,
+            "only {} members parsed out of `full` — the manifest layout changed and this              test would report covered features as orphans",
+            in_full.len()
+        );
+
+        let orphans: Vec<String> = declared_features(&manifest)
+            .into_iter()
+            .filter(|f| {
+                !built.contains(f)
+                    && !in_full.contains(f)
+                    && !min_members.contains(f.as_str())
+                    && !excused.contains(f.as_str())
+                    && !UNCOVERED_BACKLOG.contains(&f.as_str())
+            })
+            .collect();
+
+        assert!(
+            orphans.is_empty(),
+            "a NEW feature is declared that nothing in CI compiles: {orphans:?}\n\
+             Add them to the matrix in ci.yml, or to NOT_IN_CI with the reason. \
+             A feature no job builds is where declared debt accumulates unseen."
+        );
+    }
+
+    #[test]
+    fn the_ci_exclusion_list_does_not_name_features_that_stopped_existing() {
+        // The other direction: an excuse for a feature that was renamed or
+        // deleted is a stale note that hides the fact nothing is excluded.
+        let manifest = std::fs::read_to_string("Cargo.toml").unwrap_or_default();
+        if manifest.is_empty() {
+            return;
+        }
+        let declared: BTreeSet<String> = declared_features(&manifest).into_iter().collect();
+        for (name, reason) in NOT_IN_CI {
+            assert!(
+                declared.contains(*name),
+                "NOT_IN_CI excuses {name:?} ({reason}), but no such feature is declared"
+            );
+        }
+    }
+
+    #[test]
+    fn the_ci_matrix_parser_reads_the_real_list() {
+        let yml = "\
+jobs:\n  matrix:\n    strategy:\n      matrix:\n        features:\n          - \"security\"\n          - \"autonomous,scheduler\"\n          - \"rag\"\n    steps:\n      - uses: actions/checkout@v5\n";
+        let got = ci_matrix_features(yml);
+        assert_eq!(got, vec!["security", "autonomous", "scheduler", "rag"]);
     }
 
     #[test]

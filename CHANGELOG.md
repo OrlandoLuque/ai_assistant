@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v188 (2026-09-11) — V313: 27 features declaradas que ningún job de CI compila, y un trinquete para que no sean 28 (0.2.265)
+
+Salió de diagnosticar N27 (`whisper-local` no compila). El bug está identificado y es de
+`whisper-rs-sys` —bindgen emite tipos de glibc (`_IO_FILE`, `_G_fpos_t`) bajo MSVC y el
+desbordamiento es el `assert` de layout que sigue; hay workaround upstream,
+`WHISPER_DONT_GENERATE_BINDINGS`— pero al buscarlo apareció algo mayor.
+
+### El hallazgo
+
+**`whisper-local` no aparece en ninguna parte del CI.** Ni en la matriz de `ci.yml` (que
+lleva una lista escrita a mano) ni en `FEATURES_STD`/`FEATURES_NETWORK`, y `release.yml` lo
+excluye. Es una feature declarada **que nada compila nunca** — el patrón que la memoria del
+proyecto ya tenía fichado: *el código no compilado es donde la deuda declarada se acumula
+sin verse*.
+
+Y no está sola: contando cobertura transitiva (pertenencia a `full`, que sí se compila, y
+los conjuntos `FEATURES_*`), quedan **27 features declaradas que ningún job compila**.
+
+La causa es una asimetría: **la matriz del harness se deriva de `Cargo.toml`** —de ahí que
+conozca las 87— **y la del CI se escribe a mano**, así que pueden divergir, y divergen.
+
+### Añadido: un trinquete, no una lista de excusas
+
+Tres tests en `feature_matrix`:
+
+- **Toda feature declarada está en CI, excusada con motivo, o en la lista conocida.** Esa
+  lista (`UNCOVERED_BACKLOG`) recoge las 27 con su clasificación —específicas de
+  plataforma, features implícitas de dependencia, variantes de GUI, y las que son hueco de
+  verdad— y **el test falla solo si aparece una nueva**. Un test que se queda en rojo se
+  vuelve ruido; lo que hay que impedir es que el número crezca sin que nadie lo decida.
+- **Ninguna excusa nombra una feature que ya no existe.** Cazó una a la primera: `egui`
+  estaba en mi propia lista y no es una feature declarada, es el nombre de una dependencia.
+- **El parser de la matriz lee la lista de verdad**, con su propio caso de prueba, para que
+  un cambio de formato en `ci.yml` no deje el test pasando sin comprobar nada — el mismo
+  guardarraíl que ya tenía el parser del manifiesto.
+
+Reducir `UNCOVERED_BACKLOG` es el objetivo; ampliarlo tiene que ser deliberado.
+
 ## [Unreleased] - v187 (2026-09-11) — V312: el bug del modelo llamado «» tenía un tercer sitio, y `ai_proxy` lo heredaba de sus upstreams (0.2.264)
 
 Auditoría del gateway OpenAI de `ai_proxy` (N42), que es la superficie que ve un tercero.
