@@ -183,8 +183,22 @@ pub struct AntiHallucinationConfig {
     /// Default: `0.3`.
     pub min_confidence_for_output: f64,
 
-    /// Maximum number of extra LLM calls the anti-hallucination pipeline
-    /// may make per response. Prevents runaway costs. Default: `5`.
+    /// Ceiling for the LLM-backed stages a caller drives alongside this
+    /// pipeline. Default: `5`.
+    ///
+    /// **[`AntiHallucinationPipeline`] itself never spends it**, and that is not
+    /// an oversight: every stage it runs — confidence scoring, claim extraction,
+    /// grounding — is heuristic, so [`AntiHallucinationResult::llm_calls_used`]
+    /// is always `0`. The number is here to be carried into the stages that *do*
+    /// spend, [`crate::faithfulness::FaithfulnessConfig::max_llm_calls`] and
+    /// [`crate::chain_of_verification::CoVeConfig::max_llm_calls`], so one
+    /// budget governs a whole verification run.
+    ///
+    /// Said out loud because the alternative reads as a knob that silently does
+    /// nothing — which is what it looked like before V310, when the doc claimed
+    /// the pipeline "may make" these calls and nothing in it ever did.
+    /// See also [`crate::rag_tiers::RagTierConfig::max_extra_llm_calls`], a
+    /// different field of the same name that the RAG pipeline really does spend.
     pub max_extra_llm_calls: usize,
 
     /// Custom abstention message. If None, a default message is used.
@@ -289,7 +303,10 @@ pub struct AntiHallucinationResult {
     pub strategy_applied: UngroundedClaimStrategy,
     /// Number of claims that were marked as ungrounded.
     pub ungrounded_count: usize,
-    /// Number of extra LLM calls consumed by the pipeline.
+    /// Extra LLM calls consumed by the pipeline — **always `0`**, because every
+    /// stage it runs is heuristic. Kept in the result so a caller aggregating
+    /// cost across stages has one shape to read, and pinned by a test so that a
+    /// future LLM-backed stage cannot be added without also counting it.
     pub llm_calls_used: usize,
 }
 
@@ -1460,5 +1477,51 @@ mod tests {
         let response = "Rust is a programming language.";
         let result = gen.process(response, sources);
         assert!(result.grounding_ratio > 0.0);
+    }
+}
+
+#[cfg(test)]
+mod cost_honesty_tests {
+    //! The pipeline is heuristic end to end and must keep saying so.
+    use super::*;
+
+    #[test]
+    fn the_pipeline_reports_the_zero_it_actually_spends() {
+        // `llm_calls_used` was a `let ... = 0` that nothing incremented, next to a
+        // doc claiming the pipeline "may make" LLM calls. The zero is the truth;
+        // the doc was the bug. This test is what stops a future LLM-backed stage
+        // from being added without being counted, which would put the two back
+        // out of step.
+        let pipeline = AntiHallucinationPipeline::new(AntiHallucinationConfig::default());
+        let result = pipeline.process(
+            "Rust was released in 2015 and is a systems language.",
+            Some("Rust was first released in 2015."),
+        );
+
+        assert_eq!(
+            result.llm_calls_used, 0,
+            "either this pipeline gained an LLM stage and must count it, or the \
+             count drifted from the truth"
+        );
+    }
+
+    #[test]
+    fn the_budget_field_is_carried_not_spent() {
+        // Setting it must change nothing here: it exists to be handed to the
+        // stages that do spend. If this ever starts failing, the field acquired
+        // behaviour and its documentation has to change with it.
+        let mut config = AntiHallucinationConfig::default();
+        config.max_extra_llm_calls = 0;
+
+        let result = AntiHallucinationPipeline::new(config).process(
+            "Rust was released in 2015.",
+            Some("Rust was first released in 2015."),
+        );
+
+        assert_eq!(result.llm_calls_used, 0);
+        assert!(
+            !result.processed_text.is_empty(),
+            "a zero budget must not disable the heuristic stages, which cost nothing"
+        );
     }
 }

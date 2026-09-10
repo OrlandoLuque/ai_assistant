@@ -130,8 +130,15 @@ y PgVectorDb (SQL generation). Total: 10 backends.
 
 **Estado**: HECHO — `document_parsing.rs` (5105 líneas) ya soporta 11 formatos:
 EPUB, DOCX, ODT, HTML, PDF, PlainText, CSV, Email, Image, PPTX, XLSX.
-También tiene subsistema OCR (template matching + Tesseract), extracción de imágenes,
-y parsing de metadatos EXIF.
+También tiene subsistema OCR, extracción de imágenes y parsing de metadatos EXIF.
+
+> **Corrección (V311).** Esta línea decía «OCR (template matching + **Tesseract**)». El
+> template matching sí funciona; `TesseractOcrBackend` **nunca invoca el binario** — es un
+> contenedor de configuración para que el llamante integre Tesseract con su propio spawn de
+> proceso. Peor: devolvía su propio diagnóstico dentro de `full_text`, o sea en el campo que
+> dice *qué ponía la imagen*, así que un pipeline que indexara OCR habría guardado esa frase
+> como contenido del documento. Corregido en V311 (devuelve vacío) junto con el
+> `min_confidence` que el pipeline documentaba y no aplicaba.
 
 **Prioridad**: MEDIA-ALTA | **Esfuerzo**: M | **Impacto**: Medio-Alto
 

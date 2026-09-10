@@ -1,7 +1,7 @@
 //! Multi-backend OCR pipeline.
 
 use super::image_extraction::{ExtractedImage, ImageFormat};
-use super::ocr_engine::{OcrConfig, OcrEngine, OcrLine, OcrResult};
+use super::ocr_engine::{OcrConfig, OcrEngine, OcrResult};
 
 // ============================================================================
 // OCR Integration (WS9)
@@ -92,8 +92,13 @@ impl Default for TesseractConfig {
 ///
 /// This backend does **not** actually invoke the binary at runtime; it serves
 /// as a configuration holder so that callers can integrate Tesseract via their
-/// own process-spawning logic.  Calling `recognize` returns a placeholder
-/// result with zero confidence.
+/// own process-spawning logic. `recognize` reads nothing and returns an empty
+/// result at zero confidence.
+///
+/// Registering it alone therefore yields no text: with the default
+/// `min_confidence` of 0.3 the pipeline discards its result, which is the
+/// correct outcome — no OCR ran. **Do not read the name as "Tesseract works
+/// here"**; `docs/IMPROVEMENTS.md` did exactly that and listed OCR as done.
 pub struct TesseractOcrBackend {
     config: TesseractConfig,
 }
@@ -102,6 +107,15 @@ impl TesseractOcrBackend {
     pub fn new(config: TesseractConfig) -> Self {
         Self { config }
     }
+
+    /// The settings a caller needs to spawn `tesseract` themselves.
+    ///
+    /// Without this the struct was a "configuration holder" whose configuration
+    /// could not be read — the compiler said so as `field is never read` the
+    /// moment the fake output stopped consuming it.
+    pub fn config(&self) -> &TesseractConfig {
+        &self.config
+    }
 }
 
 impl OcrBackend for TesseractOcrBackend {
@@ -109,18 +123,17 @@ impl OcrBackend for TesseractOcrBackend {
         "tesseract"
     }
 
+    /// Recognises nothing, and says so by returning nothing.
+    ///
+    /// This used to put its own diagnostic — "binary not available for direct
+    /// invocation" — into `full_text`, i.e. into the field that holds *what the
+    /// image said*. A caller feeding OCR output into a summary or a RAG index
+    /// would have stored that sentence as the content of the page. An empty
+    /// result at zero confidence is the honest shape: nothing was read.
     fn recognize(&self, _image: &[u8], _width: usize, _height: usize) -> OcrResult {
-        let msg = format!(
-            "Tesseract OCR backend ({}): binary not available for direct invocation",
-            self.config.binary_path
-        );
         OcrResult {
-            lines: vec![OcrLine {
-                text: msg.clone(),
-                confidence: 0.0,
-                y_position: 0,
-            }],
-            full_text: msg,
+            lines: Vec::new(),
+            full_text: String::new(),
             average_confidence: 0.0,
         }
     }
@@ -180,10 +193,16 @@ impl OcrPipeline {
 
     /// Run all backends against a single image and return the best result.
     ///
-    /// If `preferred_backend` is set, that backend is tried first.  The result
+    /// If `preferred_backend` is set, that backend is tried first. The result
     /// with the highest `average_confidence` that meets `min_confidence` wins.
-    /// If no result meets the threshold the best available result is returned
-    /// anyway.  If no backends are registered an empty `OcrResult` is returned.
+    ///
+    /// **If no result meets the threshold, an empty result is returned** — not
+    /// the best of a bad lot. This sentence used to promise the opposite and the
+    /// code did neither: the threshold was never applied at all, so the "best"
+    /// result won even at zero confidence. Returning text nobody could read is
+    /// worse than returning none, because only the second is obvious downstream.
+    ///
+    /// An empty `OcrResult` also comes back when no backends are registered.
     pub fn process_image(&self, data: &[u8], width: usize, height: usize) -> OcrResult {
         if self.backends.is_empty() {
             return OcrResult {
@@ -205,6 +224,14 @@ impl OcrPipeline {
         let mut best: Option<OcrResult> = None;
         for idx in indices {
             let result = self.backends[idx].recognize(data, width, height);
+            // `min_confidence` was documented as a filter here and never applied,
+            // so a backend that recognised nothing still won by default when it
+            // was the only one registered — and its output was returned as text.
+            // Reading nothing is a legitimate answer; returning noise as if it
+            // were the page is not.
+            if result.average_confidence < self.config.min_confidence {
+                continue;
+            }
             let dominated = match best {
                 Some(ref b) => result.average_confidence > b.average_confidence,
                 None => true,
@@ -244,5 +271,61 @@ impl OcrPipeline {
     /// Names of all registered backends in insertion order.
     pub fn backend_names(&self) -> Vec<String> {
         self.backends.iter().map(|b| b.name().to_string()).collect()
+    }
+}
+
+#[cfg(test)]
+mod honest_output_tests {
+    //! OCR output feeds summaries and RAG indexes, so "what the image said" has
+    //! to contain only that. Both defects pinned here shipped together: a
+    //! backend that returned its own error message as recognised text, and a
+    //! `min_confidence` the pipeline documented and never applied.
+    use super::*;
+
+    fn tesseract() -> TesseractOcrBackend {
+        TesseractOcrBackend::new(TesseractConfig::default())
+    }
+
+    #[test]
+    fn a_backend_that_reads_nothing_returns_nothing() {
+        let result = tesseract().recognize(&[0u8; 16], 4, 4);
+
+        assert!(
+            result.full_text.is_empty(),
+            "the diagnostic must not travel in the field that holds page content: {:?}",
+            result.full_text
+        );
+        assert!(result.lines.is_empty());
+        assert_eq!(result.average_confidence, 0.0);
+    }
+
+    #[test]
+    fn the_pipeline_drops_results_below_min_confidence() {
+        // With only the non-working backend registered, the honest answer is
+        // "no text", not "here is a sentence at zero confidence".
+        let mut pipeline = OcrPipeline::new(OcrPipelineConfig::default());
+        pipeline.add_backend(Box::new(tesseract()));
+
+        let result = pipeline.process_image(&[0u8; 16], 4, 4);
+
+        assert!(result.full_text.is_empty(), "got {:?}", result.full_text);
+        assert_eq!(result.average_confidence, 0.0);
+    }
+
+    #[test]
+    fn min_confidence_is_read_from_the_config_not_ignored() {
+        // The regression guard: before V311 `min_confidence` was documented as a
+        // filter and never consulted, so this backend won by default.
+        let config = OcrPipelineConfig {
+            min_confidence: 0.0,
+            ..OcrPipelineConfig::default()
+        };
+        let mut permissive = OcrPipeline::new(config);
+        permissive.add_backend(Box::new(tesseract()));
+
+        // At a zero threshold the empty result is admissible — and still empty,
+        // because the backend no longer invents text.
+        let result = permissive.process_image(&[0u8; 16], 4, 4);
+        assert!(result.full_text.is_empty(), "got {:?}", result.full_text);
     }
 }

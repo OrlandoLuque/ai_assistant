@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v186 (2026-09-11) — V311: el barrido de stubs, y el OCR que devolvía su propio error como texto de la página (0.2.263)
+
+Cierre del barrido que pedía N56: buscar en toda la solución más opciones públicas que
+prometen una cosa y hacen otra, después de que V309 y V310 encontraran tres.
+
+### El resultado del barrido, que importa tanto como los arreglos
+
+**La firma estructural está agotada.** Un script recorrió `src/` buscando variantes
+distintas de un mismo enum público despachando a la misma llamada — la forma exacta del
+fallo de `faithfulness`. Primera pasada: ~40 candidatos, casi todos ruido porque comparaba
+solo el nombre de la función. Afinado a comparar el **cuerpo entero** del brazo: 11
+candidatos, y los 11 legítimos tras revisarlos uno a uno.
+
+- `cache_compression::Best` llama a `compress_gzip` igual que `Gzip`, **con otro nivel**.
+- `cloud_providers`: siete proveedores cuyo `Ok(vec![` coincide solo en la primera línea.
+- `answer_extraction`: `How` y `Why` comparten extractor, y **nada promete lo contrario**.
+
+Y las funciones `*_with_llm` (`analyze_failure_with_llm`, `extract_entities_with_llm`,
+`decompose_task_with_llm`, `detect_topics_with_llm`) resultaron ser **el patrón bien
+hecho**: reciben `llm: Option<&dyn LlmEnhancer>` explícito y documentan la caída. Es la
+misma forma que `chain_of_verification` y que la que V309 llevó a `faithfulness`.
+`examples/` y `benches/`: limpios.
+
+### Corregido — el OCR devolvía su propio diagnóstico como contenido de la imagen
+
+`TesseractOcrBackend::recognize` metía *«Tesseract OCR backend: binary not available for
+direct invocation»* dentro de `full_text` — el campo que dice **qué ponía la imagen**. Un
+pipeline que indexara OCR en RAG habría guardado esa frase como el contenido del documento.
+Ahora devuelve vacío, que es la forma honesta de «no se leyó nada».
+
+Y debajo había un segundo defecto que lo hacía alcanzable: **`OcrPipelineConfig::min_confidence`
+(por defecto 0.3) no se leía nunca**, mientras el doc de `process_image` decía que el
+resultado ganador debe cumplirlo. Con el backend de Tesseract como único registrado, un
+resultado de confianza 0.0 ganaba por ser el único. Aplicado el umbral; si nada lo cumple se
+devuelve vacío, no «el mejor de lo malo» — porque un texto que nadie puede leer es peor que
+ninguno, ya que solo el segundo es evidente aguas abajo.
+
+- `TesseractOcrBackend::config()`: el struct se describía como «contenedor de configuración
+  para el llamante» y su config era **privada y sin lectura**. El compilador lo dijo
+  (`field is never read`) en cuanto la salida falsa dejó de consumirla.
+- 3 tests que fijan las dos cosas.
+- `docs/IMPROVEMENTS.md` marcaba «Estado: HECHO — subsistema OCR (template matching +
+  **Tesseract**)». El template matching sí funciona; Tesseract nunca se invocó.
+
 ## [Unreleased] - v185 (2026-09-10) — V310: `Warn` y `Log` eran la misma cosa, y las herramientas de research no llegaban al cable (0.2.262)
 
 Segunda mitad de «terminar anti-alucinaciones e investigación». V309 arregló las rutas LLM
