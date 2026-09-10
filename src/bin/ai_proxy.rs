@@ -717,6 +717,10 @@ impl Backend {
     fn known_models(&self) -> Vec<String> {
         let mut out: Vec<String> = self.static_models.clone();
         out.extend(self.advertised_models.read().iter().cloned());
+        // Belt and braces with `push_model_name`: that guards what upstreams
+        // advertise, this also guards `static_models`, which comes from the
+        // config file and can carry a stray empty entry just as easily.
+        out.retain(|m| !m.trim().is_empty());
         out.sort();
         out.dedup();
         out
@@ -872,19 +876,39 @@ fn parse_models_response(bytes: &[u8]) -> Vec<String> {
     if let Some(arr) = v.get("data").and_then(|x| x.as_array()) {
         for item in arr {
             if let Some(id) = item.get("id").and_then(|x| x.as_str()) {
-                out.push(id.to_string());
+                push_model_name(&mut out, id);
             }
         }
     } else if let Some(arr) = v.get("models").and_then(|x| x.as_array()) {
         for item in arr {
             if let Some(name) = item.get("name").and_then(|x| x.as_str()) {
-                out.push(name.to_string());
+                push_model_name(&mut out, name);
             } else if let Some(id) = item.get("id").and_then(|x| x.as_str()) {
-                out.push(id.to_string());
+                push_model_name(&mut out, id);
             }
         }
     }
     out
+}
+
+/// Accept an upstream model name only if it names something.
+///
+/// An upstream that advertises `"id": ""` is not hypothetical — V308 fixed
+/// exactly that bug in this project's own `/v1/models` and `/api/tags`, and any
+/// third-party server can have it. Relaying it costs twice:
+///
+/// * `/v1/models` on the proxy republishes a model called nothing, so a client
+///   lists it, selects it, and fails somewhere far from here;
+/// * and [`Backend::advertises_model`] compares by equality, so `""` in the list
+///   makes a request whose `model` is empty look *served*, and it gets routed.
+///
+/// Dropping it is the only reading that is both true and useful: this backend
+/// did not tell us about a model.
+fn push_model_name(out: &mut Vec<String>, name: &str) {
+    let trimmed = name.trim();
+    if !trimmed.is_empty() {
+        out.push(trimmed.to_string());
+    }
 }
 
 /// V149 F4: backend pick driven by the configured routing policy.
@@ -2496,6 +2520,11 @@ fn build_aggregated_models_body(state: &ProxyState) -> Vec<u8> {
                 "id": id,
                 "object": "model",
                 "created": 0,
+                // OpenAI's Model object is {id, object, created, owned_by}, and
+                // strictly-typed SDKs deserialise all four. `served_by` is our
+                // own addition (which mesh node answers for this model) and is
+                // additive: a client that does not know it ignores it.
+                "owned_by": "ai_proxy",
                 "served_by": served_by,
             })
         })
@@ -4227,10 +4256,121 @@ fn print_usage() {
 
 #[cfg(test)]
 mod tests {
+
     // The config sections are #[non_exhaustive]; default()+assign is the
     // only way to build them here.
     #![allow(clippy::field_reassign_with_default)]
     use super::*;
+
+    /// What a third party's SDK actually receives from `/v1/models`.
+    ///
+    /// V308 found this project publishing a model whose id was the empty string
+    /// from two of its own endpoints. `ai_proxy` builds a third such list, and
+    /// builds it from what *upstreams* advertise — so it can inherit the bug
+    /// from any server that still has it, ours or someone else's.
+    mod published_model_list {
+        use super::super::*;
+
+        #[test]
+        fn an_upstream_advertising_an_empty_id_is_not_relayed() {
+            let body = br#"{"object":"list","data":[
+                {"id":"","object":"model"},
+                {"id":"llama3","object":"model"},
+                {"id":"   ","object":"model"}
+            ]}"#;
+
+            let parsed = parse_models_response(body);
+
+            assert_eq!(
+                parsed,
+                vec!["llama3".to_string()],
+                "a model called nothing must not reach our catalogue"
+            );
+        }
+
+        #[test]
+        fn the_ollama_shape_is_filtered_too() {
+            // `/api/tags` names models under `name`, and V308's empty-id bug hit
+            // that endpoint first.
+            let body = br#"{"models":[{"name":""},{"name":"mistral"}]}"#;
+            assert_eq!(parse_models_response(body), vec!["mistral".to_string()]);
+        }
+
+        #[test]
+        fn an_empty_model_name_is_not_treated_as_served() {
+            // The sharp edge: `serves_model` compares by equality, so an empty
+            // entry in the advertised list would make a request with no model
+            // look routable.
+            let backend = Backend::new("upstream:1".to_string());
+            *backend.advertised_models.write() =
+                parse_models_response(br#"{"object":"list","data":[{"id":""},{"id":"llama3"}]}"#);
+
+            assert!(backend.advertises_model("llama3"));
+            assert!(
+                !backend.advertises_model(""),
+                "an empty model must never match a backend"
+            );
+        }
+
+        #[test]
+        fn a_stray_empty_entry_in_the_config_is_dropped_too() {
+            // `static_models` comes from the config file, which `push_model_name`
+            // never sees.
+            let backend = Backend::with_models(
+                "upstream:1".to_string(),
+                vec!["".to_string(), "phi3".to_string(), "  ".to_string()],
+            );
+
+            assert_eq!(backend.known_models(), vec!["phi3".to_string()]);
+        }
+
+        #[test]
+        fn every_published_entry_carries_the_openai_model_shape() {
+            // Strictly-typed SDKs deserialise {id, object, created, owned_by}.
+            let backend = Backend::with_models(
+                "upstream:1".to_string(),
+                vec!["llama3".to_string(), "".to_string()],
+            );
+            backend.healthy.store(true, Ordering::Relaxed);
+            let state = ProxyState {
+                backends: Arc::new(vec![backend]),
+                next_index: Arc::new(AtomicUsize::new(0)),
+                session_affinity: Arc::new(DashMap::new()),
+                api_key: None,
+                served_by_config: Arc::new(ServedByConfig::default()),
+                self_addr: Arc::new("127.0.0.1:0".to_string()),
+                dedupe: Arc::new(DedupeCache::new(DEDUPE_MAX_ENTRIES, DEDUPE_TTL)),
+                max_forward_hops: DEFAULT_MAX_FORWARD_HOPS,
+                policy: RoutingPolicy::RoundRobin,
+                metrics: Arc::new(ProxyMetrics::default()),
+                model_polling_enabled: false,
+                aggregated_models: Arc::new(AggregatedModelsCache::default()),
+                stream_chunk_timeout: DEFAULT_STREAM_CHUNK_TIMEOUT,
+            };
+            let body = build_aggregated_models_body(&state);
+            let json: serde_json::Value =
+                serde_json::from_slice(&body).expect("the catalogue must be valid JSON");
+
+            assert_eq!(json["object"].as_str(), Some("list"));
+            let data = json["data"].as_array().expect("data must be an array");
+            assert_eq!(
+                data.len(),
+                1,
+                "the empty id must not have survived: {data:?}"
+            );
+
+            for entry in data {
+                let id = entry["id"].as_str().unwrap_or_default();
+                assert!(!id.trim().is_empty(), "published an unnamed model");
+                assert_eq!(entry["object"].as_str(), Some("model"));
+                assert!(entry.get("created").is_some());
+                assert!(
+                    entry["owned_by"].as_str().is_some(),
+                    "owned_by is part of the OpenAI Model object: {entry:?}"
+                );
+            }
+        }
+    }
 
     fn args(strs: &[&str]) -> Vec<String> {
         strs.iter().map(|s| s.to_string()).collect()

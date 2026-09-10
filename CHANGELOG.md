@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v187 (2026-09-11) — V312: el bug del modelo llamado «» tenía un tercer sitio, y `ai_proxy` lo heredaba de sus upstreams (0.2.264)
+
+Auditoría del gateway OpenAI de `ai_proxy` (N42), que es la superficie que ve un tercero.
+
+### Lo primero: está mejor de lo que el ticket suponía
+
+246 tests, 127 en el binario, todos verdes. Las formas que un SDK parsea ya estaban
+cubiertas — `error.type`/`message`/`code`, `{"object":"list","data":[…]}`, `[DONE]` — el
+`Content-Type` de streaming se preserva del upstream, y lo no enrutado cae al `fallback`,
+que reenvía. No había que rehacer nada.
+
+### Lo que sí había: V308 arregló dos sitios y existía un tercero
+
+V308 encontró este proyecto publicando **un modelo cuyo identificador es la cadena vacía**
+desde `/api/tags` y `/v1/models`. `ai_proxy` construye una tercera lista de modelos, y la
+construye a partir de **lo que anuncian los upstreams** — así que no tenía el bug: lo
+*heredaba* de cualquier servidor que lo tuviera, nuestro o de un tercero.
+
+`parse_models_response` empujaba cualquier cadena, incluida `""`. Y eso cuesta dos veces:
+
+- `/v1/models` del proxy republica un modelo que no se llama nada, y el cliente lo lista,
+  lo selecciona y falla lejos de aquí — exactamente el recorrido que describía V308;
+- **y `advertises_model` compara por igualdad**, así que un `""` en la lista hace que una
+  petición *sin modelo* parezca servida por ese backend, y se enruta.
+
+Filtrado al parsear (`push_model_name`) y de nuevo en `known_models`, porque
+`static_models` viene del fichero de configuración y ahí el parser no llega.
+
+### Añadido
+
+- **`owned_by` en cada entrada publicada.** El objeto `Model` de OpenAI es
+  `{id, object, created, owned_by}` y los SDK con tipos estrictos deserializan los cuatro.
+  `served_by` (qué nodo de la malla responde) se mantiene: es aditivo y un cliente que no
+  lo conozca lo ignora.
+- **5 tests** que fijan las dos formas de la lista (OpenAI y Ollama), el enrutado con
+  modelo vacío, la entrada suelta en la configuración, y el esquema completo de cada
+  entrada publicada.
+
 ## [Unreleased] - v186 (2026-09-11) — V311: el barrido de stubs, y el OCR que devolvía su propio error como texto de la página (0.2.263)
 
 Cierre del barrido que pedía N56: buscar en toda la solución más opciones públicas que
