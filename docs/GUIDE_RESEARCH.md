@@ -673,7 +673,20 @@ switching to a terminal.
 | `extract_paper_metadata` | Extract metadata from a local PDF file |
 
 All six tools are registered automatically when the `research` feature is
-enabled and the MCP server is running.
+enabled and the MCP server is running. Confirm with:
+
+```bash
+ai_mcp_server --list-tools
+```
+
+Both halves of that sentence became true only in V310. Before it, this page was
+right that six tools existed and wrong about what they did: nothing registered
+them on the server, so `--list-tools` never showed them, and four of the six —
+`search_papers`, `get_paper_metadata`, `export_bibtex`, `literature_review` —
+answered `{"status": "requires_runtime"}` instead of doing the work, while the
+implementations sat unused in `academic_search` and `literature_review`. The
+cause was mundane: provider resolution lived inside the `ai_cli` binary, which
+the library cannot reach.
 
 ---
 

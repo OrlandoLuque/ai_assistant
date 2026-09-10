@@ -29,3 +29,6 @@ _*.txt
 /extracted_lines.txt
 /insert_code.py
 /prompt_safe_creative.md
+
+# Runtime artefact: ai_mcp_server opens its task store in the working directory.
+ai_assistant_tasks.sqlite

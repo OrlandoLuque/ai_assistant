@@ -5,6 +5,65 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v185 (2026-09-10) — V310: `Warn` y `Log` eran la misma cosa, y las herramientas de research no llegaban al cable (0.2.262)
+
+Segunda mitad de «terminar anti-alucinaciones e investigación». V309 arregló las rutas LLM
+de `faithfulness`; aquí caen los dos que quedaban, y son **el mismo defecto en dos sitios**:
+una opción pública que dice una cosa y hace otra, sin avisar.
+
+### Corregido — anti-alucinaciones
+
+- **`GateAction::Log` se comportaba exactamente como `Warn`.** El doc de `Log` dice
+  «registra el fallo pero pasa **en silencio**» y el de `warnings` dice «gates que fallaron
+  con acción **Warn**» — pero `run()` clasificaba por «bloquea o no», así que todo lo no
+  bloqueante caía en `warnings`. La única diferencia entre las dos acciones es si el fallo
+  se le enseña al usuario, y esa diferencia existía en la documentación y en ningún otro
+  sitio.
+  - `QualityGateResult` gana `logged`, separado de `warnings`.
+  - `QualityGate::log_below`, que faltaba mientras `fail_below` y `warn_below` existían —
+    una asimetría que hacía incómodo llegar a la tercera acción y fácil olvidar que estaba.
+  - `QualityGateResult` pasa a `#[non_exhaustive]`.
+  - 3 tests: cada acción a su lista, `Log` nunca en `warnings`, y un gate que pasa no
+    aparece en ninguna.
+
+### Corregido — investigación
+
+- **Cuatro de las seis herramientas MCP de research devolvían un marcador.**
+  `search_papers`, `get_paper_metadata`, `export_bibtex` y `literature_review` respondían
+  `{"status": "requires_runtime"}` mientras `academic_search.rs` (2.410 líneas, cinco
+  proveedores) y `literature_review.rs` estaban ahí sin usarse.
+  - **La causa era mundana**: la resolución de proveedores vivía dentro del binario
+    `ai_cli`, y la librería no puede alcanzar un binario. Subida a
+    `academic_search::provider_by_name` + `AcademicSearchEngine::with_default_providers`;
+    el CLI ahora reenvía a la librería, así que hay **una lista en un sitio**.
+  - `export_bibtex` acepta dos entradas: los papers de una búsqueda anterior, o una consulta
+    que ejecuta él. La primera no toca la red, que es lo que un agente necesita para
+    encadenar llamadas.
+  - `get_paper_metadata` acepta identificador **o** título, y cuando no encuentra nada
+    devuelve `found: false` — un vacío honesto, no un marcador: la búsqueda se hizo.
+- **Nada las registraba en el servidor MCP**, así que `--list-tools` nunca las mostró.
+  Nuevo `mcp_protocol::research_tools::register_research_tools`, cableado en
+  `ai_mcp_server`. Verificado: las seis salen por `tools/list`.
+- **`AcademicSource::Supplied`** para un registro que entrega el llamante en vez de venir de
+  una base de datos. Atribuir a CrossRef un registro que nadie comprobó sería una cita con
+  una procedencia inventada.
+
+### Nota sobre un test que había que borrar
+
+`test_dispatch_search_papers_stub` afirmaba `status == "requires_runtime"`. **Un test que
+fija un stub es peor que no tener test**: convierte arreglar el stub en un fallo de la
+suite. Sustituido por tres que comprueban el contrato real sin red — el parámetro que falta
+se nombra en el error, `export_bibtex` genera entradas desde papers dados, y **ninguna de
+las seis herramientas responde ya con un marcador**.
+
+### Documentación
+
+- `GUIDE_RESEARCH.md` decía que las seis herramientas se registran automáticamente. Era
+  verdad a medias y ahora lo es entera; queda escrito qué pasaba antes y cómo comprobarlo
+  (`ai_mcp_server --list-tools`).
+- `.gitignore`: `ai_assistant_tasks.sqlite`, que `ai_mcp_server` crea en el directorio de
+  trabajo.
+
 ## [Unreleased] - v184 (2026-09-10) — V309: las tres opciones «con LLM» de `faithfulness` ya llaman al LLM (0.2.261)
 
 ### Cómo apareció

@@ -1548,6 +1548,10 @@ impl SearchProvider for AcademicSearchAdapter {
             AcademicSource::PubMed => Box::new(PubMedProvider::new()),
             AcademicSource::OpenAlex => Box::new(OpenAlexProvider::new()),
             AcademicSource::CrossRef => Box::new(CrossrefProvider::new()),
+            // `Supplied` marks a record the caller handed us, not a database we
+            // can query. Refusing beats substituting a provider: the caller
+            // would otherwise get results from a corpus they never asked for.
+            _ => return Err(SearchError::InvalidQuery),
         };
 
         let papers = provider

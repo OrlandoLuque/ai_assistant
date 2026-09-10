@@ -295,14 +295,36 @@ pub fn dispatch_tool(
     _args: &HashMap<String, serde_json::Value>,
 ) -> Result<serde_json::Value, String> {
     match tool_name {
-        "search_papers" => Ok(serde_json::json!({
-            "status": "requires_runtime",
-            "message": "search_papers requires runtime academic search providers"
-        })),
-        "get_paper_metadata" => Ok(serde_json::json!({
-            "status": "requires_runtime",
-            "message": "get_paper_metadata requires runtime academic search provider"
-        })),
+        "search_papers" => {
+            let query = require_str(_args, "query")?;
+            let engine = super::academic_search::AcademicSearchEngine::with_default_providers();
+            let config = search_config_from(_args);
+            let papers = engine.search_all(query, &config);
+            Ok(serde_json::json!({
+                "query": query,
+                "total": papers.len(),
+                "providers": engine.provider_names(),
+                "papers": papers.iter().map(paper_json).collect::<Vec<_>>(),
+            }))
+        }
+        "get_paper_metadata" => {
+            // Accept either an identifier or a title: a caller holding a DOI
+            // should not have to know that the providers are searched by text.
+            let needle = require_str(_args, "paper_id").or_else(|_| require_str(_args, "title"))?;
+            let engine = super::academic_search::AcademicSearchEngine::with_default_providers();
+            let mut config = search_config_from(_args);
+            config.max_results = config.max_results.max(1);
+            let papers = engine.search_all(needle, &config);
+            match papers.first() {
+                Some(p) => Ok(paper_json(p)),
+                // An honest empty result, not a placeholder: the search ran.
+                None => Ok(serde_json::json!({
+                    "found": false,
+                    "query": needle,
+                    "providers": engine.provider_names(),
+                })),
+            }
+        }
         "import_bibtex" => {
             if let Some(bibtex) = _args.get("bibtex").and_then(|v| v.as_str()) {
                 match super::bibtex::BibParser::parse(bibtex) {
@@ -317,14 +339,47 @@ pub fn dispatch_tool(
                 Err("Missing 'bibtex' parameter".to_string())
             }
         }
-        "export_bibtex" => Ok(serde_json::json!({
-            "status": "requires_runtime",
-            "message": "export_bibtex requires paper data from previous search"
-        })),
-        "literature_review" => Ok(serde_json::json!({
-            "status": "requires_runtime",
-            "message": "literature_review requires runtime search providers"
-        })),
+        "export_bibtex" => {
+            // Two ways in, because both are natural for an agent: hand over the
+            // papers from a previous `search_papers` call, or just name a query
+            // and let this run the search.
+            let papers = match _args.get("papers").and_then(|v| v.as_array()) {
+                Some(items) => items.iter().filter_map(paper_from_json).collect::<Vec<_>>(),
+                None => {
+                    let query = require_str(_args, "query").map_err(|_| {
+                        "export_bibtex needs either 'papers' (from a previous search) or 'query'"
+                            .to_string()
+                    })?;
+                    let engine =
+                        super::academic_search::AcademicSearchEngine::with_default_providers();
+                    engine.search_all(query, &search_config_from(_args))
+                }
+            };
+            let bibtex = super::bibtex::BibGenerator::from_papers(&papers);
+            Ok(serde_json::json!({
+                "entries": papers.len(),
+                "bibtex": bibtex,
+            }))
+        }
+        "literature_review" => {
+            let topic = require_str(_args, "topic").or_else(|_| require_str(_args, "query"))?;
+            let config = match _args.get("mode").and_then(|v| v.as_str()) {
+                Some("systematic") => {
+                    super::literature_review::LiteratureReviewConfig::systematic()
+                }
+                _ => super::literature_review::LiteratureReviewConfig::quick(),
+            };
+            let engine = super::academic_search::AcademicSearchEngine::with_default_providers();
+            let pipeline = super::literature_review::LiteratureReviewPipeline::new(engine, config);
+            let review = pipeline.execute(topic);
+            Ok(serde_json::json!({
+                "topic": topic,
+                "sections": review.sections.len(),
+                "word_count": review.total_word_count(),
+                "references": review.bib_entries().len(),
+                "markdown": review.to_markdown(),
+            }))
+        }
         "extract_paper_metadata" => {
             if let Some(text) = _args.get("text").and_then(|v| v.as_str()) {
                 let extractor = super::paper_metadata::PaperMetadataExtractor::new();
@@ -352,6 +407,94 @@ pub fn dispatch_tool(
         }
         _ => Err(format!("Unknown research tool: {}", tool_name)),
     }
+}
+
+// ============================================================================
+// Argument and value helpers for `dispatch_tool`
+// ============================================================================
+
+/// A required string argument, or a message naming what is missing.
+///
+/// Returning the parameter name matters more here than it looks: an agent that
+/// gets "Missing parameter" has to guess, and guessing costs a round trip.
+fn require_str<'a>(
+    args: &'a HashMap<String, serde_json::Value>,
+    key: &str,
+) -> Result<&'a str, String> {
+    args.get(key)
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| format!("Missing or empty '{key}' parameter"))
+}
+
+/// Build a search config from the optional tuning arguments.
+///
+/// Every field has a working default, so a caller that passes only the query
+/// still gets a sensible search.
+fn search_config_from(
+    args: &HashMap<String, serde_json::Value>,
+) -> super::academic_search::AcademicSearchConfig {
+    let mut config = super::academic_search::AcademicSearchConfig::default();
+    if let Some(n) = args.get("max_results").and_then(|v| v.as_u64()) {
+        // Clamped, not trusted: this reaches five public APIs, and an agent
+        // asking for ten thousand results would be rate-limited into looking
+        // like an outage.
+        config.max_results = (n as usize).clamp(1, 100);
+    }
+    if let (Some(from), Some(to)) = (
+        args.get("year_from").and_then(|v| v.as_u64()),
+        args.get("year_to").and_then(|v| v.as_u64()),
+    ) {
+        config.year_range = Some((from as u16, to as u16));
+    }
+    config
+}
+
+/// A paper as JSON, in the shape `paper_from_json` reads back.
+fn paper_json(p: &super::academic_search::AcademicPaper) -> serde_json::Value {
+    serde_json::json!({
+        "id": p.id,
+        "title": p.title,
+        "authors": p.authors.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(),
+        "abstract": p.abstract_text,
+        "year": p.year,
+        "venue": p.venue,
+        "doi": p.doi,
+        "url": p.url,
+        "pdf_url": p.pdf_url,
+        "citation_count": p.citation_count,
+        "source": p.source.display_name(),
+    })
+}
+
+/// Read back what [`paper_json`] wrote, for `export_bibtex`.
+///
+/// Only the fields BibTeX needs are required; a title alone is enough to produce
+/// an entry, so a caller passing a trimmed-down list still gets output rather
+/// than an error.
+fn paper_from_json(v: &serde_json::Value) -> Option<super::academic_search::AcademicPaper> {
+    use super::academic_search::{AcademicPaper, AcademicSource, Author};
+
+    let title = v.get("title").and_then(|t| t.as_str())?;
+    let id = v.get("id").and_then(|t| t.as_str()).unwrap_or(title);
+    let mut paper = AcademicPaper::new(id, title, AcademicSource::Supplied);
+
+    if let Some(authors) = v.get("authors").and_then(|a| a.as_array()) {
+        paper.authors = authors
+            .iter()
+            .filter_map(|a| a.as_str())
+            .map(Author::new)
+            .collect();
+    }
+    paper.year = v.get("year").and_then(|y| y.as_u64()).map(|y| y as u16);
+    paper.venue = v.get("venue").and_then(|s| s.as_str()).map(str::to_string);
+    paper.doi = v.get("doi").and_then(|s| s.as_str()).map(str::to_string);
+    paper.url = v.get("url").and_then(|s| s.as_str()).map(str::to_string);
+    paper.abstract_text = v
+        .get("abstract")
+        .and_then(|s| s.as_str())
+        .map(str::to_string);
+    Some(paper)
 }
 
 #[cfg(test)]
@@ -431,12 +574,69 @@ mod tests {
         assert!(result.is_err());
     }
 
+    /// Replaces `test_dispatch_search_papers_stub`, which asserted
+    /// `status == "requires_runtime"` — it pinned the placeholder in place and
+    /// would have gone red the moment the tool started working. A test that
+    /// locks in a stub is worse than no test: it turns fixing the stub into a
+    /// test failure.
+    ///
+    /// The contract checked here needs no network: the parameter is required,
+    /// and the error has to name it.
     #[test]
-    fn test_dispatch_search_papers_stub() {
+    fn search_papers_demands_a_query_and_names_the_missing_parameter() {
+        let err = dispatch_tool("search_papers", &HashMap::new())
+            .expect_err("a search with no query cannot succeed");
+        assert!(
+            err.contains("query"),
+            "an agent that reads {err:?} has to guess which parameter is missing"
+        );
+    }
+
+    #[test]
+    fn no_tool_answers_with_a_placeholder_any_more() {
+        // The whole family at once: four of these six used to return
+        // `"status": "requires_runtime"` while the real implementations sat
+        // unused in academic_search and literature_review.
+        for name in ResearchToolRegistry::new().tool_names() {
+            if let Ok(value) = dispatch_tool(name, &HashMap::new()) {
+                assert_ne!(
+                    value.get("status").and_then(|s| s.as_str()),
+                    Some("requires_runtime"),
+                    "{name} still answers with a placeholder"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn export_bibtex_turns_supplied_papers_into_entries_without_searching() {
+        // The `papers` route exists so an agent can hand back what a previous
+        // search returned; it must not need the network.
         let mut args = HashMap::new();
-        args.insert("query".to_string(), serde_json::json!("transformers"));
-        let result = dispatch_tool("search_papers", &args).unwrap();
-        assert_eq!(result["status"], "requires_runtime");
+        args.insert(
+            "papers".to_string(),
+            serde_json::json!([{
+                "title": "Attention Is All You Need",
+                "authors": ["Ashish Vaswani"],
+                "year": 2017,
+            }]),
+        );
+
+        let out = dispatch_tool("export_bibtex", &args).expect("supplied papers need no network");
+        assert_eq!(out["entries"], 1);
+        let bibtex = out["bibtex"].as_str().unwrap_or_default();
+        assert!(bibtex.contains("Attention"), "got {bibtex:?}");
+        assert!(bibtex.contains("2017"), "got {bibtex:?}");
+    }
+
+    #[test]
+    fn export_bibtex_says_what_it_needs_when_given_nothing() {
+        let err = dispatch_tool("export_bibtex", &HashMap::new())
+            .expect_err("with neither papers nor query there is nothing to export");
+        assert!(
+            err.contains("papers") && err.contains("query"),
+            "got {err:?}"
+        );
     }
 
     #[test]

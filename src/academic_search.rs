@@ -38,6 +38,11 @@ pub enum AcademicSource {
     CrossRef,
     /// OpenAlex — ~250 M works across every discipline
     OpenAlex,
+    /// Supplied by the caller rather than fetched — a paper handed to us as
+    /// JSON, e.g. by `export_bibtex`. Distinct from the real providers on
+    /// purpose: attributing a caller-supplied record to CrossRef would be a
+    /// citation claiming a provenance nobody checked.
+    Supplied,
 }
 
 impl AcademicSource {
@@ -48,6 +53,7 @@ impl AcademicSource {
             Self::SemanticScholar => "Semantic Scholar",
             Self::PubMed => "PubMed",
             Self::CrossRef => "CrossRef",
+            Self::Supplied => "Supplied",
             Self::OpenAlex => "OpenAlex",
         }
     }
@@ -1725,6 +1731,34 @@ impl AcademicSearchProvider for CrossrefProvider {
 // Multi-provider Search Engine
 // =============================================================================
 
+/// The providers [`AcademicSearchEngine::with_default_providers`] installs: every
+/// one that works without an API key.
+pub const DEFAULT_PROVIDER_NAMES: &[&str] = &[
+    "arxiv",
+    "semantic_scholar",
+    "pubmed",
+    "openalex",
+    "crossref",
+];
+
+/// Resolve a provider by name, accepting the spellings people actually type.
+///
+/// Returns `None` for an unknown name rather than substituting a default: a
+/// search that silently ran against a different corpus than the one asked for is
+/// worse than one that refuses.
+pub fn provider_by_name(name: &str) -> Option<Box<dyn AcademicSearchProvider>> {
+    match name.trim().to_lowercase().as_str() {
+        "arxiv" => Some(Box::new(ArxivProvider::new())),
+        "scholar" | "semantic_scholar" | "semanticscholar" | "s2" => {
+            Some(Box::new(SemanticScholarProvider::new()))
+        }
+        "pubmed" => Some(Box::new(PubMedProvider::new())),
+        "openalex" => Some(Box::new(OpenAlexProvider::new())),
+        "crossref" | "cross_ref" => Some(Box::new(CrossrefProvider::new())),
+        _ => None,
+    }
+}
+
 /// Aggregated academic search across multiple providers.
 pub struct AcademicSearchEngine {
     providers: Vec<Box<dyn AcademicSearchProvider>>,
@@ -1735,6 +1769,23 @@ impl AcademicSearchEngine {
         Self {
             providers: Vec::new(),
         }
+    }
+
+    /// An engine with every provider that needs no credentials.
+    ///
+    /// Exists so callers that are not the CLI — the MCP tools, an embedding
+    /// application — can search without each rebuilding the same list. Provider
+    /// resolution used to live inside `ai_cli`, which is a binary: the library
+    /// could not reach it, and that is the whole reason the research MCP tools
+    /// spent months returning `"status": "requires_runtime"` instead of results.
+    pub fn with_default_providers() -> Self {
+        let mut engine = Self::new();
+        for name in DEFAULT_PROVIDER_NAMES {
+            if let Some(p) = provider_by_name(name) {
+                engine.add_provider(p);
+            }
+        }
+        engine
     }
 
     /// Add a provider to the engine.

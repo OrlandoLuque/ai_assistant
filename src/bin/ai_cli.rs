@@ -3378,19 +3378,16 @@ const AVAILABLE_PROVIDERS: &str =
 /// this match, so adding a provider meant editing both and the error messages listed
 /// different sets. Returning `None` rather than a default keeps "unknown provider" a
 /// visible outcome instead of a silent substitution.
+/// Now a thin forward to the library, which is where this lives since V310.
+///
+/// It used to be defined here, in a binary — so the MCP tools, which are in the
+/// library, could not reach it and returned `"status": "requires_runtime"`
+/// instead of searching. One list, one place.
 #[cfg(feature = "research")]
 fn resolve_academic_provider(
     name: &str,
 ) -> Option<Box<dyn ai_assistant::academic_search::AcademicSearchProvider>> {
-    use ai_assistant::academic_search as ac;
-    match name.trim().to_lowercase().as_str() {
-        "arxiv" => Some(Box::new(ac::ArxivProvider::new())),
-        "scholar" | "semantic_scholar" | "s2" => Some(Box::new(ac::SemanticScholarProvider::new())),
-        "pubmed" => Some(Box::new(ac::PubMedProvider::new())),
-        "openalex" => Some(Box::new(ac::OpenAlexProvider::new())),
-        "crossref" | "cross_ref" => Some(Box::new(ac::CrossrefProvider::new())),
-        _ => None,
-    }
+    ai_assistant::academic_search::provider_by_name(name)
 }
 
 #[cfg(feature = "research")]

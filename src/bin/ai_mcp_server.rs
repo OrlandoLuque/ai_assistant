@@ -179,6 +179,16 @@ fn build_server(opts: &Options) -> (McpServer, Vec<String>) {
     #[cfg(not(feature = "rag"))]
     absent.push("knowledge tools: built without the `rag` feature".to_string());
 
+    // --- Research tools ---
+    //
+    // Absent until V310 for a reason worth recording: the tools existed and were
+    // catalogued, but nothing registered them here, so a client could read
+    // `search_papers` in the docs and never find it on the wire.
+    #[cfg(feature = "research")]
+    ai_assistant::mcp_protocol::research_tools::register_research_tools(&mut server);
+    #[cfg(not(feature = "research"))]
+    absent.push("research tools: built without the `research` feature".to_string());
+
     (server, absent)
 }
 

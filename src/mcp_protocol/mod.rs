@@ -10,6 +10,8 @@ pub mod client;
 #[cfg(feature = "rag")]
 pub mod knowledge_tools;
 pub mod oauth;
+#[cfg(feature = "research")]
+pub mod research_tools;
 pub mod server;
 pub mod session;
 pub mod transport;

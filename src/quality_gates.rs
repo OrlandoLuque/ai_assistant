@@ -125,6 +125,16 @@ impl QualityGate {
         Self::new(name, metric, threshold, GateAction::Warn)
     }
 
+    /// A gate that only records the failure, without surfacing it.
+    ///
+    /// The counterpart to [`fail_below`](Self::fail_below) and
+    /// [`warn_below`](Self::warn_below), which existed while `Log` had no
+    /// constructor at all — an asymmetry that made the third action awkward to
+    /// reach and easy to forget was there.
+    pub fn log_below(name: &str, metric: QualityMetric, threshold: f64) -> Self {
+        Self::new(name, metric, threshold, GateAction::Log)
+    }
+
     /// Check if a value passes this gate.
     pub fn check(&self, value: f64) -> GateCheckResult {
         let passed = value >= self.threshold;
@@ -286,15 +296,20 @@ impl QualityGateRunner {
         let mut gate_results = Vec::new();
         let mut failing_gates = Vec::new();
         let mut warnings = Vec::new();
+        let mut logged = Vec::new();
 
         for gate in &self.gates {
             if let Some(value) = scores.get(gate.metric) {
                 let result = gate.check(value);
                 if !result.passed {
-                    if result.is_blocking() {
-                        failing_gates.push(result.gate_name.clone());
-                    } else {
-                        warnings.push(result.gate_name.clone());
+                    // Split by the action the gate was configured with, rather
+                    // than by "blocking or not". Lumping `Log` in with `Warn`
+                    // made the two actions indistinguishable, which quietly
+                    // contradicted `Log`'s own promise to pass *silently*.
+                    match gate.action {
+                        GateAction::Fail => failing_gates.push(result.gate_name.clone()),
+                        GateAction::Warn => warnings.push(result.gate_name.clone()),
+                        GateAction::Log => logged.push(result.gate_name.clone()),
                     }
                 }
                 gate_results.push(result);
@@ -309,6 +324,7 @@ impl QualityGateRunner {
             gate_results,
             failing_gates,
             warnings,
+            logged,
             overall_score: scores.overall(),
         }
     }
@@ -331,15 +347,21 @@ impl QualityGateRunner {
 
 /// Result of running all quality gates.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct QualityGateResult {
     /// Whether all blocking gates passed
     pub passed: bool,
     /// Individual gate results
     pub gate_results: Vec<GateCheckResult>,
-    /// Names of gates that failed with Fail action
+    /// Names of gates that failed with [`GateAction::Fail`]
     pub failing_gates: Vec<String>,
-    /// Names of gates that failed with Warn action
+    /// Names of gates that failed with [`GateAction::Warn`] — surface these.
     pub warnings: Vec<String>,
+    /// Names of gates that failed with [`GateAction::Log`] — record these, but
+    /// do not put them in front of the user. Kept apart from `warnings` because
+    /// the whole difference between the two actions is whether the failure is
+    /// shown, and until V309 both landed in the same list.
+    pub logged: Vec<String>,
     /// Overall quality score
     pub overall_score: f64,
 }
@@ -605,5 +627,72 @@ mod tests {
         let gate = QualityGate::fail_below("test", QualityMetric::Confidence, 0.5);
         let result = gate.check(0.5); // Exactly at threshold = pass
         assert!(result.passed);
+    }
+}
+
+#[cfg(test)]
+mod action_separation_tests {
+    //! `Warn` and `Log` differ in exactly one thing: whether the failure is put
+    //! in front of the user. Until V309 both landed in `warnings`, so the
+    //! difference existed in the documentation and nowhere else.
+    use super::*;
+
+    fn scores_below_everything() -> QualityScores {
+        let mut s = QualityScores::default();
+        s.confidence = Some(0.1);
+        s.faithfulness = Some(0.1);
+        s
+    }
+
+    #[test]
+    fn each_action_lands_in_its_own_list() {
+        let runner = QualityGateRunner::new(vec![
+            QualityGate::fail_below("blocker", QualityMetric::Confidence, 0.9),
+            QualityGate::warn_below("shout", QualityMetric::Faithfulness, 0.9),
+        ]);
+
+        let result = runner.run(&scores_below_everything());
+
+        assert_eq!(result.failing_gates, vec!["blocker"]);
+        assert_eq!(result.warnings, vec!["shout"]);
+        assert!(result.logged.is_empty());
+        assert!(!result.passed, "a Fail gate must block");
+    }
+
+    #[test]
+    fn a_log_gate_is_recorded_but_never_shown_as_a_warning() {
+        let runner = QualityGateRunner::new(vec![QualityGate::log_below(
+            "quiet",
+            QualityMetric::Confidence,
+            0.9,
+        )]);
+
+        let result = runner.run(&scores_below_everything());
+
+        assert_eq!(result.logged, vec!["quiet"]);
+        assert!(
+            result.warnings.is_empty(),
+            "Log promises to pass silently; putting it in warnings breaks that: {:?}",
+            result.warnings
+        );
+        assert!(result.passed, "Log must not block");
+    }
+
+    #[test]
+    fn a_passing_gate_appears_in_no_list_whatever_its_action() {
+        let mut scores = QualityScores::default();
+        scores.confidence = Some(0.95);
+
+        for gate in [
+            QualityGate::fail_below("a", QualityMetric::Confidence, 0.5),
+            QualityGate::warn_below("b", QualityMetric::Confidence, 0.5),
+            QualityGate::log_below("c", QualityMetric::Confidence, 0.5),
+        ] {
+            let result = QualityGateRunner::new(vec![gate]).run(&scores);
+            assert!(result.passed);
+            assert!(result.failing_gates.is_empty());
+            assert!(result.warnings.is_empty());
+            assert!(result.logged.is_empty());
+        }
     }
 }
