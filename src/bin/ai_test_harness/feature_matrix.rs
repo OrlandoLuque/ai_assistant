@@ -132,6 +132,18 @@ full = [",
 /// `whisper-local` came to be declared, shipped and never built by anything.
 ///
 /// Shrinking this list is the goal; growing it must be deliberate.
+///
+/// **Measured, not assumed (2026-09-11, full battery, 84/87):** every feature
+/// below *compiles* on top of the minimum set. None of them is broken — they are
+/// simply absent from CI, so nothing would notice if one broke tomorrow. The only
+/// three combinations that fail are the native-toolchain ones already excused in
+/// [`NOT_IN_CI`] (`vector-lancedb`, `whisper-local`, `local-inference-llama-cpp`),
+/// and they fail here for a *local* reason — no libclang / C++ toolchain on the
+/// dev laptop — which is a lead about this machine, not a verdict about the code.
+///
+/// So the cost of closing this list is CI minutes, not repair work. That is a
+/// budget decision for the maintainer, which is why the list records the fact
+/// rather than acting on it.
 #[cfg(test)]
 const UNCOVERED_BACKLOG: &[&str] = &[
     // Platform-specific: the Linux runner cannot build these at all.
