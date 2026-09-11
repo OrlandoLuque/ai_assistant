@@ -2670,17 +2670,29 @@ Let me process the results."#;
             }
         });
 
+        // Concurrency is observed directly, by counting how many handlers are
+        // inside at once. This used to be inferred from wall-clock time
+        // (`elapsed < 200ms`), which made the test flaky: it ran alongside
+        // 7000 others, so a loaded machine failed it while the code was fine.
+        // A clock measures the machine; this measures the scheduler.
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let peak_in_flight = Arc::new(AtomicUsize::new(0));
+        let (inf, peak) = (Arc::clone(&in_flight), Arc::clone(&peak_in_flight));
+
         let mut registry = ToolRegistry::new();
         let def = ToolBuilder::new("read_file", "Read a file")
             .required_string("path", "Path")
             .build();
         registry.register(
             def,
-            Arc::new(|call: &ToolCall| {
-                let path = call.get_string("path").unwrap_or("?");
-                // Tiny sleep so a sequential schedule would observably take
-                // longer than a parallel one (loose timing assertion below).
+            Arc::new(move |call: &ToolCall| {
+                let now = inf.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(now, Ordering::SeqCst);
+                // Held long enough that a sibling call has time to enter; the
+                // assertion is on the overlap, not on how long the sleep took.
                 std::thread::sleep(std::time::Duration::from_millis(60));
+                inf.fetch_sub(1, Ordering::SeqCst);
+                let path = call.get_string("path").unwrap_or("?");
                 Ok(ToolOutput::text(format!("contents-of-{}", path)))
             }),
         );
@@ -2699,9 +2711,7 @@ Let me process the results."#;
             .parallel_read_only_tools(true)
             .build();
 
-        let started = std::time::Instant::now();
         let result = agent.run("Read /a and /b").unwrap();
-        let elapsed = started.elapsed();
 
         assert_eq!(result.output, "Done.");
         // Both reads were executed.
@@ -2712,13 +2722,11 @@ Let me process the results."#;
             .collect();
         assert_eq!(read_calls.len(), 2);
 
-        // Loose timing: 2 × 60 ms tasks done concurrently should land
-        // well under the strictly-sequential 120 ms floor + agent
-        // overhead. Tolerate ample slack to avoid CI flakes.
-        assert!(
-            elapsed < std::time::Duration::from_millis(200),
-            "expected parallel < 200ms, got {:?}",
-            elapsed
+        assert_eq!(
+            peak_in_flight.load(Ordering::SeqCst),
+            2,
+            "both read-only calls must have been inside the registry at the \
+             same time; a peak of 1 means they were run one after the other"
         );
     }
 
@@ -2741,13 +2749,25 @@ Let me process the results."#;
             }
         });
 
+        // Shared across both handlers, so the peak is a property of the batch
+        // and not of either tool. Until V315 this test asserted only that both
+        // tools ran — which a *parallel* schedule also satisfies, so the name
+        // said "sequential" and nothing checked it.
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let peak_in_flight = Arc::new(AtomicUsize::new(0));
+
         let mut registry = ToolRegistry::new();
         let def_read = ToolBuilder::new("read_file", "Read a file")
             .required_string("path", "Path")
             .build();
+        let (inf, peak) = (Arc::clone(&in_flight), Arc::clone(&peak_in_flight));
         registry.register(
             def_read,
-            Arc::new(|call: &ToolCall| {
+            Arc::new(move |call: &ToolCall| {
+                let now = inf.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(now, Ordering::SeqCst);
+                std::thread::sleep(std::time::Duration::from_millis(60));
+                inf.fetch_sub(1, Ordering::SeqCst);
                 let path = call.get_string("path").unwrap_or("?");
                 Ok(ToolOutput::text(format!("contents-of-{}", path)))
             }),
@@ -2755,9 +2775,14 @@ Let me process the results."#;
         let def_calc = ToolBuilder::new("calculate", "Calc")
             .required_string("expression", "Expr")
             .build();
+        let (inf, peak) = (Arc::clone(&in_flight), Arc::clone(&peak_in_flight));
         registry.register(
             def_calc,
-            Arc::new(|call: &ToolCall| {
+            Arc::new(move |call: &ToolCall| {
+                let now = inf.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(now, Ordering::SeqCst);
+                std::thread::sleep(std::time::Duration::from_millis(60));
+                inf.fetch_sub(1, Ordering::SeqCst);
                 let e = call.get_string("expression").unwrap_or("0");
                 Ok(ToolOutput::text(format!("calc-{}", e)))
             }),
@@ -2781,6 +2806,13 @@ Let me process the results."#;
         assert_eq!(result.output, "Done.");
         assert!(result.tools_called.contains(&"read_file".to_string()));
         assert!(result.tools_called.contains(&"calculate".to_string()));
+
+        assert_eq!(
+            peak_in_flight.load(Ordering::SeqCst),
+            1,
+            "a batch holding a tool outside the read-only allow-list must run \
+             strictly one at a time; a peak of 2 means the fallback did not fire"
+        );
     }
 
     // ── V123: inspector wire-in ──────────────────────────────────────────

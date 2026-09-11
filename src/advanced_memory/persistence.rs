@@ -1,5 +1,19 @@
 //! Auto-persistence: configuration for automatic memory persistence with
 //! compressed snapshots and checksum verification.
+//!
+//! # This is one of two snapshot stores
+//!
+//! The other is [`crate::unified_persistence::SqliteMemoryStore`], which keeps
+//! snapshots as rows in `unified.db`. Its documentation described itself as
+//! *replacing* this one, which was overstated: this path is public, tested and
+//! fully usable. The two differ in storage and in what they are good at — see
+//! that module for the comparison.
+//!
+//! What each is for: files here are inspectable and copyable on their own, which
+//! is what you want for backups and for moving a memory store between machines;
+//! SQLite is what you want when snapshots should live with sessions and be
+//! queryable. [`crate::unified_persistence::SqliteMemoryStore::import_json_snapshots`]
+//! reads the files this module writes, so choosing one is not a one-way door.
 
 /// Configuration for automatic memory persistence.
 #[derive(Debug, Clone)]
@@ -46,6 +60,13 @@ impl AutoPersistenceConfig {
     }
 
     /// List existing snapshots for a store, sorted oldest first.
+    ///
+    /// Matches both `.json` and `.json.gz`, which is the whole point: until V315
+    /// this filtered on `extension() == "json"`, and [`Self::save_compressed`]
+    /// writes `{store}_{ts}.json.gz`, whose extension is `gz`. So **this listed
+    /// nothing that this module had written** — and since
+    /// [`Self::rotate_snapshots`] is built on it, `max_snapshots` never removed
+    /// anything and snapshots accumulated without bound.
     pub fn list_snapshots(&self, store_name: &str) -> Vec<std::path::PathBuf> {
         let prefix = format!("{}_", store_name);
         let mut snapshots: Vec<std::path::PathBuf> = std::fs::read_dir(&self.base_dir)
@@ -54,11 +75,14 @@ impl AutoPersistenceConfig {
             .filter_map(|e| e.ok())
             .map(|e| e.path())
             .filter(|p| {
-                p.extension().map(|e| e == "json").unwrap_or(false)
-                    && p.file_stem()
-                        .and_then(|s| s.to_str())
-                        .map(|s| s.starts_with(&prefix))
-                        .unwrap_or(false)
+                // Matched on the whole file name, not `extension()`, because for
+                // `a_1.json.gz` that returns `gz` and the stem is `a_1.json`.
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| {
+                        n.starts_with(&prefix) && (n.ends_with(".json") || n.ends_with(".json.gz"))
+                    })
+                    .unwrap_or(false)
             })
             .collect();
         snapshots.sort();
@@ -155,5 +179,77 @@ impl AutoPersistenceConfig {
             }
         }
         Ok(data)
+    }
+}
+
+#[cfg(test)]
+mod rotation_tests {
+    //! `max_snapshots` is a documented limit that removed nothing until V315:
+    //! `list_snapshots` filtered on `extension() == "json"` while
+    //! `save_compressed` writes `.json.gz`, whose extension is `gz`. The lister
+    //! could not see what the writer wrote, so rotation had nothing to rotate
+    //! and snapshots grew without bound.
+    use super::*;
+
+    #[test]
+    fn compressed_snapshots_are_listed_at_all() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cfg = AutoPersistenceConfig::new(dir.path());
+        cfg.save_compressed("episodic", b"one").expect("save");
+
+        let found = cfg.list_snapshots("episodic");
+        assert_eq!(
+            found.len(),
+            1,
+            "the lister must see what save_compressed writes: {found:?}"
+        );
+    }
+
+    #[test]
+    fn rotation_enforces_the_documented_limit() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut cfg = AutoPersistenceConfig::new(dir.path());
+        cfg.max_snapshots = 2;
+
+        // Written by hand rather than through save_compressed: its filename
+        // carries a whole-second timestamp, so three quick calls would collide
+        // on one name and the test would pass for the wrong reason.
+        for name in [
+            "episodic_1.json.gz",
+            "episodic_2.json.gz",
+            "episodic_3.json.gz",
+        ] {
+            std::fs::write(dir.path().join(name), b"x").expect("write");
+        }
+        assert_eq!(cfg.list_snapshots("episodic").len(), 3);
+
+        cfg.rotate_snapshots("episodic");
+
+        let left = cfg.list_snapshots("episodic");
+        assert_eq!(left.len(), 2, "max_snapshots must actually cap: {left:?}");
+        assert!(
+            left.iter().all(|p| !p.ends_with("episodic_1.json.gz")),
+            "the oldest is the one that should go: {left:?}"
+        );
+    }
+
+    #[test]
+    fn snapshots_of_other_stores_are_left_alone() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut cfg = AutoPersistenceConfig::new(dir.path());
+        cfg.max_snapshots = 1;
+
+        std::fs::write(dir.path().join("episodic_1.json.gz"), b"x").expect("write");
+        std::fs::write(dir.path().join("episodic_2.json.gz"), b"x").expect("write");
+        std::fs::write(dir.path().join("procedural_1.json.gz"), b"x").expect("write");
+
+        cfg.rotate_snapshots("episodic");
+
+        assert_eq!(cfg.list_snapshots("episodic").len(), 1);
+        assert_eq!(
+            cfg.list_snapshots("procedural").len(),
+            1,
+            "rotating one store must not touch another"
+        );
     }
 }

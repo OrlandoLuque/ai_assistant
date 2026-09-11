@@ -9,8 +9,30 @@
 //!   schema versions, runs numbered migrations.
 //! - **`SqliteSessionStore`** — write-through session storage backed by SQLite.
 //!   Every `save_session` / `delete_session` is immediately persisted.
-//! - **`SqliteMemoryStore`** — replaces compressed JSON snapshots with SQLite
-//!   rows; supports atomic writes via transactions.
+//! - **`SqliteMemoryStore`** — memory snapshots as SQLite rows, with atomic
+//!   writes via transactions.
+//!
+//! # Two snapshot stores, and which to pick
+//!
+//! This one is **not** the only way to persist memory snapshots:
+//! [`crate::advanced_memory::AutoPersistenceConfig`] writes `.json.gz` files and
+//! is equally public and equally alive. This module used to say `SqliteMemoryStore`
+//! *"replaces compressed JSON snapshots"*, which read as though the file-based
+//! path were gone. It is not, and until V315 there was not even a way across.
+//!
+//! They do the same job — named store, opaque bytes, optional compression, FNV-1a
+//! checksum, rotation — and differ in what they are good at:
+//!
+//! | | `SqliteMemoryStore` | `AutoPersistenceConfig` |
+//! |---|---|---|
+//! | storage | one row per snapshot in `unified.db` | one `.json.gz` file per snapshot |
+//! | atomicity | transaction | write-to-temp then rename |
+//! | queryable | yes (metadata column, SQL) | no — you list files |
+//! | portable | move the database | copy a file anywhere |
+//!
+//! Pick SQLite when the snapshots live alongside sessions and you want to query
+//! them; pick files when you want them inspectable or copyable on their own.
+//! [`SqliteMemoryStore::import_json_snapshots`] moves existing files into SQLite.
 //!
 //! # Schema versioning
 //!
@@ -859,8 +881,10 @@ pub struct ImportReport {
 
 /// SQLite-backed memory snapshot store.
 ///
-/// Replaces file-based compressed JSON snapshots with SQLite rows.
-/// Supports atomic writes and rotation (max snapshots per store).
+/// Snapshots as rows, with atomic writes and rotation (max snapshots per store).
+/// The file-based alternative is [`crate::advanced_memory::AutoPersistenceConfig`];
+/// see the module docs for which to pick, and
+/// [`Self::import_json_snapshots`] for moving from one to the other.
 pub struct SqliteMemoryStore<'a> {
     db: &'a UnifiedDb,
     /// Maximum number of snapshots to keep per store name.
@@ -914,6 +938,53 @@ impl<'a> SqliteMemoryStore<'a> {
         self.rotate_snapshots(store_name)?;
 
         Ok(id)
+    }
+
+    /// Import existing `.json.gz` snapshots written by
+    /// [`crate::advanced_memory::AutoPersistenceConfig`].
+    ///
+    /// This is the road that makes "SQLite replaces compressed JSON snapshots"
+    /// a fact rather than an aspiration. Until V315 both stores existed, did the
+    /// same job, and there was **no way across** — so anyone holding `.json.gz`
+    /// files had to choose between keeping them and adopting SQLite.
+    ///
+    /// Reads every snapshot the directory holds for `store_name`, oldest first,
+    /// and saves each one. The bytes are stored **decompressed** (`compressed =
+    /// false`): `load_compressed` already unzips, and re-compressing to satisfy
+    /// a flag would mean this store's checksum described a different byte string
+    /// than the one a reader gets back.
+    ///
+    /// Rotation still applies, so importing more than `max_snapshots` keeps the
+    /// newest — which is why the order matters.
+    ///
+    /// Returns how many were imported. A file that cannot be read or unzipped is
+    /// skipped and counted in `.1`, because one corrupt snapshot should not cost
+    /// you the rest of the history.
+    pub fn import_json_snapshots(
+        &self,
+        config: &crate::advanced_memory::AutoPersistenceConfig,
+        store_name: &str,
+    ) -> Result<(usize, usize)> {
+        // `list_snapshots` returns newest first; import oldest first so that
+        // rotation leaves the newest in place.
+        let mut paths = config.list_snapshots(store_name);
+        paths.reverse();
+
+        let (mut imported, mut skipped) = (0usize, 0usize);
+        for path in paths {
+            let Ok(data) = crate::advanced_memory::AutoPersistenceConfig::load_compressed(&path)
+            else {
+                skipped += 1;
+                continue;
+            };
+            let metadata = serde_json::json!({
+                "imported_from": path.file_name().and_then(|n| n.to_str()).unwrap_or("?"),
+            })
+            .to_string();
+            self.save_snapshot(store_name, &data, false, &metadata)?;
+            imported += 1;
+        }
+        Ok((imported, skipped))
     }
 
     /// Load the most recent snapshot for a store.
@@ -1706,5 +1777,87 @@ mod tests {
             .attachments_for_message(message_id)
             .expect("query empty");
         assert!(after.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod snapshot_migration_tests {
+    //! The two snapshot stores were documented as one replacing the other while
+    //! no road existed between them. These tests are that road.
+    use super::*;
+    use crate::advanced_memory::AutoPersistenceConfig;
+
+    #[test]
+    fn json_snapshots_can_be_imported_into_sqlite() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let files = AutoPersistenceConfig::new(dir.path());
+        files
+            .save_compressed("episodic", b"the remembered thing")
+            .expect("write a .json.gz snapshot");
+
+        let db = UnifiedDb::open(&dir.path().join("unified.db")).expect("open db");
+        let store = SqliteMemoryStore::new(&db);
+
+        let (imported, skipped) = store
+            .import_json_snapshots(&files, "episodic")
+            .expect("import");
+
+        assert_eq!(imported, 1);
+        assert_eq!(skipped, 0);
+
+        let latest = store
+            .load_latest("episodic")
+            .expect("load")
+            .expect("a snapshot must be there");
+        assert_eq!(
+            latest.data, b"the remembered thing",
+            "the bytes must survive the crossing unchanged"
+        );
+        assert!(
+            !latest.compressed,
+            "load_compressed already unzipped; claiming otherwise would make the \
+             stored checksum describe bytes the reader never sees"
+        );
+    }
+
+    #[test]
+    fn importing_nothing_is_not_an_error() {
+        // A caller who never used the file store should get a clean zero, not a
+        // failure: "there was nothing to migrate" is a normal outcome.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let files = AutoPersistenceConfig::new(dir.path());
+        let db = UnifiedDb::open(&dir.path().join("unified.db")).expect("open db");
+        let store = SqliteMemoryStore::new(&db);
+
+        let (imported, skipped) = store
+            .import_json_snapshots(&files, "never-used")
+            .expect("import of an empty directory must succeed");
+        assert_eq!((imported, skipped), (0, 0));
+    }
+
+    #[test]
+    fn a_corrupt_file_is_skipped_and_the_rest_survive() {
+        // One unreadable snapshot must not cost the caller the whole history.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let files = AutoPersistenceConfig::new(dir.path());
+        files
+            .save_compressed("procedural", b"good one")
+            .expect("write");
+
+        // Not gzip: the decoder will refuse it.
+        std::fs::write(dir.path().join("procedural_0.json.gz"), b"not gzip at all")
+            .expect("write a corrupt snapshot");
+
+        let db = UnifiedDb::open(&dir.path().join("unified.db")).expect("open db");
+        let store = SqliteMemoryStore::new(&db);
+        let (imported, skipped) = store
+            .import_json_snapshots(&files, "procedural")
+            .expect("import must not abort on one bad file");
+
+        assert_eq!(imported, 1, "the readable snapshot should have come across");
+        assert_eq!(
+            skipped, 1,
+            "and the corrupt one should be counted, not hidden"
+        );
     }
 }

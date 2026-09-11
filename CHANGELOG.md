@@ -5,6 +5,62 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v190 (2026-09-12) — V315: `max_snapshots` era un límite que nunca quitaba nada (0.2.267)
+
+Venía de la misma revisión de bases de datos que V314. `SqliteMemoryStore` se documentaba
+como el que **sustituye** a los snapshots JSON comprimidos de `AutoPersistenceConfig`, y los
+snapshots seguían ahí: públicos, con tests, y sin **ninguna vía** para pasar de unos a otros.
+Quien tuviera ficheros `.json.gz` tenía que elegir entre conservarlos o adoptar SQLite.
+
+### El defecto que apareció al escribir el puente
+
+Escribiendo el test del import saltaron dos fallos, y no eran del test:
+
+`AutoPersistenceConfig::list_snapshots` filtraba por `extension() == "json"`. Pero
+`save_compressed` escribe `{store}_{ts}.json.gz`, y para ese nombre `extension()` devuelve
+`"gz"`. **El listador no veía nada de lo que el propio módulo escribía.** Y como
+`rotate_snapshots` está construido encima, `max_snapshots` —documentado como «máximo número
+de snapshots a conservar»— no borraba nunca nada: los snapshots crecían sin límite en el
+disco del usuario mientras la API afirmaba tener un tope.
+
+### Corregido
+
+- **`list_snapshots` compara el nombre completo**, no la extensión: `.json` y `.json.gz`.
+  Con eso la rotación empieza a funcionar por primera vez.
+- **`SqliteMemoryStore::import_json_snapshots(config, store)`** — la vía que faltaba. Lee
+  los snapshots del directorio de más antiguo a más nuevo (para que la rotación conserve los
+  nuevos), guarda los bytes **descomprimidos** (`load_compressed` ya los desinfla; marcarlos
+  como comprimidos haría que el checksum describiera unos bytes que el lector nunca ve) y
+  devuelve `(importados, saltados)`. Un fichero corrupto se salta y se cuenta, no aborta la
+  migración entera.
+- **La documentación de los dos módulos**, con una tabla comparativa en lugar de la
+  afirmación de que uno sustituye al otro: ficheros para copiar y respaldar, SQLite para
+  consultar junto a las sesiones. Elegir uno ya no es una puerta de un solo sentido.
+
+### Un test de reloj que medía la máquina, no el código
+
+La suite completa falló 2 de 5 veces, siempre en
+`test_parallel_read_only_executes_all_calls`, y no por nada de lo anterior: afirmaba
+`elapsed < 200ms` para deducir que dos herramientas se habían ejecutado en paralelo. Corre
+junto a otros 7.057 tests; cuando la máquina va cargada (36 s frente a 118 s entre
+ejecuciones de esta misma sesión) el umbral salta con el código intacto.
+
+No se ha subido el umbral —eso es exactamente lo que oculta una regresión real—. Se ha
+cambiado el instrumento: los handlers **cuentan cuántos hay dentro a la vez** y el test exige
+un pico de 2. Mide el planificador en vez de la máquina, y es más fuerte: apagando
+`parallel_read_only_tools` el test falla (verificado por mutación).
+
+Su hermano, `test_parallel_falls_back_to_sequential_on_unknown_tool`, decía «sequential» en
+el nombre y solo comprobaba que ambas herramientas se ejecutaran —cosa que un horario
+paralelo también cumple—. Ahora exige pico 1.
+
+### Tests
+
+Nueve nuevos: 3 de rotación (`advanced_memory::persistence::rotation_tests`), 3 de
+importación (`unified_persistence::snapshot_migration_tests`) y 3 aserciones de concurrencia
+directa. Suite completa 7.058 verdes, tres ejecuciones seguidas sin inestabilidad; clippy
+`-D warnings` limpio.
+
 ## [Unreleased] - v189 (2026-09-12) — V314: la búsqueda de tareas del servidor MCP era un `LIKE` sin decirlo (0.2.266)
 
 Salió de repasar qué bases de datos usa el proyecto. `CREATE TABLE ... user_tasks` aparecía
