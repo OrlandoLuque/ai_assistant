@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v189 (2026-09-12) — V314: la búsqueda de tareas del servidor MCP era un `LIKE` sin decirlo (0.2.266)
+
+Salió de repasar qué bases de datos usa el proyecto. `CREATE TABLE ... user_tasks` aparecía
+en dos módulos, y la pregunta era si eran dos bases o una duplicación.
+
+### Lo que resultó ser
+
+Ninguna de las dos, exactamente. El esquema base era **idéntico**, pero `unified_persistence`
+(migración V5) añadía cuatro índices, una tabla **FTS5** y sus triggers, y `mcp_task_tools`
+creaba **solo la tabla**. Su `search()` comprueba si existe `user_tasks_fts` y, si no, cae a
+un `LIKE %…%`. El comentario decía «may not in standalone mode», así que estaba previsto.
+
+Lo que no estaba previsto es cuál es el caso por defecto: **`ai_mcp_server` abre
+`ai_assistant_tasks.sqlite`**, que es standalone. O sea que `task_search` —una de las
+herramientas que el servidor publica— venía respondiendo con un escaneo `LIKE` en lugar de
+un índice de texto completo, con peores resultados y nada que lo indicara. La degradación
+silenciosa otra vez, esta vez en la superficie que ve un cliente MCP.
+
+### Corregido
+
+- **Una sola definición del esquema**, `USER_TASKS_SCHEMA`, aplicada por
+  `UserTaskStore::open` y por la migración V5. Antes cada uno llevaba su copia del
+  `CREATE TABLE`: `IF NOT EXISTS` tiene éxito en silencio contra una tabla con la forma
+  *antigua*, así que una columna añadida a una copia simplemente faltaría al consultar en
+  las bases creadas por la otra.
+- **Standalone recibe el esquema completo** — índices, FTS5 y triggers. La búsqueda ya no
+  depende de con qué fichero arrancaste.
+- **3 tests**: que una base standalone tiene el índice; que `search` encuentra por *palabra*
+  en mitad de una descripción (cosa que un `LIKE` con comodines también haría, así que la
+  consulta está elegida para que solo la responda un índice tokenizado); y que aplicar el
+  esquema dos veces sobre el mismo fichero no falla ni pierde filas — que es lo que permite
+  que ambos caminos compartan base.
+- La cabecera del módulo decía «Tasks persist in SQLite (**same unified.db file**)». No es
+  cierto: `open` recibe una ruta y el servidor usa otra por defecto, así que **hay dos
+  listas de tareas que no se ven entre sí**. Ahora lo dice, y dice que eso lo elige el
+  llamante.
+
 ## [Unreleased] - v188 (2026-09-11) — V313: 27 features declaradas que ningún job de CI compila, y un trinquete para que no sean 28 (0.2.265)
 
 Salió de diagnosticar N27 (`whisper-local` no compila). El bug está identificado y es de

@@ -264,39 +264,7 @@ impl UnifiedDb {
             (
                 5,
                 "User tasks table with FTS5 search and soft-delete rollback",
-                "CREATE TABLE IF NOT EXISTS user_tasks (
-                    id TEXT PRIMARY KEY,
-                    title TEXT NOT NULL,
-                    description TEXT NOT NULL DEFAULT '',
-                    status TEXT NOT NULL DEFAULT 'pending',
-                    priority TEXT NOT NULL DEFAULT 'medium',
-                    due_date TEXT,
-                    tags TEXT NOT NULL DEFAULT '[]',
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    deleted_at TEXT
-                );
-                CREATE INDEX IF NOT EXISTS idx_user_tasks_status ON user_tasks(status);
-                CREATE INDEX IF NOT EXISTS idx_user_tasks_priority ON user_tasks(priority);
-                CREATE INDEX IF NOT EXISTS idx_user_tasks_due_date ON user_tasks(due_date);
-                CREATE INDEX IF NOT EXISTS idx_user_tasks_deleted ON user_tasks(deleted_at);
-                CREATE VIRTUAL TABLE IF NOT EXISTS user_tasks_fts USING fts5(
-                    title, description, content=user_tasks, content_rowid=rowid
-                );
-                CREATE TRIGGER IF NOT EXISTS user_tasks_ai AFTER INSERT ON user_tasks BEGIN
-                    INSERT INTO user_tasks_fts(rowid, title, description)
-                    VALUES (new.rowid, new.title, new.description);
-                END;
-                CREATE TRIGGER IF NOT EXISTS user_tasks_ad AFTER DELETE ON user_tasks BEGIN
-                    INSERT INTO user_tasks_fts(user_tasks_fts, rowid, title, description)
-                    VALUES ('delete', old.rowid, old.title, old.description);
-                END;
-                CREATE TRIGGER IF NOT EXISTS user_tasks_au AFTER UPDATE ON user_tasks BEGIN
-                    INSERT INTO user_tasks_fts(user_tasks_fts, rowid, title, description)
-                    VALUES ('delete', old.rowid, old.title, old.description);
-                    INSERT INTO user_tasks_fts(rowid, title, description)
-                    VALUES (new.rowid, new.title, new.description);
-                END;",
+                crate::mcp_task_tools::USER_TASKS_SCHEMA,
             ),
             (
                 6,

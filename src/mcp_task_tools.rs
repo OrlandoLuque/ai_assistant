@@ -1,13 +1,72 @@
 //! MCP tools for user task management (personal TODO lists).
 //!
 //! Provides CRUD operations, full-text search, filtering, and soft-delete
-//! with rollback. Tasks persist in SQLite (same unified.db file).
+//! with rollback.
+//!
+//! # Where the tasks live
+//!
+//! In whichever SQLite file the caller opens — **not necessarily `unified.db`**,
+//! which is what this line used to claim. [`UserTaskStore::open`] takes a path,
+//! and `ai_mcp_server` defaults to a standalone `ai_assistant_tasks.sqlite`. Two
+//! different files therefore hold two task lists that cannot see each other, and
+//! choosing between them is the caller's decision, not an accident.
+//!
+//! Either way the schema is the same one — [`USER_TASKS_SCHEMA`], applied both
+//! here and by migration V5 of [`crate::unified_persistence`] — so a standalone
+//! database gets the same indexes and the same FTS5 search as `unified.db`.
 
 use crate::mcp_protocol::server::McpServer;
 use crate::mcp_protocol::types::{McpTool, McpToolAnnotation};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+
+/// The complete `user_tasks` schema: table, indexes, FTS5 index and the triggers
+/// that keep it in sync.
+///
+/// **One definition, used twice.** It is applied by
+/// [`UserTaskStore::open`] (standalone databases) and by migration V5 in
+/// [`crate::unified_persistence`] (`unified.db`). Both used to carry their own
+/// copy of the `CREATE TABLE`, which is a drift waiting to happen: `CREATE TABLE
+/// IF NOT EXISTS` succeeds silently against an existing table of the *old*
+/// shape, so a column added to one copy would simply be missing at query time in
+/// databases created by the other.
+///
+/// Every statement is `IF NOT EXISTS`, so applying it to a database that already
+/// has the schema — including one created by the migration — is a no-op.
+pub const USER_TASKS_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS user_tasks (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending',
+    priority TEXT NOT NULL DEFAULT 'medium',
+    due_date TEXT,
+    tags TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    deleted_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_user_tasks_status ON user_tasks(status);
+CREATE INDEX IF NOT EXISTS idx_user_tasks_priority ON user_tasks(priority);
+CREATE INDEX IF NOT EXISTS idx_user_tasks_due_date ON user_tasks(due_date);
+CREATE INDEX IF NOT EXISTS idx_user_tasks_deleted ON user_tasks(deleted_at);
+CREATE VIRTUAL TABLE IF NOT EXISTS user_tasks_fts USING fts5(
+    title, description, content=user_tasks, content_rowid=rowid
+);
+CREATE TRIGGER IF NOT EXISTS user_tasks_ai AFTER INSERT ON user_tasks BEGIN
+    INSERT INTO user_tasks_fts(rowid, title, description)
+    VALUES (new.rowid, new.title, new.description);
+END;
+CREATE TRIGGER IF NOT EXISTS user_tasks_ad AFTER DELETE ON user_tasks BEGIN
+    INSERT INTO user_tasks_fts(user_tasks_fts, rowid, title, description)
+    VALUES ('delete', old.rowid, old.title, old.description);
+END;
+CREATE TRIGGER IF NOT EXISTS user_tasks_au AFTER UPDATE ON user_tasks BEGIN
+    INSERT INTO user_tasks_fts(user_tasks_fts, rowid, title, description)
+    VALUES ('delete', old.rowid, old.title, old.description);
+    INSERT INTO user_tasks_fts(rowid, title, description)
+    VALUES (new.rowid, new.title, new.description);
+END;";
 
 // ============================================================================
 // Types
@@ -234,22 +293,16 @@ impl UserTaskStore {
              PRAGMA foreign_keys = ON;",
         )
         .map_err(|e| format!("Failed to set pragmas: {}", e))?;
-        // Create table if migration hasn't run (standalone mode)
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS user_tasks (
-                id TEXT PRIMARY KEY,
-                title TEXT NOT NULL,
-                description TEXT NOT NULL DEFAULT '',
-                status TEXT NOT NULL DEFAULT 'pending',
-                priority TEXT NOT NULL DEFAULT 'medium',
-                due_date TEXT,
-                tags TEXT NOT NULL DEFAULT '[]',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                deleted_at TEXT
-            );",
-        )
-        .map_err(|e| format!("Failed to create table: {}", e))?;
+        // Create the schema if the migration has not run (standalone mode).
+        //
+        // The FULL schema, indexes and FTS5 included — not just the base table.
+        // Until V314 standalone mode created the table alone, so `search()` found
+        // no `user_tasks_fts`, fell back to a `LIKE` scan, and returned worse
+        // results with nothing to indicate it. `ai_mcp_server` opens
+        // `ai_assistant_tasks.sqlite` by default, so that WAS the default
+        // experience.
+        conn.execute_batch(USER_TASKS_SCHEMA)
+            .map_err(|e| format!("Failed to create task schema: {}", e))?;
         Ok(Self { conn })
     }
 
@@ -1171,5 +1224,97 @@ mod tests {
         assert!(validate_due_date("2026-04-15").is_ok());
         assert!(validate_due_date("not-a-date").is_err());
         assert!(validate_due_date("2026-13-01").is_err());
+    }
+}
+
+#[cfg(test)]
+mod schema_parity_tests {
+    //! A standalone task database and `unified.db` must give the same answers.
+    //! Until V314 they did not: standalone created only the base table, so
+    //! `search()` found no FTS index and silently degraded to a `LIKE` scan —
+    //! and standalone is what `ai_mcp_server` opens by default.
+    use super::*;
+
+    fn store_in(dir: &std::path::Path) -> UserTaskStore {
+        UserTaskStore::open(&dir.join("tasks.sqlite")).expect("open")
+    }
+
+    fn sample(title: &str, description: &str) -> UserTask {
+        UserTask {
+            id: format!("t-{title}"),
+            title: title.to_string(),
+            description: description.to_string(),
+            status: TaskStatus::Pending,
+            priority: TaskPriority::Medium,
+            due_date: None,
+            tags: Vec::new(),
+            created_at: "2026-09-12T00:00:00Z".to_string(),
+            updated_at: "2026-09-12T00:00:00Z".to_string(),
+        }
+    }
+
+    fn table_exists(store: &UserTaskStore, name: &str) -> bool {
+        store
+            .conn
+            .prepare("SELECT 1 FROM sqlite_master WHERE name = ?1")
+            .and_then(|mut s| s.exists(rusqlite::params![name]))
+            .unwrap_or(false)
+    }
+
+    #[test]
+    fn a_standalone_database_gets_the_full_text_index_too() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = store_in(dir.path());
+
+        assert!(table_exists(&store, "user_tasks"));
+        assert!(
+            table_exists(&store, "user_tasks_fts"),
+            "without the FTS index, search() falls back to LIKE and nobody is told"
+        );
+        for idx in [
+            "idx_user_tasks_status",
+            "idx_user_tasks_priority",
+            "idx_user_tasks_due_date",
+            "idx_user_tasks_deleted",
+        ] {
+            assert!(table_exists(&store, idx), "missing index {idx}");
+        }
+    }
+
+    #[test]
+    fn search_actually_uses_the_index_and_finds_by_word() {
+        // A LIKE fallback on "%deploy%" would also match this, so the test asks
+        // for something only a tokenised index answers: a word in the middle of
+        // the description, matched without wildcards.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = store_in(dir.path());
+
+        let task = sample(
+            "Ship the release",
+            "Remember to regenerate the changelog first",
+        );
+        store.create(&task).expect("create");
+
+        let hits = store.search("changelog", 10).expect("search");
+        assert_eq!(hits.len(), 1, "got {hits:?}");
+        assert_eq!(hits[0].title, "Ship the release");
+    }
+
+    #[test]
+    fn applying_the_schema_twice_is_a_no_op() {
+        // `UserTaskStore::open` runs the schema unconditionally, and migration V5
+        // runs the same text. Opening a database the migration already prepared
+        // must not fail, or the two paths cannot share one file.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("tasks.sqlite");
+
+        let first = UserTaskStore::open(&path).expect("first open");
+        let task = sample("survives", "written before the second open");
+        first.create(&task).expect("create");
+        drop(first);
+
+        let second = UserTaskStore::open(&path).expect("second open must not fail");
+        let hits = second.search("survives", 10).expect("search");
+        assert_eq!(hits.len(), 1, "reopening lost the row: {hits:?}");
     }
 }
