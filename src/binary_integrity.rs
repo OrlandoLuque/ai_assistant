@@ -412,7 +412,7 @@ pub fn startup_integrity_check() {
 /// Macro to embed integrity check at compile time
 ///
 /// Place this in your main.rs to automatically verify on startup:
-/// ```ignore
+/// ```rust,no_run
 /// ai_assistant::integrity_guard!();
 /// ```
 #[macro_export]

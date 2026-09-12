@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v193 (2026-09-12) — V318: auditados los 20 ejemplos marcados `ignore` (0.2.270)
+
+V317 metió `cargo test --doc` en CI, pero ese candado no toca los bloques marcados
+```` ```ignore ````: rustdoc ni los compila. Quedaban 20 sin verificar por nada.
+
+### Cómo se auditaron
+
+En vez de leerlos uno a uno, se convirtieron **todos** a `no_run` en una pasada de medición y
+se clasificaron por el tipo de error que devuelve el compilador:
+
+- *«cannot find X in this scope»* → es un fragmento; le faltan `use` o funciones de ejemplo,
+  y `ignore` está justificado.
+- *tipos, firmas, métodos inexistentes* → la API cambió y el ejemplo no. Eso es lo que se
+  buscaba.
+
+El árbol estaba commiteado, así que restaurar fue `git checkout -- src/`.
+
+### Resultado
+
+| | |
+|---|---|
+| Fragmentos y plantillas (`ignore` correcto) | 18 |
+| Compilaban ya, sin tocar nada | 1 |
+| **API desfasada** | **1** |
+
+- **`binary_integrity::integrity_guard`** compilaba tal cual. `ignore` le estaba costando
+  cobertura a cambio de nada: pasa a `no_run`.
+- **`encrypted_knowledge`** llamaba `add_document("guide.md", "…", 10)`. El tercer parámetro
+  es `Option<i32>` —la prioridad del documento, opcional— y el ejemplo pasaba un entero
+  desnudo. Dejó de compilar cuando la firma cambió, y `ignore` impidió que nadie se enterara.
+  Corregido a `Some(10)`, con una línea explicando qué significa ese argumento, y marcado
+  `no_run` para que el compilador lo vigile de aquí en adelante.
+
+Los 18 restantes se quedan como están: son recetas con rutas `crate::` (válidas solo dentro
+del crate), una macro pensada para el `lib.rs` del llamante, o secuencias de llamadas con
+variables de ejemplo. Ninguno es Rust compilable ni en principio.
+
+**Regla que queda:** `ignore` solo si el bloque no puede compilar ni en principio. Si puede,
+`no_run` —compila y no ejecuta— o `compile_fail` cuando el fallo *es* lo que se ilustra.
+Cualquier cosa que el compilador pueda verificar, que la verifique.
+
+### Tests
+
+86 doctests verdes con el conjunto de CI (eran 84), 18 `ignore` justificados uno a uno.
+
 ## [Unreleased] - v192 (2026-09-12) — V317: nadie compilaba los ejemplos de la documentación (0.2.269)
 
 Salió de V316: al arreglar el ejemplo de cabecera de `rag_pipeline` —que llamaba

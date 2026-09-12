@@ -18,13 +18,17 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
-//! use ai_assistant::{KpkgReader, KpkgBuilder, AppKeyProvider};
+//! ```rust,no_run
+//! use ai_assistant::{AppKeyProvider, KpkgBuilder, KpkgReader};
 //!
-//! // Create a package
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! // Create a package. The third argument of `add_document` is an optional
+//! // priority — `Some(10)` to rank this document above others, `None` to leave
+//! // it unranked. The example passed a bare `10` and had stopped compiling when
+//! // the parameter became optional; `ignore` kept that from ever being noticed.
 //! let encrypted = KpkgBuilder::<AppKeyProvider>::with_app_key()
 //!     .name("My Knowledge Base")
-//!     .add_document("guide.md", "# Guide\n\nContent here...", 10)
+//!     .add_document("guide.md", "# Guide\n\nContent here...", Some(10))
 //!     .build()?;
 //! std::fs::write("knowledge.kpkg", encrypted)?;
 //!
@@ -35,6 +39,8 @@
 //! for doc in docs {
 //!     println!("{}: {} bytes", doc.path, doc.content.len());
 //! }
+//! # Ok(())
+//! # }
 //! ```
 
 use std::io::{Cursor, Read, Write as IoWrite};
