@@ -3150,7 +3150,7 @@ fn handle_openai_chat_completions(
             // it is a product decision and not made here.
             if !result.passed {
                 log::warn!(
-                    "[guardrails] output blocked by '{}', but only PII redaction is wired                      to output violations (redact_output_pii={}); the response is being                      returned as generated",
+                    "[guardrails] output blocked by '{}'; only PII redaction is wired to output violations (redact_output_pii={}) so the response is returned as generated",
                     result.blocked_by.as_deref().unwrap_or("unknown"),
                     config.enrichment.redact_output_pii
                 );
@@ -3437,7 +3437,7 @@ fn handle_openai_chat_completions_stream(
             // it is a product decision and not made here.
             if !result.passed {
                 log::warn!(
-                    "[guardrails] output blocked by '{}', but only PII redaction is wired                      to output violations (redact_output_pii={}); the response is being                      returned as generated",
+                    "[guardrails] output blocked by '{}'; only PII redaction is wired to output violations (redact_output_pii={}) so the response is returned as generated",
                     result.blocked_by.as_deref().unwrap_or("unknown"),
                     config.enrichment.redact_output_pii
                 );
