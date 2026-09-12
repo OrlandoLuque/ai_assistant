@@ -13,7 +13,9 @@
 //! # Example
 //!
 //! ```rust
-//! use ai_assistant::plugins::{Plugin, PluginManager, PluginContext};
+//! use std::any::Any;
+//!
+//! use ai_assistant::plugins::{Plugin, PluginContext, PluginManager};
 //!
 //! struct MyPlugin;
 //!
@@ -21,6 +23,11 @@
 //!     fn name(&self) -> &str { "my-plugin" }
 //!     fn version(&self) -> &str { "1.0.0" }
 //!     fn on_load(&mut self, _ctx: &PluginContext) -> Result<(), String> { Ok(()) }
+//!
+//!     // Required, not optional: the manager downcasts through these to hand a
+//!     // caller back its concrete plugin type.
+//!     fn as_any(&self) -> &dyn Any { self }
+//!     fn as_any_mut(&mut self) -> &mut dyn Any { self }
 //! }
 //!
 //! let mut manager = PluginManager::new();

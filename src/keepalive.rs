@@ -17,15 +17,21 @@
 //!
 //! let manager = KeepaliveManager::new(KeepaliveConfig::default());
 //!
-//! // Register a connection
+//! // Register a connection. This records the endpoint; it does not contact it,
+//! // so the connection starts out `Disconnected`.
 //! manager.register("ollama", "http://localhost:11434");
+//! assert_eq!(
+//!     manager.get_state("ollama"),
+//!     Some(ConnectionState::Disconnected)
+//! );
 //!
-//! // Start keepalive monitoring
-//! manager.start();
+//! // `start` returns a guard that stops monitoring when it drops — writing
+//! // `manager.start();` without binding it switches keepalive off on the very
+//! // next line, which is what this example used to do.
+//! let _keepalive = manager.start();
 //!
-//! // Check connection state
-//! let state = manager.get_state("ollama");
-//! assert_eq!(state, Some(ConnectionState::Connected));
+//! // The state becomes `Connected` once a health check actually reaches the
+//! // endpoint; asserting it here would be asserting that a server is running.
 //! ```
 
 use std::collections::HashMap;

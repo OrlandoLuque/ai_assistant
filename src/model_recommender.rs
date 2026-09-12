@@ -24,12 +24,11 @@
 //!
 //! let registry = ModelRegistry::default();
 //! let hw = detect_cached();
-//! let req = RecommendationRequest {
-//!     task: TaskKind::Coding,
-//!     min_quality_tier: QualityTier::Balanced,
-//!     privacy: PrivacyConstraint::PreferLocal,
-//!     ..Default::default()
-//! };
+//! // `RecommendationRequest` is `#[non_exhaustive]`: default, then set fields.
+//! let mut req = RecommendationRequest::default();
+//! req.task = TaskKind::Coding;
+//! req.min_quality_tier = QualityTier::Balanced;
+//! req.privacy = PrivacyConstraint::PreferLocal;
 //! let rec = recommend(&req, &registry, &hw, None).unwrap();
 //! println!("{}: {}", rec.primary.family_id, rec.reasoning);
 //! # }

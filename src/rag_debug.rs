@@ -16,23 +16,27 @@
 //!
 //! # Usage
 //!
-//! ```rust
-//! use ai_assistant::rag_debug::{RagDebugConfig, RagDebugLogger, RagDebugLevel};
+//! `no_run` because `log_to_file` makes this write into the working directory;
+//! the example is here to show the shape, not to leave a `rag_debug/` behind in
+//! whatever directory the doctests happen to run from.
 //!
-//! // Create debug config
-//! let config = RagDebugConfig {
-//!     enabled: true,
-//!     level: RagDebugLevel::Detailed,
-//!     log_to_file: true,
-//!     log_path: Some("./rag_debug/".into()),
-//!     ..Default::default()
+//! ```rust,no_run
+//! use ai_assistant::rag_debug::{
+//!     RagDebugConfig, RagDebugLevel, RagDebugLogger, RagDebugStep,
 //! };
+//!
+//! // `RagDebugConfig` is `#[non_exhaustive]`: build a default and set fields.
+//! let mut config = RagDebugConfig::default();
+//! config.enabled = true;
+//! config.level = RagDebugLevel::Detailed;
+//! config.log_to_file = true;
+//! config.log_path = Some("./rag_debug/".into());
 //!
 //! // Create logger
 //! let logger = RagDebugLogger::new(config);
 //!
 //! // Start a query session
-//! let session = logger.start_query("What are the ship specifications?");
+//! let mut session = logger.start_query("What are the ship specifications?");
 //!
 //! // Log retrieval steps
 //! session.log_step(RagDebugStep::QueryExpansion {
@@ -43,7 +47,7 @@
 //! });
 //!
 //! // End session and export
-//! session.complete(Some("The Aurora MR has..."));
+//! session.complete(Some("The Aurora MR has...".to_string()));
 //! ```
 
 use serde::{Deserialize, Serialize};

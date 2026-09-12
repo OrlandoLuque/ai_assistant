@@ -38,8 +38,11 @@
 //! ```rust
 //! use ai_assistant::adaptive_thinking::*;
 //!
-//! // Create a classifier with default config (disabled by default)
-//! let config = AdaptiveThinkingConfig { enabled: true, ..Default::default() };
+//! // Create a classifier with default config (disabled by default).
+//! // `AdaptiveThinkingConfig` is `#[non_exhaustive]`, so a struct expression
+//! // does not compile outside the crate: default first, then set the field.
+//! let mut config = AdaptiveThinkingConfig::default();
+//! config.enabled = true;
 //! let classifier = QueryClassifier::new(config);
 //!
 //! // Classify a query
@@ -208,8 +211,11 @@ pub struct ThinkingStrategy {
 
 /// Configuration for the adaptive thinking system.
 ///
-/// Disabled by default for backwards compatibility. Enable with `enabled: true`
-/// or use `AiAssistant::enable_adaptive_thinking()`.
+/// Disabled by default for backwards compatibility. Enable by setting the field
+/// on a default value (`let mut c = AdaptiveThinkingConfig::default(); c.enabled
+/// = true;`) or with `AiAssistant::enable_adaptive_thinking()`. This type is
+/// `#[non_exhaustive]`, so `AdaptiveThinkingConfig { enabled: true, .. }` does
+/// not compile outside the crate — which is what the previous wording asked for.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct AdaptiveThinkingConfig {
@@ -312,7 +318,8 @@ impl Default for AdaptiveThinkingConfig {
 /// ```rust
 /// use ai_assistant::adaptive_thinking::*;
 ///
-/// let config = AdaptiveThinkingConfig { enabled: true, ..Default::default() };
+/// let mut config = AdaptiveThinkingConfig::default();
+/// config.enabled = true;
 /// let classifier = QueryClassifier::new(config);
 ///
 /// let strategy = classifier.classify("hello");
@@ -979,9 +986,16 @@ pub struct ThinkingParseResult {
 /// let v1 = parser.process_chunk("<think>reasoning here</think>");
 /// assert_eq!(v1, "");
 ///
+/// // A chunk can end in the middle of a tag, so the parser holds back the last
+/// // `"<think>".len()` bytes until it has seen enough to rule that out. That is
+/// // why this returns the text minus its seven-byte tail rather than all of it:
+/// // emitting them would mean emitting half a tag if the next chunk completes
+/// // one. The example asserted the whole string here and was simply wrong about
+/// // what a streaming parser can promise per chunk.
 /// let v2 = parser.process_chunk("The answer is 42.");
-/// assert_eq!(v2, "The answer is 42.");
+/// assert_eq!(v2, "The answer");
 ///
+/// // `finalize` releases the held-back tail: nothing is lost, only delayed.
 /// parser.finalize();
 /// let result = parser.result();
 /// assert_eq!(result.thinking.as_deref(), Some("reasoning here"));

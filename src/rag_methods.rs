@@ -35,19 +35,41 @@
 //! # Usage
 //!
 //! ```rust
-//! use ai_assistant::rag_methods::{AdvancedQueryExpander, LlmReranker, RrfFusion};
+//! use ai_assistant::rag_methods::{
+//!     AdvancedQueryExpander, LlmGenerate, LlmReranker, RrfFusion, ScoredItem,
+//! };
+//!
+//! // These methods call an LLM through this trait; wire it to your provider.
+//! struct Llm;
+//! impl LlmGenerate for Llm {
+//!     fn generate(&self, _prompt: &str, _max_tokens: usize) -> Result<String, String> {
+//!         Ok(["1. Aurora MR specifications", "2. Aurora MR cargo"].join("\n"))
+//!     }
+//!     fn model_name(&self) -> &str { "stub" }
+//! }
+//! let llm = Llm;
 //!
 //! // Expand query
 //! let expander = AdvancedQueryExpander::new();
-//! let variants = expander.expand("What is the Aurora MR?", &llm)?;
+//! let variants = expander.expand("What is the Aurora MR?", &llm).expect("expand");
+//! println!("{} variants in {}ms", variants.result.len(), variants.duration_ms);
 //!
 //! // Rerank results
+//! let chunks = vec![
+//!     ScoredItem::new("the Aurora MR carries 3 SCU", 0.4),
+//!     ScoredItem::new("unrelated passage", 0.9),
+//! ];
 //! let reranker = LlmReranker::new();
-//! let reranked = reranker.rerank("query", chunks, &llm)?;
+//! let _reranked = reranker.rerank("cargo capacity", chunks, &llm).expect("rerank");
 //!
-//! // Fuse results from multiple sources
+//! // Fuse results from multiple sources. `fuse` needs an id function: two lists
+//! // agreeing on an item is the whole point of RRF, so it has to be told what
+//! // makes two entries the same one.
+//! let keyword_results = vec![ScoredItem::new("a", 0.9), ScoredItem::new("b", 0.5)];
+//! let semantic_results = vec![ScoredItem::new("b", 0.8), ScoredItem::new("c", 0.3)];
 //! let fusion = RrfFusion::new();
-//! let fused = fusion.fuse(vec![keyword_results, semantic_results]);
+//! let fused = fusion.fuse(vec![keyword_results, semantic_results], |t| t.to_string());
+//! assert_eq!(fused.result[0].item, "b", "the item both lists ranked wins");
 //! ```
 
 use std::collections::{HashMap, HashSet};

@@ -2051,13 +2051,16 @@ impl std::fmt::Debug for ConnectionPoolHandle {
 /// # Example
 ///
 /// ```rust
-/// use ai_assistant::providers::{ResilientProviderRegistry, ProviderConfig};
+/// // `providers` is a private module: these come from the crate root, and
+/// // `ProviderConfig` is re-exported as `LlmProviderConfig` because
+/// // `config_file::ProviderConfig` already holds the plain name there.
+/// use ai_assistant::{LlmProviderConfig, ResilientProviderRegistry};
 ///
-/// let primary = ProviderConfig::new("ollama", "http://localhost:11434")
+/// let primary = LlmProviderConfig::new("ollama", "http://localhost:11434")
 ///     .with_priority(0);
 /// let mut registry = ResilientProviderRegistry::new(primary);
 ///
-/// let fallback = ProviderConfig::new("lmstudio", "http://localhost:1234")
+/// let fallback = LlmProviderConfig::new("lmstudio", "http://localhost:1234")
 ///     .with_priority(1);
 /// registry.add_fallback(fallback);
 ///

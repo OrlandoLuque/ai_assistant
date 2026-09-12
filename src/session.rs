@@ -374,7 +374,7 @@ impl JournalEntry {
 /// # Example
 ///
 /// ```rust,no_run
-/// use ai_assistant::session::JournalSession;
+/// use ai_assistant::JournalSession;
 /// use ai_assistant::ChatMessage;
 ///
 /// let journal = JournalSession::new("my_session.jsonl");

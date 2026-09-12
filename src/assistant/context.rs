@@ -213,7 +213,8 @@ impl AiAssistant {
     /// assistant.set_knowledge_context("# Star Citizen Ships\n\nThe Aurora MR is...");
     ///
     /// // Messages will automatically use the knowledge context
-    /// assistant.send_message_auto("Tell me about the Aurora MR");
+    /// // `send_message_auto` takes an owned String, not a &str.
+    /// assistant.send_message_auto("Tell me about the Aurora MR".to_string());
     /// ```
     pub fn set_knowledge_context(&mut self, context: &str) {
         self.knowledge_context = context.to_string();

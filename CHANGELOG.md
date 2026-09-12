@@ -5,6 +5,86 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v192 (2026-09-12) — V317: nadie compilaba los ejemplos de la documentación (0.2.269)
+
+Salió de V316: al arreglar el ejemplo de cabecera de `rag_pipeline` —que llamaba
+`process("…").await?` con un argumento contra una función síncrona de cinco— la pregunta
+obvia era cuántos más había así. Medido: **19 de 104 no compilaban**.
+
+CI corre `cargo test --lib` y `cargo test --test '*'`. Ninguno de los dos toca los ejemplos
+de documentación, así que son el único cuerpo de código del repositorio que **nada** compila.
+Y un ejemplo roto es peor que ningún ejemplo: es lo primero que copia quien llega.
+
+### Las clases de fallo
+
+- **`#[non_exhaustive]` (7 casos)** — `AdaptiveThinkingConfig`, `BatchConfig`,
+  `RecommendationRequest`, `RagDebugConfig`, `NetworkConfig`. El atributo impide la
+  construcción con literal **fuera** del crate. Los tests unitarios compilan *dentro*, así que
+  siguen usando `..Default::default()` sin problema y nunca lo detectaron; los doctests
+  compilan fuera y son los únicos que podían verlo. La documentación de
+  `AdaptiveThinkingConfig` llegaba a decir «Enable with `enabled: true`», que es exactamente
+  lo que no compila.
+- **Módulos privados (4 casos)** — ejemplos que importaban `ai_assistant::config::…`,
+  `::context::…`, `::providers::…`, `::session::…`. Los cuatro módulos son `mod`, no
+  `pub mod`; lo que se exporta son los re-exports de la raíz. De paso queda documentado que
+  `providers::ProviderConfig` sale como **`LlmProviderConfig`**, porque el nombre llano ya lo
+  ocupa el de `config_file`.
+- **Firmas cambiadas (5 casos)** — `send_message_auto` toma `String`, `decompress_chunk`
+  toma también el algoritmo, `as_graph_callback` toma el extractor, `complete` toma `String`,
+  `ContainerExecutor` no tiene `default()` sino un `new(config) -> Result`.
+- **Bocetos (2 casos)** — `knowledge_graph` y `rag_methods` usaban variables que nunca se
+  definían (`llm_callback`, `llm`, `chunks`, `keyword_results`…) y `?` fuera de una función
+  que devuelva `Result`. Reescritos con stubs que compilan y se ejecutan.
+- **Campos renombrados** — `MethodResult.value` no existe; es `.result`.
+
+### Tres ejemplos afirmaban cosas falsas sobre el comportamiento
+
+Estos compilaban y **fallaban al ejecutarse**, que es más interesante:
+
+- **`ThinkingTagParser`** esperaba que `process_chunk("The answer is 42.")` devolviera la
+  frase entera. Devuelve `"The answer"`: el parser retiene los últimos siete bytes
+  (`"<think>"`) por si el trozo corta un tag a la mitad, y `finalize()` los suelta. El código
+  es correcto; el ejemplo prometía algo que un parser en streaming no puede prometer por
+  trozo.
+- **`keepalive`** hacía `manager.start();` sin asignar el resultado —y `KeepaliveHandle`
+  **para la monitorización al soltarse**, así que el ejemplo la apagaba en la línea
+  siguiente— y luego afirmaba `ConnectionState::Connected` sobre una conexión que nadie había
+  intentado. Ambas cosas documentadas ahora.
+- **`streaming_compression`** comprimía 13 bytes contra un `min_size` de 100: la compresión
+  era un no-op y la descompresión habría fallado sobre datos que nunca se comprimieron. El
+  ejemplo nuevo enseña las dos mitades, el paso directo por debajo del umbral y el viaje de
+  ida y vuelta por encima.
+
+### Un defecto real: un lote de ediciones entraba en pánico en vez de devolver el error
+
+Arreglando el ejemplo de `edit_operations` apareció esto. `Edit::apply` comprueba límites y
+devuelve `EditError::OutOfBounds`. Pero `TextEditor::apply_batch` llama a `edit.inverse(...)`
+**antes** que a `apply`, e `inverse` corta el texto sin comprobar nada. Resultado: un lote con
+una edición fuera de rango **entraba en pánico** aunque la API está montada sobre
+`Result<(), EditError>` y el error existe justo para ese caso. La comprobación estaba escrita
+y se saltaba por el orden de las operaciones.
+
+Corregido extrayendo `Edit::validate(&str)` —usado por `apply` y por `apply_batch` antes de
+`inverse`—. Tres tests nuevos: el error en vez del pánico, que un lote rechazado deja el texto
+intacto, y que `validate` y `apply` nunca discrepan.
+
+### El candado
+
+`cargo test --features "$FEATURES_STD" --doc` entra en CI, en el mismo job que los otros dos.
+Verificado con **ese** conjunto y no con `full`: `FEATURES_STD` compila 104 ejemplos frente a
+los 95 de `full`, y dos de los rotos solo aparecían ahí.
+
+Quedan **21 ejemplos marcados `ignore`**, que rustdoc no compila. Una muestra de tres
+(`error_taxonomy`, `http_client`, `stuck_detector`) son plantillas y fragmentos: rutas
+`crate::`, una macro pensada para `lib.rs`, una secuencia de llamadas con variables de
+ejemplo. Uso defendible del atributo, no rot escondido. **La auditoría de los 21 queda
+pendiente** (tarea aparte); esta entrega no la incluye.
+
+### Tests
+
+104 doctests verdes con el conjunto de CI, 0 fallos. Suite completa 7.071 (+3 de
+`edit_operations`); clippy `-D warnings` limpio con `full --all-targets` y con el mínimo.
+
 ## [Unreleased] - v191 (2026-09-12) — V316: el tier «Semantic» del RAG devolvía cero trozos, siempre (0.2.268)
 
 Salió de la pregunta de por qué el RAG de SQLite y los ocho backends vectoriales no se

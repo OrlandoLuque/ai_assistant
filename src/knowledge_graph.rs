@@ -41,20 +41,26 @@
 //!
 //! ```no_run
 //! use ai_assistant::knowledge_graph::{
-//!     KnowledgeGraph, KnowledgeGraphConfig, LlmEntityExtractor
+//!     KnowledgeGraph, KnowledgeGraphConfig, LlmEntityExtractor,
 //! };
 //!
+//! # fn main() -> ai_assistant::AiResult<()> {
 //! // Create the graph
 //! let config = KnowledgeGraphConfig::default();
 //! let mut graph = KnowledgeGraph::open("knowledge.db", config)?;
 //!
-//! // Index documents (requires LLM for entity extraction)
-//! let extractor = LlmEntityExtractor::new(llm_callback);
+//! // Entity extraction needs an LLM: the closure takes (system_prompt,
+//! // user_prompt) and returns the model's reply.
+//! let extractor = LlmEntityExtractor::new(|_system: &str, _user: &str| {
+//!     Ok(String::from("[]")) // call your provider here
+//! });
 //! graph.index_document("doc1", "Aegis Dynamics manufactures the Sabre fighter.", &extractor)?;
 //!
 //! // Query the graph
-//! let callback = graph.as_graph_callback();
+//! let _callback = graph.as_graph_callback(&extractor);
 //! // Use with RagPipeline...
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # Entity Types

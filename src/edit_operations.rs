@@ -22,12 +22,22 @@
 //! editor.replace_range(0..5, "Hi");
 //! assert_eq!(editor.text(), "Hi World");
 //!
-//! // Batched edits
+//! // Batched edits are applied in order against the text as it changes, so the
+//! // offsets of later edits must account for earlier ones. Ordering them from
+//! // the end of the text backwards keeps that from mattering, which is why the
+//! // convention is descending offset.
 //! let edits = EditBuilder::new()
-//!     .insert(3, " Beautiful")
-//!     .delete(9..14)
+//!     .delete(2..3)          // the space in "Hi World"
+//!     .insert(2, ", ")       // ...then insert at the same point
 //!     .build();
-//! editor.apply_batch(&edits);
+//! editor.apply_batch(&edits).expect("both edits are in range");
+//! assert_eq!(editor.text(), "Hi, World");
+//!
+//! // An out-of-range edit is reported, not a panic: the whole batch is
+//! // rejected and the text is left as it was.
+//! let bad = EditBuilder::new().delete(90..99).build();
+//! assert!(editor.apply_batch(&bad).is_err());
+//! assert_eq!(editor.text(), "Hi, World");
 //! ```
 
 use std::collections::VecDeque;
@@ -223,8 +233,14 @@ impl Edit {
         self.insert_text.len() as isize - self.delete_len as isize
     }
 
-    /// Apply this edit to text
-    pub fn apply(&self, text: &mut String) -> Result<(), EditError> {
+    /// Check this edit fits `text`, without applying it.
+    ///
+    /// [`Self::inverse`] slices `text` unchecked, and [`TextEditor::apply_batch`]
+    /// used to call it *before* [`Self::apply`] — so a batch holding an
+    /// out-of-range edit panicked instead of returning the
+    /// [`EditError::OutOfBounds`] the API defines for exactly that case. The
+    /// check lived only inside `apply`, which ran second and never got there.
+    pub fn validate(&self, text: &str) -> Result<(), EditError> {
         if self.offset > text.len() {
             return Err(EditError::OutOfBounds {
                 offset: self.offset,
@@ -238,6 +254,13 @@ impl Edit {
                 text_len: text.len(),
             });
         }
+
+        Ok(())
+    }
+
+    /// Apply this edit to text
+    pub fn apply(&self, text: &mut String) -> Result<(), EditError> {
+        self.validate(text)?;
 
         // Perform the edit
         let end = self.offset + self.delete_len;
@@ -433,6 +456,10 @@ impl TextEditor {
 
         // Apply edits (should be sorted by offset descending)
         for edit in edits {
+            // Validated first: `inverse` slices unchecked, so calling it on an
+            // out-of-range edit panics — and a panic is not what a caller
+            // holding a `Result<(), EditError>` has any way to handle.
+            edit.validate(&temp_text)?;
             inverses.push(edit.inverse(&temp_text));
             edit.apply(&mut temp_text)?;
         }
@@ -870,5 +897,56 @@ mod tests {
 
         editor.delete_line(1).unwrap();
         assert_eq!(editor.text(), "Line 1\nLine 3");
+    }
+}
+
+#[cfg(test)]
+mod batch_bounds_tests {
+    //! `apply_batch` took each edit's inverse before applying it, and `inverse`
+    //! slices the text unchecked. So an out-of-range edit in a batch panicked,
+    //! even though `Edit::apply` bounds-checks and `EditError::OutOfBounds`
+    //! exists for precisely that — the check simply ran second and was never
+    //! reached. A panic is not something a caller holding a `Result` can handle.
+    use super::*;
+
+    #[test]
+    fn an_out_of_range_edit_in_a_batch_is_an_error_not_a_panic() {
+        let mut editor = TextEditor::new("short");
+        let edits = EditBuilder::new().delete(90..99).build();
+
+        let err = editor
+            .apply_batch(&edits)
+            .expect_err("90..99 does not fit in 5 characters");
+        assert!(matches!(err, EditError::OutOfBounds { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn a_rejected_batch_leaves_the_text_untouched() {
+        let mut editor = TextEditor::new("Hello World");
+        // First edit is fine, second is not: the batch must be all-or-nothing.
+        let edits = EditBuilder::new().delete(0..5).delete(90..99).build();
+
+        assert!(editor.apply_batch(&edits).is_err());
+        assert_eq!(
+            editor.text(),
+            "Hello World",
+            "a batch that fails half way must not leave the first edit applied"
+        );
+    }
+
+    #[test]
+    fn validate_agrees_with_apply() {
+        // The two must never disagree, since `apply_batch` now trusts
+        // `validate` to protect `inverse`.
+        let text = "Hello";
+        for (start, end) in [(0, 0), (0, 5), (5, 5), (2, 5), (6, 6), (0, 6), (4, 6)] {
+            let edit = Edit::delete(start..end);
+            let mut copy = text.to_string();
+            assert_eq!(
+                edit.validate(text).is_ok(),
+                edit.apply(&mut copy).is_ok(),
+                "disagreement at {start}..{end}"
+            );
+        }
     }
 }

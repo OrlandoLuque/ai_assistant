@@ -32,3 +32,6 @@ _*.txt
 
 # Runtime artefact: ai_mcp_server opens its task store in the working directory.
 ai_assistant_tasks.sqlite
+
+# Written by the rag_debug doc example if it is ever run for real
+rag_debug/

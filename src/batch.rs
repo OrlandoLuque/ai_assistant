@@ -15,10 +15,9 @@
 //! ```rust,no_run
 //! use ai_assistant::batch::{BatchProcessor, BatchConfig, BatchRequest};
 //!
-//! let config = BatchConfig {
-//!     max_concurrent: 4,
-//!     ..Default::default()
-//! };
+//! // `BatchConfig` is `#[non_exhaustive]`: default first, then set fields.
+//! let mut config = BatchConfig::default();
+//! config.max_concurrent = 4;
 //!
 //! let processor = BatchProcessor::new(config);
 //!

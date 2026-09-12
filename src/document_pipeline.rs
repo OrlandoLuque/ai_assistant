@@ -320,10 +320,13 @@ impl Default for DocumentPipelineConfig {
 /// ```rust,no_run
 /// use ai_assistant::document_pipeline::*;
 /// use ai_assistant::shared_folder::SharedFolder;
-/// use ai_assistant::container_executor::ContainerExecutor;
+/// use ai_assistant::container_executor::{ContainerConfig, ContainerExecutor};
 /// use std::sync::{Arc, RwLock};
 ///
-/// let executor = Arc::new(RwLock::new(ContainerExecutor::default()));
+/// // `ContainerExecutor::new` takes a config and can fail (no runtime, no
+/// // permissions); there is no `default()`.
+/// let executor = ContainerExecutor::new(ContainerConfig::default()).unwrap();
+/// let executor = Arc::new(RwLock::new(executor));
 /// let folder = SharedFolder::temp().unwrap();
 /// let config = DocumentPipelineConfig::default();
 /// let mut pipeline = DocumentPipeline::new(config, executor, folder);

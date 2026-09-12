@@ -372,10 +372,9 @@ pub struct RingInfo {
 /// ```no_run
 /// use ai_assistant::distributed_network::{NetworkNode, NetworkConfig};
 ///
-/// let config = NetworkConfig {
-///     listen_addr: "127.0.0.1:0".parse().unwrap(),
-///     ..NetworkConfig::default()
-/// };
+/// // `NetworkConfig` is `#[non_exhaustive]`: default first, then set fields.
+/// let mut config = NetworkConfig::default();
+/// config.listen_addr = "127.0.0.1:0".parse().unwrap();
 /// let node = NetworkNode::new(config).expect("Failed to create node");
 /// println!("Node {} listening on {}", node.node_id(), node.local_addr());
 /// ```

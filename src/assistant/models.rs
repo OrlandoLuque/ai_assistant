@@ -87,7 +87,7 @@ impl AiAssistant {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use ai_assistant::{AiAssistant, config::AiProvider};
+    /// use ai_assistant::{AiAssistant, AiProvider};
     ///
     /// let mut ai = AiAssistant::new();
     /// ai.configure_fallback(vec![

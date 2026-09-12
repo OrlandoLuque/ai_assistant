@@ -13,16 +13,26 @@
 //! # Example
 //!
 //! ```rust
-//! use ai_assistant::streaming_compression::{StreamCompressor, CompressionConfig};
+//! use ai_assistant::streaming_compression::{Algorithm, CompressionConfig, StreamCompressor};
 //!
-//! let compressor = StreamCompressor::new(CompressionConfig::default());
+//! let config = CompressionConfig::default(); // Gzip, min_size 100
+//! let compressor = StreamCompressor::new(config.clone());
 //!
-//! // Compress chunks as they come
-//! let compressed = compressor.compress_chunk(b"Hello, world!");
-//! println!("Compressed {} bytes to {} bytes", 13, compressed.len());
+//! // Payloads below `min_size` (100 bytes by default) are passed through
+//! // untouched — compressing them would cost more than it saves.
+//! let small = b"Hello, world!";
+//! assert_eq!(compressor.compress_chunk(small), small);
 //!
-//! // Decompress
-//! let decompressed = compressor.decompress_chunk(&compressed)?;
+//! // Above the threshold the chunk really is compressed, and the algorithm has
+//! // to be named again on the way back: the compressed bytes do not carry it.
+//! let chunk = "the same sentence over and over. ".repeat(10);
+//! let compressed = compressor.compress_chunk(chunk.as_bytes());
+//! assert!(compressed.len() < chunk.len());
+//!
+//! let decompressed = compressor
+//!     .decompress_chunk(&compressed, Algorithm::Gzip)
+//!     .expect("round trip");
+//! assert_eq!(decompressed, chunk.as_bytes());
 //! ```
 
 use flate2::read::{DeflateDecoder, GzDecoder};

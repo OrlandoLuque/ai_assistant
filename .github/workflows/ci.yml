@@ -71,6 +71,14 @@ jobs:
         run: cargo test --features "$FEATURES_STD" --lib
       - name: Run integration tests
         run: cargo test --features "$FEATURES_STD" --test '*'
+      - name: Run doc examples
+        # Added V317. Nothing compiled the doc examples before this: `--lib` and
+        # `--test '*'` do not touch them, and 17 of 95 had rotted unnoticed --
+        # including rag_pipeline's own header, which showed
+        # `process(query).await?` against a synchronous five-argument function.
+        # A broken example is worse than no example: it is the first thing a
+        # reader copies.
+        run: cargo test --features "$FEATURES_STD" --doc
 
   clippy:
     name: Clippy

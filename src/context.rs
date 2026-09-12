@@ -194,7 +194,7 @@ pub fn get_model_context_size(model_name: &str) -> usize {
 /// # Example
 ///
 /// ```rust,no_run
-/// use ai_assistant::context::get_model_context_size_cached;
+/// use ai_assistant::get_model_context_size_cached;
 ///
 /// let size = get_model_context_size_cached("llama3.2:7b", |_name| {
 ///     // In production, call fetch_model_context_size(config, name) here
