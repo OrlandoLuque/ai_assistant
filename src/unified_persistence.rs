@@ -15,7 +15,7 @@
 //! # Two snapshot stores, and which to pick
 //!
 //! This one is **not** the only way to persist memory snapshots:
-//! [`crate::advanced_memory::AutoPersistenceConfig`] writes `.json.gz` files and
+//! `AutoPersistenceConfig` (feature `advanced-memory`) writes `.json.gz` files and
 //! is equally public and equally alive. This module used to say `SqliteMemoryStore`
 //! *"replaces compressed JSON snapshots"*, which read as though the file-based
 //! path were gone. It is not, and until V315 there was not even a way across.
@@ -32,7 +32,7 @@
 //!
 //! Pick SQLite when the snapshots live alongside sessions and you want to query
 //! them; pick files when you want them inspectable or copyable on their own.
-//! [`SqliteMemoryStore::import_json_snapshots`] moves existing files into SQLite.
+//! `SqliteMemoryStore::import_json_snapshots` (same feature) moves files into SQLite.
 //!
 //! # Schema versioning
 //!
@@ -882,9 +882,9 @@ pub struct ImportReport {
 /// SQLite-backed memory snapshot store.
 ///
 /// Snapshots as rows, with atomic writes and rotation (max snapshots per store).
-/// The file-based alternative is [`crate::advanced_memory::AutoPersistenceConfig`];
+/// The file-based alternative is `AutoPersistenceConfig` (feature `advanced-memory`);
 /// see the module docs for which to pick, and
-/// [`Self::import_json_snapshots`] for moving from one to the other.
+/// `import_json_snapshots` (feature `advanced-memory`) for moving between them.
 pub struct SqliteMemoryStore<'a> {
     db: &'a UnifiedDb,
     /// Maximum number of snapshots to keep per store name.
@@ -941,6 +941,10 @@ impl<'a> SqliteMemoryStore<'a> {
     }
 
     /// Import existing `.json.gz` snapshots written by
+    ///
+    /// Present only with the `advanced-memory` feature: without it the file
+    /// store this reads does not exist, and `rag` alone compiles this module.
+    #[cfg(feature = "advanced-memory")]
     /// [`crate::advanced_memory::AutoPersistenceConfig`].
     ///
     /// This is the road that makes "SQLite replaces compressed JSON snapshots"
@@ -1780,7 +1784,7 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "advanced-memory"))]
 mod snapshot_migration_tests {
     //! The two snapshot stores were documented as one replacing the other while
     //! no road existed between them. These tests are that road.

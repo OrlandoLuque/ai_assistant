@@ -3,7 +3,7 @@
 //!
 //! # This is one of two snapshot stores
 //!
-//! The other is [`crate::unified_persistence::SqliteMemoryStore`], which keeps
+//! The other is `unified_persistence::SqliteMemoryStore` (feature `rag`), which keeps
 //! snapshots as rows in `unified.db`. Its documentation described itself as
 //! *replacing* this one, which was overstated: this path is public, tested and
 //! fully usable. The two differ in storage and in what they are good at — see
@@ -12,8 +12,8 @@
 //! What each is for: files here are inspectable and copyable on their own, which
 //! is what you want for backups and for moving a memory store between machines;
 //! SQLite is what you want when snapshots should live with sessions and be
-//! queryable. [`crate::unified_persistence::SqliteMemoryStore::import_json_snapshots`]
-//! reads the files this module writes, so choosing one is not a one-way door.
+//! queryable. `SqliteMemoryStore::import_json_snapshots` reads the files this
+//! module writes, so choosing one is not a one-way door.
 
 /// Configuration for automatic memory persistence.
 #[derive(Debug, Clone)]
