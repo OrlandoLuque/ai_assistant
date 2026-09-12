@@ -206,13 +206,35 @@ impl GuardrailPipeline {
                 }
             };
 
-            // Record violation if logging is enabled and score meets threshold.
-            if self.log_violations && result.score >= self.block_threshold {
+            // A guard's `action` is its decision; `score` is only a magnitude.
+            // Until V319 this loop consulted the score alone, so a guard could
+            // return `GuardAction::Block` and be silently overruled whenever its
+            // score fell under `block_threshold` (0.8 by default). With stock
+            // configuration that left three dead bands:
+            //
+            //   ToxicityGuard   blocks at score >= 0.5 → dead band 0.5 .. 0.8
+            //   AttackGuard     blocks at risk  >  0.7 → dead band 0.7 .. 0.8
+            //   AbstentionGuard blocks below confidence 0.3, scoring
+            //                   `1.0 - confidence` → dead band 0.2 .. 0.3
+            //
+            // So content the toxicity detector had flagged, and prompt
+            // injections the attack detector had rated high-risk, passed
+            // through while the pipeline reported `passed = true`.
+            //
+            // The threshold is kept as a second, independent trigger rather than
+            // replaced: it is what a guard that only scores relies on, and for a
+            // security control the union is the fail-safe direction — this can
+            // only block more than before, never less.
+            let blocks = matches!(result.action, GuardAction::Block(_))
+                || result.score >= self.block_threshold;
+
+            // Record violation if logging is enabled.
+            if self.log_violations && blocks {
                 self.violations.push(result.clone());
             }
 
             // Track the first guard that triggers a block.
-            if result.score >= self.block_threshold && blocked_by.is_none() {
+            if blocks && blocked_by.is_none() {
                 blocked_by = Some(result.guard_name.clone());
             }
 
@@ -2406,19 +2428,57 @@ mod tests {
         assert_eq!(result.blocked_by, Some("block".to_string()));
     }
 
+    /// Scores without ever asking for a block — which is what makes it usable
+    /// for testing the threshold in isolation.
+    struct ScoreOnlyGuard {
+        score: f64,
+    }
+    impl Guard for ScoreOnlyGuard {
+        fn name(&self) -> &str {
+            "score_only"
+        }
+        fn stage(&self) -> GuardStage {
+            GuardStage::Both
+        }
+        fn check(&self, _text: &str) -> GuardCheckResult {
+            GuardCheckResult {
+                guard_name: "score_only".into(),
+                action: GuardAction::Warn("noticed something".into()),
+                score: self.score,
+                details: "scores but does not decide".into(),
+            }
+        }
+    }
+
     #[test]
     fn test_pipeline_threshold() {
-        // Score below threshold should not trigger a block.
+        // Until V319 this used `BlockGuard` — a guard whose action is
+        // `GuardAction::Block` — and asserted that at score 0.5 against a 0.9
+        // threshold the message *passed*. That is the old defect written down
+        // as the contract: it said a guard asking to block need not be obeyed.
+        // The threshold is a real mechanism and still worth testing, so the
+        // test now uses a guard that scores without deciding.
         let mut pipeline = GuardrailPipeline::new().with_threshold(0.9);
-        pipeline.add_guard(Box::new(BlockGuard { score: 0.5 }));
+        pipeline.add_guard(Box::new(ScoreOnlyGuard { score: 0.5 }));
         let result = pipeline.check_input("hello");
-        assert!(result.passed);
+        assert!(result.passed, "0.5 is under the 0.9 threshold");
 
         // Score at threshold should trigger a block.
         let mut pipeline2 = GuardrailPipeline::new().with_threshold(0.5);
-        pipeline2.add_guard(Box::new(BlockGuard { score: 0.5 }));
+        pipeline2.add_guard(Box::new(ScoreOnlyGuard { score: 0.5 }));
         let result2 = pipeline2.check_input("hello");
-        assert!(!result2.passed);
+        assert!(!result2.passed, "0.5 reaches the 0.5 threshold");
+    }
+
+    #[test]
+    fn a_block_is_obeyed_whatever_the_threshold_is() {
+        // The counterpart of the test above: raising the threshold tunes how
+        // severe a *score* must be, and must not turn an explicit Block into a
+        // suggestion.
+        let mut pipeline = GuardrailPipeline::new().with_threshold(0.99);
+        pipeline.add_guard(Box::new(BlockGuard { score: 0.5 }));
+
+        assert!(!pipeline.check_input("hello").passed);
     }
 
     #[test]
@@ -3539,5 +3599,122 @@ mod tests {
         pipeline.add_guard(Box::new(AttributionGuard::new()));
         let result = pipeline.check_output("Rust is fast.");
         assert!(result.passed);
+    }
+}
+
+#[cfg(test)]
+mod action_is_the_decision_tests {
+    //! A guard returns both an `action` and a `score`. The pipeline used to
+    //! consult only the score, so `GuardAction::Block` was advisory: any guard
+    //! whose score fell under `block_threshold` (0.8) was overruled without a
+    //! word. With stock configuration that silently let through everything the
+    //! toxicity detector flagged between 0.5 and 0.8, and every prompt injection
+    //! the attack detector rated high-risk between 0.7 and 0.8.
+    use super::*;
+
+    /// A guard that returns exactly what the test tells it to.
+    struct Fixed(GuardAction, f64, GuardStage);
+    impl Guard for Fixed {
+        fn name(&self) -> &str {
+            "fixed"
+        }
+        fn stage(&self) -> GuardStage {
+            self.2
+        }
+        fn check(&self, _text: &str) -> GuardCheckResult {
+            GuardCheckResult {
+                guard_name: self.name().to_string(),
+                action: self.0.clone(),
+                score: self.1,
+                details: String::new(),
+            }
+        }
+    }
+
+    #[test]
+    fn a_guard_that_says_block_blocks_however_low_it_scored() {
+        let mut pipeline = GuardrailPipeline::new();
+        pipeline.add_guard(Box::new(Fixed(
+            GuardAction::Block("nope".to_string()),
+            0.01,
+            GuardStage::PreSend,
+        )));
+
+        let result = pipeline.check_input("anything");
+        assert!(
+            !result.passed,
+            "the guard's decision was Block; a score of 0.01 does not overrule it"
+        );
+        assert_eq!(result.blocked_by.as_deref(), Some("fixed"));
+    }
+
+    #[test]
+    fn the_score_threshold_still_blocks_on_its_own() {
+        // Preserved deliberately: a guard that only scores, and leaves `action`
+        // at Warn, must keep blocking above the threshold. The fix is a union,
+        // so it can only block more than before — the fail-safe direction.
+        let mut pipeline = GuardrailPipeline::new();
+        pipeline.add_guard(Box::new(Fixed(
+            GuardAction::Warn("loud".to_string()),
+            0.95,
+            GuardStage::PreSend,
+        )));
+
+        assert!(!pipeline.check_input("anything").passed);
+    }
+
+    #[test]
+    fn pass_with_a_low_score_still_passes() {
+        let mut pipeline = GuardrailPipeline::new();
+        pipeline.add_guard(Box::new(Fixed(GuardAction::Pass, 0.0, GuardStage::PreSend)));
+
+        let result = pipeline.check_input("anything");
+        assert!(result.passed);
+        assert!(result.blocked_by.is_none());
+    }
+
+    #[test]
+    fn abstention_blocks_inside_the_band_its_score_used_to_hide() {
+        // `estimate_confidence` gives a neutral sentence the base 0.5, so the
+        // guard emits Block with `1.0 - 0.5 = 0.5` — under the 0.8 floor. This
+        // is the real guard, not a stub: the dead band was reachable with the
+        // shipped code and shipped defaults.
+        let mut pipeline = GuardrailPipeline::new();
+        pipeline.add_guard(Box::new(AbstentionGuard::new(0.9)));
+
+        let result = pipeline.check_output("The capital of France is Paris today");
+        assert!(
+            !result.passed,
+            "the guard abstained; the pipeline must honour that rather than              compare its score against a threshold meant for severity"
+        );
+        assert_eq!(result.blocked_by.as_deref(), Some("abstention"));
+        assert!(
+            matches!(result.results[0].action, GuardAction::Block(_)),
+            "sanity: this test only means something if the guard really said Block"
+        );
+        assert!(
+            result.results[0].score < 0.8,
+            "sanity: and only if that Block scored under the threshold — got {}",
+            result.results[0].score
+        );
+    }
+
+    #[test]
+    fn a_blocking_action_is_recorded_as_a_violation() {
+        // The violation log was gated on the same score comparison, so a
+        // blocked message could be absent from the audit trail.
+        let mut pipeline = GuardrailPipeline::new().with_logging(true);
+        pipeline.add_guard(Box::new(Fixed(
+            GuardAction::Block("nope".to_string()),
+            0.05,
+            GuardStage::PreSend,
+        )));
+
+        pipeline.check_input("anything");
+        assert_eq!(
+            pipeline.violations().len(),
+            1,
+            "what was blocked must be auditable"
+        );
     }
 }

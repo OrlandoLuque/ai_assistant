@@ -5,6 +5,74 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v194 (2026-09-13) — V319: una guarda podía decir «bloquea» y el pipeline no bloqueaba (0.2.271)
+
+Salió de barrer una clase de defecto que sugería el de V316: **valores producidos en una escala
+y comparados contra un umbral que asume otra**. El primer sitio donde miré fue el que tiene
+varios productores y un único umbral, que es la misma forma que tenía RRF.
+
+### El defecto
+
+`GuardrailPipeline::run_stage` decidía bloquear comparando `result.score >= block_threshold`
+(0,8 por defecto) y **nunca miraba `result.action`**. Pero una guarda devuelve las dos cosas:
+la acción es su **decisión** y el score es solo una **magnitud**. Así que cualquier guarda que
+devolviera `GuardAction::Block` con un score por debajo del umbral quedaba anulada sin decir
+una palabra, y `PipelineResult.passed` salía `true`.
+
+Con la configuración que trae la librería de fábrica, tres bandas muertas:
+
+| Guarda | dice `Block` cuando | score que emite | banda muerta |
+|---|---|---|---|
+| `ToxicityGuard` | `overall_score >= 0,5` (umbral por defecto) | ese mismo score | **0,5 – 0,8** |
+| `AttackGuard` | `is_high_risk()`, o sea `risk_score > 0,7` | ese mismo risk | **0,7 – 0,8** |
+| `AbstentionGuard` | `confidence < 0,3` | `1,0 - confidence` | confianza **0,2 – 0,3** |
+
+Es decir: todo lo que el detector de toxicidad marcaba entre 0,5 y 0,8, y toda inyección de
+prompt que el detector de ataques clasificaba como **alto riesgo** entre 0,7 y 0,8, pasaba
+mientras el pipeline informaba de que no había pasado nada. Y el registro de violaciones
+estaba gateado por la misma comparación, así que lo bloqueado podía además no aparecer en la
+auditoría.
+
+### Corregido
+
+```rust
+let blocks = matches!(result.action, GuardAction::Block(_))
+    || result.score >= self.block_threshold;
+```
+
+Es una **unión a propósito**, no una sustitución. El umbral lo sigue necesitando una guarda que
+solo puntúa y deja la acción en `Warn`, y para un control de seguridad la unión es la
+dirección segura: esto solo puede bloquear más que antes, nunca menos.
+
+### El test que fijaba el defecto
+
+`test_pipeline_threshold` usaba `BlockGuard` —cuya acción es `GuardAction::Block`— con score
+0,5 contra un umbral de 0,9, y afirmaba `assert!(result.passed)`. O sea que el defecto estaba
+**escrito como contrato**: el test decía que una guarda que pide bloquear puede no ser
+obedecida.
+
+Su intención legítima era probar el umbral, que es un mecanismo real, así que ahora lo hace
+con una guarda nueva que puntúa sin decidir (`ScoreOnlyGuard`, acción `Warn`). Y se añade su
+contrapartida: subir el umbral ajusta cuán severo debe ser un *score*, y no convierte un
+`Block` explícito en una sugerencia.
+
+Es el **tercer** test de esta serie que fijaba el comportamiento defectuoso, tras
+`test_dispatch_search_papers_stub` (V310) y `test_tesseract_backend_not_available` (V311).
+
+### Lo que no estaba roto
+
+El pipeline de streaming del mismo fichero decide por **severidad de acción**
+(`worse_action`, `Pass < Pause < Flag < Block`) y no tiene umbral numérico. Dos diseños
+conviviendo en un fichero, y el que estaba bien era el que nadie había tocado.
+
+### Tests
+
+Cinco nuevos en `action_is_the_decision_tests`, verificados por mutación: quitando el arreglo
+fallan exactamente tres y siguen pasando los dos que comprueban que lo que ya bloqueaba
+bloquea igual. Uno usa la guarda real de abstención, con aserciones de cordura que exigen que
+de verdad haya dicho `Block` y de verdad haya puntuado por debajo del umbral — si no, el test
+pasaría por el motivo equivocado. Suite completa 7.077 verdes; clippy `-D warnings` limpio.
+
 ## [Unreleased] - v193 (2026-09-12) — V318: auditados los 20 ejemplos marcados `ignore` (0.2.270)
 
 V317 metió `cargo test --doc` en CI, pero ese candado no toca los bloques marcados
