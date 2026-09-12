@@ -540,6 +540,45 @@ println!("Stats: {} LLM calls in {}ms",
     result.stats.llm_calls, result.stats.total_duration_ms);
 ```
 
+### Retrieving from a Vector Database
+
+`RetrievalCallback::semantic_search` takes a query embedding and returns the
+nearest chunks -- which is what a vector database does. `VectorDbRetrieval`
+implements that trait over any `VectorDb` backend, so the pipeline and the
+vector subsystem no longer need glue code written per caller:
+
+```rust
+use ai_assistant::{RagPipeline, VectorDbRetrieval};
+use ai_assistant::vector_db::{InMemoryVectorDb, VectorDbConfig};
+
+let db = InMemoryVectorDb::new(VectorDbConfig::default());
+// ...insert vectors, each with a `content` key in its metadata...
+
+let retrieval = VectorDbRetrieval::new(&db);
+let result = pipeline.process("which axis?", &my_llm, Some(&my_embedder), &retrieval, None)?;
+```
+
+Chunk text is read from the `content` metadata key; use `.with_content_key()`
+for a different convention. Any other metadata key is carried through into
+`RetrievedChunk::metadata` rather than dropped, so filters and citations that
+depend on your own fields keep working. `.with_source()` labels which store a
+passage came from when several feed one pipeline.
+
+**Keyword search is refused, not faked.** A vector store has no lexical index,
+and returning an empty result would be indistinguishable from "nothing matched".
+`keyword_search` therefore returns an error unless you supply a delegate:
+
+```rust
+let hybrid = VectorDbRetrieval::new(&db).with_keyword_search(&my_fts_retriever);
+```
+
+That pairing -- BM25/FTS5 for words, vectors for meaning -- is the hybrid setup
+the pipeline's fusion stage was built for.
+
+**`HierarchicalRouter` names this retriever.** `route()` classifies a query and
+returns a strategy name (`"bm25"`, `"dense"`, `"graph"`, `"raptor"`); it does not
+dispatch. `VectorDbRetrieval` is what `"dense"` should be wired to.
+
 ### Individual RAG Methods
 
 Use advanced methods standalone:
@@ -6599,7 +6638,7 @@ let query = SearchQuery {
 
 ## 118. Advanced RAG v2
 
-**What**: Three enhancements to the RAG pipeline. `DiscourseChunker` splits documents based on discourse structure (topic shifts, rhetorical boundaries) rather than fixed token counts, producing semantically coherent chunks that preserve argument flow. `DiversityRetriever` applies Maximal Marginal Relevance (MMR) to retrieved passages, balancing relevance to the query with diversity among selected passages -- reducing redundancy in the context window. `HierarchicalRouter` analyzes query complexity (simple factual, multi-hop reasoning, comparative analysis) and routes each query to the optimal retrieval strategy: direct vector search for simple queries, multi-step retrieval for multi-hop, and parallel retrieval with fusion for comparative questions.
+**What**: Three enhancements to the RAG pipeline. `DiscourseChunker` splits documents based on discourse structure (topic shifts, rhetorical boundaries) rather than fixed token counts, producing semantically coherent chunks that preserve argument flow. `DiversityRetriever` applies Maximal Marginal Relevance (MMR) to retrieved passages, balancing relevance to the query with diversity among selected passages -- reducing redundancy in the context window. `HierarchicalRouter` analyzes query complexity (simple factual, multi-hop reasoning, comparative analysis) and names the retrieval strategy each query should take: direct vector search for simple queries, multi-step retrieval for multi-hop, and parallel retrieval with fusion for comparative questions. It returns that choice as a string for the caller to act on -- it classifies, it does not dispatch.
 
 **Why**: Fixed-size chunking breaks mid-sentence and mid-argument, losing context. Naive top-k retrieval returns near-duplicate passages that waste context tokens. One-size-fits-all retrieval under-serves complex queries. Discourse-aware chunking, MMR diversity, and adaptive routing address these three fundamental RAG limitations.
 

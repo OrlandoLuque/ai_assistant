@@ -1848,7 +1848,7 @@ pub use rag_debug::{
 pub use rag_pipeline::{
     EmbeddingCallback, GraphCallback, GraphRelation, LlmCallback, PipelineChunkPosition,
     RagPipeline, RagPipelineConfig, RagPipelineError, RagPipelineResult, RagPipelineStats,
-    RetrievalCallback, RetrievedChunk,
+    RetrievalCallback, RetrievedChunk, VectorDbRetrieval,
 };
 
 #[cfg(feature = "rag")]

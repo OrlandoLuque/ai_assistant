@@ -41,21 +41,59 @@
 //!
 //! # Usage
 //!
+//! `process` is synchronous and takes the four callbacks the pipeline needs —
+//! this example used to show `process(query).await?` with a single argument,
+//! which never compiled against any version of this API. Doc examples are not
+//! built by CI (`--lib` and `--test '*'`, never `--doc`), so it went unnoticed.
+//!
 //! ```rust
-//! use ai_assistant::rag_pipeline::{RagPipeline, RagPipelineConfig};
-//! use ai_assistant::rag_tiers::{RagTierConfig, RagTier};
+//! use ai_assistant::rag_pipeline::{
+//!     EmbeddingCallback, LlmCallback, RagPipeline, RetrievalCallback, RetrievedChunk,
+//! };
+//! use ai_assistant::rag_tiers::{RagTier, RagTierConfig};
 //!
-//! // Create pipeline with a tier
-//! let rag_config = RagTierConfig::with_tier(RagTier::Enhanced);
-//! let pipeline = RagPipeline::new(rag_config);
+//! struct MyLlm;
+//! impl LlmCallback for MyLlm {
+//!     fn generate(&self, _prompt: &str, _max_tokens: usize) -> Result<String, String> {
+//!         Ok("...".to_string())
+//!     }
+//!     fn model_name(&self) -> &str { "my-model" }
+//! }
 //!
-//! // Process a query
-//! let result = pipeline.process("What is the Aurora MR's cargo capacity?").await?;
+//! struct MyEmbedder;
+//! impl EmbeddingCallback for MyEmbedder {
+//!     fn embed(&self, _text: &str) -> Result<Vec<f32>, String> { Ok(vec![0.0; 3]) }
+//!     fn model_name(&self) -> &str { "my-embedder" }
+//!     fn dimension(&self) -> usize { 3 }
+//! }
 //!
-//! // Use the context
+//! struct MyIndex;
+//! impl RetrievalCallback for MyIndex {
+//!     fn keyword_search(&self, _q: &str, _n: usize) -> Result<Vec<RetrievedChunk>, String> {
+//!         Ok(Vec::new())
+//!     }
+//!     fn semantic_search(&self, _e: &[f32], _n: usize) -> Result<Vec<RetrievedChunk>, String> {
+//!         Ok(Vec::new())
+//!     }
+//!     fn get_chunk(&self, _id: &str) -> Result<Option<RetrievedChunk>, String> { Ok(None) }
+//! }
+//!
+//! let mut pipeline = RagPipeline::new(RagTierConfig::with_tier(RagTier::Enhanced));
+//! let result = pipeline.process(
+//!     "What is the Aurora MR's cargo capacity?",
+//!     &MyLlm,
+//!     Some(&MyEmbedder),
+//!     &MyIndex,
+//!     None, // optional GraphCallback
+//! )?;
+//!
 //! println!("Retrieved context: {}", result.context);
 //! println!("Sources: {:?}", result.sources);
+//! # Ok::<(), ai_assistant::rag_pipeline::RagPipelineError>(())
 //! ```
+//!
+//! [`VectorDbRetrieval`] saves writing that `RetrievalCallback` by hand when the
+//! chunks live in a vector database.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -1098,6 +1136,25 @@ impl RagPipeline {
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
+
+        // Normalised to 0-1 (V316). RRF scores encode *rank*, not relevance:
+        // with k = 60 the best attainable value is 1/61 ≈ 0.0164, or ≈0.033 for
+        // a chunk ranked first by both lists. Every other stage works on a 0-1
+        // relevance scale and `min_relevance_score` (0.1 by default) is applied
+        // to whatever `score` holds — so raw RRF output was *always* under the
+        // floor. Tiers that rerank afterwards had their scores rewritten and
+        // never noticed; `RagTier::Semantic`, the only one that fuses without a
+        // reranker, discarded every chunk of every query. Dividing by the
+        // maximum preserves the ordering exactly — which is all RRF determines —
+        // and puts the values back on the scale the rest of the pipeline uses.
+        if let Some(max) = result.first().map(|c| c.score) {
+            if max > 0.0 {
+                for chunk in &mut result {
+                    chunk.score /= max;
+                }
+            }
+        }
+
         result
     }
 
@@ -1755,6 +1812,425 @@ fn count_by_score_type(chunks: &[RetrievedChunk]) -> (usize, usize) {
 // ============================================================================
 // Tests
 // ============================================================================
+
+// ============================================================================
+// VectorDb-backed retrieval (V316)
+// ============================================================================
+
+/// Retrieval backed by any [`crate::vector_db::VectorDb`] implementation.
+///
+/// # Why this exists
+///
+/// [`RetrievalCallback::semantic_search`] takes a query embedding and is meant
+/// to return the nearest chunks — which is exactly what a vector database does.
+/// Until V316 the crate shipped **no implementation of it**, so the ~3.700-line
+/// vector subsystem and the RAG pipeline had no way to meet: every caller had to
+/// write the glue by hand, and the only in-repo example of that glue (in the
+/// evaluation suite) pre-computed a list outside the pipeline and ignored the
+/// embedding it was handed.
+///
+/// It also gives [`crate::rag_methods::HierarchicalRouter`] something real to
+/// point at. That router classifies a query and names a retriever — `"dense"`
+/// for factual and conversational queries — but naming is all it does; nothing
+/// mapped that name to a dense retriever.
+///
+/// # Keyword search is not silently faked
+///
+/// A vector database has no lexical index. Rather than return an empty result —
+/// which the pipeline cannot tell apart from "nothing matched" —
+/// [`Self::keyword_search`] returns an error unless you supply a delegate with
+/// [`Self::with_keyword_search`]. Pairing an FTS5-backed callback for keywords
+/// with this one for vectors is the hybrid setup the pipeline was built for.
+///
+/// # Example
+///
+/// ```no_run
+/// # use ai_assistant::rag_pipeline::VectorDbRetrieval;
+/// # use ai_assistant::vector_db::{InMemoryVectorDb, VectorDbConfig};
+/// let db = InMemoryVectorDb::new(VectorDbConfig::default());
+/// let retrieval = VectorDbRetrieval::new(&db);
+/// // hand `&retrieval` to RagPipeline::process
+/// ```
+pub struct VectorDbRetrieval<'a> {
+    db: &'a dyn crate::vector_db::VectorDb,
+    content_key: String,
+    source: String,
+    keyword: Option<&'a dyn RetrievalCallback>,
+}
+
+impl<'a> VectorDbRetrieval<'a> {
+    /// Wrap a vector database, reading chunk text from the `"content"` metadata
+    /// key.
+    pub fn new(db: &'a dyn crate::vector_db::VectorDb) -> Self {
+        Self {
+            db,
+            content_key: "content".to_string(),
+            source: "vectordb".to_string(),
+            keyword: None,
+        }
+    }
+
+    /// Read chunk text from a different metadata key.
+    ///
+    /// The vector store holds arbitrary JSON metadata, so the text has to be
+    /// found by convention; `"content"` is the default because that is what the
+    /// rest of the crate writes.
+    pub fn with_content_key(mut self, key: impl Into<String>) -> Self {
+        self.content_key = key.into();
+        self
+    }
+
+    /// Set the `source` recorded on every returned chunk (default
+    /// `"vectordb"`). Useful when several stores feed one pipeline and the
+    /// answer should say which one a passage came from.
+    pub fn with_source(mut self, source: impl Into<String>) -> Self {
+        self.source = source.into();
+        self
+    }
+
+    /// Delegate keyword search to another callback, making this a hybrid
+    /// retriever: lexical hits from `delegate`, vector hits from here.
+    ///
+    /// Without this, [`Self::keyword_search`] reports that it cannot do it
+    /// instead of quietly returning nothing.
+    pub fn with_keyword_search(mut self, delegate: &'a dyn RetrievalCallback) -> Self {
+        self.keyword = Some(delegate);
+        self
+    }
+
+    /// Turn one stored vector's metadata into a chunk.
+    fn to_chunk(&self, id: &str, score: f32, metadata: &serde_json::Value) -> RetrievedChunk {
+        let content = metadata
+            .get(&self.content_key)
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+
+        // Everything else in the metadata object is carried through as strings
+        // rather than dropped: the store is the caller's, and a filter or a
+        // citation may depend on a key this adapter knows nothing about.
+        let mut extra = HashMap::new();
+        if let Some(obj) = metadata.as_object() {
+            for (k, v) in obj {
+                if k == &self.content_key {
+                    continue;
+                }
+                let as_text = match v {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                extra.insert(k.clone(), as_text);
+            }
+        }
+
+        RetrievedChunk {
+            chunk_id: id.to_string(),
+            token_count: crate::context::estimate_tokens(&content),
+            content,
+            source: self.source.clone(),
+            section: None,
+            score,
+            keyword_score: None,
+            semantic_score: Some(score),
+            position: None,
+            metadata: extra,
+        }
+    }
+}
+
+impl RetrievalCallback for VectorDbRetrieval<'_> {
+    fn keyword_search(&self, query: &str, limit: usize) -> Result<Vec<RetrievedChunk>, String> {
+        match self.keyword {
+            Some(delegate) => delegate.keyword_search(query, limit),
+            None => Err("VectorDbRetrieval has no lexical index; supply one with \
+                 with_keyword_search() or disable keyword search for this tier"
+                .to_string()),
+        }
+    }
+
+    fn semantic_search(
+        &self,
+        embedding: &[f32],
+        limit: usize,
+    ) -> Result<Vec<RetrievedChunk>, String> {
+        let hits = self
+            .db
+            .search(embedding, limit, None)
+            .map_err(|e| format!("vector search failed: {}", e))?;
+        Ok(hits
+            .iter()
+            .map(|h| self.to_chunk(&h.id, h.score, &h.metadata))
+            .collect())
+    }
+
+    fn get_chunk(&self, chunk_id: &str) -> Result<Option<RetrievedChunk>, String> {
+        let stored = self
+            .db
+            .get(chunk_id)
+            .map_err(|e| format!("vector get failed: {}", e))?;
+        // A direct fetch is not a similarity result, so there is no score to
+        // report; 1.0 would claim a perfect match that was never measured.
+        Ok(stored.map(|s| self.to_chunk(&s.id, 0.0, &s.metadata)))
+    }
+}
+
+#[cfg(test)]
+mod vector_db_retrieval_tests {
+    //! The seam between the RAG pipeline and the vector subsystem. Before V316
+    //! nothing in the crate implemented `RetrievalCallback` against a
+    //! `VectorDb`; the one in-repo attempt (evaluation suite) took `_emb` and
+    //! ignored it, returning a list computed outside the pipeline. So the first
+    //! test here is the one that attempt would fail: it asks two different
+    //! questions and requires two different answers.
+    use super::*;
+    use crate::vector_db::{DistanceMetric, InMemoryVectorDb, VectorDb, VectorDbConfig};
+
+    /// Stands in for an FTS5-backed callback: it answers by word, never by
+    /// vector, which is the half a vector store cannot do.
+    struct LexicalStub;
+    impl RetrievalCallback for LexicalStub {
+        fn keyword_search(&self, _q: &str, limit: usize) -> Result<Vec<RetrievedChunk>, String> {
+            Ok((0..limit.min(2))
+                .map(|i| RetrievedChunk {
+                    chunk_id: format!("lex_{}", i),
+                    content: format!("lexical hit {}", i),
+                    source: "fts".to_string(),
+                    section: None,
+                    score: 0.5,
+                    keyword_score: Some(0.5),
+                    semantic_score: None,
+                    token_count: 3,
+                    position: None,
+                    metadata: HashMap::new(),
+                })
+                .collect())
+        }
+        fn semantic_search(&self, _e: &[f32], _l: usize) -> Result<Vec<RetrievedChunk>, String> {
+            Ok(Vec::new())
+        }
+        fn get_chunk(&self, _id: &str) -> Result<Option<RetrievedChunk>, String> {
+            Ok(None)
+        }
+    }
+
+    struct StubLlm;
+    impl LlmCallback for StubLlm {
+        fn generate(&self, _prompt: &str, _max_tokens: usize) -> Result<String, String> {
+            Ok("stub".to_string())
+        }
+        fn model_name(&self) -> &str {
+            "stub-llm"
+        }
+    }
+
+    /// Three orthogonal unit vectors, so "nearest" is unambiguous and the test
+    /// does not depend on how any embedding model happens to behave.
+    fn seeded_db() -> InMemoryVectorDb {
+        let config = VectorDbConfig {
+            dimensions: 3,
+            distance_metric: DistanceMetric::Cosine,
+            collection_name: "seam".to_string(),
+            ..Default::default()
+        };
+        let mut db = InMemoryVectorDb::new(config);
+        db.insert(
+            "x",
+            vec![1.0, 0.0, 0.0],
+            serde_json::json!({"content": "about the X axis", "page": 7}),
+        )
+        .expect("insert x");
+        db.insert(
+            "y",
+            vec![0.0, 1.0, 0.0],
+            serde_json::json!({"content": "about the Y axis"}),
+        )
+        .expect("insert y");
+        db.insert(
+            "z",
+            vec![0.0, 0.0, 1.0],
+            serde_json::json!({"content": "about the Z axis"}),
+        )
+        .expect("insert z");
+        db
+    }
+
+    #[test]
+    fn the_query_embedding_actually_selects_the_chunk() {
+        let db = seeded_db();
+        let retrieval = VectorDbRetrieval::new(&db);
+
+        let near_x = retrieval.semantic_search(&[1.0, 0.0, 0.0], 1).expect("x");
+        let near_z = retrieval.semantic_search(&[0.0, 0.0, 1.0], 1).expect("z");
+
+        assert_eq!(near_x[0].chunk_id, "x");
+        assert_eq!(near_z[0].chunk_id, "z");
+        assert_ne!(
+            near_x[0].chunk_id, near_z[0].chunk_id,
+            "a retriever that ignores its embedding returns the same chunk for \
+             every query; that is the failure this test exists to catch"
+        );
+    }
+
+    #[test]
+    fn the_similarity_is_reported_as_a_semantic_score() {
+        let db = seeded_db();
+        let retrieval = VectorDbRetrieval::new(&db);
+        let hits = retrieval
+            .semantic_search(&[1.0, 0.0, 0.0], 3)
+            .expect("hits");
+
+        assert_eq!(hits.len(), 3);
+        assert!(
+            hits[0].semantic_score.is_some(),
+            "the score came from vector similarity and must be labelled as such"
+        );
+        assert!(
+            hits[0].keyword_score.is_none(),
+            "no lexical index was consulted; claiming a keyword score would be a lie"
+        );
+        assert!(
+            hits[0].score >= hits[1].score,
+            "hits must arrive ordered: {:?}",
+            hits.iter().map(|h| h.score).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn keyword_search_says_it_cannot_rather_than_returning_nothing() {
+        // The whole point: an empty Vec is indistinguishable from "no document
+        // matched", which is how a missing capability turns into a silently
+        // worse answer.
+        let db = seeded_db();
+        let retrieval = VectorDbRetrieval::new(&db);
+
+        let err = retrieval
+            .keyword_search("axis", 5)
+            .expect_err("a vector store has no lexical index");
+        assert!(
+            err.contains("with_keyword_search"),
+            "the error must name the way out: {err}"
+        );
+    }
+
+    #[test]
+    fn a_delegate_makes_it_a_hybrid_retriever() {
+        let db = seeded_db();
+        let lexical = LexicalStub;
+        let retrieval = VectorDbRetrieval::new(&db).with_keyword_search(&lexical);
+
+        let by_word = retrieval.keyword_search("anything", 2).expect("delegated");
+        assert_eq!(by_word.len(), 2);
+        assert!(by_word[0].chunk_id.starts_with("lex_"));
+
+        // ...and the vector side still answers from the database.
+        let by_vector = retrieval.semantic_search(&[0.0, 1.0, 0.0], 1).expect("vec");
+        assert_eq!(by_vector[0].chunk_id, "y");
+    }
+
+    #[test]
+    fn metadata_the_adapter_does_not_understand_is_carried_through() {
+        let db = seeded_db();
+        let retrieval = VectorDbRetrieval::new(&db);
+        let hits = retrieval.semantic_search(&[1.0, 0.0, 0.0], 1).expect("hit");
+
+        assert_eq!(hits[0].content, "about the X axis");
+        assert_eq!(
+            hits[0].metadata.get("page").map(String::as_str),
+            Some("7"),
+            "the store is the caller's; a key this adapter never heard of must survive"
+        );
+        assert!(
+            !hits[0].metadata.contains_key("content"),
+            "the text is in `content`, not duplicated into the metadata map"
+        );
+    }
+
+    #[test]
+    fn the_content_key_is_configurable() {
+        let config = VectorDbConfig {
+            dimensions: 2,
+            collection_name: "other".to_string(),
+            ..Default::default()
+        };
+        let mut db = InMemoryVectorDb::new(config);
+        db.insert("a", vec![1.0, 0.0], serde_json::json!({"passage": "hello"}))
+            .expect("insert");
+
+        let default_key = VectorDbRetrieval::new(&db);
+        assert_eq!(
+            default_key.semantic_search(&[1.0, 0.0], 1).expect("hit")[0].content,
+            "",
+            "with the wrong key the text is simply absent, not invented"
+        );
+
+        let right_key = VectorDbRetrieval::new(&db).with_content_key("passage");
+        assert_eq!(
+            right_key.semantic_search(&[1.0, 0.0], 1).expect("hit")[0].content,
+            "hello"
+        );
+    }
+
+    #[test]
+    fn get_chunk_fetches_by_id_and_claims_no_score() {
+        let db = seeded_db();
+        let retrieval = VectorDbRetrieval::new(&db).with_source("papers");
+
+        let found = retrieval.get_chunk("y").expect("lookup").expect("y exists");
+        assert_eq!(found.content, "about the Y axis");
+        assert_eq!(found.source, "papers");
+        assert_eq!(
+            found.score, 0.0,
+            "a fetch by id measured no similarity; a 1.0 here would be a made-up match"
+        );
+
+        assert!(
+            retrieval.get_chunk("nope").expect("lookup").is_none(),
+            "a missing id is None, not an error"
+        );
+    }
+
+    #[test]
+    fn the_pipeline_retrieves_through_it_end_to_end() {
+        // The seam is only worth anything if RagPipeline can actually use it.
+        struct FixedEmbedding;
+        impl EmbeddingCallback for FixedEmbedding {
+            fn embed(&self, _text: &str) -> Result<Vec<f32>, String> {
+                Ok(vec![0.0, 0.0, 1.0]) // points at "z"
+            }
+            fn model_name(&self) -> &str {
+                "fixed-3d"
+            }
+            fn dimension(&self) -> usize {
+                3
+            }
+        }
+
+        let db = seeded_db();
+        let lexical = LexicalStub;
+        let retrieval = VectorDbRetrieval::new(&db).with_keyword_search(&lexical);
+
+        let mut pipeline = RagPipeline::new(RagTierConfig::with_tier(RagTier::Semantic));
+        let result = pipeline
+            .process(
+                "which axis?",
+                &StubLlm,
+                Some(&FixedEmbedding),
+                &retrieval,
+                None,
+            )
+            .expect("the pipeline must run with a vector-backed retriever");
+
+        assert!(
+            !result.chunks.is_empty(),
+            "the pipeline retrieved nothing through the adapter"
+        );
+        assert!(
+            result.chunks.iter().any(|c| c.chunk_id == "z"),
+            "the Semantic tier must have reached the vector store, not only the              lexical delegate: {:?}",
+            result.chunks.iter().map(|c| &c.chunk_id).collect::<Vec<_>>()
+        );
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -2486,5 +2962,134 @@ mod tests {
             .unwrap();
         assert!(result.debug_session_id.is_some());
         assert!(!result.debug_session_id.unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod tier_survival_tests {
+    //! Every tier that retrieves something must still be holding it at the end.
+    //!
+    //! `RagTier::Semantic` was not: it is the only tier that fuses with RRF and
+    //! has no reranker to rewrite the scores afterwards, so its chunks reached
+    //! the `min_relevance_score` floor still carrying RRF's rank-scale values
+    //! (~0.03 against a 0.1 floor) and every single one was dropped. "Keyword +
+    //! semantic search, better recall" returned strictly less than the keyword-
+    //! only tier below it: nothing at all.
+    //!
+    //! The guard is per-tier and not per-bug on purpose — the next scale
+    //! mismatch will land on whichever tier lacks the stage that was masking it.
+    use super::*;
+
+    struct Llm;
+    impl LlmCallback for Llm {
+        fn generate(&self, _p: &str, _m: usize) -> Result<String, String> {
+            Ok("answer".to_string())
+        }
+        fn model_name(&self) -> &str {
+            "tier-test-llm"
+        }
+    }
+
+    struct Embed;
+    impl EmbeddingCallback for Embed {
+        fn embed(&self, _t: &str) -> Result<Vec<f32>, String> {
+            Ok(vec![0.1, 0.2, 0.3])
+        }
+        fn model_name(&self) -> &str {
+            "tier-test-embed"
+        }
+        fn dimension(&self) -> usize {
+            3
+        }
+    }
+
+    /// Two chunks per method, scored the way a healthy retriever scores them.
+    struct Retrieval;
+    impl Retrieval {
+        fn chunk(id: &str, score: f32, keyword: bool) -> RetrievedChunk {
+            RetrievedChunk {
+                chunk_id: id.to_string(),
+                content: format!("passage {id} about testing and retrieval"),
+                source: "doc.md".to_string(),
+                section: None,
+                score,
+                keyword_score: if keyword { Some(score) } else { None },
+                semantic_score: if keyword { None } else { Some(score) },
+                token_count: 8,
+                position: None,
+                metadata: HashMap::new(),
+            }
+        }
+    }
+    impl RetrievalCallback for Retrieval {
+        fn keyword_search(&self, _q: &str, _l: usize) -> Result<Vec<RetrievedChunk>, String> {
+            Ok(vec![
+                Self::chunk("k1", 0.9, true),
+                Self::chunk("k2", 0.7, true),
+            ])
+        }
+        fn semantic_search(&self, _e: &[f32], _l: usize) -> Result<Vec<RetrievedChunk>, String> {
+            Ok(vec![
+                Self::chunk("s1", 0.8, false),
+                Self::chunk("k1", 0.6, false),
+            ])
+        }
+        fn get_chunk(&self, id: &str) -> Result<Option<RetrievedChunk>, String> {
+            Ok(Some(Self::chunk(id, 0.5, true)))
+        }
+    }
+
+    #[test]
+    fn no_tier_silently_discards_everything_it_retrieved() {
+        for tier in [
+            RagTier::Fast,
+            RagTier::Semantic,
+            RagTier::Enhanced,
+            RagTier::Thorough,
+            RagTier::Agentic,
+            RagTier::Graph,
+            RagTier::Full,
+        ] {
+            let mut pipeline = RagPipeline::new(RagTierConfig::with_tier(tier));
+            let result = pipeline
+                .process("what is testing?", &Llm, Some(&Embed), &Retrieval, None)
+                .unwrap_or_else(|e| panic!("{tier:?} failed: {e:?}"));
+
+            assert!(
+                result.stats.chunks_retrieved > 0,
+                "{tier:?} retrieved nothing, so the test proves nothing"
+            );
+            assert!(
+                !result.chunks.is_empty(),
+                "{tier:?} retrieved {} chunks and kept none",
+                result.stats.chunks_retrieved
+            );
+        }
+    }
+
+    #[test]
+    fn rrf_output_lands_on_the_same_scale_as_every_other_stage() {
+        let pipeline = RagPipeline::new(RagTierConfig::with_tier(RagTier::Semantic));
+        let fused = pipeline.reciprocal_rank_fusion(vec![
+            Retrieval::chunk("a", 0.9, true),
+            Retrieval::chunk("b", 0.7, true),
+            Retrieval::chunk("a", 0.8, false),
+        ]);
+
+        assert!(!fused.is_empty());
+        let top = fused[0].score;
+        assert!(
+            (top - 1.0).abs() < 1e-6,
+            "the best fused chunk must sit at 1.0, not at RRF's raw ~0.03: got {top}"
+        );
+        assert!(
+            fused.iter().all(|c| c.score > 0.0 && c.score <= 1.0),
+            "every fused score must be inside 0-1: {:?}",
+            fused.iter().map(|c| c.score).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            fused[0].chunk_id, "a",
+            "normalising must not disturb the ranking RRF computed"
+        );
     }
 }

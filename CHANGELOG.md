@@ -5,6 +5,87 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v191 (2026-09-12) — V316: el tier «Semantic» del RAG devolvía cero trozos, siempre (0.2.268)
+
+Salió de la pregunta de por qué el RAG de SQLite y los ocho backends vectoriales no se
+hablan. La respuesta era peor de lo que parecía, y por el camino apareció un defecto que no
+tiene nada que ver con la pregunta.
+
+### El defecto: `RagTier::Semantic` descartaba todo lo que recuperaba
+
+`reciprocal_rank_fusion` escribe en `chunk.score` el valor de RRF, que con k = 60 vale como
+mucho `1/61 ≈ 0,0164` —o ≈0,033 si un trozo va primero en las dos listas—. RRF codifica
+**rango**, no relevancia: su magnitud absoluta es un artefacto de la constante.
+
+El resto de la tubería trabaja en escala 0-1, y el filtro final es
+`retain(|c| c.score >= min_relevance_score)`, con 0,1 por defecto. Es decir: **la salida de
+RRF estaba siempre por debajo del suelo**.
+
+Los tiers que rerankean después no se enteraron nunca, porque el reranker reescribe los
+scores. `Semantic` es el único que fusiona y no rerankea. Medido:
+
+| Tier | recuperados | conservados |
+|---|---|---|
+| Fast | 3 | 3 |
+| **Semantic** | **6** | **0** |
+| Enhanced | 6 | 6 |
+| Thorough | 6 | 6 |
+| Graph | 6 | 6 |
+| Full | 6 | 6 |
+
+Su propia descripción es «Keyword + semantic search, better recall». Subir de `Fast` a
+`Semantic` buscando más recall daba **nada en absoluto**, menos que el tier de debajo, sin un
+aviso ni un error.
+
+Corregido normalizando la salida de RRF a 0-1 (dividir por el máximo), que preserva
+exactamente el orden —lo único que RRF determina— y devuelve los valores a la escala que usa
+el resto. El test de regresión recorre **los siete tiers** y exige que ninguno tire todo lo
+que ha recuperado: el próximo desajuste de escala caerá en el tier al que le falte la etapa
+que lo tapaba, no en este.
+
+### Lo que faltaba entre el RAG y los vectores: un adaptador
+
+`RetrievalCallback::semantic_search(&embedding, limit)` pide exactamente lo que hace una base
+vectorial. La costura estaba bien puesta desde el principio; lo que no había era **ninguna
+implementación** en la librería. El único intento del repositorio (en la suite de evaluación)
+recibe `_emb` y lo ignora: calcula la lista fuera de la tubería y la devuelve tal cual.
+
+Nuevo: **`VectorDbRetrieval`**, que implementa `RetrievalCallback` sobre cualquier backend de
+`VectorDb`.
+
+- El texto sale de la clave de metadatos `content` (configurable con `with_content_key`), y
+  **las demás claves se arrastran** al `metadata` del trozo en vez de perderse: el almacén es
+  del llamante y un filtro o una cita pueden depender de un campo que el adaptador no conoce.
+- **`keyword_search` devuelve error, no una lista vacía.** Una base vectorial no tiene índice
+  léxico, y un `Vec` vacío no se distingue de «no coincidió nada» —que es exactamente cómo una
+  capacidad ausente se convierte en una respuesta peor sin que nadie lo note—. Con
+  `with_keyword_search(delegate)` se compone el híbrido de verdad: FTS5 para palabras,
+  vectores para significado.
+- `get_chunk` no inventa un score: una búsqueda por id no midió ninguna similitud, y un 1,0
+  ahí sería afirmar una coincidencia perfecta que nadie calculó.
+
+### `HierarchicalRouter` nombra, no enruta
+
+Su documentación decía que «dirige las consultas al recuperador apropiado». Lo que hace es
+clasificar y devolver una **cadena** (`"bm25"`, `"dense"`, `"graph"`, `"raptor"`); el despacho
+es cosa del llamante, y nada en la librería mapeaba `"dense"` a un recuperador denso.
+Corregido en el comentario del propio tipo, en `docs/CONCEPTS.md` y en `docs/GUIDE.md`. Ahora
+`"dense"` sí tiene a qué apuntar.
+
+### Los ejemplos de documentación no los compila nadie
+
+El ejemplo de cabecera de `rag_pipeline` llamaba `pipeline.process("…").await?`: un argumento
+y `await`, cuando la función es síncrona y toma cinco. Nunca compiló contra ninguna versión de
+esa API. CI corre `cargo test --lib` y `--test '*'`, **nunca `--doc`**, así que nadie lo
+comprobaba. Reescrito para que compile y pase.
+
+### Tests
+
+Diez nuevos: 8 de `VectorDbRetrieval` —el primero exige que dos preguntas distintas den dos
+respuestas distintas, que es justo lo que el intento anterior fallaría— y 2 de supervivencia
+por tier. Suite completa 7.068 verdes; clippy `-D warnings` limpio con `full --all-targets` y
+con el conjunto mínimo de CI.
+
 ## [Unreleased] - v190 (2026-09-12) — V315: `max_snapshots` era un límite que nunca quitaba nada (0.2.267)
 
 Venía de la misma revisión de bases de datos que V314. `SqliteMemoryStore` se documentaba

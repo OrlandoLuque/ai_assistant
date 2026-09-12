@@ -1892,7 +1892,17 @@ impl QueryClassifier {
     }
 }
 
-/// Hierarchical router that directs queries to appropriate retrievers
+/// Classifies a query and **names** the retriever that suits it.
+///
+/// It does not dispatch. [`Self::route`] returns a [`RouteDecision`] whose
+/// `chosen_retriever` is a string — `"bm25"`, `"dense"`, `"graph"`, `"raptor"` —
+/// and it is the caller who maps that name to something that retrieves. The doc
+/// comment here used to say it "directs queries to appropriate retrievers",
+/// which described a dispatch that never happened.
+///
+/// For `"dense"` the crate now ships a retriever to point at:
+/// [`crate::rag_pipeline::VectorDbRetrieval`] (feature `rag`), which answers a
+/// query embedding from any [`crate::vector_db::VectorDb`] backend.
 #[derive(Debug)]
 pub struct HierarchicalRouter {
     config: RouterConfig,
