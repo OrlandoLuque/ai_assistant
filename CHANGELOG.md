@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v195 (2026-09-13) — V320: una violación de salida que no era PII se descartaba sin decir nada (0.2.272)
+
+Continuación del barrido de V319, una capa más arriba. El mismo defecto —un veredicto que se
+calcula y solo se obedece en parte— aparece en los tres sitios donde el gateway HTTP mira la
+salida del modelo:
+
+```rust
+let result = gp.check_output(&response_text);
+if !result.passed && config.enrichment.redact_output_pii {
+    ...OutputPiiGuard::redact(...)
+} else {
+    response_text   // tal cual
+}
+```
+
+Se ejecuta el pipeline **entero** de guardas de salida —toxicidad, PII, abstención— y se
+calcula un veredicto sobre todas. Pero la única reacción cableada es redactar PII, y encima
+está gateada tras un flag que habla de PII. Así que:
+
+- `OutputToxicityGuard` dice `Block` → con el flag activo corre el redactor de PII, que no
+  encuentra PII y devuelve el texto intacto; con el flag inactivo no pasa nada. **En los dos
+  casos el texto tóxico se sirve al cliente.**
+- `AbstentionGuard` dice `Block` porque el modelo no estaba seguro → la respuesta poco fiable
+  se sirve igual.
+
+Y todo ello **sin una sola línea de log**: el veredicto se descartaba en silencio en
+`server.rs` (dos rutas) y `server_axum.rs`.
+
+### Lo que cambia aquí, y lo que no
+
+Cambia el silencio: un `log::warn!` en los tres sitios que nombra la guarda que bloqueó y el
+estado del flag. Es estrictamente aditivo y no toca ningún contrato.
+
+**No cambia qué devuelve el gateway.** Hay tres respuestas razonables —un 400 con
+`content_policy_violation`, como ya hace la ruta de *entrada*; una respuesta enlatada de
+rechazo con su propio `finish_reason`; o dejarlo así y renombrar el flag para que diga que las
+guardas de salida solo redactan PII— y elegir una cambia lo que ve un cliente de terceros. Es
+una decisión de producto, no un defecto con una única corrección posible, así que queda
+anotada (N63) y sin tocar.
+
+### Batería
+
+Aprovechando el paso, la batería completa del harness, que no se había ejecutado en toda la
+sesión: **694 tests, todos verdes** (193 s, 3 saltados). Suite de la librería 7.077 verdes;
+clippy `-D warnings` limpio con `full,server-axum --all-targets` y con el conjunto mínimo.
+
 ## [Unreleased] - v194 (2026-09-13) — V319: una guarda podía decir «bloquea» y el pipeline no bloqueaba (0.2.271)
 
 Salió de barrer una clase de defecto que sugería el de V316: **valores producidos en una escala

@@ -1609,6 +1609,21 @@ async fn openai_completions_handler(
             let result = gp.check_output(&response_text);
             drop(gp);
 
+            // V320: an output violation is reported here because it is otherwise
+            // invisible. The only reaction wired to `check_output` is PII
+            // redaction, so a response the pipeline blocked for toxicity — or a
+            // low-confidence answer the abstention guard asked to withhold — is
+            // returned to the client exactly as generated. What the gateway
+            // *should* return instead changes what a third-party client sees, so
+            // it is a product decision and not made here.
+            if !result.passed {
+                log::warn!(
+                    "[guardrails] output blocked by '{}', but only PII redaction is wired                      to output violations (redact_output_pii={}); the response is being                      returned as generated",
+                    result.blocked_by.as_deref().unwrap_or("unknown"),
+                    config.enrichment.redact_output_pii
+                );
+            }
+
             if !result.passed && config.enrichment.redact_output_pii {
                 let gconf = &config.enrichment.guardrails;
                 let action = if gconf.output_pii_action == "block" {
