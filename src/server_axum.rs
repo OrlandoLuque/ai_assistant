@@ -1144,15 +1144,52 @@ async fn chat_stream_handler(
         }
     });
 
+    // V321: the streamed answer goes through the same output guards the
+    // non-streaming path applies, token by token. Until now asking for a stream
+    // skipped every check the same request went through without one.
+    let mut guards = {
+        let config = state.server_config.read().await;
+        crate::server::OutputStreamGuards::new(&config.enrichment)
+    };
+
     // Async SSE stream — yields events as real tokens arrive
     let stream = async_stream::stream! {
+        // Tokens a guard asked to hold, released together on the next Forward.
+        let mut held: Vec<String> = Vec::new();
         while let Some(event) = rx.recv().await {
             match event {
                 StreamEvent::Token(token) => {
+                    match guards.check(&token) {
+                        crate::server::StreamTokenVerdict::Stop => {
+                            // Whatever is held dies with the stream: it was held
+                            // precisely because a guard was not happy with it.
+                            let err_json = serde_json::json!({
+                                "error": "response withheld by content policy"
+                            });
+                            yield Ok(SseEvent::default().data(err_json.to_string()));
+                            break;
+                        }
+                        crate::server::StreamTokenVerdict::Hold => {
+                            held.push(token);
+                            continue;
+                        }
+                        crate::server::StreamTokenVerdict::Forward => {}
+                    }
+                    for earlier in held.drain(..) {
+                        let token_json = serde_json::json!({"token": earlier});
+                        yield Ok(SseEvent::default().data(token_json.to_string()));
+                    }
                     let token_json = serde_json::json!({"token": token});
                     yield Ok(SseEvent::default().data(token_json.to_string()));
                 }
                 StreamEvent::Done => {
+                    // A clean end releases anything still held: the guards never
+                    // objected again, so holding it back for ever would be
+                    // silently truncating the answer.
+                    for earlier in held.drain(..) {
+                        let token_json = serde_json::json!({"token": earlier});
+                        yield Ok(SseEvent::default().data(token_json.to_string()));
+                    }
                     yield Ok(SseEvent::default().data("[DONE]"));
                     break;
                 }
@@ -1468,6 +1505,13 @@ async fn openai_completions_handler(
         let model = requested_model.unwrap_or_default();
         let id = format!("chatcmpl-{:016x}", created);
 
+        // V321: built before the stream so the config lock is not held across
+        // the whole response.
+        let mut guards = {
+            let config = state.server_config.read().await;
+            crate::server::OutputStreamGuards::new(&config.enrichment)
+        };
+
         // Async SSE stream — real tokens from the LLM provider
         let stream = async_stream::stream! {
             // Role announcement chunk
@@ -1489,46 +1533,92 @@ async fn openai_completions_handler(
                 SseEvent::default().data(serde_json::to_string(&first_chunk).unwrap_or_default())
             );
 
+            // Emits one content chunk. Declared here so the token path and the
+            // release-what-was-held paths cannot drift apart.
+            macro_rules! content_chunk {
+                ($text:expr) => {
+                    crate::openai_adapter::StreamChunk {
+                        id: Some(id.clone()),
+                        object: Some("chat.completion.chunk".to_string()),
+                        created: Some(created),
+                        model: Some(model.clone()),
+                        choices: vec![crate::openai_adapter::StreamChoice {
+                            index: Some(0),
+                            delta: crate::openai_adapter::StreamDelta {
+                                role: None,
+                                content: Some($text),
+                            },
+                            finish_reason: None,
+                        }],
+                    }
+                };
+            }
+            macro_rules! final_chunk {
+                ($reason:expr) => {
+                    crate::openai_adapter::StreamChunk {
+                        id: Some(id.clone()),
+                        object: Some("chat.completion.chunk".to_string()),
+                        created: Some(created),
+                        model: Some(model.clone()),
+                        choices: vec![crate::openai_adapter::StreamChoice {
+                            index: Some(0),
+                            delta: crate::openai_adapter::StreamDelta {
+                                role: None,
+                                content: None,
+                            },
+                            finish_reason: Some($reason.to_string()),
+                        }],
+                    }
+                };
+            }
+
+            // V321: tokens go through the same output guards the non-streaming
+            // path applies. Before this, `stream: true` skipped all of them.
+            let mut held: Vec<String> = Vec::new();
+
             // Real token chunks from LLM provider
             while let Some(event) = rx.recv().await {
                 match event {
                     StreamEvent::Token(token) => {
-                        let chunk = crate::openai_adapter::StreamChunk {
-                            id: Some(id.clone()),
-                            object: Some("chat.completion.chunk".to_string()),
-                            created: Some(created),
-                            model: Some(model.clone()),
-                            choices: vec![crate::openai_adapter::StreamChoice {
-                                index: Some(0),
-                                delta: crate::openai_adapter::StreamDelta {
-                                    role: None,
-                                    content: Some(token),
-                                },
-                                finish_reason: None,
-                            }],
-                        };
+                        match guards.check(&token) {
+                            crate::server::StreamTokenVerdict::Stop => {
+                                // Held tokens die with the stream: they were held
+                                // because a guard was unhappy with them. The
+                                // client gets `content_filter`, which is what an
+                                // OpenAI-compatible client already understands.
+                                yield Ok(SseEvent::default().data(
+                                    serde_json::to_string(&final_chunk!("content_filter"))
+                                        .unwrap_or_default()
+                                ));
+                                yield Ok(SseEvent::default().data("[DONE]"));
+                                break;
+                            }
+                            crate::server::StreamTokenVerdict::Hold => {
+                                held.push(token);
+                                continue;
+                            }
+                            crate::server::StreamTokenVerdict::Forward => {}
+                        }
+                        for earlier in held.drain(..) {
+                            yield Ok(SseEvent::default().data(
+                                serde_json::to_string(&content_chunk!(earlier)).unwrap_or_default()
+                            ));
+                        }
                         yield Ok(SseEvent::default().data(
-                            serde_json::to_string(&chunk).unwrap_or_default()
+                            serde_json::to_string(&content_chunk!(token)).unwrap_or_default()
                         ));
                     }
                     StreamEvent::Done => {
-                        // finish_reason: "stop" chunk
-                        let stop_chunk = crate::openai_adapter::StreamChunk {
-                            id: Some(id.clone()),
-                            object: Some("chat.completion.chunk".to_string()),
-                            created: Some(created),
-                            model: Some(model.clone()),
-                            choices: vec![crate::openai_adapter::StreamChoice {
-                                index: Some(0),
-                                delta: crate::openai_adapter::StreamDelta {
-                                    role: None,
-                                    content: None,
-                                },
-                                finish_reason: Some("stop".to_string()),
-                            }],
-                        };
+                        // A clean end releases anything still held: no guard ever
+                        // objected again, and holding it back for good would be
+                        // truncating the answer without saying so.
+                        for earlier in held.drain(..) {
+                            yield Ok(SseEvent::default().data(
+                                serde_json::to_string(&content_chunk!(earlier)).unwrap_or_default()
+                            ));
+                        }
                         yield Ok(SseEvent::default().data(
-                            serde_json::to_string(&stop_chunk).unwrap_or_default()
+                            serde_json::to_string(&final_chunk!("stop")).unwrap_or_default()
                         ));
                         yield Ok(SseEvent::default().data("[DONE]"));
                         break;
@@ -1602,55 +1692,12 @@ async fn openai_completions_handler(
         }
     };
 
-    // -- Output guardrails (only for non-streaming) --
-    let final_text = if config.enrichment.enable_guardrails {
-        if let Some(ref pipeline) = state.guardrail_pipeline {
-            let mut gp = pipeline.lock().unwrap_or_else(|e| e.into_inner());
-            let result = gp.check_output(&response_text);
-            drop(gp);
-
-            // V320: an output violation is reported here because it is otherwise
-            // invisible. The only reaction wired to `check_output` is PII
-            // redaction, so a response the pipeline blocked for toxicity — or a
-            // low-confidence answer the abstention guard asked to withhold — is
-            // returned to the client exactly as generated. What the gateway
-            // *should* return instead changes what a third-party client sees, so
-            // it is a product decision and not made here.
-            if !result.passed {
-                log::warn!(
-                    "[guardrails] output blocked by '{}'; only PII redaction is wired to output violations (redact_output_pii={}) so the response is returned as generated",
-                    result.blocked_by.as_deref().unwrap_or("unknown"),
-                    config.enrichment.redact_output_pii
-                );
-            }
-
-            if !result.passed && config.enrichment.redact_output_pii {
-                let gconf = &config.enrichment.guardrails;
-                let action = if gconf.output_pii_action == "block" {
-                    crate::guardrail_pipeline::PiiAction::Block
-                } else {
-                    crate::guardrail_pipeline::PiiAction::Redact(gconf.output_pii_redact_char)
-                };
-                let output_pii = crate::guardrail_pipeline::OutputPiiGuard::new(
-                    crate::guardrail_pipeline::OutputPiiConfig {
-                        action,
-                        check_emails: gconf.output_pii_check_emails,
-                        check_phones: gconf.output_pii_check_phones,
-                        check_ssns: gconf.output_pii_check_ssns,
-                        check_credit_cards: gconf.output_pii_check_credit_cards,
-                        check_ip_addresses: gconf.output_pii_check_ip_addresses,
-                    },
-                );
-                output_pii.redact(&response_text)
-            } else {
-                response_text
-            }
-        } else {
-            response_text
-        }
-    } else {
-        response_text
-    };
+    // -- Output guardrails (non-streaming; the SSE path guards per chunk) --
+    let (final_text, content_filtered) = crate::server::apply_output_guardrails(
+        &config.enrichment,
+        state.guardrail_pipeline.as_ref(),
+        response_text,
+    );
 
     // Token estimation
     let prompt_tokens = crate::context::estimate_tokens(&user_msg)
@@ -1673,7 +1720,14 @@ async fn openai_completions_handler(
                 content: Some(final_text),
                 function_call: None,
             },
-            finish_reason: Some("stop".to_string()),
+            finish_reason: Some(
+                if content_filtered {
+                    "content_filter"
+                } else {
+                    "stop"
+                }
+                .to_string(),
+            ),
         }],
         usage: Some(crate::openai_adapter::OpenAIUsage {
             prompt_tokens,

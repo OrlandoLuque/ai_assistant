@@ -2311,6 +2311,258 @@ impl Guard for AttributionGuard {
 // Tests
 // ---------------------------------------------------------------------------
 
+// ============================================================================
+// Output enforcement (V321)
+// ============================================================================
+
+/// What should reach the client once the output guards have seen the response.
+///
+/// Before V321 the HTTP servers ran the whole output pipeline, computed a
+/// verdict across every guard, and then acted on one case only: PII redaction.
+/// A response blocked for toxicity — or withheld by the abstention guard — was
+/// served exactly as generated. This type exists so the decision is a value the
+/// caller must match on rather than an `if` someone can forget to write.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum OutputVerdict {
+    /// No guard objected (or redaction resolved the objection). Serve this text.
+    Serve(String),
+    /// A guard blocked the response and it was replaced. The caller should
+    /// report `finish_reason: "content_filter"`, which is what an
+    /// OpenAI-compatible client expects for a filtered completion.
+    Filtered {
+        /// The replacement to serve in place of the generated text.
+        text: String,
+        /// Which guard objected.
+        blocked_by: String,
+    },
+    /// A guard blocked the response but enforcement is switched off, so the
+    /// generated text is served anyway. Distinct from [`Self::Serve`] on
+    /// purpose: the caller is told an objection was overridden, and can log it.
+    ServedDespite {
+        /// The generated text, unchanged.
+        text: String,
+        /// Which guard objected.
+        blocked_by: String,
+    },
+}
+
+/// How [`enforce_output`] should treat a blocked response.
+pub struct OutputEnforcement<'a> {
+    /// Redact PII before deciding. When present, the text is re-checked after
+    /// redaction, because redaction genuinely resolves a PII objection.
+    pub redact_pii: Option<&'a OutputPiiGuard>,
+    /// Replace a still-blocked response instead of serving it.
+    pub block: bool,
+    /// What to serve in place of a blocked response.
+    pub replacement: &'a str,
+}
+
+/// Run the output guards over `text` and decide what the client gets.
+///
+/// The order matters and is the reason this is one function rather than three
+/// copies at the call sites: **redact first, then ask again**. Whether
+/// redaction resolved the objection is not something to infer from the guard's
+/// name — the pipeline can simply be asked a second time, and it is the only
+/// answer that stays right when guards are added.
+pub fn enforce_output(
+    pipeline: &mut GuardrailPipeline,
+    text: String,
+    opts: OutputEnforcement<'_>,
+) -> OutputVerdict {
+    let first = pipeline.check_output(&text);
+    if first.passed {
+        return OutputVerdict::Serve(text);
+    }
+
+    let (text, blocked_by) = match opts.redact_pii {
+        Some(guard) => {
+            let redacted = guard.redact(&text);
+            let second = pipeline.check_output(&redacted);
+            if second.passed {
+                return OutputVerdict::Serve(redacted);
+            }
+            let name = second.blocked_by.unwrap_or_else(|| "unknown".to_string());
+            (redacted, name)
+        }
+        None => {
+            let name = first.blocked_by.unwrap_or_else(|| "unknown".to_string());
+            (text, name)
+        }
+    };
+
+    if opts.block {
+        OutputVerdict::Filtered {
+            text: opts.replacement.to_string(),
+            blocked_by,
+        }
+    } else {
+        OutputVerdict::ServedDespite { text, blocked_by }
+    }
+}
+
+#[cfg(test)]
+mod output_enforcement_tests {
+    //! The three call sites in the HTTP servers used to share a defect rather
+    //! than code: each ran the pipeline, computed a verdict over every output
+    //! guard, and acted only on PII. These tests pin the contract the shared
+    //! helper replaces it with.
+    use super::*;
+
+    /// Objects to a fixed word, so a test can decide whether the response is
+    /// "toxic" without depending on the real detector's tuning.
+    struct WordGuard(&'static str);
+    impl Guard for WordGuard {
+        fn name(&self) -> &str {
+            "word"
+        }
+        fn stage(&self) -> GuardStage {
+            GuardStage::PostReceive
+        }
+        fn check(&self, text: &str) -> GuardCheckResult {
+            let hit = text.contains(self.0);
+            GuardCheckResult {
+                guard_name: self.name().to_string(),
+                action: if hit {
+                    GuardAction::Block(format!("contains {}", self.0))
+                } else {
+                    GuardAction::Pass
+                },
+                // Deliberately under `block_threshold`: this is the V319 case,
+                // and it must still be obeyed here.
+                score: if hit { 0.2 } else { 0.0 },
+                details: String::new(),
+            }
+        }
+    }
+
+    fn pipeline_with(guard: Box<dyn Guard>) -> GuardrailPipeline {
+        let mut p = GuardrailPipeline::new();
+        p.add_guard(guard);
+        p
+    }
+
+    fn plain(block: bool) -> OutputEnforcement<'static> {
+        OutputEnforcement {
+            redact_pii: None,
+            block,
+            replacement: "[withheld]",
+        }
+    }
+
+    #[test]
+    fn a_clean_response_is_served_untouched() {
+        let mut p = pipeline_with(Box::new(WordGuard("badword")));
+        let verdict = enforce_output(&mut p, "all fine here".to_string(), plain(true));
+        assert_eq!(verdict, OutputVerdict::Serve("all fine here".to_string()));
+    }
+
+    #[test]
+    fn a_blocked_response_is_replaced_and_names_the_guard() {
+        let mut p = pipeline_with(Box::new(WordGuard("badword")));
+        let verdict = enforce_output(&mut p, "this has badword in it".to_string(), plain(true));
+
+        match verdict {
+            OutputVerdict::Filtered { text, blocked_by } => {
+                assert_eq!(
+                    text, "[withheld]",
+                    "the generated text must not reach the client"
+                );
+                assert_eq!(blocked_by, "word");
+            }
+            other => panic!("expected Filtered, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn enforcement_off_serves_the_text_but_says_so() {
+        // This is V320's behaviour, kept reachable on purpose — but now it is a
+        // distinct variant instead of an indistinguishable `Serve`, so a caller
+        // cannot mistake an overridden objection for a clean response.
+        let mut p = pipeline_with(Box::new(WordGuard("badword")));
+        let verdict = enforce_output(&mut p, "this has badword in it".to_string(), plain(false));
+
+        match verdict {
+            OutputVerdict::ServedDespite { text, blocked_by } => {
+                assert_eq!(text, "this has badword in it");
+                assert_eq!(blocked_by, "word");
+            }
+            other => panic!("expected ServedDespite, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn redaction_that_resolves_the_objection_yields_a_clean_serve() {
+        // The PII guard objects, redaction removes the PII, and the second pass
+        // passes — so the client gets the redacted answer rather than a
+        // replacement. Inferring this from the guard's name instead of asking
+        // the pipeline again is what breaks the moment a guard is added.
+        let mut p = GuardrailPipeline::new();
+        p.add_guard(Box::new(OutputPiiGuard::new(OutputPiiConfig {
+            action: PiiAction::Redact('*'),
+            check_emails: true,
+            ..Default::default()
+        })));
+        let redactor = OutputPiiGuard::new(OutputPiiConfig {
+            action: PiiAction::Redact('*'),
+            check_emails: true,
+            ..Default::default()
+        });
+
+        let verdict = enforce_output(
+            &mut p,
+            "write to alice@example.com please".to_string(),
+            OutputEnforcement {
+                redact_pii: Some(&redactor),
+                block: true,
+                replacement: "[withheld]",
+            },
+        );
+
+        match verdict {
+            OutputVerdict::Serve(text) => {
+                assert!(
+                    !text.contains("alice@example.com"),
+                    "the address survived: {text}"
+                );
+                assert!(
+                    text.contains("write to"),
+                    "only the PII should have gone: {text}"
+                );
+            }
+            other => panic!("expected Serve after redaction, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn redaction_that_does_not_help_still_blocks() {
+        // Redacting an email does nothing about a toxic word, and the second
+        // pass says so.
+        let mut p = GuardrailPipeline::new();
+        p.add_guard(Box::new(WordGuard("badword")));
+        let redactor = OutputPiiGuard::new(OutputPiiConfig {
+            action: PiiAction::Redact('*'),
+            check_emails: true,
+            ..Default::default()
+        });
+
+        let verdict = enforce_output(
+            &mut p,
+            "badword and alice@example.com".to_string(),
+            OutputEnforcement {
+                redact_pii: Some(&redactor),
+                block: true,
+                replacement: "[withheld]",
+            },
+        );
+
+        assert!(
+            matches!(verdict, OutputVerdict::Filtered { ref blocked_by, .. } if blocked_by == "word"),
+            "got {verdict:?}"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

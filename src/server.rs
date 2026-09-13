@@ -635,6 +635,22 @@ pub struct EnrichmentConfig {
     /// Redact PII from LLM output before returning to client.
     #[serde(default = "default_true")]
     pub redact_output_pii: bool,
+    /// Withhold a response the output guards blocked, instead of serving it.
+    ///
+    /// V321. Before it, the output pipeline ran in full and only PII redaction
+    /// was ever acted on, so a response blocked for toxicity — or withheld by
+    /// the abstention guard — reached the client exactly as generated. Defaults
+    /// to `true`, matching `block_on_input_violation`: it made no sense that the
+    /// request side enforced its verdict and the response side did not.
+    ///
+    /// When a response is withheld the client receives
+    /// `finish_reason: "content_filter"`, which is what an OpenAI-compatible
+    /// client already understands.
+    #[serde(default = "default_true")]
+    pub block_on_output_violation: bool,
+    /// What to serve in place of a withheld response.
+    #[serde(default = "default_output_violation_message")]
+    pub output_violation_message: String,
     /// Guardrail score threshold (0.0–1.0). Higher = more permissive.
     #[serde(default = "default_threshold")]
     pub guardrail_threshold: f32,
@@ -669,6 +685,234 @@ fn default_true() -> bool {
 }
 fn default_threshold() -> f32 {
     0.8
+}
+fn default_output_violation_message() -> String {
+    // Deliberately says nothing about *why*: the guard name goes to the server
+    // log, not to whoever prompted the model. Telling a caller which guard
+    // objected is a probing oracle for getting round it.
+    "[Response withheld by content policy]".to_string()
+}
+
+/// Run the output guards over a generated response and decide what the client
+/// gets: the text to serve, and whether it was filtered.
+///
+/// V321. The three response paths — chat completions, its SSE variant, and the
+/// axum server — used to share a *defect* rather than code: each ran the whole
+/// output pipeline, computed a verdict across every guard, and then acted on
+/// one case, PII redaction. A response blocked for toxicity, or withheld by the
+/// abstention guard, was served exactly as generated. Now they call this.
+///
+/// `true` in the second slot means the caller must report
+/// `finish_reason: "content_filter"` — the value an OpenAI-compatible client
+/// already knows how to handle.
+#[cfg(feature = "security")]
+pub(crate) fn apply_output_guardrails(
+    enrichment: &EnrichmentConfig,
+    pipeline: Option<&Arc<Mutex<crate::guardrail_pipeline::GuardrailPipeline>>>,
+    response_text: String,
+) -> (String, bool) {
+    use crate::guardrail_pipeline::{
+        enforce_output, OutputEnforcement, OutputPiiConfig, OutputPiiGuard, OutputVerdict,
+        PiiAction,
+    };
+
+    if !enrichment.enable_guardrails {
+        return (response_text, false);
+    }
+    let Some(pipeline) = pipeline else {
+        return (response_text, false);
+    };
+
+    let gconf = &enrichment.guardrails;
+    let redactor = enrichment.redact_output_pii.then(|| {
+        OutputPiiGuard::new(OutputPiiConfig {
+            action: if gconf.output_pii_action == "block" {
+                PiiAction::Block
+            } else {
+                PiiAction::Redact(gconf.output_pii_redact_char)
+            },
+            check_emails: gconf.output_pii_check_emails,
+            check_phones: gconf.output_pii_check_phones,
+            check_ssns: gconf.output_pii_check_ssns,
+            check_credit_cards: gconf.output_pii_check_credit_cards,
+            check_ip_addresses: gconf.output_pii_check_ip_addresses,
+        })
+    });
+
+    let mut gp = pipeline.lock().unwrap_or_else(|e| e.into_inner());
+    let verdict = enforce_output(
+        &mut gp,
+        response_text,
+        OutputEnforcement {
+            redact_pii: redactor.as_ref(),
+            block: enrichment.block_on_output_violation,
+            replacement: &enrichment.output_violation_message,
+        },
+    );
+    drop(gp);
+
+    match verdict {
+        OutputVerdict::Serve(text) => (text, false),
+        OutputVerdict::Filtered { text, blocked_by } => {
+            log::warn!("[guardrails] output withheld: blocked by '{}'", blocked_by);
+            (text, true)
+        }
+        OutputVerdict::ServedDespite { text, blocked_by } => {
+            log::warn!(
+                "[guardrails] output blocked by '{}' but block_on_output_violation is off: serving as generated",
+                blocked_by
+            );
+            (text, false)
+        }
+    }
+}
+
+/// What the streaming guards decided about one token.
+///
+/// Gated on `server-axum` because its only consumers are that server's two SSE
+/// handlers; without the feature this is dead code, and `-D warnings` says so.
+#[cfg(feature = "server-axum")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StreamTokenVerdict {
+    /// Forward the token (releasing anything held first).
+    Forward,
+    /// Hold it back; a later `Forward` releases what was held.
+    Hold,
+    /// Stop the stream. The caller emits its own terminal event.
+    Stop,
+}
+
+/// The output guards, applied token by token to a streamed answer.
+///
+/// V321. `StreamingGuardrailPipeline` has existed since V160 and `ai_proxy`
+/// wired it over its SSE body, but the axum server's two streaming endpoints
+/// ran with **no guards at all**: asking for `stream: true` skipped every check
+/// the same request went through without it. This is that gap closed.
+///
+/// The type exists (and compiles to a no-op) without the `security` feature so
+/// the SSE handlers need no `cfg` attributes inside a proc-macro body.
+///
+/// # What this does and does not promise
+///
+/// Guarding a stream is **detection within a bounded number of tokens, not
+/// before the first bad one**, and saying otherwise would be the kind of
+/// overstatement this codebase keeps finding. `StreamingGuardrailPipeline`
+/// evaluates only once its buffer holds at least `min_buffer_size` whitespace
+/// tokens *and* `eval_interval` chunks have arrived since the last evaluation —
+/// 10 and 5 by default. Everything before that is forwarded unevaluated.
+///
+/// So a client streaming a response can receive the opening of something the
+/// guards later stop. That is inherent to guarding a stream rather than a
+/// finished text, and it is why the non-streaming path keeps its full pipeline
+/// over the complete answer instead of reusing this. A caller who cannot accept
+/// a partial leak should not offer streaming for that route.
+#[cfg(feature = "server-axum")]
+pub(crate) struct OutputStreamGuards {
+    #[cfg(feature = "security")]
+    inner: Option<crate::guardrail_pipeline::StreamingGuardrailPipeline>,
+    /// Bytes currently held by a `Pause`. Bounded: holding for ever is a leak
+    /// and a stall, so past the cap this fails closed like `ai_proxy` does.
+    held_bytes: usize,
+}
+
+#[cfg(feature = "server-axum")]
+impl OutputStreamGuards {
+    /// How much may be held by `Pause` before the stream fails closed.
+    const MAX_HELD_BYTES: usize = 256 * 1024;
+
+    /// Build the guards mirroring the *output* guards of `enrichment`.
+    #[cfg(feature = "security")]
+    pub(crate) fn new(enrichment: &EnrichmentConfig) -> Self {
+        use crate::guardrail_pipeline::{
+            StreamingGuardrailPipeline, StreamingPatternGuard, StreamingPiiGuard,
+            StreamingToxicityGuard,
+        };
+
+        if !enrichment.enable_guardrails {
+            return Self {
+                inner: None,
+                held_bytes: 0,
+            };
+        }
+        let g = &enrichment.guardrails;
+        let mut pipeline = StreamingGuardrailPipeline::new();
+        let mut any = false;
+
+        if g.output_pii_guard {
+            pipeline = pipeline.add_guard(Box::new(StreamingPiiGuard));
+            any = true;
+        }
+        if g.output_toxicity_guard {
+            pipeline = pipeline.add_guard(Box::new(StreamingToxicityGuard::with_defaults()));
+            any = true;
+        }
+        if !g.blocked_patterns.is_empty() {
+            pipeline = pipeline.add_guard(Box::new(StreamingPatternGuard::new(
+                g.blocked_patterns.clone(),
+            )));
+            any = true;
+        }
+
+        Self {
+            inner: any.then_some(pipeline),
+            held_bytes: 0,
+        }
+    }
+
+    /// Without `security` there are no guards to run, and every token passes.
+    #[cfg(not(feature = "security"))]
+    pub(crate) fn new(_enrichment: &EnrichmentConfig) -> Self {
+        Self { held_bytes: 0 }
+    }
+
+    /// Feed one token to the guards and say what to do with it.
+    ///
+    /// `Flag` forwards — it means "worth noticing", not "stop" — which is what
+    /// `ai_proxy` does with the same action.
+    #[cfg(feature = "security")]
+    pub(crate) fn check(&mut self, token: &str) -> StreamTokenVerdict {
+        use crate::guardrail_pipeline::StreamGuardAction;
+
+        let Some(ref mut pipeline) = self.inner else {
+            return StreamTokenVerdict::Forward;
+        };
+        if token.is_empty() {
+            return StreamTokenVerdict::Forward;
+        }
+
+        match pipeline.process_chunk(token).action {
+            StreamGuardAction::Block(reason) => {
+                log::warn!("[guardrails] stream stopped: {}", reason);
+                StreamTokenVerdict::Stop
+            }
+            StreamGuardAction::Pause => {
+                self.held_bytes += token.len();
+                if self.held_bytes > Self::MAX_HELD_BYTES {
+                    log::warn!(
+                        "[guardrails] stream stopped: held {} bytes without ever resolving",
+                        self.held_bytes
+                    );
+                    StreamTokenVerdict::Stop
+                } else {
+                    StreamTokenVerdict::Hold
+                }
+            }
+            StreamGuardAction::Flag(reason) => {
+                log::info!("[guardrails] stream flagged: {}", reason);
+                self.held_bytes = 0;
+                StreamTokenVerdict::Forward
+            }
+            _ => {
+                self.held_bytes = 0;
+                StreamTokenVerdict::Forward
+            }
+        }
+    }
+
+    #[cfg(not(feature = "security"))]
+    pub(crate) fn check(&mut self, _token: &str) -> StreamTokenVerdict {
+        StreamTokenVerdict::Forward
+    }
 }
 fn default_rate_limit_max() -> usize {
     60
@@ -739,6 +983,8 @@ impl Default for EnrichmentConfig {
             enable_memory: false,
             block_on_input_violation: true,
             redact_output_pii: true,
+            block_on_output_violation: true,
+            output_violation_message: default_output_violation_message(),
             guardrail_threshold: 0.8,
             guardrails: GuardrailEnrichmentConfig::default(),
             rag: RagEnrichmentConfig::default(),
@@ -3135,57 +3381,13 @@ fn handle_openai_chat_completions(
 
     // -- Output guardrails --
     #[cfg(feature = "security")]
-    let final_text = if config.enrichment.enable_guardrails {
-        if let Some(ref pipeline) = config.guardrail_pipeline {
-            let mut gp = pipeline.lock().unwrap_or_else(|e| e.into_inner());
-            let result = gp.check_output(&response_text);
-            drop(gp);
-
-            // V320: an output violation is reported here because it is otherwise
-            // invisible. The only reaction wired to `check_output` is PII
-            // redaction, so a response the pipeline blocked for toxicity — or a
-            // low-confidence answer the abstention guard asked to withhold — is
-            // returned to the client exactly as generated. What the gateway
-            // *should* return instead changes what a third-party client sees, so
-            // it is a product decision and not made here.
-            if !result.passed {
-                log::warn!(
-                    "[guardrails] output blocked by '{}'; only PII redaction is wired to output violations (redact_output_pii={}) so the response is returned as generated",
-                    result.blocked_by.as_deref().unwrap_or("unknown"),
-                    config.enrichment.redact_output_pii
-                );
-            }
-
-            if !result.passed && config.enrichment.redact_output_pii {
-                // Use OutputPiiGuard to redact PII from the response
-                let gconf = &config.enrichment.guardrails;
-                let action = if gconf.output_pii_action == "block" {
-                    crate::guardrail_pipeline::PiiAction::Block
-                } else {
-                    crate::guardrail_pipeline::PiiAction::Redact(gconf.output_pii_redact_char)
-                };
-                let output_pii = crate::guardrail_pipeline::OutputPiiGuard::new(
-                    crate::guardrail_pipeline::OutputPiiConfig {
-                        action,
-                        check_emails: gconf.output_pii_check_emails,
-                        check_phones: gconf.output_pii_check_phones,
-                        check_ssns: gconf.output_pii_check_ssns,
-                        check_credit_cards: gconf.output_pii_check_credit_cards,
-                        check_ip_addresses: gconf.output_pii_check_ip_addresses,
-                    },
-                );
-                output_pii.redact(&response_text)
-            } else {
-                response_text
-            }
-        } else {
-            response_text
-        }
-    } else {
-        response_text
-    };
+    let (final_text, content_filtered) = apply_output_guardrails(
+        &config.enrichment,
+        config.guardrail_pipeline.as_ref(),
+        response_text,
+    );
     #[cfg(not(feature = "security"))]
-    let final_text = response_text;
+    let (final_text, content_filtered) = (response_text, false);
 
     let prompt_tokens = crate::context::estimate_tokens(&user_message)
         + crate::context::estimate_tokens(&system_prompt)
@@ -3211,7 +3413,14 @@ fn handle_openai_chat_completions(
                 content: Some(final_text),
                 function_call: None,
             },
-            finish_reason: Some("stop".to_string()),
+            finish_reason: Some(
+                if content_filtered {
+                    "content_filter"
+                } else {
+                    "stop"
+                }
+                .to_string(),
+            ),
         }],
         usage: Some(crate::openai_adapter::OpenAIUsage {
             prompt_tokens,
@@ -3421,55 +3630,16 @@ fn handle_openai_chat_completions_stream(
     drop(ass); // release assistant lock before output guardrails
 
     // -- Output guardrails --
+    // Under `not(security)` there is nothing to rebind: `full_text` keeps the
+    // binding it got from the generation loop, and only the flag is defined.
     #[cfg(feature = "security")]
-    let full_text = if config.enrichment.enable_guardrails {
-        if let Some(ref pipeline) = config.guardrail_pipeline {
-            let mut gp = pipeline.lock().unwrap_or_else(|e| e.into_inner());
-            let result = gp.check_output(&full_text);
-            drop(gp);
-
-            // V320: an output violation is reported here because it is otherwise
-            // invisible. The only reaction wired to `check_output` is PII
-            // redaction, so a response the pipeline blocked for toxicity — or a
-            // low-confidence answer the abstention guard asked to withhold — is
-            // returned to the client exactly as generated. What the gateway
-            // *should* return instead changes what a third-party client sees, so
-            // it is a product decision and not made here.
-            if !result.passed {
-                log::warn!(
-                    "[guardrails] output blocked by '{}'; only PII redaction is wired to output violations (redact_output_pii={}) so the response is returned as generated",
-                    result.blocked_by.as_deref().unwrap_or("unknown"),
-                    config.enrichment.redact_output_pii
-                );
-            }
-
-            if !result.passed && config.enrichment.redact_output_pii {
-                let gconf = &config.enrichment.guardrails;
-                let action = if gconf.output_pii_action == "block" {
-                    crate::guardrail_pipeline::PiiAction::Block
-                } else {
-                    crate::guardrail_pipeline::PiiAction::Redact(gconf.output_pii_redact_char)
-                };
-                let output_pii = crate::guardrail_pipeline::OutputPiiGuard::new(
-                    crate::guardrail_pipeline::OutputPiiConfig {
-                        action,
-                        check_emails: gconf.output_pii_check_emails,
-                        check_phones: gconf.output_pii_check_phones,
-                        check_ssns: gconf.output_pii_check_ssns,
-                        check_credit_cards: gconf.output_pii_check_credit_cards,
-                        check_ip_addresses: gconf.output_pii_check_ip_addresses,
-                    },
-                );
-                output_pii.redact(&full_text)
-            } else {
-                full_text
-            }
-        } else {
-            full_text
-        }
-    } else {
-        full_text
-    };
+    let (full_text, content_filtered) = apply_output_guardrails(
+        &config.enrichment,
+        config.guardrail_pipeline.as_ref(),
+        full_text,
+    );
+    #[cfg(not(feature = "security"))]
+    let content_filtered = false;
 
     let created = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -3533,7 +3703,14 @@ fn handle_openai_chat_completions_stream(
                 role: None,
                 content: None,
             },
-            finish_reason: Some("stop".to_string()),
+            finish_reason: Some(
+                if content_filtered {
+                    "content_filter"
+                } else {
+                    "stop"
+                }
+                .to_string(),
+            ),
         }],
     };
     sse_body.push_str(&format!(
@@ -7100,6 +7277,8 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
             enable_memory: true,
             block_on_input_violation: true,
             redact_output_pii: true,
+            block_on_output_violation: true,
+            output_violation_message: default_output_violation_message(),
             guardrail_threshold: 0.6,
             guardrails: GuardrailEnrichmentConfig {
                 attack_guard: false,
@@ -7397,5 +7576,99 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         let (status, body) = route_request(&req, &assistant, &metrics);
         assert_eq!(status, "400 Bad Request");
         assert!(body.contains("invalid JSON"), "got: {body}");
+    }
+}
+
+#[cfg(all(test, feature = "security", feature = "server-axum"))]
+mod output_stream_guard_tests {
+    //! V321. The axum server's two SSE endpoints ran with no guards at all:
+    //! asking for `stream: true` skipped every check the same request went
+    //! through without it, while `ai_proxy` had been guarding its stream since
+    //! V160. These pin the decision layer the handlers now share.
+    use super::*;
+
+    fn enrichment(enabled: bool, patterns: Vec<String>) -> EnrichmentConfig {
+        let mut e = EnrichmentConfig {
+            enable_guardrails: enabled,
+            ..Default::default()
+        };
+        e.guardrails.blocked_patterns = patterns;
+        e
+    }
+
+    #[test]
+    fn with_guardrails_off_every_token_passes() {
+        let mut g = OutputStreamGuards::new(&enrichment(false, vec!["secret".to_string()]));
+        assert_eq!(g.check("secret"), StreamTokenVerdict::Forward);
+    }
+
+    #[test]
+    fn a_blocked_pattern_stops_the_stream_within_a_bounded_number_of_tokens() {
+        // Not on the offending token itself: the pipeline evaluates only once
+        // its buffer holds >= min_buffer_size (10) whitespace tokens and
+        // eval_interval (5) chunks have passed. The contract is "caught soon",
+        // and this test states the bound instead of pretending otherwise.
+        let mut g = OutputStreamGuards::new(&enrichment(true, vec!["hunter2".to_string()]));
+
+        let stream = [
+            "the ",
+            "password ",
+            "for ",
+            "the ",
+            "account ",
+            "you ",
+            "asked ",
+            "about ",
+            "happens ",
+            "to ",
+            "be ",
+            "hunter2 ",
+            "ok ",
+            "bye ",
+            "now ",
+            "really ",
+            "done ",
+            "here ",
+            "at ",
+            "last ",
+        ];
+        let mut stopped_at = None;
+        for (i, token) in stream.iter().enumerate() {
+            if g.check(token) == StreamTokenVerdict::Stop {
+                stopped_at = Some(i);
+                break;
+            }
+        }
+
+        let at = stopped_at.expect("a blocked pattern must stop the stream eventually");
+        assert!(
+            at >= 11,
+            "stopped at {at}, before the pattern was even streamed — the test              would be passing for the wrong reason"
+        );
+        assert!(
+            at <= 16,
+            "stopped at {at}: the pattern arrived at 11 and the evaluation              cadence is every 5 chunks, so anything later means it was missed"
+        );
+    }
+
+    #[test]
+    fn an_empty_token_is_never_a_reason_to_stop() {
+        // Providers do emit empty deltas; treating one as content would let the
+        // guards' sliding window decide on nothing at all.
+        let mut g = OutputStreamGuards::new(&enrichment(true, vec!["x".to_string()]));
+        assert_eq!(g.check(""), StreamTokenVerdict::Forward);
+    }
+
+    #[test]
+    fn no_output_guard_enabled_means_no_pipeline_at_all() {
+        // `enable_guardrails` alone is not enough: if every output guard is off
+        // there is nothing to run, and the stream should not pay for a pipeline
+        // that would pass everything anyway.
+        let mut e = enrichment(true, vec![]);
+        e.guardrails.output_pii_guard = false;
+        e.guardrails.output_toxicity_guard = false;
+
+        let mut g = OutputStreamGuards::new(&e);
+        assert_eq!(g.check("anything at all"), StreamTokenVerdict::Forward);
     }
 }

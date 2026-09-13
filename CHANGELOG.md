@@ -5,6 +5,78 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v196 (2026-09-14) — V321: las guardas de salida se aplican, y también cuando hay streaming (0.2.273)
+
+Cierra N63 y N64. La decisión del autor sobre N63 fue «lo más completo posible», y lo más
+completo resultó ser también lo más compatible: `finish_reason: "content_filter"`, que es lo
+que un cliente de OpenAI ya sabe interpretar, en vez de inventar un código propio.
+
+### El estado del que se partía
+
+Tres caminos por los que sale texto hacia un cliente, comportándose de tres maneras:
+
+| Camino | Antes |
+|---|---|
+| `server.rs`, respuesta completa | ejecutaba el pipeline entero y solo actuaba sobre PII |
+| `server.rs`, «stream» | igual (acumula la respuesta antes de enviar, así que las guardas sí corrían a tiempo) |
+| `server_axum`, no-streaming | igual |
+| `server_axum`, **streaming** (dos endpoints) | **ninguna guarda en absoluto** |
+| `ai_proxy` | correcto desde V160: `StreamingGuardrailPipeline` sobre el cuerpo SSE |
+
+O sea: pedir `stream: true` contra axum se saltaba todas las comprobaciones por las que pasaba
+la misma petición sin streaming. Y el resto calculaba un veredicto sobre todas las guardas
+para después obedecer solo a una.
+
+### Lo que se aplica ahora
+
+**`enforce_output` en la librería**, con un `OutputVerdict` de tres variantes que el llamante
+tiene que discriminar: `Serve`, `Filtered` y `ServedDespite`. Esa tercera existe a propósito —
+es el comportamiento antiguo, alcanzable si se apaga la aplicación, pero **distinguible** de
+una respuesta limpia, que es lo que faltaba.
+
+El orden importa y es la razón de que sea una función y no tres copias: **redactar primero,
+preguntar después**. Si la guarda que objetaba era la de PII, la redacción resuelve la
+objeción y el segundo paso lo confirma; deducirlo del nombre de la guarda es lo que se rompe
+en cuanto se añade una guarda nueva.
+
+Dos opciones nuevas, `block_on_output_violation` (por defecto **true**, igual que
+`block_on_input_violation`) y `output_violation_message`. El mensaje de sustitución no dice
+*por qué*: el nombre de la guarda va al log del servidor, no a quien escribió el prompt —
+decírselo es darle un oráculo para tantear cómo esquivarla.
+
+**`OutputStreamGuards` para las dos rutas SSE de axum**, espejo de las guardas de salida,
+token a token, con el mismo criterio que ya usaba `ai_proxy`: `Flag` deja pasar, `Pause`
+retiene (con tope de 256 KB, y pasado el tope falla cerrado) y `Block` corta el stream
+emitiendo `content_filter`. Un final limpio libera lo retenido, porque retenerlo para siempre
+sería truncar la respuesta sin decirlo.
+
+### Lo que NO promete, dicho en el código
+
+Guardar un stream es **detectar dentro de un número acotado de tokens, no antes del primero
+malo**. `StreamingGuardrailPipeline` evalúa solo cuando su buffer tiene ≥ `min_buffer_size`
+tokens (10) y han pasado `eval_interval` trozos (5); lo anterior se reenvía sin evaluar. Así
+que un cliente puede recibir el comienzo de algo que las guardas cortan después.
+
+Es inherente a guardar un flujo en vez de un texto terminado, y por eso la ruta no-streaming
+conserva su pipeline completo en lugar de reutilizar esta. Queda escrito en la documentación
+del tipo y **el test declara la cota** (el patrón entra en el token 11 y se corta antes del
+16) en vez de fingir detección instantánea, que es la clase de afirmación que lleva toda la
+semana apareciendo.
+
+### De paso
+
+La librería **ya hacía streaming de verdad** y los dos GUI ya lo usaban: `send_message` lanza
+un hilo y llama a `provider.generate_streaming`, que emite `AiResponse::Chunk`. Lo comprobé
+antes de tocar nada porque la sospecha inicial era que no; era infundada.
+
+### Tests
+
+14 nuevos: 5 de `enforce_output` (incluido el caso en que la redacción resuelve la objeción y
+el caso en que no), 4 de `OutputStreamGuards` y los 5 de V319 que siguen verdes. Suite
+completa **7.194** con `full,server-axum`; clippy `-D warnings` limpio con `full,server-axum
+--all-targets` y con el conjunto mínimo de CI —donde `OutputStreamGuards` habría sido código
+muerto, así que va gateado tras `server-axum`, la feature de su consumidor—.
+
 ## [Unreleased] - v195 (2026-09-13) — V320: una violación de salida que no era PII se descartaba sin decir nada (0.2.272)
 
 Continuación del barrido de V319, una capa más arriba. El mismo defecto —un veredicto que se
