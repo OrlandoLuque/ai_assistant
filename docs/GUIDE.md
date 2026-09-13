@@ -8318,11 +8318,31 @@ EnrichmentConfig
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enable_rag` | bool | false | Enable RAG context retrieval for every request |
-| `enable_guardrails` | bool | false | Enable input guardrail pipeline |
+| `enable_guardrails` | bool | false | Enable the guardrail pipeline on input **and** output |
 | `enable_memory` | bool | false | Enable conversation memory (future) |
 | `block_on_input_violation` | bool | true | Return 400 when guardrails detect violations |
 | `redact_output_pii` | bool | true | Mask PII in generated responses |
+| `block_on_output_violation` | bool | true | Withhold a response the output guards blocked |
+| `output_violation_message` | String | `[Response withheld by content policy]` | What to serve in its place |
 | `guardrail_threshold` | f32 | 0.8 | Minimum confidence to trigger a guardrail |
+
+**Output enforcement (V321).** A withheld response is reported with
+`finish_reason: "content_filter"`, which OpenAI-compatible clients already
+understand, and the replacement text deliberately does not say which guard
+objected -- the guard name goes to the server log, because telling the caller is
+handing them an oracle for probing their way past it. The order is *redact, then
+re-check*: if the objection came from the PII guard, redaction resolves it and
+the response is served redacted rather than withheld.
+
+**Streaming routes are guarded too, with a bound worth knowing.** The SSE
+endpoints run the streaming counterpart of the output guards token by token
+(`Flag` forwards, `Pause` holds within a 256 KB cap, `Block` stops the stream and
+emits `content_filter`). But the streaming pipeline evaluates only once its
+buffer holds at least `min_buffer_size` whitespace tokens (10) and
+`eval_interval` chunks have passed (5) -- so guarding a stream means **detection
+within a bounded number of tokens, not before the first bad one**. A client can
+receive the opening of something the guards later stop. If a route cannot accept
+that, serve it non-streaming, where the guards see the finished text.
 
 ### Guardrails Sub-Config (`guardrails`)
 

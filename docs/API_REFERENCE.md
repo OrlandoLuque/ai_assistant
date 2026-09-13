@@ -722,10 +722,12 @@ The enrichment config has 52 configurable fields across 7 sub-configs. See the [
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enable_rag` | bool | false | Enable RAG context retrieval |
-| `enable_guardrails` | bool | false | Enable input guardrails |
+| `enable_guardrails` | bool | false | Enable the guardrail pipeline on input **and** output |
 | `enable_memory` | bool | false | Enable conversation memory |
 | `block_on_input_violation` | bool | true | Return 400 on guardrail violations |
 | `redact_output_pii` | bool | true | Mask PII in responses |
+| `block_on_output_violation` | bool | true | Withhold a response the output guards blocked, returning `finish_reason: "content_filter"`. Streaming routes stop the stream. |
+| `output_violation_message` | String | `[Response withheld by content policy]` | What to serve in place of a withheld response |
 | `guardrail_threshold` | f32 | 0.8 | Guardrail confidence threshold |
 
 **Sub-configs**: `guardrails` (18 fields), `rag` (8), `context` (5), `compaction` (6), `model_selection` (5), `cost` (5), `thinking` (7).
