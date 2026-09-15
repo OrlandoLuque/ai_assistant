@@ -23,14 +23,27 @@ Esto te da el contexto completo: dónde estamos, qué se ha hecho, cómo trabaja
 - **540K líneas de código**, 559 archivos fuente (.rs), 9.753 tests
   (medido el 2026-09-03 en 0.2.244; antes decía 523K/500/9.600+)
 - **Autor único**: Orlando José Luque Moraira (Lander) — orlando.luque@gmail.com
-- **Estado**: **el repositorio de GitHub es PÚBLICO** (`OrlandoLuque/ai_assistant`, 3 estrellas
-  y 1 fork a 2026-09-03). No está en crates.io ni distribuido a terceros de otra forma.
-  Esta línea decía «NO publicado en ningún sitio (ni crates.io, ni GitHub público…)», que
-  llevaba tiempo siendo falso. La licencia PolyForm Noncommercial sigue aplicando y prohíbe
-  el uso comercial, pero **el código es legible por cualquiera y ya se ha bifurcado una vez**:
-  cualquier decisión sobre PI, secreto industrial o «aún no lo hemos enseñado» debe partir
-  de ese hecho. Si la intención era mantenerlo privado, hay que cambiar la visibilidad, no
-  la frase.
+- **Estado**: **el repositorio de GitHub es PÚBLICO Y ASÍ DEBE SEGUIR**
+  (`OrlandoLuque/ai_assistant`, 3 estrellas y 1 fork a 2026-09-03). No está en crates.io ni
+  distribuido a terceros de otra forma.
+  - **Decidido y confirmado por el autor el 2026-09-15**: público es lo que se quiere, no un
+    accidente. Queda cerrada la pregunta que esta línea dejaba abierta desde el 03/09
+    («si la intención era mantenerlo privado, hay que cambiar la visibilidad, no la frase»).
+  - **NADIE lo pone en privado.** Ni Claude, ni por iniciativa propia, ni deducido de un
+    objetivo como «protege esto» o «corta la exposición». Solo con una petición explícita
+    del autor que diga literalmente que quiere cambiar la visibilidad, y tras confirmársela.
+    Precedente: el 2026-09-03 un cambio de visibilidad costó **2 de 3 estrellas** y
+    **desacopló el fork de un tercero**, y ninguna de las dos cosas se recupera al volver
+    atrás. Ver [[feedback_never_change_repo_visibility]] y la PARADA OBLIGATORIA de abajo.
+  - **GitHub no ofrece un cerrojo** para esto en repos de usuario: solo el propietario puede
+    cambiar la visibilidad y no hay ajuste que lo bloquee (las políticas de restricción son
+    de organización, no de cuenta personal). Así que la salvaguarda es esta instrucción, no
+    un mecanismo técnico. Si algún día quieres una barrera real, la vía es mover el repo a
+    una organización y restringir ahí quién puede cambiar visibilidad — decisión tuya, con
+    sus propias consecuencias.
+  - La licencia PolyForm Noncommercial sigue aplicando y prohíbe el uso comercial, pero
+    **el código es legible por cualquiera y ya se ha bifurcado una vez**: cualquier decisión
+    sobre PI o secreto industrial debe partir de ese hecho, no de suponer que está oculto.
 - **Feature flags**: 95 (multi-agent, security, analytics, rag, distributed, autonomous, gui-pro, audio-io, gpu-sharing, research, etc.). El conjunto mínimo soportado son ocho, documentado en `Cargo.toml` y verificado en CI.
 - **Binarios**: 41 declarados en `Cargo.toml` (V305 añadió `ai_mcp_server`). El inventario
   es `docs/BINARIES.md`, y desde V305 CI comprueba que coincide con el manifiesto: decía 26
