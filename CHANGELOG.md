@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v199 (2026-09-16) — V324: el catálogo exigía un fork de llama.cpp que ya no hace falta (0.2.276)
+
+Las tres entradas de **Bonsai 1-bit** de `curated_models.rs` decían que hacía falta el fork
+de PrismML, una de ellas con la coletilla «upstream llama.cpp does not ship Q1_0». Dejó de
+ser cierto:
+
+- `GGML_TYPE_Q1_0` aparece en **43 ficheros de `ggml-org/llama.cpp`**, repartidos por los
+  backends de CUDA, SYCL y Vulkan.
+- La documentación de PrismML lo dice con todas las letras: 1-bit (`Q1_0`) está fusionado
+  en upstream y **solo el ternario (`Q2_0`) necesita el fork**.
+
+Las entradas ternarias siguen diciendo que lo necesitan, porque siguen necesitándolo.
+
+**Un requisito caducado no es inocuo.** Este campo se le enseña a quien decide, así que la
+frase mandaba a la gente a buscar un fork concreto de llama.cpp para correr un modelo que su
+build normal ya carga. Quien no vaya a discutir con el mensaje, sencillamente no lo corre.
+Es el mismo daño que una capacidad que falta, por el camino contrario — y de la misma
+familia que la deuda declarada que V310, V311 y V319 fueron encontrando: el código afirma
+algo que dejó de ser verdad y nadie lo vuelve a mirar.
+
+### Y había un test fijando la frase
+
+`bonsai_entries_flag_prismml_fork_requirement` exigía que **todas** las entradas Bonsai
+reclamaran el fork. Por eso la afirmación sobrevivió a dejar de ser cierta: el test fijaba
+la frase en vez de comprobar el hecho, y no sabía distinguir 1-bit de ternario. Es el
+**cuarto** de esta clase en la serie, después de `test_dispatch_search_papers_stub` (V310),
+`test_tesseract_backend_not_available` (V311) y `test_pipeline_threshold` (V319).
+
+Ahora se llama `bonsai_entries_say_what_they_actually_need` y separa los dos casos: el
+ternario **debe** mencionar PrismML, el de 1 bit **no debe**. Así puede cazar la deriva en
+cualquiera de las dos direcciones.
+
+Salió al ir a medir los Bonsai: el fork estaba clonado y compilado en esta máquina desde
+julio, con los pesos de 4B y 8B descargados, y la pregunta «¿hace falta de verdad?» no se
+había hecho nunca.
+
 ## [Unreleased] - v198 (2026-09-16) — V323: cuatro avisos que solo salen con pocas features (0.2.275)
 
 La regla del proyecto es cero avisos del compilador. Se cumple en los dos conjuntos de

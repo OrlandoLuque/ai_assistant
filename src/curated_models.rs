@@ -76,7 +76,19 @@ fn provider_matches(catalog: &AiProvider, query: &AiProvider) -> bool {
 
 const CURATED_MODELS: &[CuratedModel] = &[
     // ------------------------------------------------------------------
-    // PrismML Bonsai — 1-bit Qwen3 derivatives (llama.cpp / PrismML fork)
+    // PrismML Bonsai — 1-bit Qwen3 derivatives.
+    //
+    // These ran on the PrismML fork and these entries said so: "upstream
+    // llama.cpp does not ship Q1_0". That stopped being true. `GGML_TYPE_Q1_0`
+    // is in `ggml-org/llama.cpp` across the CUDA, SYCL and Vulkan backends, and
+    // PrismML's own documentation says 1-bit is merged upstream and only
+    // ternary (`Q2_0`) still needs the fork.
+    //
+    // A stale requirement is not a harmless one. This field is shown to the
+    // person deciding, so the sentence was telling people they needed to go
+    // and fetch a particular fork of llama.cpp to run a model their ordinary
+    // build already handles — which, for anyone who is not going to argue with
+    // it, means not running it at all.
     // ------------------------------------------------------------------
     CuratedModel {
         provider: AiProvider::LlamaCpp,
@@ -89,7 +101,7 @@ const CURATED_MODELS: &[CuratedModel] = &[
         quantization: "Q1_0 (1.125 bpw)",
         source_url: Some("https://huggingface.co/prism-ml/Bonsai-8B-gguf"),
         requirements: Some(
-            "Requires PrismML fork: github.com/PrismML-Eng/llama.cpp (upstream llama.cpp does not ship Q1_0).",
+            "Needs a recent llama.cpp: `Q1_0` is in upstream now, but a build from before it landed cannot load these.",
         ),
     },
     CuratedModel {
@@ -101,7 +113,7 @@ const CURATED_MODELS: &[CuratedModel] = &[
         approx_size: "~600 MB",
         quantization: "Q1_0 (1.125 bpw)",
         source_url: Some("https://huggingface.co/prism-ml/Bonsai-4B-gguf"),
-        requirements: Some("Requires PrismML fork of llama.cpp for Q1_0 support."),
+        requirements: Some("Needs a recent llama.cpp: `Q1_0` is in upstream now, but a build from before it landed cannot load these."),
     },
     CuratedModel {
         provider: AiProvider::LlamaCpp,
@@ -112,7 +124,7 @@ const CURATED_MODELS: &[CuratedModel] = &[
         approx_size: "~250 MB",
         quantization: "Q1_0 (1.125 bpw)",
         source_url: Some("https://huggingface.co/prism-ml/Bonsai-1.7B-gguf"),
-        requirements: Some("Requires PrismML fork of llama.cpp for Q1_0 support."),
+        requirements: Some("Needs a recent llama.cpp: `Q1_0` is in upstream now, but a build from before it landed cannot load these."),
     },
     // ------------------------------------------------------------------
     // PrismML Ternary Bonsai — {-1, 0, 1} weights
@@ -445,15 +457,39 @@ mod tests {
     }
 
     #[test]
-    fn bonsai_entries_flag_prismml_fork_requirement() {
+    fn bonsai_entries_say_what_they_actually_need() {
+        // This test used to assert that EVERY Bonsai entry demanded the
+        // PrismML fork, which is how the claim survived after it stopped
+        // being true: the test pinned the sentence rather than checking the
+        // fact. `GGML_TYPE_Q1_0` is in `ggml-org/llama.cpp` across the CUDA,
+        // SYCL and Vulkan backends, and PrismML's own documentation says 1-bit
+        // is merged upstream and only ternary still needs the fork.
+        //
+        // So the rule under test is the real one, and it separates the two
+        // cases. A test that cannot tell them apart cannot catch this drifting
+        // again in either direction.
         for m in all_curated_models() {
-            if m.id.contains("Bonsai") || m.id.contains("Ternary") {
-                let req = m
-                    .requirements
-                    .expect("Bonsai/Ternary must declare PrismML requirement");
+            let is_ternary = m.id.contains("Ternary");
+            let is_bonsai = m.id.contains("Bonsai");
+            if !is_bonsai && !is_ternary {
+                continue;
+            }
+
+            let req = m
+                .requirements
+                .expect("every Bonsai entry says something about what runs it")
+                .to_lowercase();
+
+            if is_ternary {
                 assert!(
-                    req.to_lowercase().contains("prismml") || req.to_lowercase().contains("prism"),
-                    "requirement should mention PrismML fork: {}",
+                    req.contains("prism"),
+                    "ternary weights need PrismML's fork; stock builds cannot load them: {}",
+                    m.id
+                );
+            } else {
+                assert!(
+                    !req.contains("prism"),
+                    "Q1_0 is upstream: sending the user after a fork keeps the model                      out of reach just as effectively as not shipping it: {}",
                     m.id
                 );
             }
