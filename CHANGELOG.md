@@ -5,6 +5,66 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v197 (2026-09-16) — V322: ningún crate de fuera podía construir un catálogo de modelos (0.2.274)
+
+`ModelVariant` y `ModelFamily` son `#[non_exhaustive]` y **no tenían ningún constructor**.
+Dentro del crate eso no se nota — una expresión de struct funciona y ya está — pero
+`#[non_exhaustive]` prohíbe exactamente eso desde fuera. El efecto: nadie ajeno a la
+librería podía montar un `ModelRegistry` propio, y por tanto `model_recommender::recommend`
+era, en la práctica, privado del crate. Nadie decidió eso; simplemente **nunca se había
+consumido la librería desde fuera**.
+
+Apareció al construir un crate aparte contra `ai_assistant`. Es la misma mancha ciega que
+dejó pudrirse 19 de 104 ejemplos de documentación hasta V317: *los tests unitarios compilan
+dentro, los consumidores reales no*.
+
+### Constructores
+
+- `ModelVariant::new(id, size_bytes, source)` más `with_display_name`, `with_sweet_spots`,
+  `with_license`, `with_requirements`, `with_quantization`.
+- `ModelFamily::new(id, display_name)` más `with_description`, `with_creator`, `with_tags`,
+  `with_variants`.
+- `ModelRegistry::from_families(families)` — también `#[non_exhaustive]`, así que
+  `ModelRegistry { families, ..Default::default() }` tampoco valía desde fuera.
+- `RecommendationRequest::new()` más `for_task`, `at_least`, `with_privacy`,
+  `no_larger_than`, `within_latency_ms`, `with_hint`. Este tenía `Default` pero ningún
+  builder, así que la única vía desde fuera era `let mut r = Default::default();` y asignar
+  campos — un patrón que **clippy marca por defecto** (`field_reassign_with_default`). El
+  único camino soportado dejaba a todo consumidor externo eligiendo entre un error de
+  compilación y un aviso del linter.
+
+### Y el caso más claro de todos: hardware declarado
+
+`set_declared(info: HardwareInfo) -> bool` es **pública y documentada** — «inyecta un
+snapshot declarado a mano; útil para tests y para hosts donde las sondas están
+deliberadamente desactivadas» — y **ningún llamante externo podía construir el
+`HardwareInfo` que exige**. La variante `HardwareSource::Declared` existe, es decir, el
+diseño previó que el hardware pudiera venir de otro sitio que no fuera una sonda, y luego
+no dejó forma de expresarlo. Una función pública que estructuralmente no se puede llamar
+es deuda declarada en estado puro.
+
+Constructores para las seis: `HardwareInfo::declared(cpu, ram)` — que fija
+`source = Declared`, para que el consumidor distinga lo afirmado de lo medido antes de
+fiarse de algo como `vram_free_bytes` — más `with_gpus` / `with_os`; `CpuInfo::new`,
+`RamInfo::new`, `GpuInfo::new`, `OsInfo::new` con sus `with_*`; y `CpuFeatures::x86_64_modern()`
+y `CpuFeatures::aarch64()`, porque el `Default` de ese struct dice «este procesador no tiene
+AVX», que de casi cualquier máquina real es falso y hace el plan más lento de lo que debe.
+
+### El guardián es un doctest, y no podía ser otra cosa
+
+Un doctest se compila **como crate aparte**, así que es la única prueba del repositorio que
+puede fallar cuando un consumidor externo no consigue construir uno de estos. Un test
+unitario aquí pasaría igual con el agujero abierto — que es precisamente por qué el agujero
+llevaba ahí desde que existe el módulo.
+
+Se ganó el sueldo dos veces antes de pasar: un `SweetSpot::GeneralChat` que no existe y un
+`TaskKind` importado del módulo equivocado. Dos errores en seis líneas de ejemplo, escritas
+mirando el fuente.
+
+En total, **once tipos** de la librería eran inconstruibles desde fuera. Ninguno lo era por
+decisión: `#[non_exhaustive]` se puso para poder añadir campos sin romper a nadie, y el
+efecto colateral — que nadie pueda construirlos — solo se ve desde fuera del crate.
+
 ## [Unreleased] - v196 (2026-09-14) — V321: las guardas de salida se aplican, y también cuando hay streaming (0.2.273)
 
 Cierra N63 y N64. La decisión del autor sobre N63 fue «lo más completo posible», y lo más

@@ -64,6 +64,71 @@ pub struct RecommendationRequest {
     pub max_size_bytes: Option<u64>,
 }
 
+/// Builders, because the struct is `#[non_exhaustive]`.
+///
+/// Outside this crate `RecommendationRequest { min_quality_tier, ..Default::default() }`
+/// does not compile, and the fallback — `let mut r = Default::default();`
+/// followed by field assignment — is a pattern clippy flags by default
+/// (`field_reassign_with_default`). So the only supported way in left every
+/// external caller choosing between a compile error and a lint. Same class of
+/// hole as [`crate::models_dev::ModelVariant::new`], found the same way.
+///
+/// ```
+/// use ai_assistant::model_recommender::{QualityTier, RecommendationRequest, TaskKind};
+///
+/// let request = RecommendationRequest::new()
+///     .for_task(TaskKind::Coding)
+///     .at_least(QualityTier::Balanced)
+///     .no_larger_than(4_000_000_000);
+///
+/// assert_eq!(request.task, TaskKind::Coding);
+/// assert_eq!(request.max_size_bytes, Some(4_000_000_000));
+/// ```
+impl RecommendationRequest {
+    /// The default request: a general task, preferring local, balanced quality.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// What the model is wanted for.
+    pub fn for_task(mut self, task: TaskKind) -> Self {
+        self.task = task;
+        self
+    }
+
+    /// The floor on quality. Nothing below this tier is offered.
+    pub fn at_least(mut self, tier: QualityTier) -> Self {
+        self.min_quality_tier = tier;
+        self
+    }
+
+    /// Where the work may run.
+    pub fn with_privacy(mut self, privacy: PrivacyConstraint) -> Self {
+        self.privacy = privacy;
+        self
+    }
+
+    /// Cap on variant size on disk. The deciding constraint whenever the model
+    /// has to be downloaded or carried rather than already installed.
+    pub fn no_larger_than(mut self, bytes: u64) -> Self {
+        self.max_size_bytes = Some(bytes);
+        self
+    }
+
+    /// Cap on how long an answer may take.
+    pub fn within_latency_ms(mut self, ms: u32) -> Self {
+        self.max_latency_ms = Some(ms);
+        self
+    }
+
+    /// Free-form text for the optional LLM advisor. Never parsed by the
+    /// rule-based pipeline.
+    pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
+        self.user_hint = Some(hint.into());
+        self
+    }
+}
+
 impl Default for RecommendationRequest {
     fn default() -> Self {
         Self {

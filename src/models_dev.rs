@@ -626,6 +626,162 @@ pub struct ModelFamily {
     pub lora_adapters: Vec<LoraAdapter>,
 }
 
+impl ModelVariant {
+    /// A variant with the three things that cannot be guessed: what it is
+    /// called, how big it is, and where it comes from.
+    ///
+    /// # Why this exists
+    ///
+    /// The type is `#[non_exhaustive]` and had no constructor, which meant no
+    /// code outside this crate could build one — and therefore no outside code
+    /// could assemble a [`ModelRegistry`] to hand to
+    /// [`crate::model_recommender::recommend`]. The recommender was effectively
+    /// crate-private without anyone deciding that it should be.
+    ///
+    /// It only surfaced when the library was consumed from a separate crate for
+    /// the first time. Inside the crate a struct expression works and the hole
+    /// is invisible, which is the same blind spot that let doc examples rot:
+    /// unit tests compile *inside*, real consumers do not.
+    ///
+    /// Which is why the guard against it returning is **this example**. A doc
+    /// example is compiled as a separate crate, so it is the only test in the
+    /// repository that can fail when an outside caller cannot build one of
+    /// these. A unit test here would pass either way.
+    ///
+    /// ```
+    /// use ai_assistant::models_dev::{
+    ///     FamilyTag, ModelFamily, ModelRegistry, ModelSource, ModelVariant, SweetSpot,
+    /// };
+    ///
+    /// let variant = ModelVariant::new(
+    ///     "qwen3:4b",
+    ///     2_500_000_000,
+    ///     ModelSource::Ollama { tag: "qwen3:4b".into() },
+    /// )
+    /// .with_display_name("Qwen 3 4B")
+    /// .with_sweet_spots(vec![SweetSpot::VramEfficiency])
+    /// .with_license("apache-2.0");
+    ///
+    /// let family = ModelFamily::new("qwen3", "Qwen 3")
+    ///     .with_creator("Alibaba")
+    ///     .with_tags(vec![FamilyTag::GeneralChat])
+    ///     .with_variants(vec![variant]);
+    ///
+    /// let registry = ModelRegistry::from_families(vec![family]);
+    /// assert_eq!(registry.families.len(), 1);
+    /// assert!(registry.find_variant("qwen3:4b").is_some());
+    /// ```
+    pub fn new(id: impl Into<String>, size_bytes: u64, source: ModelSource) -> Self {
+        Self {
+            id: id.into(),
+            display_name: None,
+            variant_kind: Default::default(),
+            quantization: None,
+            modifier: None,
+            size_bytes,
+            requirements: Default::default(),
+            source,
+            sweet_spot_for: Vec::new(),
+            provenance: Default::default(),
+            license: String::new(),
+        }
+    }
+
+    /// Set the label shown to a person, rather than the id.
+    pub fn with_display_name(mut self, name: impl Into<String>) -> Self {
+        self.display_name = Some(name.into());
+        self
+    }
+
+    /// Set what this variant is *for*, which is the axis
+    /// [`crate::model_recommender::recommend`] scores on. A variant with none
+    /// scores the same as every other, so a caller offering several will find
+    /// they all tie.
+    pub fn with_sweet_spots(mut self, spots: Vec<SweetSpot>) -> Self {
+        self.sweet_spot_for = spots;
+        self
+    }
+
+    /// Record the licence. Worth setting whenever the weights might be
+    /// redistributed, because shipping a model file is redistribution and this
+    /// is the field that answers whether that is allowed.
+    pub fn with_license(mut self, license: impl Into<String>) -> Self {
+        self.license = license.into();
+        self
+    }
+
+    /// Set the hardware this variant needs.
+    pub fn with_requirements(mut self, requirements: HardwareRequirements) -> Self {
+        self.requirements = requirements;
+        self
+    }
+
+    /// Set the quantization scheme.
+    pub fn with_quantization(mut self, quantization: Quantization) -> Self {
+        self.quantization = Some(quantization);
+        self
+    }
+}
+
+impl ModelFamily {
+    /// A family with an id and a name. Everything else is optional and can be
+    /// added with the `with_*` methods.
+    ///
+    /// Same reason as [`ModelVariant::new`]: `#[non_exhaustive]` with no
+    /// constructor is unconstructible from outside the crate.
+    pub fn new(id: impl Into<String>, display_name: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            display_name: display_name.into(),
+            creator: String::new(),
+            description: String::new(),
+            modality: Default::default(),
+            context_window: None,
+            training_cutoff: None,
+            family_tags: Vec::new(),
+            variants: Vec::new(),
+            lora_adapters: Vec::new(),
+        }
+    }
+
+    /// One line on what this family is good at.
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = description.into();
+        self
+    }
+
+    /// Who made the base model.
+    pub fn with_creator(mut self, creator: impl Into<String>) -> Self {
+        self.creator = creator.into();
+        self
+    }
+
+    /// Coarse tags used for routing and recommendation.
+    pub fn with_tags(mut self, tags: Vec<FamilyTag>) -> Self {
+        self.family_tags = tags;
+        self
+    }
+
+    /// The concrete variants a caller can actually run.
+    pub fn with_variants(mut self, variants: Vec<ModelVariant>) -> Self {
+        self.variants = variants;
+        self
+    }
+}
+
+impl ModelRegistry {
+    /// A registry holding these families and nothing else.
+    ///
+    /// The struct is `#[non_exhaustive]`, so an outside caller could not write
+    /// `ModelRegistry { families, ..Default::default() }` either.
+    pub fn from_families(families: Vec<ModelFamily>) -> Self {
+        Self {
+            families,
+            ..Default::default()
+        }
+    }
+}
+
 impl ModelFamily {
     /// Lookup a variant by id within this family.
     pub fn lookup_variant(&self, id: &str) -> Option<&ModelVariant> {

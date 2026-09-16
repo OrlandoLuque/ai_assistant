@@ -45,6 +45,208 @@ pub struct HardwareInfo {
     pub os: OsInfo,
 }
 
+// ---------------------------------------------------------------------------
+// Constructors
+//
+// These types are `#[non_exhaustive]` and had none, which made `set_declared`
+// — a public, documented function whose whole purpose is "inject a
+// manually-declared snapshot" — impossible to call from outside this crate.
+// The `HardwareSource::Declared` variant existed, so the design anticipated
+// hardware arriving from somewhere other than a probe, and then left no way to
+// express it. Found by consuming the library from a separate crate for the
+// first time; see V322 for the same hole in the model catalogue.
+// ---------------------------------------------------------------------------
+
+impl HardwareInfo {
+    /// A snapshot the caller is asserting rather than probing: read from a
+    /// config file, describing a machine that is not this one, or fixed for a
+    /// test.
+    ///
+    /// [`Self::source`] is [`HardwareSource::Declared`], which is what lets a
+    /// consumer tell asserted numbers from measured ones before trusting
+    /// something like `vram_free_bytes`.
+    ///
+    /// ```
+    /// use ai_assistant::hardware_info::{CpuInfo, GpuInfo, GpuVendor, HardwareInfo,
+    ///                                   HardwareSource, RamInfo};
+    ///
+    /// let info = HardwareInfo::declared(
+    ///     CpuInfo::new("AuthenticAMD", "Ryzen 7 5800X", 8, 16),
+    ///     RamInfo::new(32_000_000_000, 20_000_000_000),
+    /// )
+    /// .with_gpus(vec![
+    ///     GpuInfo::new(GpuVendor::Nvidia, "RTX 4080 SUPER", 16_000_000_000),
+    /// ]);
+    ///
+    /// assert_eq!(info.source, HardwareSource::Declared);
+    /// assert_eq!(info.gpus.len(), 1);
+    /// ```
+    pub fn declared(cpu: CpuInfo, ram: RamInfo) -> Self {
+        Self {
+            source: HardwareSource::Declared,
+            cpu,
+            ram,
+            gpus: Vec::new(),
+            os: OsInfo::default(),
+        }
+    }
+
+    /// The graphics cards on the declared machine. Absent this, the snapshot
+    /// says there are none, which is a claim and not a gap.
+    pub fn with_gpus(mut self, gpus: Vec<GpuInfo>) -> Self {
+        self.gpus = gpus;
+        self
+    }
+
+    /// The operating system of the declared machine.
+    pub fn with_os(mut self, os: OsInfo) -> Self {
+        self.os = os;
+        self
+    }
+}
+
+impl CpuInfo {
+    /// A processor described by the four things anything downstream actually
+    /// branches on.
+    pub fn new(
+        vendor: impl Into<String>,
+        brand: impl Into<String>,
+        physical_cores: usize,
+        logical_cores: usize,
+    ) -> Self {
+        Self {
+            vendor: vendor.into(),
+            brand: brand.into(),
+            physical_cores,
+            logical_cores,
+            base_freq_mhz: None,
+            features: CpuFeatures::default(),
+        }
+    }
+
+    /// Instruction sets this processor supports. Worth setting: a CPU-only plan
+    /// is much slower without AVX2, and defaulting to "none" understates most
+    /// real machines.
+    pub fn with_features(mut self, features: CpuFeatures) -> Self {
+        self.features = features;
+        self
+    }
+
+    /// Base clock, where it is known.
+    pub fn with_base_freq_mhz(mut self, mhz: u32) -> Self {
+        self.base_freq_mhz = Some(mhz);
+        self
+    }
+}
+
+impl CpuFeatures {
+    /// The flags a modern x86-64 desktop or laptop has. A convenience, and an
+    /// honest one only where it is true — check before asserting it of a
+    /// machine you have not looked at.
+    pub fn x86_64_modern() -> Self {
+        Self {
+            avx: true,
+            avx2: true,
+            avx512: false,
+            fma: true,
+            f16c: true,
+            neon: false,
+        }
+    }
+
+    /// The flags of an Apple Silicon or other AArch64 machine.
+    pub fn aarch64() -> Self {
+        Self {
+            neon: true,
+            ..Self::default()
+        }
+    }
+}
+
+impl RamInfo {
+    /// Total and currently-free memory, in bytes.
+    ///
+    /// Both matter and they are not interchangeable: a plan is sized against
+    /// *free* memory, because the user has other programs open and the model is
+    /// about to sit next to them.
+    pub fn new(total_bytes: u64, free_bytes: u64) -> Self {
+        Self {
+            total_bytes,
+            free_bytes,
+        }
+    }
+}
+
+impl GpuInfo {
+    /// A graphics card described by vendor, name and total VRAM.
+    pub fn new(vendor: GpuVendor, name: impl Into<String>, vram_bytes: u64) -> Self {
+        Self {
+            vendor,
+            name: name.into(),
+            vram_bytes,
+            vram_free_bytes: None,
+            compute_capability: None,
+            driver_version: None,
+            backend_support: Vec::new(),
+        }
+    }
+
+    /// Currently-free VRAM, where the driver reports it. Leaving it `None` is
+    /// meaningfully different from zero: Metal and some ROCm builds simply do
+    /// not say.
+    pub fn with_vram_free(mut self, bytes: u64) -> Self {
+        self.vram_free_bytes = Some(bytes);
+        self
+    }
+
+    /// NVIDIA compute capability, e.g. `"8.9"` for sm_89.
+    pub fn with_compute_capability(mut self, cc: impl Into<String>) -> Self {
+        self.compute_capability = Some(cc.into());
+        self
+    }
+
+    /// Driver version string.
+    pub fn with_driver_version(mut self, version: impl Into<String>) -> Self {
+        self.driver_version = Some(version.into());
+        self
+    }
+
+    /// Backend names this card is known to work with.
+    pub fn with_backend_support(mut self, backends: Vec<String>) -> Self {
+        self.backend_support = backends;
+        self
+    }
+}
+
+impl OsInfo {
+    /// An operating system described by family, name and architecture.
+    pub fn new(
+        family: impl Into<String>,
+        name: impl Into<String>,
+        arch: impl Into<String>,
+    ) -> Self {
+        Self {
+            family: family.into(),
+            name: name.into(),
+            version: String::new(),
+            kernel: String::new(),
+            arch: arch.into(),
+        }
+    }
+
+    /// Release version of the operating system.
+    pub fn with_version(mut self, version: impl Into<String>) -> Self {
+        self.version = version.into();
+        self
+    }
+
+    /// Kernel version.
+    pub fn with_kernel(mut self, kernel: impl Into<String>) -> Self {
+        self.kernel = kernel.into();
+        self
+    }
+}
+
 /// Provenance of a [`HardwareInfo`] snapshot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
