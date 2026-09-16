@@ -119,11 +119,38 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
 /// worth more than silently serving a shorter list: a client that cannot find a tool
 /// otherwise has no way to tell a missing feature from a bug.
 fn build_server(opts: &Options) -> (McpServer, Vec<String>) {
+    use ai_assistant::mcp_publish::{PublishConfig, ToolGroup};
+
     let mut server = McpServer::new(NAME, VERSION);
     let mut absent: Vec<String> = Vec::new();
 
-    // --- Configuration tools (always available under `tools`) ---
-    {
+    // What the operator lets this server offer. A missing file means the
+    // risk-based defaults; a malformed one is fatal rather than ignored,
+    // because quietly falling back would publish groups they may have been
+    // trying to withhold.
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(PathBuf::from))
+        .unwrap_or_else(|| PathBuf::from("."));
+    let publish = match PublishConfig::load_beside(&exe_dir) {
+        Ok(found) => found.unwrap_or_default(),
+        Err(e) => {
+            // Refusing to start is the right answer here: serving a tool list
+            // built from guessed policy is worse than serving none.
+            eprintln!("[mcp] {e}");
+            eprintln!("[mcp] refusing to start: fix the file or remove it to use the defaults");
+            std::process::exit(2);
+        }
+    };
+
+    // Everything the policy withholds, reported like any other absence. A
+    // client that cannot find a tool has no way to tell policy from a bug.
+    for (group, reason) in publish.withheld() {
+        absent.push(format!("{} tools: {reason}", group.key()));
+    }
+
+    // --- Configuration tools ---
+    if publish.publishes(ToolGroup::Config) {
         let config = ai_assistant::config_file::default_config_path();
         let loaded = if config.exists() {
             ai_assistant::config_file::load_config(&config).unwrap_or_default()
@@ -143,32 +170,36 @@ fn build_server(opts: &Options) -> (McpServer, Vec<String>) {
     }
 
     // --- Task tools ---
-    match ai_assistant::mcp_task_tools::UserTaskStore::open(&opts.db_path) {
-        Ok(store) => {
-            ai_assistant::mcp_task_tools::register_task_tools(
-                &mut server,
-                Arc::new(Mutex::new(store)),
-            );
-        }
-        Err(e) => {
-            // Do not abort: a broken task store is a reason to serve fewer tools, not a
-            // reason to serve none. Reported so it is not mistaken for a shorter build.
-            absent.push(format!(
-                "task tools: could not open {} ({e})",
-                opts.db_path.display()
-            ));
+    if publish.publishes(ToolGroup::Tasks) {
+        match ai_assistant::mcp_task_tools::UserTaskStore::open(&opts.db_path) {
+            Ok(store) => {
+                ai_assistant::mcp_task_tools::register_task_tools(
+                    &mut server,
+                    Arc::new(Mutex::new(store)),
+                );
+            }
+            Err(e) => {
+                // Do not abort: a broken task store is a reason to serve fewer tools, not a
+                // reason to serve none. Reported so it is not mistaken for a shorter build.
+                absent.push(format!(
+                    "task tools: could not open {} ({e})",
+                    opts.db_path.display()
+                ));
+            }
         }
     }
 
     // --- Benchmark tools ---
     #[cfg(feature = "eval")]
-    ai_assistant::mcp_protocol::register_benchmark_tools(&mut server);
+    if publish.publishes(ToolGroup::Benchmarks) {
+        ai_assistant::mcp_protocol::register_benchmark_tools(&mut server);
+    }
     #[cfg(not(feature = "eval"))]
     absent.push("benchmark tools: built without the `eval` feature".to_string());
 
     // --- Knowledge tools ---
     #[cfg(feature = "rag")]
-    {
+    if publish.publishes(ToolGroup::Knowledge) {
         let rag_db = PathBuf::from("ai_assistant_rag.db");
         ai_assistant::mcp_protocol::knowledge_tools::register_knowledge_tools(
             &mut server,
@@ -185,9 +216,74 @@ fn build_server(opts: &Options) -> (McpServer, Vec<String>) {
     // catalogued, but nothing registered them here, so a client could read
     // `search_papers` in the docs and never find it on the wire.
     #[cfg(feature = "research")]
-    ai_assistant::mcp_protocol::research_tools::register_research_tools(&mut server);
+    if publish.publishes(ToolGroup::Research) {
+        ai_assistant::mcp_protocol::research_tools::register_research_tools(&mut server);
+    }
     #[cfg(not(feature = "research"))]
     absent.push("research tools: built without the `research` feature".to_string());
+
+    // --- Event tools ---
+    //
+    // Wired here for the first time: the library has had `register_event_tools`
+    // ready for a long time and nothing called it. Off by default — it can
+    // change what the kit reacts to — so this only runs when asked.
+    #[cfg(feature = "tools")]
+    if publish.publishes(ToolGroup::Events) {
+        let manager = ai_assistant::event_source::EventSourceManager::new();
+        ai_assistant::mcp_event_tools::register_event_tools(
+            &mut server,
+            Arc::new(Mutex::new(manager)),
+        );
+    }
+
+    // --- Container tools ---
+    #[cfg(feature = "containers")]
+    if publish.publishes(ToolGroup::Containers) {
+        match ai_assistant::container_executor::ContainerExecutor::new(Default::default()) {
+            Ok(executor) => {
+                ai_assistant::mcp_docker_tools::register_mcp_docker_tools(
+                    &mut server,
+                    Arc::new(std::sync::RwLock::new(executor)),
+                );
+            }
+            Err(e) => absent.push(format!(
+                "containers tools: asked for, but no container runtime could be reached ({e})"
+            )),
+        }
+    }
+    #[cfg(not(feature = "containers"))]
+    if publish.publishes(ToolGroup::Containers) {
+        absent.push("containers tools: built without the `containers` feature".to_string());
+    }
+
+    // --- Groups that need something this server cannot build ---
+    //
+    // Not an oversight and not laziness: each of these takes a dependency that
+    // has to come from outside. The agent pool needs a response generator (an
+    // LLM), home automation needs a backend that talks to real devices, and the
+    // speaker gate needs a verifier trained on someone's voice. A standalone
+    // stdio server has no way to conjure any of them.
+    //
+    // This is the same shape as the research tools before V310: a complete
+    // `register_*` that nothing could call because its dependency lived
+    // somewhere else. Saying so is the point — an operator who switches one of
+    // these on deserves to be told why nothing appeared, rather than being left
+    // to wonder whether the switch works.
+    for (group, needs) in [
+        (
+            ToolGroup::Agents,
+            "a response generator to drive the agents",
+        ),
+        (ToolGroup::Home, "a backend connected to real devices"),
+        (ToolGroup::Voice, "a speaker verifier enrolled on a voice"),
+    ] {
+        if publish.publishes(group) {
+            absent.push(format!(
+                "{} tools: asked for, but this server cannot supply {needs}. Embed the library and register them yourself.",
+                group.key()
+            ));
+        }
+    }
 
     (server, absent)
 }

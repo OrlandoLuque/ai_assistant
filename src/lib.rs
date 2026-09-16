@@ -165,6 +165,9 @@ mod messages;
 pub mod model_recommender;
 mod models;
 pub mod models_dev;
+// What the kit offers over MCP, and what the operator lets it offer.
+#[cfg(feature = "tools")]
+pub mod mcp_publish;
 mod providers;
 mod session;
 
