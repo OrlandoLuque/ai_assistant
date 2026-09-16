@@ -1056,7 +1056,14 @@ pub struct CacheEntryInfo {
     pub size_bytes: usize,
 }
 
-// Base64 helper functions
+// Base64 helper functions.
+//
+// Gated exactly like their only callers, which are the two methods of the
+// `#[cfg(feature = "rag")] impl PersistentCache` above. Without the gate they
+// are dead code in every build that leaves `rag` out, which is how a narrow
+// feature set ends up emitting warnings in a project whose rule is that there
+// are none. CI only builds two wide feature sets, so nothing saw it.
+#[cfg(feature = "rag")]
 fn base64_encode(data: &[u8]) -> String {
     const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -1091,6 +1098,7 @@ fn base64_encode(data: &[u8]) -> String {
     result
 }
 
+#[cfg(feature = "rag")]
 fn base64_decode(data: &str) -> Result<Vec<u8>> {
     let mut result = Vec::new();
     let data = data.trim_end_matches('=');

@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v198 (2026-09-16) — V323: cuatro avisos que solo salen con pocas features (0.2.275)
+
+La regla del proyecto es cero avisos del compilador. Se cumple en los dos conjuntos de
+features que CI construye — ambos anchos — y no en los estrechos, que no construye nadie.
+Compilar con `default-features = false` y tres features saca cuatro:
+
+- `base64_encode` y `base64_decode` de `persistence.rs` sin usar. No sobran: sus dos
+  únicos llamantes están dentro del `#[cfg(feature = "rag")] impl PersistentCache`, y las
+  funciones estaban sin gatear. Ahora llevan el mismo `cfg` que sus llamantes.
+- Los campos `role` y `content` de `OpenAIChatMessage` nunca leídos. Es el mismo caso que
+  su propio padre `OpenAIChatRequest`, que ya lo decía: se deserializan por compatibilidad
+  con la API de OpenAI. Le faltaba el `allow` y el motivo escrito.
+- `WS_MAGIC_GUID` sin usar, cuando su único llamante es `ws_handshake`, gateada en
+  `advanced-streaming`. Mismo `cfg`.
+
+### Y por el camino, una rotura de verdad
+
+Gatear la constante destapó que **`test_ws_handshake_writes_101` llamaba a `ws_handshake`
+sin gatearse**, es decir, el módulo de tests de `server.rs` no compilaba sin
+`advanced-streaming`. Los tres tests de WebSocket llevan ya el `cfg` de lo que prueban.
+
+Eso, a su vez, destapó algo más grande que **no** arregla este cambio: con features
+estrechas, `cargo test --lib` acumula **108 errores** de compilación — referencias a
+`crate::mcp_protocol`, `crate::websocket_streaming` y `crate::pii_detection` desde tests sin
+gatear. La librería compila; sus tests no. Queda anotado como tarea aparte, porque es un
+barrido, no un parche.
+
 ## [Unreleased] - v197 (2026-09-16) — V322: ningún crate de fuera podía construir un catálogo de modelos (0.2.274)
 
 `ModelVariant` y `ModelFamily` son `#[non_exhaustive]` y **no tenían ningún constructor**.

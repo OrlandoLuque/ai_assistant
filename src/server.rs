@@ -1097,6 +1097,7 @@ struct OpenAIChatRequest {
 
 /// A single message in the OpenAI chat format.
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)] // fields deserialized for API compatibility
 struct OpenAIChatMessage {
     role: String,
     content: String,
@@ -1539,6 +1540,7 @@ fn build_sse_response(sse_body: &str, extra_headers: &str) -> String {
 // ============================================================================
 
 /// WebSocket magic GUID for Sec-WebSocket-Accept (RFC 6455 §4.2.2).
+#[cfg(feature = "advanced-streaming")]
 const WS_MAGIC_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 /// Read a single WebSocket frame from a stream (RFC 6455 §5.2).
@@ -4936,11 +4938,13 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "advanced-streaming")]
     fn test_ws_magic_guid_correct() {
         assert_eq!(WS_MAGIC_GUID, "258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
     }
 
     #[test]
+    #[cfg(feature = "advanced-streaming")]
     fn test_ws_handshake_accept_value() {
         // RFC 6455 §4.2.2 example: key = "dGhlIHNhbXBsZSBub25jZQ=="
         // Expected accept = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
@@ -4953,6 +4957,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "advanced-streaming")]
     fn test_ws_handshake_writes_101() {
         let headers = vec![(
             "sec-websocket-key".to_string(),
