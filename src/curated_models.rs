@@ -12,10 +12,65 @@
 //!
 //! Each entry carries enough metadata for a UI picker: display name,
 //! short description, approximate weight size, Hugging Face URL (if any),
-//! and a `requirements` note that surfaces non-obvious constraints such
-//! as "requires PrismML fork for `Q1_0` quantization".
+//! and a `requirements` note that surfaces non-obvious constraints such as
+//! needing a particular build of the engine.
+//!
+//! It also records the **licence** and what that licence lets a redistributor
+//! do ([`Redistribution`]). Putting a model file on a drive, or into an
+//! installer, is redistributing it, and the families differ sharply: Qwen,
+//! Mistral and PrismML's Bonsai are Apache-2.0; Gemma and Llama allow it but
+//! charge specific, checkable duties for the privilege. Those values are what
+//! the licence texts say, with the date they were read, not a legal opinion --
+//! and anything not established reads as "do not ship".
 
 use crate::config::AiProvider;
+
+/// What a model's licence lets a redistributor do.
+///
+/// # Why this is a field and not a document
+///
+/// Putting a model file on a drive, or into an installer, is **redistributing
+/// it**, and the licences differ on whether that is allowed and on what the
+/// distributor owes in return. Until this existed the catalogue recorded no
+/// licence at all, so any code asking "may we ship this one?" had nothing to
+/// read and the answer lived in somebody's head.
+///
+/// # What this is not
+///
+/// These values record what the model card and licence text **say**, with the
+/// source and the date of reading in the entry's notes. They are research, not
+/// a legal opinion, and deciding what to actually ship is not a decision this
+/// file makes. The default is therefore the conservative one: anything not
+/// known to be redistributable is treated as not redistributable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Redistribution {
+    /// A permissive licence with the usual notice-retention duty: Apache-2.0,
+    /// MIT. Shipping the file is allowed; keep the notices.
+    Permissive,
+    /// Allowed, but the distributor owes specific, checkable things --
+    /// forwarding the terms, shipping a NOTICE file, displaying a phrase.
+    /// See [`CuratedModel::redistribution_note`].
+    WithConditions,
+    /// Not established. Treat as "do not ship" until somebody reads the
+    /// licence and changes this, which is the safe direction to be wrong in.
+    Unknown,
+    /// There is nothing to redistribute: the model runs behind somebody's API
+    /// and no weights exist to put on a drive. Distinct from `Unknown`, which
+    /// means "we did not find out".
+    NotDistributed,
+}
+
+impl Redistribution {
+    /// May the kit put this file on a drive without further human input?
+    ///
+    /// `WithConditions` is **false** on purpose. The conditions are real
+    /// obligations, and a program cannot confirm that a NOTICE file was
+    /// written or that "Built with Llama" appears on a page.
+    pub fn shippable_unattended(&self) -> bool {
+        matches!(self, Redistribution::Permissive)
+    }
+}
 
 /// Curated model entry.
 #[derive(Debug, Clone)]
@@ -38,6 +93,15 @@ pub struct CuratedModel {
     pub source_url: Option<&'static str>,
     /// Special requirements (e.g. "requires PrismML fork of llama.cpp").
     pub requirements: Option<&'static str>,
+    /// The licence the weights are published under, as written on the model
+    /// card. The string is the identifier, not a summary.
+    pub license: &'static str,
+    /// What that licence lets a redistributor do. See [`Redistribution`].
+    pub redistribution: Redistribution,
+    /// What the distributor owes, in enough detail to act on, plus where it
+    /// was read and when. `None` for permissive licences, where retaining the
+    /// notices is the whole of it.
+    pub redistribution_note: Option<&'static str>,
 }
 
 /// Return the curated model list for a given provider.
@@ -103,6 +167,11 @@ const CURATED_MODELS: &[CuratedModel] = &[
         requirements: Some(
             "Needs a recent llama.cpp: `Q1_0` is in upstream now, but a build from before it landed cannot load these.",
         ),
+        license: "apache-2.0",
+        redistribution: Redistribution::Permissive,
+        redistribution_note: Some(
+            "Read 2026-09-16 on the model card. Derived from Qwen3, itself Apache-2.0, so the chain is clean.",
+        ),
     },
     CuratedModel {
         provider: AiProvider::LlamaCpp,
@@ -114,6 +183,9 @@ const CURATED_MODELS: &[CuratedModel] = &[
         quantization: "Q1_0 (1.125 bpw)",
         source_url: Some("https://huggingface.co/prism-ml/Bonsai-4B-gguf"),
         requirements: Some("Needs a recent llama.cpp: `Q1_0` is in upstream now, but a build from before it landed cannot load these."),
+        license: "apache-2.0",
+        redistribution: Redistribution::Permissive,
+        redistribution_note: Some("Read 2026-09-16 on the model card. Derived from Qwen3, itself Apache-2.0, so the chain is clean."),
     },
     CuratedModel {
         provider: AiProvider::LlamaCpp,
@@ -125,6 +197,9 @@ const CURATED_MODELS: &[CuratedModel] = &[
         quantization: "Q1_0 (1.125 bpw)",
         source_url: Some("https://huggingface.co/prism-ml/Bonsai-1.7B-gguf"),
         requirements: Some("Needs a recent llama.cpp: `Q1_0` is in upstream now, but a build from before it landed cannot load these."),
+        license: "apache-2.0",
+        redistribution: Redistribution::Permissive,
+        redistribution_note: Some("Read 2026-09-16 on the model card. Derived from Qwen3, itself Apache-2.0, so the chain is clean."),
     },
     // ------------------------------------------------------------------
     // PrismML Ternary Bonsai — {-1, 0, 1} weights
@@ -139,6 +214,9 @@ const CURATED_MODELS: &[CuratedModel] = &[
         quantization: "Ternary (~1.6 bpw)",
         source_url: Some("https://huggingface.co/collections/prism-ml/ternary-bonsai"),
         requirements: Some("Requires PrismML fork of llama.cpp for ternary kernels."),
+        license: "unknown",
+        redistribution: Redistribution::Unknown,
+        redistribution_note: Some("Not established. On 2026-09-16 the Hugging Face API answered 401 for prism-ml/TernaryBonsai-8B and -8B-gguf, so the weights are not publicly readable and no licence tag could be read. The catalogue points at a collection page, not a model repo. Treat as do-not-ship until someone can open the repo and read the licence."),
     },
     CuratedModel {
         provider: AiProvider::LlamaCpp,
@@ -150,6 +228,9 @@ const CURATED_MODELS: &[CuratedModel] = &[
         quantization: "Ternary (~1.6 bpw)",
         source_url: Some("https://huggingface.co/collections/prism-ml/ternary-bonsai"),
         requirements: Some("Requires PrismML fork of llama.cpp for ternary kernels."),
+        license: "unknown",
+        redistribution: Redistribution::Unknown,
+        redistribution_note: Some("Not established. On 2026-09-16 the Hugging Face API answered 401 for prism-ml/TernaryBonsai-8B and -8B-gguf, so the weights are not publicly readable and no licence tag could be read. The catalogue points at a collection page, not a model repo. Treat as do-not-ship until someone can open the repo and read the licence."),
     },
     CuratedModel {
         provider: AiProvider::LlamaCpp,
@@ -161,6 +242,9 @@ const CURATED_MODELS: &[CuratedModel] = &[
         quantization: "Ternary (~1.6 bpw)",
         source_url: Some("https://huggingface.co/collections/prism-ml/ternary-bonsai"),
         requirements: Some("Requires PrismML fork of llama.cpp for ternary kernels."),
+        license: "unknown",
+        redistribution: Redistribution::Unknown,
+        redistribution_note: Some("Not established. On 2026-09-16 the Hugging Face API answered 401 for prism-ml/TernaryBonsai-8B and -8B-gguf, so the weights are not publicly readable and no licence tag could be read. The catalogue points at a collection page, not a model repo. Treat as do-not-ship until someone can open the repo and read the licence."),
     },
     // ------------------------------------------------------------------
     // Generic llama.cpp — community-standard GGUF builds (work on upstream)
@@ -175,6 +259,9 @@ const CURATED_MODELS: &[CuratedModel] = &[
         quantization: "Q4_K_M",
         source_url: Some("https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF"),
         requirements: None,
+        license: "apache-2.0",
+        redistribution: Redistribution::Permissive,
+        redistribution_note: Some("Licence tag read 2026-09-16 via the Hugging Face API."),
     },
     CuratedModel {
         provider: AiProvider::LlamaCpp,
@@ -186,6 +273,9 @@ const CURATED_MODELS: &[CuratedModel] = &[
         quantization: "Q4_K_M",
         source_url: Some("https://huggingface.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF"),
         requirements: None,
+        license: "llama3.1",
+        redistribution: Redistribution::WithConditions,
+        redistribution_note: Some("Llama 3.1 Community License, read 2026-09-16: ship a copy of the agreement (1.b.i), display \"Built with Llama\" prominently (1.b.i), include the notice \"Llama 3.1 is licensed under the Llama 3.1 Community License, Copyright (c) Meta Platforms, Inc. All Rights Reserved.\" (1.b.iii), pass on the Acceptable Use Policy (1.b.iv). Over 700M MAU needs a separate licence from Meta (2)."),
     },
     // ------------------------------------------------------------------
     // Vision (multimodal) — llama.cpp GGUF + mmproj projector files.
@@ -207,6 +297,9 @@ const CURATED_MODELS: &[CuratedModel] = &[
         requirements: Some(
             "Launch with --mmproj <projector.gguf> from the same repo; pass images as base64.",
         ),
+        license: "apache-2.0",
+        redistribution: Redistribution::Permissive,
+        redistribution_note: Some("Licence tag read 2026-09-16 via the Hugging Face API."),
     },
     CuratedModel {
         provider: AiProvider::LlamaCpp,
@@ -221,6 +314,9 @@ const CURATED_MODELS: &[CuratedModel] = &[
         requirements: Some(
             "Launch with --mmproj <projector.gguf>. Use only when 7B+ models do not fit; otherwise prefer Qwen2.5-VL.",
         ),
+        license: "gemma",
+        redistribution: Redistribution::WithConditions,
+        redistribution_note: Some("Gemma Terms of Use section 3.1, read 2026-09-16: forward the section-3.2 use restrictions as an ENFORCEABLE provision, give every recipient a copy of the agreement, and ship a NOTICE text file saying Gemma is subject to the Terms. Commercial distribution is allowed. Download is gated on accepting."),
     },
     // ------------------------------------------------------------------
     // Ollama — by name (matches `ollama pull <name>`)
@@ -235,6 +331,9 @@ const CURATED_MODELS: &[CuratedModel] = &[
         quantization: "Q4_K_M",
         source_url: Some("https://ollama.com/library/qwen2.5"),
         requirements: None,
+        license: "apache-2.0",
+        redistribution: Redistribution::Permissive,
+        redistribution_note: Some("Licence tag read 2026-09-16 via the Hugging Face API."),
     },
     CuratedModel {
         provider: AiProvider::Ollama,
@@ -246,6 +345,9 @@ const CURATED_MODELS: &[CuratedModel] = &[
         quantization: "Q4_K_M",
         source_url: Some("https://ollama.com/library/llama3.1"),
         requirements: None,
+        license: "llama3.1",
+        redistribution: Redistribution::WithConditions,
+        redistribution_note: Some("Llama 3.1 Community License, read 2026-09-16: ship a copy of the agreement (1.b.i), display \"Built with Llama\" prominently (1.b.i), include the notice \"Llama 3.1 is licensed under the Llama 3.1 Community License, Copyright (c) Meta Platforms, Inc. All Rights Reserved.\" (1.b.iii), pass on the Acceptable Use Policy (1.b.iv). Over 700M MAU needs a separate licence from Meta (2)."),
     },
     CuratedModel {
         provider: AiProvider::Ollama,
@@ -257,6 +359,9 @@ const CURATED_MODELS: &[CuratedModel] = &[
         quantization: "Q4_0",
         source_url: Some("https://ollama.com/library/mistral"),
         requirements: None,
+        license: "apache-2.0",
+        redistribution: Redistribution::Permissive,
+        redistribution_note: Some("Licence tag read 2026-09-16 via the Hugging Face API."),
     },
     CuratedModel {
         provider: AiProvider::Ollama,
@@ -268,6 +373,9 @@ const CURATED_MODELS: &[CuratedModel] = &[
         quantization: "Q4_0",
         source_url: Some("https://ollama.com/library/deepseek-coder"),
         requirements: None,
+        license: "deepseek-model",
+        redistribution: Redistribution::WithConditions,
+        redistribution_note: Some("DeepSeek Model License, read 2026-09-16: the paragraph-5 use restrictions MUST be included as an enforceable provision in any agreement (4.a), give recipients a copy of the licence (4.b), retain all notices (4.d). Attachment A forbids military use, harm to minors, discrimination and fully-automated decisions on legal rights, among others."),
     },
     // ------------------------------------------------------------------
     // Ollama — vision (multimodal) models. Same tiering as the LlamaCpp
@@ -286,6 +394,9 @@ const CURATED_MODELS: &[CuratedModel] = &[
         quantization: "Q4_K_M",
         source_url: Some("https://ollama.com/library/qwen2.5vl"),
         requirements: Some("Pull with `ollama pull qwen2.5vl:7b`. Pass images via the multimodal API."),
+        license: "apache-2.0",
+        redistribution: Redistribution::Permissive,
+        redistribution_note: Some("Licence tag read 2026-09-16 via the Hugging Face API."),
     },
     CuratedModel {
         provider: AiProvider::Ollama,
@@ -298,6 +409,9 @@ const CURATED_MODELS: &[CuratedModel] = &[
         quantization: "Q4_K_M",
         source_url: Some("https://ollama.com/library/gemma3"),
         requirements: Some("Pull with `ollama pull gemma3:4b`. Lower OCR accuracy than qwen2.5vl."),
+        license: "gemma",
+        redistribution: Redistribution::WithConditions,
+        redistribution_note: Some("Gemma Terms of Use section 3.1, read 2026-09-16: forward the section-3.2 use restrictions as an ENFORCEABLE provision, give every recipient a copy of the agreement, and ship a NOTICE text file saying Gemma is subject to the Terms. Commercial distribution is allowed. Download is gated on accepting."),
     },
     // ------------------------------------------------------------------
     // vLLM — HuggingFace repo IDs (GPU-backed, OpenAI-compatible)
@@ -313,6 +427,9 @@ const CURATED_MODELS: &[CuratedModel] = &[
         quantization: "fp16 / bf16",
         source_url: Some("https://huggingface.co/Qwen/Qwen2.5-7B-Instruct"),
         requirements: Some("Needs ≥12 GB VRAM at fp16. Use AWQ quantization for ≥8 GB cards."),
+        license: "proprietary (API only)",
+        redistribution: Redistribution::NotDistributed,
+        redistribution_note: Some("An API model: there are no weights to put on a drive."),
     },
     CuratedModel {
         provider: AiProvider::VLLM,
@@ -324,6 +441,9 @@ const CURATED_MODELS: &[CuratedModel] = &[
         quantization: "fp16",
         source_url: Some("https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct"),
         requirements: Some("Gated HF repo — accept license at huggingface.co then export HF_TOKEN."),
+        license: "proprietary (API only)",
+        redistribution: Redistribution::NotDistributed,
+        redistribution_note: Some("An API model: there are no weights to put on a drive."),
     },
     CuratedModel {
         provider: AiProvider::VLLM,
@@ -335,6 +455,9 @@ const CURATED_MODELS: &[CuratedModel] = &[
         quantization: "AWQ 4-bit",
         source_url: Some("https://huggingface.co/Qwen/Qwen2.5-32B-Instruct-AWQ"),
         requirements: Some("Launch with --quantization awq. Needs ≥24 GB VRAM for KV cache headroom."),
+        license: "proprietary (API only)",
+        redistribution: Redistribution::NotDistributed,
+        redistribution_note: Some("An API model: there are no weights to put on a drive."),
     },
     CuratedModel {
         provider: AiProvider::VLLM,
@@ -349,6 +472,9 @@ const CURATED_MODELS: &[CuratedModel] = &[
         requirements: Some(
             "Multi-GPU only. Launch with --tensor-parallel-size=N where N divides attention heads (64). Gated — needs HF_TOKEN.",
         ),
+        license: "proprietary (API only)",
+        redistribution: Redistribution::NotDistributed,
+        redistribution_note: Some("An API model: there are no weights to put on a drive."),
     },
     CuratedModel {
         provider: AiProvider::VLLM,
@@ -362,6 +488,9 @@ const CURATED_MODELS: &[CuratedModel] = &[
             "https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
         ),
         requirements: Some("Needs ≥12 GB VRAM at fp16. Ideal for multi-agent reasoning workflows."),
+        license: "proprietary (API only)",
+        redistribution: Redistribution::NotDistributed,
+        redistribution_note: Some("An API model: there are no weights to put on a drive."),
     },
     CuratedModel {
         provider: AiProvider::VLLM,
@@ -373,6 +502,9 @@ const CURATED_MODELS: &[CuratedModel] = &[
         quantization: "fp16",
         source_url: Some("https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct"),
         requirements: Some("Needs ≥12 GB VRAM at fp16. Best choice for agentic coding workflows."),
+        license: "proprietary (API only)",
+        redistribution: Redistribution::NotDistributed,
+        redistribution_note: Some("An API model: there are no weights to put on a drive."),
     },
     CuratedModel {
         provider: AiProvider::VLLM,
@@ -386,6 +518,9 @@ const CURATED_MODELS: &[CuratedModel] = &[
         requirements: Some(
             "Launch with --quantization fp8. Best on H100/L40S/RTX 4090; falls back on older GPUs.",
         ),
+        license: "proprietary (API only)",
+        redistribution: Redistribution::NotDistributed,
+        redistribution_note: Some("An API model: there are no weights to put on a drive."),
     },
     CuratedModel {
         provider: AiProvider::VLLM,
@@ -400,6 +535,9 @@ const CURATED_MODELS: &[CuratedModel] = &[
         requirements: Some(
             "Launch with `vllm serve BAAI/bge-m3 --task embed`. Outputs 1024-dim dense vectors by default.",
         ),
+        license: "proprietary (API only)",
+        redistribution: Redistribution::NotDistributed,
+        redistribution_note: Some("An API model: there are no weights to put on a drive."),
     },
     // ------------------------------------------------------------------
     // Cloud anchor entries (optional — helps GUI pickers offer a default)
@@ -414,6 +552,9 @@ const CURATED_MODELS: &[CuratedModel] = &[
         quantization: "n/a",
         source_url: Some("https://docs.anthropic.com/en/docs/about-claude/models"),
         requirements: Some("Cloud — requires ANTHROPIC_API_KEY."),
+        license: "proprietary (API only)",
+        redistribution: Redistribution::NotDistributed,
+        redistribution_note: Some("An API model: there are no weights to put on a drive."),
     },
     CuratedModel {
         provider: AiProvider::OpenAI,
@@ -425,6 +566,9 @@ const CURATED_MODELS: &[CuratedModel] = &[
         quantization: "n/a",
         source_url: Some("https://platform.openai.com/docs/models"),
         requirements: Some("Cloud — requires OPENAI_API_KEY."),
+        license: "proprietary (API only)",
+        redistribution: Redistribution::NotDistributed,
+        redistribution_note: Some("An API model: there are no weights to put on a drive."),
     },
     CuratedModel {
         provider: AiProvider::Gemini,
@@ -436,6 +580,9 @@ const CURATED_MODELS: &[CuratedModel] = &[
         quantization: "n/a",
         source_url: Some("https://ai.google.dev/gemini-api/docs/models/gemini"),
         requirements: Some("Cloud — requires GOOGLE_API_KEY."),
+        license: "proprietary (API only)",
+        redistribution: Redistribution::NotDistributed,
+        redistribution_note: Some("An API model: there are no weights to put on a drive."),
     },
 ];
 
@@ -520,6 +667,87 @@ mod tests {
             assert!(!m.id.is_empty());
             assert!(!m.display_name.is_empty());
             assert!(!m.description.is_empty());
+        }
+    }
+
+    #[test]
+    fn every_entry_says_what_its_licence_is() {
+        // Putting a model file on a drive is REDISTRIBUTING it. Until this
+        // field existed the catalogue recorded no licence at all, so code
+        // asking "may we ship this one?" had nothing to read.
+        for m in all_curated_models() {
+            assert!(!m.license.trim().is_empty(), "{} declares no licence", m.id);
+        }
+    }
+
+    #[test]
+    fn anything_not_plainly_permissive_says_why() {
+        // `WithConditions` without the conditions written down is the same as
+        // not knowing them, and `Unknown` without a reason cannot be resolved
+        // by whoever picks it up next.
+        for m in all_curated_models() {
+            match m.redistribution {
+                Redistribution::Permissive => {}
+                _ => {
+                    let note = m.redistribution_note.unwrap_or("");
+                    assert!(
+                        note.len() > 30,
+                        "{} is {:?} and says nothing useful about it: {note:?}",
+                        m.id,
+                        m.redistribution
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn only_permissive_ships_without_a_human() {
+        // The conditions are real obligations -- forwarding terms as an
+        // enforceable provision, shipping a NOTICE file, displaying a phrase
+        // on a page. No program can confirm any of that was done, so no
+        // program gets to decide it was.
+        assert!(Redistribution::Permissive.shippable_unattended());
+        assert!(!Redistribution::WithConditions.shippable_unattended());
+        assert!(!Redistribution::Unknown.shippable_unattended());
+        assert!(!Redistribution::NotDistributed.shippable_unattended());
+    }
+
+    #[test]
+    fn an_api_model_is_not_merely_unknown() {
+        // Two different facts that a single "no" would blur: nothing to ship,
+        // versus we did not find out. Only the second is homework.
+        for m in all_curated_models() {
+            let is_cloud = matches!(
+                m.provider,
+                AiProvider::OpenAI | AiProvider::Anthropic | AiProvider::Gemini
+            );
+            if is_cloud {
+                assert_eq!(
+                    m.redistribution,
+                    Redistribution::NotDistributed,
+                    "{} runs behind an API; there are no weights to redistribute",
+                    m.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_notes_say_when_they_were_read() {
+        // A licence claim with no date is a claim about an unknown moment.
+        // Licences change: Llama and Gemma have both been revised.
+        for m in all_curated_models() {
+            if let Some(note) = m.redistribution_note {
+                if m.redistribution == Redistribution::NotDistributed {
+                    continue; // "no weights exist" does not go stale.
+                }
+                assert!(
+                    note.contains("20"),
+                    "{} gives no date for when this was read: {note}",
+                    m.id
+                );
+            }
         }
     }
 

@@ -5,6 +5,63 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v201 (2026-09-16) — V326: el catálogo no registraba ninguna licencia (0.2.278)
+
+Cierra N72, que el autor pidió el 2026-09-15: «investígame los que se pueden redistribuir o
+bajo qué condiciones».
+
+Poner un fichero de modelo en un pendrive, o dentro de un instalador, es **redistribuirlo**.
+`CuratedModel` no tenía campo de licencia, así que cualquier código que preguntara «¿podemos
+embarcar éste?» no tenía nada que leer y la respuesta vivía en la cabeza de alguien. Ahora
+cada entrada declara `license`, `redistribution` y, cuando hace falta, qué se debe y dónde
+y cuándo se leyó.
+
+### Lo leído, con fecha
+
+| Familia | Licencia | Redistribuible |
+|---|---|---|
+| **Bonsai 1-bit** (8B/4B/1.7B) | `apache-2.0` | Sí. Deriva de Qwen3, también Apache-2.0: la cadena está limpia. |
+| **Qwen2.5 7B / VL 7B** | `apache-2.0` | Sí. |
+| **Mistral 7B Instruct v0.3** | `apache-2.0` | Sí. |
+| **Gemma 3 4B** | `gemma` | Sí, **con deberes**. |
+| **Llama 3.1 8B** | `llama3.1` | Sí, **con deberes**. |
+| **DeepSeek Coder 6.7B** | `deepseek-model` | Sí, **con deberes**. |
+| **Ternary Bonsai** (8B/4B/1.7B) | sin establecer | **No, por ahora.** |
+
+Los deberes, que no son decorativos:
+
+- **Gemma** (Terms of Use 3.1): pasar las restricciones de uso de 3.2 como cláusula
+  **exigible**, entregar a cada destinatario una copia del acuerdo, y acompañar la
+  distribución de un fichero **NOTICE**. La distribución comercial está permitida.
+- **Llama 3.1**: copia del acuerdo (1.b.i), mostrar «Built with Llama» de forma destacada
+  (1.b.i), incluir el aviso de copyright literal (1.b.iii) y trasladar la Acceptable Use
+  Policy (1.b.iv). Por encima de 700 M de usuarios activos mensuales hace falta una licencia
+  aparte de Meta (2).
+- **DeepSeek**: las restricciones del párrafo 5 **deben** ir como cláusula exigible (4.a),
+  copia de la licencia al destinatario (4.b), conservar los avisos (4.d). El anexo A prohíbe
+  uso militar, daño a menores, discriminación y decisiones totalmente automatizadas sobre
+  derechos legales, entre otros.
+- **Ternary Bonsai**: el 2026-09-16 la API de Hugging Face contestó **401** para
+  `prism-ml/TernaryBonsai-8B` y `-8B-gguf`. Los pesos no son legibles públicamente y no se
+  pudo leer ninguna etiqueta de licencia; el catálogo apuntaba a una **colección**, no a un
+  repositorio de modelo. Queda como «no embarcar» hasta que alguien pueda abrirlo.
+
+### Cómo se convierte en regla
+
+`Redistribution::shippable_unattended()` es **verdadero solo para `Permissive`**. Los deberes
+son obligaciones reales y ningún programa puede confirmar que se escribió un NOTICE o que
+«Built with Llama» aparece en alguna página, así que ningún programa decide que sí.
+
+Cinco tests: toda entrada declara licencia; lo que no es permisivo explica qué se debe o por
+qué no se sabe; solo lo permisivo se embarca sin intervención; un modelo de API es
+`NotDistributed` y no `Unknown` — dos hechos distintos que un «no» único confundiría, y solo
+el segundo es tarea pendiente; y toda nota lleva **fecha**, porque una afirmación sobre una
+licencia sin fecha es una afirmación sobre un momento desconocido, y tanto Llama como Gemma
+han revisado las suyas.
+
+**Esto es investigación con fuentes, no un dictamen jurídico**, y qué se embarca al final no
+lo decide este fichero.
+
 ## [Unreleased] - v200 (2026-09-16) — V325: el repaso mensual de seguridad leía los comentarios como si fueran datos (0.2.277)
 
 Cierra N67. Cada `--ignore RUSTSEC-XXXX-NNNN` es una afirmación: «este aviso no alcanza a
