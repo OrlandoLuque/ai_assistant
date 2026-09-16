@@ -70,8 +70,9 @@ llama.cpp process requests sequentially by default.
 
 - **CPU performance.** Best CPU inference of the four.
 - **Apple Silicon.** Metal offload is a first-class target.
-- **Exotic quants.** `Q1_0` / ternary kernels on the PrismML fork
-  (Bonsai models).
+- **Exotic quants.** 1-bit `Q1_0` (Bonsai) runs on a recent mainline build —
+  `GGML_TYPE_Q1_0` is upstream across the CUDA, SYCL and Vulkan backends. The
+  **ternary** (`Q2_0`) kernels still need the PrismML fork.
 - **Tight control.** Direct `-ngl`, `-c`, `-t` flags.
 
 ### vLLM

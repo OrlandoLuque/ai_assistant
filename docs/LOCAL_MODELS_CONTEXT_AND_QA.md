@@ -326,8 +326,17 @@ las finanzas es Carlos Vega"` buried in filler, queried with the paraphrase
 
 ## 8. Running the extreme-quant models (PrismML)
 
-The Bonsai / Ternary-Bonsai weights use a custom `Q1_0` / ternary kernel that
-mainline `llama.cpp` does not implement, so they need the PrismML fork:
+The two families differ, and the difference decides whether you need to build
+anything at all.
+
+**1-bit Bonsai (`Q1_0`) runs on mainline.** `GGML_TYPE_Q1_0` is in
+`ggml-org/llama.cpp` across the CUDA, SYCL and Vulkan backends, and PrismML's
+own documentation says so: 1-bit is merged upstream, only ternary is not. A
+recent stock build loads these. *This page said the opposite until 2026-09-16,
+which is worse than saying nothing: it sent people to build a fork to run a
+model their ordinary binary already handles.*
+
+**Ternary Bonsai (`Q2_0`) does need the fork.** Stock builds cannot load it:
 
 ```sh
 git clone https://github.com/PrismML-Eng/llama.cpp

@@ -86,8 +86,9 @@ lm_studio = "http://localhost:1234"
 The underlying engine behind Ollama and LM Studio, but usable
 directly. Pick it when you need:
 
-- Quantizations that Ollama doesn't expose (e.g. `Q1_0` on the
-  PrismML fork for Bonsai models).
+- Quantizations that Ollama doesn't expose (e.g. 1-bit `Q1_0` for the
+  Bonsai models — upstream now, so a recent build is enough; only the
+  ternary `Q2_0` weights still need the PrismML fork).
 - CPU-only operation on a machine without a supported GPU.
 - Tight control over `-c` (context), `-ngl` (GPU layers), `-t`
   (threads).
