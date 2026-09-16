@@ -35,3 +35,19 @@ ai_assistant_tasks.sqlite
 
 # Written by the rag_debug doc example if it is ever run for real
 rag_debug/
+
+# ---------------------------------------------------------------------------
+# Things that are deliberately NOT committed
+# ---------------------------------------------------------------------------
+# Drafts, strategy notes, scratch scripts, anything half-finished. Put it in
+# `_private/` and it cannot reach a commit by accident.
+#
+# Why this exists: on 2026-09-16 a `git add -A docs/` swept an untracked
+# open-core/licensing note into a commit and pushed it to the PUBLIC repo. It
+# was removed from HEAD within minutes, but a commit in a public history is not
+# something you take back -- undoing it means a force-push, which is a decision
+# the author has to make, not a tidy-up.
+#
+# The rule that goes with the folder: stage files by NAME. Never `git add -A`,
+# never `git add .`. An untracked file in this repo is a deliberate state.
+_private/
