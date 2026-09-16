@@ -200,6 +200,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+
+      # Two files decide which advisories are suppressed -- deny.toml for
+      # `cargo deny`, the --ignore flags below for `cargo audit` -- and nothing
+      # kept them in step. An advisory silenced in one and enforced in the other
+      # means which gate catches it depends on which tool runs, which is the
+      # same as not knowing. This also refuses an entry with no reason written
+      # above it: a suppression is a claim that the advisory cannot reach our
+      # usage, and a claim with no argument is not reviewable.
+      - name: Check the two RUSTSEC ignore lists agree
+        run: python3 scripts/check_rustsec_ignores.py
+
       - uses: dtolnay/rust-toolchain@1.98.0
       - uses: Swatinem/rust-cache@v2
         with:
@@ -226,6 +237,12 @@ jobs:
       #                       reach >=0.41); build-time XML of trusted
       #                       wayland protocol files only, no direct use in
       #                       src/. Revisit when wayland-scanner bumps it.
+      #   RUSTSEC-2026-0195 — quick-xml again: same crate, same pinned version,
+      #                       a second DoS (unbounded namespace-declaration
+      #                       allocation in NsReader). Same reasoning and the
+      #                       same revisit condition as 0194 above. It was the
+      #                       one entry with no note here, which is how an
+      #                       argued suppression becomes an unargued one.
       #   (RUSTSEC-2026-0222 was here. It was the only entry with an upstream
       #    fix, held back because the fix needed a newer toolchain than the repo
       #    pinned. V276 moved the pin to 1.98 and wasmtime to 46, so the entry

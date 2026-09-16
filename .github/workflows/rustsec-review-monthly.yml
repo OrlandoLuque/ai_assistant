@@ -52,8 +52,16 @@ jobs:
         id: ignores
         run: |
           set -euo pipefail
-          ids=$(sed -n '/\[advisories\]/,/^\[/p' deny.toml \
-            | grep -oE 'RUSTSEC-[0-9]+-[0-9]+' | sort -u)
+          # Only the quoted entries inside `ignore = [ ... ]`. The range scan
+          # this replaced read the COMMENTS as well, so RUSTSEC-2026-0222 --
+          # deleted from the list on purpose, with a comment recording the
+          # deletion -- came back into the review issue every month. A comment
+          # documenting an ABSENCE was read as a PRESENCE, which sent the
+          # operator to re-check something that is not suppressed and implied,
+          # by listing it at all, that it is.
+          # Guarded by scripts/check_rustsec_ignores.py.
+          ids=$(sed -n '/^ignore = \[/,/^\]/p' deny.toml \
+            | grep -oE '"RUSTSEC-[0-9]+-[0-9]+"' | tr -d '"' | sort -u)
           echo "ids<<EOF" >> "$GITHUB_OUTPUT"
           echo "$ids" >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"

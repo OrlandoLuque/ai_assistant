@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v200 (2026-09-16) — V325: el repaso mensual de seguridad leía los comentarios como si fueran datos (0.2.277)
+
+Cierra N67. Cada `--ignore RUSTSEC-XXXX-NNNN` es una afirmación: «este aviso no alcanza a
+nuestro uso». La afirmación se hace en dos ficheros — `deny.toml` para `cargo deny`, los
+flags de `ci.yml` para `cargo audit` — y la revisa un tercero, el workflow mensual.
+
+### El fallo
+
+El repaso mensual sacaba su lista así:
+
+```
+sed -n '/\[advisories\]/,/^\[/p' deny.toml | grep -oE 'RUSTSEC-[0-9]+-[0-9]+'
+```
+
+Un barrido por rango que lee **también los comentarios**. `RUSTSEC-2026-0222` se borró de la
+lista a propósito en V276 — era el único con arreglo upstream, y el propio comentario decía
+que se borrara en cuanto la toolchain se moviera — y el comentario que documenta ese borrado
+lo metía de vuelta en el issue de revisión **todos los meses**. Extraía 10 donde hay 9.
+
+Un comentario que documenta una **ausencia** se leía como una **presencia**: manda al
+operador a revisar algo que no está suprimido y, por el hecho de listarlo, le sugiere que sí.
+Ahora lee solo las entradas entrecomilladas de dentro de `ignore = [ ... ]`.
+
+### Y el trinquete que faltaba
+
+`scripts/check_rustsec_ignores.py`, en el job de Security Audit. Comprueba tres cosas:
+
+1. Las dos listas contienen exactamente los mismos avisos. Hoy coinciden; nada lo garantizaba,
+   y ya se habían separado antes. Un aviso silenciado en una herramienta y exigido en la otra
+   significa que qué puerta lo caza depende de cuál se ejecute, que es lo mismo que no saberlo.
+2. Cada entrada de `deny.toml` lleva escrito encima **por qué**, y un comentario que solo
+   repite el identificador no cuenta como motivo.
+3. Ningún identificador se cuenta desde un comentario.
+
+Verificado por mutación, y la primera vez la propia mutación no llegó a aplicarse y dio un
+falso verde — así que ahora cada mutación comprueba que ha entrado antes de creerse el
+resultado. Quitar un flag de `ci.yml`: lo caza. Añadir una entrada sin motivo: lo caza.
+Mencionar un aviso borrado en un comentario: **no** lo cuenta, que es el caso que empezó todo.
+
+De paso, `RUSTSEC-2026-0195` era el único de los nueve sin nota en `ci.yml`. Ya la tiene: es
+el segundo DoS de `quick-xml`, misma versión fijada y mismo razonamiento que `0194`.
+
 ## [Unreleased] - v199 (2026-09-16) — V324: el catálogo exigía un fork de llama.cpp que ya no hace falta (0.2.276)
 
 Las tres entradas de **Bonsai 1-bit** de `curated_models.rs` decían que hacía falta el fork
