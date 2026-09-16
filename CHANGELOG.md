@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v202 (2026-09-16) — V327: la gráfica más común del mundo era invisible (0.2.279)
+
+Había tres sondas de GPU — NVIDIA, AMD y Apple. `GpuVendor::Intel` existía en el enum y
+**nada lo producía nunca**, así que en la inmensa mayoría de los portátiles `detect()`
+devolvía cero GPUs y todo consumidor concluía que la máquina no tenía ninguna. Mismo patrón
+que `HardwareSource::Declared` en V322: previsto en el diseño, nunca implementado.
+
+Y es el hecho equivocado que faltaba. Una Iris Xe o una UHD corren llama.cpp por Vulkan y
+por SYCL sin problema, y en un portátil fino son el único acelerador que hay. Decir «este
+ordenador no tiene tarjeta gráfica» convierte **una pieza que nos falta a nosotros** en
+**una limitación del ordenador del usuario**: falso, y encima con pinta de irreparable.
+
+Comprobado en esta máquina, que es exactamente el caso: antes 0 GPUs, ahora
+`Intel | Intel(R) Iris(R) Xe Graphics | vram=0 | backends=["vulkan", "sycl"]`.
+
+- **Windows**: una consulta a `Win32_VideoController`, como las sondas de ROCm y Metal ya
+  hacen, sin meter un crate de WMI para una pregunta.
+- **Linux**: el id de fabricante PCI de cada tarjeta DRM en `/sys/class/drm` — `0x8086` es
+  Intel. Sin salir a `lspci`, que no está en todas partes.
+- **macOS**: lo cubre la sonda de Metal.
+
+`vram_bytes` es **0, y es un dato, no una medición fallida**: una integrada no tiene VRAM
+dedicada, usa la memoria del sistema. Quien dimensione un modelo contra ese campo debe leer
+`0 + Intel` como «presupuesta contra la RAM».
+
+La sonda se ejecuta **la última**, para que una tarjeta dedicada siga siendo `gpus[0]`: quien
+hace `.first()` quiere la más rápida, y una integrada nunca lo es. Y descarta lo que ya tiene
+sonda propia — listar una NVIDIA aquí otra vez la metería dos veces, la segunda con
+`vram_bytes = 0`, y quien dimensionara contra eso no arrancaría nada. También descarta los
+adaptadores de software (Microsoft Basic, Parsec, Citrix), que una sesión remota deja en la
+lista y que no aceleran nada.
+
 ## [Unreleased] - v201 (2026-09-16) — V326: el catálogo no registraba ninguna licencia (0.2.278)
 
 Cierra N72, que el autor pidió el 2026-09-15: «investígame los que se pueden redistribuir o

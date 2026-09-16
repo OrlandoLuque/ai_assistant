@@ -364,6 +364,9 @@ pub fn detect() -> Result<HardwareInfo, HardwareError> {
     let mut gpus = nvml_probe::collect_nvidia();
     gpus.extend(rocm_probe::collect_amd());
     gpus.extend(metal_probe::collect_apple());
+    // Last, so a discrete card is always `gpus[0]`: consumers that take
+    // `.first()` want the fastest one, and an integrated chip never is.
+    gpus.extend(igpu_probe::collect_integrated());
 
     Ok(HardwareInfo {
         source: HardwareSource::Detected,
@@ -605,6 +608,217 @@ mod nvml_probe {
 mod nvml_probe {
     use super::GpuInfo;
     pub(super) fn collect_nvidia() -> Vec<GpuInfo> {
+        Vec::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Integrated-GPU probe -- the most common graphics chip there is
+//
+// There were three probes: NVIDIA, AMD and Apple. `GpuVendor::Intel` existed in
+// the enum and **nothing ever produced it**, so on the overwhelming majority of
+// laptops `detect()` returned no GPU at all and every consumer concluded the
+// machine had none.
+//
+// That is the wrong fact to be missing. An Intel Iris Xe or UHD runs llama.cpp
+// through the Vulkan and SYCL backends perfectly well, and on a thin laptop it
+// is the only accelerator present. Reporting "no graphics card" turns a
+// *missing backend on our side* into *a limitation of the user's computer*,
+// which is both false and unfixable-looking.
+//
+// What is reported, and what is not: an integrated GPU has **no dedicated
+// VRAM** -- it borrows system memory -- so `vram_bytes` is 0 and that is a
+// fact, not a failure to measure. Anything sizing a model against
+// `vram_bytes` must treat 0 + `GpuVendor::Intel` as "budget against system
+// RAM", which is what it actually is.
+// ---------------------------------------------------------------------------
+
+#[cfg(all(feature = "hardware-detection", target_os = "windows"))]
+mod igpu_probe {
+    use super::*;
+
+    /// Ask Windows what display adapters exist.
+    ///
+    /// Shelling out matches what the ROCm and Metal probes already do, and
+    /// avoids a WMI crate for one query. `-NoProfile` because a user profile
+    /// can print banners into stdout, and this parses stdout.
+    pub(super) fn collect_integrated() -> Vec<GpuInfo> {
+        let output = match std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name }",
+            ])
+            .output()
+        {
+            Ok(o) if o.status.success() => o,
+            Ok(o) => {
+                log::debug!("video-controller query exited {}; skipping", o.status);
+                return Vec::new();
+            }
+            Err(e) => {
+                log::debug!("could not query video controllers ({e}); skipping");
+                return Vec::new();
+            }
+        };
+        parse_adapter_names(&String::from_utf8_lossy(&output.stdout))
+    }
+
+    /// Keep only adapters this probe is responsible for.
+    ///
+    /// NVIDIA and AMD have their own probes, which report real VRAM and driver
+    /// versions; listing them again here would double-count the same card.
+    pub(super) fn parse_adapter_names(stdout: &str) -> Vec<GpuInfo> {
+        stdout
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .filter_map(|name| {
+                let lower = name.to_ascii_lowercase();
+                if lower.contains("nvidia")
+                    || lower.contains("geforce")
+                    || lower.contains("quadro")
+                    || lower.contains("radeon")
+                    || lower.contains("amd ")
+                {
+                    return None;
+                }
+                // Software adapters are not accelerators. Offering one would be
+                // worse than reporting nothing.
+                if lower.contains("microsoft basic")
+                    || lower.contains("remote display")
+                    || lower.contains("meta virtual")
+                    || lower.contains("parsec")
+                    || lower.contains("citrix")
+                {
+                    return None;
+                }
+                if lower.contains("intel") {
+                    // vram_bytes = 0: shared memory, not an unknown quantity.
+                    Some(
+                        GpuInfo::new(GpuVendor::Intel, name, 0)
+                            .with_backend_support(vec!["vulkan".to_string(), "sycl".to_string()]),
+                    )
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn an_intel_chip_is_reported() {
+            // The exact string this machine's Windows returns.
+            let gpus = parse_adapter_names(
+                "Intel(R) Iris(R) Xe Graphics
+",
+            );
+            assert_eq!(gpus.len(), 1);
+            assert_eq!(gpus[0].vendor, GpuVendor::Intel);
+            assert!(gpus[0].name.contains("Iris"));
+            // Shared memory, not an unknown quantity.
+            assert_eq!(gpus[0].vram_bytes, 0);
+            assert!(gpus[0].backend_support.iter().any(|b| b == "vulkan"));
+        }
+
+        #[test]
+        fn cards_with_their_own_probe_are_not_counted_twice() {
+            // NVML and rocm-smi report real VRAM and driver versions for these.
+            // Listing them here as well would put the same card in the list
+            // twice, the second time with vram_bytes = 0 -- and a consumer
+            // sizing a model against that would refuse to run anything.
+            let gpus = parse_adapter_names(
+                "NVIDIA GeForce RTX 4080 SUPER
+AMD Radeon RX 7900 XTX
+Intel(R) UHD Graphics 770
+",
+            );
+            assert_eq!(gpus.len(), 1, "{gpus:?}");
+            assert!(gpus[0].name.contains("UHD"));
+        }
+
+        #[test]
+        fn software_adapters_are_not_accelerators() {
+            // A remote session or a VM leaves these in the list. Offering one
+            // as "your graphics card" is worse than reporting nothing.
+            let gpus = parse_adapter_names(
+                "Microsoft Basic Display Adapter
+Parsec Virtual Display Adapter
+Citrix Indirect Display Adapter
+",
+            );
+            assert!(gpus.is_empty(), "{gpus:?}");
+        }
+
+        #[test]
+        fn blank_output_is_not_a_gpu() {
+            assert!(parse_adapter_names("").is_empty());
+            assert!(parse_adapter_names(
+                "
+   
+
+"
+            )
+            .is_empty());
+        }
+    }
+}
+
+#[cfg(all(feature = "hardware-detection", target_os = "linux"))]
+mod igpu_probe {
+    use super::*;
+
+    /// Read the PCI vendor id of each DRM card. `0x8086` is Intel.
+    ///
+    /// No shelling out: the kernel already publishes this, and `lspci` is not
+    /// installed everywhere.
+    pub(super) fn collect_integrated() -> Vec<GpuInfo> {
+        let entries = match std::fs::read_dir("/sys/class/drm") {
+            Ok(e) => e,
+            Err(e) => {
+                log::debug!("no /sys/class/drm ({e}); skipping integrated-GPU probe");
+                return Vec::new();
+            }
+        };
+        let mut found = Vec::new();
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            // `card0`, not `card0-HDMI-A-1`: the connectors are not devices.
+            if !name.starts_with("card") || name.contains('-') {
+                continue;
+            }
+            let vendor = entry.path().join("device/vendor");
+            let Ok(id) = std::fs::read_to_string(&vendor) else {
+                continue;
+            };
+            if id.trim().eq_ignore_ascii_case("0x8086") {
+                found.push(
+                    GpuInfo::new(GpuVendor::Intel, "Intel integrated graphics", 0)
+                        .with_backend_support(vec!["vulkan".to_string(), "sycl".to_string()]),
+                );
+            }
+        }
+        found
+    }
+}
+
+#[cfg(all(
+    feature = "hardware-detection",
+    not(target_os = "windows"),
+    not(target_os = "linux")
+))]
+mod igpu_probe {
+    use super::*;
+
+    /// macOS is covered by the Metal probe; anywhere else, say nothing rather
+    /// than guess.
+    pub(super) fn collect_integrated() -> Vec<GpuInfo> {
         Vec::new()
     }
 }
