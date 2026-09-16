@@ -133,6 +133,67 @@ dependencies), so disk growth is not a concern in normal use.
 
 ## Log (newest first)
 
+### 2026-09-16/17 — PrismML Bonsai 1-bit: the 8B is a real model, and the stale requirement was ours
+
+Asked for by the author. First measurement of 1-bit weights here, and the first on a
+**CPU-only** machine — this is the laptop (i7-1165G7, Iris Xe, 34 GB), not the desktop with
+the 4080, so every figure below is CPU inference at **2.8–4.9 tokens/second**.
+
+Backend: PrismML's llama.cpp fork, `llama-server` on `:8081`, `temp=0.5 seed=42x3
+num_ctx=4096`. Transport sanity-checked first («capital of France?» → «Paris») before
+trusting any score, per the rule that has saved this page before.
+
+| Model | `agentic_code` | mean rate | shape | runs used |
+|---|---|---|---|---|
+| **Bonsai-4B-Q1_0** (~600 MB) | 3.67/5 | 0.73 (sd 0.39) | always 3, sometimes 1, never 1 | 15/15 |
+| **Bonsai-8B-Q1_0** (1.16 GB) | **5.00/5** | **1.00 (sd 0.00)** | always 5 | 12/15 |
+
+**The 8B solved every task, every time it got to finish.** For an 8B-class model at 1.125
+bits per weight, in a gigabyte, that is the interesting result: this is the size that fits on
+a stick with room to spare, and it is not a toy. The 4B is visibly weaker — one task it never
+solved («fix binary_search off-by-one»), one it solved sometimes.
+
+**Read the 8B's denominator before quoting it.** The harness says so itself: *LOST 3 of 15
+runs never completed and left the denominator, across 2 of 5 tasks.* Those runs are excluded
+rather than counted as failures, so the rate is not inflated — but it rests on 12 draws, not
+15, and the two affected tasks each lost one or two.
+
+### The «backend crash» that was not one
+
+Those lost runs were reported as `BACKEND CRASH — the generation never returned; check the
+backend log`. **The backend log shows no crash**: `llama-server` reached task 34025 and
+finished idle, and its only errors are prompt-cache misses (`failed to load prompt from
+cache`), which are not failures at all.
+
+At 2.8–4.9 tok/s a long generation simply exceeds the harness's patience. `agentic_code.rs`
+turns *any* error from `generate_sync` into that one verdict, so a timeout — the most likely
+failure on the most likely slow backend — sends the operator to read a log that has nothing
+in it. Filed as its own task; the detection was added because a **real** crash once
+masquerraded as a model failure (temperature ≤0.3 aborting the llama.cpp sampler), and it now
+over-fires in the other direction.
+
+### And a requirement that had stopped being true
+
+The curated catalogue said the 1-bit Bonsai models need PrismML's fork of llama.cpp. They do
+not: `GGML_TYPE_Q1_0` is in `ggml-org/llama.cpp` across the CUDA, SYCL and Vulkan backends,
+and PrismML's own documentation says 1-bit is merged upstream and only **ternary** (`Q2_0`)
+still needs the fork. A test was pinning the false sentence rather than checking the fact.
+Fixed in V324/V326.
+
+`TernaryBonsai-*` could not be measured at all: on 2026-09-16 the Hugging Face API answered
+**401** for `prism-ml/TernaryBonsai-8B` and `-8B-gguf`, so the weights are not publicly
+readable.
+
+### What this does not say
+
+One category, on one machine, with no comparison against a 4-bit model of similar size on the
+same hardware. The question that matters for the stick — *is a 1-bit 8B better than a 4-bit
+3B of the same file size?* — is not answered here and needs the two run side by side.
+`agentic_multi` and `agentic_rust` were attempted on the 4B and are not reportable: the first
+lost most of its runs to the same timeout problem, and the second scored 1/12, which on CPU
+with an unmeasured timeout budget says more about the clock than the model.
+
+
 ### 2026-08-04 (5th) — RETRACTION: "never solves it" was one unlucky seed, and repeats never varied the seed
 
 **Every "never" in the four entries below is unsafe, and two specific claims are wrong.**
