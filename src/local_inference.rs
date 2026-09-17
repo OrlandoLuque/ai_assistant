@@ -6,9 +6,25 @@
 //! who only need the trait surface (e.g. for stub testing) don't pull the
 //! native deps.
 //!
-//! Out of scope here (deferred): real Candle / llama-cpp-2 integration,
-//! provider dispatch wiring, dedicated bin + auditor pair. Each of those is
-//! a separate task that builds on this module.
+//! # What is done and what is not, as of 2026-09-18
+//!
+//! This header used to say the Candle and llama-cpp-2 integrations were
+//! deferred. **Two of the four items on that list have been done since**, and
+//! a sentence that says "not yet" about something that exists hides a
+//! capability — which is the same defect as claiming one that does not, with
+//! the cost on the other side. Someone reading this module concluded the crate
+//! could not run a model in process, when it can.
+//!
+//! * **Candle backend** — done in V110 (`local_inference_candle`).
+//! * **llama-cpp-2 backend** — done in V112 (`local_inference_llama_cpp`),
+//!   real bindings, CPU only.
+//! * **Provider dispatch wiring** — **not done**. Nothing routes an
+//!   [`crate::AiAssistant`] to these backends, so the loading works and
+//!   nobody can ask for it through the normal path. This is the gap that
+//!   matters: it is why a caller who wants in-process inference has to drive
+//!   [`Backend`] directly.
+//! * **Dedicated bin + auditor pair** — **not done**. Every other subsystem
+//!   that stores or runs things has one.
 
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
