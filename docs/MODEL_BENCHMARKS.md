@@ -133,6 +133,55 @@ dependencies), so disk growth is not a concern in normal use.
 
 ## Log (newest first)
 
+### 2026-09-18 (2nd) — PrismML's formats are split across three engine generations, and no single build runs all of them
+
+Measured while answering "can the kit carry Bonsai?". The answer is yes, for exactly one of
+the three families, and the reason matters more than the numbers.
+
+| Weights | Loads on upstream `b11026`? | Loads on the **July** fork? | Loads on the **current** fork? |
+|---|---|---|---|
+| **Bonsai `Q1_0`** (1-bit, Feb) | **Yes** | Yes | Yes |
+| **Ternary `Q2_0`** (Apr) | No | **Yes** | **No** |
+| **`PTQ1_0` / `PQ2_0`** (Sep) | No | No | **Yes** |
+
+The middle row is the problem: PrismML broke compatibility **with their own earlier format**.
+A kit that ships one engine cannot offer all three families, and which one it can offer
+changes with every fork update.
+
+Their history was also rewritten between July and September — a clone from July cannot be
+pulled forward (`refusing to merge unrelated histories`, 10 687 commits apart) and has to be
+re-cloned. That is a maintenance cost, not a one-off.
+
+### And the speeds say the small 1-bit model is the only practical one here
+
+All on the same laptop (i7-1165G7, Iris Xe, no discrete card):
+
+| Model | Engine | Prompt | Generation |
+|---|---|---|---|
+| Bonsai-4B `Q1_0` (540 MiB) | upstream, Vulkan | **15.19** | **6.80** |
+| Bonsai-4B `Q1_0` | upstream, CPU | 6.39 | 5.13 |
+| Ternary-Bonsai-1.7B `Q2_0` (436 MiB) | July fork, CPU | 2.01 | 1.56 |
+| Ternary-Bonsai-2-27B `PTQ1_0` (5.53 GiB) | current fork, Vulkan | 0.95 | **0.22** |
+
+Two things worth saying plainly:
+
+**Ternary is slower than 1-bit here, on a smaller model.** A 1.7 B at `Q2_0` manages 1.56
+tokens/second where a 4 B at `Q1_0` manages 5.13 — three times the parameters, three times
+the speed. Compression ratio is not speed; kernel maturity on the hardware in front of you is.
+
+**The 27B is not usable on this class of machine.** 0.22 tokens/second is four and a half
+seconds per token. "A 27B with reasoning, coding and vision in 6 GB" is true as a statement
+about file size and false as a statement about a thin laptop. It needs a real GPU, and on a
+real GPU the whole calculus changes anyway.
+
+### What this means for the stick
+
+The shippable combination today is **Bonsai `Q1_0` on stock llama.cpp** — it is Apache-2.0,
+it runs without carrying anybody's fork, it runs at about reading speed, and it was the one
+that scored 5/5 on `agentic_code` at 8B. Everything else on the PrismML shelf either needs a
+specific fork generation or needs hardware the target machine does not have.
+
+
 ### 2026-09-18 — Vulkan on an integrated GPU: 2.4× reading the question, and not much writing the answer
 
 The laptop has no discrete card, only an Intel Iris Xe — which is the machine the portable
