@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v203 (2026-09-18) — V328: pregunté mal una dirección y di la respuesta por una propiedad del modelo (0.2.280)
+
+V326 marcó las tres entradas de **Ternary Bonsai** como «no se puede embarcar: licencia sin
+establecer, la API de Hugging Face contesta 401». **Era falso, y falso en la dirección cara.**
+
+Los repositorios se llaman `Ternary-Bonsai-8B-gguf`, con guion. Yo pregunté por
+`TernaryBonsai-8B`, que es el campo `id` **de este mismo catálogo**, no un nombre de
+Hugging Face. Un 401 a una dirección que no existe no dice nada del modelo, y yo lo anoté
+como si dijera que no se puede redistribuir.
+
+Los tres son **`apache-2.0`**, legibles y descargables. Corregidos también los tamaños, que
+eran aproximados, y las URLs, que apuntaban a una **colección** en vez de a un repositorio:
+
+| Entrada | Decía | Es |
+|---|---|---|
+| Ternary Bonsai 8B | ~1.8 GB, licencia desconocida | **2.18 GB**, `apache-2.0` |
+| Ternary Bonsai 4B | ~900 MB, licencia desconocida | **1.07 GB**, `apache-2.0` |
+| Ternary Bonsai 1.7B | ~400 MB, licencia desconocida | **0.46 GB**, `apache-2.0` |
+
+### Y uno nuevo, de ayer
+
+**Ternary Bonsai 2 27B** (Qwen3.8-27B, `apache-2.0`, 7.21 GB en `PQ2_0` y **5.95 GB** en
+`PTQ1_0`), con un `mmproj` de 0.63 GB que le da **visión**. Un 27B con razonamiento, código
+y visión en **6.6 GB** es el argumento más fuerte que hay contra llevar un modelo distinto
+por tarea — que era justo la pregunta que el autor hizo esta tarde.
+
+### La lección, que no es sobre PrismML
+
+Preguntar a la dirección equivocada y **apuntar la respuesta como una propiedad de la cosa**.
+El 401 era verdad; lo que era falso es lo que concluí de él. Es la misma familia que el
+instrumento que miente de `feedback_diagnose_before_fixing`, y el coste aquí habría sido
+dejar fuera del pendrive tres modelos perfectamente embarcables.
+
 ## [Unreleased] - v202 (2026-09-16) — V327: la gráfica más común del mundo era invisible (0.2.279)
 
 Había tres sondas de GPU — NVIDIA, AMD y Apple. `GpuVendor::Intel` existía en el enum y
