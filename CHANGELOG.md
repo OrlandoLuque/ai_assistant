@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v204 (2026-09-18) — V329: «necesita el fork» no era bastante preciso (0.2.281)
+
+Las cuatro entradas de PrismML decían «requires PrismML fork of llama.cpp». Medido el
+2026-09-18, la verdad es más específica y más incómoda: **hacen falta generaciones
+distintas del fork, y ninguna las ejecuta todas.**
+
+| Pesos | upstream `b11026` | fork de **julio** | fork **actual** |
+|---|---|---|---|
+| Bonsai `Q1_0` (feb) | **Sí** | Sí | Sí |
+| Ternario `Q2_0` (abr) | No | **Sí** | **No** |
+| `PTQ1_0` / `PQ2_0` (sep) | No | No | **Sí** |
+
+PrismML rompió compatibilidad con su propio formato anterior. Un kit que embarca un motor
+no puede ofrecer las tres familias, y cuál puede ofrecer cambia con cada actualización del
+fork. Además reescribieron su historia entre julio y septiembre, así que un clon viejo no se
+actualiza — hay que rehacerlo.
+
+Y las velocidades, todas en el mismo portátil sin tarjeta dedicada:
+
+| Modelo | Motor | Prompt | Generación |
+|---|---|---|---|
+| Bonsai-4B `Q1_0` | upstream, Vulkan | 15.19 | 6.80 |
+| Bonsai-4B `Q1_0` | upstream, CPU | 6.39 | 5.13 |
+| Ternary-1.7B `Q2_0` | fork julio, CPU | 2.01 | 1.56 |
+| Ternary-2-27B `PTQ1_0` | fork actual, Vulkan | 0.95 | **0.22** |
+
+**El ternario es más lento que el de 1 bit teniendo menos parámetros.** La compresión no es
+velocidad; lo es la madurez del kernel en el hardware que tienes delante. Y el 27B a 0.22
+tokens/segundo son cuatro segundos y medio por token: el tamaño de fichero es real, la
+afirmación de que corre en un portátil fino no lo es.
+
+La entrada del 27B pasa a ser la que se midió de verdad — `PTQ1_0`, 5.95 GB — en vez de la
+`PQ2_0` de 7.21 GB que se anotó sin ejecutar.
+
 ## [Unreleased] - v203 (2026-09-18) — V328: pregunté mal una dirección y di la respuesta por una propiedad del modelo (0.2.280)
 
 V326 marcó las tres entradas de **Ternary Bonsai** como «no se puede embarcar: licencia sin

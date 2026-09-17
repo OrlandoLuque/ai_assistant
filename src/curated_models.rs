@@ -213,7 +213,9 @@ const CURATED_MODELS: &[CuratedModel] = &[
         approx_size: "2.18 GB",
         quantization: "Ternary (~1.6 bpw)",
         source_url: Some("https://huggingface.co/prism-ml/Ternary-Bonsai-8B-gguf"),
-        requirements: Some("Requires PrismML fork of llama.cpp for ternary kernels."),
+        requirements: Some(
+            "Needs the PrismML fork as it stood around mid-2026. Measured 2026-09-18: these load on a July checkout and NOT on the current one, because PrismML broke compatibility with their own earlier ternary format. Also slower than the 1-bit models despite being smaller: 1.56 tokens/second for the 1.7B against 5.13 for the 4B at Q1_0.",
+        ),
         license: "apache-2.0",
         redistribution: Redistribution::Permissive,
         redistribution_note: Some(
@@ -229,7 +231,9 @@ const CURATED_MODELS: &[CuratedModel] = &[
         approx_size: "1.07 GB",
         quantization: "Ternary (~1.6 bpw)",
         source_url: Some("https://huggingface.co/prism-ml/Ternary-Bonsai-4B-gguf"),
-        requirements: Some("Requires PrismML fork of llama.cpp for ternary kernels."),
+        requirements: Some(
+            "Needs the PrismML fork as it stood around mid-2026. Measured 2026-09-18: these load on a July checkout and NOT on the current one, because PrismML broke compatibility with their own earlier ternary format. Also slower than the 1-bit models despite being smaller: 1.56 tokens/second for the 1.7B against 5.13 for the 4B at Q1_0.",
+        ),
         license: "apache-2.0",
         redistribution: Redistribution::Permissive,
         redistribution_note: Some(
@@ -245,7 +249,9 @@ const CURATED_MODELS: &[CuratedModel] = &[
         approx_size: "0.46 GB",
         quantization: "Ternary (~1.6 bpw)",
         source_url: Some("https://huggingface.co/prism-ml/Ternary-Bonsai-1.7B-gguf"),
-        requirements: Some("Requires PrismML fork of llama.cpp for ternary kernels."),
+        requirements: Some(
+            "Needs the PrismML fork as it stood around mid-2026. Measured 2026-09-18: these load on a July checkout and NOT on the current one, because PrismML broke compatibility with their own earlier ternary format. Also slower than the 1-bit models despite being smaller: 1.56 tokens/second for the 1.7B against 5.13 for the 4B at Q1_0.",
+        ),
         license: "apache-2.0",
         redistribution: Redistribution::Permissive,
         redistribution_note: Some(
@@ -254,15 +260,17 @@ const CURATED_MODELS: &[CuratedModel] = &[
     },
     CuratedModel {
         provider: AiProvider::LlamaCpp,
-        id: "Ternary-Bonsai-2-27B-PQ2_0.gguf",
+        id: "Ternary-Bonsai-2-27B-PTQ1_0.gguf",
         display_name: "PrismML Ternary Bonsai 2 27B",
         description:
             "Qwen3.8-27B with ternary weights — reasoning, coding and vision in one file, which is              the argument against carrying a different model per task.",
         parameters: "27B",
-        approx_size: "7.21 GB",
-        quantization: "Ternary Q2_0 (~2.1 bpw)",
+        approx_size: "5.95 GB",
+        quantization: "PTQ1_0 (1.75 bpw ternary, group 128)",
         source_url: Some("https://huggingface.co/prism-ml/Ternary-Bonsai-2-27B-gguf"),
-        requirements: Some("Requires PrismML fork of llama.cpp for ternary kernels."),
+        requirements: Some(
+            "Needs the CURRENT PrismML fork: its type is GGML_TYPE_PTQ1_0 = 143, marked Prism-private, so it will never arrive upstream. Measured 2026-09-18 on a laptop with integrated graphics: 0.22 tokens/second, which is four and a half seconds per token. The file size is real; the claim that it runs on a thin laptop is not.",
+        ),
         license: "apache-2.0",
         redistribution: Redistribution::Permissive,
         redistribution_note: Some(
