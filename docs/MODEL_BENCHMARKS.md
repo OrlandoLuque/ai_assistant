@@ -133,6 +133,52 @@ dependencies), so disk growth is not a concern in normal use.
 
 ## Log (newest first)
 
+### 2026-09-18 — Vulkan on an integrated GPU: 2.4× reading the question, and not much writing the answer
+
+The laptop has no discrete card, only an Intel Iris Xe — which is the machine the portable
+kit is aimed at, and the one the library could not see at all until V327. Same llama.cpp
+build (upstream `b11026`) both times, so this compares backends and not versions.
+
+| Bonsai-4B-Q1_0 | CPU (4 threads) | Vulkan (Iris Xe) | |
+|---|---|---|---|
+| Prompt processing (`pp128`) | 6.39 ± 0.31 | **15.19 ± 3.82** | **2.4×** |
+| Generation (`tg64`, 6 repeats) | 5.13 ± 0.67 | **6.80 ± 1.90** | ~1.3× |
+
+**The split is the finding.** Prompt processing is compute-bound and the GPU helps a lot;
+generation is memory-bandwidth-bound and an integrated GPU borrows the same system RAM the
+CPU was already using, so there is little left to win. For a chat this means Vulkan pays off
+when somebody **pastes a document**, and barely changes how fast the answer types itself out.
+
+### Two repeats is not a measurement
+
+The first pass used `-r 2` and gave `tg64` as 3.21 (CPU) against 3.64 ± **3.15** (Vulkan) —
+an error bar wider than the number. At six repeats the CPU figure moved from **3.21 to
+5.13**. The two-repeat run was wrong about the CPU, not just imprecise about the GPU, and a
+comparison built on it would have been wrong in a direction nobody would have questioned.
+
+### `Q1_0` on upstream, settled by running it
+
+V324 corrected the catalogue's claim that 1-bit Bonsai needs PrismML's fork, on the strength
+of PrismML's own documentation and of `GGML_TYPE_Q1_0` appearing in `ggml-org/llama.cpp`.
+Now it is settled properly: the **official** Windows build loads
+`Bonsai-4B-Q1_0.gguf` and reports it as `qwen3 4B Q1_0`, 540 MiB.
+
+### And the new 27B needs the fork after all — a different fork
+
+`Ternary-Bonsai-2-27B-PTQ1_0.gguf` (released 2026-09-17, 5.95 GB, plus a 0.63 GB `mmproj`
+for vision) loads on **neither** upstream **nor** the fork checked out here in July. The
+reason is in the new fork's own header:
+
+```c
+GGML_TYPE_PTQ1_0 = 143, // Prism-private ternary, group 128
+```
+
+**Prism-private.** It will not arrive upstream, and the July clone predates it by 10 687
+commits — PrismML also rewrote their history in between, so the old clone cannot even be
+pulled forward. A kit that wants the 27B has to carry *their current* fork, which is a
+different commitment from carrying llama.cpp.
+
+
 ### 2026-09-16/17 — PrismML Bonsai 1-bit: the 8B is a real model, and the stale requirement was ours
 
 Asked for by the author. First measurement of 1-bit weights here, and the first on a
