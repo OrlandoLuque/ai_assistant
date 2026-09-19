@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v206 (2026-09-19) — V331: la inferencia en proceso iba 32 veces más lenta de lo que debía (0.2.283)
+
+V330 dejó el puente funcionando y un número feo encima de la mesa: el Bonsai-4B `Q1_0`
+respondía bien, pero tardaba **108,8 s** de generación, contra los 5,13 tok/s que V329
+midió con `llama-cli` en este mismo portátil y con este mismo fichero de pesos.
+
+No era el modelo ni era la máquina. `llama-cpp-sys-2` vendoriza su propia copia de
+llama.cpp, y en la 0.1.146 el producto punto `ggml_vec_dot_q1_0_q8_0` **solo existe para
+ARM** (`ggml/src/ggml-cpu/arch/arm/quants.c`). En x86 no hay implementación, así que
+`arch-fallback.h` la redirige al escalar genérico de `quants.c`. Es decir: multiplicábamos
+matrices de mil millones de parámetros con un bucle sin SIMD.
+
+La 0.1.156 sí la trae (`arch/x86/quants.c:555`). Y como el manifiesto ya pedía `"0.1"`, no
+hubo que tocar el manifiesto — estaba clavado en el `Cargo.lock` y nada más. El update
+resultó quirúrgico: `llama-cpp-2` y `llama-cpp-sys-2`, las otras 313 dependencias intactas.
+
+| | generación |
+|---|---|
+| 0.1.146 (escalar) | 108,4 s · 108,8 s |
+| 0.1.156 (SIMD x86) | 2,97 · 3,34 · 3,56 · 3,02 · 3,46 s |
+
+Misma pregunta, mismos parámetros, misma máquina, misma respuesta («51»). Cinco
+repeticiones después del cambio y dos antes, porque una medida no es una medida — y aquí ya
+pasó que un barrido de dos repeticiones se equivocó sobre la CPU, no solo sobre la tarjeta.
+
+**Lo que NO se afirma aquí, a propósito:** ningún tok/s. 48 tokens en 3 s daría 16 tok/s y
+superaría a `llama-cli`, pero el modelo casi seguro paró al emitir `<|im_end|>` tras unos
+pocos tokens, no generó los 48. `GenStats` devuelve `generated_tokens` y `tokens_per_sec` y
+**nadie los estaba mirando**, así que el dato no existe. Lo comparable es el reloj de pared
+sobre trabajo idéntico, y eso es lo que está en la tabla.
+
+La lección para el kit, que es donde esto importaba: **la vía en proceso te ata a la versión
+de llama.cpp que vendoricen las bindings**, y esa versión puede no traer el kernel del tipo
+de cuantización que más te interesa. No es una posibilidad teórica: acaba de pasar, con la
+cuantización exacta que hace atractivo correr un modelo en una máquina sin tarjeta.
+
+Queda abierto, medible ya en tres segundos por prueba: el backend sigue usando
+`LlamaContextParams::default()`, que fija **4 hilos** en una máquina de 8 y nunca llama a
+`with_n_threads`. Se mide y se arregla aparte, para poder atribuir la mejora a una cosa.
+
 ## [Unreleased] - v205 (2026-09-19) — V330: sabíamos cargar un GGUF en proceso y nadie podía pedírnoslo (0.2.282)
 
 Desde V112 la librería carga un GGUF **dentro del proceso** y genera con él, con las
