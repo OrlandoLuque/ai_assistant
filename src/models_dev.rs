@@ -1259,7 +1259,7 @@ mod fetcher {
     /// Refuses to GET URLs whose host is a loopback/private/link-local
     /// IP literal or the bare hostname `localhost` (V143 SSRF defense).
     /// Tests that need to hit a local mock server should call
-    /// [`Self::with_allow_private_endpoints(true)`].
+    /// [`Self::with_allow_private_endpoints`].
     #[derive(Clone, Default)]
     pub struct ReqwestCatalogClient {
         client: reqwest::Client,

@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v210 (2026-09-20) — V335: la documentación enlazaba a cosas que no existen, y nadie miraba (0.2.287)
+
+`cargo doc` avisa de enlaces que no puede resolver. Nadie los estaba leyendo, así que había
+**57** — documentación pública que dice «ve a [`Esto`]» y `Esto` no existe, de modo que en
+la página renderizada queda texto muerto. Misma clase que V317 (los doctests eran lo único
+que nadie compilaba), una capa más afuera.
+
+Lo que cerró el caso: **uno de los 57 lo introduje yo y se publicó el mismo día en que
+encontré el resto.** V332 renombró `default_thread_count` a `thread_policy` y dejó el enlace
+apuntando al nombre viejo. Sin puerta, esto no se estanca: crece.
+
+### Por qué un ratchet y no exigir cero
+
+Exigir cero hoy obligaba a elegir entre un commit enorme o no poner puerta, y **la puerta es
+lo que importa**. `scripts/check_doc_links.py` compara contra una línea base: el número
+puede bajar, nunca subir. Cada lote arreglado la baja. Cuando llegue a cero se cambia por
+`-D rustdoc::broken_intra_doc_links` a secas.
+
+**Verificado que la puerta falla de verdad**, que es lo único que distingue un verificador
+de un adorno: metiendo un enlace a un símbolo inventado, el script detecta 58 contra 57,
+sale con código 1 y lista los enlaces. Restaurado después.
+
+### El conjunto de features forma parte del contrato
+
+El recuento **depende de qué features se compilen, y el conjunto ancho encuentra más, no
+menos**: `full,local-inference` daba 46 y `FEATURES_STD` da 57, porque más código compilado
+es más documentación comprobada. Una puerta con features estrechas habría dado una cifra
+tranquilizadora y falsa. Por eso el conjunto se pasa explícitamente y queda escrito.
+
+### Primer lote: 57 → 49
+
+Solo lo inequívoco, que es prosa que nunca quiso ser un enlace: `[0,1]` era un intervalo,
+`[1]`/`[2]` marcadores de cita, `[unverified]` y `[EMAIL]` literales que el propio texto
+entrecomilla, `[OPTIONS]` una línea de uso. Más un enlace que llevaba argumentos de llamada
+(`Self::with_allow_private_endpoints(true)`).
+
+Los 49 restantes necesitan mirar uno a uno si el símbolo existe con otro nombre, está detrás
+de una feature, o le falta la ruta — y eso es **N86**, por lotes, bajando la base con cada
+uno. Comprobado ya que `enrich`, `push`, `UngroundedClaimStrategy` y `detect_format` **sí
+existen** (les falta calificar la ruta), y que `ImageRef` no aparece como tipo en ningún
+sitio.
+
 ## [Unreleased] - v209 (2026-09-20) — V334: el SLO vigilaba una magnitud que significaba dos cosas (0.2.286)
 
 V333 dejó `tokens_per_sec` marcado como mezclado y abrió N85 para separarlo. Al empezar

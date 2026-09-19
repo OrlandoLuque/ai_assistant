@@ -105,7 +105,7 @@ impl PiiType {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum RedactionStrategy {
-    /// Replace with placeholder like [EMAIL]
+    /// Replace with placeholder like `[EMAIL]`
     Replace,
     /// Mask with asterisks: j***@example.com
     Mask,

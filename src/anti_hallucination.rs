@@ -51,7 +51,7 @@ use crate::hallucination_detection::{Claim, HallucinationDetector};
 pub enum UngroundedClaimStrategy {
     /// Remove ungrounded claims entirely from the output.
     Omit,
-    /// Mark ungrounded claims with a configurable tag (e.g., "[unverified]").
+    /// Mark ungrounded claims with a configurable tag (e.g., `[unverified]`).
     Mark,
     /// Emit a warning but keep the claim in the output.
     Warn,

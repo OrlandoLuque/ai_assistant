@@ -47,7 +47,7 @@ impl Default for CitationConfig {
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum CitationStyle {
-    /// [1], [2], etc.
+    /// \[1\], \[2\], etc.
     Numeric,
     /// (Author, Year)
     AuthorYear,

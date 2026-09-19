@@ -79,6 +79,19 @@ jobs:
         # A broken example is worse than no example: it is the first thing a
         # reader copies.
         run: cargo test --features "$FEATURES_STD" --doc
+      - name: Check doc links
+        # Added V335, next to the doc examples because it is the same defect one
+        # layer out: V317 caught examples that did not compile, this catches
+        # links that point at symbols which do not exist, so they render dead.
+        #
+        # A ratchet rather than zero: 57 were already there, and demanding zero
+        # today would have meant either one enormous commit or no gate at all --
+        # and the gate is the part that matters, since one of the 57 was
+        # introduced and shipped the same day the rest were found (V332 renamed
+        # `default_thread_count` and left the link behind). The count can fall,
+        # never rise. FEATURES_STD on purpose: a narrower set checks less code
+        # and reports a smaller, untrue number.
+        run: python scripts/check_doc_links.py "$FEATURES_STD"
 
   clippy:
     name: Clippy

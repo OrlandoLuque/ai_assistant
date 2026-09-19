@@ -1,7 +1,7 @@
 //! AI Assistant HTTP Server — standalone binary.
 //!
 //! Usage:
-//!   ai_assistant_server [OPTIONS]
+//!   ai_assistant_server \[OPTIONS\]
 //!
 //! Options:
 //!   --host <HOST>      Host to bind to (default: 127.0.0.1)

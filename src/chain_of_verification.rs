@@ -41,7 +41,7 @@ impl Default for VerificationSource {
 pub enum CorrectionMode {
     /// Replace incorrect claims with corrected text
     Replace,
-    /// Add annotations (e.g., "[unverified]") to unverified claims
+    /// Add annotations (e.g., `[unverified]`) to unverified claims
     Annotate,
     /// Add footnotes with verification details
     Footnote,

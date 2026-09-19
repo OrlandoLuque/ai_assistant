@@ -342,7 +342,7 @@ fn erf_approx(x: f64) -> f64 {
 /// Distance between two ConfigPoints.
 ///
 /// - Bool: Hamming (0 if same, 1 if different)
-/// - Float/Uint: normalized absolute difference (capped to [0,1])
+/// - Float/Uint: normalized absolute difference (capped to \[0,1\])
 /// - Str: 0 if equal, 1 otherwise
 /// - Missing keys count as distance 1.
 pub fn config_distance(a: &ConfigPoint, b: &ConfigPoint) -> f64 {
