@@ -283,7 +283,49 @@ touch it" was **wrong**:
 
 ---
 
-## 6. Open questions — to measure, not to assume
+## 6. El kernel que no está — cuando la cuantización cabe pero no corre
+
+Las secciones de arriba deciden si un modelo **cabe**. Esta decide si se mueve, y es la
+que más fácil se pasa por alto, porque no falla: responde bien y tarda una eternidad.
+
+Un tipo de cuantización solo va rápido si el motor trae el **kernel compilado para tu
+arquitectura**. ggml resuelve cada tipo a un producto punto en una tabla; si no hay versión
+para la tuya, `arch-fallback.h` la redirige a la implementación escalar genérica. No hay
+aviso, no hay error, y el modelo da la respuesta correcta.
+
+**Medido 2026-09-19** (detalle en [MODEL_BENCHMARKS.md](MODEL_BENCHMARKS.md)): Bonsai-4B
+`Q1_0`, mismo prompt y mismos parámetros, portátil x86.
+
+| motor | generación |
+|---|---|
+| `llama-cpp-sys-2` 0.1.146 | 108,4 · 108,8 s |
+| `llama-cpp-sys-2` 0.1.156 | 2,97 · 3,34 · 3,56 · 3,02 · 3,46 s |
+
+En la 0.1.146, `ggml_vec_dot_q1_0_q8_0` solo existía para ARM. Treinta y dos veces, por una
+línea del `Cargo.lock`.
+
+**Lo que hay que sacar de aquí:**
+
+- **Las bindings vendorizan su propio llama.cpp.** Cuando se usa la ruta en proceso, la
+  versión del motor la fija la crate, no el clon que tengas en disco. Antes de concluir
+  nada sobre la velocidad de un modelo, comprobar que el tipo tiene kernel para tu
+  arquitectura: `ggml/src/ggml-cpu/arch/<arch>/quants.c`.
+- **Cuidado al buscarlo:** `q1_0` casa también dentro de `tq1_0`, que es un tipo distinto
+  (ternario). Un `grep` ingenuo da un falso negativo perfectamente convincente. Usar
+  `[^t]q1_0`.
+- **Cuanto más exótica la cuantización, más probable el agujero.** Los `Q4_K_M` de toda la
+  vida tienen kernel en todas partes; los formatos de 1 bit y ternarios son recientes y su
+  cobertura por arquitectura va por detrás. Esa es una razón de peso para no elegir una
+  cuantización rara solo porque el fichero sea pequeño.
+
+Y el hilo hermano, porque falla igual de callado: **el número de hilos**. La librería usa
+núcleos **físicos**, no lógicos — llenar los hermanos SMT salió cinco veces más lento en la
+misma prueba (16,8 s contra 3,5 s). El valor por defecto de llama.cpp son 4 fijos, sea cual
+sea la máquina; se ajusta con `LocalInferenceConfig::builder(...).n_threads(n)`.
+
+---
+
+## 7. Open questions — to measure, not to assume
 
 Each of these is a vendor or community claim that this project is equipped to verify:
 
@@ -300,7 +342,7 @@ Each of these is a vendor or community claim that this project is equipped to ve
 
 ---
 
-## 7. Terms that did not resolve
+## 8. Terms that did not resolve
 
 Recorded so the next person does not re-run the search:
 
