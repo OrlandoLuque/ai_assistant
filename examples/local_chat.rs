@@ -1,0 +1,59 @@
+//! Proof that the bridge works: a GGUF loaded in THIS process, answering
+//! through the ordinary `LlmProvider` port — no server, no subprocess.
+//!
+//! ```text
+//! cargo run --release --example local_chat --features local-inference-llama-cpp -- <ruta.gguf>
+//! ```
+//!
+//! A word about speed before anyone reads a number here as a verdict on the
+//! model: for `Q1_0` weights on x86 this path is currently far slower than a
+//! current `llama-cli` with the same file, because the llama.cpp vendored by
+//! `llama-cpp-sys-2` has no x86 kernel for that type and falls back to a scalar
+//! dot product. That is N84, and it is a fact about our bindings, not about the
+//! model or about your computer.
+use ai_assistant::local_inference::{BackendKind, GenParams, LocalInferenceConfig};
+use ai_assistant::{ChatMessage, LlmProvider, LocalInferenceProvider};
+
+fn main() {
+    let Some(model) = std::env::args().nth(1) else {
+        eprintln!("uso: local_chat <ruta a un .gguf>");
+        eprintln!("p.ej. cargo run --release --example local_chat \\");
+        eprintln!("        --features local-inference-llama-cpp -- modelos/Bonsai-4B-Q1_0.gguf");
+        std::process::exit(2);
+    };
+
+    let config = LocalInferenceConfig::builder(BackendKind::LlamaCpp, &model)
+        .ctx_size(2048)
+        .build();
+
+    let started = std::time::Instant::now();
+    let provider = match LocalInferenceProvider::load(&config) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("no se pudo cargar {model}: {e}");
+            std::process::exit(1);
+        }
+    };
+    println!("cargado en {:?} -- {}", started.elapsed(), provider.label());
+
+    let provider = provider.with_params(GenParams {
+        max_tokens: 48,
+        temperature: 0.5,
+        top_p: 0.9,
+        stop: vec!["<|im_end|>".to_string()],
+    });
+
+    // Deliberately a question with one right answer, so the output says whether
+    // the model really ran rather than just whether bytes came back.
+    let convo = vec![ChatMessage::user(
+        "What is 17 times 3? Answer with just the number.",
+    )];
+    let t = std::time::Instant::now();
+    match LlmProvider::generate(&provider, &convo, "You are concise.") {
+        Ok(reply) => println!("respuesta ({:?}): {:?}", t.elapsed(), reply.trim()),
+        Err(e) => {
+            eprintln!("error generando: {e}");
+            std::process::exit(1);
+        }
+    }
+}

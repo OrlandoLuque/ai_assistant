@@ -223,11 +223,16 @@ impl Backend for LlamaCppBackend {
         let mut decoder = encoding_rs::UTF_8.new_decoder();
         let eos = self.model.token_eos();
 
-        let mut next_pos = prompt_tokens.len() as i32;
+        // The prompt occupies positions [0, prompt_len), and every completed
+        // step appends exactly one token — so the next position is derivable
+        // from the step rather than tracked in a parallel counter. (Kept as a
+        // counter until V330, when `local-inference-llama-cpp` was linted for
+        // the first time: no CI job had ever compiled this feature.)
+        let prompt_len = prompt_tokens.len() as i32;
         let mut generated: u32 = 0;
         let mut tail_buffer = String::new();
 
-        for _ in 0..params.max_tokens {
+        for step in 0..params.max_tokens {
             // Sample from the most recent logits. After the prompt decode
             // that's the last token of the prompt; after each subsequent
             // single-token decode that's index 0 of the new batch.
@@ -265,11 +270,10 @@ impl Backend for LlamaCppBackend {
             // grows by 1 each step, so we don't reprocess the prompt.
             batch.clear();
             batch
-                .add(next, next_pos, &[0], true)
+                .add(next, prompt_len + step as i32, &[0], true)
                 .map_err(|e| BackendError::Backend(format!("batch.add token: {e}")))?;
             ctx.decode(&mut batch)
                 .map_err(|e| BackendError::Backend(format!("decode token: {e}")))?;
-            next_pos += 1;
         }
 
         let elapsed = start.elapsed();

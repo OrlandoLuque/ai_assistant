@@ -281,6 +281,8 @@ pub mod local_inference;
 mod local_inference_candle;
 #[cfg(feature = "local-inference-llama-cpp")]
 mod local_inference_llama_cpp;
+#[cfg(feature = "local-inference")]
+pub mod local_inference_provider;
 pub mod log_redaction;
 #[cfg(all(feature = "tools", feature = "audio"))]
 pub mod mcp_voice_tools;
@@ -359,6 +361,8 @@ pub use llm_provider::{
     provider_from_config, ConfigLlmProvider, FallbackLlmProvider, LlmProvider, MockLlmProvider,
     OllamaAdapter, PiiMaskingProvider,
 };
+#[cfg(feature = "local-inference")]
+pub use local_inference_provider::{LocalInferenceProvider, PromptStyle};
 pub use messages::{AiResponse, ChatMessage};
 pub use models::{ModelCapabilityInfo, ModelInfo, ModelRegistry};
 pub use providers::{

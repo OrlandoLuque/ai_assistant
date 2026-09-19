@@ -26,7 +26,7 @@
 //! * **Dedicated bin + auditor pair** — **not done**. Every other subsystem
 //!   that stores or runs things has one.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -194,9 +194,17 @@ pub trait Backend: Send {
     fn unload(&mut self) {}
 }
 
-/// Load a backend from a config. Until concrete backends are wired, only
-/// [`BackendKind::Stub`] returns a working backend; the others surface
-/// `NotImplemented` so callers can detect missing features at runtime.
+/// Load a backend from a config.
+///
+/// This used to say "until concrete backends are wired, only `Stub` returns a
+/// working backend". **They were wired** -- Candle in V110, `llama-cpp-2` in
+/// V112 -- and the sentence stayed. It is the second stale claim in this file:
+/// a header that says "not yet" about something that exists hides a capability,
+/// which costs as much as claiming one that does not.
+///
+/// What is still true: a `BackendKind` whose feature was not compiled in
+/// surfaces `NotImplemented` naming the missing one, so a caller can tell
+/// "you did not build this" from "this does not exist".
 pub fn load(config: &LocalInferenceConfig) -> Result<Box<dyn Backend>, BackendError> {
     if !config.model_path.as_os_str().is_empty()
         && config.kind != BackendKind::Stub

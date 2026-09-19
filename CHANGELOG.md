@@ -5,6 +5,102 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v205 (2026-09-19) — V330: sabíamos cargar un GGUF en proceso y nadie podía pedírnoslo (0.2.282)
+
+Desde V112 la librería carga un GGUF **dentro del proceso** y genera con él, con las
+bindings de `llama-cpp-2`. Funcionaba. Lo que no había era forma de **pedirlo**: el único
+camino era pilotar el trait `Backend` a mano, que es exactamente donde no está ninguno de
+los decoradores que la crate envuelve alrededor de la generación — cadena de reserva,
+enmascarado de PII, guardas de salida. Quien quisiera un modelo corriendo en su propio
+proceso lo conseguía, y a cambio perdía en silencio todo el resto del pipeline.
+
+**`LocalInferenceProvider`** (`src/local_inference_provider.rs`) es el adaptador que
+faltaba: presenta un `Backend` como `LlmProvider`, que es el puerto por el que ya pasan
+todas las rutas de generación. Se inyecta con `AiAssistant::set_llm_provider` — que ya
+existía — y a partir de ahí todo lo de abajo aplica sin una rama nueva en ningún `match`.
+La decisión de V108 de **no** ser una variante de `AiProvider` sigue intacta; lo que cambia
+es que «API directa en proceso» ya no implica «se salta el pipeline».
+
+### Lo que el módulo dice en voz alta en vez de callarse
+
+- **`PromptStyle`.** `Backend::generate` tokeniza el prompt **en crudo**: no aplica la
+  plantilla de chat que trae el GGUF. Así que quien construye el prompt decide el formato,
+  y un modelo al que le das el formato equivocado no falla — responde peor. Esa es la forma
+  más silenciosa que hay de perder calidad, así que la decisión tiene nombre propio y dos
+  valores: `ChatMl` (por defecto, que es lo que esperan Qwen y sus derivados, incluido el
+  Bonsai) y `Plain`.
+- **Un `Mutex`, y por qué.** `Backend` toma `&mut self` y es `Send` pero no `Sync`;
+  `LlmProvider` reparte `&self` y tiene que ser ambas. El mutex reconcilia las dos firmas y
+  además enuncia la restricción real: un modelo, una generación cada vez.
+- **Cancelar no para el modelo.** El trait `Backend` no puede detener una generación ya
+  empezada. Lo que se corta es el *reenvío*.
+
+### El test que pasaba con el código mal
+
+`cancelling_reports_what_was_produced_rather_than_claiming_it_stopped` comprobaba que
+llegara un `AiResponse::Cancelled(_)` — con `_`. Y `_` encajaba igual de bien con la
+respuesta entera que con la cadena vacía, así que no separaba nada: el código acumulaba
+*todo* lo generado, incluido lo posterior a la cancelación, y lo mandaba etiquetado como
+«cancelado». Ahora lo reenviado se acumula aparte, se deja de acumular al cancelar, y el
+test afirma el contenido exacto. Verificado mutando el código al comportamiento viejo y
+comprobando que el test falla — un test que no se ha visto fallar no es un test.
+
+### Y el agujero de cobertura que lo explicaba todo
+
+`local-inference` **no estaba en `full`**, ni en `FEATURES_STD`, ni en `FEATURES_NETWORK`,
+ni en la matriz de features de CI. Ningún trabajo de CI compilaba el módulo. Y la feature
+**no declara ni una dependencia extra** — el paraguas es el trait y el stub; las caras son
+sus dos backends concretos (`-candle`, `-llama-cpp`, este último además necesita libclang),
+que sí tienen motivo para quedarse fuera. Excluir también el paraguas no ahorraba nada.
+Añadido a la matriz y a `FEATURES_STD`, que es lo que le da clippy `--all-targets` y
+doctests.
+
+El doctest importa más de lo que parece: compila como **crate aparte**, así que es el único
+guardián de que los tipos se puedan nombrar y el trait llamar desde fuera — el agujero que
+V322 encontró en once tipos públicos, invisible a los tests unitarios por construcción
+porque compilan dentro. Por eso el doctest llega hasta `set_llm_provider`: para que la
+frase «se inyecta y ya está» esté comprobada y no solamente escrita. De hecho el primer
+intento de ejemplo no compilaba por usar `ai_assistant::messages::ChatMessage`, que es
+privado, y al mirarlo salió que `LocalInferenceProvider` tampoco se re-exportaba en la
+raíz cuando todos sus hermanos `LlmProvider` sí.
+
+Y el agujero cobró factura en el acto: al pasarle clippy `-D warnings` a
+`local-inference-llama-cpp` **por primera vez**, el backend nativo tenía un error dentro
+(`explicit_counter_loop` sobre `next_pos`). Llevaba ahí desde V112 sin que nada lo mirara.
+Arreglado derivando la posición del propio paso del bucle — el prompt ocupa
+`[0, prompt_len)` y cada paso completado añade exactamente un token — y **vuelto a
+comprobar contra el modelo real**, porque eso son posiciones de KV cache y equivocarse ahí
+no da un error de compilación, da texto malo.
+
+**El ratchet de features solo miraba en una dirección.** `UNCOVERED_BACKLOG` lista lo que
+CI no compila, y la prueba que lo vigila solo detecta *huérfanas*: features que nadie
+cubre. Nada comprobaba lo contrario, así que una entrada que pasara a estar cubierta se
+quedaba ahí diciendo «genuinely uncovered» para siempre, y el siguiente lector
+presupuestaba minutos de CI para trabajo ya hecho. Añadida la aserción inversa.
+
+### Verificación
+
+Bonsai-4B `Q1_0` cargado en proceso vía el adaptador, preguntado «What is 17 times 3?»:
+responde **«51»**. El puente funciona de extremo a extremo, ejecutado y no deducido.
+8 tests del módulo, el doctest (fuera de la crate), el ratchet de la matriz y clippy
+`--all-targets -D warnings`, todo en verde.
+
+**Pero tardó 108,4 s solo de generación**, contra los 5,13 tok/s que V329 midió con
+`llama-cli` en este mismo portátil y con este mismo modelo. Buscando el porqué:
+`llama-cpp-sys-2` 0.1.146 vendoriza su propia copia de llama.cpp, y ahí
+`ggml_vec_dot_q1_0_q8_0` **solo existe para ARM** — en x86 `arch-fallback.h` la redirige al
+producto escalar genérico. El clon local de llama.cpp sí trae la versión x86
+(`arch/x86/quants.c:639`). O sea: la vía en proceso te ata a la versión de llama.cpp que
+vendoricen las bindings, y esa versión no trae el kernel x86 de justo la cuantización que
+más interesa para correr en una máquina sin tarjeta. Aparte, el backend usa
+`LlamaContextParams::default()`, que fija **4 hilos** en
+una máquina de 8 y nunca llama a `with_n_threads`.
+
+Queda abierto como **N84**, con la medida limpia pendiente (antivirus sobre el binario
+recién compilado, máquina cargada por el build, y contar los tokens reales vía `GenStats`,
+que ya los devuelve y nadie miraba). No se mezcla aquí: el puente está verificado y es
+correcto, y la lentitud es un defecto distinto, de las bindings.
+
 ## [Unreleased] - v204 (2026-09-18) — V329: «necesita el fork» no era bastante preciso (0.2.281)
 
 Las cuatro entradas de PrismML decían «requires PrismML fork of llama.cpp». Medido el

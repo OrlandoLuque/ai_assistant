@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.281"
+version = "0.2.282"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -1043,6 +1043,13 @@ name = "ai_breeder_gui"
 path = "src/bin/ai_breeder_gui.rs"
 required-features = ["prompt-breeder", "gui-pro"]
 bench = false
+
+# Needs a GGUF on disk to do anything, and the native backend to build at all.
+# Declared so `--all-targets` in a build without the feature skips it rather
+# than failing: an example CI cannot compile is how 19 of them rotted (V317).
+[[example]]
+name = "local_chat"
+required-features = ["local-inference-llama-cpp"]
 
 [[example]]
 name = "autonomous_agent"

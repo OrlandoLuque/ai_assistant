@@ -28,7 +28,7 @@ env:
   CARGO_HTTP_LOW_SPEED_LIMIT: 5
   CARGO_HTTP_TIMEOUT: 120
   # Standard test set — covers core + all lightweight opt-in features
-  FEATURES_STD: "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing"
+  FEATURES_STD: "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing,local-inference"
   # Heavy networking features (separate due to quinn/rustls deps)
   FEATURES_NETWORK: "full,distributed-network,p2p,gpu-sharing,server-axum,server-cluster"
   # The smallest set the crate actually builds with (V267). Every other job here
@@ -294,6 +294,13 @@ jobs:
           - "distributed"
           - "containers"
           - "audio"
+          # V330: `local-inference` declares no extra dependencies — the umbrella
+          # is just the `Backend` trait plus the stub. Only its two concrete
+          # backends (`-candle`, `-llama-cpp`) pull heavy native deps, and
+          # `-llama-cpp` additionally needs libclang, which is why they stay out
+          # of CI. Excluding the umbrella too bought nothing and meant the
+          # `LlmProvider` bridge added in V330 compiled on no CI job at all.
+          - "local-inference"
           # Autonomous combinations
           - "autonomous"
           - "autonomous,scheduler"

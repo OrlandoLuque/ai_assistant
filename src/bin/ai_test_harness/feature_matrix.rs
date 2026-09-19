@@ -164,7 +164,10 @@ const UNCOVERED_BACKLOG: &[&str] = &[
     "stall-detection-llm",
     "sub-agents",
     "acp",
-    "local-inference",
+    // V330 removed `local-inference` from here by putting it in CI: it declares
+    // no dependencies of its own (the umbrella is the `Backend` trait plus the
+    // stub), so the CI minutes this list was weighing were almost none, and
+    // leaving it out meant the V330 `LlmProvider` bridge compiled on no job.
     "local-inference-candle",
     "embeddings-local",
     "redis-backend",
@@ -493,6 +496,25 @@ serde = \"1\"
             "a NEW feature is declared that nothing in CI compiles: {orphans:?}\n\
              Add them to the matrix in ci.yml, or to NOT_IN_CI with the reason. \
              A feature no job builds is where declared debt accumulates unseen."
+        );
+
+        // The same check in the other direction, added V330. The assertion above
+        // only catches features nothing covers; it says nothing about a backlog
+        // entry that quietly became covered. So the list could keep calling a
+        // feature "genuinely uncovered" forever after someone fixed it, and the
+        // next reader would budget CI minutes for work already done. A list that
+        // is only checked in the direction that grows it is how a ratchet rusts.
+        let now_covered: Vec<&str> = UNCOVERED_BACKLOG
+            .iter()
+            .copied()
+            .filter(|f| built.contains(*f) || in_full.contains(*f) || min_members.contains(f))
+            .collect();
+
+        assert!(
+            now_covered.is_empty(),
+            "UNCOVERED_BACKLOG still lists features CI now compiles: {now_covered:?}\n\
+             Delete them from the list. Leaving them makes it overstate the gap, \
+             which is the same defect as understating it."
         );
     }
 
