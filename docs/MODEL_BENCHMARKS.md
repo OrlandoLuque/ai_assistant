@@ -133,6 +133,46 @@ dependencies), so disk growth is not a concern in normal use.
 
 ## Log (newest first)
 
+### 2026-09-19 — inferencia en proceso: dos defectos nuestros que parecían del modelo
+
+**Qué:** primera medida de la ruta **en proceso** (V330 la hizo pedible:
+`LocalInferenceProvider` presenta un `Backend` como `LlmProvider`). Hasta ahora todo lo
+medido en este fichero salía por un servidor o por `llama-cli`.
+
+**Montaje.** Bonsai-4B `Q1_0`, `ctx_size` 2048, `max_tokens` 48, temp 0,5, top_p 0,9,
+stop `<|im_end|>`. Prompt: «What is 17 times 3? Answer with just the number.» Portátil sin
+tarjeta dedicada, 4 núcleos físicos / 8 lógicos. Respuesta correcta («51») en **todas** las
+ejecuciones de abajo — lo que se mueve es el reloj, no la calidad.
+
+| configuración | generación |
+|---|---|
+| `llama-cpp-2` 0.1.146, 4 hilos | 108,4 · 108,8 s |
+| `llama-cpp-2` 0.1.156, 4 hilos | 2,97 · 3,34 · 3,56 · 3,02 · 3,46 s |
+| `llama-cpp-2` 0.1.156, 8 hilos | 16,77 · 16,91 · 16,18 s |
+| 0.1.156, hilos automáticos (físicos) | 3,48 · 3,42 · 3,45 s |
+
+**Lo aprendido, que no es sobre el modelo:**
+
+1. **Las bindings vendorizan su propio llama.cpp, y puede no traer tu kernel.** En 0.1.146,
+   `ggml_vec_dot_q1_0_q8_0` solo existe para ARM; en x86 `arch-fallback.h` la manda al
+   escalar genérico. 0.1.156 sí trae `arch/x86/quants.c:555`. Treinta y dos veces, por una
+   línea de versión en el `Cargo.lock`. Para cualquier decisión sobre embarcar un motor:
+   **la vía en proceso te ata a la versión que vendoricen, no a la que tú clonaste.**
+2. **«Usa todos los núcleos» es cinco veces peor.** Llenar los hermanos SMT hundió la
+   generación. Físicos, acotado a `[1, lógicos]`, que es lo que hace el CLI de llama.cpp.
+
+**Lo que NO se afirma:** ningún tok/s. El modelo casi seguro paró al emitir `<|im_end|>`
+mucho antes de los 48 tokens, así que dividir 48 entre el tiempo daría una cifra inventada.
+`GenStats` devuelve `generated_tokens` y `tokens_per_sec` y la ruta del proveedor no los
+expone — pendiente. Lo comparable aquí es reloj de pared sobre trabajo idéntico, y eso es
+lo que está en la tabla.
+
+**Comparación con lo de arriba:** la entrada del 2026-09-18 midió 5,13 tok/s en CPU con
+`llama-cli` y upstream para este mismo modelo y esta misma máquina. Esa cifra sigue siendo
+válida y fue la que delató el problema: la ruta en proceso *debería* haberse parecido y no
+se parecía.
+
+
 ### 2026-09-18 (2nd) — PrismML's formats are split across three engine generations, and no single build runs all of them
 
 Measured while answering "can the kit carry Bonsai?". The answer is yes, for exactly one of
