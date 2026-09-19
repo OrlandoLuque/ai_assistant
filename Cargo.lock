@@ -103,7 +103,7 @@ dependencies = [
 
 [[package]]
 name = "ai_assistant"
-version = "0.2.283"
+version = "0.2.284"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -145,6 +145,7 @@ dependencies = [
  "llama-cpp-2",
  "log",
  "nokhwa",
+ "num_cpus",
  "nvml-wrapper",
  "parking_lot",
  "pdf-extract",

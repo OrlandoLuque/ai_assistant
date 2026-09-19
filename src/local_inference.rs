@@ -6,23 +6,24 @@
 //! who only need the trait surface (e.g. for stub testing) don't pull the
 //! native deps.
 //!
-//! # What is done and what is not, as of 2026-09-18
+//! # What is done and what is not, as of 2026-09-19
 //!
 //! This header used to say the Candle and llama-cpp-2 integrations were
-//! deferred. **Two of the four items on that list have been done since**, and
-//! a sentence that says "not yet" about something that exists hides a
+//! deferred. A sentence that says "not yet" about something that exists hides a
 //! capability — which is the same defect as claiming one that does not, with
 //! the cost on the other side. Someone reading this module concluded the crate
-//! could not run a model in process, when it can.
+//! could not run a model in process, when it can. Keeping the list honest is
+//! therefore part of the module, not bookkeeping around it.
 //!
 //! * **Candle backend** — done in V110 (`local_inference_candle`).
 //! * **llama-cpp-2 backend** — done in V112 (`local_inference_llama_cpp`),
 //!   real bindings, CPU only.
-//! * **Provider dispatch wiring** — **not done**. Nothing routes an
-//!   [`crate::AiAssistant`] to these backends, so the loading works and
-//!   nobody can ask for it through the normal path. This is the gap that
-//!   matters: it is why a caller who wants in-process inference has to drive
-//!   [`Backend`] directly.
+//! * **Provider dispatch wiring** — **done in V330**
+//!   ([`crate::LocalInferenceProvider`]). It had been the gap that mattered for
+//!   eighteen versions: loading worked and nobody could ask for it through the
+//!   normal path, so in-process inference sat outside every decorator the crate
+//!   wraps generation in. It is now an [`crate::llm_provider::LlmProvider`],
+//!   injected with [`crate::AiAssistant::set_llm_provider`].
 //! * **Dedicated bin + auditor pair** — **not done**. Every other subsystem
 //!   that stores or runs things has one.
 
@@ -62,6 +63,41 @@ pub struct LocalInferenceConfig {
     /// Optional model size override in MiB. When `None`, the backend is
     /// expected to read it from the file. Used by the clamp policy.
     pub model_size_mib: Option<u64>,
+    /// CPU threads for generation. `None` means "ask the machine" — the
+    /// backend counts cores and applies [`thread_policy`].
+    ///
+    /// This exists because llama.cpp's own default is a **fixed 4**, whatever
+    /// the machine is. Until V332 nothing overrode it, so a sixteen-core desktop
+    /// and a four-core laptop got the same four threads and neither was told.
+    pub n_threads: Option<u32>,
+}
+
+/// How many CPU threads to generate with, given what the machine has.
+///
+/// Pure on purpose: the probe that counts cores lives in the llama.cpp backend,
+/// because counting *physical* cores needs a dependency and this module's
+/// umbrella feature is deliberately dependency-free. Keeping the policy here
+/// means it can be tested on machines it was never run on.
+///
+/// # Why physical and not logical
+///
+/// `llama_context_default_params()` hardcodes 4 threads whatever the machine
+/// is — a fact about llama.cpp's defaults, not about the computer in front of
+/// the user. The obvious correction is "use every core", and it is wrong.
+///
+/// Measured 2026-09-19 on a 4-physical / 8-logical laptop, Bonsai-4B `Q1_0`,
+/// same prompt, rounds interleaved so ordering could not favour either:
+///
+/// | threads | generation |
+/// |---|---|
+/// | 4 (physical) | 5.16 · 3.46 · 3.47 s |
+/// | 8 (logical)  | 16.77 · 16.91 · 16.18 s |
+///
+/// Filling the SMT siblings made it **five times slower**. So the rule is
+/// physical cores, clamped into `[1, logical]` — which is also what llama.cpp's
+/// own CLI does for its default, and the measurement agrees with it.
+pub fn thread_policy(physical: u32, logical: u32) -> u32 {
+    physical.clamp(1, logical.max(1))
 }
 
 impl LocalInferenceConfig {
@@ -76,6 +112,7 @@ impl LocalInferenceConfig {
             n_gpu_layers: 0,
             allow_gpu_clamp: true,
             model_size_mib: None,
+            n_threads: None,
         }
     }
 }
@@ -87,6 +124,7 @@ pub struct LocalInferenceConfigBuilder {
     n_gpu_layers: u32,
     allow_gpu_clamp: bool,
     model_size_mib: Option<u64>,
+    n_threads: Option<u32>,
 }
 
 impl LocalInferenceConfigBuilder {
@@ -106,6 +144,12 @@ impl LocalInferenceConfigBuilder {
         self.model_size_mib = Some(n);
         self
     }
+    /// Pin the CPU thread count. Leave unset to derive it from the machine
+    /// via [`default_thread_count`].
+    pub fn n_threads(mut self, n: u32) -> Self {
+        self.n_threads = Some(n);
+        self
+    }
     pub fn build(self) -> LocalInferenceConfig {
         LocalInferenceConfig {
             kind: self.kind,
@@ -114,6 +158,7 @@ impl LocalInferenceConfigBuilder {
             n_gpu_layers: self.n_gpu_layers,
             allow_gpu_clamp: self.allow_gpu_clamp,
             model_size_mib: self.model_size_mib,
+            n_threads: self.n_threads,
         }
     }
 }
@@ -399,6 +444,33 @@ pub mod vram {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_thread_policy_prefers_physical_cores_over_filling_smt_siblings() {
+        // The measured case: 4 physical, 8 logical. Answering 8 here would be
+        // the "obvious" reading of available_parallelism and it was five times
+        // slower on the machine this was measured on.
+        assert_eq!(thread_policy(4, 8), 4);
+        // No SMT: physical == logical, nothing to hold back.
+        assert_eq!(thread_policy(16, 16), 16);
+        // A probe that over-reports physical cannot exceed what exists.
+        assert_eq!(thread_policy(32, 8), 8);
+        // And it never returns zero, whatever the probe says.
+        assert_eq!(thread_policy(0, 0), 1);
+        assert_eq!(thread_policy(0, 4), 1);
+    }
+
+    #[test]
+    fn threads_are_unset_until_asked_for() {
+        // `None` is meaningful: it is what tells the backend to look at the
+        // machine instead of taking llama.cpp's fixed 4.
+        let cfg = LocalInferenceConfig::builder(BackendKind::Stub, "/tmp/m").build();
+        assert_eq!(cfg.n_threads, None);
+        let pinned = LocalInferenceConfig::builder(BackendKind::Stub, "/tmp/m")
+            .n_threads(6)
+            .build();
+        assert_eq!(pinned.n_threads, Some(6));
+    }
 
     #[test]
     fn config_builder_defaults() {

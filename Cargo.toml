@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.283"
+version = "0.2.284"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -471,6 +471,7 @@ embeddings-local = [
 local-inference-llama-cpp = [
     "local-inference",
     "dep:llama-cpp-2",
+    "dep:num_cpus",
     "dep:encoding_rs",
 ]
 
@@ -757,6 +758,11 @@ tokenizers = { version = "0.23", optional = true, default-features = false, feat
 # libclang at build time. CPU-only by default — GPU support is opt-in via
 # upstream features (`cuda`, `metal`) which we don't enable yet.
 llama-cpp-2 = { version = "0.1", optional = true, default-features = false }
+# V332: contar nucleos FISICOS para el numero de hilos. available_parallelism
+# solo da los logicos, y medido en este repo llenar los hermanos SMT hace la
+# generacion 5 veces mas lenta. Cuelga de `local-inference-llama-cpp` y no del
+# paraguas `local-inference`, que sigue sin dependencias propias a proposito.
+num_cpus = { version = "1", optional = true }
 # UTF-8 incremental decoder used by `LlamaModel::token_to_piece` to stitch
 # multi-byte glyphs across tokens.
 encoding_rs = { version = "0.8", optional = true }

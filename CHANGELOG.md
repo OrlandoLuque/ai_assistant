@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v207 (2026-09-19) — V332: «usa todos los núcleos» era cinco veces peor que no hacer nada (0.2.284)
+
+V331 dejó una pregunta abierta con pinta de trámite: el backend usaba
+`LlamaContextParams::default()`, que fija **4 hilos** sea cual sea la máquina, y nunca
+llamaba a `with_n_threads`. Un dato sobre los valores por defecto de llama.cpp, no sobre el
+ordenador que tiene delante el usuario.
+
+La corrección evidente es «usa todos los núcleos». **Y es falsa.** Medido en este portátil
+(4 físicos, 8 lógicos), mismo prompt, rondas alternadas para que el orden no favoreciera a
+ninguno:
+
+| hilos | generación |
+|---|---|
+| 4 (físicos) | 5,16 · 3,46 · 3,47 s |
+| 8 (lógicos) | 16,77 · 16,91 · 16,18 s |
+
+Llenar los hermanos SMT lo hace **cinco veces más lento**. Así que la política es núcleos
+**físicos**, acotada a `[1, lógicos]` — que además es lo que usa el propio CLI de llama.cpp
+para su valor por defecto, y la medida coincide con él.
+
+Cómo se llegó aquí importa más que el resultado. La primera versión de `thread_policy`
+devolvía los lógicos, y venía con un comentario que decía haber medido que 4 y 8 daban
+igual. **Esa medición no existía**: la escribí al escribir el código. Se borró por
+principio, no por sospecha — y al medir de verdad resultó ser exactamente al revés. El
+comentario falso habría justificado un defecto que multiplica por cinco el tiempo de
+respuesta de cualquiera que no toque el ajuste. Es el defecto que este repositorio lleva
+doscientas versiones persiguiendo, cometido aquí mismo y frenado por la única regla que lo
+frena: no escribas un número que no has medido.
+
+- `LocalInferenceConfig::n_threads: Option<u32>` + `builder().n_threads(n)`. `None` significa
+  «mira la máquina», no «4».
+- `thread_policy(physical, logical)` es pura y está testeada, incluyendo el caso medido
+  (4,8)→4, el sin-SMT (16,16)→16, una sonda que exagera (32,8)→8 y el suelo (0,0)→1.
+- La sonda de núcleos físicos (`num_cpus`) cuelga de `local-inference-llama-cpp` y **no**
+  del paraguas `local-inference`, que sigue sin dependencias propias — que es exactamente
+  el argumento con el que V330 lo metió en CI. Colgarla del paraguas habría convertido ese
+  comentario en mentira una hora después de escribirlo.
+- El ejemplo `local_chat` acepta un segundo argumento con el número de hilos, para que
+  «¿de verdad van mejor más hilos en esta máquina?» sea una pregunta que se ejecuta y no
+  que se supone.
+
+Verificado: el defecto automático (3,48 · 3,42 · 3,45 s) iguala al 4 explícito
+(3,44 · 3,46 · 3,43 s), así que la sonda hace lo que dice. 16 tests de `local_inference`,
+clippy `--all-targets -D warnings` exit 0.
+
+Y de paso, la cabecera de `local_inference.rs` seguía diciendo que el cableado al proveedor
+**no estaba hecho** — el mismo fichero cuya cabecera explica que decir «todavía no» sobre
+algo que existe esconde una capacidad. Lo hizo V330 doce horas antes. Corregida.
+
 ## [Unreleased] - v206 (2026-09-19) — V331: la inferencia en proceso iba 32 veces más lenta de lo que debía (0.2.283)
 
 V330 dejó el puente funcionando y un número feo encima de la mesa: el Bonsai-4B `Q1_0`

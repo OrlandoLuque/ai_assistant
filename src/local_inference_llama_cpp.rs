@@ -120,7 +120,22 @@ pub(crate) fn load_llama_cpp(cfg: &LocalInferenceConfig) -> Result<Box<dyn Backe
         .map_err(|e| BackendError::Backend(format!("load gguf via llama-cpp-2: {e}")))?;
 
     let ctx_size = cfg.ctx_size.max(1);
-    let ctx_params = LlamaContextParams::default().with_n_ctx(NonZeroU32::new(ctx_size));
+    // `LlamaContextParams::default()` hardcodes 4 threads whatever the machine
+    // is (V332). Leaving that alone meant every caller got four, on a laptop
+    // and on a sixteen-core desktop alike, and nothing said so. The probe lives
+    // here rather than in `local_inference` so the umbrella feature keeps its
+    // "no dependencies of its own" property.
+    let threads = cfg.n_threads.unwrap_or_else(|| {
+        let logical = std::thread::available_parallelism()
+            .map(|n| n.get() as u32)
+            .unwrap_or(1);
+        crate::local_inference::thread_policy(num_cpus::get_physical() as u32, logical)
+    }) as i32;
+    let threads = threads.max(1);
+    let ctx_params = LlamaContextParams::default()
+        .with_n_ctx(NonZeroU32::new(ctx_size))
+        .with_n_threads(threads)
+        .with_n_threads_batch(threads);
 
     Ok(Box::new(LlamaCppBackend {
         backend,

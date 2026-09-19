@@ -22,9 +22,14 @@ fn main() {
         std::process::exit(2);
     };
 
-    let config = LocalInferenceConfig::builder(BackendKind::LlamaCpp, &model)
-        .ctx_size(2048)
-        .build();
+    // Optional second argument: pin the thread count, so "is more threads
+    // actually faster on this machine?" is a question you can answer by
+    // running it rather than by assuming.
+    let mut builder = LocalInferenceConfig::builder(BackendKind::LlamaCpp, &model).ctx_size(2048);
+    if let Some(t) = std::env::args().nth(2).and_then(|s| s.parse::<u32>().ok()) {
+        builder = builder.n_threads(t);
+    }
+    let config = builder.build();
 
     let started = std::time::Instant::now();
     let provider = match LocalInferenceProvider::load(&config) {
