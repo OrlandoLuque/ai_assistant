@@ -93,7 +93,7 @@ impl VisionLimits {
 }
 
 /// Unified image format detection. Wraps
-/// [`crate::document_parsing::image_extraction::ImageExtractor::detect_format`]
+/// [`crate::document_parsing::ImageExtractor::detect_format`]
 /// and adds WebP detection (RIFF + "WEBP" tag). Returns the canonical
 /// media type on success, or `None` for unsupported / unknown formats.
 ///

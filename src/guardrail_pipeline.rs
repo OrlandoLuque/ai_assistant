@@ -2205,7 +2205,8 @@ impl Guard for AbstentionGuard {
 /// Guard that warns or annotates responses containing ungrounded claims.
 ///
 /// Scans the output for patterns that suggest unverified/unsupported assertions
-/// and applies the configured [`UngroundedClaimStrategy`] equivalent action.
+/// and applies the configured
+/// [`crate::anti_hallucination::UngroundedClaimStrategy`] equivalent action.
 /// By default, marks suspicious content with `[unverified]` annotations.
 ///
 /// Runs at [`GuardStage::PostReceive`] since it evaluates generated output.

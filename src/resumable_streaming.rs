@@ -86,7 +86,7 @@ struct StreamState {
 
 /// A resumable stream that wraps a chunk producer.
 ///
-/// The producer pushes text chunks via [`push`], and consumers can
+/// The producer pushes text chunks via [`Self::push`], and consumers can
 /// read chunks or resume from a given sequence ID.
 pub struct ResumableStream {
     config: ResumableStreamConfig,

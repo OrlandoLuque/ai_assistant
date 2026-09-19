@@ -31,8 +31,10 @@ import sys
 
 # Measured 2026-09-20 against FEATURES_STD: 57 at first, 49 after V335 fixed
 # the unambiguous batch (prose in brackets that was never meant to be a link,
-# plus one link carrying call arguments). Only ever lower this.
-BASELINE = 49
+# plus one link carrying call arguments), and 45 after the second batch
+# (links whose target exists but needed its path qualifying). Only ever
+# lower this.
+BASELINE = 45
 
 # Must match ci.yml's FEATURES_STD. Passed explicitly so a narrower default
 # cannot quietly make the gate pass by checking less.

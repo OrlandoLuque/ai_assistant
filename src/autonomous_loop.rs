@@ -27,7 +27,7 @@ pub trait KnowledgeProvider: Send + Sync {
     /// context. That mistake cost a whole benchmark experiment before it was
     /// noticed, so the agent now supplies the original task as well.
     ///
-    /// The default implementation ignores `task` and delegates to [`enrich`], so
+    /// The default implementation ignores `task` and delegates to [`Self::enrich`], so
     /// existing providers keep working unchanged.
     fn enrich_for_task(&self, task: &str, query: &str) -> String {
         let _ = task;
