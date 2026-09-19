@@ -61,12 +61,17 @@ fn main() {
             // stops at its end-of-turn token long before the ceiling, so the
             // ceiling would give a rate nobody measured.
             match provider.last_stats() {
-                // `tokens_per_sec` mixes prompt processing with generation
-                // (N85), so the counts are printed and the rate is labelled
-                // for what it is rather than passed off as a writing speed.
+                // Two rates, because reading and writing are different
+                // workloads (V334). A single mixed figure said 0.58 tok/s for a
+                // healthy 3.5 s reply, which described neither half.
                 Some(s) => println!(
-                    "  {} tokens de prompt, {} generados, {:.2} tok/s (mezclado: N85)",
-                    s.prompt_tokens, s.generated_tokens, s.tokens_per_sec
+                    "  prompt: {} tok en {} ms ({:.1} tok/s) | generado: {} tok en {} ms ({:.1} tok/s)",
+                    s.prompt_tokens,
+                    s.prompt_ms,
+                    s.prompt_tokens_per_sec,
+                    s.generated_tokens,
+                    s.generation_ms,
+                    s.generation_tokens_per_sec
                 ),
                 None => println!("  (sin estadisticas: el backend no devolvio ninguna)"),
             }

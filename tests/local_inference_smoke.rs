@@ -71,7 +71,11 @@ fn stub_backend_full_roundtrip() {
         total_ms,
         prompt_tokens: stats.prompt_tokens,
         generated_tokens: stats.generated_tokens,
-        tokens_per_sec: stats.tokens_per_sec,
+        tokens_per_sec_mixed: stats.generation_tokens_per_sec,
+        prompt_ms: stats.prompt_ms,
+        generation_ms: stats.generation_ms,
+        prompt_tokens_per_sec: stats.prompt_tokens_per_sec,
+        generation_tokens_per_sec: stats.generation_tokens_per_sec,
         n_gpu_layers_requested: 0,
         n_gpu_layers_used: 0,
         peak_vram_mib: stats.peak_vram_mib,
@@ -175,18 +179,25 @@ fn tiny_model_smoke() {
             SLO_FIRST_CHUNK_MS
         );
     }
+    // V334: against the GENERATION rate. The old assertion used generated
+    // tokens over total time, so it also charged prompt evaluation to the
+    // model's writing speed -- the same conflation that made the auditor call a
+    // healthy 3.5 s reply a breach.
     assert!(
-        stats.tokens_per_sec >= SLO_MIN_TPS,
-        "tokens_per_sec below SLO: {} < {}",
-        stats.tokens_per_sec,
-        SLO_MIN_TPS
+        stats.generation_tokens_per_sec >= SLO_MIN_TPS,
+        "generation tok/s below SLO: {} < {} (prompt was {} tok in {} ms)",
+        stats.generation_tokens_per_sec,
+        SLO_MIN_TPS,
+        stats.prompt_tokens,
+        stats.prompt_ms
     );
     eprintln!(
-        "tiny_model_smoke: backend={:?} load_ms={} first={}ms total={}ms tok/s={:.1}",
+        "tiny_model_smoke: backend={:?} load_ms={} first={}ms total={}ms pp={:.1} tg={:.1}",
         backend,
         load_ms,
         first_chunk_ms.unwrap_or(total_ms),
         total_ms,
-        stats.tokens_per_sec
+        stats.prompt_tokens_per_sec,
+        stats.generation_tokens_per_sec
     );
 }

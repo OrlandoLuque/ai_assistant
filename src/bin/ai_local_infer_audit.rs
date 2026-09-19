@@ -108,18 +108,19 @@ fn cmd_show(args: &[String]) -> ExitCode {
         }
     };
     println!(
-        "{:<12} {:>8} {:>10} {:>10} {:>9} {:>9}",
-        "BACKEND", "LOAD_MS", "FIRST_MS", "TOTAL_MS", "GEN_TOK", "TOK/S"
+        "{:<12} {:>8} {:>10} {:>10} {:>9} {:>9} {:>9}",
+        "BACKEND", "LOAD_MS", "FIRST_MS", "TOTAL_MS", "GEN_TOK", "PP_T/S", "TG_T/S"
     );
     for r in &recs {
         println!(
-            "{:<12} {:>8} {:>10} {:>10} {:>9} {:>9.1}",
+            "{:<12} {:>8} {:>10} {:>10} {:>9} {:>9} {:>9}",
             r.backend,
             r.load_ms,
             r.first_chunk_ms,
             r.total_ms,
             r.generated_tokens,
-            r.tokens_per_sec
+            rate_cell(r.prompt_tokens_per_sec, r.predates_phase_split()),
+            rate_cell(r.generation_tokens_per_sec, r.predates_phase_split()),
         );
     }
     ExitCode::SUCCESS
@@ -155,9 +156,15 @@ fn cmd_audit(args: &[String]) -> ExitCode {
         SLO_FIRST_CHUNK_MS, breaches.first_chunk
     );
     println!(
-        "  tokens/sec breaches <{:.1}:  {}",
+        "  generation tok/s breaches <{:.1}:  {}",
         SLO_MIN_TPS, breaches.tps
     );
+    if breaches.legacy > 0 {
+        println!(
+            "  ({} registro(s) anteriores a V334 sin velocidad de generacion:              no evaluados, no incumplidos)",
+            breaches.legacy
+        );
+    }
 
     if breaches.any() {
         if strict {
@@ -176,11 +183,28 @@ pub(crate) struct BreachCounts {
     pub load: usize,
     pub first_chunk: usize,
     pub tps: usize,
+    /// Registros escritos antes de V334, que no traen velocidad de generacion.
+    /// No son incumplimientos: son mediciones que no existen.
+    pub legacy: usize,
 }
 
 impl BreachCounts {
+    /// Deliberadamente sin `legacy`: un registro que no trae el dato no es un
+    /// incumplimiento, y sumarlo aqui haria fallar `--strict` por la edad del
+    /// fichero en vez de por el rendimiento.
     pub fn any(&self) -> bool {
         self.load + self.first_chunk + self.tps > 0
+    }
+}
+
+/// Una tasa, o un guion cuando el registro es anterior a la separacion. Un
+/// `0.0` impreso como numero se lee como "midio cero", que es una afirmacion
+/// distinta de "no lo midio".
+fn rate_cell(v: f64, legacy: bool) -> String {
+    if legacy {
+        "--".to_string()
+    } else {
+        format!("{v:.1}")
     }
 }
 
@@ -188,6 +212,7 @@ pub(crate) fn count_breaches(records: &[SloRecord]) -> BreachCounts {
     let mut load = 0;
     let mut first_chunk = 0;
     let mut tps = 0;
+    let mut legacy = 0;
     for r in records {
         if r.load_ms > SLO_LOAD_MS {
             load += 1;
@@ -195,7 +220,17 @@ pub(crate) fn count_breaches(records: &[SloRecord]) -> BreachCounts {
         if r.first_chunk_ms > SLO_FIRST_CHUNK_MS {
             first_chunk += 1;
         }
-        if r.generated_tokens > 0 && r.tokens_per_sec < SLO_MIN_TPS {
+        // V334: comprobado contra la velocidad de GENERACION, no contra la
+        // mezcla de leer y escribir. Con la cifra mezclada, una respuesta corta
+        // a un prompt largo incumplia estando sana (medido: 0,58 contra un
+        // umbral de 5) y una maquina lenta escribiendo mucho aprobaba. Un
+        // umbral sobre una magnitud que significa dos cosas no se puede cumplir
+        // ni incumplir.
+        if r.predates_phase_split() {
+            // Anterior a la separacion: no lleva el dato. Decirlo, en vez de
+            // contar un incumplimiento que no se puede evidenciar.
+            legacy += 1;
+        } else if r.generated_tokens > 0 && r.generation_tokens_per_sec < SLO_MIN_TPS {
             tps += 1;
         }
     }
@@ -203,6 +238,7 @@ pub(crate) fn count_breaches(records: &[SloRecord]) -> BreachCounts {
         load,
         first_chunk,
         tps,
+        legacy,
     }
 }
 

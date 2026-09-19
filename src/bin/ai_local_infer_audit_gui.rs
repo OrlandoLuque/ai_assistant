@@ -113,6 +113,7 @@ impl AuditApp {
         let mut load_breach = 0usize;
         let mut first_breach = 0usize;
         let mut tps_breach = 0usize;
+        let mut legacy = 0usize;
         for r in &self.records {
             if r.load_ms > SLO_LOAD_MS {
                 load_breach += 1;
@@ -120,7 +121,11 @@ impl AuditApp {
             if r.first_chunk_ms > SLO_FIRST_CHUNK_MS {
                 first_breach += 1;
             }
-            if r.generated_tokens > 0 && r.tokens_per_sec < SLO_MIN_TPS {
+            // V334: contra la velocidad de GENERACION. Un registro anterior a
+            // la separacion no trae el dato, y no traerlo no es incumplir.
+            if r.predates_phase_split() {
+                legacy += 1;
+            } else if r.generated_tokens > 0 && r.generation_tokens_per_sec < SLO_MIN_TPS {
                 tps_breach += 1;
             }
         }
@@ -135,9 +140,14 @@ impl AuditApp {
             ui.label("first_chunk_ms breaches");
             ui.label(format!("{} (>{}ms)", first_breach, SLO_FIRST_CHUNK_MS));
             ui.end_row();
-            ui.label("tokens/sec breaches");
+            ui.label("generation tok/s breaches");
             ui.label(format!("{} (<{:.1})", tps_breach, SLO_MIN_TPS));
             ui.end_row();
+            if legacy > 0 {
+                ui.label("pre-V334 records");
+                ui.label(format!("{legacy} (no generation rate: not evaluated)"));
+                ui.end_row();
+            }
             let any_breach = load_breach + first_breach + tps_breach > 0;
             ui.label("Status");
             if any_breach {
@@ -158,13 +168,17 @@ impl AuditApp {
                 ui.strong("first_chunk_ms");
                 ui.strong("total_ms");
                 ui.strong("gen_tok");
-                ui.strong("tok/s");
+                ui.strong("pp t/s");
+                ui.strong("tg t/s");
                 ui.strong("gpu used/req");
                 ui.end_row();
                 for r in &self.records {
                     let load_breach = r.load_ms > SLO_LOAD_MS;
                     let first_breach = r.first_chunk_ms > SLO_FIRST_CHUNK_MS;
-                    let tps_breach = r.generated_tokens > 0 && r.tokens_per_sec < SLO_MIN_TPS;
+                    let legacy = r.predates_phase_split();
+                    let tps_breach = !legacy
+                        && r.generated_tokens > 0
+                        && r.generation_tokens_per_sec < SLO_MIN_TPS;
                     let normal = ui.style().visuals.text_color();
                     let red = egui::Color32::from_rgb(220, 80, 80);
 
@@ -179,9 +193,19 @@ impl AuditApp {
                     );
                     ui.label(r.total_ms.to_string());
                     ui.label(r.generated_tokens.to_string());
+                    // Un guion, no un 0.0: "no lo midio" y "midio cero" son
+                    // afirmaciones distintas y no deben pintarse igual.
+                    let cell = |v: f64| {
+                        if legacy {
+                            "--".to_string()
+                        } else {
+                            format!("{v:.1}")
+                        }
+                    };
+                    ui.label(cell(r.prompt_tokens_per_sec));
                     ui.colored_label(
                         if tps_breach { red } else { normal },
-                        format!("{:.1}", r.tokens_per_sec),
+                        cell(r.generation_tokens_per_sec),
                     );
                     ui.label(format!(
                         "{}/{}",

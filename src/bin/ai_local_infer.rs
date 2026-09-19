@@ -213,8 +213,11 @@ fn cmd_bench(args: &[String]) -> ExitCode {
         match run_one(&g) {
             Ok(rec) => {
                 eprintln!(
-                    "  total {}ms, first_chunk {}ms, {:.1} tok/s",
-                    rec.total_ms, rec.first_chunk_ms, rec.tokens_per_sec
+                    "  total {}ms, first_chunk {}ms, {:.1} tok/s leyendo, {:.1} escribiendo",
+                    rec.total_ms,
+                    rec.first_chunk_ms,
+                    rec.prompt_tokens_per_sec,
+                    rec.generation_tokens_per_sec
                 );
                 if let Err(e) = persist_record(&g.log_dir, &rec) {
                     eprintln!("  warning: could not persist SLO record: {}", e);
@@ -271,7 +274,11 @@ fn run_one(g: &GenArgs) -> Result<SloRecord, String> {
         total_ms,
         prompt_tokens: stats.prompt_tokens,
         generated_tokens: stats.generated_tokens,
-        tokens_per_sec: stats.tokens_per_sec,
+        tokens_per_sec_mixed: stats.generation_tokens_per_sec,
+        prompt_ms: stats.prompt_ms,
+        generation_ms: stats.generation_ms,
+        prompt_tokens_per_sec: stats.prompt_tokens_per_sec,
+        generation_tokens_per_sec: stats.generation_tokens_per_sec,
         n_gpu_layers_requested: g.n_gpu_layers,
         n_gpu_layers_used: n_used,
         peak_vram_mib: stats.peak_vram_mib,
@@ -288,7 +295,16 @@ fn print_summary(r: &SloRecord) {
     println!("  total_ms:          {}", r.total_ms);
     println!("  prompt_tokens:     {}", r.prompt_tokens);
     println!("  generated_tokens:  {}", r.generated_tokens);
-    println!("  tokens_per_sec:    {:.1}", r.tokens_per_sec);
+    println!("  prompt_ms:         {}", r.prompt_ms);
+    println!("  generation_ms:     {}", r.generation_ms);
+    println!(
+        "  prompt tok/s:      {:.1}  (pp: lo que tarda en LEER)",
+        r.prompt_tokens_per_sec
+    );
+    println!(
+        "  generation tok/s:  {:.1}  (tg: lo que tarda en ESCRIBIR)",
+        r.generation_tokens_per_sec
+    );
     println!(
         "  gpu_layers:        {} requested, {} used",
         r.n_gpu_layers_requested, r.n_gpu_layers_used
@@ -306,7 +322,12 @@ fn print_bench_summary(records: &[SloRecord]) {
     let avg_load = records.iter().map(|r| r.load_ms).sum::<u64>() as f64 / n;
     let avg_first = records.iter().map(|r| r.first_chunk_ms).sum::<u64>() as f64 / n;
     let avg_total = records.iter().map(|r| r.total_ms).sum::<u64>() as f64 / n;
-    let avg_tps = records.iter().map(|r| r.tokens_per_sec).sum::<f64>() / n;
+    let avg_pp = records.iter().map(|r| r.prompt_tokens_per_sec).sum::<f64>() / n;
+    let avg_tg = records
+        .iter()
+        .map(|r| r.generation_tokens_per_sec)
+        .sum::<f64>()
+        / n;
     let max_total = records.iter().map(|r| r.total_ms).max().unwrap_or(0);
     let min_total = records.iter().map(|r| r.total_ms).min().unwrap_or(0);
     println!();
@@ -317,7 +338,8 @@ fn print_bench_summary(records: &[SloRecord]) {
         "  avg total_ms:       {:.1} (min {}, max {})",
         avg_total, min_total, max_total
     );
-    println!("  avg tokens/sec:     {:.1}", avg_tps);
+    println!("  avg prompt tok/s:   {:.1}  (pp)", avg_pp);
+    println!("  avg generation t/s: {:.1}  (tg)", avg_tg);
 }
 
 fn persist_record(dir: &Path, rec: &SloRecord) -> std::io::Result<()> {

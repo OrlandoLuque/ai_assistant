@@ -144,8 +144,8 @@ impl LocalInferenceConfigBuilder {
         self.model_size_mib = Some(n);
         self
     }
-    /// Pin the CPU thread count. Leave unset to derive it from the machine
-    /// via [`default_thread_count`].
+    /// Pin the CPU thread count. Leave unset and the backend counts the
+    /// machine's cores and applies [`thread_policy`].
     pub fn n_threads(mut self, n: u32) -> Self {
         self.n_threads = Some(n);
         self
@@ -182,27 +182,71 @@ impl Default for GenParams {
     }
 }
 
+/// What a backend measured about one generation.
+///
+/// # Two regimes, two numbers (V334)
+///
+/// Reading the prompt and writing the answer are **not the same workload**:
+/// prompt processing runs the whole prompt through the model in parallel and is
+/// compute-bound, while generation produces one token at a time and is
+/// memory-bandwidth-bound. llama.cpp's own tooling reports them as `pp` and
+/// `tg` for exactly that reason.
+///
+/// Until V334 this struct had a single `tokens_per_sec` = generated ÷ *total*
+/// time, which mixed them. Measured 2026-09-19: 32 prompt tokens, **2**
+/// generated, 3.5 s → 0.58 "tok/s" — a number that describes neither half. The
+/// auditor's SLO (`≥ 5 tok/s`) was checked against it, so a healthy 3.5 s reply
+/// read as a breach, and a slow machine answering at length would have passed.
+/// A threshold on a quantity that means two things cannot be met or missed.
 #[derive(Debug, Clone, Default)]
 pub struct GenStats {
     pub prompt_tokens: u32,
     pub generated_tokens: u32,
     /// Wall-clock for the **whole** call: reading the prompt and writing the
-    /// answer.
+    /// answer. `prompt_ms + generation_ms` plus whatever sits between them.
     pub time_ms: u64,
-    /// `generated_tokens / time_ms`, and therefore **not** a generation rate.
-    ///
-    /// Prompt processing and token generation are different regimes — one is
-    /// compute-bound, the other memory-bandwidth-bound — which is why
-    /// llama.cpp's own tooling reports `pp` and `tg` separately. This number
-    /// mixes them, so on a short answer to a long prompt it is dominated by the
-    /// prompt and reads far lower than the model actually writes.
-    ///
-    /// Measured 2026-09-19 for the shape that makes this obvious: 32 prompt
-    /// tokens, **2** generated, 3.5 s → 0.58 "tok/s", which describes nothing
-    /// anyone wants to know. Splitting the two is tracked as N85; until then,
-    /// compare wall-clock on identical work rather than quoting this.
-    pub tokens_per_sec: f64,
+    /// Time spent evaluating the prompt, before the first token is sampled.
+    pub prompt_ms: u64,
+    /// Time spent generating, from the first sampled token to the last.
+    pub generation_ms: u64,
+    /// `prompt_tokens / prompt_ms` — llama.cpp's `pp`. How fast it *reads*.
+    pub prompt_tokens_per_sec: f64,
+    /// `generated_tokens / generation_ms` — llama.cpp's `tg`. How fast it
+    /// *writes*, and the one an SLO on responsiveness should use.
+    pub generation_tokens_per_sec: f64,
     pub peak_vram_mib: Option<u64>,
+}
+
+impl GenStats {
+    /// Build the derived rates from the counts and the two durations, so the
+    /// three backends cannot each divide slightly differently.
+    ///
+    /// Zero elapsed is floored rather than propagated as infinity: a rate of
+    /// `inf` in a log reads as a sensor fault, and the honest reading of "too
+    /// fast to time" is "we cannot say", not "infinitely fast".
+    pub fn with_timings(
+        prompt_tokens: u32,
+        generated_tokens: u32,
+        prompt: std::time::Duration,
+        generation: std::time::Duration,
+    ) -> Self {
+        let rate = |tokens: u32, d: std::time::Duration| -> f64 {
+            if tokens == 0 {
+                return 0.0;
+            }
+            tokens as f64 / d.as_secs_f64().max(1e-6)
+        };
+        Self {
+            prompt_tokens,
+            generated_tokens,
+            time_ms: (prompt + generation).as_millis() as u64,
+            prompt_ms: prompt.as_millis() as u64,
+            generation_ms: generation.as_millis() as u64,
+            prompt_tokens_per_sec: rate(prompt_tokens, prompt),
+            generation_tokens_per_sec: rate(generated_tokens, generation),
+            peak_vram_mib: None,
+        }
+    }
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -323,19 +367,26 @@ impl Backend for StubBackend {
         _params: &GenParams,
         on_chunk: &mut dyn FnMut(&str),
     ) -> Result<GenStats, BackendError> {
-        let start = std::time::Instant::now();
+        // The stub has the same two phases as a real backend, even though both
+        // are trivial: it "reads" the prompt and then "writes" the answer.
+        // Timing them separately keeps it an honest stand-in — a stub that
+        // reported zero for one phase would let a consumer that divides by it
+        // pass here and fail against a real model.
+        let read_start = std::time::Instant::now();
+        let prompt_tokens = prompt.split_whitespace().count() as u32;
         let response = format!("[stub] {prompt}");
+        let prompt_elapsed = read_start.elapsed();
+
+        let write_start = std::time::Instant::now();
         on_chunk(&response);
-        let elapsed = start.elapsed();
-        let tokens = response.split_whitespace().count() as u32;
-        let secs = elapsed.as_secs_f64().max(1e-9);
-        Ok(GenStats {
-            prompt_tokens: prompt.split_whitespace().count() as u32,
-            generated_tokens: tokens,
-            time_ms: elapsed.as_millis() as u64,
-            tokens_per_sec: tokens as f64 / secs,
-            peak_vram_mib: None,
-        })
+        let generation_elapsed = write_start.elapsed();
+
+        Ok(GenStats::with_timings(
+            prompt_tokens,
+            response.split_whitespace().count() as u32,
+            prompt_elapsed,
+            generation_elapsed,
+        ))
     }
     fn kind(&self) -> BackendKind {
         BackendKind::Stub
@@ -350,6 +401,27 @@ impl StubBackend {
     }
 }
 
+/// One durable line of the local-inference log.
+///
+/// # Reading records written before V334
+///
+/// This is persisted as JSONL and there are records on disk from earlier runs,
+/// so the wire format stays backward-compatible: the old `tokens_per_sec` key
+/// is still read and written, and the four fields V334 adds default to zero on
+/// an old line.
+///
+/// The Rust field was renamed to [`Self::tokens_per_sec_mixed`] even though the
+/// JSON key did not change, because the number was never a generation rate —
+/// it is generated tokens over *total* time, prompt evaluation included. A
+/// rename makes the compiler point at every place that reads it; redefining
+/// what the old name means would have let the misreading continue silently,
+/// which is how it survived this long.
+///
+/// **Telling a legacy record apart from a slow one:** since V334 a record with
+/// `generated_tokens > 0` always carries a positive
+/// `generation_tokens_per_sec`. So zero-with-tokens means "written before the
+/// split", not "infinitely slow", and an auditor must say so rather than
+/// report a breach it cannot actually evidence.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SloRecord {
     pub ts_unix_ms: u64,
@@ -360,10 +432,35 @@ pub struct SloRecord {
     pub total_ms: u64,
     pub prompt_tokens: u32,
     pub generated_tokens: u32,
-    pub tokens_per_sec: f64,
+    /// Legacy: generated tokens over **total** time. Kept under its original
+    /// JSON key so old logs still parse. Prefer
+    /// [`Self::generation_tokens_per_sec`].
+    #[serde(rename = "tokens_per_sec")]
+    pub tokens_per_sec_mixed: f64,
+    /// Zero on records written before V334.
+    #[serde(default)]
+    pub prompt_ms: u64,
+    /// Zero on records written before V334.
+    #[serde(default)]
+    pub generation_ms: u64,
+    /// Zero on records written before V334.
+    #[serde(default)]
+    pub prompt_tokens_per_sec: f64,
+    /// Zero on records written before V334. The rate an SLO on responsiveness
+    /// should be checked against.
+    #[serde(default)]
+    pub generation_tokens_per_sec: f64,
     pub n_gpu_layers_requested: u32,
     pub n_gpu_layers_used: u32,
     pub peak_vram_mib: Option<u64>,
+}
+
+impl SloRecord {
+    /// Whether this line predates the prompt/generation split, and therefore
+    /// cannot answer "how fast did it write?" at all.
+    pub fn predates_phase_split(&self) -> bool {
+        self.generated_tokens > 0 && self.generation_tokens_per_sec == 0.0
+    }
 }
 
 impl SloRecord {
@@ -601,7 +698,11 @@ mod tests {
             total_ms: 30,
             prompt_tokens: 5,
             generated_tokens: 7,
-            tokens_per_sec: 70.0,
+            tokens_per_sec_mixed: 70.0,
+            prompt_ms: 4,
+            generation_ms: 20,
+            prompt_tokens_per_sec: 1250.0,
+            generation_tokens_per_sec: 350.0,
             n_gpu_layers_requested: 32,
             n_gpu_layers_used: 16,
             peak_vram_mib: Some(2048),
@@ -609,7 +710,50 @@ mod tests {
         let json = serde_json::to_string(&r).unwrap();
         assert!(json.contains("\"backend\":\"stub\""));
         assert!(json.contains("\"n_gpu_layers_used\":16"));
+        // The Rust field was renamed; the wire key must not move, or every log
+        // written before V334 stops parsing.
+        assert!(json.contains("\"tokens_per_sec\":70.0"), "{json}");
         let back: SloRecord = serde_json::from_str(&json).unwrap();
         assert_eq!(back.generated_tokens, 7);
+        assert_eq!(back.generation_tokens_per_sec, 350.0);
+        assert!(!back.predates_phase_split());
+    }
+
+    #[test]
+    fn a_record_written_before_the_split_still_parses_and_says_so() {
+        // Copied verbatim from .ai_assistant/local_infer_logs, written in May
+        // 2026. The point of keeping the old JSON key is that this line keeps
+        // working; the point of `predates_phase_split` is that nobody mistakes
+        // its missing generation rate for a measurement of zero.
+        let old = r#"{"ts_unix_ms":1777934566481,"backend":"candle","model_path":"../TinyLlama-1.1B-Chat-v1.0/tinyllama-1.1b-chat-v1.0.Q2_K.gguf","load_ms":1192,"first_chunk_ms":1858,"total_ms":6828,"prompt_tokens":6,"generated_tokens":16,"tokens_per_sec":2.3430714702990207,"n_gpu_layers_requested":0,"n_gpu_layers_used":0,"peak_vram_mib":null}"#;
+
+        let r: SloRecord = serde_json::from_str(old).expect("old records must keep parsing");
+        assert_eq!(r.generated_tokens, 16);
+        assert_eq!(r.tokens_per_sec_mixed, 2.3430714702990207);
+        // Absent in the file, so zero -- and that is exactly what must NOT be
+        // read as "it generated at zero tokens per second".
+        assert_eq!(r.generation_tokens_per_sec, 0.0);
+        assert_eq!(r.prompt_ms, 0);
+        assert!(
+            r.predates_phase_split(),
+            "a record with tokens but no generation rate predates the split"
+        );
+    }
+
+    #[test]
+    fn a_new_record_with_tokens_is_never_mistaken_for_a_legacy_one() {
+        // The discriminator only works if the backends always populate the
+        // rate when they generated anything. This is that guarantee, checked
+        // on the one backend that runs everywhere.
+        let mut b = StubBackend::new();
+        let stats = b
+            .generate("hola que tal", &GenParams::default(), &mut |_| {})
+            .expect("stub generates");
+        assert!(stats.generated_tokens > 0);
+        assert!(
+            stats.generation_tokens_per_sec > 0.0,
+            "a backend that produced tokens must report a rate, or the legacy              discriminator turns fresh records into old ones: {stats:?}"
+        );
+        assert!(stats.prompt_tokens_per_sec > 0.0, "{stats:?}");
     }
 }

@@ -212,6 +212,13 @@ impl Backend for CandleBackend {
         let mut prev_decoded = String::new();
         let mut index_pos = 0usize;
 
+        // Unlike llama.cpp, here the prompt is evaluated *inside* the loop, on
+        // the first iteration — so the pp/tg boundary is that first `forward`
+        // and nothing else (V334). Timing the whole first iteration would fold
+        // the first token's sampling into the read.
+        let mut prompt_elapsed = std::time::Duration::ZERO;
+        let mut generation_start = std::time::Instant::now();
+
         for i in 0..params.max_tokens {
             // First step: feed the whole prompt. After that: just the new
             // token; the KV cache holds the rest.
@@ -224,10 +231,15 @@ impl Backend for CandleBackend {
                 .map_err(|e| BackendError::Backend(format!("build input: {e}")))?
                 .unsqueeze(0)
                 .map_err(|e| BackendError::Backend(format!("unsqueeze: {e}")))?;
+            let forward_start = std::time::Instant::now();
             let logits = self
                 .inner
                 .forward(&input, index_pos)
                 .map_err(|e| BackendError::Backend(format!("forward: {e}")))?;
+            if i == 0 {
+                prompt_elapsed = forward_start.elapsed();
+                generation_start = std::time::Instant::now();
+            }
             index_pos += ctx_slice.len();
             let logits = logits
                 .squeeze(0)
@@ -261,15 +273,13 @@ impl Backend for CandleBackend {
             }
         }
 
-        let elapsed = start.elapsed();
-        let secs = elapsed.as_secs_f64().max(1e-9);
+        let generation_elapsed = generation_start.elapsed();
         let n_gen = generated_tokens.len() as u32;
-        Ok(GenStats {
-            prompt_tokens,
-            generated_tokens: n_gen,
-            time_ms: elapsed.as_millis() as u64,
-            tokens_per_sec: n_gen as f64 / secs,
-            peak_vram_mib: None,
-        })
+        let mut stats =
+            GenStats::with_timings(prompt_tokens, n_gen, prompt_elapsed, generation_elapsed);
+        // The real total also covers tokenization and model setup before the
+        // loop, so report the clock rather than the sum of the two phases.
+        stats.time_ms = start.elapsed().as_millis() as u64;
+        Ok(stats)
     }
 }

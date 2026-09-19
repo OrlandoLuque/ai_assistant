@@ -5,6 +5,65 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v209 (2026-09-20) — V334: el SLO vigilaba una magnitud que significaba dos cosas (0.2.286)
+
+V333 dejó `tokens_per_sec` marcado como mezclado y abrió N85 para separarlo. Al empezar
+resultó que no era cosmético: **el SLO del auditor estaba puesto sobre esa cifra.** El
+umbral es `≥ 5 tok/s` y la ejecución medida el 2026-09-19 dio **0,58**, así que el auditor
+habría marcado incumplimiento en una respuesta sana de 3,5 s. Y al revés: una máquina lenta
+escribiendo mucho a un prompt corto habría aprobado. **Un umbral sobre una magnitud que
+significa dos cosas no se puede cumplir ni incumplir.**
+
+Leer el prompt y escribir la respuesta no son el mismo trabajo: el prompt pasa entero por el
+modelo de una vez y está limitado por cómputo; la generación sale token a token y está
+limitada por ancho de banda de memoria. Por eso el instrumental de llama.cpp los llama `pp`
+y `tg` y nunca los suma.
+
+### Lo medido, que ahora sí se puede comparar
+
+Bonsai-4B `Q1_0`, mismo portátil, mismo fichero de pesos:
+
+| | prompt (pp) | generación (tg) |
+|---|---|---|
+| `llama-cli`, medido en V329 | 6,39 tok/s | 5,13 tok/s |
+| en proceso, V334 | **10,3 · 10,5** | **7,6 · 8,4 · 9,3** |
+
+Dos cosas que la cifra mezclada escondía. La ruta en proceso es **más rápida que la
+referencia en ambas fases** — ayer el único dato disponible era 0,58 tok/s, que parecía
+catastrófico. Y **lo que domina es leer**: 3.050 ms para 32 tokens de prompt contra 238 ms
+generando. El «tarda 3,4 segundos» era casi todo prompt.
+
+### Cómo se hizo el cambio, que importa tanto como el qué
+
+- **Renombrar en vez de redefinir.** El campo viejo no se redefinió para significar otra
+  cosa: se renombró, y el compilador señaló los **siete** sitios que lo leían. Cambiarle el
+  significado a un nombre es cómo el problema sobrevivió tanto tiempo.
+- **El formato persistido no se rompe.** `SloRecord` se guarda en JSONL y hay registros
+  reales de mayo en disco. La clave JSON `tokens_per_sec` se mantiene, los cuatro campos
+  nuevos entran con `#[serde(default)]`, y hay un test que carga **un registro de mayo
+  literal** y comprueba que sigue leyéndose.
+- **No medido ≠ medido cero.** Un registro anterior a V334 no trae velocidad de generación.
+  Eso **no es un incumplimiento**: `predates_phase_split()` lo distingue, el auditor lo
+  cuenta aparte, `--strict` no falla por él, y la tabla pinta `--` en vez de `0.0`. Son
+  afirmaciones distintas y no deben verse igual.
+- **El stub mide dos fases también.** Un stub que devolviera cero en una de ellas dejaría
+  pasar aquí a un consumidor que divide, para que falle contra un modelo de verdad.
+- **El discriminador está protegido:** un test comprueba que un backend que generó tokens
+  siempre reporta tasa, porque si no un registro nuevo se leería como antiguo.
+
+Tocados los tres backends, los dos auditores (CLI y GUI), `ai_local_infer`, el test de
+integración —que llevaba **la misma aserción mezclada**— y el ejemplo.
+
+Verificado: 27 tests del módulo, 4 de integración, doctest, y clippy `--all-targets
+-D warnings` en verde con el backend nativo y con el GUI.
+
+### Y de paso
+
+`cargo doc` saca **46 avisos de enlaces rotos** — documentación que apunta a símbolos que no
+existen, sin nada que lo vigile. Uno lo metí yo en V332 (`default_thread_count`, renombrado
+a `thread_policy` con el enlace apuntando al nombre viejo); ese queda corregido aquí. Los 45
+restantes y la puerta de CI que impide que vuelvan son **N86**.
+
 ## [Unreleased] - v208 (2026-09-19) — V333: el backend contaba los tokens y el proveedor los tiraba (0.2.285)
 
 Dos veces seguidas, en V331 y V332, hubo que escribir «no puedo dar un tok/s». La razón era

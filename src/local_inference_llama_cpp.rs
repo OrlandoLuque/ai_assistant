@@ -189,6 +189,12 @@ impl Backend for LlamaCppBackend {
             .new_context(self.backend, self.ctx_params.clone())
             .map_err(|e| BackendError::Backend(format!("new context: {e}")))?;
 
+        // Prompt evaluation starts here and not at `start`: creating the
+        // context allocates the KV cache, which is setup whose cost scales with
+        // ctx_size rather than with the prompt. Folding it into `pp` would make
+        // a large context look like a slow reader. `time_ms` still covers
+        // everything (V334).
+        let prompt_start = Instant::now();
         let prompt_tokens = self
             .model
             .str_to_token(prompt, AddBos::Always)
@@ -219,6 +225,11 @@ impl Backend for LlamaCppBackend {
 
         ctx.decode(&mut batch)
             .map_err(|e| BackendError::Backend(format!("decode prompt: {e}")))?;
+
+        // The whole prompt has gone through the model in one pass — that is
+        // llama.cpp's `pp`, and everything after this line is `tg`.
+        let prompt_elapsed = prompt_start.elapsed();
+        let generation_start = Instant::now();
 
         // Sampler chain: temp ≤ 0 → greedy. Otherwise temp + top_p + dist.
         // `dist` is the actual stochastic sampler at the tail; without it
@@ -291,15 +302,13 @@ impl Backend for LlamaCppBackend {
                 .map_err(|e| BackendError::Backend(format!("decode token: {e}")))?;
         }
 
-        let elapsed = start.elapsed();
-        let secs = elapsed.as_secs_f64().max(1e-9);
-        Ok(GenStats {
-            prompt_tokens: n_prompt,
-            generated_tokens: generated,
-            time_ms: elapsed.as_millis() as u64,
-            tokens_per_sec: generated as f64 / secs,
-            peak_vram_mib: None,
-        })
+        let generation_elapsed = generation_start.elapsed();
+        let mut stats =
+            GenStats::with_timings(n_prompt, generated, prompt_elapsed, generation_elapsed);
+        // `with_timings` derives the total from the two phases; here the real
+        // total also covers context creation, so report what the clock says.
+        stats.time_ms = start.elapsed().as_millis() as u64;
+        Ok(stats)
     }
 }
 
