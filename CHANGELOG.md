@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v208 (2026-09-19) — V333: el backend contaba los tokens y el proveedor los tiraba (0.2.285)
+
+Dos veces seguidas, en V331 y V332, hubo que escribir «no puedo dar un tok/s». La razón era
+tonta y nuestra: `Backend::generate` **devuelve** un `GenStats` con los tokens contados y el
+tiempo medido, y `LocalInferenceProvider::run` lo descartaba, porque el puerto `LlmProvider`
+devuelve un `String` y los números no tenían dónde ir.
+
+`LocalInferenceProvider::last_stats()` los expone, en su propio `Mutex` para que leerlos no
+espere a una generación en curso.
+
+### Y lo primero que dijo el dato
+
+Con el ejemplo pidiendo 17×3 y `max_tokens: 48`, la respuesta real es:
+
+```
+32 tokens de prompt, 2 generados, 0.58 tok/s
+```
+
+**Dos tokens.** El modelo para en `<|im_end|>` muchísimo antes del techo. Si en V331 hubiera
+dividido 48 entre 3,5 s habría publicado **13,7 tok/s** — una cifra veinticuatro veces mayor
+que la cuenta real, y habría quedado estupenda en la tabla. Negarse a darla no fue prudencia
+excesiva: era la diferencia entre medir y decorar.
+
+### Y una segunda cosa, que deja una métrica marcada
+
+`tokens_per_sec` es `generated_tokens` entre el tiempo **total**, y el cronómetro arranca
+antes de decodificar el prompt (`local_inference_llama_cpp.rs:182`). Así que no es una
+velocidad de generación: mezcla dos regímenes distintos —procesar el prompt está limitado
+por cómputo, generar por ancho de banda de memoria— que es justo por lo que el instrumental
+de llama.cpp reporta `pp` y `tg` por separado, y por lo que la entrada del 2026-09-18 de
+`MODEL_BENCHMARKS.md` tiene dos columnas y no una.
+
+Con 32 de prompt y 2 generados, ese 0,58 no describe nada que nadie quiera saber. El campo
+queda documentado con lo que es y lo que no, para que nadie lo cite como velocidad de
+escritura; separarlo de verdad es **N85**.
+
+Verificado: 25 tests del módulo, doctest, clippy `--all-targets -D warnings` exit 0.
+
 ## [Unreleased] - v207 (2026-09-19) — V332: «usa todos los núcleos» era cinco veces peor que no hacer nada (0.2.284)
 
 V331 dejó una pregunta abierta con pinta de trámite: el backend usaba

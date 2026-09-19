@@ -55,7 +55,22 @@ fn main() {
     )];
     let t = std::time::Instant::now();
     match LlmProvider::generate(&provider, &convo, "You are concise.") {
-        Ok(reply) => println!("respuesta ({:?}): {:?}", t.elapsed(), reply.trim()),
+        Ok(reply) => {
+            println!("respuesta ({:?}): {:?}", t.elapsed(), reply.trim());
+            // Counted by the backend, not divided by `max_tokens` — the model
+            // stops at its end-of-turn token long before the ceiling, so the
+            // ceiling would give a rate nobody measured.
+            match provider.last_stats() {
+                // `tokens_per_sec` mixes prompt processing with generation
+                // (N85), so the counts are printed and the rate is labelled
+                // for what it is rather than passed off as a writing speed.
+                Some(s) => println!(
+                    "  {} tokens de prompt, {} generados, {:.2} tok/s (mezclado: N85)",
+                    s.prompt_tokens, s.generated_tokens, s.tokens_per_sec
+                ),
+                None => println!("  (sin estadisticas: el backend no devolvio ninguna)"),
+            }
+        }
         Err(e) => {
             eprintln!("error generando: {e}");
             std::process::exit(1);

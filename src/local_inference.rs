@@ -186,7 +186,21 @@ impl Default for GenParams {
 pub struct GenStats {
     pub prompt_tokens: u32,
     pub generated_tokens: u32,
+    /// Wall-clock for the **whole** call: reading the prompt and writing the
+    /// answer.
     pub time_ms: u64,
+    /// `generated_tokens / time_ms`, and therefore **not** a generation rate.
+    ///
+    /// Prompt processing and token generation are different regimes — one is
+    /// compute-bound, the other memory-bandwidth-bound — which is why
+    /// llama.cpp's own tooling reports `pp` and `tg` separately. This number
+    /// mixes them, so on a short answer to a long prompt it is dominated by the
+    /// prompt and reads far lower than the model actually writes.
+    ///
+    /// Measured 2026-09-19 for the shape that makes this obvious: 32 prompt
+    /// tokens, **2** generated, 3.5 s → 0.58 "tok/s", which describes nothing
+    /// anyone wants to know. Splitting the two is tracked as N85; until then,
+    /// compare wall-clock on identical work rather than quoting this.
     pub tokens_per_sec: f64,
     pub peak_vram_mib: Option<u64>,
 }

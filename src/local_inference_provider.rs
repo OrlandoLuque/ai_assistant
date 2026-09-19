@@ -61,7 +61,7 @@ use anyhow::{anyhow, Result};
 use crate::conversation_control::CancellationToken;
 use crate::llm_provider::LlmProvider;
 use crate::local_inference::{
-    load, Backend, BackendError, BackendKind, GenParams, LocalInferenceConfig,
+    load, Backend, BackendError, BackendKind, GenParams, GenStats, LocalInferenceConfig,
 };
 use crate::messages::{AiResponse, ChatMessage};
 
@@ -151,6 +151,9 @@ pub struct LocalInferenceProvider {
     params: GenParams,
     style: PromptStyle,
     label: String,
+    /// What the backend reported about the last generation. Separate lock from
+    /// `backend` so reading it never waits on a generation in flight.
+    last_stats: Mutex<Option<GenStats>>,
 }
 
 impl std::fmt::Debug for LocalInferenceProvider {
@@ -176,6 +179,7 @@ impl LocalInferenceProvider {
             params: GenParams::default(),
             style: PromptStyle::default(),
             label,
+            last_stats: Mutex::new(None),
         })
     }
 
@@ -194,6 +198,19 @@ impl LocalInferenceProvider {
     /// What to call this in a "which provider answered" indicator.
     pub fn label(&self) -> &str {
         &self.label
+    }
+
+    /// What the backend reported about the most recent generation: token
+    /// counts, elapsed time, tokens/sec, peak VRAM. `None` before the first
+    /// one.
+    ///
+    /// The `LlmProvider` port returns a `String`, so without this the numbers
+    /// the backend already computed had nowhere to go. That is why V331 could
+    /// only report wall-clock: `max_tokens` is a ceiling and the model stops at
+    /// its end-of-turn token long before it, so dividing by it would have been
+    /// a made-up rate rather than a measured one.
+    pub fn last_stats(&self) -> Option<GenStats> {
+        self.last_stats.lock().ok().and_then(|s| s.clone())
     }
 
     /// Generate, forwarding each chunk to `on_chunk`, and return the whole
@@ -215,12 +232,21 @@ impl LocalInferenceProvider {
             // pretending the model is fine.
             .map_err(|_| anyhow!("the local model is in a bad state after an earlier failure"))?;
 
-        guard
+        let stats = guard
             .generate(&prompt, &self.params, &mut |chunk| {
                 whole.push_str(chunk);
                 on_chunk(chunk);
             })
             .map_err(|e| anyhow!("{e}"))?;
+        drop(guard);
+
+        // The backend counted the tokens and timed itself; throwing that away
+        // is how V331 ended up unable to state a tokens/sec at all and had to
+        // report wall-clock instead. `max_tokens` is a ceiling, not a count —
+        // dividing by it would have invented a number.
+        if let Ok(mut slot) = self.last_stats.lock() {
+            *slot = Some(stats);
+        }
 
         Ok(whole)
     }
@@ -425,6 +451,32 @@ mod tests {
             payload.as_deref(),
             Some(""),
             "Cancelled must carry what was forwarded, not what was generated: {got:?}"
+        );
+    }
+
+    #[test]
+    fn the_numbers_the_backend_counted_do_not_get_thrown_away() {
+        // The port returns a String, so without `last_stats` the token counts
+        // the backend had already computed were dropped on the floor -- which
+        // is why V331 could report a stopwatch and not a rate.
+        let provider = stub();
+        assert!(
+            provider.last_stats().is_none(),
+            "nothing has been generated yet"
+        );
+
+        provider
+            .generate(&convo(&[("user", "hello")]), "")
+            .expect("stub generates");
+
+        let stats = provider.last_stats().expect("stats after a generation");
+        assert!(
+            stats.generated_tokens > 0,
+            "the stub produced text, so it counted tokens: {stats:?}"
+        );
+        assert!(
+            stats.prompt_tokens > 0,
+            "the prompt was not empty: {stats:?}"
         );
     }
 
