@@ -133,6 +133,37 @@ dependencies), so disk growth is not a concern in normal use.
 
 ## Log (newest first)
 
+### 2026-09-20 — `Q1_0` contra `PTQ1_0` a tamaño constante: el formato nuevo pierde en los dos ejes
+
+**La pregunta.** V329 midió el Ternary Bonsai 2 de 27B en `PTQ1_0` a 0,22 tok/s y quedó la
+duda de si eso era **el formato o el tamaño**. No se podía separar: «Ternary Bonsai 2» solo
+existe en 27B — comprobada la lista completa de `prism-ml`, no hay versión pequeña.
+
+La comparación que **sí** aísla la variable es la otra: el mismo tamaño en los dos formatos.
+
+**Montaje.** `llama-bench` del fork **actual**, build con Vulkan, el mismo binario para los
+dos. Portátil i7-1165G7 con Intel Iris Xe integrada. `-p 64 -n 16 -r 2`. Ambos modelos
+reportan **26,90 B de parámetros**, que es la comprobación de que el tamaño no varía.
+
+| Modelo | Cuantización | Tamaño | `pp` (leer) | `tg` (escribir) |
+|---|---|---|---|---|
+| Bonsai-27B | `Q1_0` (1,125 bpw) | **3,53 GiB** | **5,97** ± 0,01 | **1,94** ± 0,04 |
+| Ternary-Bonsai-2-27B | `PTQ1_0` (1,75 bpw ternario) | 5,53 GiB | 3,88 ± 0,51 | **0,23** ± 0,01 |
+
+**El formato de septiembre es 57 % más grande y 8,4× más lento generando.** Peor en ambos
+ejes, sin compensación. El 0,23 reproduce el 0,22 de V329, así que la medida vieja era
+buena; lo que faltaba era el término de comparación.
+
+**Y el hallazgo que no se buscaba:** un modelo de **27B en 3,5 GB a ~2 tok/s sobre una
+gráfica integrada**. Descartar el 27B por la medida de V329 habría sido descartar el
+tamaño por culpa del formato. La conclusión correcta no es «el 27B no vale para el kit»
+sino «el 27B vale, en `Q1_0`».
+
+**Lo que esto NO dice.** Nada sobre una tarjeta dedicada. La cobertura de kernels por
+backend es distinta y el orden podría —en principio— invertirse en CUDA. Pendiente de
+repetir en la 4080; hasta entonces, transferible es el orden en esta clase de máquina, no
+los valores.
+
 ### 2026-09-19 — inferencia en proceso: dos defectos nuestros que parecían del modelo
 
 **Qué:** primera medida de la ruta **en proceso** (V330 la hizo pedible:

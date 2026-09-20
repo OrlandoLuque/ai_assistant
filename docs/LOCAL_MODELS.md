@@ -11,8 +11,21 @@ sit on.
 > harness confirms it. That distinction is the point: the whole reason this project has
 > an execution-verified benchmark is that model-card claims are not evidence.
 
-The reference hardware throughout is the development machine: **RTX 4080 SUPER, 16 GB,
-compute capability 8.9 (Ada Lovelace)**.
+**Dos máquinas, y cada medida dice cuál.** Este documento nació hablando de una sola —
+«the reference hardware throughout» — y dejó de ser cierto en cuanto entraron medidas de la
+otra, que es el peor momento para no darse cuenta: el lector arrastra la cabecera hasta una
+tabla que no le corresponde y atribuye a una tarjeta de gama alta números tomados sin
+tarjeta.
+
+| | |
+|---|---|
+| **Sobremesa** | RTX 4080 SUPER, 16 GB, compute 8.9 (Ada Lovelace) |
+| **Portátil** | i7-1165G7, **Intel Iris Xe integrada**, sin tarjeta dedicada, 34 GB |
+
+Las secciones 1–5 razonan sobre la de 16 GB, que es la que fija qué cabe. La **sección 6**
+mide en el portátil, y lo dice en cada tabla. `MODEL_BENCHMARKS.md` etiqueta cada entrada
+igual. Si una cifra de aquí no dice de qué máquina sale, es un defecto, no un descuido de
+formato.
 
 ---
 

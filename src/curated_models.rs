@@ -156,6 +156,25 @@ const CURATED_MODELS: &[CuratedModel] = &[
     // ------------------------------------------------------------------
     CuratedModel {
         provider: AiProvider::LlamaCpp,
+        id: "Bonsai-27B-Q1_0.gguf",
+        display_name: "PrismML Bonsai 27B (1-bit)",
+        description:
+            "Qwen3-27B at 1 bit/weight. 26.9 B parameters in 3.53 GiB -- the size/capability trade this whole family exists for.",
+        parameters: "27B",
+        approx_size: "3.80 GB",
+        quantization: "Q1_0 (1.125 bpw)",
+        source_url: Some("https://huggingface.co/prism-ml/Bonsai-27B-gguf"),
+        requirements: Some(
+            "Needs a recent llama.cpp: `Q1_0` is in upstream now, but a build from before it landed cannot load these.",
+        ),
+        license: "apache-2.0",
+        redistribution: Redistribution::Permissive,
+        redistribution_note: Some(
+            "Tag read 2026-09-20 on prism-ml/Bonsai-27B-gguf itself, not inherited from the sibling entries -- licences are per repository, and the Qwen family is not uniform: Qwen3.8-Flash-Next ships under qwen-community-1.0, which is NOT Apache and carries a separate-licence clause for AI-assistant businesses. Here the chain is clean: Qwen3 is Apache-2.0.",
+        ),
+    },
+    CuratedModel {
+        provider: AiProvider::LlamaCpp,
         id: "Bonsai-8B-Q1_0.gguf",
         display_name: "PrismML Bonsai 8B (1-bit)",
         description:
@@ -269,7 +288,7 @@ const CURATED_MODELS: &[CuratedModel] = &[
         quantization: "PTQ1_0 (1.75 bpw ternary, group 128)",
         source_url: Some("https://huggingface.co/prism-ml/Ternary-Bonsai-2-27B-gguf"),
         requirements: Some(
-            "Needs the CURRENT PrismML fork: its type is GGML_TYPE_PTQ1_0 = 143, marked Prism-private, so it will never arrive upstream. Measured 2026-09-18 on a laptop with integrated graphics: 0.22 tokens/second, which is four and a half seconds per token. The file size is real; the claim that it runs on a thin laptop is not.",
+            "Needs the CURRENT PrismML fork: its type is GGML_TYPE_PTQ1_0 = 143, marked Prism-private, so it will never arrive upstream. MEASURED AGAINST ITS OWN ALTERNATIVE 2026-09-20 -- same 26.90 B parameters, same engine, same machine, only the quantization differing (`llama-bench`, fork build with Vulkan, Intel Iris Xe): Bonsai-27B `Q1_0` gives 5.97 pp / 1.94 tg in 3.53 GiB; this gives 3.88 pp / 0.23 tg in 5.53 GiB. Fifty-seven per cent larger and eight times slower to write, with nothing gained on either axis. Prefer Bonsai-27B-Q1_0, which also runs on upstream. Untested on a discrete GPU, where kernel coverage differs and the ordering could conceivably change.",
         ),
         license: "apache-2.0",
         redistribution: Redistribution::Permissive,

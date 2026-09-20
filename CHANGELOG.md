@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v211 (2026-09-20) — V336: el 27B no era el problema, lo era su formato (0.2.288)
+
+V329 midió el Ternary Bonsai 2 de 27B a 0,22 tok/s y de ahí salió «el 27B no vale para un
+portátil». La duda que quedaba —**¿es el formato o es el tamaño?**— no se podía resolver:
+«Ternary Bonsai 2» solo existe en 27B. Comprobada la lista completa de `prism-ml`: 1.7B, 4B
+y 8B son de las familias anteriores; de la nueva no hay versión pequeña.
+
+Pero la variable se aísla por el otro lado: **el mismo tamaño en los dos formatos**.
+`llama-bench` del fork actual, build Vulkan, **el mismo binario para ambos**, portátil con
+Intel Iris Xe. Los dos reportan **26,90 B de parámetros**, que es la prueba de que el tamaño
+no varía.
+
+| Modelo | Cuantización | Tamaño | `pp` | `tg` |
+|---|---|---|---|---|
+| Bonsai-27B | `Q1_0` | **3,53 GiB** | **5,97** ± 0,01 | **1,94** ± 0,04 |
+| Ternary-Bonsai-2-27B | `PTQ1_0` | 5,53 GiB | 3,88 ± 0,51 | **0,23** ± 0,01 |
+
+**57 % más grande y 8,4× más lento escribiendo.** Peor en los dos ejes a la vez, que es
+justo lo que no se espera de un formato que se anuncia como más comprimido. El 0,23
+reproduce el 0,22 de V329: la medida vieja era correcta, lo que faltaba era con qué
+compararla.
+
+**Y el hallazgo que no se buscaba:** un modelo de **27B en 3,5 GB a ~2 tok/s sobre una
+gráfica integrada**. Descartar el 27B por la medida de V329 habría sido descartar el tamaño
+por culpa del formato. Añadido al catálogo `Bonsai-27B-Q1_0`, que además corre en upstream.
+
+**El catálogo me pilló en una pereza.** Al añadir la entrada puse «misma cadena que las
+otras Bonsai, derivado de Qwen3, Apache-2.0» — sin fecha, y heredando la licencia de sus
+hermanas en vez de leerla. El test `the_notes_say_when_they_were_read` falló, que es su
+trabajo. Leída la etiqueta del repositorio concreto (`apache-2.0`, 2026-09-20). Y no era
+formalismo: **la familia Qwen no es uniforme.** `Qwen3.8-Flash-Next` va bajo
+`qwen-community-1.0`, que no es Apache y exige licencia aparte a quien opere un negocio de
+«AI Work Assistant». Heredar por familia habría metido esa cláusula en el catálogo sin que
+nadie la viera.
+
+**Dos máquinas, y `LOCAL_MODELS.md` decía una.** El documento afirmaba que el hardware de
+referencia era «throughout» la RTX 4080, y la sección que V335 le añadió mide en el portátil
+con gráfica integrada. Un lector se llevaría números de una integrada atribuidos a una 4080.
+Ahora declara las dos máquinas y cada tabla dice cuál.
+
+**Lo que NO se afirma:** nada sobre tarjeta dedicada. La cobertura de kernels por backend
+difiere y el orden podría invertirse en CUDA. Pendiente de repetir en la 4080.
+
 ## [Unreleased] - v210 (2026-09-20) — V335: la documentación enlazaba a cosas que no existen, y nadie miraba (0.2.287)
 
 `cargo doc` avisa de enlaces que no puede resolver. Nadie los estaba leyendo, así que había
