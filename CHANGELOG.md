@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v212 (2026-09-21) — V337: contrasté V336 con el mundo y V336 estaba mal encuadrado (0.2.289)
+
+V336 concluyó que `PTQ1_0` es «peor en los dos ejes». El autor pidió contrastarlo con lo que
+se publica fuera. **Hizo bien: la parte de velocidad no medía el formato.**
+
+**Lo que apareció al buscar.** El fork **no tiene kernel x86 SIMD para `PTQ1_0`**.
+Comprobado en el clon local (PR #198) y en `origin/prism`: cero apariciones de `ptq1_0` en
+`ggml/src/ggml-cpu/arch/x86/quants.c`. Las PR que lo añaden —**#181** (AVX-VNNI) y **#206**
+(AVX2 + GEMM en bloques)— están **abiertas, sin fusionar**. Es la misma trampa que V331
+documentó para `Q1_0` en las bindings de Rust, y caí en ella otra vez con el otro formato,
+dos días después de escribir la advertencia.
+
+Y fuera de este portátil las cifras son las contrarias: ~96,7 tok/s en una RTX 4090, ~142 en
+una 5090. PrismML documenta además que `PTQ1_0` gana en Ada y `PQ2_0` en H100/A100/Blackwell
+— ni entre sus dos formatos hay ganador único.
+
+**La prueba que lo confirma.** Repetido el test con CPU pura (`-ngl 0`), mismo montaje:
+
+| | `pp` | `tg` |
+|---|---|---|
+| Bonsai-27B `Q1_0` | 3,70 | **0,81** |
+| Ternary-Bonsai-2-27B `PTQ1_0` | 2,43 | **0,05** |
+
+Sin GPU la distancia pasa de 8,4× a **16×**. Esa es la firma de un kernel que falta, no la de
+un formato peor: un formato intrínsecamente lento no empeora al quitarle la GPU en esa
+proporción.
+
+**Qué sobrevive y qué se retira.** Sobrevive el **tamaño** —5,53 GiB contra 3,53 para el
+mismo modelo, intrínseco al empaquetado— y la recomendación operativa para gama baja: hoy,
+en integrada o CPU, `Q1_0`. **Se retira** «peor en los dos ejes» como afirmación sobre el
+formato; era una afirmación sobre un fork del 17 de septiembre en una Iris Xe.
+
+**Y lo que nadie ha publicado:** `Q1_0` contra `PTQ1_0` en una Ada. Las cifras de terceros
+son de `PTQ1_0` a solas, sin término de comparación. Ese hueco sigue abierto.
+
+**La lección, que ya tenía escrita.** V331 dejó dicho que hay que comprobar si tu
+cuantización tiene kernel para tu arquitectura antes de concluir nada sobre velocidad. No lo
+apliqué a `PTQ1_0` porque el modelo *arrancaba* y di por hecho que el motor lo soportaba de
+verdad. Arrancar y estar soportado con kernel no son lo mismo, y esa distinción es
+precisamente la que V331 existía para recordar.
+
 ## [Unreleased] - v211 (2026-09-20) — V336: el 27B no era el problema, lo era su formato (0.2.288)
 
 V329 midió el Ternary Bonsai 2 de 27B a 0,22 tok/s y de ahí salió «el 27B no vale para un

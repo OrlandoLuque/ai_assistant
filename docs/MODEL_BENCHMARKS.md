@@ -164,6 +164,41 @@ backend es distinta y el orden podría —en principio— invertirse en CUDA. Pe
 repetir en la 4080; hasta entonces, transferible es el orden en esta clase de máquina, no
 los valores.
 
+#### Corrección del mismo día: no era el formato, era su kernel
+
+Contrastado con fuentes externas esa misma noche, y **la conclusión de arriba estaba mal
+encuadrada**. Dos hechos que la cambian:
+
+1. **El fork no tiene kernel x86 SIMD para `PTQ1_0`.** Comprobado en el clon (PR #198) y en
+   `origin/prism`: cero apariciones de `ptq1_0` en `ggml/src/ggml-cpu/arch/x86/quants.c`.
+   Las PR que lo añaden (**#181** AVX-VNNI, **#206** AVX2 + GEMM en bloques) están
+   **abiertas, sin fusionar**. Es exactamente la trampa que V331 documentó para `Q1_0` en
+   las bindings de Rust — y caí en ella otra vez, con el otro formato.
+2. **En una tarjeta dedicada las cifras publicadas son las contrarias:** ~96,7 tok/s en una
+   RTX 4090 y ~142 en una 5090. PrismML documenta además que `PTQ1_0` gana en Ada y `PQ2_0`
+   en H100/A100/Blackwell, o sea que ni entre sus dos formatos hay un ganador único.
+
+**La prueba que lo confirma aquí.** Repetido el mismo test con CPU pura (`-ngl 0`):
+
+| | `pp` | `tg` |
+|---|---|---|
+| Bonsai-27B `Q1_0` | 3,70 ± 0,15 | **0,81** ± 0,04 |
+| Ternary-Bonsai-2-27B `PTQ1_0` | 2,43 ± 0,22 | **0,05** ± 0,00 |
+
+Sin GPU la distancia se abre de 8,4× a **16×**, que es la firma de un kernel ausente y no la
+de un formato peor. Vulkan —que sí tiene shaders para el tipo— lo rescata a medias.
+
+**Lo que sobrevive de la conclusión original:** el tamaño. 5,53 GiB contra 3,53 para el
+mismo modelo es intrínseco del empaquetado, no depende de la máquina. Y la recomendación
+operativa para el kit en gama baja también: hoy, en integrada o CPU, `Q1_0`.
+
+**Lo que se retira:** «peor en los dos ejes» como afirmación sobre el formato. Era una
+afirmación sobre un fork del 17 de septiembre en una Iris Xe.
+
+**Y lo que nadie ha publicado:** `Q1_0` contra `PTQ1_0` en una Ada. Las cifras de terceros
+son de `PTQ1_0` a solas. Esa comparación en la 4080 sigue siendo el dato que falta, y ahora
+con más motivo.
+
 ### 2026-09-19 — inferencia en proceso: dos defectos nuestros que parecían del modelo
 
 **Qué:** primera medida de la ruta **en proceso** (V330 la hizo pedible:
