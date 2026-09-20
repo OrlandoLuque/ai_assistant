@@ -1,6 +1,6 @@
 //! Shared folder monitoring and synchronization for collaborative AI sessions.
 //!
-//! Provides [`SharedFolder`], [`FolderWatcher`], and [`SharedFolderConfig`] for
+//! Provides [`SharedFolder`] for
 //! wrapping a local directory that can be bind-mounted into Docker containers,
 //! with optional cloud sync via the `CloudStorage` trait.
 //!

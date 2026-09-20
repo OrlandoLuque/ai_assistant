@@ -1916,7 +1916,7 @@ impl QueryClassifier {
 
 /// Classifies a query and **names** the retriever that suits it.
 ///
-/// It does not dispatch. [`Self::route`] returns a [`RouteDecision`] whose
+/// It does not dispatch. [`Self::route`] returns a [`RagRoutingDecision`] whose
 /// `chosen_retriever` is a string — `"bm25"`, `"dense"`, `"graph"`, `"raptor"` —
 /// and it is the caller who maps that name to something that retrieves. The doc
 /// comment here used to say it "directs queries to appropriate retrievers",

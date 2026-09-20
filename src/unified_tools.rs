@@ -9,8 +9,8 @@
 //!
 //! - [`ToolRegistry`] — Central registry for available tools
 //! - [`ToolCall`] — A parsed tool invocation (name + arguments)
-//! - [`ToolResult`] — Execution result (success/error) returned to the LLM
-//! - [`ToolSchema`] — JSON Schema description of a tool's parameters
+//! - [`ToolOutput`] — Execution result (success/error) returned to the LLM
+//! - [`ParamSchema`] — JSON Schema description of a tool's parameters
 //! - [`ToolError`] — Typed error enum for tool execution failures
 //!
 //! ## Feature flags

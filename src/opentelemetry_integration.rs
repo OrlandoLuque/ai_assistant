@@ -7,8 +7,8 @@
 //! ## Key types
 //!
 //! - [`OtelTracer`] — Main tracer; create spans, record metrics, export traces
-//! - [`OtelSpan`] — Individual span with attributes, events, and timing
-//! - [`OtelMetrics`] — Histogram and counter aggregation for model performance
+//! - [`AiSpan`] — Individual span with attributes, events, and timing
+//! - [`MetricsCollector`] — Histogram and counter aggregation for model performance
 //! - [`OtelConfig`] — Configuration for service name, endpoint, sampling
 //!
 //! ## Feature flags

@@ -6,9 +6,9 @@
 //! ## Key types
 //!
 //! - [`DocumentPipeline`] — Orchestrates container-based document creation
-//! - [`CreateRequest`] — Describes what to create (format, content, template)
-//! - [`ConversionResult`] — Output bytes, format, and metadata
-//! - [`PipelineConfig`] — Timeout, temp directory, container image overrides
+//! - [`DocumentRequest`] — Describes what to create (format, content, template)
+//! - [`DocumentResult`] — Output bytes, format, and metadata
+//! - [`DocumentPipelineConfig`] — Timeout, temp directory, container image overrides
 //!
 //! ## Feature flags
 //!

@@ -1,6 +1,6 @@
 //! Cloud-based LLM provider integrations (OpenAI, Anthropic, and others).
 //!
-//! Provides [`CloudProviderConfig`] and [`CloudProviderType`] for direct API
+//! Free functions over [`crate::config::AiConfig`] for direct API
 //! integration with cloud LLM services. API keys are resolved from
 //! `AiConfig.api_key` first, then from environment variables.
 //!
