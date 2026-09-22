@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v214 (2026-09-22) — V339: CI se puso en rojo sin que cambiara una línea (0.2.291)
+
+`ringbuf` 0.4.8 → **0.5.2**. RUSTSEC-2026-0293: doble liberación / uso después de liberar
+en `Consumer::skip` y `Consumer::clear` cuando el `Drop` de un elemento entra en pánico.
+
+### La prueba de que no fue nuestro
+
+El mismo commit, `bdd0df3f`, **pasó Supply Chain el 20/09 a las 22:49 y falló el 21/09 a
+las 11:37**. Ni un fichero distinto entre las dos ejecuciones. Lo que cambió fue la base de
+datos de avisos: el aviso se publicó en medio. Es la forma ordinaria en que una puerta de
+cadena de suministro se pone roja, y merece decirse porque la reacción instintiva ante un CI
+rojo es buscar qué rompiste tú.
+
+Cayeron cuatro trabajos en dos flujos —`cargo-deny`, `cargo-audit`, su espejo en `ci.yml`—
+y los cuatro señalaban **el mismo** identificador. Los otros tres avisos que aparecen en la
+salida (`event-listener` 0221, `lru` 0253, `memmap2` 0186) son amarillos, clase *unsound*,
+y no hacen fallar nada: ya estaban ahí cuando el trabajo estaba verde.
+
+### Un arreglo, no una supresión
+
+`ringbuf` es dependencia **directa** nuestra, no transitiva, y 0.5.2 corrige el fallo. Así
+que esto se arregla subiendo la versión, no añadiendo una entrada a las listas de ignorados
+—que habría sido lo cómodo y lo que deja la deuda puesta—. Las dos listas RUSTSEC siguen
+con nueve entradas idénticas y su motivo escrito al lado.
+
+Un solo fichero la usa, `src/bin/ai_virtual_mic.rs`, dos líneas de `use`. La API que
+tocamos (`HeapRb::new`, `split`, `try_push`, `try_pop`, los *traits* `Consumer`/`Producer`/
+`Split`) no cambió entre 0.4 y 0.5: compila sin editar una línea, con `audio-io` y con
+`video-io`, las dos features que la activan.
+
+### El `Cargo.lock` cambió más de lo que parecía, y no era nada
+
+`cargo update -p ringbuf` dijo «Locking 1 package», pero el diff traía además aristas de
+`itertools 0.10.5 → 0.13.0` y de `windows-sys 0.59.0 → 0.61.2`. Antes de commitearlo:
+**1033 paquetes antes y 1033 después**, y las dos versiones «nuevas» ya estaban en el lock.
+Son dependencias con rango ancho que el re-resolve re-apuntó a algo que ya se compilaba.
+No entró ni una crate nueva en el árbol.
+
+### Y ahora `cargo audit` corre también aquí
+
+Este aviso solo se podía ver empujando a GitHub, porque `cargo-audit` no estaba instalado en
+la máquina de desarrollo. Ahora sí lo está, y se ejecuta con **los mismos nueve `--ignore`**
+que CI. Un ciclo de «empuja y espera diez minutos a ver si la cadena de suministro te deja»
+es un ciclo que no se corre, y lo que no se corre no avisa.
+
 ## [Unreleased] - v213 (2026-09-22) — V338: cero enlaces rotos, y la puerta que los contaba leía de menos (0.2.290)
 
 N86 cerrado. El desagüe completo: **57 → 49 → 45 → 32 → 0**.

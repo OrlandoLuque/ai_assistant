@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.290"
+version = "0.2.291"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -686,7 +686,12 @@ hound = { version = "3.5", optional = true }
 # Optional high-quality sample rate conversion
 rubato = { version = "0.16", optional = true }
 # Optional lock-free ring buffer for real-time audio threads
-ringbuf = { version = "0.4", optional = true }
+# 0.5 and not 0.4: RUSTSEC-2026-0293 (published 2026-09-22) reports a double
+# free in `Consumer::skip`/`clear` when an element's Drop panics, fixed in
+# 0.5.2. The advisory landed on an unchanged lockfile -- CI had been green on
+# this exact version hours earlier -- which is the ordinary way a supply-chain
+# job goes red.
+ringbuf = { version = "0.5", optional = true }
 # Optional global-hotkey for PTT (EAC-safe: uses RegisterHotKey, no input hooking)
 global-hotkey = { version = "0.6", optional = true }
 # Optional eframe for GUI application (desktop window with egui)
