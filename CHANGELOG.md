@@ -5,6 +5,64 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v216 (2026-09-22) — V341: la misma mentira, dicha en prosa (0.2.293)
+
+Segunda mitad de N88. V340 arregló los `use` y les puso puerta. Pero la guía repite la misma
+afirmación en forma de frase, una por sección: **`**Key types**: …`**, que es exactamente
+*«estos son los tipos de esta función»*. **Veintidós** de esos nombres no existían.
+
+Los mismos de antes —`MemoryBus`, `TurnDetector`, `JudgeScore`, `BreakpointType`,
+`VulnerabilityReport`, `ElicitField`— más `SemanticFactStore`, `ValidationFinding`,
+`ValidationSeverity` y `ContextTracker`. Quien copia de una lista de «Key types» se lleva el
+mismo error de compilación que quien copia del `use` de arriba.
+
+### Dos de esas frases describían un mecanismo que no existe
+
+No era un nombre mal puesto, era una explicación falsa:
+
+> `SharedMemoryPool` + `MemoryBus` enable cross-agent memory sharing: **agents publish
+> memories to the bus and subscribe to memory types they care about**, building a shared
+> knowledge fabric.
+
+No hay bus y no hay suscripción. Lo que hay es un `SharedMemoryPool` con una
+`MemorySyncPolicy` que decide qué se propaga y un `MemoryFilter` que decide qué se lleva cada
+agente: **un almacén que otros leen, no un bus al que se suscriben**. La frase no solo
+nombraba un tipo inexistente, prometía un patrón de diseño distinto del implementado.
+
+Y `ExtractedFact` / `ExtractedProcedure` no son tipos: son **variantes** del enum
+`MemoryExtraction` que devuelve el extractor (`NewFact`, `NewProcedure`, `EntityUpdate`,
+`Correction`, `Preference`). Lo que las hacía creíbles es que `ExtractedEntity` **sí** es un
+struct, ahí al lado.
+
+### La tabla de embeddings tenía los cuatro nombres mal
+
+«Four implementations», y ninguno se llamaba así: son `LocalTfIdfEmbedding`,
+`OllamaEmbeddings`, `OpenAIEmbeddings` y `HuggingFaceEmbeddings` (tres en plural, y el local
+con sufijo). También `SourceFormat` prometía una variante `ReStructuredText` que se llama
+`Rst`, y se quedaba en cuatro de las siete. Y en `PROMPT_BREEDER_GUIDE.md`,
+`BudgetLimit::MaxCalls` es `MaxLlmCalls` y `OutputParser::FirstJsonBlock` es `JsonFirst`.
+
+### La puerta cubre ahora esa clase, y solo esa línea
+
+`check_doc_imports.py` gana una tercera comprobación: todo identificador CamelCase entre
+comillas invertidas en una línea `**Key types**:` tiene que existir en `src/`. **35 líneas,
+239 nombres**, cero fallos.
+
+Acotada a esas líneas a propósito. Una palabra CamelCase entre comillas en cualquier otro
+sitio es tan probable que sea el `ChatOpenAI` de LangChain, una tarea programada de Windows o
+`OnceCell` como que sea nuestra — hay **24 menciones legítimas** de ese tipo en los docs
+vivos. En una línea `**Key types**:` la tasa de falsos positivos fue **cero de veintidós**,
+porque esa línea afirma algo sobre *esta* crate y nada más.
+
+Verificada por mutación, como manda la casa: metiendo un `ContextTrackerZZ` en esa línea la
+puerta falla y lo nombra; quitándolo, vuelve a cero. Un checker que no se ha visto fallar no
+es un checker.
+
+Y un aviso que no era nada: la línea 93 de `PROMPT_BREEDER_GUIDE.md` se veía como
+`**Budget limit** � ...`. Los bytes son `\xe2\x80\x94`, un guion largo perfectamente válido:
+era la consola, no el fichero. Tercera vez este mes que lo compruebo antes de «arreglar» algo
+que no estaba roto.
+
 ## [Unreleased] - v215 (2026-09-22) — V340: los ejemplos de los `.md` no los compilaba nadie (0.2.292)
 
 N88. Había **tres** poblaciones de código de ejemplo en el repositorio y solo dos estaban

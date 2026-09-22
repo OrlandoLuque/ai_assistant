@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ratchet gate: `use ai_assistant::...;` inside the docs must name real paths.
+"""Ratchet gate: the docs must name types and paths the crate actually has.
 
 Three populations of example code exist in this repository and until V340 only
 two of them were checked by anything:
@@ -23,8 +23,8 @@ not build at all (``vector-lancedb`` needs ``protoc``). A gate that calls
 ``a2a_protocol`` non-existent because nobody enabled ``a2a`` would be worse than
 no gate -- it would teach you to ignore it.
 
-The two checks below are feature-independent by construction, because whether a
-name is *declared* in the tree does not depend on which features are on. What
+The three checks below are feature-independent by construction, because whether
+a name is *declared* in the tree does not depend on which features are on. What
 does depend on features is whether it *compiles*, and that is a different (and
 much softer) documentation question: saying which feature a type needs.
 
@@ -47,6 +47,18 @@ Checks
    ``advanced_memory::EpisodicStore`` is correct even though the struct is
    declared in ``advanced_memory/episodic.rs``. An earlier attempt ignored globs
    and called that an error.
+3. **``**Key types**:`` lines name real types.** The same claim in sentence
+   form, and the one the guide repeats per feature section. Twenty-two of them
+   named types that do not exist -- `MemoryBus`, `TurnDetector`, `JudgeScore`,
+   `BreakpointType` -- and two of those sentences described a *mechanism* that
+   does not exist either ("agents publish memories to the bus and subscribe to
+   memory types they care about": there is no bus, it is a pool you read).
+
+   Scoped to those lines on purpose. A backticked CamelCase word anywhere else
+   is as likely to be LangChain's ``ChatOpenAI``, a Windows scheduled task, or
+   ``OnceCell`` as it is to be ours -- 24 such mentions are legitimate. On a
+   ``**Key types**:`` line the false-positive rate was zero out of twenty-two,
+   because that line makes a claim about *this* crate and nothing else.
 
 Both regexes allow leading whitespace. An earlier version of this file anchored
 declarations at column 0 and silently reported every type declared inside an
@@ -137,6 +149,11 @@ DECL = re.compile(
     re.M,
 )
 REEXPORT = re.compile(r"pub use ([^;]+);")
+
+# Two humps or more: `FolderWatcher`, not `Html` or `Rst`. A single-hump word in
+# backticks is far more often prose ("`Markdown`") than a type name, and the
+# point of check 3 is a zero-false-positive rule.
+KEY_TYPE = re.compile(r"^[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+$")
 
 
 def module_of(path: str) -> str:
@@ -343,9 +360,48 @@ def main() -> int:
         open(dest, "w", encoding="utf-8", newline="\n").write("\n".join(body))
         print(f"\nescritos {len(emitted)} imports en {dest}")
 
+    # --- check 3: the `**Key types**:` lines ------------------------------
+    everything = set()
+    for names in crate.declared.values():
+        everything |= names
+    for names in crate.named.values():
+        everything |= names
+    # Enum variants are named on these lines too, and they are declared inside
+    # the enum body rather than by a `pub` item, so take any identifier the
+    # source mentions. The question here is "does this word exist in the
+    # crate", not "is it importable" -- check 2 already covers importability.
+    for base, _dirs, fs in os.walk(SRC):
+        for f in fs:
+            if f.endswith(".rs"):
+                everything |= set(
+                    re.findall(
+                        r"[A-Za-z_]\w*",
+                        open(os.path.join(base, f), encoding="utf-8", errors="replace").read(),
+                    )
+                )
+
+    n_keytypes = n_keynames = 0
+    for p in docs:
+        for i, line in enumerate(
+            open(p, encoding="utf-8", errors="replace").read().split("\n"), 1
+        ):
+            if "**Key types**" not in line:
+                continue
+            n_keytypes += 1
+            for span in re.findall(r"`([^`\n]{2,80})`", line):
+                head = re.split(r"[:<(\[ ]", span.strip())[0]
+                if not KEY_TYPE.match(head):
+                    continue
+                n_keynames += 1
+                if head not in everything:
+                    failures.append(
+                        f"{p}:{i}  **Key types** nombra `{head}`, que no existe en src/"
+                    )
+
     print(f"documentos vivos    : {len(docs)}")
     print(f"`use` encontrados   : {n_imports}")
     print(f"nombres importados  : {n_leaves}")
+    print(f"lineas **Key types**: {n_keytypes} ({n_keynames} nombres)")
     if KNOWN:
         print(f"suprimidos con motivo: {len(KNOWN)}")
     print(f"\nimports que fallan  : {len(failures)} (baseline {BASELINE})")

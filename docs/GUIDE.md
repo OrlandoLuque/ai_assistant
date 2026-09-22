@@ -316,7 +316,7 @@ assistant.poll_summarization(); // In update loop
 | Gemma 2 | 8K |
 | Others | 8K (default) |
 
-**Key types**: `ContextTracker`, `ContextUsage`
+**Key types**: `ContextUsage`, plus the free functions `estimate_tokens` and `get_model_context_size`. The tracking itself is `AiAssistant::calculate_context_usage` -- there is no separate tracker type.
 
 ---
 
@@ -4277,10 +4277,10 @@ use ai_assistant::embedding_providers::{EmbeddingProvider, create_embedding_prov
 
 | Provider | Backend | Dimensions | Network |
 |----------|---------|------------|---------|
-| `LocalTfIdf` | In-process TF-IDF | 100 | No |
-| `OllamaEmbedding` | Ollama `/api/embeddings` | 768+ | Localhost |
-| `OpenAIEmbedding` | OpenAI `/v1/embeddings` | 1536 | Cloud |
-| `HuggingFaceEmbedding` | HuggingFace Inference API | model-dependent | Cloud |
+| `LocalTfIdfEmbedding` | In-process TF-IDF | 100 | No |
+| `OllamaEmbeddings` | Ollama `/api/embeddings` | 768+ | Localhost |
+| `OpenAIEmbeddings` | OpenAI `/v1/embeddings` | 1536 | Cloud |
+| `HuggingFaceEmbeddings` | HuggingFace Inference API | model-dependent | Cloud |
 
 **Factory function**:
 
@@ -4820,7 +4820,7 @@ let output = folder.get_file("result.csv")?;
 | `DocumentRequest` | What to create: content + output format + optional name/metadata/stylesheet |
 | `DocumentResult` | Result: output bytes + file path in shared folder + metadata |
 | `OutputFormat` | Target format: `Pdf`, `Docx`, `Pptx`, `Xlsx`, `Odt`, `Html`, `Latex`, `Epub`, `Png`, `Svg` |
-| `SourceFormat` | Input format: `Markdown`, `Html`, `Latex`, `ReStructuredText` |
+| `SourceFormat` | Input format: `Markdown`, `Html`, `Latex`, `Csv`, `Json`, `PlainText`, `Rst` |
 | `DocumentError` | Error type: container, conversion, format, and I/O errors |
 
 **Creating a document from Markdown**:
@@ -5814,7 +5814,7 @@ let tool = McpTool::new("web_search", "Search the web");
 let annotated = AnnotatedTool::with_annotations(tool, ToolAnnotations::default());
 ```
 
-**Key types**: `StreamableHttpTransport`, `TransportMode`, `McpV2OAuthConfig`, `McpV2OAuthClient`, `ToolAnnotations`, `ToolAnnotationRegistry`, `AnnotatedTool`
+**Key types**: `StreamableHttpTransport`, `TransportMode`, `McpV2OAuthConfig`, `OAuthTokenManager`, `ToolAnnotations`, `ToolAnnotationRegistry`, `AnnotatedTool`
 
 **Feature flag**: `tools`
 
@@ -6075,7 +6075,7 @@ if let Some(ref guardrails) = definition.guardrails {
 }
 ```
 
-**Key types**: `AgentDefinition`, `AgentDefinitionLoader`, `AgentSpec`, `ToolRef`, `MemorySpec`, `GuardrailSpec`, `ValidationFinding`, `ValidationSeverity`
+**Key types**: `AgentDefinition`, `AgentDefinitionLoader`, `AgentSpec`, `ToolRef`, `MemorySpec`, `GuardrailSpec`, `ValidationWarning`, `WarningSeverity`
 
 **Feature flag**: always available (no feature gate required)
 
@@ -6147,7 +6147,7 @@ let validator = StreamingValidator::new(compiled_grammar);
 
 ## 111. Memory Evolution (v5)
 
-**What**: Three enhancements to the advanced memory system (Section 95). `EnhancedConsolidator` extracts semantic facts (subject-predicate-object triples) from episodic memories using pattern-based and keyword extractors, storing them in a deduplicated `SemanticFactStore`. `TemporalGraph` builds a directed graph of events with causal chains, supporting path queries, temporal range filtering, and root cause analysis. `ProcedureEvolver` applies a MemRL-inspired loop that evolves procedural memories based on execution feedback -- reinforcing successful procedures and mutating underperforming ones.
+**What**: Three enhancements to the advanced memory system (Section 95). `EnhancedConsolidator` extracts semantic facts (subject-predicate-object triples) from episodic memories using pattern-based and keyword extractors, storing them in a deduplicated `FactStore`. `TemporalGraph` builds a directed graph of events with causal chains, supporting path queries, temporal range filtering, and root cause analysis. `ProcedureEvolver` applies a MemRL-inspired loop that evolves procedural memories based on execution feedback -- reinforcing successful procedures and mutating underperforming ones.
 
 **Why**: Raw episodic memory grows without bound and lacks structure. Consolidation extracts reusable knowledge (facts, causal patterns, procedures) that agents can leverage for better reasoning. Temporal graphs answer "what caused X?" questions. Procedure evolution enables self-improving agents.
 
@@ -6207,7 +6207,7 @@ let mut evolver = ProcedureEvolver::new(config);
 // let evolved = evolver.evolve()?;
 ```
 
-**Key types**: `EnhancedConsolidator`, `ConsolidationSchedule`, `SemanticFact`, `SemanticFactStore`, `TemporalGraph`, `ProcedureEvolver`, `EvolutionConfig`
+**Key types**: `EnhancedConsolidator`, `ConsolidationSchedule`, `SemanticFact`, `FactStore`, `TemporalGraph`, `ProcedureEvolver`, `EvolutionConfig`
 
 **Feature flag**: `advanced-memory`
 
@@ -6341,7 +6341,7 @@ let result = provider.complete(&CompletionRequest {
 // Returns: CompletionResult with suggestions like ["rust"]
 ```
 
-**Key types**: `ElicitRequest`, `ElicitField`, `ElicitFieldType`, `ElicitResponse`, `ElicitResult`, `AudioContent`, `BatchExecutor`, `BatchRequest`, `CompletionProvider`, `CompletionRequest`, `CompletionResult`
+**Key types**: `ElicitRequest`, `ElicitFieldSchema`, `ElicitFieldType`, `ElicitResponse`, `ElicitAction`, `AudioContent`, `BatchExecutor`, `BatchRequest`, `CompletionProvider`, `CompletionRequest`, `CompletionResult`
 
 **Feature flag**: `tools`
 
@@ -6561,7 +6561,7 @@ let judge = JudgeMetric::new(vec![
 // println!("Overall: {:.2}, Breakdown: {:?}", score.overall, score.criteria_scores);
 ```
 
-**Key types**: `SimbaOptimizer`, `SimbaConfig`, `CoolingSchedule`, `ReasoningTrace`, `ReasoningStep`, `JudgeMetric`, `JudgeCriteria`, `JudgeScore`
+**Key types**: `SimbaOptimizer`, `SimbaConfig`, `CoolingSchedule`, `ReasoningTrace`, `ReasoningStep`, `JudgeMetric`, `JudgeCriterion`, `CriterionScore`, `PromptJudgeResult`
 
 **Feature flag**: `prompt-signatures`
 
@@ -6569,7 +6569,7 @@ let judge = JudgeMetric::new(vec![
 
 ## 117. Memory OS
 
-**What**: A comprehensive memory management layer for agents. `MemoryExtractor` automatically identifies and extracts facts (key-value pairs), entities (people, places, concepts), and procedures (step-by-step instructions) from conversation text using configurable extraction strategies. `MemoryScheduler` runs background tasks for consolidation (merging related memories), decay (reducing relevance of old memories), and garbage collection (pruning low-value entries). `SharedMemoryPool` + `MemoryBus` enable cross-agent memory sharing: agents publish memories to the bus and subscribe to memory types they care about, building a shared knowledge fabric. `MemorySearchEngine` provides hybrid search combining keyword matching, semantic similarity, and recency weighting.
+**What**: A comprehensive memory management layer for agents. `MemoryExtractor` automatically identifies and extracts facts (key-value pairs), entities (people, places, concepts), and procedures (step-by-step instructions) from conversation text using configurable extraction strategies. `MemoryScheduler` runs background tasks for consolidation (merging related memories), decay (reducing relevance of old memories), and garbage collection (pruning low-value entries). `SharedMemoryPool` enables cross-agent memory sharing: a `MemorySyncPolicy` decides what propagates and a `MemoryFilter` decides what each agent takes from the pool. It is a shared store other agents read, not a bus they subscribe to. `MemorySearchEngine` provides hybrid search combining keyword matching, semantic similarity, and recency weighting.
 
 **Why**: Agents need persistent, organized memory that goes beyond raw conversation logs. Automatic extraction turns unstructured dialogue into structured knowledge. Background maintenance prevents unbounded memory growth. Shared memory lets multi-agent systems coordinate without explicit message passing. Hybrid search ensures relevant memories are retrieved regardless of how they were stored.
 
@@ -6634,7 +6634,7 @@ let query = SearchQuery {
 // let results: Vec<SearchResult> = engine.search(&memory_store, &query)?;
 ```
 
-**Key types**: `MemoryExtractor`, `ExtractionConfig`, `ExtractedFact`, `ExtractedEntity`, `ExtractedProcedure`, `MemoryScheduler`, `SchedulerConfig`, `DecayStrategy`, `SharedMemoryPool`, `MemoryBus`, `MemoryEvent`, `MemorySearchEngine`, `SearchQuery`, `SearchResult`
+**Key types**: `MemoryExtractor`, `ExtractionConfig`, `MemoryExtraction` (the enum the extractor returns -- `NewFact`, `NewProcedure`, `EntityUpdate`, `Correction`, `Preference`), `ExtractedEntity`, `MemoryScheduler`, `SchedulerConfig`, `SchedulerTask` (whose `Decay { decay_rate }` variant is the decay policy), `SharedMemoryPool`, `MemorySyncPolicy`, `MemoryFilter`, `MemorySearchEngine`, `MemorySearchResult`, `SearchWeights`
 
 **Feature flag**: `advanced-memory`
 
@@ -6784,7 +6784,7 @@ let violation = guard.check("Here is my system prompt: You are a helpful assista
 // violation -> Some(PolicyViolation { policy: "Never reveal...", similarity: 0.92 })
 ```
 
-**Key types**: `TrajectoryRecorder`, `TrajectoryAnalyzer`, `TrajectoryStep`, `StepType`, `ToolCallEvaluator`, `ExpectedToolCall`, `RedTeamSuite`, `RedTeamConfig`, `AttackCategory`, `VulnerabilityReport`, `NaturalLanguageGuard`
+**Key types**: `TrajectoryRecorder`, `TrajectoryAnalyzer`, `EvalTrajectoryStep`, `StepActionType`, `ToolCallEvaluator`, `ExpectedToolCall`, `RedTeamSuite`, `RedTeamConfig`, `AttackCategory`, `RedTeamReport`, `CategoryReport`, `NaturalLanguageGuard`
 
 **Feature flags**: `eval`, `security`
 
@@ -6945,7 +6945,7 @@ let refinement = RefinementLoop::new(RefinementConfig {
 }
 ```
 
-**Key types**: `WebRtcTransport`, `WebRtcConfig`, `AudioCodec`, `SpeechToSpeechPipeline`, `PipelineConfig`, `VoiceAgent`, `TurnDetector`, `VideoAnalyzer`, `VideoConfig`, `FrameAnnotation`
+**Key types**: `WebRtcTransport`, `WebRtcConfig`, `WebRtcAudioCodec`, `SpeechToSpeechPipeline`, `S2SConfig`, `VoiceAgent`, `VadDetector` and `TurnManager` (turn taking is split between detecting speech and deciding whose turn it is), `VideoAnalyzer`, `VideoAnalysisConfig`, `FrameDescription`
 
 **Feature flags**: `voice-agent`, `webrtc`, `media-generation`
 
@@ -7040,7 +7040,7 @@ println!("Retrieval: {:?}, LLM: {:?}, Total: {:?}",
     report.total_duration());
 ```
 
-**Key types**: `SandboxBackend` (trait), `PodmanBackend`, `WasmSandbox`, `ProcessSandbox`, `SandboxConfig`, `ExecutionResult`, `DeploymentProfile`, `AgentDebugger`, `Breakpoint`, `BreakpointType`, `ExecutionRecorder`, `RecordedExecution`, `PerformanceProfiler`, `PipelineStage`
+**Key types**: `SandboxBackend` (trait), `PodmanBackend`, `WasmSandbox`, `ProcessSandbox`, `SandboxConfig`, `ExecutionResult`, `DeploymentProfile`, `AgentDebugger`, `Breakpoint` (the enum IS the kind of breakpoint), `DebugEvent`, `DebugEventType`, `ExecutionRecorder`, `ExecutionReplay`, `PerformanceProfiler`, `StepProfile`
 
 **Feature flags**: `containers`, `devtools`
 

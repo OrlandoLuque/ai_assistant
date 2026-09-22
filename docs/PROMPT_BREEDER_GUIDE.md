@@ -90,13 +90,13 @@ println!("best: {} @ fitness {:.4}",
     `Constitutional{principles}` / `Composite(vec)`.
 13. **Retry policy** — `max_retries` + `Backoff::Fixed{ms} |
     Exponential{base_ms, factor}`.
-14. **Budget limit** — `MaxCalls(u64)` / `MaxTokens(u64)` /
+14. **Budget limit** — `MaxLlmCalls(u64)` / `MaxTokens(u64)` /
     `MaxWallTime(Duration)` / `MaxCostUsd(f64)` (via `CostEstimator`).
 15. **Cache mode** — `Disabled` / `Memory{capacity}` /
     `MemoryAndDisk{path, capacity}`.
 16. **Eval augmenter** — optional `EvalAugmenter::Synonym|Paraphrase|
     Noise|LlmRephrase` to expand the dataset deterministically.
-17. **Output parser** — `Raw` / `StripMarkdown` / `FirstJsonBlock` /
+17. **Output parser** — `Raw` / `StripMarkdown` / `JsonFirst` /
     `Regex{pattern, group}`.
 18. **Checkpoint policy** — `Disabled` /
     `Every{n_generations, path}` / `OnBudgetExhaustion{path}`.
