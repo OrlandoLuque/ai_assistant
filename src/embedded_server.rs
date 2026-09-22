@@ -28,7 +28,7 @@
 //!
 //! * It does not download binaries or model files.
 //! * It does not parse `llama-server` stdout for tokens — every model
-//!   request still goes over HTTP through [`crate::providers`].
+//!   request still goes over HTTP through `crate::providers`.
 //! * It does not retry on crash; restart policy is the caller's
 //!   responsibility.
 //!

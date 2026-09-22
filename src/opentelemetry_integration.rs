@@ -1,7 +1,8 @@
 //! OpenTelemetry integration for AI operations tracing.
 //!
 //! Provides OTel-compatible tracing for AI operations: model calls, RAG queries,
-//! tool invocations, and agent steps. Bridges the existing [`TelemetryEvent`] system
+//! tool invocations, and agent steps. Bridges the existing
+//! [`crate::telemetry::TelemetryEvent`] system
 //! to OpenTelemetry spans and metrics following the GenAI semantic conventions.
 //!
 //! ## Key types
@@ -131,7 +132,7 @@ impl AiSpan {
         self.finish();
     }
 
-    /// Mark the span as failed using a [`StructuredError`].
+    /// Mark the span as failed using a [`crate::error_taxonomy::StructuredError`].
     ///
     /// V118: wires the V113-V117 error taxonomy into OTel spans. Sets
     /// `status = "error"`, `error_message = structured.message`, and adds
@@ -166,9 +167,11 @@ impl AiSpan {
         self.finish();
     }
 
-    /// Convenience wrapper: fail the span using any [`ErrorCode`] +
-    /// [`std::error::Error`] type. Internally builds a [`StructuredError`]
-    /// via [`StructuredError::from_err`] and delegates to
+    /// Convenience wrapper: fail the span using any
+    /// [`crate::error_taxonomy::ErrorCode`] +
+    /// [`std::error::Error`] type. Internally builds a
+    /// [`crate::error_taxonomy::StructuredError`]
+    /// via [`crate::error_taxonomy::StructuredError::from_err`] and delegates to
     /// [`AiSpan::fail_with_structured`].
     pub fn fail_structured<E>(&mut self, err: &E)
     where
@@ -533,7 +536,7 @@ impl OtelTracer {
         self.commit_span(span);
     }
 
-    /// Record a failed span using the [`StructuredError`] taxonomy.
+    /// Record a failed span using the [`crate::error_taxonomy::StructuredError`] taxonomy.
     ///
     /// V118: this is the OTel-side counterpart to V113-V117. The span
     /// gets `error.code` plus per-field `error.fields.<key>` attributes,
@@ -629,7 +632,7 @@ impl OtelTracer {
     ///
     /// The `signal` value is attached as an attribute (key `"signal"`) and is
     /// typically either `"Frustrated"` or `"RepeatedToolCall"`, matching the
-    /// variants of [`crate::stall_detection::StallSignal`] when the
+    /// variants of `crate::stall_detection::StallSignal` when the
     /// `stall-detection` feature is enabled. The caller is responsible for
     /// calling [`OtelTracer::end_span`] (or `record_error`) on the returned
     /// span.
@@ -638,7 +641,7 @@ impl OtelTracer {
             .with_attribute("signal", signal)
     }
 
-    /// Start a span for a sub-agent spawn (see [`crate::sub_agents`]).
+    /// Start a span for a sub-agent spawn (see `crate::sub_agents`).
     ///
     /// Attached attributes: `kind` (e.g. `"Fork"`/`"Teammate"`/`"Explore"`)
     /// and `isolation` (e.g. `"InProcess"`/`"ContextIsolated"`/

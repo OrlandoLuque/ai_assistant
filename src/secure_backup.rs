@@ -171,7 +171,7 @@ pub struct BackupReport {
 /// HKDF is appropriate here because the salt is generated fresh per archive
 /// and stored in the encrypted file header — it is not a password-strength
 /// stretching function. For weak passphrases, supply a high-entropy key
-/// directly via [`BackupConfig::encryption_key`].
+/// directly via [`BackupConfig::encryption`] with [`EncryptionMaterial::Key`].
 pub fn derive_key(passphrase: &str, salt: &[u8]) -> [u8; 32] {
     let hk = Hkdf::<Sha256>::new(Some(salt), passphrase.as_bytes());
     let mut out = [0u8; 32];

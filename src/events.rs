@@ -1,6 +1,7 @@
 //! Pub/sub event system for inter-module communication.
 //!
-//! Provides [`EventBus`], [`EventHandler`], [`EventFilter`], and [`AiEvent`] for
+//! Provides [`EventBus`], [`EventHandler`], [`crate::event_source::EventFilter`],
+//! and [`AiEvent`] for
 //! typed lifecycle hooks and monitoring across all major `AiAssistant` operations.
 //! Handlers receive events synchronously on the calling thread.
 //!

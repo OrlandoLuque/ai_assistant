@@ -57,8 +57,12 @@
 //!
 //! ## Schema versioning
 //!
-//! `apiVersion` must be `recipes/v1`. Future versions can be supported
-//! by [`Recipe::migrate_to_v1`]. Unknown apiVersion → load error.
+//! `apiVersion` must be `recipes/v1`; an unknown one is a load error.
+//!
+//! There is no migration yet. This used to say future versions "can be
+//! supported by `Recipe::migrate_to_v1`", linking a method that was never
+//! written -- a plan phrased as an existing API, which is the one thing a
+//! reference should never do.
 //!
 //! ## Discovery
 //!

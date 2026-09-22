@@ -618,7 +618,7 @@ impl OpenAIFineTuneClient {
     ///
     /// Until V270 this sent `application/json` with the JSONL inline, which the
     /// endpoint rejects — it requires `multipart/form-data`. It now builds a
-    /// correct multipart body via [`multipart_body`], which **is** unit-tested:
+    /// correct multipart body via `multipart_body`, which **is** unit-tested:
     /// part headers, the CRLF framing, the closing delimiter, and that the
     /// boundary never occurs inside the payload.
     ///

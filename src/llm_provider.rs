@@ -1,7 +1,7 @@
 //! LLM provider **port** — hexagonal architecture, phase 1.
 //!
 //! Historically the core LLM path dispatched by `match`ing on the [`AiProvider`]
-//! enum with HTTP calls inlined in [`crate::providers`]. That is fast to write
+//! enum with HTTP calls inlined in `crate::providers`. That is fast to write
 //! but couples the domain (the assistant, agents, the fact extractor, tests)
 //! directly to the transport: you cannot substitute or mock the model without a
 //! live server, and the "which provider" decision is data, not a swappable

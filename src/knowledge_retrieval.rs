@@ -196,7 +196,7 @@ pub fn select_relevant_semantic(
 /// query's, so paraphrased / synonymous queries still match (lexical
 /// term-overlap would miss "¿de qué vivo?" against "trabajo de arquitecta").
 /// The embedder can be Ollama, an in-process candle model
-/// ([`crate::local_embedder`]), or anything else. Returns `None` if `embed`
+/// (`crate::local_embedder`), or anything else. Returns `None` if `embed`
 /// fails, so the caller can fall back to lexical [`select_relevant`].
 pub fn select_relevant_semantic_with<F>(
     knowledge: &str,

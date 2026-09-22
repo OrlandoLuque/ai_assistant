@@ -8,7 +8,7 @@
 //!
 //! - `delegated` (default) — shells out to `ai_cli` (or an arbitrary shell
 //!   command) as a subprocess. Always available.
-//! - `embedded` — runs an in-process [`AiAssistant`] with access to RAG,
+//! - `embedded` — runs an in-process [`ai_assistant::AiAssistant`] with access to RAG,
 //!   tools, memory, and session state. Gated behind `--features full`.
 //!
 //! ## Run

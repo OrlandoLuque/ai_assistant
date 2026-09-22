@@ -1,6 +1,7 @@
 //! Priority-based request queuing with rate limiting and backpressure.
 //!
-//! Provides [`RequestQueue`], [`QueueConfig`], and [`PriorityRequest`] for
+//! Provides [`RequestQueue`], [`crate::priority_queue::QueueConfig`], and
+//! [`crate::priority_queue::PriorityRequest`] for
 //! thread-safe management of concurrent AI generation requests. Higher-priority
 //! requests (system commands, cancellations) are processed before normal user
 //! messages or background tasks.

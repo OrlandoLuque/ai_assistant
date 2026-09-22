@@ -479,8 +479,13 @@ fn unfinished_prompt(marker: &str, count: usize) -> String {
     )
 }
 
-/// Same as [`verify_crate`] but also returns the cargo output, so a scaffolding
-/// loop can hand the compiler's own errors back to the model.
+/// Compiles and tests a scaffolded crate, returning the cargo output as well
+/// as the verdict, so a scaffolding loop can hand the compiler's own errors
+/// back to the model.
+///
+/// The doc used to open with "same as `verify_crate`", naming a function that
+/// no longer exists under that name -- which told a reader to go and compare
+/// against nothing.
 fn verify_crate_verbose(cargo: &str, ws: &Path, checker: &str) -> (bool, String) {
     let lib = ws.join("src").join("lib.rs");
     let Ok(src) = std::fs::read_to_string(&lib) else {

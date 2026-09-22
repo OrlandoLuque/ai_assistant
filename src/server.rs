@@ -8,7 +8,7 @@
 //!
 //! - [`ServerConfig`] — Server address, port, CORS, rate limiting, optional TLS
 //! - [`AiServer`] — The server instance; call [`AiServer::run_blocking`] to start
-//! - [`ServerMetrics`] — Prometheus-style counters (requests, latency, errors)
+//! - `ServerMetrics` — Prometheus-style counters (requests, latency, errors)
 //!
 //! ## Endpoints
 //!

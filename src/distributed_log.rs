@@ -457,7 +457,7 @@ impl LogCollector {
         self.export_trace_filtered(trace_id, format, None)
     }
 
-    /// Like [`export_trace`], but drops entries below `min_level` when
+    /// Like [`Self::export_trace`], but drops entries below `min_level` when
     /// `min_level` is `Some`. `None` exports every entry (identical to
     /// `export_trace`). Wired to the `min_level` query param of
     /// `GET /v1/logs/traces/{trace_id}`.

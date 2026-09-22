@@ -5,6 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v213 (2026-09-22) — V338: cero enlaces rotos, y la puerta que los contaba leía de menos (0.2.290)
+
+N86 cerrado. El desagüe completo: **57 → 49 → 45 → 32 → 0**.
+
+Pero el número de partida no era 57. **Eran 62**, y lo descubrí al llegar al final.
+
+### Mi propia puerta leía de menos
+
+`scripts/check_doc_links.py` contaba una sola clase de aviso, `unresolved link`.
+`rustdoc` emite **dos**, y la otra —`public documentation for X links to private item Y`—
+nunca se contó. Cinco avisos pasaron invisibles los tres días que duró el trabajo, mientras
+el marcador iba bajando y daba la sensación de avanzar hacia cero.
+
+Es exactamente el defecto que la puerta existe para cazar, cometido por la puerta. Y es la
+tercera vez esta semana que un instrumento mío informa de menos de lo que mira: antes fue un
+script que decía «EXISTE» con el mensaje de error dentro, y una consola que pintaba rayas
+como signos de interrogación. **Ninguna de las tres me habría costado nada creerla.**
+
+Ahora el parser nombra las dos clases una por una, con el motivo escrito al lado, en vez de
+casar «warning» y confiar.
+
+### El último lote, y lo que había debajo
+
+Los 32 restantes salieron en tres grupos, y ninguno era una errata:
+
+- **Ocho cruzaban features.** `crate::stall_detection`, `crate::sub_agents`,
+  `crate::local_embedder`: módulos reales, detrás de features que el build de documentación
+  no activa. Un enlace que cruza una frontera de feature no resuelve, así que van como
+  código plano. Y `crate::security::audit` no resolvería **nunca**: es `mod`, no `pub mod`.
+- **Quince eran tipos existentes sin ruta.** `Grammar`, `ApprovalRequest`, `StructuredError`,
+  `QueueConfig`… todos verificados contra su definición real antes de tocarlos.
+- **Tres eran deuda declarada.** `Recipe::migrate_to_v1` describía un plan futuro **como si
+  fuera API existente** — el método nunca se escribió. `verify_crate` nombraba una función
+  que ya no existe con ese nombre, mandando al lector a comparar contra nada.
+  `BackupConfig::encryption_key` apuntaba a un parámetro de función, no a un campo; el campo
+  se llama `encryption`.
+
+Y los cinco privados: el módulo `providers` y tres funciones internas, referencias legítimas
+en prosa que no pueden ser enlaces.
+
+### La puerta pasa a ser dura
+
+Con el recuento en cero, `BASELINE = 0`: **cualquier** enlace roto falla. Sigue siendo un
+script y no `-D rustdoc::broken_intra_doc_links` porque ese flag **no cubre** el aviso de
+item privado, y porque listar los enlaces uno a uno es lo que hace que un fallo se pueda
+arreglar en vez de solo hacer ruido.
+
+**Verificado mutando**: un símbolo inventado más un enlace a item privado en el mismo
+comentario. La puerta detecta 2 contra 0, sale con código 1 y lista ambos. Restaurado
+después.
+
+7.125 tests, clippy `-D warnings` limpio.
+
 ## [Unreleased] - v212 (2026-09-21) — V337: contrasté V336 con el mundo y V336 estaba mal encuadrado (0.2.289)
 
 V336 concluyó que `PTQ1_0` es «peor en los dos ejes». El autor pidió contrastarlo con lo que

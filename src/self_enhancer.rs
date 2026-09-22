@@ -15,7 +15,7 @@ use crate::llm_provider::provider_from_config;
 use crate::messages::ChatMessage;
 
 /// An [`LlmEnhancer`] that answers with a one-shot completion through the
-/// [`LlmProvider`] port, using `config`'s provider/model/URLs.
+/// [`crate::llm_provider::LlmProvider`] port, using `config`'s provider/model/URLs.
 pub struct SelfChatEnhancer {
     config: AiConfig,
 }

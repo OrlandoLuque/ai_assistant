@@ -8,7 +8,7 @@
 //!
 //! ## Why a bus on top of existing per-subsystem loggers?
 //!
-//! Existing modules ([`crate::security::audit`], [`crate::agent_sandbox`])
+//! Existing modules (`crate::security::audit`, [`crate::agent_sandbox`])
 //! keep their own private logs. That's fine for unit-level debugging, but
 //! makes it hard to answer cross-cutting questions like "what did the
 //! agent touch yesterday?" V104.14 doesn't *replace* those loggers — it

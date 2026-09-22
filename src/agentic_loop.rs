@@ -71,7 +71,7 @@ pub enum LoopStatus {
     Error,
     MaxIterationsReached,
     /// The agent stopped because the in-crate stall heuristic (see
-    /// [`crate::stall_detection`]) detected repeated tool calls or user
+    /// `crate::stall_detection`) detected repeated tool calls or user
     /// frustration. Produced only when the `stall-detection` feature is
     /// enabled; the variant is always present so existing matches stay
     /// exhaustive regardless of feature selection.
@@ -207,9 +207,9 @@ impl AgenticLoop {
         self
     }
 
-    /// Configure vision limits used by [`process_with_images`].
+    /// Configure vision limits used by [`Self::process_with_images`].
     /// Calling this is what opts the loop into vision dispatch — without
-    /// it, [`process_with_images`] uses default limits.
+    /// it, [`Self::process_with_images`] uses default limits.
     #[cfg(feature = "vision")]
     pub fn with_vision_config(mut self, limits: crate::vision::VisionLimits) -> Self {
         self.vision_config = Some(limits);

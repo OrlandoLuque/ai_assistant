@@ -57,7 +57,7 @@ pub struct LocalInferenceConfig {
     pub model_path: PathBuf,
     pub ctx_size: u32,
     pub n_gpu_layers: u32,
-    /// If true, [`Backend::load`] consults VRAM and reduces `n_gpu_layers`
+    /// If true, [`load`] consults VRAM and reduces `n_gpu_layers`
     /// rather than letting the backend OOM. Defaults to true.
     pub allow_gpu_clamp: bool,
     /// Optional model size override in MiB. When `None`, the backend is

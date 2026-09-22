@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
-"""Ratchet on rustdoc's broken intra-doc links: the count may fall, never rise.
+"""Ratchet on rustdoc's doc-link warnings: the count may fall, never rise.
+
+Counts BOTH classes rustdoc reports:
+
+* `unresolved link to X` -- the target does not exist from here.
+* `public documentation for X links to private item Y` -- the target exists but
+  the reader cannot reach it, so the rendered page shows a link to nothing.
+
+The second was missed for three days while the first was being drained, which
+is why the parser names them one by one instead of matching "warning".
 
 # Why a ratchet and not a clean zero
 
@@ -29,13 +38,16 @@ import re
 import subprocess
 import sys
 
-# Measured 2026-09-20 against FEATURES_STD: 57 at first, 49 after V335 fixed
-# the unambiguous batch (prose in brackets that was never meant to be a link,
-# plus one link carrying call arguments), and 45 after the second batch
-# (links whose target exists but needed its path qualifying), and 32 after
-# the third (module headers still listing the PREVIOUS API: renamed types,
-# plus two that never existed at all). Only ever lower this.
-BASELINE = 32
+# ZERO, reached 2026-09-22. The drain ran 57 -> 49 -> 45 -> 32 -> 0, and the
+# last step also uncovered five warnings of a SECOND class the parser had never
+# read, so the true starting point was 62 and not 57.
+#
+# Now that it is zero the ratchet has done its job and the check is absolute:
+# any broken link at all fails. This stays a script rather than becoming
+# `-D rustdoc::broken_intra_doc_links` because that flag does not cover the
+# private-item lint, and because the per-link listing below is what makes a
+# failure fixable instead of merely loud.
+BASELINE = 0
 
 # Must match ci.yml's FEATURES_STD. Passed explicitly so a narrower default
 # cannot quietly make the gate pass by checking less.
@@ -59,9 +71,18 @@ def broken_links(features: str) -> list[tuple[str, int, str]]:
     found: list[tuple[str, int, str]] = []
     pending: str | None = None
     for line in proc.stderr.splitlines():
+        # TWO classes, not one. The gate counted only `unresolved link` for its
+        # first three days and reported 57 -> 1 while five of these went by
+        # unseen -- a checker that reads less than it claims is the defect it
+        # exists to catch, so it is spelled out here rather than left to a
+        # regex somebody has to notice.
         m = re.search(r"unresolved link to `(.*)`", line)
         if m:
             pending = m.group(1)
+            continue
+        m = re.search(r"public documentation for `(.*?)` links to private item `(.*?)`", line)
+        if m:
+            found.append(("<private-link>", 0, f"{m.group(1)} -> {m.group(2)}"))
             continue
         if pending is not None:
             loc = re.search(r"-->\s+(\S+):(\d+):", line)

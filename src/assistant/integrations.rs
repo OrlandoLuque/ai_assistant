@@ -358,9 +358,11 @@ impl AiAssistant {
 
     /// Generate a response constrained by a GBNF grammar.
     ///
-    /// Parses the grammar string (in GBNF format) into a [`Grammar`], sends
+    /// Parses the grammar string (in GBNF format) into a
+    /// [`crate::constrained_decoding::Grammar`], sends
     /// the prompt to the configured LLM provider (synchronously), and validates
-    /// the response against the grammar using a [`StreamingValidator`]-style
+    /// the response against the grammar using a
+    /// [`crate::constrained_decoding::StreamingValidator`]-style
     /// check.
     ///
     /// # Arguments
@@ -450,8 +452,8 @@ impl AiAssistant {
     ///
     /// When `auto_approve` is `true`, the message is sent and the response
     /// returned directly. When `false`, the method simulates a HITL approval
-    /// gate by creating an [`ApprovalRequest`] and logging it to an
-    /// [`ApprovalLog`] before returning the response.
+    /// gate by creating an [`crate::hitl::ApprovalRequest`] and logging it to an
+    /// [`crate::hitl::ApprovalLog`] before returning the response.
     ///
     /// The approval request records the prompt as the tool name and the
     /// response as context, providing a full audit trail of LLM interactions.
@@ -553,7 +555,8 @@ impl AiAssistant {
 
     /// Connect to a remote MCP server by URL.
     ///
-    /// Validates the URL and creates a [`RemoteMcpClient`] connection. The
+    /// Validates the URL and creates a [`crate::mcp_client::RemoteMcpClient`]
+    /// connection. The
     /// connection URL is stored internally for subsequent tool listing.
     ///
     /// # Arguments

@@ -7,7 +7,8 @@
 //!
 //! It extracts `attribute = value` pairs the user states about themselves
 //! (heuristic Spanish/English patterns, plus an optional LLM extractor for
-//! arbitrary facts the patterns miss) into a **latest-wins** [`FactLedger`].
+//! arbitrary facts the patterns miss) into a **latest-wins**
+//! [`crate::fact_extraction::FactLedger`].
 //! The memory manager re-injects that ledger as a small, explicit block, so the
 //! model reads "profesión: arquitecta" instead of having to remember it. Being
 //! latest-wins, the ledger also handles a fact being *corrected* mid-chat

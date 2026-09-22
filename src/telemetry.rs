@@ -87,7 +87,7 @@ pub struct AggregatedMetrics {
     pub avg_latency_ms: f64,
     pub latency_samples: usize,
     /// Cumulative count of user-stall events detected by the in-crate
-    /// [`crate::stall_detection`] heuristic. Only incremented when the
+    /// `crate::stall_detection` heuristic. Only incremented when the
     /// `stall-detection` feature is enabled; otherwise remains zero.
     pub user_stall_events_total: u64,
     /// Cumulative count of sub-agent spawn requests recorded via
@@ -171,7 +171,7 @@ impl TelemetryCollector {
     }
 
     /// Record a user-stall event detected by the in-crate
-    /// [`crate::stall_detection`] heuristic. Increments
+    /// `crate::stall_detection` heuristic. Increments
     /// `user_stall_events_total` on the aggregated metrics and logs a
     /// structured event with the signal name (e.g. `"Frustrated"` or
     /// `"RepeatedToolCall"`).
@@ -188,7 +188,7 @@ impl TelemetryCollector {
         self.record(TelemetryEvent::new("user_stall_detected").with_property("signal", signal));
     }
 
-    /// Record that a sub-agent was spawned (see [`crate::sub_agents`]).
+    /// Record that a sub-agent was spawned (see `crate::sub_agents`).
     /// Increments `sub_agents_spawned_total` and emits a
     /// `sub_agent_spawned` event with `kind` and `isolation` properties.
     ///

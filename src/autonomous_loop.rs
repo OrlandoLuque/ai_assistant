@@ -1270,7 +1270,7 @@ fn repair_model_json(text: &str) -> std::borrow::Cow<'_, str> {
 /// 2. OpenAI-style: response contains `"tool_calls": [{"function": {"name": "x", "arguments": "..."}}]`
 /// 3. XML tool_use: `<tool_use><name>x</name><arguments>{"k":"v"}</arguments></tool_use>`
 ///
-/// The text is repaired first — see [`repair_model_json`] — so a well-formed
+/// The text is repaired first — see `repair_model_json` — so a well-formed
 /// call is not lost to a syntax slip in the model's escaping.
 pub fn parse_tool_calls(response: &str) -> Vec<ParsedToolCall> {
     let cleaned = repair_model_json(response);

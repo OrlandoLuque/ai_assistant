@@ -122,7 +122,7 @@ impl AgentMessage {
         self
     }
 
-    /// Attach a vision [`ImageRef`] to this message. The bytes themselves are
+    /// Attach a vision [`crate::vision::ImageRef`] to this message. The bytes themselves are
     /// expected to live in an `ImageStore`; only the ref travels on the bus.
     #[cfg(feature = "vision")]
     pub fn with_image(mut self, image: crate::vision::ImageRef) -> Self {
