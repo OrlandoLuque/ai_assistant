@@ -13,7 +13,7 @@
 //! caller must keep all calls on the same OS thread. In debug builds this
 //! is enforced via an atomic thread-pin — the first call records the
 //! caller's thread ID and subsequent calls from other threads panic
-//! (caught by [`guard`] and reported as [`AI_ERR_PANIC`]). Release builds
+//! (caught by the internal `guard` wrapper and reported as [`AI_ERR_PANIC`]). Release builds
 //! trust the caller for zero overhead.
 //!
 //! This pattern is chosen over a `Mutex<AiAssistant>` because
@@ -171,7 +171,7 @@ struct Inner {
     azure_endpoint: RefCell<Option<String>>,
     azure_deployment: RefCell<Option<String>>,
     /// Debug-only thread pin. 0 = unpinned; any other value is the
-    /// per-thread ID stamped by [`check_thread`] on first use.
+    /// per-thread ID stamped by the internal `check_thread` on first use.
     #[cfg(debug_assertions)]
     owner_thread: AtomicU64,
 }
@@ -1661,7 +1661,7 @@ mod tests {
             // Not a PNG, JPEG or WebP header: `ImagePreprocessor::validate_bytes`
             // rejects it, so the call returns without a provider being built --
             // which is what makes this test hermetic.
-            let junk = [b'n', b'o', b't', b'a', b'n', b'i', b'm', b'a', b'g', b'e'];
+            let junk = b"notanimage";
             let mut out: *mut c_char = ptr::null_mut();
             let rc = unsafe {
                 ai_assistant_send_message_with_image(

@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v220 (2026-09-22) — V345: encender una feature enciende también sus puertas (0.2.297)
+
+V342 puso `ffi` en CI y se puso rojo, en dos trabajos. Las dos cosas son consecuencia
+directa de lo que V342 hacía, y una es un error de proceso mío.
+
+### Clippy: verifiqué, y luego cambié el código
+
+Un test nuevo escribía `[b'n', b'o', b't', b'a', b'n', b'i', b'm', b'a', b'g', b'e']` y
+clippy pide `b"notanimage"` (`clippy::byte_char_slices`). Ya es `b"notanimage"`.
+
+Lo que importa no es el lint: **corrí clippy a las 04:31 y añadí los tests a las 04:40.**
+Verifiqué el estado anterior al cambio y di por verificado el posterior. El propio repositorio
+tiene la regla escrita —*cada commit verde por sí solo, con el conjunto de features que
+compila lo que has tocado*— y la orden de los pasos es parte de la regla: verificar **después**
+de la última edición, no antes.
+
+### Enlaces de documentación: la puerta de V338 miró `ffi.rs` por primera vez
+
+Meter `ffi` en `FEATURES_STD` hace que `cargo doc` documente `src/ffi.rs`, 1.607 líneas que
+nunca habían pasado por el contador de enlaces. Apareció uno: el doc de módulo decía
+*«caught by [`guard`]»*, y `guard` es privado, así que en los docs generados eso no es un
+enlace, es texto muerto. Igual `[`check_thread`]` en un campo privado, que no avisa porque
+rustdoc no documenta lo privado — arreglado igual, porque el enlace estaba igual de mal.
+
+Los dos van ahora como código plano, que es lo que son: detalles internos citados en una
+explicación, no destinos a los que se pueda navegar.
+
+**Esto es la lección de la noche una vuelta más arriba.** Encender una feature que nadie
+compilaba no solo compila su código: le aplica *todas* las puertas por primera vez —clippy con
+`-D warnings`, el contador de enlaces, los doctests—. Que salieran dos cosas es exactamente lo
+que cabía esperar de 1.607 líneas que llevaban fuera del alcance de los gates, y el saldo es a
+favor: dos defectos menos y una superficie más vigilada.
+
+V343 y V344 heredaron los dos fallos, porque están en `FEATURES_STD` y no en lo que cada uno
+tocaba. Esta versión los cierra.
+
+### Y la batería completa, aparte
+
+`ai_test_harness --all` sobre `full,browser` y perfil `release-fast`: **694 tests, todos
+verdes** (139 s, 3 saltados). Es el guardián de regresión del proyecto y confirma que nada de
+esta noche —V339 a V344— ha cambiado comportamiento. También comprobado que `cargo check
+--examples` por debajo de `full` está limpio, que era la misma clase de hueco un paso más allá
+de N79.
+
 ## [Unreleased] - v219 (2026-09-22) — V344: el nombre es correcto, la llamada es imposible (0.2.296)
 
 Una cuarta clase, encontrada al comprobar que la web no repitiera los nombres que V340-V341
