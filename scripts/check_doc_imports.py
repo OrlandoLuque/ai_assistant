@@ -60,6 +60,19 @@ Checks
    ``**Key types**:`` line the false-positive rate was zero out of twenty-two,
    because that line makes a claim about *this* crate and nothing else.
 
+What this does NOT check
+------------------------
+Call signatures. A name can exist, sit at the documented path, and still be
+called in a way that cannot compile -- which is how the embeddings section
+survived every check above while showing
+``create_embedding_provider("openai", Some("text-embedding-3-small"))`` for a
+one-argument function returning ``Result``, and an ``embed_batch`` that does not
+exist. See N91: argument *count* for free functions is extractable textually and
+is the next thing worth gating; argument types, `?` on a `Result`, and trait
+methods need the compiler, which needs the feature problem solved first.
+
+Read "the documentation is checked" narrowly. Three classes are.
+
 Both regexes allow leading whitespace. An earlier version of this file anchored
 declarations at column 0 and silently reported every type declared inside an
 inner ``mod`` block as missing -- including ``VoiceAgent`` and ``WorkflowGraph``,

@@ -4285,17 +4285,29 @@ use ai_assistant::embedding_providers::{EmbeddingProvider, create_embedding_prov
 **Factory function**:
 
 ```rust
-// Quick construction by name
-let provider = create_embedding_provider("openai", Some("text-embedding-3-small"));
-let provider = create_embedding_provider("local", None); // TF-IDF fallback
+use ai_assistant::embedding_providers::create_embedding_provider;
+
+// Quick construction by name. One argument, and it returns a Result: the
+// cloud backends read their key from the environment (`OPENAI_API_KEY`,
+// `HF_API_KEY`) and fail here if it is missing, rather than at first use.
+let provider = create_embedding_provider("openai")?;
+let local = create_embedding_provider("local")?; // TF-IDF, no network, no key
 ```
+
+Accepted names: `"local"` / `"tfidf"`, `"ollama"`, `"openai"`, `"huggingface"` / `"hf"`.
+Anything else is an error, not a silent fallback.
 
 **Usage**:
 
 ```rust
-let embedder = create_embedding_provider("local", None);
-let vector = embedder.embed("Hello world").unwrap();
-let batch = embedder.embed_batch(&["Hello", "World"]).unwrap();
+let embedder = create_embedding_provider("local")?;
+
+// `embed` is the batch call and takes a slice; `embed_single` is the
+// convenience wrapper over it. There is no `embed_batch`.
+let batch: Vec<Vec<f32>> = embedder.embed(&["Hello", "World"])?;
+let vector: Vec<f32> = embedder.embed_single("Hello world")?;
+
+assert_eq!(batch.len(), 2);
 assert_eq!(vector.len(), embedder.dimensions());
 ```
 

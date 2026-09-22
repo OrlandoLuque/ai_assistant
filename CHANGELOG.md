@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v219 (2026-09-22) — V344: el nombre es correcto, la llamada es imposible (0.2.296)
+
+Una cuarta clase, encontrada al comprobar que la web no repitiera los nombres que V340-V341
+arreglaron. La web estaba limpia; el que no lo estaba era `docs/GUIDE.md`, en un sitio por el
+que **las dos puertas nuevas pasan sin objetar nada**:
+
+```rust
+let provider = create_embedding_provider("openai", Some("text-embedding-3-small"));
+let vector = embedder.embed("Hello world").unwrap();
+let batch = embedder.embed_batch(&["Hello", "World"]).unwrap();
+```
+
+Cuatro errores en tres líneas, **con todos los nombres bien escritos**:
+
+- `create_embedding_provider` toma **un** argumento (`name: &str`), no dos.
+- Devuelve `Result<Box<dyn EmbeddingProvider>>`: las variantes de nube leen su clave del
+  entorno y **fallan ahí**, no en el primer uso, así que hace falta `?`.
+- `embed` es la llamada por lotes: toma `&[&str]` y devuelve `Vec<Vec<f32>>`. Para un solo
+  texto es `embed_single`.
+- `embed_batch` **no existe**.
+
+Reescrito contra la API real, y con los nombres aceptados dichos (`"local"` / `"tfidf"`,
+`"ollama"`, `"openai"`, `"huggingface"` / `"hf"`) y el hecho de que cualquier otro es un error
+y no un repliegue silencioso.
+
+### Y dicho en el sitio donde alguien podría creer lo contrario
+
+`check_doc_imports.py` gana una sección **«What this does NOT check»**. Tres clases están
+comprobadas —la ruta del módulo, que el item sea alcanzable ahí, y las líneas
+`**Key types**:`— y las firmas **no**. Sin esa nota, un lector razonable ve una puerta
+llamada «doc imports» con baseline 0 y concluye que los ejemplos están verificados.
+
+Lo que sí es medible sin compilar es la **aridad** de las funciones libres, y habría cazado el
+primero de los cuatro: encolado como N91, con lo que queda fuera escrito (tipos, el `?`, y los
+métodos de trait necesitan el compilador, y el compilador necesita resolver antes el problema
+de las features).
+
 ## [Unreleased] - v218 (2026-09-22) — V343: compilar y probar no son la misma pregunta (0.2.295)
 
 N79 cerrado, y con un número muy distinto del que decía el encolado: **eran cuatro errores,
