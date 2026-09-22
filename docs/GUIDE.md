@@ -1548,15 +1548,28 @@ println!("Time to first token: {}ms", snapshot.time_to_first_token_ms);
 **Why**: Network requests fail. Retries handle transient failures. Circuit breakers prevent cascading failures when a service is down.
 
 ```rust
-use ai_assistant::{RetryConfig, retry, CircuitBreaker, ResilientExecutor};
+use ai_assistant::{retry, RetryConfig, RetryExecutor, ResilientExecutor};
 
-// Simple retry with backoff
-let result = retry(|| some_fallible_operation(), RetryConfig::default())?;
+// Simple retry with backoff. One argument: `retry` applies
+// `RetryConfig::default()` itself, so there is nothing to pass here.
+let result = retry(|| some_fallible_operation())?;
 
-// Circuit breaker: opens after 5 failures, waits 30s before retrying
-let breaker = CircuitBreaker::new(5, Duration::from_secs(30));
-let executor = ResilientExecutor::new(breaker);
+// To choose the policy, build the executor with it. `execute` returns a
+// RetryResult (attempts, error history), not a plain Result.
+let executor = RetryExecutor::new(RetryConfig::default());
+let outcome = executor.execute(|| some_fallible_operation());
+assert!(outcome.success);
 
+// Retry + circuit breaker together. `ResilientExecutor` builds its own
+// breaker from the threshold and the recovery window -- you do not pass a
+// CircuitBreaker in. Opens after 5 failures, waits 30s before retrying.
+let mut executor = ResilientExecutor::new(
+    RetryConfig::default(),
+    5,
+    Duration::from_secs(30),
+);
+
+// This `execute` DOES return a Result, unlike RetryExecutor's.
 let result = executor.execute(|| api_call())?;
 ```
 

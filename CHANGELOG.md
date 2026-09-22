@@ -5,6 +5,65 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v221 (2026-09-22) — V346: medí 18 defectos y 17 eran mi regla de medir (0.2.298)
+
+Primera mitad de N91: medir la clase de las **firmas** antes de poner puerta. La medición es
+la noticia.
+
+### 18 → 1
+
+Un script que extrae las llamadas a funciones libres de la crate en las vallas ```rust y
+compara el número de argumentos con la firma declarada. Primera ejecución: **18 desajustes**.
+Antes de arreglar nada, verifiqué cuatro a mano. Los cuatro estaban bien escritos en la
+documentación. Dos fallos míos:
+
+- **Off-by-one por la coma final.** `fn f(a: A, b: B,)` tiene **dos** parámetros; yo contaba
+  `comas + 1` = tres. Casi todas las firmas multilínea de este repositorio llevan coma final,
+  así que el error afectaba a casi todas. `register_knowledge_tools` tiene 3 parámetros y mi
+  herramienta pedía 4, y la guía lo llamaba con 3 — correctamente.
+- **`Tipo::funcion(...)` contado como la función libre del mismo nombre.** Por ahí entraron
+  `reqwest::blocking::get` (de otra crate), `GraphCluster::detect` y `FaultRule::timeout`: mi
+  *lookbehind* excluía `.foo(` pero no `::foo(`.
+
+Con los dos arreglados: **18 → 1**. Diecisiete de dieciocho eran el instrumento. Si hubiera
+conectado esa puerta a CI sin verificar, habría dejado el CI rojo sobre **dieciocho ejemplos
+correctos** — y la primera reacción de cualquiera ante eso es dejar de mirar la puerta.
+
+### El que quedaba era real, y peor de lo que decía la cifra
+
+`docs/GUIDE.md`, sección de reintentos:
+
+```rust
+let result = retry(|| some_fallible_operation(), RetryConfig::default())?;
+let breaker = CircuitBreaker::new(5, Duration::from_secs(30));
+let executor = ResilientExecutor::new(breaker);
+```
+
+- `retry<T, F>(operation: F)` toma **un** argumento, y el segundo que pasaba el ejemplo
+  (`RetryConfig::default()`) es exactamente lo que `retry` aplica por dentro: el ejemplo
+  sugería que ahí se puede configurar la política, y no se puede. Se configura con
+  `RetryExecutor::new(config)`.
+- `ResilientExecutor::new(retry_config, failure_threshold, recovery_timeout)` toma **tres**, y
+  **se construye su propio** `CircuitBreaker`. El ejemplo le pasaba uno, y encima un
+  `CircuitBreaker` que la función no acepta. Mal dos veces.
+- De paso: `RetryExecutor::execute` devuelve `RetryResult<T>` (intentos, historial de errores)
+  y `ResilientExecutor::execute` devuelve `Result<T>`. El `?` del ejemplo solo vale en el
+  segundo. Ahora el bloque dice cuál es cuál, porque es justo lo que confunde.
+
+Reescrito contra la API real: 74 llamadas comprobadas, **0 desajustes**.
+
+### La puerta, no todavía
+
+La cuarta comprobación no entra en `check_doc_imports.py` en esta versión. El diseño está
+resuelto y medido —funciones libres declaradas en **columna 0** (742 de 840; restringirlo no
+pierde ni una de las 74 llamadas que los documentos hacen, porque a las de dentro de `mod`
+internos no llaman), más la exclusión de `.foo(` y `::foo(`— pero integrarlo a las 06:20
+peleándome con los escapes de un heredoc acabó corrompiendo el fichero. Revertido: la puerta
+de V344 está verde en CI y no se arriesga por prisa.
+
+Queda en N91 con las dos trampas escritas, que es la parte que cuesta encontrar. El script de
+medición vive en el scratchpad de la sesión.
+
 ## [Unreleased] - v220 (2026-09-22) — V345: encender una feature enciende también sus puertas (0.2.297)
 
 V342 puso `ffi` en CI y se puso rojo, en dos trabajos. Las dos cosas son consecuencia
