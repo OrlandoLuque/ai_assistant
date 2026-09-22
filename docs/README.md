@@ -82,11 +82,15 @@ Documentation drifts silently, so some of it is enforced:
   unresolved `[link]` and a public page linking to a private item. A ratchet, now at
   zero. Its own first version counted only the first class, so five warnings went
   unseen for the three days the work took.
-- `scripts/check_doc_imports.py` — every `use ai_assistant::…;` inside a ```rust fence
-  of these files must name a module that exists and an item reachable at that path.
-  Nothing compiled those fences: 48 of 1037 imported names existed at no path at all
-  and 38 more lived somewhere other than where the document said, two of them in the
-  README's front-page example.
+- `scripts/check_doc_imports.py` — three checks over these files. Every
+  `use ai_assistant::…;` inside a ```rust fence must name a module that exists and an
+  item *reachable at that path*; and every CamelCase name on a `**Key types**:` line
+  must exist. Nothing compiled those fences: 48 of 1037 imported names existed at no
+  path at all, 38 more lived somewhere other than where the document said (two of them
+  in the README's front-page example), and 22 `**Key types**` entries named types that
+  were never written. **Call signatures are not checked** — the script says so in its
+  own docstring, because a gate called "doc imports" sitting at zero invites the reader
+  to assume more than it verifies. See N91.
 - `scripts/check_feature_dep_drift.py` — `dep:X` vs feature `X` in `Cargo.toml`.
 - `scripts/check_deprecation_policy.py` — every `#[deprecated]` carries `since` and `note`.
 - `scripts/check_bench_budget.py` — benchmark budgets.
