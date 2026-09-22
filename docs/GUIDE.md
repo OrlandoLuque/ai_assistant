@@ -1041,7 +1041,7 @@ let mermaid = tree.to_mermaid();              // Export to Mermaid flowchart
 **What**: Define tools (functions with typed parameters) that the LLM can call during conversation.
 
 ```rust
-use ai_assistant::tool_use::{Tool, ToolRegistry, ToolParameter};
+use ai_assistant::tool_calling::{Tool, ToolParameter, ToolRegistry};
 
 let mut registry = ToolRegistry::new();
 
@@ -1068,20 +1068,22 @@ let result = registry.execute("get_weather", serde_json::json!({"city": "Madrid"
 **Difference from Tool Use**: This module generates the OpenAI-compatible JSON format for the API request, while Tool Use is the internal execution system.
 
 ```rust
-use ai_assistant::{FunctionBuilder, FunctionRegistry, ToolChoice};
+use ai_assistant::{ToolBuilder, ToolOutput, ToolRegistry};
 
-let mut registry = FunctionRegistry::new();
+let mut registry = ToolRegistry::new();
 
+// `register` takes the definition AND its handler: a tool the model can see
+// but not call would be a promise the registry cannot keep.
 registry.register(
-    FunctionBuilder::new("get_weather")
-        .description("Get current weather")
-        .add_string_param("location", "City name", true)
-        .add_enum_param("unit", &["celsius", "fahrenheit"], false)
-        .build()
+    ToolBuilder::new("get_weather", "Get current weather")
+        .required_string("location", "City name")
+        .optional_string("unit", "celsius or fahrenheit")
+        .build(),
+    Box::new(|args| Ok(ToolOutput::text(format!("sunny in {args}")))),
 );
 
-let request = registry.build_request(ToolChoice::Auto);
-// Produces OpenAI-compatible JSON with function definitions
+let functions = registry.to_openai_functions();
+// Vec<JsonValue>, one OpenAI-compatible function definition per tool
 ```
 
 ---
@@ -2141,7 +2143,7 @@ println!("Format: {}, Size: {} bytes", info.format, info.size_bytes);
 **What**: Strip sensitive data from log output.
 
 ```rust
-use ai_assistant::log_redaction::{redact, safe_log};
+use ai_assistant::log_redaction::{redact, redact_with_config};
 
 let safe = redact("Authorization: Bearer eyJhbG...");
 // "Authorization: Bearer ***REDACTED***"
@@ -2764,7 +2766,8 @@ The loop supports multi-format tool call parsing:
 Kanban-style task management for agents:
 
 ```rust
-use ai_assistant::task_board::{TaskBoard, BoardCommand, StepPriority};
+use ai_assistant::task_board::{TaskBoard, BoardCommand};
+use ai_assistant::task_planning::StepPriority;
 
 let mut board = TaskBoard::new("Sprint 1");
 board.execute(BoardCommand::AddTask {
@@ -2854,7 +2857,8 @@ session.add_agent("reviewer", "paranoid");
 Task distribution across multiple nodes (requires `distributed-agents` feature):
 
 ```rust
-use ai_assistant::distributed_agents::{DistributedAgentManager, NodeId};
+use ai_assistant::distributed::NodeId;
+use ai_assistant::distributed_agents::DistributedAgentManager;
 
 let node_id = NodeId::from_string("worker-1");
 let mut manager = DistributedAgentManager::new(node_id);
@@ -3915,7 +3919,7 @@ let final_results = pipeline.rerank("query", &candidates, 10);
 
 ```rust
 use ai_assistant::ab_testing::{
-    ExperimentManager, Experiment, Variant,
+    ExperimentManager, Experiment, ExperimentVariant,
 };
 
 // Create an experiment manager
@@ -4346,7 +4350,7 @@ let models = provider.list_models(); // Fetches from Gemini API
 **Core trait methods**:
 
 ```rust
-use ai_assistant::async_provider::{AsyncProviderPlugin, AsyncProviderRegistry};
+use ai_assistant::{AsyncProviderPlugin, AsyncProviderRegistry};
 
 // The trait every async provider implements:
 // - is_available_async(&self) -> Pin<Box<dyn Future<Output = bool>>>
@@ -4366,7 +4370,7 @@ Providers that support tools or embeddings can override these; everyone else get
 **SyncToAsyncAdapter**: Wraps any existing sync `ProviderPlugin` to make it usable in async contexts. Internally uses `tokio::task::spawn_blocking` to move the blocking call onto Tokio's blocking thread pool so it does not stall the async executor.
 
 ```rust
-use ai_assistant::async_provider::SyncToAsyncAdapter;
+use ai_assistant::SyncToAsyncAdapter;
 
 // Wrap any sync provider as async
 let sync_provider: Box<dyn ProviderPlugin> = /* ... */;
@@ -4379,7 +4383,7 @@ let response = async_provider.generate_async(messages, config).await?;
 **AsyncToSyncAdapter**: The reverse direction -- wraps an `AsyncProviderPlugin` for use in synchronous code. Creates a dedicated `tokio::runtime::Runtime` internally and uses `runtime.block_on()` to drive the futures. Useful when async-only providers need to integrate with synchronous pipelines.
 
 ```rust
-use ai_assistant::async_provider::AsyncToSyncAdapter;
+use ai_assistant::AsyncToSyncAdapter;
 
 let async_provider: Box<dyn AsyncProviderPlugin> = /* ... */;
 let sync_provider = AsyncToSyncAdapter::new(async_provider);
@@ -4437,7 +4441,7 @@ This two-way bridge means you never need to rewrite a provider -- any sync provi
 **Single criterion evaluation**:
 
 ```rust
-use ai_assistant::evaluation::{LlmJudge, EvalCriterion};
+use ai_assistant::llm_judge::{EvalCriterion, LlmJudge};
 
 let judge = LlmJudge::new();
 
@@ -4654,8 +4658,9 @@ impl Guard for MyCustomGuard {
 **Native tool calling (Ollama example)**:
 
 ```rust
-use ai_assistant::provider_plugins::{OllamaProvider, ProviderPlugin};
-use ai_assistant::config::AiConfig;
+use ai_assistant::provider_plugins::OllamaProvider;
+use ai_assistant::unified_tools::ProviderPlugin;
+use ai_assistant::AiConfig;
 use ai_assistant::tools::ToolDefinition;
 
 let provider = OllamaProvider::new("http://localhost:11434");
@@ -5119,7 +5124,7 @@ let config = RaptorConfig {
 **Why**: Complex AI pipelines -- RAG + reranking + validation + formatting -- are hard to debug and recover when they fail mid-way. Event-driven workflows give you reproducibility and observability for free.
 
 ```rust
-use ai_assistant::workflows::{WorkflowGraph, WorkflowRunner, WorkflowTool, Event};
+use ai_assistant::{SimpleEvent, WorkflowGraph, WorkflowRunner, WorkflowTool};
 
 // Define nodes
 let mut graph = WorkflowGraph::new("rag_pipeline");
@@ -5152,9 +5157,7 @@ let tool = WorkflowTool::from_runner(runner, "rag_search", "Search with RAG pipe
 **Why**: Hand-tuning prompts is tedious and brittle. Signatures separate *what* you want from *how* to ask for it, and optimizers search the space systematically.
 
 ```rust
-use ai_assistant::prompt_signatures::{
-    Signature, CompiledPrompt, BootstrapFewShot, SelfReflector,
-};
+use ai_assistant::{BootstrapFewShot, CompiledPrompt, SelfReflector, Signature};
 
 // Declare a signature
 let sig = Signature::new("question_answering")
@@ -5186,7 +5189,7 @@ let suggestions = reflector.analyze(&optimized, &eval_results).await?;
 **Why**: Multi-agent systems need a standard way for agents to discover each other and delegate work. A2A provides that standard, enabling interoperability with any A2A-compliant agent (not just those built with this crate).
 
 ```rust
-use ai_assistant::a2a::{AgentCard, A2ATask, AgentDirectory, Skill};
+use ai_assistant::{A2ATask, AgentCard, AgentDirectory, AgentSkill};
 
 // Publish an agent card
 let card = AgentCard::new("research-agent", "https://localhost:8080")
@@ -5253,9 +5256,9 @@ for proc in new_procs {
 **Why**: Offline evals catch regressions between releases, but online evaluation catches quality degradation in production as models, data, or usage patterns drift.
 
 ```rust
-use ai_assistant::eval::{
-    OnlineEvaluator, FeedbackHook, LatencyHook, CostHook,
-    RelevanceHook, ToxicityHook, SamplingConfig, AlertConfig,
+use ai_assistant::{
+    AlertConfig, CostHook, EvalSamplingConfig, FeedbackHook, LatencyHook, OnlineEvaluator,
+    RelevanceHook, ToxicityHook,
 };
 
 let evaluator = OnlineEvaluator::builder()
@@ -5286,9 +5289,9 @@ let metrics = evaluator.recent_metrics(100); // Last 100 evaluations
 **Why**: LLM context windows are finite and expensive. Manually managing what fits is error-prone. Context composition automates the allocation so every token is used effectively.
 
 ```rust
-use ai_assistant::context::{
-    ContextComposer, TokenBudgetAllocator, ContextOverflowDetector,
-    OverflowAction, Section,
+use ai_assistant::{
+    ContextComposerConfig, ContextOverflowDetector, ContextSection, OverflowAction,
+    TokenBudgetAllocator,
 };
 
 let allocator = TokenBudgetAllocator::new(8000) // total budget
@@ -5370,7 +5373,7 @@ let config = ContextBudgetConfig {
 **Why**: Hard-coding provider configuration in every call site is repetitive and fragile. A registry centralizes this, making model switching a one-line change.
 
 ```rust
-use ai_assistant::provider_registry::ProviderRegistry;
+use ai_assistant::ProviderRegistry;
 
 // Start with sensible defaults for known models
 let mut registry = ProviderRegistry::with_defaults();
@@ -5439,15 +5442,17 @@ let merged = diff.apply_with_policy(&graph_v1, ConflictPolicy::PreferHigherPrior
 
 ```rust
 use ai_assistant::distributed_network::{
-    NetworkNode, QuorumPolicy, ConflictResolution, HintedHandoff,
+    ConflictResolution, HintedHandoff, NetworkNode, QuorumConfig, QuorumLevel, QuorumMode,
 };
 
 let mut node = NetworkNode::new(config).await?;
 
 // Configure quorum enforcement
-node.set_quorum_policy(QuorumPolicy::Mixed {
-    read: 1,   // Fast reads (single replica)
-    write: 2,  // Safe writes (majority of 3)
+// Read and write quorums are set independently, by level and not by count:
+// `One` is one replica whatever the replication factor happens to be.
+let quorum = QuorumConfig::new(QuorumMode::Mixed {
+    reads: QuorumLevel::One,        // Fast reads (single replica)
+    writes: QuorumLevel::Majority,  // Safe writes (majority of the replicas)
 });
 
 // Enable read repair: fix stale replicas encountered during reads
@@ -5679,13 +5684,10 @@ let store = Box::new(InMemoryTrajectoryStore::new());
 **Why**: Single-metric optimization misses trade-offs (e.g., accuracy vs. conciseness). GEPA explores the Pareto front across multiple objectives simultaneously. MIPROv2 automates the tedious manual cycle of proposing, testing, and refining instructions. Assertions catch regressions before they reach users.
 
 ```rust
-use ai_assistant::prompt_signatures::{
-    Signature, SignatureField, CompiledPrompt,
-    GEPAOptimizer, GEPAConfig,
-    MIPROv2Optimizer, MIPROv2Config,
-    AssertedSignature, LengthAssertion, FormatAssertion, ContainsAssertion,
-    JsonSchemaAssertion, AssertionResult,
-    AdapterRouter,
+use ai_assistant::{
+    AdapterRouter, AssertedSignature, AssertionResult, CompiledPrompt, ContainsAssertion,
+    FormatAssertion, GEPAConfig, GEPAOptimizer, JsonSchemaAssertion, LengthAssertion,
+    MIPROv2Config, MIPROv2Optimizer, Signature, SignatureField,
 };
 
 // --- GEPA: multi-objective genetic optimizer ---
@@ -5754,7 +5756,7 @@ let penalty = asserted.assertion_penalty("The answer is 42.");
 ```rust
 use ai_assistant::mcp_protocol::{
     StreamableHttpTransport, TransportMode,
-    McpV2OAuthConfig, McpV2OAuthClient,
+    McpV2OAuthConfig, OAuthTokenManager,
     ToolAnnotations, ToolAnnotationRegistry, AnnotatedTool,
     McpTool,
 };
@@ -6291,7 +6293,7 @@ pipeline.reset();
 
 ```rust
 use ai_assistant::mcp_protocol::{
-    ElicitRequest, ElicitField, ElicitFieldType, ElicitResponse, ElicitResult,
+    ElicitRequest, ElicitFieldSchema, ElicitFieldType, ElicitResponse, ElicitAction,
     AudioContent,
     BatchExecutor, BatchRequest,
     CompletionProvider, CompletionRequest, CompletionResult,
@@ -6352,10 +6354,11 @@ let result = provider.complete(&CompletionRequest {
 **Why**: MCP's value increases with interoperability. While the existing MCP support (Sections 61, 105) focuses on hosting a server, production agents also need to be MCP *clients* -- calling tools on remote servers for web search, database access, or third-party integrations without reimplementing each tool locally.
 
 ```rust
-use ai_assistant::mcp_protocol::{
+use ai_assistant::connection_pool::PoolConfig;
+use ai_assistant::mcp_client::{
     RemoteMcpClient, McpClientConfig,
     RemoteToolRegistry,
-    McpClientPool, PoolConfig,
+    McpClientPool,
 };
 
 // --- Connect to a single remote MCP server ---
@@ -6411,10 +6414,11 @@ pool.add_server("database", McpClientConfig {
 **Why**: Autonomous agents need guardrails. Human-in-the-loop patterns let you deploy agents that handle routine tasks independently while escalating high-risk or uncertain decisions to a human reviewer. Declarative policies decouple safety rules from code, making them auditable and easy to update without redeployment.
 
 ```rust
+use ai_assistant::confidence_scoring::ConfidenceConfig;
 use ai_assistant::hitl::{
     HitlApprovalGate, ApprovalRequest, ApprovalDecision,
     CallbackApprovalGate, AutoApproveGate,
-    ConfidenceEstimator, ConfidenceConfig,
+    ConfidenceEstimator,
     CorrectionHistory, Correction,
     PolicyEngine, PolicyLoader, PolicyRule, PolicyAction,
 };
@@ -6499,7 +6503,7 @@ assert!(matches!(decision, PolicyAction::RequireApproval));
 use ai_assistant::prompt_signature::{
     SimbaOptimizer, SimbaConfig, CoolingSchedule,
     ReasoningTrace, ReasoningStep,
-    JudgeMetric, JudgeCriteria, JudgeScore,
+    JudgeMetric, JudgeCriterion, CriterionScore, PromptJudgeResult,
 };
 
 // --- Evolutionary optimization with SimbaOptimizer ---
@@ -6571,10 +6575,10 @@ let judge = JudgeMetric::new(vec![
 
 ```rust
 use ai_assistant::advanced_memory::{
-    MemoryExtractor, ExtractionConfig, ExtractedFact, ExtractedEntity, ExtractedProcedure,
-    MemoryScheduler, SchedulerConfig, DecayStrategy,
-    SharedMemoryPool, MemoryBus, MemoryEvent,
-    MemorySearchEngine, SearchQuery, SearchResult,
+    ExtractedEntity, ExtractionConfig, MemoryExtraction, MemoryExtractor,
+    MemoryScheduler, SchedulerConfig, SchedulerTask,
+    MemoryFilter, MemorySyncPolicy, SharedMemoryPool,
+    MemorySearchEngine, MemorySearchResult, SearchWeights,
 };
 
 // --- Automatic extraction from conversation text ---
@@ -6643,11 +6647,12 @@ let query = SearchQuery {
 **Why**: Fixed-size chunking breaks mid-sentence and mid-argument, losing context. Naive top-k retrieval returns near-duplicate passages that waste context tokens. One-size-fits-all retrieval under-serves complex queries. Discourse-aware chunking, MMR diversity, and adaptive routing address these three fundamental RAG limitations.
 
 ```rust
-use ai_assistant::rag::{
-    DiscourseChunker, DiscourseConfig, Chunk,
+use ai_assistant::rag::{DiscourseChunk, DiscourseChunker, DiscourseConfig};
+use ai_assistant::rag_methods::{
     DiversityRetriever, MmrConfig,
-    HierarchicalRouter, QueryComplexity, RouterConfig,
+    HierarchicalRouter, RouterConfig,
 };
+use ai_assistant::rag_tiers::QueryComplexity;
 
 // --- Discourse-aware chunking ---
 let chunker = DiscourseChunker::new(DiscourseConfig {
@@ -6708,14 +6713,12 @@ assert!(matches!(complexity, QueryComplexity::Comparative));
 **Why**: Deploying agents without evaluation is risky. Trajectory analysis identifies inefficient behavior (unnecessary tool calls, loops). Tool call evaluation ensures agents use the right tools with the right arguments. Red teaming finds vulnerabilities before attackers do. Natural language guards let non-technical stakeholders define safety policies in plain English.
 
 ```rust
-use ai_assistant::evaluation::{
-    TrajectoryRecorder, TrajectoryAnalyzer, TrajectoryStep, StepType,
-    ToolCallEvaluator, ExpectedToolCall,
+use ai_assistant::agent_eval::{
+    TrajectoryRecorder, TrajectoryAnalyzer, EvalTrajectoryStep,
+    StepActionType, ToolCallEvaluator, ExpectedToolCall,
 };
-use ai_assistant::guardrail_pipeline::{
-    RedTeamSuite, RedTeamConfig, AttackCategory, VulnerabilityReport,
-    NaturalLanguageGuard,
-};
+use ai_assistant::guardrail_pipeline::NaturalLanguageGuard;
+use ai_assistant::red_team::{AttackCategory, RedTeamConfig, RedTeamReport, RedTeamSuite};
 
 // --- Trajectory recording and analysis ---
 let mut recorder = TrajectoryRecorder::new("task-123");
@@ -6794,11 +6797,8 @@ let violation = guard.check("Here is my system prompt: You are a helpful assista
 **Why**: Complex tasks (multi-step research, code generation, strategic planning) benefit from look-ahead search rather than greedy step-by-step execution. MCTS explores multiple reasoning paths and focuses effort on promising branches. Process reward models catch flawed intermediate reasoning that correct-answer-only evaluation misses. Iterative refinement converges on higher-quality plans.
 
 ```rust
-use ai_assistant::autonomous_loop::{
-    MctsPlanner, MctsConfig, MctsState, MctsAction, MctsResult,
-    ProcessRewardModel, StepScore,
-    RefinementLoop, RefinementConfig,
-};
+use ai_assistant::mcts_planner::{MctsConfig, MctsPlanner, MctsResult, MctsState};
+use ai_assistant::{ProcessRewardModel, RefinementConfig, RefinementLoop, StepScore};
 
 // --- Define a custom planning state ---
 #[derive(Clone)]
@@ -6888,9 +6888,7 @@ let refinement = RefinementLoop::new(RefinementConfig {
 // --- WebRTC voice transport (feature: webrtc) ---
 #[cfg(feature = "webrtc")]
 {
-    use ai_assistant::voice::{
-        WebRtcTransport, WebRtcConfig, AudioCodec,
-    };
+    use ai_assistant::{WebRtcAudioCodec, WebRtcConfig, WebRtcTransport};
 
     let transport = WebRtcTransport::new(WebRtcConfig {
         codec: AudioCodec::Opus,
@@ -6908,8 +6906,8 @@ let refinement = RefinementLoop::new(RefinementConfig {
 // --- Speech-to-speech pipeline (feature: voice-agent) ---
 #[cfg(feature = "voice-agent")]
 {
-    use ai_assistant::voice::{
-        SpeechToSpeechPipeline, PipelineConfig, VoiceAgent, TurnDetector,
+    use ai_assistant::voice_agent::{
+        S2SConfig, SpeechToSpeechPipeline, TurnManager, VadDetector, VoiceAgent,
     };
 
     let pipeline = SpeechToSpeechPipeline::new(PipelineConfig {
@@ -6930,8 +6928,8 @@ let refinement = RefinementLoop::new(RefinementConfig {
 // --- Video analysis (feature: media-generation) ---
 #[cfg(feature = "media-generation")]
 {
-    use ai_assistant::media::{
-        VideoAnalyzer, VideoConfig, FrameAnnotation,
+    use ai_assistant::media_generation::{
+        FrameDescription, VideoAnalysisConfig, VideoAnalyzer,
     };
 
     let analyzer = VideoAnalyzer::new(VideoConfig {
@@ -6961,9 +6959,9 @@ let refinement = RefinementLoop::new(RefinementConfig {
 
 ```rust
 // --- Sandbox backends (feature: containers) ---
+use ai_assistant::code_sandbox::{SandboxConfig, ExecutionResult};
 use ai_assistant::container_sandbox::{
     SandboxBackend, PodmanBackend, WasmSandbox, ProcessSandbox,
-    SandboxConfig, ExecutionResult,
 };
 
 // Podman: rootless container isolation
@@ -6985,7 +6983,7 @@ let process = ProcessSandbox::new(SandboxConfig::default());
 // let result = process.execute("./untrusted_binary", &workspace).await?;
 
 // --- Declarative deployment profiles (feature: containers) ---
-use ai_assistant::container_sandbox::DeploymentProfile;
+use ai_assistant::agent_definition::DeploymentProfile;
 
 let profile = DeploymentProfile {
     name: "research-agent".to_string(),
@@ -7003,10 +7001,10 @@ let profile = DeploymentProfile {
 // let deployment = profile.deploy().await?;
 
 // --- Developer tools (feature: devtools) ---
-use ai_assistant::devtools::{
-    AgentDebugger, Breakpoint, BreakpointType,
-    ExecutionRecorder, RecordedExecution,
-    PerformanceProfiler, PipelineStage,
+use ai_assistant::agent_devtools::{
+    AgentDebugger, Breakpoint, DebugEvent, DebugEventType,
+    ExecutionRecorder, ExecutionReplay,
+    PerformanceProfiler, StepProfile,
 };
 
 // Step-through debugger
@@ -7055,7 +7053,7 @@ println!("Retrieval: {:?}, LLM: {:?}, Total: {:?}",
 **Why**: Token-by-token streaming gives users immediate visual feedback while the model is still generating, dramatically reducing perceived latency. SSE is a simple, well-supported protocol that works over standard HTTP/1.1 without requiring WebSocket upgrades, making it compatible with proxies, load balancers, and `curl`.
 
 ```rust
-use ai_assistant::http_server::{ServerConfig, start_server};
+use ai_assistant::{AiServer, ServerConfig};
 
 // Start the server with streaming enabled
 let config = ServerConfig {
@@ -7063,7 +7061,9 @@ let config = ServerConfig {
     port: 8080,
     ..ServerConfig::default()
 };
-// start_server(config, assistant).await?;
+// `run_blocking` serves on the calling thread; `start_background` returns a
+// ServerHandle instead, for when the caller has its own event loop.
+// AiServer::new(config).run_blocking()?;
 
 // --- Client-side: curl ---
 // curl -N -X POST http://127.0.0.1:8080/chat/stream \
@@ -7113,11 +7113,15 @@ let config = ServerConfig {
 **Why**: LLM responses can be lengthy (thousands of tokens). Gzip compression typically reduces JSON payload sizes by 60-80%, saving bandwidth and improving transfer times, especially on slower connections. The overhead of compression is negligible compared to LLM inference time.
 
 ```rust
-use ai_assistant::http_client::{compress_gzip, decompress_gzip};
+use ai_assistant::cache_compression::{
+    compress, decompress, CompressionAlgorithm, CompressionLevel,
+};
 
-// Server-side: compress a response body when client accepts gzip
+// Server-side: compress a response body when the client accepts gzip.
+// `compress` is generic over the algorithm, so the same call serves gzip,
+// zstd or Auto (which picks by sniffing the data).
 let body = b"A long response from the LLM...";
-let compressed = compress_gzip(body).expect("compression failed");
+let compressed = compress(body, CompressionAlgorithm::Gzip, CompressionLevel::Default);
 // Set header: Content-Encoding: gzip
 
 // Client-side: decompress received body
@@ -7144,7 +7148,7 @@ assert_eq!(decompressed, body);
 **Why**: LLM inference is expensive (GPU time, memory, energy). Without rate limiting, a single client can monopolize the server, starving other users. Rate limiting ensures fair resource sharing, protects against accidental loops, and provides a foundation for usage-based billing.
 
 ```rust
-use ai_assistant::http_server::{ServerConfig, ServerRateLimiter};
+use ai_assistant::{ServerConfig, ServerRateLimiter};
 
 // Configure rate limiting in the server
 let config = ServerConfig {
@@ -7232,7 +7236,7 @@ let training_data = assistant.export_training_data();
 **Why**: Security auditing is a compliance requirement for many organizations (SOC 2, HIPAA, GDPR). An in-process audit log captures events with minimal latency and no external dependencies. The append-only design ensures that logged events cannot be retroactively modified, and the rotation policy prevents unbounded memory growth.
 
 ```rust
-use ai_assistant::http_server::AuditLog;
+use ai_assistant::ServerAuditLog;
 
 // Create an audit log with a max of 10,000 entries
 let audit = AuditLog::new(10_000);
@@ -7271,7 +7275,7 @@ for entry in &entries {
 **Why**: API versioning is essential for production services that have multiple client versions in the wild. By serving both versioned and unversioned paths from the start, the crate avoids a breaking migration later. The `X-API-Version` header lets clients programmatically verify which version they are talking to.
 
 ```rust
-use ai_assistant::http_server::ServerConfig;
+use ai_assistant::ServerConfig;
 
 let config = ServerConfig {
     host: "127.0.0.1".to_string(),
@@ -7330,14 +7334,12 @@ let config = ServerConfig {
 // NOT_FOUND          - Endpoint does not exist
 // METHOD_NOT_ALLOWED - Wrong HTTP method for endpoint
 
-use ai_assistant::http_server::ErrorResponse;
+use ai_assistant::StructuredError;
 
-// Create a structured error response
-let error = ErrorResponse {
-    error_code: "VALIDATION_ERROR".to_string(),
-    message: "Prompt cannot be empty".to_string(),
-    details: Some("The 'prompt' field must contain at least one character".to_string()),
-    retry_after_secs: None,
+// Create a structured error response. The fields are private, so it is built
+// through the constructor and its builder methods rather than a literal.
+let error = StructuredError::new("VALIDATION_ERROR", "Prompt cannot be empty")
+    .with_details("The 'prompt' field must contain at least one character");
 };
 
 // Rate limit error with retry information
@@ -7999,9 +8001,9 @@ The `eval-suite` feature provides a comprehensive benchmark framework for evalua
 ### Running Benchmarks
 
 ```rust
+use ai_assistant::benchmark::{BenchmarkRunner, BenchmarkConfig};
 use ai_assistant::eval_suite::{
-    BenchmarkRunner, BenchmarkConfig, BenchmarkSuiteType,
-    ComparisonMatrix, SubtaskAnalysis,
+    BenchmarkSuiteType, ComparisonMatrix, SubtaskAnalysis,
 };
 
 // Configure the benchmark
@@ -8129,7 +8131,7 @@ Both also available at `/api/v1/` prefix.
 ### Starting the Server
 
 ```rust
-use ai_assistant::server::{ServerConfig, AiServer, ServerEnrichmentConfig};
+use ai_assistant::{AiServer, ServerConfig, ServerEnrichmentConfig};
 use ai_assistant::server::{
     GuardrailEnrichmentConfig, RagEnrichmentConfig, CostEnrichmentConfig,
 };
@@ -8539,7 +8541,7 @@ All 46 sub-config fields use `#[serde(default)]`. An empty JSON `{}` or old 6-fi
 ### Programmatic Configuration
 
 ```rust
-use ai_assistant::server::{
+use ai_assistant::{
     ServerConfig, ServerEnrichmentConfig,
     GuardrailEnrichmentConfig, RagEnrichmentConfig, CostEnrichmentConfig,
     ThinkingEnrichmentConfig,
@@ -9358,13 +9360,14 @@ The `LogCollector` buffers log entries from all nodes and provides:
 
 ### Configuration
 ```rust
-use ai_assistant::{LogCollector, LogCorrelationConfig, LogLevel};
+use ai_assistant::{LogCollector, LogCollectorConfig, LogLevel};
 
-let config = LogCorrelationConfig {
+let config = LogCollectorConfig {
     min_level: LogLevel::Info,         // Collect Info and above
     share_logs: true,                   // Allow remote nodes to return logs
     retention_secs: 3600,               // Keep logs for 1 hour
     max_entries_per_trace: 10_000,      // Bound memory per trace
+    ..LogCollectorConfig::default()     // enabled, max_active_traces
 };
 
 let mut collector = LogCollector::new(config);

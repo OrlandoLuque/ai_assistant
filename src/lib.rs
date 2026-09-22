@@ -1889,6 +1889,11 @@ pub use rag_methods::{
     MultiQueryConfig,
     MultiQueryDecomposer,
     QueryExpanderConfig,
+    // Returned by `RagRouter::route`. It was the only one of the module's
+    // forty-seven public types missing from this list, so a caller could
+    // call the method and then have to reach into `rag_methods::` to name
+    // what came back, while everything around it was at the root.
+    RagRoutingDecision,
     RaptorConfig,
     RaptorNode,
     RaptorRetriever,

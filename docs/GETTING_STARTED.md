@@ -573,23 +573,24 @@ fn main() {
 ### Guardrails Pipeline
 
 ```rust
-use ai_assistant::{GuardrailPipeline, GuardrailRule, GuardrailAction};
+use ai_assistant::{ContentLengthGuard, GuardrailPipeline, PiiGuard};
 
 fn main() {
     let mut pipeline = GuardrailPipeline::new();
 
-    // Add content safety rules
-    pipeline.add_rule(GuardrailRule::new("no-pii", "Block PII in outputs")
-        .with_action(GuardrailAction::Block)
-        .with_pattern(r"\b\d{3}-\d{2}-\d{4}\b"));  // SSN pattern
+    // Guards are trait objects, added in the order they should run.
+    pipeline.add_guard(Box::new(PiiGuard::new()));
+    pipeline.add_guard(Box::new(ContentLengthGuard::new(2_000)));
 
-    pipeline.add_rule(GuardrailRule::new("max-length", "Limit response length")
-        .with_action(GuardrailAction::Truncate)
-        .with_max_tokens(500));
-
-    // Check content before sending to user
-    let result = pipeline.check("The answer is 42.");
-    println!("Passed: {}, Violations: {}", result.passed, result.violations.len());
+    // Input and output are checked separately: a guard can be relevant on the
+    // way in (prompt injection) and not on the way out, or the reverse (PII).
+    let result = pipeline.check_output("The answer is 42.");
+    println!(
+        "Passed: {}, guards run: {}, blocked by: {:?}",
+        result.passed,
+        result.results.len(),
+        result.blocked_by
+    );
 }
 ```
 

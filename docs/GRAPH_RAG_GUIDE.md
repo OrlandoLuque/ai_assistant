@@ -291,8 +291,10 @@ let config = KnowledgeGraphConfig {
 ### Basic Graph RAG Setup
 
 ```rust
-use ai_assistant::rag_tiers::{RagConfig, RagTier};
-use ai_assistant::rag_methods::{GraphRagRetriever, GraphRagConfig, Entity, Relationship};
+use ai_assistant::rag::RagConfig;
+use ai_assistant::rag_tiers::RagTier;
+use ai_assistant::knowledge_graph::Entity;
+use ai_assistant::rag_methods::{GraphRagRetriever, GraphRagConfig, Relationship};
 
 // 1. Configure RAG with Graph tier
 let config = RagConfig::with_tier(RagTier::Graph)

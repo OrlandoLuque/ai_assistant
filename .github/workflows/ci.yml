@@ -93,6 +93,32 @@ jobs:
         # and reports a smaller, untrue number.
         run: python scripts/check_doc_links.py "$FEATURES_STD"
 
+      - name: Check doc imports
+        # Added V340, the third layer of the same defect. Three populations of
+        # example code exist and only two were checked:
+        #   examples/*.rs      -- cargo clippy --all-targets (V247)
+        #   `///` doctests     -- cargo test --doc (V317)
+        #   ```rust in .md     -- nobody, until now
+        # The third is the one a reader meets first: README.md and GUIDE.md open
+        # with code blocks. 48 of the 1037 names imported there did not exist at
+        # any path, and 38 more existed somewhere other than where the document
+        # said -- including two in the README's own front-page example.
+        #
+        # No feature set: this check is static because there is no usable one.
+        # `full` turns on 25 of the 95 features, so compiling reports every type
+        # behind the other 70 as missing, and --all-features does not build
+        # (vector-lancedb needs protoc). Whether a name is DECLARED does not
+        # depend on features; only whether it compiles does.
+        run: python3 scripts/check_doc_imports.py
+
+      - name: Check the list of checkers is true
+        # Added V340. docs/README.md has a section on the automated checks that
+        # keep the docs honest, and it had drifted twice: "all three run in CI"
+        # until V307 while five did, "all six" until V340 while eight did. A page
+        # about enforcement, unenforced. This makes the scripts on disk, the steps
+        # in the workflows and that list agree, including the stated total.
+        run: python3 scripts/check_checkers_documented.py
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest

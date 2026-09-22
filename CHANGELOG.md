@@ -5,6 +5,152 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v215 (2026-09-22) — V340: los ejemplos de los `.md` no los compilaba nadie (0.2.292)
+
+N88. Había **tres** poblaciones de código de ejemplo en el repositorio y solo dos estaban
+comprobadas:
+
+| población | quién la compila |
+|---|---|
+| `examples/*.rs` | `cargo clippy --all-targets` (V247) |
+| doctests `///` de los `.rs` | `cargo test --doc` (V317) |
+| **vallas ```rust de los `.md`** | **nadie** |
+
+La tercera es la primera que ve alguien que llega: `README.md` y `docs/GUIDE.md` empiezan con
+bloques de código, y la guía se presenta como *«covers every feature in the crate … with code
+examples»*. De los **1.037 nombres** que importan esas vallas, **48 no existían en ninguna
+ruta** y **38 más existían en otro sitio del que decía el documento**. Ochenta y seis.
+Dos de ellos, en el ejemplo de portada del README.
+
+### Un `use` es la afirmación menos ambigua que puede hacer una documentación
+
+Nombra un item **y** el módulo donde vive, así que puede ser falso por las dos mitades a la
+vez, y quien lee no distingue cuál de las dos falló: en ambos casos el ejemplo no compila.
+
+Trece rutas de módulo estaban **inventadas**: `voice` (es `voice_agent`), `devtools`
+(`agent_devtools`), `tool_use` (`tool_calling`), `a2a` (`a2a_protocol`), `workflows`
+(`event_workflow`), `eval` (`online_eval`), `media`, `research`, `http_server`,
+`async_provider`, `prompt_signatures`, `provider_registry`, `discover_services`. Y una era
+peor que inventada: `ai_assistant::context` existe pero es `mod`, no `pub mod`, así que
+`context::ContextComposer` no resolvería **nunca**, con ninguna feature.
+
+El patrón que lo hizo barato de arreglar: **casi todos esos nombres sí están re-exportados en
+la raíz**. La ruta correcta era `ai_assistant::X`, sin el segmento inventado — que además es
+la fachada que la librería quiere tener.
+
+### APIs enteras que nunca se escribieron, descritas con detalle
+
+Algunos no eran un nombre mal puesto:
+
+- `FunctionBuilder` / `ParameterProperty` / `FunctionRegistry`, con `.param()`,
+  `.add_enum_param()` y `registry.build_request(ToolChoice::Auto)` — un constructor fluido
+  para *function calling*, en el README y en la guía. Lo real es `ToolBuilder` +
+  `ToolRegistry`, con otros métodos, y `register` **exige el manejador** además de la
+  definición.
+- `GuardrailRule` / `GuardrailAction`, con `.with_pattern(r"\b\d{3}-\d{2}-\d{4}\b")` y
+  `pipeline.add_rule(...)`. Lo real es `add_guard(Box<dyn Guard>)` con guardas concretas
+  (`PiiGuard`, `ContentLengthGuard`), y el resultado no tiene `violations` sino `results` y
+  `blocked_by`. Encima `PatternGuard` toma **subcadenas**, no expresiones regulares: el
+  ejemplo del DNI/SSN era falso dos veces.
+- `start_server`, `ErrorResponse`, `compress_gzip` / `decompress_gzip`,
+  `LogCorrelationConfig`, `MemoryBus` / `MemoryEvent` / `DecayStrategy`.
+
+`ErrorResponse` merece una nota: es `StructuredError`, y sus campos son privados. El ejemplo
+construía un literal de struct, así que **no habría compilado ni con el nombre correcto**.
+Ahora usa el constructor. Y `ExtractedFact` / `ExtractedProcedure` no son tipos: son
+variantes del enum `MemoryExtraction`.
+
+### La puerta es estática, y no por comodidad
+
+Lo primero que intenté fue compilar los imports extraídos, que es más fuerte. No se puede
+aquí: **`full` activa 25 de las 95 features**, así que una ejecución de `cargo check` informa
+de que no existe todo lo que vive detrás de las otras 70, y `--all-features` no compila
+(`vector-lancedb` necesita `protoc`). Una puerta que llame inexistente a `a2a_protocol`
+porque nadie activó `a2a` es peor que no tener puerta: enseña a ignorarla.
+
+Que un nombre esté **declarado** no depende de las features. Que **compile**, sí — y eso es
+otra pregunta, más blanda: decir qué feature hace falta.
+
+### Mi primera versión de la puerta bendijo tres errores reales
+
+Preguntaba «¿existe este nombre en algún sitio?» en vez de «¿existe **aquí**?». Con eso
+pasaban `evaluation::LlmJudge` (vive en `llm_judge`), `advanced_memory::SearchQuery` (es del
+módulo `search` de arriba, y es otra cosa) y `mcp_protocol::RemoteMcpClient` (está en
+`mcp_client`). Los encontró `rustc` después, sobre una puerta que ya decía cero.
+
+La versión que resuelve rutas de verdad encontró **38 más**, y tres eran **parches míos** de
+la primera ronda: había supuesto que `Tool`, `S2SConfig` y `AuditLog` estaban en la raíz.
+`AuditLog` sí está… **renombrado a `ServerAuditLog`**, que es justamente el caso que un
+`pub use X as Y` crea y que sólo se ve si sigues la cadena.
+
+Seguir esa cadena obliga a entender los globs: `advanced_memory/mod.rs` son trece
+`pub use x::*;`, así que `advanced_memory::EpisodicStore` es correcto aunque el struct se
+declare en `episodic.rs`. Un intento anterior, sin globs, lo llamó error.
+
+### Instrumentos que informan de menos, quinta y sexta vez
+
+- Un regex de declaraciones anclado en la columna 0 daba por inexistentes todos los tipos
+  declarados dentro de un `mod` interno — **incluidos `VoiceAgent` y `WorkflowGraph`**, que
+  existen. Estuve a un paso de escribir que no.
+- Mi propio monitor de CI usaba `jq`, que no está instalado en esta máquina: se quedó mudo y
+  terminó sin decir nada, con el CI ya verde detrás.
+- Y el shell de fondo informó «exit code 0» de un `--all-features` que había fallado en
+  `protoc`.
+
+Por eso el script imprime lo que ha leído —ficheros, módulos, nombres— y **aborta** si los
+totales son absurdos: un regex roto tiene que salir como una cifra imposible, no como un
+visto bueno. Los parches se aplicaron con un script que exige **una sola coincidencia
+exacta** por parche y no escribe nada si alguna falla; cazó once que había escrito de memoria
+en vez de copiar del fichero.
+
+### Lo que queda dicho y no hecho
+
+`docs/AGENT_SYSTEM_DESIGN.md`, `GUI_FULL_WIRING_PLAN.md` y `FEATURE_LIFECYCLE.md` quedan
+fuera de la puerta, con el motivo escrito al lado: los tres declaran en su cabecera que
+describen un **plan**, no lo que hay. Un nombre sin construir ahí no es una mentira. El resto
+de los `.md` vivos —77— sí entra.
+
+Verificación aparte: `python scripts/check_doc_imports.py --emit <fichero.rs>` escribe los
+319 `use` distintos como un ejemplo compilable, un módulo por import, para cuando se quiera
+contrastar la puerta con el compilador. Es como se encontró el hueco de arriba. Con la puerta
+a cero, rustc confirma **cero imports sin resolver** sobre un conjunto de 43 features.
+
+### La lista de puertas también mentía
+
+`docs/README.md` tiene una sección llamada «Automated checks that keep these files honest» y
+decía **«All six run in CI»** cuando corrían ocho: le faltaban `check_doc_links.py` (V335) y
+`check_rustsec_ignores.py`. El propio párrafo ya avisaba de que había dicho «all three» hasta
+V307 mientras corrían cinco, y terminaba con *«prefer adding the check to trusting the
+list»* — consejo que no se había aplicado a sí mismo.
+
+Ahora existe `scripts/check_checkers_documented.py`: los ficheros de `scripts/`, los pasos de
+los workflows y esa lista tienen que coincidir, **incluido el total escrito en letra**. Un
+checker que nadie ejecuta es peor que no tenerlo (parece cobertura); uno que se ejecuta y no
+está listado es invisible para quien lee la documentación para saber qué está protegido. Las
+dos cosas fallan aquí. Y se señaló a sí misma en la primera ejecución, antes de estar
+conectada, que es exactamente lo que debía hacer.
+
+Son diez en CI y una manual (`check_release_ready.py`, declarada como tal con su motivo).
+
+### Dos defectos que aparecieron al verificar, y no son de documentación
+
+Para contrastar la puerta con rustc hubo que compilar con un conjunto amplio de features, y
+eso compiló cosas que CI no compila nunca:
+
+- **La feature `ffi` no compila** (N89): `src/ffi.rs:1132` pasa un `Vec<u8>` donde
+  `ImageInput::from_bytes` pide `&[u8]`, y `src/ffi.rs:1141` lee un campo
+  `config.system_prompt` que `AiConfig` no tiene.
+- **Dos conjuntos de features verdes en CI que no se pueden combinar** (N90):
+  `IceCandidateType` se re-exporta dos veces en `lib.rs` —línea 925 del lado ICE
+  distribuido, línea 2676 del lado WebRtc— y son tipos distintos. `FEATURES_STD` lleva
+  `webrtc,voice-agent` sin `p2p`; `FEATURES_NETWORK` lleva `p2p,distributed-network` sin
+  `webrtc`. La combinación no se compila en ningún sitio, así que un consumidor que active
+  las dos se encuentra una librería que no compila. **Sin arreglar a propósito**: el arreglo
+  cambia la superficie pública y hay que elegir cuál de los dos conserva el nombre llano.
+
+Ninguno de los dos es mío y ninguno es de documentación; quedan encolados con la evidencia y
+las opciones.
+
 ## [Unreleased] - v214 (2026-09-22) — V339: CI se puso en rojo sin que cambiara una línea (0.2.291)
 
 `ringbuf` 0.4.8 → **0.5.2**. RUSTSEC-2026-0293: doble liberación / uso después de liberar

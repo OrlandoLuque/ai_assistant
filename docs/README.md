@@ -78,13 +78,28 @@ Documentation drifts silently, so some of it is enforced:
   `Cargo.toml` must agree on which binaries exist, the stated total must be right, and
   no row may link to a page that is not there. The page calls itself the authoritative
   inventory and had been listing 26 of 41.
+- `scripts/check_doc_links.py` — counts broken rustdoc links, both classes: an
+  unresolved `[link]` and a public page linking to a private item. A ratchet, now at
+  zero. Its own first version counted only the first class, so five warnings went
+  unseen for the three days the work took.
+- `scripts/check_doc_imports.py` — every `use ai_assistant::…;` inside a ```rust fence
+  of these files must name a module that exists and an item reachable at that path.
+  Nothing compiled those fences: 48 of 1037 imported names existed at no path at all
+  and 38 more lived somewhere other than where the document said, two of them in the
+  README's front-page example.
 - `scripts/check_feature_dep_drift.py` — `dep:X` vs feature `X` in `Cargo.toml`.
 - `scripts/check_deprecation_policy.py` — every `#[deprecated]` carries `since` and `note`.
 - `scripts/check_bench_budget.py` — benchmark budgets.
+- `scripts/check_rustsec_ignores.py` — the suppressed-advisory lists in `deny.toml` and
+  `ci.yml` must match, and each entry must have a reason written above it.
 
-All six run in CI. `scripts/check_release_ready.py` is the seventh checker in
+All ten run in CI. `scripts/check_release_ready.py` is the eleventh checker in
 `scripts/` and is **not** wired to CI — it is a pre-release manual step.
 
-This list said "all three" until V307, while five were already running. If you add a
-claim here that can be checked mechanically, prefer adding the check to trusting the
+And that paragraph is itself checked, by `scripts/check_checkers_documented.py`: the
+list above, the scripts on disk and the steps in the workflows must agree, including
+the count. It said "all three" until V307 while five were running, and "all six" until
+V340 while eight were — the same drift the rest of this section exists to prevent, one
+level up. If you add a claim here that can be checked mechanically, prefer adding the
+check to trusting the
 prose — and then remember that this paragraph is itself prose.

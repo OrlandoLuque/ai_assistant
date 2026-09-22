@@ -1436,17 +1436,16 @@ println!("Time to first token: {}ms", snapshot.time_to_first_token_ms);
 OpenAI-compatible function calling:
 
 ```rust
-use ai_assistant::{FunctionBuilder, ParameterProperty};
+use ai_assistant::ToolBuilder;
 
 // Build a function definition for OpenAI-compatible function calling
-let function = FunctionBuilder::new("get_weather")
-    .description("Get current weather")
-    .param("location", ParameterProperty::string("City name"), true)
-    .param("unit", ParameterProperty::string("Temperature unit"), false)
+let function = ToolBuilder::new("get_weather", "Get current weather")
+    .required_string("location", "City name")
+    .optional_string("unit", "Temperature unit")
     .build();
 
-// Serialize to OpenAI format
-let json = serde_json::to_value(&function).unwrap();
+// Serialize to OpenAI function-calling format
+let json = function.to_openai_function();
 ```
 
 ### Vision Support
@@ -1789,7 +1788,7 @@ println!("Found {} models", models.len());
 Expose the assistant as a REST API with OpenAI-compatible endpoints:
 
 ```rust
-use ai_assistant::server::{ServerConfig, AiServer, ServerEnrichmentConfig};
+use ai_assistant::{AiServer, ServerConfig, ServerEnrichmentConfig};
 
 let config = ServerConfig {
     port: 8090,

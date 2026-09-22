@@ -377,7 +377,7 @@ Nine BibTeX entry types are supported:
 Parse existing `.bib` files into structured `Vec<BibEntry>`:
 
 ```rust
-use ai_assistant::research::BibParser;
+use ai_assistant::bibtex::BibParser;
 
 let bib_content = std::fs::read_to_string("references.bib")?;
 let entries = BibParser::parse(&bib_content)?;
@@ -390,7 +390,7 @@ Generate `.bib` content from entries, or directly from `AcademicPaper` search
 results:
 
 ```rust
-use ai_assistant::research::BibGenerator;
+use ai_assistant::bibtex::BibGenerator;
 
 // From search results
 let papers: Vec<AcademicPaper> = search_results;
