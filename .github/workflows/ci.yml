@@ -71,6 +71,14 @@ jobs:
         run: cargo test --features "$FEATURES_STD" --lib
       - name: Run integration tests
         run: cargo test --features "$FEATURES_STD" --test '*'
+      - name: Run tests (minimum supported features)
+        # V343. The `check` job compiles the minimum set but nothing TESTED it,
+        # and the two are not the same question: the library built while its
+        # test binary did not, because `tests/integration_tests.rs` used
+        # `ai_assistant::multi_agent` and `::agent_memory` in ungated modules.
+        # Four unresolved imports, invisible for as long as nobody ran the tests
+        # down here. `cargo check` passing is what made it look fine.
+        run: cargo test --no-default-features --features "$FEATURES_MIN"
       - name: Run doc examples
         # Added V317. Nothing compiled the doc examples before this: `--lib` and
         # `--test '*'` do not touch them, and 17 of 95 had rotted unnoticed --

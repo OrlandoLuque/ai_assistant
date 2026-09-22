@@ -4,6 +4,12 @@
 
 // === Multi-Agent Integration Tests ===
 
+// Gated because the modules are. `agent_memory` and `multi_agent` live behind
+// the `multi-agent` feature, which is not in the documented minimum set, so
+// without this the test binary failed to compile at all below `full` -- and
+// `cargo check` passing made that look fine. The library built, its tests did
+// not, and nothing said so because no CI job ran the tests down there.
+#[cfg(feature = "multi-agent")]
 mod multi_agent_integration_tests {
     use ai_assistant::agent_memory::*;
     use ai_assistant::multi_agent::*;
@@ -340,6 +346,7 @@ mod multi_agent_integration_tests {
 
 // === Chaos Engineering Tests ===
 
+#[cfg(feature = "multi-agent")]
 mod chaos_engineering_tests {
     use ai_assistant::agent_memory::*;
     use ai_assistant::multi_agent::*;

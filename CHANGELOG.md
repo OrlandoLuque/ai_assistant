@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v218 (2026-09-22) — V343: compilar y probar no son la misma pregunta (0.2.295)
+
+N79 cerrado, y con un número muy distinto del que decía el encolado: **eran cuatro errores,
+no 108**. El trabajo de las últimas versiones —V267 el mínimo soportado, V269 la matriz sobre
+el mínimo en vez de sobre `full`, V330, V342— se había comido los otros 104 sin que nadie
+volviera a medir. Merece decirse: un encolado con una cifra dentro envejece, y la cifra
+envejece peor que el problema.
+
+Los cuatro eran el mismo defecto en dos sitios: `tests/integration_tests.rs` usaba
+`ai_assistant::multi_agent` y `::agent_memory` en **dos módulos sin gatear**. Ambos viven
+detrás de la feature `multi-agent`, que no está en el mínimo documentado, así que por debajo
+de `full` **la librería compilaba y su binario de tests no**.
+
+### Y eso no lo veía nadie porque `cargo check` sí pasaba
+
+El trabajo `check` de CI compila el mínimo desde V267. El trabajo `test` corre siempre con
+`FEATURES_STD`, que parte de `full`. La matriz de features corre `cargo test --lib`, que no
+toca los tests de integración. Tres trabajos, y entre los tres ninguno construía
+`tests/integration_tests.rs` por debajo de `full`.
+
+Que `cargo check` pase es exactamente lo que lo hacía invisible: da la sensación de que el
+conjunto reducido está sano, y comprueba menos de lo que parece. **Compilar la librería y
+compilar sus tests son dos preguntas distintas**, y solo se estaba haciendo la primera.
+
+El paso nuevo en el trabajo `test`:
+
+    cargo test --no-default-features --features "$FEATURES_MIN"
+
+**5.290 tests verdes** por debajo de `full`, incluidos **130 de integración** que hasta ahora
+no se construían nunca ahí.
+
+### Gatear no es borrar cobertura
+
+Los dos módulos llevan ahora `#[cfg(feature = "multi-agent")]`, y eso hay que comprobarlo en
+las **dos** direcciones o el arreglo es un apagado disfrazado: sin la feature compila y corre
+(los 130), y **con** la feature los 38 tests de esos dos módulos siguen construyéndose y
+pasando. Verificado antes de commitear.
+
 ## [Unreleased] - v217 (2026-09-22) — V342: la exención decía que no había nada que comprobar (0.2.294)
 
 N89. La feature `ffi` no compilaba. Dos errores en `src/ffi.rs`, dentro de
