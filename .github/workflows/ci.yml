@@ -28,7 +28,7 @@ env:
   CARGO_HTTP_LOW_SPEED_LIMIT: 5
   CARGO_HTTP_TIMEOUT: 120
   # Standard test set — covers core + all lightweight opt-in features
-  FEATURES_STD: "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing,local-inference"
+  FEATURES_STD: "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing,local-inference,ffi"
   # Heavy networking features (separate due to quinn/rustls deps)
   FEATURES_NETWORK: "full,distributed-network,p2p,gpu-sharing,server-axum,server-cluster"
   # The smallest set the crate actually builds with (V267). Every other job here
@@ -365,6 +365,19 @@ jobs:
           - "precise-tokens"
           - "diagnostic-logging"
           - "integrity-check"
+          # V342. `ffi` was excluded with the reason "produces cdylib/staticlib
+          # only; nothing to type-check beyond the lib". That is false: the
+          # feature gates src/ffi.rs, 1607 lines behind `#[cfg(feature = "ffi")]`,
+          # and it had been sitting on two compile errors -- a `Vec<u8>` passed
+          # where `&[u8]` was wanted, and a read of `AiConfig::system_prompt`,
+          # a field that does not exist. An argued suppression whose argument is
+          # wrong is the worst kind, because nobody re-reads it.
+          #
+          # `vision` on purpose: the broken lines are in
+          # `ai_assistant_send_message_with_image`, which is `#[cfg]`-gated on
+          # `vision` inside the `ffi` module, so `ffi` alone would not compile
+          # them and the job would go green over the same hole.
+          - "ffi,vision"
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.98.0

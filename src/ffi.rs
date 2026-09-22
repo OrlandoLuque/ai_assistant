@@ -1129,7 +1129,7 @@ pub unsafe extern "C" fn ai_assistant_send_message_with_image(
             set_last_error(&format!("image validation failed: {e}"));
             return E_SEND_FAILED;
         }
-        let image = crate::vision::ImageInput::from_bytes(bytes, &mt);
+        let image = crate::vision::ImageInput::from_bytes(&bytes, &mt);
         let provider = match build_provider(inner) {
             Ok(p) => p,
             Err(rc) => return rc,
@@ -1138,7 +1138,10 @@ pub unsafe extern "C" fn ai_assistant_send_message_with_image(
         a.config.provider = provider;
 
         let vmsg = crate::vision::VisionMessage::user(&msg, vec![image]);
-        let system_prompt = a.config.system_prompt.clone().unwrap_or_default();
+        // The prompt lives on the assistant, not on the config: `AiConfig` has
+        // no `system_prompt` field and never had one. The accessor is the same
+        // one `ai_assistant_set_system_prompt` writes to, a few hundred lines up.
+        let system_prompt = a.system_prompt().to_string();
         let result = crate::vision::generate_vision_response(&a.config, &[vmsg], &system_prompt);
 
         match result {
@@ -1599,6 +1602,86 @@ mod tests {
             let result2 = build_provider(inner);
             assert!(result2.is_ok());
             ai_assistant_free(h);
+        }
+    }
+
+    // `ai_assistant_send_message_with_image` had no test and no CI job that
+    // compiled it: `ffi` sat in the exclusion list with the reason "nothing to
+    // type-check beyond the lib", and it was carrying two compile errors. These
+    // three exercise the argument checks and the image validation, which all
+    // happen before any provider is built, so nothing here touches the network.
+    #[cfg(feature = "vision")]
+    mod with_image {
+        use super::*;
+
+        #[test]
+        fn null_image_bytes_is_rejected() {
+            let h = ai_assistant_new();
+            let prompt = make_cstr("what is in this picture");
+            let mut out: *mut c_char = ptr::null_mut();
+            let rc = unsafe {
+                ai_assistant_send_message_with_image(
+                    h,
+                    prompt.as_ptr(),
+                    ptr::null(),
+                    16,
+                    ptr::null(),
+                    &mut out,
+                )
+            };
+            assert_eq!(rc, E_NULL_PTR);
+            assert!(out.is_null(), "out must stay null when the call fails");
+            unsafe { ai_assistant_free(h) };
+        }
+
+        #[test]
+        fn zero_length_is_rejected_even_with_a_valid_pointer() {
+            let h = ai_assistant_new();
+            let prompt = make_cstr("what is in this picture");
+            let bytes = [0x89u8, 0x50, 0x4E, 0x47];
+            let mut out: *mut c_char = ptr::null_mut();
+            let rc = unsafe {
+                ai_assistant_send_message_with_image(
+                    h,
+                    prompt.as_ptr(),
+                    bytes.as_ptr(),
+                    0,
+                    ptr::null(),
+                    &mut out,
+                )
+            };
+            assert_eq!(rc, E_NULL_PTR);
+            unsafe { ai_assistant_free(h) };
+        }
+
+        #[test]
+        fn bytes_that_are_not_an_image_fail_validation_before_any_request() {
+            let h = ai_assistant_new();
+            let prompt = make_cstr("what is in this picture");
+            // Not a PNG, JPEG or WebP header: `ImagePreprocessor::validate_bytes`
+            // rejects it, so the call returns without a provider being built --
+            // which is what makes this test hermetic.
+            let junk = [b'n', b'o', b't', b'a', b'n', b'i', b'm', b'a', b'g', b'e'];
+            let mut out: *mut c_char = ptr::null_mut();
+            let rc = unsafe {
+                ai_assistant_send_message_with_image(
+                    h,
+                    prompt.as_ptr(),
+                    junk.as_ptr(),
+                    junk.len(),
+                    ptr::null(),
+                    &mut out,
+                )
+            };
+            assert_eq!(rc, E_SEND_FAILED);
+            let err = ai_assistant_last_error();
+            assert!(!err.is_null());
+            let msg = unsafe { CStr::from_ptr(err) }.to_string_lossy();
+            assert!(
+                msg.contains("image validation failed"),
+                "the message must say WHICH stage refused it, got: {msg}"
+            );
+            unsafe { ai_assistant_free(h) };
         }
     }
 }

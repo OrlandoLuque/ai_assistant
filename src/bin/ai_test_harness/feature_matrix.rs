@@ -82,10 +82,6 @@ const NOT_IN_CI: &[(&str, &str)] = &[
     ),
     ("aws-bedrock", "needs AWS credentials"),
     ("server-tls", "needs PEM material at build time"),
-    (
-        "ffi",
-        "produces cdylib/staticlib only; nothing to type-check beyond the lib",
-    ),
 ];
 
 /// The members of `full`, which CI builds in its check / clippy / test jobs via

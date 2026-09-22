@@ -5,6 +5,65 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v217 (2026-09-22) — V342: la exención decía que no había nada que comprobar (0.2.294)
+
+N89. La feature `ffi` no compilaba. Dos errores en `src/ffi.rs`, dentro de
+`ai_assistant_send_message_with_image`:
+
+- `ImageInput::from_bytes(bytes, &mt)` pasaba un `Vec<u8>` donde la firma pide `&[u8]`.
+- `a.config.system_prompt` — `AiConfig` **no tiene** ese campo y nunca lo tuvo. El prompt
+  vive en el asistente, y el accesor es el mismo al que escribe
+  `ai_assistant_set_system_prompt` unos cientos de líneas más arriba, en el mismo fichero.
+
+### La causa raíz no es el código, es el motivo que justificaba no mirarlo
+
+`ffi` estaba en la lista de exenciones de CI (`NOT_IN_CI`, en el harness) con este argumento:
+
+> *«produces cdylib/staticlib only; nothing to type-check beyond the lib»*
+
+Es **falso**. `ffi` gatea `src/ffi.rs`: **1.607 líneas** detrás de
+`#[cfg(feature = "ffi")]`, veinte puntos de entrada `extern "C"`, un contrato de hilos y una
+frontera de pánico. Había exactamente lo que el motivo decía que no había, y con dos errores
+dentro.
+
+**Una supresión con argumento equivocado es la peor clase que hay**, precisamente porque
+parece revisada: quien la lee ve un razonamiento, lo acepta y no vuelve. Y el proyecto ya
+exige que cada supresión lleve su motivo escrito al lado —lo cumplía— sin que nadie
+comprobara si el motivo era cierto.
+
+### Tres capas, no una
+
+`ffi` no lo compilaba **ningún** trabajo, así que había tres huecos y no uno:
+
+| capa | estaba | ahora |
+|---|---|---|
+| `cargo check` / `test` sobre el mínimo | no | entrada `"ffi,vision"` en la matriz |
+| `cargo clippy -D warnings` | no | `ffi` en `FEATURES_STD` |
+| los 27 tests de `ffi` que ya existían | **no se ejecutaban** | se ejecutan en las dos |
+
+Lo tercero conviene subrayarlo: había 27 tests escritos y ninguno corría, porque el conjunto
+que los habilita no lo usaba ningún trabajo de CI. Tests que existen y no se ejecutan tienen
+el mismo valor que los que no existen, con el agravante de que se cuentan.
+
+La entrada de la matriz es **`ffi,vision`** y no `ffi` a secas: las líneas rotas están en una
+función gateada además por `vision` **dentro** del módulo `ffi`, así que `ffi` solo habría
+dado el trabajo en verde por encima del mismo agujero.
+
+### Y la función no tenía ni un test
+
+`ai_assistant_send_message_with_image` no se mencionaba en ningún sitio fuera de su propia
+definición. Van tres, y los tres son herméticos porque la validación de la imagen ocurre
+antes de construir el proveedor: puntero nulo, longitud cero con puntero válido, y bytes que
+no son una imagen (que debe contestar `E_SEND_FAILED` **y decir en qué etapa se paró**).
+
+Verificados por mutación: quitando el rechazo de `validate_bytes`, el tercero falla; al
+devolverlo, los tres pasan. Un test que no se ha visto fallar no es un test.
+
+Comprobado con el comando exacto de CI: `cargo check` y `cargo test --lib` sobre
+`FEATURES_MIN,ffi,vision` (**5.244 tests verdes**), y `cargo clippy --all-targets -D warnings`
+sobre `FEATURES_STD` con `ffi` (**cero avisos**). `ffi = []` no arrastra dependencias, así que
+el coste en minutos de CI es el de compilar el módulo.
+
 ## [Unreleased] - v216 (2026-09-22) — V341: la misma mentira, dicha en prosa (0.2.293)
 
 Segunda mitad de N88. V340 arregló los `use` y les puso puerta. Pero la guía repite la misma
