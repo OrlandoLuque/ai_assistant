@@ -261,6 +261,13 @@ pub mod group_queue_host;
 pub mod group_queue_runtime;
 pub mod http_client;
 pub mod huggingface;
+// V347: not feature-gated on purpose. `ice` holds the one ICE candidate type
+// that `p2p`, `distributed_rag` and `voice_agent` had each written for
+// themselves; a shared type that only exists when one of its consumers is
+// enabled would not be shared, and the three bare re-exports collided at the
+// root -- each feature set compiled alone and no combination did.
+pub mod ice;
+pub use ice::IceCandidateType;
 #[cfg(feature = "autonomous")]
 pub mod inspector;
 pub mod internal_storage;
@@ -602,9 +609,10 @@ pub use browser_policy::{
 
 #[cfg(feature = "distributed")]
 pub use distributed_rag::{
-    DistributedRagConfig, DistributedRagResult, DocumentScope, IceCandidate as P2pIceCandidate,
-    IceCandidateType as P2pIceCandidateType, IceConfig as P2pIceConfig, IceState as P2pIceState,
-    SharedChunkMeta, TurnServerConfig as P2pTurnServerConfig,
+    DistributedRagConfig, DistributedRagResult, DocumentScope,
+    IceCandidate as DistributedIceCandidate, IceConfig as DistributedIceConfig,
+    IceState as DistributedIceState, SharedChunkMeta,
+    TurnServerConfig as DistributedTurnServerConfig,
 };
 
 pub use event_source::{
@@ -922,10 +930,10 @@ pub mod p2p;
 
 #[cfg(feature = "p2p")]
 pub use p2p::{
-    ContradictionReport, IceAgent, IceCandidate, IceCandidateType, IceState, KnowledgeShare,
-    NatDiscoveryResult, NatTraversal, NatType, P2PConfig, P2PManager, P2PStats, P2PTransport,
-    PeerConnection, PeerDataTrust, PeerInfo, PeerMessage, PeerReputation, ReputationSystem,
-    TurnConfig, WireEnvelope,
+    ContradictionReport, IceAgent, IceCandidate, IceState, KnowledgeShare, NatDiscoveryResult,
+    NatTraversal, NatType, P2PConfig, P2PManager, P2PStats, P2PTransport, PeerConnection,
+    PeerDataTrust, PeerInfo, PeerMessage, PeerReputation, ReputationSystem, TurnConfig,
+    WireEnvelope,
 };
 
 // =============================================================================
@@ -2673,8 +2681,8 @@ pub use voice_agent::{
 
 #[cfg(all(feature = "webrtc", feature = "voice-agent"))]
 pub use voice_agent::{
-    IceCandidateType, RtpStreamConfig, SdpAnswer, SdpOffer, TurnServer, WebRtcAudioCodec,
-    WebRtcConfig, WebRtcIceCandidate, WebRtcSessionStats, WebRtcTransport,
+    RtpStreamConfig, SdpAnswer, SdpOffer, TurnServer, WebRtcAudioCodec, WebRtcConfig,
+    WebRtcIceCandidate, WebRtcSessionStats, WebRtcTransport,
 };
 
 // =============================================================================

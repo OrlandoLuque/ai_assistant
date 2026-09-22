@@ -59,6 +59,14 @@ jobs:
         run: cargo check --features "$FEATURES_NETWORK"
       - name: Check (minimum supported features)
         run: cargo check --no-default-features --features "$FEATURES_MIN"
+      - name: Check (standard AND network features together)
+        # V347. The two sets above were each green and COULD NOT BE COMBINED:
+        # `p2p` and `voice_agent` both re-exported an `IceCandidateType` at the
+        # crate root, and no job ever turned both on, so the collision was
+        # invisible while a consumer enabling both got a library that does not
+        # compile. Checking each half of a partition proves nothing about the
+        # whole; this step is the one that would have caught it.
+        run: cargo check --features "$FEATURES_STD,$FEATURES_NETWORK"
 
   test:
     name: Tests

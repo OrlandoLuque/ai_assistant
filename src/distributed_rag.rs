@@ -142,32 +142,10 @@ pub struct IceCandidate {
     pub protocol: String,
 }
 
-/// Type of ICE candidate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
-pub enum IceCandidateType {
-    /// Direct local IP.
-    Host,
-    /// Discovered via STUN (public IP).
-    ServerReflexive,
-    /// Discovered during connectivity checks.
-    PeerReflexive,
-    /// Via TURN relay server.
-    Relay,
-}
-
-impl std::fmt::Display for IceCandidateType {
-    #[allow(unreachable_patterns)]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Host => write!(f, "host"),
-            Self::ServerReflexive => write!(f, "srflx"),
-            Self::PeerReflexive => write!(f, "prflx"),
-            Self::Relay => write!(f, "relay"),
-            _ => write!(f, "unknown"),
-        }
-    }
-}
+// V347: this enum and its `Display` moved to `crate::ice`, which is where the
+// copies from `p2p` and `voice_agent` went too. The `Display` output (the SDP
+// abbreviations host/srflx/prflx/relay) is unchanged.
+pub use crate::ice::IceCandidateType;
 
 /// ICE agent state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

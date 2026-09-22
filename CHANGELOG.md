@@ -5,6 +5,77 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v222 (2026-09-23) — V347: el mismo tipo escrito tres veces (0.2.299)
+
+N90, resuelto por el autor con la opción de fondo y no con el parche de una línea: **unificar**.
+
+### Eran tres, no dos, y eran el mismo tipo
+
+`IceCandidateType` estaba declarado en `p2p.rs`, en `distributed_rag.rs` y —dentro de un `mod`
+gateado en `webrtc`— en `voice_agent.rs`. Mismas cuatro variantes (`Host`, `ServerReflexive`,
+`PeerReflexive`, `Relay`), mismo significado, las tres `#[non_exhaustive]`. **Lo único que
+cambiaba eran los `derive`**, que no es una diferencia entre tipos: es tres personas llegando
+por separado al mismo estándar (RFC 8445).
+
+Ahora vive en `src/ice.rs`, **sin gatear a propósito** — un tipo compartido que solo existe
+cuando está activo uno de sus tres consumidores no estaría compartido. Los `derive` son la
+unión de los tres, así que nadie pierde nada en la fusión: el de `p2p` no era `Copy` ni
+`PartialEq` ni `Eq`, y el de `voice_agent` no era `Copy` ni `Eq`.
+
+### El precio de tenerlos separados era que no se podían combinar
+
+`p2p` y `voice_agent` re-exportaban el suyo en la raíz **sin prefijo**. `FEATURES_STD` lleva
+`webrtc`+`voice-agent` y no `p2p`; `FEATURES_NETWORK` lleva `p2p` y no los otros dos. Cada
+mitad compilaba y **ninguna combinación de las dos**, así que quien activara ambas se
+encontraba una librería que no compila. Invisible, porque ningún trabajo de CI las juntaba.
+
+El paso nuevo en el trabajo `check`:
+
+    cargo check --features "$FEATURES_STD,$FEATURES_NETWORK"
+
+**Comprobar cada mitad de una partición no dice nada del todo.** Es la misma forma que V343
+(compilar la librería y compilar sus tests son dos preguntas) una vuelta más arriba.
+
+### Lo que NO se ha unificado, y por qué
+
+`IceCandidate` e `IceState` también están duplicados, y ahí **no** es el mismo tipo dos veces:
+
+- `p2p::IceCandidate` lleva un `SocketAddr` y un `foundation`; el de `distributed_rag` lleva
+  `address: String` con `port` y `protocol` aparte. Campos distintos, representación distinta.
+- `p2p::IceState` tiene cinco variantes; el de `distributed_rag`, siete (añade `New` y
+  `Completed`). Fusionarlos añadiría estados a una máquina de estados en marcha, que es un
+  cambio de comportamiento y no un renombrado.
+
+Las dos son preguntas de diseño con consecuencias, no duplicación accidental, así que se
+quedan como están **y se dice en voz alta** en la documentación del módulo nuevo, en vez de
+colarlas de tapadillo aprovechando el viaje.
+
+### El prefijo estaba del revés
+
+`distributed_rag` exportaba sus tipos con prefijo **`P2p`** (`P2pIceCandidate`, `P2pIceConfig`,
+`P2pIceState`, `P2pTurnServerConfig`) y el módulo que de verdad se llama `p2p` exportaba los
+nombres llanos. Ahora son `DistributedIceCandidate`, `DistributedIceConfig`,
+`DistributedIceState` y `DistributedTurnServerConfig`. Comprobado antes de tocarlo: los
+nombres viejos no aparecían en ninguna documentación, ejemplo ni test, así que dentro del
+repositorio no rompen a nadie.
+
+### El test que de verdad importa aquí
+
+Fusionar tres enums solo es seguro si **los bytes no se mueven**: `p2p` pone este tipo en el
+cable entre nodos y `distributed_rag` lo persiste, así que un cambio de representación sería
+una incompatibilidad silenciosa con todo lo ya desplegado. Serde escribe una variante sin
+campos como su nombre pelado, y los nombres no han cambiado — hay un test que lo afirma
+explícitamente (`"ServerReflexive"`, con las comillas), no solo un *round trip*.
+
+Verificado por mutación, y la mutación enseñó algo: poniéndole `#[serde(rename_all =
+"camelCase")]` al enum, **el round trip sigue pasando** —serializa y deserializa igual de
+bien— y es la aserción del formato literal la que cae. Un test de ida y vuelta no habría
+detectado el cambio de formato, que es justo el riesgo.
+
+Comprobado además: `full,p2p,webrtc,voice-agent` (la combinación que estaba rota), `FEATURES_STD`,
+`FEATURES_NETWORK` y las dos juntas; 159 tests de los tres módulos y 3 nuevos de `ice`;
+`clippy --all-targets -D warnings` sobre `FEATURES_STD` con salida vacía y código 0.
+
 ## [Unreleased] - v221 (2026-09-22) — V346: medí 18 defectos y 17 eran mi regla de medir (0.2.298)
 
 Primera mitad de N91: medir la clase de las **firmas** antes de poner puerta. La medición es

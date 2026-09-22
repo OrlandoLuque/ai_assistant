@@ -1668,15 +1668,10 @@ mod inner {
         pub candidate_type: IceCandidateType,
     }
 
+    // V347: was a third identical copy of this enum. It lives in `crate::ice`
+    // now, shared with `p2p` and `distributed_rag`.
     #[cfg(feature = "webrtc")]
-    #[non_exhaustive]
-    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-    pub enum IceCandidateType {
-        Host,
-        ServerReflexive,
-        PeerReflexive,
-        Relay,
-    }
+    pub use crate::ice::IceCandidateType;
 
     #[cfg(feature = "webrtc")]
     #[non_exhaustive]

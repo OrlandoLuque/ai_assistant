@@ -603,19 +603,11 @@ impl NatTraversal {
 // ICE (Interactive Connectivity Establishment)
 // =============================================================================
 
-/// ICE candidate type
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[non_exhaustive]
-pub enum IceCandidateType {
-    /// Direct host address
-    Host,
-    /// Server reflexive (from STUN)
-    ServerReflexive,
-    /// Peer reflexive (discovered during connectivity checks)
-    PeerReflexive,
-    /// Relay (from TURN)
-    Relay,
-}
+// V347: this enum used to be declared here, identically to the copies in
+// `distributed_rag` and `voice_agent`. It now lives in `crate::ice` so the
+// three can share it; the re-export keeps `p2p::IceCandidateType` working for
+// anyone who reaches it by module path.
+pub use crate::ice::IceCandidateType;
 
 /// An ICE candidate
 #[derive(Clone, Debug, Serialize, Deserialize)]
