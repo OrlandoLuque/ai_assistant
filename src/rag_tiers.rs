@@ -3228,3 +3228,170 @@ mod tests {
         assert_eq!(count1, count2);
     }
 }
+
+/// Which of these flags actually govern anything.
+///
+/// # Why this test exists
+///
+/// [`RagFeatures`] reads as a control panel: 46 booleans, each documented, each
+/// declared `true` by one tier or another. `RagTier::Enhanced` alone claims
+/// seventeen of them.
+///
+/// Measured on 2026-09-23, **sixteen** are consulted by `RagPipeline` and
+/// **thirty** are not. Of those thirty, twenty-six are declared `true` by at
+/// least one tier, and eleven reach a checkbox in the interface that toggles a
+/// value nothing reads.
+///
+/// That is not the same as "those capabilities do not exist". Several do, and
+/// run elsewhere — deduplication runs on every query, ungated by its own flag;
+/// memory injection happens through `MemoryManager`. What is false is the
+/// promise that picking a tier turns them on.
+///
+/// The cost of this being invisible is already on the record: `features.
+/// reranking` was declared by four tiers before anything read it, and nobody
+/// noticed until somebody went looking. This test makes the next one loud.
+///
+/// # What it enforces
+///
+/// The inert list may **shrink**, never grow. Wiring a flag is progress, so the
+/// test tells you to delete it from the baseline. Un-wiring one — or adding a
+/// new flag that gates nothing — fails, which is the whole point: a field that
+/// exists only to be documented is a promise the code does not keep.
+#[cfg(test)]
+mod flags_that_govern_nothing {
+    /// Flags `RagPipeline` does not consult, as of 2026-09-23.
+    ///
+    /// Shrink this when you wire one. Do not extend it.
+    const INERT: &[&str] = &[
+        "adaptive_strategy",
+        "auto_temperature",
+        "autocut",
+        "calibrated_abstention",
+        "cascade_reranking",
+        "chain_of_verification",
+        "chunk_granular_scoring",
+        "context_budget_allocation",
+        "context_scoring_mode",
+        "cross_encoder_rerank",
+        "deduplication",
+        "discourse_chunking",
+        "distributed_search",
+        "diversity_mmr",
+        "emotion_aware",
+        "entity_extraction",
+        "fact_check_search",
+        "faithfulness_scoring",
+        "fresh_context",
+        "grounded_generation",
+        "mandatory_attribution",
+        "memory_augmented",
+        "multi_layer_graph",
+        "multimodal",
+        "raptor",
+        "self_query_filter",
+        "semantic_dedup_fusion",
+        "topic_matching",
+        "topic_matching_llm",
+        "web_search_augmentation",
+    ];
+
+    /// Every `pub` field of `RagFeatures`, read from this file.
+    fn every_flag(source: &str) -> Vec<String> {
+        let start = match source.find("pub struct RagFeatures") {
+            Some(i) => i,
+            None => return Vec::new(),
+        };
+        let end = match source[start..].find("\n}") {
+            Some(i) => start + i,
+            None => return Vec::new(),
+        };
+        source[start..end]
+            .lines()
+            .filter_map(|line| {
+                let line = line.trim();
+                let rest = line.strip_prefix("pub ")?;
+                let name = rest.split(':').next()?.trim();
+                (!name.is_empty()
+                    && name
+                        .chars()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'))
+                .then(|| name.to_string())
+            })
+            .collect()
+    }
+
+    fn read(relative: &str) -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(relative);
+        std::fs::read_to_string(path).unwrap_or_default()
+    }
+
+    #[test]
+    fn the_list_of_flags_that_gate_nothing_only_gets_shorter() {
+        let tiers = read("src/rag_tiers.rs");
+        let pipeline = read("src/rag_pipeline.rs");
+        assert!(
+            !tiers.is_empty() && !pipeline.is_empty(),
+            "the sources could not be read, so this checked nothing"
+        );
+
+        let flags = every_flag(&tiers);
+        assert!(
+            flags.len() > 30,
+            "only {} flags were found; the struct moved or the parse broke",
+            flags.len()
+        );
+
+        let gates = |flag: &str| pipeline.contains(&format!("features.{flag}"));
+
+        // A flag that used to gate something and no longer does.
+        let newly_inert: Vec<&String> = flags
+            .iter()
+            .filter(|f| !gates(f) && !INERT.contains(&f.as_str()))
+            .collect();
+        assert!(
+            newly_inert.is_empty(),
+            "these flags gate nothing in RagPipeline and are not in the baseline. \
+             A tier that declares one is promising something no query will do:\n  {newly_inert:?}"
+        );
+
+        // And the good news, which must also be acted on: the baseline is stale.
+        let now_wired: Vec<&&str> = INERT
+            .iter()
+            .filter(|f| flags.iter().any(|k| k == *f) && gates(f))
+            .collect();
+        assert!(
+            now_wired.is_empty(),
+            "these are wired now -- delete them from INERT so the count keeps \
+             meaning something:\n  {now_wired:?}"
+        );
+    }
+
+    #[test]
+    fn the_check_can_tell_a_wired_flag_from_an_inert_one() {
+        // Proving the instrument. A `gates` that answered the same for
+        // everything would pass the test above on any codebase.
+        let pipeline = read("src/rag_pipeline.rs");
+        assert!(
+            pipeline.contains("features.reranking"),
+            "the flag used as the known-wired example is gone; pick another"
+        );
+        assert!(
+            !pipeline.contains("features.autocut"),
+            "autocut is wired now -- good, but this test's premise needs updating"
+        );
+    }
+
+    #[test]
+    fn every_inert_flag_is_a_real_field() {
+        // A baseline entry that matches nothing silently shrinks the check.
+        let flags = every_flag(&read("src/rag_tiers.rs"));
+        let ghosts: Vec<&&str> = INERT
+            .iter()
+            .filter(|f| !flags.iter().any(|k| k == *f))
+            .collect();
+        assert!(
+            ghosts.is_empty(),
+            "the baseline names fields that do not exist: {ghosts:?}"
+        );
+    }
+}
