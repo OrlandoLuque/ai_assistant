@@ -30,7 +30,8 @@
 //! scores rewritten by the reranker and never noticed. The other two copies
 //! still carried the defect, waiting for a caller.
 //!
-//! Hence [`RrfOptions::normalise`] defaults to `true`, and turning it off is
+//! Hence [`RrfOptions::normalise`](crate::rank_fusion::RrfOptions::normalise)
+//! defaults to `true`, and turning it off is
 //! something a caller has to ask for on purpose.
 
 use std::collections::HashMap;

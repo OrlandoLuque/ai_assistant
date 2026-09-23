@@ -297,7 +297,7 @@ pub struct HybridRagConfig {
     ///
     /// Applies to **re-scoring**, not to retrieval: the candidates are already
     /// fixed by BM25 when this is used. See
-    /// [`KnowledgeBase::search_knowledge_hybrid`].
+    /// [`RagDb::search_knowledge_hybrid`].
     pub semantic_weight: f32,
     /// Enable semantic search (requires embedding computation)
     ///
