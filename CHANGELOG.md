@@ -5,6 +5,165 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v223 (2026-09-24) — V348: «semántico» no significaba nada de lo que parecía (0.2.300 → 0.2.307)
+
+Ocho versiones de un tirón porque son una sola historia: el autor preguntó qué hace exactamente
+el LLM cuando reordena resultados, y la respuesta tiró de un hilo que atraviesa toda la
+recuperación.
+
+**El resumen, antes del detalle.** `RagTier::Semantic` está documentado como «Keyword + semantic
+search, better recall». Con las piezas de la casa es **búsqueda por palabras clave puntuada dos
+veces por palabras clave** — y en cualquier superficie que la librería expone, puntuada **una**,
+porque nada llega a la ruta híbrida. Tres capas del mismo asunto, cada una invisible por
+separado.
+
+### 0.2.300 — el mismo RRF escrito tres veces (N99)
+
+Fórmula idéntica en `reranker::ReciprocalRankFusion`, `rag_methods::RrfFusion` y
+`RagPipeline::reciprocal_rank_fusion`: `1/(k + rango)` con k=60. Lo que cambiaba era el
+*adaptador* — qué cuenta como identidad, con qué forma llega la entrada — y eso se queda con
+cada llamante. La aritmética es ahora `src/rank_fusion.rs`.
+
+Lo importante: **el arreglo de V316 vivía en una de las tres**. Las otras dos seguían emitiendo
+RRF crudo, cuyo máximo con k=60 es 1/61 ≈ 0,0164 contra un suelo de relevancia de 0,1. El
+defecto que vació `RagTier::Semantic`, esperando en dos sitios más. Por eso la normalización es
+ahora el valor por defecto y apagarla hay que pedirlo.
+
+Dos más al mirar: la copia del pipeline partía la entrada en **exactamente dos** listas con el
+«dos» en la forma del código, no en un parámetro; y construía el resultado solo desde el mapa de
+la fusión, así que cualquier chunk recuperado por otra ruta desaparecía sin decir nada.
+
+Y el test del harness era `let fusion = RrfFusion::default(); let _ = fusion;` — se llamaba
+«basic usage» y no llamaba a `fuse`.
+
+### 0.2.301 — el reranker reordena, y deja de reescribir (N95)
+
+Sobreescribía cada score con `1.0 - posición/total`. Eso no es cambiar pesos: es tirar la
+relevancia que calcularon la búsqueda léxica, la semántica y la fusión, y poner la posición en su
+sitio. De esa única decisión salían **tres fallos, ninguno reportado**:
+
+1. Una respuesta sin números usables aplanaba todos los scores al mismo valor y devolvía `Ok`,
+   indistinguible de haber funcionado.
+2. A los no colocados se les daba `0.1`, y `min_relevance_score` vale `0.1`: sobrevivían por
+   igualdad exacta de dos literales `f32` escritos en ficheros distintos.
+3. El prompt no tenía tope y la respuesta sí (100 tokens fijos), así que con cuarenta pasajes se
+   cortaba y la cola entera caía al cubo del `0.1`.
+
+Un solo arreglo para los tres: **mantener los scores originales**. Y quita el efecto «lavador»
+que hacía invisible cualquier defecto de escala anterior — que es exactamente cómo el de RRF
+sobrevivió hasta V316.
+
+`rag_methods::LlmReranker`, el gemelo público, tenía los mismos tres y uno propio: **descartaba**
+lo que pasaba de `max_chunks`. Diez documentos entraban y salían cinco, en un método llamado
+«rerank».
+
+**Y dos tests que fijaban los defectos como comportamiento esperado**: uno afirmaba
+`result[0].score > result[1].score` —cierto solo porque el score ERA la posición— y otro que todos
+los scores acababan valiendo 0.1, o sea que certificaba que una respuesta ilegible aplanaba la
+lista justo sobre el borde del filtro siguiente.
+
+### 0.2.302 — `RagFeatures` es una descripción, no un mando
+
+Mirando `autocut` —que cinco tiers declaran `true`— resultó que el pipeline no lo lee nunca. Así
+que se midieron todas: **46 banderas, 16 las consulta `RagPipeline`, 30 no**. De esas 30,
+veintiséis las declara `true` algún tier, y once llegan a una **casilla de la interfaz** que
+cambia un valor que nadie lee. `RagTier::Enhanced` declara diecisiete; gobiernan cinco.
+
+Lo que no significa que esas capacidades no existan: varias corren por otro lado —
+`deduplicate_chunks` se ejecuta en cada consulta, ajena a su propia bandera. Lo falso es la
+promesa de que elegir un tier las enciende.
+
+No se arreglan las treinta —eso es cartografía y alimenta `docs/CAPABILITIES.md`— sino que se
+pone una **puerta de trinquete**: la lista de inertes puede encoger, nunca crecer.
+
+### 0.2.303 — ensanchar un acierto no puede borrarlo
+
+`apply_sentence_window` pedía los vecinos de cada chunk y hacía `expanded.extend(window)`: el
+chunk que había acertado **desaparecía**, sustituido por unos vecinos cuyo score sale de una
+implementación del trait — y el trait no decía nada sobre el score. Dos pasos más abajo está
+`retain(score >= min_relevance_score)`.
+
+El resultado era el contrario del propósito: un pasaje de 0,95 se borraba **por haber sido lo
+bastante relevante como para expandirlo**. Cuanto mejor el acierto, más probable que ensancharlo
+lo hiciera desaparecer.
+
+Regla: **expandir añade contexto, no emite juicios de relevancia nuevos.** Los vecinos heredan la
+del chunk que casó; el padre hereda del mejor hijo que lo trajo.
+
+### 0.2.304 — la base de conocimiento guarda texto (N100)
+
+`knowledge_chunks` tiene `source`, `section`, `content`, `token_count`, `created_at`. **Ninguna
+columna de vector.** Y `search_knowledge_hybrid` deja que BM25 elija los candidatos y solo
+entonces embebe cada uno para reordenarlos, así que **el recall es el de BM25**: una paráfrasis
+con otro vocabulario no es candidata. No podía ser de otra forma — no se puede buscar en un
+espacio vectorial que nunca se construyó.
+
+### 0.2.305 — «semántico» es TF-IDF, y una paráfrasis puntúa CERO (N104)
+
+`LocalEmbedder` es TF-IDF con hashing. Y `DenseEmbedder` —cuyo módulo se presenta como «sentence
+transformers style»— llama a un modelo real **solo si le das `api_url`**; sin servicio cae a
+TF-IDF otra vez, y lo hacía sin decirlo.
+
+    "the vessel sank after striking an iceberg"
+    "a ship went down when it hit floating ice"      → 0.0
+    "the vessel sank again after striking a reef"    → 0.875
+
+Dos frases que dicen lo mismo con otras palabras: **cero exacto**. Ahora hay `is_neural()` y un
+aviso la primera vez que cae al fallback.
+
+### 0.2.306 — dos enlaces de documentación que rompí yo
+
+Cazados por la puerta propia nada más escribirlos. Uno citaba `KnowledgeBase` cuando el tipo se
+llama `RagDb`.
+
+### 0.2.307 — el «cross-encoder» por defecto (N96)
+
+Aquí el docstring sí era honesto. Lo que faltaban eran las consecuencias, medidas:
+
+| | |
+|---|---|
+| mismo significado, sin palabras de contenido comunes | 0,06 |
+| vocabulario compartido, significado distinto | 0,42 |
+| pasaje corto y relevante | 0,50 |
+| el mismo contenido con frases ciertas pero irrelevantes | 0,08 |
+
+Deshace la búsqueda semántica, castiga la longitud (la unión está en el denominador), y no quita
+palabras vacías — ese 0,06 es la palabra «the». Añadido `is_word_overlap()`, igual que
+`is_neural()`.
+
+### Y el que solo se ve desde `docs/CAPABILITIES.md`
+
+Al rellenar las columnas de cableado: **nada en la crate llama a `search_knowledge_hybrid`**. CLI,
+MCP, GUI, servidor y el propio enriquecimiento de `AiAssistant` van todos por `search_knowledge`,
+que es BM25 y nada más. `semantic_enabled` y `semantic_weight` solo los alcanza alguien que
+consuma la librería y llame al método por su nombre.
+
+Tres veces esta semana la misma forma —`RrfFusion::fuse`, `rag_methods::LlmReranker` y esta—: una
+capacidad construida, probada, documentada y sin conectar. Invisible porque todos los tests pasan
+y toda la documentación es cierta sobre la parte que existe.
+
+### Lo que sigue pendiente
+
+- **N105**: embeddings de verdad con el `llama-server` que el kit ya lleva. Medido: con
+  `--embedding --pooling mean` sirve `/v1/embeddings` (2048 dims) **y sigue generando**, al
+  contrario de lo que dice su propia ayuda. Un proceso, un modelo.
+- **N103**: las dos recuperaciones sobre el mismo corpus. El obstáculo es que no comparten
+  identidad de chunk (rowid contra cadena).
+- **N102**: el conjunto dorado de ~30 consultas con recall@k y MRR. Depende de N105, porque medir
+  «semántico contra léxico» hoy compararía TF-IDF con BM25 y concluiría que el semántico no
+  aporta nada — una conclusión sobre el embebedor, presentada como una sobre la fusión.
+
+### Nota de método
+
+Cuatro instrumentos míos se quedaron cortos o midieron de más en estos dos días: una regex sin
+`\b` que casaba «pendiente de» dentro de «independiente de», un recuento de binarios que dio 40
+porque asumía que `name` va detrás de `[[bin]]` (son 41, y hay un comprobador en CI que lo dice),
+un test que llamaba a la propia función que comprobaba, y dos mutaciones que «pasaron» porque
+`cargo fmt` había partido la línea y el patrón ya no casaba.
+
+Ninguno es el defecto interesante. El patrón sí: **antes de creerse un verde, comprobar que el
+instrumento vio algo**.
+
 ## [Unreleased] - v222 (2026-09-23) — V347: el mismo tipo escrito tres veces (0.2.299)
 
 N90, resuelto por el autor con la opción de fondo y no con el parche de una línea: **unificar**.
