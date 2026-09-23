@@ -147,10 +147,39 @@ fn apply_filters(mut docs: Vec<ScoredDocument>, config: &RerankerConfig) -> Vec<
 // ---------------------------------------------------------------------------
 
 /// Reranks documents using a pluggable scoring function that evaluates
-/// (query, document) pairs.  The default scorer computes term-overlap
-/// (shared words / total unique words), similar to TF-IDF bag-of-words.
+/// (query, document) pairs.
+///
+/// # The default scorer is not a cross-encoder
+///
+/// A cross-encoder reads the query and the document *together* and returns a
+/// relevance judgement; it understands paraphrase, negation and word order.
+/// [`Self::default_scorer`] computes Jaccard overlap of word sets — shared
+/// words over total distinct words. The name of this type describes the shape
+/// of the abstraction, not what the default does.
+///
+/// Two consequences, both measured in this module's tests:
+///
+/// 1. **It undoes semantic retrieval.** Documents recalled by meaning get
+///    reordered by literal vocabulary, which is what the keyword search already
+///    did. A passage that answers the question in different words is pushed
+///    down by the very stage meant to promote it.
+/// 2. **It penalises length.** The union is the denominator, so a long and
+///    perfectly relevant document scores lower than a short one with the same
+///    overlap — a systematic bias toward short chunks that has nothing to do
+///    with relevance.
+///
+/// None of which makes it useless: it is a cheap, dependency-free ordering and
+/// it is better than none. Ask [`Self::is_word_overlap`] before drawing a
+/// conclusion from its scores, and supply your own scorer via [`Self::new`]
+/// when you have a model to supply.
 pub struct CrossEncoderReranker {
     scorer: Arc<dyn Fn(&str, &str) -> f64 + Send + Sync>,
+    /// Whether the scorer is the built-in word-overlap one.
+    ///
+    /// The struct holds an `Arc<dyn Fn>` and cannot inspect it, so this is
+    /// recorded when the scorer is chosen. Without it a caller has no way to
+    /// find out what is scoring their documents.
+    word_overlap: bool,
 }
 
 impl fmt::Debug for CrossEncoderReranker {
@@ -163,11 +192,22 @@ impl fmt::Debug for CrossEncoderReranker {
 
 impl CrossEncoderReranker {
     /// Create a new cross-encoder reranker with a custom scoring function.
+    ///
+    /// This is where a real model goes. Whatever you pass is trusted to return
+    /// a relevance score for the pair; [`Self::is_word_overlap`] will report
+    /// `false`, because you supplied it.
     pub fn new(scorer: Arc<dyn Fn(&str, &str) -> f64 + Send + Sync>) -> Self {
-        Self { scorer }
+        Self {
+            scorer,
+            word_overlap: false,
+        }
     }
 
-    /// Create a cross-encoder reranker with the default term-overlap scorer.
+    /// Create a reranker with the built-in word-overlap scorer.
+    ///
+    /// Jaccard similarity of word sets. See the type documentation for what
+    /// that costs; the short version is that it reorders by vocabulary, which
+    /// is what the keyword search already did.
     pub fn default_scorer() -> Self {
         Self {
             scorer: Arc::new(|query, doc| {
@@ -175,7 +215,17 @@ impl CrossEncoderReranker {
                 let d = word_set(doc);
                 jaccard_similarity(&q, &d)
             }),
+            word_overlap: true,
         }
+    }
+
+    /// Is this scoring by word overlap rather than by a supplied model?
+    ///
+    /// Ask before treating a score as a judgement about meaning. A pipeline
+    /// that reports "reranked with a cross-encoder" while this returns `true`
+    /// is describing the abstraction, not the computation.
+    pub fn is_word_overlap(&self) -> bool {
+        self.word_overlap
     }
 }
 
@@ -909,5 +959,113 @@ mod tests {
             gap_small,
             gap_large
         );
+    }
+}
+
+/// What the default "cross-encoder" actually scores, measured.
+///
+/// The type documentation now states two consequences. These are the
+/// measurements behind them, so the claims can be checked rather than believed
+/// — and so they fail the day somebody plugs a real model in, which is when the
+/// documentation needs rewriting.
+#[cfg(test)]
+mod the_default_scorer_is_word_overlap {
+    use super::*;
+
+    fn score(query: &str, doc: &str) -> f64 {
+        let r = CrossEncoderReranker::default_scorer();
+        let docs = vec![ScoredDocument::new(doc, 0.5, 0)];
+        let out = r.rerank(
+            query,
+            &docs,
+            &RerankerConfig {
+                min_score: 0.0,
+                top_k: 10,
+                ..Default::default()
+            },
+        );
+        out.first().map(|d| d.score).unwrap_or(-1.0)
+    }
+
+    #[test]
+    fn it_says_which_scorer_it_has() {
+        assert!(CrossEncoderReranker::default_scorer().is_word_overlap());
+        let supplied = CrossEncoderReranker::new(Arc::new(|_q, _d| 0.5));
+        assert!(
+            !supplied.is_word_overlap(),
+            "a supplied scorer must not be reported as the built-in one"
+        );
+    }
+
+    #[test]
+    fn it_undoes_the_search_that_found_the_document() {
+        // Consequence 1. The query and the first passage mean the same thing
+        // and share no content words; the second shares vocabulary and answers
+        // something else. A cross-encoder would rank the first higher. This
+        // ranks it at zero.
+        let query = "how much cargo can the freighter carry";
+        let same_meaning = "the vessel holds up to two hundred tonnes of goods";
+        let same_words = "the freighter cargo doors can carry no passengers at all";
+
+        let meaning = score(query, same_meaning);
+        let words = score(query, same_words);
+
+        assert!(
+            meaning < words,
+            "if this ever inverts, the default scorer stopped being word \
+             overlap and the type documentation needs rewriting: \
+             meaning={meaning} words={words}"
+        );
+        // Measured: 0.0625 against 0.4167 — the wrong passage scores nearly
+        // seven times higher. And that 0.0625 is not partial credit for
+        // meaning: it is the word "the". Function words are not removed, so
+        // any two sentences share a little, and the ranking treats that noise
+        // as signal.
+        assert!(
+            meaning < 0.1,
+            "a passage with the same meaning and no shared content words \
+             scored {meaning}; above the stop-word floor would mean the \
+             scorer changed"
+        );
+        assert!(
+            words > meaning * 5.0,
+            "the vocabulary match should dominate by a wide margin: \
+             meaning={meaning} words={words}"
+        );
+    }
+
+    #[test]
+    fn a_longer_document_is_penalised_for_being_longer() {
+        // Consequence 2, and the subtler one. The union is the denominator, so
+        // padding a relevant document with irrelevant-but-true sentences lowers
+        // its score. Nothing about that is relevance.
+        let query = "cargo capacity";
+        let short = "cargo capacity is large";
+        let padded = "cargo capacity is large and the hull was painted last \
+                      spring by a contractor from the northern yards who also \
+                      replaced several of the older mooring cleats";
+
+        let s_short = score(query, short);
+        let s_padded = score(query, padded);
+
+        assert!(
+            s_short > s_padded,
+            "expected the shorter document to win on overlap: \
+             short={s_short} padded={s_padded}"
+        );
+        // And it is not a small effect.
+        assert!(
+            s_padded < s_short / 2.0,
+            "the length penalty is smaller than documented: \
+             short={s_short} padded={s_padded}"
+        );
+    }
+
+    #[test]
+    fn identical_text_still_scores_one() {
+        // So the two tests above cannot be read as "the scorer is broken".
+        // It is not broken; it is lexical.
+        let same = score("cargo capacity", "cargo capacity");
+        assert!((same - 1.0).abs() < 1e-9, "identical text scored {same}");
     }
 }
