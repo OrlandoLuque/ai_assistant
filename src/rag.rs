@@ -294,8 +294,15 @@ pub struct HybridRagConfig {
     /// Weight for BM25/FTS5 score (0.0 to 1.0)
     pub bm25_weight: f32,
     /// Weight for semantic similarity (0.0 to 1.0)
+    ///
+    /// Applies to **re-scoring**, not to retrieval: the candidates are already
+    /// fixed by BM25 when this is used. See
+    /// [`KnowledgeBase::search_knowledge_hybrid`].
     pub semantic_weight: f32,
     /// Enable semantic search (requires embedding computation)
+    ///
+    /// Embeds each BM25 candidate on every query. It does not build or consult
+    /// a vector index, and it cannot widen the candidate set.
     pub semantic_enabled: bool,
     /// Minimum semantic score to consider (0.0 to 1.0)
     pub min_semantic_score: f32,
@@ -1054,9 +1061,43 @@ impl RagDb {
         Ok(results)
     }
 
-    /// Hybrid search combining BM25 and semantic similarity
+    /// Combine BM25 with semantic similarity — **as scoring, not as retrieval**.
     ///
-    /// Returns results sorted by combined score (BM25 weighted + semantic weighted)
+    /// # What this does and does not do
+    ///
+    /// BM25 chooses the candidates. The semantic half then embeds each of those
+    /// candidates and blends its cosine similarity into the score. It never
+    /// adds one.
+    ///
+    /// So **recall is BM25's**. A passage that answers the question in
+    /// different words — a paraphrase, a synonym, the same idea in another
+    /// vocabulary — is not a candidate, and no amount of semantic weight will
+    /// surface it. That is the opposite of the usual reason for adding semantic
+    /// search, and it is worth knowing before tuning `semantic_weight`: the
+    /// knob reorders a list that keywords already fixed.
+    ///
+    /// The reason is in the schema. `knowledge_chunks` holds `source`,
+    /// `section`, `content`, `token_count` and `created_at` — **no vector**.
+    /// Nothing here stores an embedding, so there is no vector space to search;
+    /// embeddings are computed per candidate, per query, and thrown away.
+    ///
+    /// # If you want semantic retrieval
+    ///
+    /// Use [`crate::rag_pipeline::VectorDbRetrieval`], which searches a real
+    /// vector index. It is a separate store: this knowledge base does not
+    /// populate it, and the two do not share chunk identifiers. Getting both
+    /// retrievals over one corpus is not wired in the library today — see the
+    /// note on that type.
+    ///
+    /// # Cost
+    ///
+    /// Every call embeds every BM25 candidate. Nothing is cached between
+    /// queries, so asking the same question twice does the same work twice.
+    ///
+    /// `semantic_enabled` is `false` by default, in which case this is BM25
+    /// alone and `semantic_score` comes back `None`.
+    ///
+    /// Returns results sorted by combined score (BM25 weighted + semantic weighted).
     pub fn search_knowledge_hybrid(
         &self,
         query: &str,
@@ -4280,5 +4321,94 @@ Total gastado: $175
         let chunks_heuristic = chunk_document("test.md", content);
         // When disabled, should match heuristic exactly
         assert_eq!(chunks_disabled.len(), chunks_heuristic.len());
+    }
+}
+
+/// What this knowledge base stores, stated as something that runs.
+///
+/// The question "is it kept semantically, lexically, or both?" has an answer in
+/// the schema — `knowledge_chunks` has no vector column — but a schema is easy
+/// to read past. These tests state the consequence instead, so the day someone
+/// adds real semantic retrieval they fail and get deleted, which is the correct
+/// outcome.
+#[cfg(test)]
+mod what_the_knowledge_base_actually_stores {
+    use super::*;
+
+    fn temp_base() -> RagDb {
+        // off-drive: a test needs somewhere to put a database file.
+        let dir = std::env::temp_dir().join(format!(
+            "ai_assistant_kb_{}",
+            std::process::id() as u64 + line!() as u64
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        RagDb::open(&dir.join("kb.db")).expect("the database opens")
+    }
+
+    #[test]
+    fn the_schema_holds_text_and_no_vectors() {
+        let kb = temp_base();
+        let columns: Vec<String> = kb
+            .conn
+            .prepare("SELECT name FROM pragma_table_info('knowledge_chunks')")
+            .and_then(|mut stmt| {
+                stmt.query_map([], |row| row.get::<_, String>(0))
+                    .map(|rows| rows.filter_map(|r| r.ok()).collect())
+            })
+            .expect("the table exists");
+
+        assert!(
+            !columns.is_empty(),
+            "knowledge_chunks was not found; this test is measuring nothing"
+        );
+        assert!(
+            columns.iter().any(|c| c == "content"),
+            "no content column: {columns:?}"
+        );
+        // The finding, as an assertion. If this ever fails it is good news and
+        // the module documentation above needs rewriting.
+        for suspicious in ["embedding", "vector", "embeddings"] {
+            assert!(
+                !columns.iter().any(|c| c.contains(suspicious)),
+                "a vector column appeared -- semantic retrieval may now be real, \
+                 which would make `search_knowledge_hybrid`'s documentation wrong: {columns:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_full_text_index_is_the_only_index_there_is() {
+        let kb = temp_base();
+        let tables: Vec<String> = kb
+            .conn
+            .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+            .and_then(|mut stmt| {
+                stmt.query_map([], |row| row.get::<_, String>(0))
+                    .map(|rows| rows.filter_map(|r| r.ok()).collect())
+            })
+            .expect("sqlite_master is readable");
+
+        assert!(
+            tables.iter().any(|t| t == "knowledge_fts"),
+            "the FTS index is missing: {tables:?}"
+        );
+        assert!(
+            !tables
+                .iter()
+                .any(|t| t.contains("vec") || t.contains("embedding")),
+            "something vector-shaped appeared: {tables:?}"
+        );
+    }
+
+    #[test]
+    fn semantic_scoring_is_off_unless_asked_for() {
+        // And when it is off, the `semantic_score` is `None` rather than a
+        // number that looks measured.
+        assert!(
+            !HybridRagConfig::default().semantic_enabled,
+            "the default changed; the documentation on search_knowledge_hybrid \
+             says it is off"
+        );
     }
 }
