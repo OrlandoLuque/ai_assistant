@@ -574,7 +574,30 @@ impl LlmReranker {
         Self { config }
     }
 
-    /// Rerank items using LLM
+    /// Reorder items by asking a model, keeping the scores retrieval computed.
+    ///
+    /// # It reorders. It does not re-score, and it does not drop anything.
+    ///
+    /// Three things this used to do, each of which failed without saying so —
+    /// the same three as the pipeline's own copy, fixed the same way:
+    ///
+    /// 1. **It overwrote every score with `1.0 - rank / n`.** Position dressed
+    ///    up as relevance. Whatever the keyword search, the semantic search and
+    ///    the fusion had worked out was gone, and any scale defect upstream
+    ///    became invisible to every caller that reranks.
+    /// 2. **An answer with no usable numbers flattened everything.** Nothing
+    ///    matched, so every item fell into the "not ranked" branch and was
+    ///    given `0.1` — a value that happens to be exactly this library's
+    ///    default relevance floor. It returned `Ok`, indistinguishable from
+    ///    having worked.
+    /// 3. **Items past `max_chunks` were discarded.** Not deprioritised:
+    ///    dropped from the returned list, by a method called "rerank", with no
+    ///    mention of it anywhere in the result.
+    ///
+    /// Now: the head of the list is put to the model, the model's order is
+    /// applied to it, everything else keeps its place after it, and every item
+    /// keeps the score it arrived with. [`MethodResult::details`] says how many
+    /// the model actually placed and whether the answer was usable at all.
     pub fn rerank<T: Clone + AsRef<str>>(
         &self,
         query: &str,
@@ -587,58 +610,74 @@ impl LlmReranker {
             return Ok(MethodResult::new(vec![], start.elapsed()));
         }
 
-        // Build prompt
+        let to_rank = items.len().min(self.config.max_chunks);
+
         let mut prompt = format!(
             "Given this question: \"{}\"\n\n\
              Rank these text passages by relevance (most relevant first).\n\
              Return ONLY the passage numbers in order, comma-separated (e.g., \"3,1,5,2,4\"):\n\n",
             query
         );
-
-        let items_to_rank: Vec<_> = items.iter().take(self.config.max_chunks).collect();
-
-        for (i, item) in items_to_rank.iter().enumerate() {
+        for (i, item) in items.iter().take(to_rank).enumerate() {
             let preview = truncate(item.item.as_ref(), self.config.chunk_preview_length);
             prompt.push_str(&format!("{}. {}\n\n", i + 1, preview));
         }
-
         prompt.push_str("Ranking (most relevant first): ");
 
-        let response = llm.generate(&prompt, 100)?;
+        // Sized to the answer asked for. A flat 100 tokens was enough for ten
+        // passages and silently short for more, which turned the tail of a long
+        // list into "not ranked".
+        let answer_budget = (to_rank * 6 + 16).clamp(64, 512);
+        let response = llm.generate(&prompt, answer_budget)?;
 
-        // Parse ranking
-        let rankings: Vec<usize> = response
+        let mut order: Vec<usize> = Vec::with_capacity(to_rank);
+        let mut seen = HashSet::new();
+        for number in response
             .split(|c: char| c == ',' || c.is_whitespace())
             .filter_map(|s| s.trim().parse::<usize>().ok())
-            .filter(|&n| n > 0 && n <= items_to_rank.len())
-            .collect();
-
-        // Reorder items
-        let mut reranked = Vec::new();
-        let mut seen = HashSet::new();
-
-        for (new_rank, rank) in rankings.iter().enumerate() {
-            let idx = rank - 1;
-            if !seen.contains(&idx) && idx < items_to_rank.len() {
-                let mut item = items_to_rank[idx].clone();
-                // New score based on rank
-                item.score = 1.0 - (new_rank as f32 / items_to_rank.len() as f32);
-                reranked.push(item);
-                seen.insert(idx);
+            .filter(|&n| n > 0 && n <= to_rank)
+        {
+            let index = number - 1;
+            if seen.insert(index) {
+                order.push(index);
             }
         }
 
-        // Add unranked items at the end
-        for (i, item) in items_to_rank.iter().enumerate() {
-            if !seen.contains(&i) {
-                let mut item = (*item).clone();
-                item.score = 0.1;
-                reranked.push(item);
-            }
+        if order.is_empty() {
+            // Unusable. The order that arrived is a real answer; replacing it
+            // with a flattened one was strictly worse than doing nothing.
+            return Ok(MethodResult::new(items, start.elapsed())
+                .with_details("items_ranked", "0".to_string())
+                .with_details(
+                    "note",
+                    "the model's answer held no usable ranking; order left as it was".to_string(),
+                ));
         }
 
-        Ok(MethodResult::new(reranked, start.elapsed())
-            .with_details("items_ranked", rankings.len().to_string()))
+        let mut reranked: Vec<ScoredItem<T>> = order.iter().map(|&i| items[i].clone()).collect();
+        // Everything the model did not place, in the order it already had, with
+        // the scores it already had.
+        reranked.extend(
+            items
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| !seen.contains(i))
+                .map(|(_, item)| item.clone()),
+        );
+
+        let ranked = order.len();
+        let mut result = MethodResult::new(reranked, start.elapsed())
+            .with_details("items_ranked", ranked.to_string());
+        if ranked < items.len() {
+            result = result.with_details(
+                "note",
+                format!(
+                    "the model placed {ranked} of {}; the rest kept their order",
+                    items.len()
+                ),
+            );
+        }
+        Ok(result)
     }
 }
 
@@ -2584,8 +2623,24 @@ mod tests {
         assert_eq!(method_result.result.len(), 3);
         // First item should be the one ranked #3 originally (Aurora MR)
         assert!(method_result.result[0].item.contains("Aurora MR"));
-        // Scores should decrease from first to last
-        assert!(method_result.result[0].score > method_result.result[1].score);
+
+        // It used to assert `result[0].score > result[1].score` -- which was
+        // only true because the score WAS the position. That assertion pinned
+        // the defect: relevance overwritten by rank, so anything the retrieval
+        // stages had worked out, and any scale error among them, vanished here.
+        //
+        // The property now is the opposite: the order is the model's, the
+        // scores are still retrieval's.
+        assert!(
+            (method_result.result[0].score - 0.7).abs() < f32::EPSILON,
+            "the third document kept its own relevance, got {}",
+            method_result.result[0].score
+        );
+        assert!(
+            (method_result.result[1].score - 0.9).abs() < f32::EPSILON,
+            "the first document kept its own relevance, got {}",
+            method_result.result[1].score
+        );
     }
 
     #[test]
@@ -2600,11 +2655,72 @@ mod tests {
         let result = reranker.rerank("query", items, &llm);
         assert!(result.is_ok());
         let method_result = result.expect("rerank should succeed even with bad ranking");
-        // All items should still be present (added as unranked with score 0.1)
         assert_eq!(method_result.result.len(), 2);
-        for item in &method_result.result {
-            assert!((item.score - 0.1).abs() < f32::EPSILON);
-        }
+
+        // This used to assert that every score had become 0.1 -- the sentinel,
+        // which is also this library's default `min_relevance_score`. So the
+        // test certified that an unusable answer flattened the whole list onto
+        // the exact edge of the filter that runs next. Nudge that floor up and
+        // a garbled reply empties the context.
+        //
+        // Nothing was ranked, so nothing should have changed.
+        assert!(
+            (method_result.result[0].score - 0.9).abs() < f32::EPSILON,
+            "score was rewritten by a ranking that never happened: {}",
+            method_result.result[0].score
+        );
+        assert!((method_result.result[1].score - 0.8).abs() < f32::EPSILON);
+        assert_eq!(method_result.result[0].item, "doc A", "order was disturbed");
+
+        // And it has to SAY it did nothing, or the caller cannot tell this
+        // apart from a successful rerank.
+        assert!(
+            method_result
+                .details
+                .get("note")
+                .is_some_and(|n| n.contains("no usable ranking")),
+            "an unusable answer passed as success: {:?}",
+            method_result.details
+        );
+    }
+
+    #[test]
+    fn a_list_longer_than_the_prompt_cap_is_reordered_not_trimmed() {
+        // The third defect of this method, and the one no test covered: it
+        // built its answer from `items.iter().take(max_chunks)` only, so a
+        // caller who passed 30 items to a method called "rerank" got 10 back.
+        // Not deprioritised -- gone, with nothing in the result saying so.
+        let reranker = LlmReranker::new();
+        assert_eq!(
+            LlmRerankerConfig::default().max_chunks,
+            10,
+            "this test is written against a cap of 10"
+        );
+        let llm = ConfigurableMockLlm::new("2,1");
+        let items: Vec<ScoredItem<String>> = (0..30)
+            .map(|i| ScoredItem::new(format!("doc {i}"), 0.9 - (i as f32) * 0.01))
+            .collect();
+
+        let out = reranker
+            .rerank("query", items.clone(), &llm)
+            .expect("rerank should succeed");
+
+        assert_eq!(out.result.len(), 30, "twenty items were thrown away");
+        // The two the model placed come first, in its order.
+        assert_eq!(out.result[0].item, "doc 1");
+        assert_eq!(out.result[1].item, "doc 0");
+        // And everything else keeps its own order and its own score.
+        assert_eq!(out.result[2].item, "doc 2");
+        assert!(
+            (out.result[29].score - items[29].score).abs() < f32::EPSILON,
+            "the tail was rescored"
+        );
+        // Said out loud, because a partial ranking is not a full one.
+        assert!(
+            out.details.get("note").is_some(),
+            "placed 2 of 30 and reported nothing: {:?}",
+            out.details
+        );
     }
 
     #[test]

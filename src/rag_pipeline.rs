@@ -505,6 +505,28 @@ pub struct RagPipeline {
     stats: RagStats,
 }
 
+/// How many chunks are ever put in front of a model for ranking.
+///
+/// The prompt used to carry every chunk while asking for 100 tokens back, so a
+/// long list was answered with a truncated ranking and the tail silently became
+/// "not mentioned". Bounding the question is cheaper than parsing a cut answer,
+/// and the chunks past the cap are the least relevant ones by definition --
+/// they arrive already ordered by the fusion.
+const MAX_CHUNKS_TO_RERANK: usize = 20;
+
+/// The result of asking a model to reorder chunks.
+///
+/// `note` exists because "reranking did not happen" and "reranking happened"
+/// used to be indistinguishable: both came back as `Ok(Vec<..>)`.
+#[derive(Debug)]
+struct Reranked {
+    chunks: Vec<RetrievedChunk>,
+    /// How many passages the model actually placed.
+    ranked: usize,
+    /// Set when the ranking was unusable or incomplete.
+    note: Option<&'static str>,
+}
+
 impl RagPipeline {
     /// Create a new pipeline with configuration
     pub fn new(rag_config: RagTierConfig) -> Self {
@@ -1236,7 +1258,16 @@ impl RagPipeline {
                 Ok(reranked) => {
                     *llm_calls -= 1;
 
+                    // Said out loud, because it used to be impossible to tell
+                    // apart from success: a model whose answer holds no usable
+                    // ranking leaves the order exactly as it was, and that is a
+                    // different outcome from having reordered.
+                    if let Some(note) = reranked.note {
+                        debug.log_warning("reranking", note);
+                    }
+
                     let score_changes: Vec<ScoreChange> = reranked
+                        .chunks
                         .iter()
                         .enumerate()
                         .filter_map(|(new_rank, chunk)| {
@@ -1255,13 +1286,16 @@ impl RagPipeline {
 
                     debug.log_step(RagDebugStep::Reranking {
                         input_count: processed.len(),
-                        output_count: reranked.len(),
-                        method: "llm".to_string(),
+                        output_count: reranked.chunks.len(),
+                        // The count belongs in the method: "llm" alone read as
+                        // "the model ordered these", which was true only
+                        // sometimes.
+                        method: format!("llm ({} of {} placed)", reranked.ranked, processed.len()),
                         score_changes,
                         duration_ms: start.elapsed().as_millis() as u64,
                     });
 
-                    processed = reranked;
+                    processed = reranked.chunks;
                 }
                 Err(e) if self.config.continue_on_error => {
                     debug.log_warning("reranking", &e);
@@ -1351,64 +1385,116 @@ impl RagPipeline {
         result
     }
 
+    /// Ask a model to put the chunks in order.
+    ///
+    /// # It reorders. It does not re-score.
+    ///
+    /// This used to overwrite every score with `1.0 - position / total`, which
+    /// threw away what the keyword search, the semantic search and the fusion
+    /// had all worked out, and replaced relevance with position. That single
+    /// decision produced three separate silent failures:
+    ///
+    /// 1. **An answer with no usable numbers destroyed the ranking.** Nothing
+    ///    matched, so every chunk fell through to the "not mentioned" branch
+    ///    and got the same flat score. The function returned `Ok`, the caller
+    ///    believed reranking had happened, and the ordering computed upstream
+    ///    was gone.
+    /// 2. **The sentinel sat exactly on the filter.** Unmentioned chunks were
+    ///    given `0.1`, and `min_relevance_score` defaults to `0.1`; they
+    ///    survived by exact equality of two independent `f32` literals. Raise
+    ///    the floor to 0.15 and the whole tail vanished — combined with (1),
+    ///    that meant a garbled answer emptied the context entirely and nothing
+    ///    said so.
+    /// 3. **It laundered upstream defects.** Because scores were overwritten,
+    ///    any scale bug before this point became invisible to every tier that
+    ///    reranks. That is exactly how V316's RRF defect went unnoticed until
+    ///    it showed up in `RagTier::Semantic`, the one tier that does not
+    ///    rerank.
+    ///
+    /// Keeping the original scores fixes all three at once: the relevance
+    /// floor now filters on relevance, an unusable answer costs the order and
+    /// nothing else, and a bad scale upstream stays visible.
     fn llm_rerank(
         &self,
         chunks: &[RetrievedChunk],
         query: &str,
         llm: &dyn LlmCallback,
-    ) -> Result<Vec<RetrievedChunk>, String> {
+    ) -> Result<Reranked, String> {
         if chunks.is_empty() {
-            return Ok(vec![]);
+            return Ok(Reranked {
+                chunks: vec![],
+                ranked: 0,
+                note: None,
+            });
         }
 
-        // Build prompt with chunk previews
+        // Only the head of the list is put to the model. The prompt used to
+        // carry every chunk while asking for 100 tokens back: with forty or
+        // fifty passages the list of numbers does not fit in the answer, so it
+        // was cut off and the entire tail was treated as "not mentioned".
+        // Anything past the cap keeps its place, after the ranked ones.
+        let to_rank = chunks.len().min(MAX_CHUNKS_TO_RERANK);
+
         let mut prompt = format!(
             "Given this query: \"{}\"\n\n\
              Rank the following text passages by relevance (most relevant first).\n\
              Return ONLY the passage numbers in order, comma-separated (e.g., \"3,1,5,2,4\"):\n\n",
             query
         );
-
-        for (i, chunk) in chunks.iter().enumerate() {
+        for (i, chunk) in chunks.iter().take(to_rank).enumerate() {
             let preview = truncate(&chunk.content, 200);
             prompt.push_str(&format!("{}. {}\n\n", i + 1, preview));
         }
-
         prompt.push_str("Ranking (most relevant first): ");
 
-        let response = llm.generate(&prompt, 100)?;
+        // Sized to the answer we asked for rather than a flat 100: a ranking of
+        // n passages needs roughly n numbers plus separators.
+        let answer_budget = (to_rank * 6 + 16).clamp(64, 512);
+        let response = llm.generate(&prompt, answer_budget)?;
 
-        // Parse ranking
-        let rankings: Vec<usize> = response
+        let mut order: Vec<usize> = Vec::with_capacity(to_rank);
+        let mut seen = HashSet::new();
+        for number in response
             .split(|c: char| c == ',' || c.is_whitespace())
             .filter_map(|s| s.trim().parse::<usize>().ok())
-            .filter(|&n| n > 0 && n <= chunks.len())
-            .collect();
-
-        // Reorder chunks based on ranking
-        let mut reranked = Vec::new();
-        let mut seen = HashSet::new();
-
-        for rank in rankings {
-            let idx = rank - 1;
-            if !seen.contains(&idx) && idx < chunks.len() {
-                let mut chunk = chunks[idx].clone();
-                chunk.score = 1.0 - (reranked.len() as f32 / chunks.len() as f32);
-                reranked.push(chunk);
-                seen.insert(idx);
+            .filter(|&n| n > 0 && n <= to_rank)
+        {
+            let index = number - 1;
+            if seen.insert(index) {
+                order.push(index);
             }
         }
 
-        // Add any chunks not mentioned in ranking
-        for (i, chunk) in chunks.iter().enumerate() {
-            if !seen.contains(&i) {
-                let mut c = chunk.clone();
-                c.score = 0.1; // Low score for unranked
-                reranked.push(c);
-            }
+        if order.is_empty() {
+            // Nothing usable came back. Say so and hand the chunks straight
+            // through: the order from upstream is a real answer, and replacing
+            // it with a flattened one was strictly worse than doing nothing.
+            return Ok(Reranked {
+                chunks: chunks.to_vec(),
+                ranked: 0,
+                note: Some("the model's answer held no usable ranking; order left as it was"),
+            });
         }
 
-        Ok(reranked)
+        let mut reranked: Vec<RetrievedChunk> = order.iter().map(|&i| chunks[i].clone()).collect();
+        // Everything the model did not place, in the order it already had.
+        // Their scores are untouched: they are the relevance computed upstream,
+        // not a sentinel, so the filter below still filters on relevance.
+        reranked.extend(
+            chunks
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| !seen.contains(i))
+                .map(|(_, c)| c.clone()),
+        );
+
+        let ranked = order.len();
+        Ok(Reranked {
+            chunks: reranked,
+            ranked,
+            note: (ranked < to_rank)
+                .then_some("the model ranked only part of the passages; the rest kept their order"),
+        })
     }
 
     fn compress_chunks(
@@ -3065,5 +3151,281 @@ mod tier_survival_tests {
             fused[0].chunk_id, "a",
             "normalising must not disturb the ranking RRF computed"
         );
+    }
+}
+
+/// The reranker must not cost more than the order.
+///
+/// Every test here corresponds to a way the old implementation failed without
+/// saying anything. It overwrote each score with `1.0 - position / total`,
+/// which threw away the relevance that the keyword search, the semantic search
+/// and the fusion had all contributed to, and put position in its place.
+#[cfg(test)]
+mod reranking_keeps_what_retrieval_worked_out {
+    use super::*;
+    use std::sync::Mutex;
+
+    /// Answers with a fixed string, and remembers what it was asked for.
+    struct Scripted {
+        answer: String,
+        asked_for: Mutex<Vec<usize>>,
+        prompts: Mutex<Vec<String>>,
+    }
+
+    impl Scripted {
+        fn saying(answer: &str) -> Self {
+            Self {
+                answer: answer.to_string(),
+                asked_for: Mutex::new(Vec::new()),
+                prompts: Mutex::new(Vec::new()),
+            }
+        }
+        fn last_budget(&self) -> usize {
+            self.asked_for
+                .lock()
+                .ok()
+                .and_then(|a| a.last().copied())
+                .unwrap_or(0)
+        }
+        fn last_prompt(&self) -> String {
+            self.prompts
+                .lock()
+                .ok()
+                .and_then(|p| p.last().cloned())
+                .unwrap_or_default()
+        }
+    }
+
+    impl LlmCallback for Scripted {
+        fn generate(&self, prompt: &str, max_tokens: usize) -> Result<String, String> {
+            if let Ok(mut a) = self.asked_for.lock() {
+                a.push(max_tokens);
+            }
+            if let Ok(mut p) = self.prompts.lock() {
+                p.push(prompt.to_string());
+            }
+            Ok(self.answer.clone())
+        }
+        fn model_name(&self) -> &str {
+            "scripted"
+        }
+    }
+
+    fn chunk(id: &str, score: f32) -> RetrievedChunk {
+        RetrievedChunk {
+            chunk_id: id.to_string(),
+            content: format!("passage {id}"),
+            source: "doc.md".to_string(),
+            section: None,
+            score,
+            keyword_score: Some(score),
+            semantic_score: None,
+            token_count: 4,
+            position: None,
+            metadata: HashMap::new(),
+        }
+    }
+
+    fn pipeline() -> RagPipeline {
+        RagPipeline::new(RagTierConfig::with_tier(RagTier::Enhanced))
+    }
+
+    fn scores_of(chunks: &[RetrievedChunk]) -> Vec<f32> {
+        chunks.iter().map(|c| c.score).collect()
+    }
+
+    fn ids_of(chunks: &[RetrievedChunk]) -> Vec<String> {
+        chunks.iter().map(|c| c.chunk_id.clone()).collect()
+    }
+
+    #[test]
+    fn the_model_changes_the_order_and_nothing_else() {
+        let chunks = vec![chunk("a", 0.9), chunk("b", 0.8), chunk("c", 0.7)];
+        let llm = Scripted::saying("3,1,2");
+
+        let out = pipeline()
+            .llm_rerank(&chunks, "a query", &llm)
+            .expect("the model answered");
+
+        assert_eq!(
+            ids_of(&out.chunks),
+            vec!["c", "a", "b"],
+            "order not applied"
+        );
+        // Each chunk keeps the relevance it arrived with. This used to be
+        // [1.0, 0.667, 0.333] -- position dressed up as relevance.
+        assert_eq!(out.chunks[0].score, 0.7, "c kept its own score");
+        assert_eq!(out.chunks[1].score, 0.9, "a kept its own score");
+        assert_eq!(out.chunks[2].score, 0.8, "b kept its own score");
+        assert_eq!(out.ranked, 3);
+        assert!(out.note.is_none(), "{:?}", out.note);
+    }
+
+    #[test]
+    fn an_answer_with_no_ranking_in_it_costs_the_order_and_nothing_more() {
+        // FAILURE 1. The old code let `rankings` come out empty, dropped every
+        // chunk into the "not mentioned" branch, gave them all the same score
+        // and returned Ok. The caller could not tell that from success, and the
+        // ordering that keyword search, semantic search and fusion had produced
+        // was gone.
+        let chunks = vec![chunk("a", 0.9), chunk("b", 0.8), chunk("c", 0.7)];
+        for nonsense in [
+            "I am not able to rank these passages.",
+            "",
+            "the third one, then the first",
+            "99, 100, 250",
+        ] {
+            let llm = Scripted::saying(nonsense);
+            let out = pipeline()
+                .llm_rerank(&chunks, "a query", &llm)
+                .expect("an unusable answer is not an error");
+
+            assert_eq!(
+                ids_of(&out.chunks),
+                ids_of(&chunks),
+                "order was disturbed by {nonsense:?}"
+            );
+            assert_eq!(
+                scores_of(&out.chunks),
+                scores_of(&chunks),
+                "scores were flattened by {nonsense:?}"
+            );
+            assert_eq!(out.ranked, 0);
+            assert!(
+                out.note.is_some(),
+                "silently did nothing for {nonsense:?} -- that is the defect"
+            );
+        }
+    }
+
+    #[test]
+    fn no_score_lands_exactly_on_the_relevance_floor() {
+        // FAILURE 2. Unplaced chunks used to be given 0.1, and
+        // `min_relevance_score` defaults to 0.1: they survived by exact
+        // equality of two independent f32 literals written in different files.
+        // Raise the floor a hair and the whole tail disappears.
+        let floor = RagTierConfig::with_tier(RagTier::Enhanced).min_relevance_score;
+        assert!(
+            (floor - 0.1).abs() < f32::EPSILON,
+            "the floor moved; this test's premise needs re-reading: {floor}"
+        );
+
+        let chunks = vec![chunk("a", 0.9), chunk("b", 0.8), chunk("c", 0.45)];
+        let llm = Scripted::saying("2");
+        let out = pipeline()
+            .llm_rerank(&chunks, "a query", &llm)
+            .expect("the model answered");
+
+        for c in &out.chunks {
+            assert!(
+                (c.score - floor).abs() > f32::EPSILON,
+                "{} sits exactly on the filter that runs two steps later",
+                c.chunk_id
+            );
+        }
+        // And the unplaced ones kept what they had, rather than a sentinel.
+        let a = out
+            .chunks
+            .iter()
+            .find(|c| c.chunk_id == "a")
+            .expect("a survived");
+        assert_eq!(a.score, 0.9);
+    }
+
+    #[test]
+    fn a_partial_ranking_says_so_and_keeps_the_rest_in_order() {
+        let chunks = vec![
+            chunk("a", 0.9),
+            chunk("b", 0.8),
+            chunk("c", 0.7),
+            chunk("d", 0.6),
+        ];
+        let llm = Scripted::saying("4,2");
+        let out = pipeline()
+            .llm_rerank(&chunks, "a query", &llm)
+            .expect("the model answered");
+
+        assert_eq!(ids_of(&out.chunks), vec!["d", "b", "a", "c"]);
+        assert_eq!(out.ranked, 2);
+        assert!(out.note.is_some(), "a partial ranking passed as a full one");
+    }
+
+    #[test]
+    fn a_repeated_number_does_not_duplicate_a_passage() {
+        let chunks = vec![chunk("a", 0.9), chunk("b", 0.8)];
+        let llm = Scripted::saying("2,2,1,2");
+        let out = pipeline()
+            .llm_rerank(&chunks, "a query", &llm)
+            .expect("the model answered");
+        assert_eq!(ids_of(&out.chunks), vec!["b", "a"]);
+        assert_eq!(out.chunks.len(), 2, "a passage came back twice");
+    }
+
+    #[test]
+    fn a_long_list_is_not_asked_for_in_one_breath() {
+        // FAILURE 3. Every chunk went into the prompt while the answer was
+        // capped at a flat 100 tokens. Forty numbers do not fit, so the answer
+        // was cut and the whole tail became "not mentioned" -- which, with the
+        // old sentinel, also flattened it onto the relevance floor.
+        let chunks: Vec<RetrievedChunk> = (0..60)
+            .map(|i| chunk(&format!("c{i}"), 0.9 - (i as f32) * 0.01))
+            .collect();
+        let llm = Scripted::saying("1,2,3");
+
+        let out = pipeline()
+            .llm_rerank(&chunks, "a query", &llm)
+            .expect("the model answered");
+
+        // Nothing is lost: what is not ranked is not discarded.
+        assert_eq!(out.chunks.len(), 60, "chunks went missing");
+
+        // The prompt is bounded.
+        let prompt = llm.last_prompt();
+        assert!(
+            !prompt.contains("passage c25"),
+            "a passage past the cap was put to the model"
+        );
+        assert!(
+            prompt.contains("passage c0"),
+            "the most relevant passage was not offered"
+        );
+
+        // And the answer budget is sized to what was asked, not to a constant
+        // that happened to be enough for short lists.
+        assert!(
+            llm.last_budget() > 100,
+            "a twenty-passage ranking was asked for in {} tokens",
+            llm.last_budget()
+        );
+    }
+
+    #[test]
+    fn the_answer_budget_grows_with_the_question() {
+        let short = Scripted::saying("1");
+        pipeline()
+            .llm_rerank(&[chunk("a", 0.9)], "q", &short)
+            .expect("answered");
+
+        let long_chunks: Vec<RetrievedChunk> =
+            (0..15).map(|i| chunk(&format!("c{i}"), 0.5)).collect();
+        let long = Scripted::saying("1");
+        pipeline()
+            .llm_rerank(&long_chunks, "q", &long)
+            .expect("answered");
+
+        assert!(
+            long.last_budget() > short.last_budget(),
+            "fifteen passages were given the same room to answer as one: {} vs {}",
+            long.last_budget(),
+            short.last_budget()
+        );
+    }
+
+    #[test]
+    fn nothing_in_nothing_out() {
+        let llm = Scripted::saying("1,2,3");
+        let out = pipeline().llm_rerank(&[], "q", &llm).expect("answered");
+        assert!(out.chunks.is_empty());
+        assert_eq!(out.ranked, 0);
     }
 }
