@@ -165,7 +165,34 @@ impl DenseEmbedder {
             .ok_or(EmbeddingError::EmptyResult)
     }
 
+    /// Is this producing neural embeddings, or the fallback?
+    ///
+    /// `false` means no embedding service was configured and every vector this
+    /// returns is TF-IDF with the hashing trick — a **lexical** representation.
+    /// Two passages that say the same thing in different words come out very
+    /// nearly orthogonal, which is the exact case a dense embedding exists to
+    /// catch.
+    ///
+    /// Ask before drawing conclusions from a similarity score. Measuring
+    /// "semantic versus keyword" retrieval without checking this compares
+    /// keyword search against keyword search and finds, correctly, that the
+    /// second one adds nothing.
+    pub fn is_neural(&self) -> bool {
+        self.api_url.is_some()
+    }
+
     /// Generate embeddings for batch of texts
+    ///
+    /// # Without an embedding service this is not neural
+    ///
+    /// With no `api_url` configured it falls back to TF-IDF with the hashing
+    /// trick, and says so once in the log. The type is called `DenseEmbedder`
+    /// and the module header says "sentence transformers style", so the
+    /// fallback used to be invisible: a caller got vectors, cosine similarity
+    /// worked, numbers came out, and every one of them was bag-of-words
+    /// overlap.
+    ///
+    /// See [`Self::is_neural`].
     pub fn embed_batch(&self, texts: &[String]) -> Result<Vec<EmbeddingVec>, EmbeddingError> {
         if texts.is_empty() {
             return Ok(Vec::new());
@@ -174,7 +201,16 @@ impl DenseEmbedder {
         if let Some(ref url) = self.api_url {
             self.embed_via_api(url, texts)
         } else {
-            // Fallback to simple TF-IDF style embedding
+            // Said once rather than per call: this runs in a retrieval loop and
+            // a warning per chunk would be its own kind of silence.
+            static TOLD_THEM: std::sync::Once = std::sync::Once::new();
+            TOLD_THEM.call_once(|| {
+                log::warn!(
+                    "[embeddings] no embedding service configured, so DenseEmbedder is \
+                     returning TF-IDF vectors. Similarity between these is word overlap, \
+                     not meaning. Set an api_url for neural embeddings."
+                );
+            });
             self.embed_simple(texts)
         }
     }
@@ -1315,5 +1351,83 @@ mod tests {
 
         let embeddings = embedder.embed_batch(&texts).unwrap();
         assert_eq!(embeddings.len(), 3);
+    }
+}
+
+/// What "semantic" means here, measured.
+///
+/// The library offers `semantic_search`, a `Semantic` tier, a
+/// `semantic_enabled` flag and a `DenseEmbedder` documented as "sentence
+/// transformers style". With no embedding service configured, all of it is
+/// TF-IDF with the hashing trick.
+///
+/// That is not a bug in `embed_simple` — it is a reasonable fallback. It is a
+/// problem when nothing says so, because every conclusion drawn from the
+/// resulting similarity scores is a conclusion about word overlap.
+#[cfg(test)]
+mod what_semantic_means_without_a_model {
+    use super::*;
+
+    fn fallback() -> DenseEmbedder {
+        DenseEmbedder::new(DenseEmbeddingConfig::default())
+    }
+
+    fn similarity(a: &str, b: &str) -> f32 {
+        let e = fallback();
+        let va = e.embed(a).expect("embeds");
+        let vb = e.embed(b).expect("embeds");
+        let dot: f32 = va.iter().zip(vb.iter()).map(|(x, y)| x * y).sum();
+        let na: f32 = va.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let nb: f32 = vb.iter().map(|x| x * x).sum::<f32>().sqrt();
+        if na == 0.0 || nb == 0.0 {
+            return 0.0;
+        }
+        dot / (na * nb)
+    }
+
+    #[test]
+    fn it_says_whether_it_is_neural_rather_than_leaving_you_to_guess() {
+        assert!(
+            !fallback().is_neural(),
+            "with no service configured this cannot be neural"
+        );
+    }
+
+    #[test]
+    fn a_paraphrase_scores_near_zero_because_this_is_word_overlap() {
+        // THE measurement. Same meaning, no shared content words. A dense
+        // embedding exists precisely to score this pair high; TF-IDF cannot,
+        // and the number is the evidence.
+        let paraphrase = similarity(
+            "the vessel sank after striking an iceberg",
+            "a ship went down when it hit floating ice",
+        );
+        let shared_words = similarity(
+            "the vessel sank after striking an iceberg",
+            "the vessel sank again after striking a reef",
+        );
+
+        assert!(
+            paraphrase < shared_words,
+            "a paraphrase scored {paraphrase} against {shared_words} for shared words; \
+             if this ever inverts, the embedder became semantic and the documentation \
+             on `is_neural` and `semantic_enabled` needs rewriting"
+        );
+        assert!(
+            paraphrase < 0.2,
+            "a paraphrase with no shared content words scored {paraphrase}; \
+             TF-IDF should put it near zero"
+        );
+    }
+
+    #[test]
+    fn identical_text_is_still_identical() {
+        // The fallback is not broken -- it is lexical. Worth pinning so the
+        // test above cannot be read as "the embedder does not work".
+        let same = similarity(
+            "cargo capacity of the freighter",
+            "cargo capacity of the freighter",
+        );
+        assert!((same - 1.0).abs() < 1e-4, "identical text scored {same}");
     }
 }

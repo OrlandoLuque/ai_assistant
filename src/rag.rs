@@ -303,6 +303,15 @@ pub struct HybridRagConfig {
     ///
     /// Embeds each BM25 candidate on every query. It does not build or consult
     /// a vector index, and it cannot widen the candidate set.
+    ///
+    /// **And "semantic" overstates it.** The embedder used here is
+    /// [`crate::embeddings::LocalEmbedder`], which is TF-IDF with the hashing
+    /// trick — a lexical representation. Its cosine similarity is weighted word
+    /// overlap, so a paraphrase scores near zero. Turning this on gives you
+    /// keyword matching measured a second way, not a second kind of matching.
+    ///
+    /// For meaning rather than vocabulary you need an embedding service; see
+    /// [`crate::neural_embeddings::DenseEmbedder::is_neural`].
     pub semantic_enabled: bool,
     /// Minimum semantic score to consider (0.0 to 1.0)
     pub min_semantic_score: f32,
