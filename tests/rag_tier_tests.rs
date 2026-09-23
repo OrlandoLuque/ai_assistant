@@ -1488,9 +1488,28 @@ mod rag_methods_tests {
             .map(|i| ScoredItem::new(format!("doc{}", i), 1.0 - i as f32 * 0.1))
             .collect();
 
-        let result = reranker.rerank("query", items, &llm).unwrap();
-        // Should only process max_chunks items
-        assert!(result.result.len() <= 5);
+        let result = reranker
+            .rerank("query", items, &llm)
+            .expect("rerank should succeed");
+
+        // It used to assert `len() <= 5`, with the comment "should only process
+        // max_chunks items". Those are two different things, and conflating
+        // them pinned a defect: `max_chunks` bounds what goes into the PROMPT,
+        // and the method was also deleting everything past it from the list it
+        // returned. A caller who passed ten documents to "rerank" got five back.
+        assert_eq!(
+            result.result.len(),
+            10,
+            "five documents were thrown away by a method that only reorders"
+        );
+        // The model placed one; the other nine keep their order and their score.
+        assert_eq!(result.result[0].item, "doc0");
+        assert_eq!(result.result[1].item, "doc1");
+        assert!(
+            (result.result[9].score - (1.0 - 9.0 * 0.1)).abs() < 1e-5,
+            "the tail was rescored: {}",
+            result.result[9].score
+        );
     }
 
     // --- Graph RAG Types Tests ---

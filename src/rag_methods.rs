@@ -545,7 +545,11 @@ pub struct LlmRerankerConfig {
     pub max_chunks: usize,
     /// Preview length for each chunk
     pub chunk_preview_length: usize,
-    /// Custom prompt template
+    /// Custom prompt template.
+    ///
+    /// Replaces the instruction that precedes the passages. `{query}` is
+    /// substituted; the numbered passages and the trailing "Ranking:" are
+    /// appended regardless, because without them there is nothing to rank.
     pub prompt_template: Option<String>,
 }
 
@@ -612,12 +616,22 @@ impl LlmReranker {
 
         let to_rank = items.len().min(self.config.max_chunks);
 
-        let mut prompt = format!(
-            "Given this question: \"{}\"\n\n\
-             Rank these text passages by relevance (most relevant first).\n\
-             Return ONLY the passage numbers in order, comma-separated (e.g., \"3,1,5,2,4\"):\n\n",
-            query
-        );
+        // `prompt_template` replaces the instruction; the numbered passages are
+        // appended either way, since a ranking of nothing is not a ranking.
+        //
+        // It used to be declared and never read -- the only config in this file
+        // that ignored its own template, while `AdvancedQueryExpander`, `Hyde`
+        // and the compressor all honour theirs. A public field that does
+        // nothing is a promise the caller cannot test.
+        let mut prompt = match &self.config.prompt_template {
+            Some(template) => format!("{}\n\n", template.replace("{query}", query)),
+            None => format!(
+                "Given this question: \"{}\"\n\n\
+                 Rank these text passages by relevance (most relevant first).\n\
+                 Return ONLY the passage numbers in order, comma-separated (e.g., \"3,1,5,2,4\"):\n\n",
+                query
+            ),
+        };
         for (i, item) in items.iter().take(to_rank).enumerate() {
             let preview = truncate(item.item.as_ref(), self.config.chunk_preview_length);
             prompt.push_str(&format!("{}. {}\n\n", i + 1, preview));
@@ -2587,6 +2601,31 @@ mod tests {
         assert_eq!(result.err(), Some("LLM unavailable".to_string()));
     }
 
+    /// Answers with a fixed ranking and remembers the prompt it was given.
+    #[derive(Default)]
+    struct RecordingLlm {
+        prompts: std::sync::Mutex<Vec<String>>,
+    }
+    impl RecordingLlm {
+        fn last_prompt(&self) -> String {
+            self.prompts
+                .lock()
+                .ok()
+                .and_then(|p| p.last().cloned())
+                .unwrap_or_default()
+        }
+    }
+    impl LlmGenerate for RecordingLlm {
+        fn generate(&self, prompt: &str, _max_tokens: usize) -> Result<String, String> {
+            if let Ok(mut p) = self.prompts.lock() {
+                p.push(prompt.to_string());
+            }
+            Ok("1".to_string())
+        }
+        fn model_name(&self) -> &str {
+            "recording"
+        }
+    }
     // --- LlmReranker tests ---
 
     #[test]
@@ -2681,6 +2720,37 @@ mod tests {
                 .is_some_and(|n| n.contains("no usable ranking")),
             "an unusable answer passed as success: {:?}",
             method_result.details
+        );
+    }
+
+    #[test]
+    fn a_custom_prompt_template_reaches_the_model() {
+        // It was the only config in this file that declared a template and
+        // never read it, while its three siblings all honour theirs. A public
+        // field that does nothing is a promise the caller cannot test.
+        let reranker = LlmReranker::with_config(LlmRerankerConfig {
+            prompt_template: Some("Order these for: {query}".to_string()),
+            ..LlmRerankerConfig::default()
+        });
+        let llm = RecordingLlm::default();
+        let items = vec![ScoredItem::new("doc".to_string(), 0.5)];
+        reranker
+            .rerank("boat engines", items, &llm)
+            .expect("rerank should succeed");
+
+        let prompt = llm.last_prompt();
+        assert!(
+            prompt.contains("Order these for: boat engines"),
+            "the template never reached the model: {prompt}"
+        );
+        assert!(
+            !prompt.contains("Rank these text passages"),
+            "the default instruction was sent as well: {prompt}"
+        );
+        // The passages still have to be there, or there is nothing to rank.
+        assert!(
+            prompt.contains("1. doc"),
+            "no passages in the prompt: {prompt}"
         );
     }
 

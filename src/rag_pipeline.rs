@@ -372,11 +372,25 @@ pub trait RetrievalCallback: Send + Sync {
     fn get_chunk(&self, chunk_id: &str) -> Result<Option<RetrievedChunk>, String>;
 
     /// Get parent document for a chunk
+    ///
+    /// The `score` of what you return is **ignored**: the pipeline assigns the
+    /// relevance of the child that pulled the parent in. An implementation has
+    /// no way to know the scale the fusion produced, and this used to be read
+    /// as a relevance judgement and filtered on.
     fn get_parent(&self, _chunk_id: &str) -> Result<Option<RetrievedChunk>, String> {
         Ok(None) // Default: no parent hierarchy
     }
 
     /// Get surrounding sentences for a chunk
+    ///
+    /// The `score` of what you return is **ignored**: the pipeline gives each
+    /// neighbour the relevance of the chunk it is expanding. Neighbours are
+    /// context for a passage that matched, not matches in their own right, and
+    /// an implementation has no way to know the scale the fusion produced.
+    ///
+    /// This used to be read as a relevance judgement and filtered on, so a
+    /// window returned with the default score of zero deleted the very passage
+    /// that had earned the expansion.
     fn get_sentence_window(
         &self,
         _chunk_id: &str,
@@ -1346,6 +1360,24 @@ impl RagPipeline {
         Ok(processed)
     }
 
+    /// Widen each hit to the sentences around it.
+    ///
+    /// # Expansion adds context. It does not judge relevance.
+    ///
+    /// The neighbours come from [`RetrievalCallback::get_sentence_window`],
+    /// whose job is "give me the sentences around this one". Nothing in that
+    /// contract says anything about `score`, so an implementer has every reason
+    /// to leave it at zero — and this stage used to hand those values straight
+    /// to the relevance floor two steps later.
+    ///
+    /// The consequence was the opposite of the intent: a chunk scoring 0.95 was
+    /// *replaced* by a window scoring whatever the callback happened to put
+    /// there, so a passage could be dropped from the answer **because it had
+    /// been relevant enough to expand**.
+    ///
+    /// The relevance belongs to the chunk that matched the query. Its
+    /// neighbours inherit it — they are there to be read alongside it — and the
+    /// chunk itself is kept, so the evidence cannot be expanded away.
     fn apply_sentence_window(
         &self,
         chunks: &[RetrievedChunk],
@@ -1356,7 +1388,13 @@ impl RagPipeline {
         for chunk in chunks {
             match retrieval.get_sentence_window(&chunk.chunk_id, self.config.sentence_window_size) {
                 Ok(window) if !window.is_empty() => {
-                    expanded.extend(window);
+                    expanded.extend(window.into_iter().map(|mut neighbour| {
+                        neighbour.score = chunk.score;
+                        neighbour
+                    }));
+                    // Kept as well. `deduplicate_chunks` collapses it if the
+                    // window already contains it under the same id.
+                    expanded.push(chunk.clone());
                 }
                 _ => {
                     expanded.push(chunk.clone());
@@ -1367,6 +1405,18 @@ impl RagPipeline {
         self.deduplicate_chunks(expanded)
     }
 
+    /// Pull in the document each hit came from.
+    ///
+    /// Same rule as [`Self::apply_sentence_window`]: a parent is here because a
+    /// child matched, so it inherits that child's relevance rather than
+    /// whatever [`RetrievalCallback::get_parent`] left in the field. It used to
+    /// be pushed with the callback's value, which put a number from outside the
+    /// pipeline's scale into a list that is then filtered by a relevance floor
+    /// and cut by rank.
+    ///
+    /// When several children share a parent it takes the best of them, and a
+    /// parent that was *itself* retrieved keeps its own score if that is higher
+    /// — being somebody's parent is not a reason to be demoted.
     fn apply_parent_document(
         &self,
         chunks: &[RetrievedChunk],
@@ -1375,9 +1425,17 @@ impl RagPipeline {
         let mut result = chunks.to_vec();
 
         for chunk in chunks {
-            if let Ok(Some(parent)) = retrieval.get_parent(&chunk.chunk_id) {
-                if !result.iter().any(|c| c.chunk_id == parent.chunk_id) {
-                    result.push(parent);
+            if let Ok(Some(mut parent)) = retrieval.get_parent(&chunk.chunk_id) {
+                match result.iter_mut().find(|c| c.chunk_id == parent.chunk_id) {
+                    Some(already_here) => {
+                        if chunk.score > already_here.score {
+                            already_here.score = chunk.score;
+                        }
+                    }
+                    None => {
+                        parent.score = chunk.score;
+                        result.push(parent);
+                    }
                 }
             }
         }
@@ -3427,5 +3485,218 @@ mod reranking_keeps_what_retrieval_worked_out {
         let out = pipeline().llm_rerank(&[], "q", &llm).expect("answered");
         assert!(out.chunks.is_empty());
         assert_eq!(out.ranked, 0);
+    }
+}
+
+/// Widening a hit must not be able to delete it.
+///
+/// Both expansion stages take chunks from a [`RetrievalCallback`] whose
+/// contract said nothing about `score`, and fed those values straight into the
+/// relevance floor. A window returned with the default score of zero removed
+/// the passage that had earned the expansion: the more relevant a chunk was,
+/// the more likely expanding it made it disappear.
+#[cfg(test)]
+mod expansion_adds_context_without_judging_relevance {
+    use super::*;
+
+    /// Returns neighbours and parents scored zero, which is what an implementer
+    /// who read the old trait would naturally write.
+    struct Careless;
+
+    impl Careless {
+        fn plain(id: &str, score: f32) -> RetrievedChunk {
+            RetrievedChunk {
+                chunk_id: id.to_string(),
+                content: format!("text of {id}"),
+                source: "doc.md".to_string(),
+                section: None,
+                score,
+                keyword_score: None,
+                semantic_score: None,
+                token_count: 4,
+                position: None,
+                metadata: HashMap::new(),
+            }
+        }
+    }
+
+    impl RetrievalCallback for Careless {
+        fn keyword_search(&self, _q: &str, _l: usize) -> Result<Vec<RetrievedChunk>, String> {
+            Ok(vec![])
+        }
+        fn semantic_search(&self, _e: &[f32], _l: usize) -> Result<Vec<RetrievedChunk>, String> {
+            Ok(vec![])
+        }
+        fn get_chunk(&self, id: &str) -> Result<Option<RetrievedChunk>, String> {
+            Ok(Some(Self::plain(id, 0.0)))
+        }
+        fn get_sentence_window(
+            &self,
+            id: &str,
+            _size: usize,
+        ) -> Result<Vec<RetrievedChunk>, String> {
+            Ok(vec![
+                Self::plain(&format!("{id}_before"), 0.0),
+                Self::plain(id, 0.0),
+                Self::plain(&format!("{id}_after"), 0.0),
+            ])
+        }
+        fn get_parent(&self, id: &str) -> Result<Option<RetrievedChunk>, String> {
+            Ok(Some(Self::plain(&format!("{id}_parent"), 0.0)))
+        }
+    }
+
+    /// A callback offering neither windows nor parents.
+    struct Bare;
+    impl RetrievalCallback for Bare {
+        fn keyword_search(&self, _q: &str, _l: usize) -> Result<Vec<RetrievedChunk>, String> {
+            Ok(vec![])
+        }
+        fn semantic_search(&self, _e: &[f32], _l: usize) -> Result<Vec<RetrievedChunk>, String> {
+            Ok(vec![])
+        }
+        fn get_chunk(&self, _id: &str) -> Result<Option<RetrievedChunk>, String> {
+            Ok(None)
+        }
+    }
+
+    fn pipeline() -> RagPipeline {
+        RagPipeline::new(RagTierConfig::with_tier(RagTier::Enhanced))
+    }
+
+    #[test]
+    fn a_window_inherits_the_relevance_of_what_it_widens() {
+        let hit = Careless::plain("c1", 0.87);
+        let out = pipeline().apply_sentence_window(&[hit], &Careless);
+
+        assert_eq!(out.len(), 3, "the window did not arrive: {out:?}");
+        for chunk in &out {
+            assert!(
+                (chunk.score - 0.87).abs() < f32::EPSILON,
+                "{} came out at {} instead of the relevance it is context for",
+                chunk.chunk_id,
+                chunk.score
+            );
+        }
+    }
+
+    #[test]
+    fn expanding_a_hit_cannot_filter_it_out() {
+        // The defect stated as its consequence. With the window scored at the
+        // callback zero, the floor two steps later removed everything --
+        // including the passage that matched.
+        let floor = RagTierConfig::with_tier(RagTier::Enhanced).min_relevance_score;
+        let hit = Careless::plain("c1", 0.9);
+        let out = pipeline().apply_sentence_window(&[hit], &Careless);
+
+        let survivors = out.iter().filter(|c| c.score >= floor).count();
+        assert_eq!(
+            survivors,
+            out.len(),
+            "expansion produced chunks the relevance floor will delete: {out:?}"
+        );
+        assert!(
+            out.iter().any(|c| c.chunk_id == "c1"),
+            "the chunk that earned the expansion is gone: {out:?}"
+        );
+    }
+
+    #[test]
+    fn a_window_that_is_not_available_leaves_the_hit_untouched() {
+        let hit = Careless::plain("c1", 0.42);
+        let out = pipeline().apply_sentence_window(&[hit], &Bare);
+        assert_eq!(out.len(), 1);
+        assert!((out[0].score - 0.42).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn a_parent_inherits_from_the_child_that_pulled_it_in() {
+        let hit = Careless::plain("c1", 0.77);
+        let out = pipeline().apply_parent_document(&[hit], &Careless);
+
+        let parent = out
+            .iter()
+            .find(|c| c.chunk_id == "c1_parent")
+            .expect("the parent was added");
+        assert!(
+            (parent.score - 0.77).abs() < f32::EPSILON,
+            "the parent came in at {}, a number from outside this scale",
+            parent.score
+        );
+    }
+
+    #[test]
+    fn a_parent_shared_by_two_children_takes_the_better_one() {
+        // And not whichever was visited first, which is what a plain
+        // "push if not already present" gives you.
+        struct OneParent;
+        impl RetrievalCallback for OneParent {
+            fn keyword_search(&self, _q: &str, _l: usize) -> Result<Vec<RetrievedChunk>, String> {
+                Ok(vec![])
+            }
+            fn semantic_search(
+                &self,
+                _e: &[f32],
+                _l: usize,
+            ) -> Result<Vec<RetrievedChunk>, String> {
+                Ok(vec![])
+            }
+            fn get_chunk(&self, _id: &str) -> Result<Option<RetrievedChunk>, String> {
+                Ok(None)
+            }
+            fn get_parent(&self, _id: &str) -> Result<Option<RetrievedChunk>, String> {
+                Ok(Some(Careless::plain("shared_parent", 0.0)))
+            }
+        }
+
+        // Worst first on purpose, so taking the first one would be wrong.
+        let children = vec![Careless::plain("c1", 0.2), Careless::plain("c2", 0.95)];
+        let out = pipeline().apply_parent_document(&children, &OneParent);
+
+        let parent = out
+            .iter()
+            .find(|c| c.chunk_id == "shared_parent")
+            .expect("the parent was added");
+        assert!(
+            (parent.score - 0.95).abs() < f32::EPSILON,
+            "took {} instead of the best child 0.95",
+            parent.score
+        );
+    }
+
+    #[test]
+    fn a_parent_that_was_retrieved_in_its_own_right_is_not_demoted() {
+        struct SelfParent;
+        impl RetrievalCallback for SelfParent {
+            fn keyword_search(&self, _q: &str, _l: usize) -> Result<Vec<RetrievedChunk>, String> {
+                Ok(vec![])
+            }
+            fn semantic_search(
+                &self,
+                _e: &[f32],
+                _l: usize,
+            ) -> Result<Vec<RetrievedChunk>, String> {
+                Ok(vec![])
+            }
+            fn get_chunk(&self, _id: &str) -> Result<Option<RetrievedChunk>, String> {
+                Ok(None)
+            }
+            fn get_parent(&self, _id: &str) -> Result<Option<RetrievedChunk>, String> {
+                Ok(Some(Careless::plain("big", 0.0)))
+            }
+        }
+
+        let chunks = vec![Careless::plain("big", 0.9), Careless::plain("small", 0.3)];
+        let out = pipeline().apply_parent_document(&chunks, &SelfParent);
+
+        let big = out
+            .iter()
+            .find(|c| c.chunk_id == "big")
+            .expect("still here");
+        assert!(
+            (big.score - 0.9).abs() < f32::EPSILON,
+            "being somebody parent demoted it to {}",
+            big.score
+        );
     }
 }
