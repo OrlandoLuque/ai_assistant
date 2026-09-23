@@ -759,6 +759,12 @@ impl RrfFusion {
     /// Fuse multiple ranked lists using RRF
     ///
     /// Each inner Vec should be sorted by relevance (best first).
+    ///
+    /// The arithmetic lives in [`crate::rank_fusion`]; this is the adapter that
+    /// knows how to get an identity out of a `T` and how to put the fused score
+    /// back. Scores come out **normalised to 0-1** — see that module for why
+    /// raw RRF values fall under this library's relevance floor and what that
+    /// cost the `Semantic` tier.
     pub fn fuse<T: Clone + Eq + std::hash::Hash>(
         &self,
         ranked_lists: Vec<Vec<ScoredItem<T>>>,
@@ -766,31 +772,34 @@ impl RrfFusion {
     ) -> MethodResult<Vec<ScoredItem<T>>> {
         let start = Instant::now();
 
-        let mut scores: HashMap<String, (f32, ScoredItem<T>)> = HashMap::new();
-
+        // One pass to build the id lists for the fusion, keeping a way back to
+        // the items themselves.
+        let mut by_id: HashMap<String, ScoredItem<T>> = HashMap::new();
+        let mut id_lists: Vec<Vec<String>> = Vec::with_capacity(ranked_lists.len());
         for list in ranked_lists {
-            for (rank, item) in list.into_iter().enumerate() {
+            let mut ids = Vec::with_capacity(list.len());
+            for item in list {
                 let id = get_id(&item.item);
-                let rrf_score = 1.0 / (self.config.k + rank as f32 + 1.0);
-
-                let entry = scores.entry(id).or_insert((0.0, item.clone()));
-                entry.0 += rrf_score;
+                by_id.entry(id.clone()).or_insert(item);
+                ids.push(id);
             }
+            id_lists.push(ids);
         }
 
-        let mut fused: Vec<ScoredItem<T>> = scores
+        let fused_scores = crate::rank_fusion::fuse_ranked_ids(
+            &id_lists,
+            &crate::rank_fusion::RrfOptions::with_k(self.config.k),
+        );
+
+        let mut fused: Vec<ScoredItem<T>> = fused_scores
             .into_iter()
-            .map(|(_, (score, mut item))| {
-                item.score = score;
-                item
+            .filter_map(|(id, score)| {
+                by_id.remove(&id).map(|mut item| {
+                    item.score = score;
+                    item
+                })
             })
             .collect();
-
-        fused.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
         fused.truncate(self.config.max_results);
 
         MethodResult::new(fused, start.elapsed())
@@ -3181,11 +3190,17 @@ mod tests {
         let result = fusion.fuse_strings(list);
         assert_eq!(result.result.len(), 1);
         assert_eq!(result.result[0].item, "only_doc");
-        // RRF score = 1 / (60 + 0 + 1) = 1/61
-        let expected_score = 1.0_f32 / 61.0;
+        // It used to assert the raw `1/61`. That is RRF's internal scale, not a
+        // fact about the answer, and asserting it is what kept this copy from
+        // ever noticing that every value it produced sat under the 0-1
+        // relevance floor the rest of the library filters on — the V316 defect,
+        // which had been fixed in exactly one of the three copies.
+        //
+        // The property: the best (here, only) document comes out at the top of
+        // the scale.
         assert!(
-            (result.result[0].score - expected_score).abs() < 0.001,
-            "Single item RRF score should be 1/(k+1), got {}",
+            (result.result[0].score - 1.0).abs() < 1e-6,
+            "the only document should score 1.0 after normalising, got {}",
             result.result[0].score
         );
     }

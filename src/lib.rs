@@ -267,6 +267,12 @@ pub mod huggingface;
 // enabled would not be shared, and the three bare re-exports collided at the
 // root -- each feature set compiled alone and no combination did.
 pub mod ice;
+
+/// Reciprocal Rank Fusion, shared by everything that fuses ranked lists.
+///
+/// Ungated on purpose: it is arithmetic over ranks with no dependencies, and
+/// three separate copies of it existed behind three different feature gates.
+pub mod rank_fusion;
 pub use ice::IceCandidateType;
 #[cfg(feature = "autonomous")]
 pub mod inspector;

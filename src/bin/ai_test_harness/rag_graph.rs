@@ -312,9 +312,43 @@ pub(crate) fn tests_rag_tiers() -> CategoryResult {
     }));
 
     // RRF Fusion tests
-    results.push(run_test("RrfFusion creation and basic usage", || {
+    //
+    // This used to be `let fusion = RrfFusion::default(); let _ = fusion;` --
+    // named "basic usage" and calling nothing. It passed for years while the
+    // function it claimed to cover produced scores that sat under the library's
+    // own relevance floor, which is the V316 defect. A test that constructs and
+    // discards reports green with exactly the confidence of one that checks.
+    results.push(run_test("RrfFusion fuses, and on the 0-1 scale", || {
         let fusion = RrfFusion::default();
-        let _ = fusion;
+        let keyword = vec![
+            ScoredItem::new("doc_a".to_string(), 0.9),
+            ScoredItem::new("doc_b".to_string(), 0.5),
+        ];
+        let semantic = vec![
+            ScoredItem::new("doc_c".to_string(), 0.8),
+            ScoredItem::new("doc_b".to_string(), 0.7),
+        ];
+
+        let fused = fusion.fuse_strings(vec![keyword, semantic]).result;
+
+        assert_test!(fused.len() == 3, "three distinct documents went in");
+        // doc_b is the only one both lists agree on, so it wins even though
+        // neither ranked it first. That is what RRF is for.
+        assert_test!(
+            fused[0].item == "doc_b",
+            "agreement between lists should win the fusion"
+        );
+        // And the output has to be on the scale the rest of the pipeline
+        // filters with: `min_relevance_score` is 0.1, and raw RRF tops out at
+        // about 0.016.
+        assert_test!(
+            (fused[0].score - 1.0).abs() < 1e-6,
+            "best fused score should be 1.0 after normalising"
+        );
+        assert_test!(
+            fused.iter().all(|f| f.score > 0.1),
+            "every fused score must clear the default relevance floor"
+        );
         Ok(())
     }));
 

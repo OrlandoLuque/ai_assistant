@@ -1077,83 +1077,57 @@ impl RagPipeline {
         }
     }
 
+    /// Fuse the keyword and semantic rankings into one.
+    ///
+    /// The arithmetic lives in [`crate::rank_fusion`], shared with the other
+    /// two copies of it that existed in this crate. The normalisation to 0-1
+    /// that V316 added is now the shared default rather than a local fix — see
+    /// that module for why raw RRF output always fell under
+    /// `min_relevance_score`.
+    ///
+    /// What stays here is the adapter: which chunk belongs in which ranking,
+    /// and how the fused scores get written back.
     fn reciprocal_rank_fusion(&self, chunks: Vec<RetrievedChunk>) -> Vec<RetrievedChunk> {
-        // Group by chunk_id and calculate RRF score
-        let mut scores: HashMap<String, (f32, RetrievedChunk)> = HashMap::new();
-        let k = 60.0; // RRF constant
+        let ranked_ids = |score_of: fn(&RetrievedChunk) -> Option<f32>| -> Vec<String> {
+            let mut ranked: Vec<&RetrievedChunk> =
+                chunks.iter().filter(|c| score_of(c).is_some()).collect();
+            ranked.sort_by(|a, b| {
+                score_of(b)
+                    .unwrap_or(0.0)
+                    .partial_cmp(&score_of(a).unwrap_or(0.0))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            ranked.into_iter().map(|c| c.chunk_id.clone()).collect()
+        };
 
-        // Separate by score type and rank
-        let mut keyword_ranked: Vec<_> = chunks
-            .iter()
-            .filter(|c| c.keyword_score.is_some())
-            .collect();
-        keyword_ranked.sort_by(|a, b| {
-            b.keyword_score
-                .unwrap_or(0.0)
-                .partial_cmp(&a.keyword_score.unwrap_or(0.0))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        let lists = vec![
+            ranked_ids(|c| c.keyword_score),
+            ranked_ids(|c| c.semantic_score),
+        ];
+        let fused = crate::rank_fusion::fuse_ranked_ids_to_map(
+            &lists,
+            &crate::rank_fusion::RrfOptions::default(),
+        );
 
-        let mut semantic_ranked: Vec<_> = chunks
-            .iter()
-            .filter(|c| c.semantic_score.is_some())
-            .collect();
-        semantic_ranked.sort_by(|a, b| {
-            b.semantic_score
-                .unwrap_or(0.0)
-                .partial_cmp(&a.semantic_score.unwrap_or(0.0))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-
-        // Calculate RRF scores
-        for (rank, chunk) in keyword_ranked.iter().enumerate() {
-            let rrf = 1.0 / (k + rank as f32 + 1.0);
-            let entry = scores
-                .entry(chunk.chunk_id.clone())
-                .or_insert((0.0, (*chunk).clone()));
-            entry.0 += rrf;
+        // A chunk that appears in neither ranking keeps the score it arrived
+        // with. It used to be dropped: the old code built its result from the
+        // fusion map alone, so anything retrieved by a route that sets neither
+        // `keyword_score` nor `semantic_score` — graph traversal, memory —
+        // disappeared here without a word. Fusing is merging; deleting is
+        // somebody else's job, and there is a relevance floor two steps down
+        // that already does it in the open.
+        let mut result: Vec<RetrievedChunk> = chunks;
+        for chunk in &mut result {
+            if let Some(score) = fused.get(&chunk.chunk_id) {
+                chunk.score = *score;
+            }
         }
-
-        for (rank, chunk) in semantic_ranked.iter().enumerate() {
-            let rrf = 1.0 / (k + rank as f32 + 1.0);
-            let entry = scores
-                .entry(chunk.chunk_id.clone())
-                .or_insert((0.0, (*chunk).clone()));
-            entry.0 += rrf;
-        }
-
-        // Sort by RRF score and return
-        let mut result: Vec<_> = scores
-            .into_iter()
-            .map(|(_, (score, mut chunk))| {
-                chunk.score = score;
-                chunk
-            })
-            .collect();
 
         result.sort_by(|a, b| {
             b.score
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-
-        // Normalised to 0-1 (V316). RRF scores encode *rank*, not relevance:
-        // with k = 60 the best attainable value is 1/61 ≈ 0.0164, or ≈0.033 for
-        // a chunk ranked first by both lists. Every other stage works on a 0-1
-        // relevance scale and `min_relevance_score` (0.1 by default) is applied
-        // to whatever `score` holds — so raw RRF output was *always* under the
-        // floor. Tiers that rerank afterwards had their scores rewritten and
-        // never noticed; `RagTier::Semantic`, the only one that fuses without a
-        // reranker, discarded every chunk of every query. Dividing by the
-        // maximum preserves the ordering exactly — which is all RRF determines —
-        // and puts the values back on the scale the rest of the pipeline uses.
-        if let Some(max) = result.first().map(|c| c.score) {
-            if max > 0.0 {
-                for chunk in &mut result {
-                    chunk.score /= max;
-                }
-            }
-        }
 
         result
     }

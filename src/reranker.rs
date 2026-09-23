@@ -225,38 +225,43 @@ impl ReciprocalRankFusion {
     }
 
     /// Fuse multiple ranked lists into a single merged list sorted by RRF score.
+    ///
+    /// The arithmetic lives in [`crate::rank_fusion`]; this is the adapter that
+    /// treats the `content` string as the identity of a document.
+    ///
+    /// Scores come out **normalised to 0-1**. They used not to be, and that is
+    /// not cosmetic: raw RRF tops out at `1/(k+1)` — about 0.016 with the
+    /// default k — while [`RerankerConfig::min_score`] and the rest of this
+    /// library work on a 0-1 relevance scale. Any caller who filtered on the
+    /// raw output discarded everything. See that module.
     pub fn fuse(&self, ranked_lists: &[Vec<ScoredDocument>]) -> Vec<ScoredDocument> {
-        // Map from content -> (accumulated_rrf_score, first-seen ScoredDocument)
-        let mut scores: HashMap<String, (f64, ScoredDocument)> = HashMap::new();
+        // Keep the first-seen document for each identity, to re-attach below.
+        let mut by_content: HashMap<String, ScoredDocument> = HashMap::new();
+        let mut id_lists: Vec<Vec<String>> = Vec::with_capacity(ranked_lists.len());
 
         for list in ranked_lists {
-            for (rank_idx, doc) in list.iter().enumerate() {
-                let rrf_contribution = 1.0 / (self.k as f64 + (rank_idx + 1) as f64);
-                let entry = scores.entry(doc.content.clone()).or_insert_with(|| {
-                    (
-                        0.0,
-                        ScoredDocument {
-                            content: doc.content.clone(),
-                            score: 0.0,
-                            original_rank: doc.original_rank,
-                            metadata: doc.metadata.clone(),
-                        },
-                    )
-                });
-                entry.0 += rrf_contribution;
+            let mut ids = Vec::with_capacity(list.len());
+            for doc in list {
+                by_content
+                    .entry(doc.content.clone())
+                    .or_insert_with(|| doc.clone());
+                ids.push(doc.content.clone());
             }
+            id_lists.push(ids);
         }
 
-        let mut result: Vec<ScoredDocument> = scores
-            .into_values()
-            .map(|(rrf_score, mut doc)| {
-                doc.score = rrf_score;
+        crate::rank_fusion::fuse_ranked_ids(
+            &id_lists,
+            &crate::rank_fusion::RrfOptions::with_k(self.k as f32),
+        )
+        .into_iter()
+        .filter_map(|(content, score)| {
+            by_content.remove(&content).map(|mut doc| {
+                doc.score = score as f64;
                 doc
             })
-            .collect();
-
-        result.sort();
-        result
+        })
+        .collect()
     }
 }
 
@@ -526,15 +531,31 @@ mod tests {
         let fused = rrf.fuse(&[list1, list2]);
 
         assert_eq!(fused.len(), 2);
-        // Both A and B appear in both lists.
-        // A: 1/(60+1) + 1/(60+2) = 1/61 + 1/62
-        // B: 1/(60+2) + 1/(60+1) = 1/62 + 1/61
-        // Scores are equal, so order may vary — just verify scores match.
-        let score_a = fused.iter().find(|d| d.content == "A").unwrap().score;
-        let score_b = fused.iter().find(|d| d.content == "B").unwrap().score;
-        let expected = 1.0 / 61.0 + 1.0 / 62.0;
-        assert!((score_a - expected).abs() < 1e-10);
-        assert!((score_b - expected).abs() < 1e-10);
+        // A is 1st then 2nd; B is 2nd then 1st. Symmetric, so the two must come
+        // out equal — that is the property. It used to be asserted as the raw
+        // constant `1/61 + 1/62`, which pinned RRF's own scale rather than
+        // anything about the answer, and pinning that scale is precisely what
+        // let the V316 defect survive in this copy: every value here is under
+        // the 0-1 relevance floor the rest of the library filters on.
+        let score_a = fused
+            .iter()
+            .find(|d| d.content == "A")
+            .map(|d| d.score)
+            .expect("A survived the fusion");
+        let score_b = fused
+            .iter()
+            .find(|d| d.content == "B")
+            .map(|d| d.score)
+            .expect("B survived the fusion");
+        assert!(
+            (score_a - score_b).abs() < 1e-10,
+            "symmetric input, asymmetric output: {score_a} vs {score_b}"
+        );
+        // And on the scale everything else uses.
+        assert!(
+            (0.0..=1.0).contains(&score_a) && (score_a - 1.0).abs() < 1e-10,
+            "the best score should be 1.0 after normalising, got {score_a}"
+        );
     }
 
     #[test]
@@ -547,11 +568,27 @@ mod tests {
         let fused = rrf.fuse(&[list1, list2]);
 
         assert_eq!(fused.len(), 2);
-        // Both should have the same RRF score (1/(60+1))
-        let score_a = fused.iter().find(|d| d.content == "A").unwrap().score;
-        let score_b = fused.iter().find(|d| d.content == "B").unwrap().score;
-        assert!((score_a - 1.0 / 61.0).abs() < 1e-10);
-        assert!((score_b - 1.0 / 61.0).abs() < 1e-10);
+        // Nothing overlaps and both are first in their own list, so neither can
+        // outrank the other. Asserted as equality rather than as `1/61`, which
+        // was RRF's internal scale and not a fact about the result.
+        let score_a = fused
+            .iter()
+            .find(|d| d.content == "A")
+            .map(|d| d.score)
+            .expect("A survived the fusion");
+        let score_b = fused
+            .iter()
+            .find(|d| d.content == "B")
+            .map(|d| d.score)
+            .expect("B survived the fusion");
+        assert!(
+            (score_a - score_b).abs() < 1e-10,
+            "two documents with identical standing scored differently"
+        );
+        assert!(
+            (0.0..=1.0).contains(&score_a),
+            "off the 0-1 scale: {score_a}"
+        );
     }
 
     #[test]
