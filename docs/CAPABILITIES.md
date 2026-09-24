@@ -106,6 +106,42 @@ Three layers of the same thing, each invisible on its own:
 
 ---
 
+## Evaluation and benchmarks
+
+Checked 2026-09-24. Everything here is behind the `eval` feature.
+
+| capability | lives in | API | CLI | MCP | GUI | srv | estado | verificado | notes |
+|---|---|---|---|---|---|---|---|---|---|
+| Download a benchmark dataset | `eval_benchmarks::http` | si | si | no | no | parcial | hecho | 2026-09-24 | size cap, atomic write via `.part`, fallback URL list |
+| Cache datasets on disk | `eval_benchmarks::cache` | si | si | no | no | parcial | hecho | 2026-09-24 | short-circuits the download when the size matches |
+| Run a model against a benchmark | `eval_benchmarks::runner` | si | si | no | no | parcial | hecho | 2026-09-24 | `ai_cli benchmark run --provider X --model Y` |
+| Sweep the correctness threshold | `eval_benchmarks::calibration` | si | si | no | no | no | hecho | 2026-09-24 | `ai_cli benchmark calibrate --objective accuracy\|f1` |
+| TruthfulQA | `loaders::truthfulqa` | si | si | no | no | — | hecho | 2026-09-24 | factuality, closed book |
+| FEVER | `loaders::fever` | si | si | no | no | — | hecho | 2026-09-24 | fact verification |
+| HaluEval | `loaders::halueval` | si | si | no | no | — | hecho | 2026-09-24 | hallucination detection |
+| FactScore | `loaders::factscore` | si | si | no | no | — | hecho | 2026-09-24 | atomic-fact precision |
+| RAGAS | `loaders::ragas` | si | si | no | no | — | hecho | 2026-09-24 | RAG faithfulness / relevance |
+| **Retrieval quality (recall@k, MRR, nDCG)** | — | **no** | no | no | no | no | **no** | 2026-09-24 | **not one occurrence of any of the three in the crate.** N102 |
+| Agentic / tool-use benchmarks | — | no | no | no | no | no | **no** | 2026-09-24 | own harness categories exist (`agentic_code`, `agentic_rust`); no public benchmark |
+| Prompt-injection / jailbreak suite | — | no | no | no | no | no | **no** | 2026-09-24 | the guardrails exist; nothing measures them against a public corpus |
+| Long-context suite | — | no | no | no | no | no | **no** | 2026-09-24 | FreshContext and the budget allocator are unmeasured |
+
+### The shape of what is there
+
+The machinery the author asked for — "a binary that downloads whatever and runs
+it and checks" — **exists**, since V90, and is more careful than it needed to be:
+a size cap against download bombs, atomic writes, a fallback URL list, and an
+explicit `--accept-license`.
+
+What it covers is **hallucination and faithfulness**. Five loaders, all of that
+family. Nothing for retrieval, agents, injection or long context.
+
+Vendored into the repo: five fixtures of 468–963 bytes each, two or three rows
+apiece. No third-party dataset is checked in, which keeps the licence question
+where it belongs — at `download --accept-license`.
+
+Adding a family is a **loader plus its metrics**, not a subsystem.
+
 ## Everything else
 
 Not checked. The subsystems are listed in `CLAUDE.md` — multi-provider LLM,
