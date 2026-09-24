@@ -67,6 +67,8 @@ findings are what most of these notes are.
 | Reranking with an LLM | `RagPipeline::llm_rerank` | si | — | — | — | — | hecho | 2026-09-24 | reorders, does not re-score. Reports when it could not |
 | Cross-encoder reranking | `reranker::CrossEncoderReranker` | si | n/a | n/a | n/a | n/a | **parcial** | 2026-09-24 | its `default_scorer` is **Jaccard**, so it reranks semantic results by literal word overlap. N96 |
 | Diversity (MMR) | `reranker::DiversityReranker` | si | n/a | n/a | n/a | n/a | parcial | 2026-09-24 | exists; the pipeline never calls it |
+| Diversity (MMR), again | `rag_methods::MmrScorer` | si | n/a | n/a | n/a | n/a | **parcial** | 2026-09-24 | **a second MMR.** 14 references, all 14 inside `rag_methods.rs` — definition, its own `select`, eight tests. N109 |
+| Reranking with a real cross-encoder | — | **no** | no | no | no | no | **no** | 2026-09-24 | no model-backed reranker anywhere. The `llama-server` the kit already carries accepts `--rerank` and serves `/v1/rerank`; nothing asks it. N96 |
 | Cascade reranking | `reranker::CascadeReranker` | si | n/a | n/a | n/a | n/a | parcial | 2026-09-24 | same: exists, uncalled |
 | Sentence-window expansion | `RagPipeline::apply_sentence_window` | si | — | — | — | — | hecho | 2026-09-24 | neighbours inherit the hit's relevance |
 | Parent-document retrieval | `RagPipeline::apply_parent_document` | si | — | — | — | — | hecho | 2026-09-24 | parent inherits from its best child |
@@ -125,6 +127,47 @@ Checked 2026-09-24. Everything here is behind the `eval` feature.
 | Agentic / tool-use benchmarks | — | no | no | no | no | no | **no** | 2026-09-24 | own harness categories exist (`agentic_code`, `agentic_rust`); no public benchmark |
 | Prompt-injection / jailbreak suite | — | no | no | no | no | no | **no** | 2026-09-24 | the guardrails exist; nothing measures them against a public corpus |
 | Long-context suite | — | no | no | no | no | no | **no** | 2026-09-24 | FreshContext and the budget allocator are unmeasured |
+
+### Families this library does not cover
+
+Researched 2026-09-24. Every row is `no` on purpose: naming the absence is the
+point of the file. The named benchmarks are what a loader would target, chosen
+because each measures something the five loaders above cannot.
+
+| family | what it measures that we cannot | candidate datasets | task |
+|---|---|---|---|
+| **Retrieval quality** | whether the right chunk came back at all | NanoBEIR (50 queries x 13 subsets), MIRACL-es, MessIRve | N102 |
+| **Reranking quality** | whether reordering helped or hurt | MTEB reranking split (MAP, MRR@k) | N102 |
+| **RAG end to end** | multi-hop and **aggregation** questions, which no single passage answers | CRAG (Meta, NeurIPS 2024), MultiHop-RAG (2-4 documents), ARES | N108 |
+| **Word-level faithfulness** | *which span* was unsupported, not whether the answer was | RAGTruth | N108 |
+| **Intrinsic hallucination** | inconsistency against a given source at scale | HaluBench (15K samples), FaithBench | N108 |
+| **Closed-book factuality** | what the model knows **without** context — separates "did not know" from "retrieval failed" | SimpleQA | N108 |
+| **Tool calling** | correct function, correct arguments, correct types | BFCL (v4, April 2026: Agentic 40% / Multi-Turn 30% / Live 10% / Non-Live 10% + hallucination) | N108 |
+| **Agentic task completion** | the task finished, not the call was well formed | tau2-bench (dual control), GAIA 2 | N108 |
+| **Prompt injection** | whether the guardrails hold against untrusted tool output | AgentDojo (97 tasks, 629 security cases), AgentDyn, AgentDrift | N108 |
+| **Long context** | whether a bigger window is a **usable** window | RULER (13 tasks, 4K-128K), LongBench v2, multi-needle NIAH | N108 |
+
+Two of these are not optional in the ordinary sense:
+
+- **Prompt injection.** V346 found the guardrail pipeline ignoring
+  `GuardAction::Block` when the score sat below its threshold — high-risk
+  injections passed with `passed == true`. That is fixed. Nothing stops the same
+  shape returning in another guard, because nothing measures it.
+- **Long context.** `FreshContext` exists to maximise how much knowledge fits,
+  and `ContextBudgetAllocator` decides what goes in. Neither has ever been
+  measured against a benchmark that distinguishes a window that holds text from
+  a window the model can still use. Published RULER results put the gap at
+  30-60 points past 200K on frontier models; on the models this project runs it
+  will be wider and it will start earlier.
+
+RULER is worth calling out separately: it is **synthetic and generated, not
+downloaded**. The tasks are constructed at whatever length you ask for, so it
+needs no dataset, no licence acceptance and no cache — which makes it the
+cheapest row in this table to turn into a `si`.
+
+And on needles: the **single**-needle test overstates usable context by 15-40
+points against the multi-needle one. If we measure this, we measure multi-needle;
+the easy version would tell us what we want to hear.
 
 ### The shape of what is there
 
