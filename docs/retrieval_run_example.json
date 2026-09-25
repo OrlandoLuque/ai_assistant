@@ -1,0 +1,31 @@
+{
+  "_comment": [
+    "An EXAMPLE of the file format ai_cli retrieval score reads. Not a golden set:",
+    "the ids are made up, and a real run's `retrieved` lists come from actually",
+    "running a retriever. This exists so the documented command is runnable, and so",
+    "the four cases worth understanding are visible in one file.",
+    "Run: cargo run --bin ai_cli --features full -- retrieval score docs/retrieval_run_example.json --k 4"
+  ],
+  "queries": [
+    {
+      "query_id": "both-relevant-on-top",
+      "retrieved": ["d1", "d2", "d9", "d8"],
+      "grades": { "d1": 3.0, "d2": 2.0 }
+    },
+    {
+      "query_id": "the-hit-is-buried-at-position-4",
+      "retrieved": ["d7", "d8", "d9", "d3"],
+      "grades": { "d3": 2.0 }
+    },
+    {
+      "query_id": "one-relevant-document-was-never-returned",
+      "retrieved": ["d4", "d7"],
+      "grades": { "d4": 1.0, "d5": 3.0 }
+    },
+    {
+      "query_id": "nothing-judged-so-this-one-is-skipped",
+      "retrieved": ["d6"],
+      "grades": {}
+    }
+  ]
+}

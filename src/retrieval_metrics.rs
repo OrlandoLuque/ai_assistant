@@ -64,6 +64,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use serde::{Deserialize, Serialize};
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -230,7 +232,7 @@ pub fn ndcg_at_k(retrieved: &[String], grades: &HashMap<String, f64>, k: usize) 
 // ---------------------------------------------------------------------------
 
 /// One query's retrieved list together with its relevance judgements.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct QueryRun {
     /// Identifies the query in reports. Not used in any computation.
     pub query_id: String,
@@ -268,6 +270,83 @@ impl QueryRun {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Reading a run from a file
+// ---------------------------------------------------------------------------
+
+/// A whole run, as it is written to disk.
+///
+/// ```json
+/// {
+///   "queries": [
+///     {
+///       "query_id": "q1",
+///       "retrieved": ["doc-3", "doc-1", "doc-7"],
+///       "grades": { "doc-1": 1.0, "doc-9": 2.0 }
+///     }
+///   ]
+/// }
+/// ```
+///
+/// `retrieved` is what a retriever returned, best first. `grades` is the
+/// judgement: which documents are relevant and how much. A document in `grades`
+/// but not in `retrieved` is one the retriever missed — which is the whole point
+/// of measuring recall, so those entries matter more than the ones that match.
+///
+/// An object rather than a bare array so the format can grow a header (which
+/// retriever, which corpus, which configuration) without breaking readers.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RunFile {
+    /// Every query in the run.
+    pub queries: Vec<QueryRun>,
+}
+
+/// Why a run file could not be read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunFileError {
+    /// Not JSON, or not this shape.
+    Malformed(String),
+    /// Two queries share a `query_id`.
+    ///
+    /// Not tolerated: a duplicated id silently double-weights one query in every
+    /// average, and the file still looks fine.
+    DuplicateQueryId(String),
+    /// The file parsed and contained no queries.
+    Empty,
+}
+
+impl std::fmt::Display for RunFileError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Malformed(e) => write!(f, "not a retrieval run file: {e}"),
+            Self::DuplicateQueryId(id) => write!(
+                f,
+                "query id {id:?} appears more than once; a duplicate would be \
+                 averaged in twice and the file would still look fine"
+            ),
+            Self::Empty => write!(f, "the file parsed but contains no queries"),
+        }
+    }
+}
+
+impl std::error::Error for RunFileError {}
+
+/// Parse a run from JSON text, rejecting duplicate ids and empty runs.
+pub fn parse_run_file(json: &str) -> Result<RunFile, RunFileError> {
+    let file: RunFile =
+        serde_json::from_str(json).map_err(|e| RunFileError::Malformed(e.to_string()))?;
+    if file.queries.is_empty() {
+        return Err(RunFileError::Empty);
+    }
+    let mut seen: HashSet<&str> = HashSet::new();
+    for q in &file.queries {
+        if !seen.insert(q.query_id.as_str()) {
+            return Err(RunFileError::DuplicateQueryId(q.query_id.clone()));
+        }
+    }
+    Ok(file)
+}
+
 /// Averages over a set of queries, plus how many could not be scored.
 ///
 /// Not called `RunSummary`, which would have been the obvious name: that one is
@@ -278,7 +357,7 @@ impl QueryRun {
 /// `--features eval-suite` and this module has no feature gate at all, so the
 /// link would resolve here and dangle in any build without that feature — and
 /// the documentation gate runs with it on, so it would never notice.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RetrievalReport {
     /// The `k` the `@k` metrics were computed at.
     pub k: usize,
@@ -596,6 +675,68 @@ mod tests {
         assert_eq!(s.skipped, 1);
         assert!(s.recall_at_k.is_finite(), "must not be NaN");
         assert!(close(s.recall_at_k, 0.0));
+    }
+
+    #[test]
+    fn a_run_file_round_trips_and_scores_the_same() {
+        let json = r#"{
+            "queries": [
+                {"query_id": "q1",
+                 "retrieved": ["d1", "d9"],
+                 "grades": {"d1": 1.0, "d7": 1.0}},
+                {"query_id": "q2",
+                 "retrieved": ["d4", "d2", "d3"],
+                 "grades": {"d2": 2.0, "d3": 1.0}}
+            ]
+        }"#;
+        let file = parse_run_file(json).expect("well-formed");
+        assert_eq!(file.queries.len(), 2);
+
+        let direct = summarise(&file.queries, 3);
+        // q1: one of two relevant in the top 3 -> 0.5. q2: two of two -> 1.0.
+        assert!(
+            close(direct.recall_at_k, 0.75),
+            "got {}",
+            direct.recall_at_k
+        );
+        assert_eq!(direct.skipped, 0);
+
+        // And serialising then reading it back must score identically — if the
+        // representation loses the grades, every metric silently drops.
+        let round = parse_run_file(&serde_json::to_string(&file).expect("serialises"))
+            .expect("round trips");
+        assert_eq!(summarise(&round.queries, 3), direct);
+    }
+
+    #[test]
+    fn a_duplicated_query_id_is_rejected_not_averaged_twice() {
+        // The file would look perfectly fine and quietly give one query double
+        // weight in every average.
+        let json = r#"{"queries": [
+            {"query_id": "same", "retrieved": ["a"], "grades": {"a": 1.0}},
+            {"query_id": "same", "retrieved": ["b"], "grades": {"z": 1.0}}
+        ]}"#;
+        assert_eq!(
+            parse_run_file(json),
+            Err(RunFileError::DuplicateQueryId("same".to_string()))
+        );
+    }
+
+    #[test]
+    fn an_empty_or_malformed_run_file_is_an_error() {
+        assert_eq!(
+            parse_run_file(r#"{"queries": []}"#),
+            Err(RunFileError::Empty)
+        );
+        assert!(matches!(
+            parse_run_file("not json at all"),
+            Err(RunFileError::Malformed(_))
+        ));
+        // A plausible-but-wrong shape: a bare array instead of the object.
+        assert!(matches!(
+            parse_run_file(r#"[{"query_id": "q", "retrieved": [], "grades": {}}]"#),
+            Err(RunFileError::Malformed(_))
+        ));
     }
 
     #[test]

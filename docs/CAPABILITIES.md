@@ -123,7 +123,7 @@ Checked 2026-09-24. Everything here is behind the `eval` feature.
 | HaluEval | `loaders::halueval` | si | si | no | no | — | hecho | 2026-09-24 | hallucination detection |
 | FactScore | `loaders::factscore` | si | si | no | no | — | hecho | 2026-09-24 | atomic-fact precision |
 | RAGAS | `loaders::ragas` | si | si | no | no | — | hecho | 2026-09-24 | RAG faithfulness / relevance |
-| **Retrieval quality (recall@k, MRR, nDCG)** | `retrieval_metrics` | si | no | no | no | no | **parcial** | 2026-09-25 | the arithmetic exists and is mutation-tested; **no corpus and no caller yet**. Also `precision_at_k`, MAP, `summarise`. N102 |
+| **Retrieval quality (recall@k, MRR, nDCG)** | `retrieval_metrics` | si | **si** | no | no | no | **parcial** | 2026-09-25 | `ai_cli retrieval score <file.json> [--k N] [--json]`. Also `precision_at_k`, MAP. **What is still missing is a corpus**: nothing in the crate produces the `retrieved` lists, so today you score a run somebody else produced. N102 |
 | Agentic / tool-use benchmarks | — | no | no | no | no | no | **no** | 2026-09-24 | own harness categories exist (`agentic_code`, `agentic_rust`); no public benchmark |
 | Prompt-injection / jailbreak suite | — | no | no | no | no | no | **no** | 2026-09-24 | the guardrails exist; nothing measures them against a public corpus |
 | Long-context suite | — | no | no | no | no | no | **no** | 2026-09-24 | FreshContext and the budget allocator are unmeasured |

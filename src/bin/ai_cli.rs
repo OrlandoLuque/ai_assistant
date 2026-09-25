@@ -159,6 +159,7 @@ fn main() -> ExitCode {
         "tool" => cmd_tool(&command_args[1..]),
         "workflow" => cmd_workflow(&command_args[1..]),
         "benchmark" => cmd_benchmark(&command_args[1..]),
+        "retrieval" => cmd_retrieval(&command_args[1..]),
         "recipes" => cmd_recipes(&command_args[1..]),
         other => {
             eprintln!("Error: unknown command '{}'\n", other);
@@ -298,6 +299,9 @@ fn print_usage() {
     println!(
         "                                     Run the benchmark and sweep correctness threshold"
     );
+    println!("  retrieval <subcommand>         Retrieval quality metrics (V351)");
+    println!("    score <file.json> [--k N] [--json]");
+    println!("                                     recall@k, precision@k, MRR, MAP, nDCG@k");
     println!("  recipes <subcommand>           Recipes — declarative YAML workflows (Phase A.1)");
     println!("    list [--dir <path>]              List discovered recipes");
     println!("    show <name>                      Show recipe definition");
@@ -4333,6 +4337,155 @@ fn cmd_benchmark_calibrate(args: &[String]) -> ExitCode {
             "{}",
             ai_assistant::eval_benchmarks::report::calibration_to_text(&calibration)
         );
+    }
+    ExitCode::SUCCESS
+}
+
+// =============================================================================
+// Retrieval quality (V351) — score a retrieval run against its judgements
+// =============================================================================
+
+fn print_retrieval_usage() {
+    println!("Usage: ai_cli retrieval score <file.json> [options]\n");
+    println!("Scores a retrieval run against its relevance judgements.\n");
+    println!("Options:");
+    println!("  --k <n>      cut-off for the @k metrics (default: 10)");
+    println!("  --json       machine-readable output");
+    println!();
+    println!("File format:");
+    println!("  {{\"queries\": [");
+    println!("    {{\"query_id\": \"q1\",");
+    println!("     \"retrieved\": [\"doc-3\", \"doc-1\"],   // what came back, best first");
+    println!("     \"grades\": {{\"doc-1\": 1.0, \"doc-9\": 2.0}}}}  // the judgement");
+    println!("  ]}}");
+    println!();
+    println!("Which metric answers which question:");
+    println!("  recall@k   of the relevant documents that exist, how many reached the top k");
+    println!("  MRR        how far down was the first hit");
+    println!("  nDCG@k     the whole ordering, with graded relevance");
+    println!();
+    println!("  A reranker cannot change recall — it reorders what it was given.");
+    println!("  Compare retrievers with recall@k and rerankers with MRR or nDCG.");
+}
+
+fn cmd_retrieval(args: &[String]) -> ExitCode {
+    if args.is_empty() || args[0] == "--help" || args[0] == "-h" {
+        print_retrieval_usage();
+        return if args.is_empty() {
+            ExitCode::from(1)
+        } else {
+            ExitCode::SUCCESS
+        };
+    }
+    match args[0].as_str() {
+        "score" => cmd_retrieval_score(&args[1..]),
+        other => {
+            eprintln!("Error: unknown retrieval subcommand '{}'\n", other);
+            print_retrieval_usage();
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn cmd_retrieval_score(args: &[String]) -> ExitCode {
+    use ai_assistant::retrieval_metrics::{parse_run_file, summarise};
+
+    let mut path: Option<&String> = None;
+    let mut k = 10usize;
+    let mut as_json = false;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--k" => match args.get(i + 1).and_then(|s| s.parse::<usize>().ok()) {
+                Some(n) if n > 0 => {
+                    k = n;
+                    i += 1;
+                }
+                _ => {
+                    eprintln!("Error: --k requires a positive number");
+                    return ExitCode::from(1);
+                }
+            },
+            "--json" => as_json = true,
+            "--help" | "-h" => {
+                print_retrieval_usage();
+                return ExitCode::SUCCESS;
+            }
+            // Not a catch-all that folds unknown words into a positional
+            // argument: that is exactly the class of bug the documented-CLI gate
+            // exists to catch (V291/V292). An unrecognised flag is an error.
+            other if other.starts_with('-') => {
+                eprintln!("Error: unknown flag '{}'\n", other);
+                print_retrieval_usage();
+                return ExitCode::from(1);
+            }
+            other => {
+                if path.is_some() {
+                    eprintln!("Error: more than one file given ('{}')", other);
+                    return ExitCode::from(1);
+                }
+                path = Some(&args[i]);
+            }
+        }
+        i += 1;
+    }
+
+    let Some(path) = path else {
+        eprintln!("Error: no run file given\n");
+        print_retrieval_usage();
+        return ExitCode::from(1);
+    };
+
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("Error: cannot read '{}': {}", path, e);
+            return ExitCode::from(1);
+        }
+    };
+
+    let run = match parse_run_file(&text) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return ExitCode::from(1);
+        }
+    };
+
+    let report = summarise(&run.queries, k);
+
+    if as_json {
+        match serde_json::to_string_pretty(&report) {
+            Ok(s) => println!("{}", s),
+            Err(e) => {
+                eprintln!("Error: cannot serialise the report: {}", e);
+                return ExitCode::from(1);
+            }
+        }
+        return ExitCode::SUCCESS;
+    }
+
+    println!("Retrieval quality at k={}", report.k);
+    println!("  queries scored   {}", report.scored);
+    if report.skipped > 0 {
+        // Printed before the numbers, and only when it is true. A run where most
+        // queries had no judgement is a statement about the judgements, not
+        // about the retriever, and the averages below are over the rest.
+        println!(
+            "  queries SKIPPED  {}  (no relevant document judged; left out of every average)",
+            report.skipped
+        );
+    }
+    println!("  recall@{:<9} {:.4}", report.k, report.recall_at_k);
+    println!("  precision@{:<6} {:.4}", report.k, report.precision_at_k);
+    println!("  MRR              {:.4}", report.mrr);
+    println!("  MAP              {:.4}", report.map);
+    println!("  nDCG@{:<11} {:.4}", report.k, report.ndcg_at_k);
+
+    if report.scored == 0 {
+        eprintln!("\nNothing was scorable: every query lacked a relevant document.");
+        return ExitCode::from(1);
     }
     ExitCode::SUCCESS
 }

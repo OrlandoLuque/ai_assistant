@@ -5,6 +5,65 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v226 (2026-09-25) — V351: las metricas dejan de ser inalcanzables (0.2.310)
+
+V349 anadio `recall@k`, MRR y nDCG. Y las dejo donde **nadie podia pedirselas**: publicas en la
+crate y sin una sola superficie. O sea que habria sido el quinto caso de esta misma semana de
+capacidad construida, probada, documentada y sin conectar — las otras cuatro fueron
+`RrfFusion::fuse`, `rag_methods::LlmReranker`, `search_knowledge_hybrid` y `MmrScorer`.
+
+    ai_cli retrieval score <file.json> [--k N] [--json]
+
+Y un formato, `RunFile`, que es lo que los cargadores de N102 tendran que producir:
+
+    {"queries": [
+      {"query_id": "q1",
+       "retrieved": ["doc-3", "doc-1"],          // lo que devolvio el recuperador
+       "grades": {"doc-1": 1.0, "doc-9": 2.0}}   // el juicio
+    ]}
+
+Un objeto y no un array pelado, para que el formato pueda crecer una cabecera (que recuperador,
+que corpus, que configuracion) sin romper a quien ya lo lea. Un documento que esta en `grades` y
+no en `retrieved` es uno que el recuperador **no encontro** — y esas entradas son las que hacen
+que medir recall signifique algo, asi que importan mas que las que casan.
+
+### Tres decisiones que son el contenido
+
+1. **Un `query_id` duplicado es un error, no un aviso.** Duplicarlo da a esa consulta doble peso
+   en todas las medias y el fichero sigue pareciendo perfecto.
+2. **Las consultas sin juzgar se cuentan aparte y se imprimen ANTES de los numeros.** Una
+   ejecucion donde la mayoria no tiene juicio es una afirmacion sobre los juicios, no sobre el
+   recuperador. Si el total scorable es cero, sale con codigo 1: no hay nada que informar.
+3. **Una bandera desconocida es un error, no parte del argumento posicional.** Va a contrapelo
+   del resto de `ai_cli`, cuyo bucle de banderas termina en un catch-all — que es el defecto de
+   V291: el comando «funciona», contesta otra pregunta y sale con 0.
+
+### Ejecutado, no solo compilado
+
+    $ ai_cli retrieval score docs/retrieval_run_example.json --k 4
+    Retrieval quality at k=4
+      queries scored   3
+      queries SKIPPED  1  (no relevant document judged; left out of every average)
+      recall@4         0.8333
+      precision@4      0.4167
+      MRR              0.7500
+      MAP              0.5833
+      nDCG@4           0.5687
+
+Los cinco numeros **comprobados a mano** antes de fiarse: recall@4 = (1,0 + 1,0 + 0,5)/3;
+MRR = (1 + 0,25 + 1)/3; MAP = (1,0 + 0,25 + 0,5)/3. Y repetido a `--k 1` para ver que MRR y MAP
+**no** se mueven: son de rango completo, no `@k`, y si cambiaran seria un defecto.
+
+`docs/retrieval_run_example.json` lleva escrito dentro que **no es un conjunto dorado**: los ids
+son inventados y las listas `retrieved` de una ejecucion real salen de ejecutar un recuperador.
+Existe para que el comando documentado sea ejecutable y para que los cuatro casos que hay que
+entender se vean juntos.
+
+### Lo que sigue faltando, dicho en `CAPABILITIES.md`
+
+**Un corpus.** Nada en la crate produce todavia las listas `retrieved`, asi que hoy se puntua
+una ejecucion que produjo otro. Eso es N102, y es el paso que convierte esto en ingenieria.
+
 ## [Unreleased] - v225 (2026-09-25) — V350: un cross-encoder de verdad, por el motor que ya llevabamos (0.2.309)
 
 `src/rerank_service.rs`. Esta crate tenia tres rerankers y ninguno usaba un modelo. El mejor de
