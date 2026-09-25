@@ -68,9 +68,28 @@ def broken_links(features: str) -> list[tuple[str, int, str]]:
         errors="replace",
     )
     # rustdoc emits these as warnings, so a zero exit says nothing. Parse.
+    return parse_warnings(proc.stderr)
+
+
+def parse_warnings(stderr: str) -> list[tuple[str, int, str]]:
+    """Read rustdoc's diagnostics. Split out from the cargo call so `--self-test`
+    can feed it the shapes that once fooled it, below."""
     found: list[tuple[str, int, str]] = []
     pending: str | None = None
-    for line in proc.stderr.splitlines():
+
+    def flush(location: str = "<no-location>", line_no: int = 0) -> None:
+        """Record the warning being parsed, located or not, and clear it.
+
+        Every exit from a warning block goes through here. A `pending` that is
+        overwritten instead of flushed is a warning that silently stopped
+        existing, which is how a gate loosens without anybody editing it.
+        """
+        nonlocal pending
+        if pending is not None:
+            found.append((location, line_no, pending))
+            pending = None
+
+    for line in stderr.splitlines():
         # TWO classes, not one. The gate counted only `unresolved link` for its
         # first three days and reported 57 -> 1 while five of these went by
         # unseen -- a checker that reads less than it claims is the defect it
@@ -78,25 +97,99 @@ def broken_links(features: str) -> list[tuple[str, int, str]]:
         # regex somebody has to notice.
         m = re.search(r"unresolved link to `(.*)`", line)
         if m:
+            # MEASURED 2026-09-25, and this cost a wrong diagnosis: rustdoc
+            # emits some of these with NO `-->` line at all -- among them every
+            # link in a module whose `pub mod x;` declaration carries an outer
+            # `///` comment, which makes rustdoc resolve the module's own `//!`
+            # docs in the parent scope.
+            #
+            # The previous version kept one `pending` and only cleared it on
+            # seeing a location. So a run of location-less warnings collapsed
+            # into ONE, and that survivor inherited the `-->` of an unrelated
+            # later warning. It reported 1 of 8 real breakages and blamed a file
+            # that had nothing to do with any of them.
+            flush()
             pending = m.group(1)
             continue
         m = re.search(r"public documentation for `(.*?)` links to private item `(.*?)`", line)
         if m:
+            flush()
             found.append(("<private-link>", 0, f"{m.group(1)} -> {m.group(2)}"))
             continue
         if pending is not None:
             loc = re.search(r"-->\s+(\S+):(\d+):", line)
             if loc:
-                found.append((loc.group(1), int(loc.group(2)), pending))
-                pending = None
-    if pending is not None:
-        # A warning whose location line never arrived. Count it rather than
-        # drop it: an uncounted warning is how a gate silently loosens.
-        found.append(("<unknown>", 0, pending))
+                flush(loc.group(1), int(loc.group(2)))
+                continue
+            # Any other diagnostic ends this warning's block, so its location
+            # never arrived. `-->` always comes immediately after the `warning:`
+            # line when it comes at all, so anything else means there is none.
+            if line.startswith("warning") or line.startswith("error"):
+                flush()
+
+    # And the last block, which no following line closes.
+    flush()
     return found
 
 
+# Captured verbatim from rustdoc 1.98.1 on 2026-09-25. Two warnings with no
+# `-->` line, then one with. The parser this replaced reported ONE finding from
+# this input and gave it the located warning's file, because it kept a single
+# `pending` and only cleared it on seeing a location.
+SELF_TEST_STDERR = """warning: unresolved link to `recall_at_k`
+  |
+  = note: the link appears in this line:
+
+          | [`recall_at_k`] | of the relevant documents that exist |
+             ^^^^^^^^^^^^^
+  = note: no item named `recall_at_k` in scope
+  = note: `#[warn(rustdoc::broken_intra_doc_links)]` on by default
+
+warning: unresolved link to `ndcg_at_k`
+  |
+  = note: the link appears in this line:
+
+          | [`ndcg_at_k`] | the whole ordering |
+             ^^^^^^^^^^^
+  = note: no item named `ndcg_at_k` in scope
+  = help: to escape `[` and `]` characters, add '\\' before them
+
+warning: unresolved link to `thread_policy`
+  --> src/model_recommender.rs:7:41
+   |
+7  | /// See [`thread_policy`] for the rest.
+   |          ^^^^^^^^^^^^^^^ no item named `thread_policy` in scope
+"""
+
+
+def self_test() -> int:
+    """Prove the parser sees every warning, located or not."""
+    found = parse_warnings(SELF_TEST_STDERR)
+    symbols = sorted(sym for _f, _l, sym in found)
+    expected = sorted(["recall_at_k", "ndcg_at_k", "thread_policy"])
+    if symbols != expected:
+        print(f"SELF-TEST FAIL: expected {expected}, got {symbols}")
+        return 1
+
+    located = {sym: (f, l) for f, l, sym in found}
+    if located["thread_policy"] != ("src/model_recommender.rs", 7):
+        print(f"SELF-TEST FAIL: wrong location: {located['thread_policy']}")
+        return 1
+    # The two unlocated ones must NOT have stolen the third's location. This is
+    # the specific defect: it made eight real breakages read as one, in a file
+    # that had nothing to do with them.
+    for sym in ("recall_at_k", "ndcg_at_k"):
+        if located[sym][0] != "<no-location>":
+            print(f"SELF-TEST FAIL: {sym} borrowed a location: {located[sym]}")
+            return 1
+
+    print("self-test ok: 3 of 3 warnings seen, none given a borrowed location")
+    return 0
+
+
 def main() -> int:
+    if "--self-test" in sys.argv:
+        return self_test()
     features = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_FEATURES
     found = broken_links(features)
     n = len(found)

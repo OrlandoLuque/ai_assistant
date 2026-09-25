@@ -5,6 +5,128 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v224 (2026-09-25) — V349: el instrumento que faltaba para poder afirmar algo del RAG (0.2.308)
+
+`src/retrieval_metrics.rs`. Hasta ahora la crate tenia fusion de rangos, tres rerankers, pesos
+lexico/semantico, una `k` de RRF configurable, umbrales de relevancia y 46 banderas de
+`RagFeatures` — y **ninguna forma de saber si algo de eso ayudaba**. `recall@k`, `MRR` y `nDCG`
+no aparecian ni una vez en 540.000 lineas. Cada decision sobre recuperacion se habia
+argumentado, no medido.
+
+    recall_at_k        precision_at_k      reciprocal_rank
+    average_precision  dcg_at_k            ndcg_at_k
+    QueryRun {binary, graded}   summarise() -> RetrievalReport
+
+Ungated y sin dependencias, por la razon de `rank_fusion` y una mas: **un aparato de medida que
+solo existe en algunas compilaciones no sirve para comparar compilaciones**.
+
+### Las cinco decisiones que son el contenido real del modulo
+
+1. **Los duplicados se colapsan.** Fusionar dos listas rankeadas es exactamente como aparece el
+   mismo id dos veces, y contarlo dos veces infla el recall: **la metrica premiaria el defecto
+   que existe para cazar**.
+2. **Una consulta sin documento relevante devuelve `None`, nunca `0.0`.** Recall de nada es
+   indefinido; el cero es una nota. `summarise` los cuenta en `skipped` en vez de promediarlos,
+   porque si no un corpus con juicios incompletos se lee como un recuperador que falla.
+3. **`precision_at_k` divide por lo que se devolvio, no por `k`.** Quien devuelve tres
+   documentos con `k = 10` no se penaliza por los siete que nunca prometio.
+4. **`average_precision` divide por los relevantes que EXISTEN.** Un acierto perfecto de cinco
+   relevantes vale 0,2, no 1,0.
+5. **El IDCG se construye con TODOS los documentos juzgados**, no reordenando lo recuperado.
+   El error clasico: quien se dejo fuera el mejor documento sacaria 1,0 por ordenar las sobras.
+
+### El test que mas vale
+
+`rerankers_cannot_change_recall_only_order`. Misma lista en dos ordenes; afirma que recall@5 no
+se mueve y que MRR y nDCG si. Convierte en comprobable la regla sin la cual se mide mal:
+**recuperacion con recall@k, reranking con MRR/MAP/nDCG**. Medir un reranker con recall da
+empate siempre y concluye que no sirve.
+
+### Verificacion, y las cosas que salieron mal
+
+14 tests verdes con el conjunto de features de CI. clippy `--all-targets -D warnings` limpio.
+**Mutacion de los cuatro invariantes, las cuatro cazadas**: IDCG desde lo recuperado,
+duplicados sin colapsar, AP dividido por aciertos, y `Some(0.0)` en vez de `None`.
+
+**Mi constante de nDCG estaba mal.** Puse 0,9607 de memoria para el ejemplo canonico; el valor
+es **0,9608081943**. Lo comprobe a mano termino a termino antes de tocar el codigo — que era
+correcto — y el test lleva ahora la derivacion completa y afirma DCG e IDCG **por separado**
+con tolerancia 1e-9. No es relajar un umbral: es apretarlo contra aritmetica en vez de contra
+un numero que el codigo imprimio una vez.
+
+**Y el tipo se llamaba `RunSummary`, que ya existia.** `eval_suite::ablation::RunSummary`, y
+reexportado en la raiz de la crate. Renombrado a `RetrievalReport`, con la razon escrita en su
+docstring para que nadie anada un tercero. Justo lo de V347.
+
+**Y al documentar ESO casi meti el defecto siguiente.** La primera version enlazaba el tipo
+viejo con `[...](crate::RunSummary)`. Pero `eval_suite` esta detras de `--features eval-suite` y
+este modulo no tiene feature ninguna: el enlace resuelve aqui y **cuelga en cualquier
+compilacion sin esa feature** — y la puerta de enlaces corre CON ella encendida, asi que no lo
+habria dicho nunca. Se queda como texto entre comillas simples, con el motivo al lado. La
+leccion de N90 en pequeno: **un conjunto de features verde no demuestra nada sobre otro.**
+
+## Y de ahi salio lo importante de la noche: la puerta contaba 1 de 8
+
+La puerta de enlaces rechazo el modulo senalando **un** simbolo, atribuido a
+`src/model_recommender.rs:7` — un fichero que no tiene nada que ver. El numero no cuadraba y la
+ubicacion menos, asi que en vez de obedecerla se capturaron los avisos crudos de rustdoc.
+**Eran ocho**, y todos decian lo mismo: `no item named X in scope`, para funciones definidas en
+ese mismo modulo.
+
+### La causa: un `///` de cortesia
+
+Reproducido en una crate minima de dos modulos identicos (rustc 1.98.1):
+
+| modulo | declaracion | sus enlaces `//!` internos |
+|---|---|---|
+| `inner` | con `///` externo sobre `pub mod` | **sin resolver** |
+| `plain` | sin comentario | resuelven bien |
+
+**Un comentario de documentacion externo sobre `pub mod X;` hace que rustdoc resuelva TODA la
+documentacion fusionada del modulo en el ambito del PADRE**, donde ninguno de sus items existe.
+Cuatro lineas de cortesia en `lib.rs` mataron los ocho enlaces internos de golpe. Ahora es un
+`//` normal con el motivo escrito, y el modulo se documenta a si mismo.
+
+### Y el defecto del propio comprobador
+
+Los avisos de esta clase **no traen linea `-->`**. `check_doc_links.py` guardaba un unico
+`pending` y solo lo limpiaba al ver una ubicacion, asi que:
+
+- una tanda de avisos sin ubicacion **colapsaba en uno** — contaba de menos;
+- y ese supervivente **heredaba el `-->` de un aviso posterior y ajeno** — de ahi el fichero
+  inocente.
+
+O sea que la puerta que vigila los enlaces podia equivocarse en silencio, y su informe apuntaba
+a otro sitio. Arreglado con un `flush()` por el que pasan todas las salidas de un bloque.
+
+**Y ahora tiene auto-test.** `check_doc_links.py --self-test` le da las tres formas reales
+capturadas de rustdoc (dos sin ubicacion, una con) y exige que vea las tres y que **ninguna
+pida prestada la ubicacion de otra**. El parser se separo de la llamada a `cargo` precisamente
+para poder probarlo sin compilar. Con el codigo anterior el auto-test veria una de tres.
+
+Comprobado despues: con el parser corregido la crate entera da **0 enlaces rotos**, o sea que
+el recuento bajo no estaba ocultando nada mas. Pero podia.
+
+Un comprobador que lee menos de lo que dice leer es el defecto que existe para cazar — que es
+lo que ya avisaba su propio comentario de cabecera sobre las dos clases de aviso, escrito
+cuando paso justo esto por otra razon.
+
+### Y un hallazgo mientras se verificaba
+
+`cargo test --no-default-features --lib` da **108 errores de compilacion**. Es exactamente el
+numero y la forma de N79, que figura como cerrada. La libreria compila sin features; sus tests
+no. Queda anotado: no es de este cambio, y la puerta de CI no lo ve porque CI prueba
+`FEATURES_STD` y `FEATURES_NETWORK`, nunca el conjunto vacio.
+
+### Lo que esto desbloquea
+
+N102 (el corpus dorado: NanoBEIR, MIRACL-es), N96 (comparar fusionadores con numeros en vez de
+con argumentos), N109 (si MMR aporta) y N112 — donde esta el hallazgo mas incomodo de la noche:
+**`ai_optimize` rellena su senal de calidad con una heuristica escrita a mano que nunca ejecuta
+el modelo**, con `temperature = 0.7` y `top_p = 0.9` como optimos codificados en la propia
+funcion de puntuacion. Un bandido sobre eso redescubre las creencias con las que se escribio la
+funcion, y lo presenta con fases, brazos y un informe HTML.
+
 ## [Unreleased] - v223 (2026-09-24) — V348: «semántico» no significaba nada de lo que parecía (0.2.300 → 0.2.307)
 
 Ocho versiones de un tirón porque son una sola historia: el autor preguntó qué hace exactamente

@@ -273,6 +273,15 @@ pub mod ice;
 /// Ungated on purpose: it is arithmetic over ranks with no dependencies, and
 /// three separate copies of it existed behind three different feature gates.
 pub mod rank_fusion;
+// Retrieval quality metrics: recall@k, precision@k, MRR, MAP, nDCG. Ungated.
+//
+// Deliberately a `//` comment and not a `///` doc comment. Measured on rustc
+// 1.98.1: an OUTER doc comment on a `pub mod x;` declaration makes rustdoc
+// resolve the module's own `//!` documentation in the PARENT scope, so every
+// intra-doc link inside the module dangles. Adding four lines of courtesy here
+// broke eight links in `retrieval_metrics` at once, and the gate reported one of
+// the eight. The module documents itself; this line just says where it is.
+pub mod retrieval_metrics;
 pub use ice::IceCandidateType;
 #[cfg(feature = "autonomous")]
 pub mod inspector;
