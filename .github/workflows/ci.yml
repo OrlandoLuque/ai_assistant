@@ -28,7 +28,7 @@ env:
   CARGO_HTTP_LOW_SPEED_LIMIT: 5
   CARGO_HTTP_TIMEOUT: 120
   # Standard test set — covers core + all lightweight opt-in features
-  FEATURES_STD: "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing,local-inference,ffi"
+  FEATURES_STD: "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing,local-inference,ffi,tabular"
   # Heavy networking features (separate due to quinn/rustls deps)
   FEATURES_NETWORK: "full,distributed-network,p2p,gpu-sharing,server-axum,server-cluster"
   # The smallest set the crate actually builds with (V267). Every other job here
@@ -326,6 +326,40 @@ jobs:
             --ignore RUSTSEC-2026-0195 \
             --ignore RUSTSEC-2026-0192 \
             --ignore RUSTSEC-2026-0257
+
+  # The expensive tabular engine, on its own because it drags 397 crates and
+  # 49.3 MiB (measured). Putting it in FEATURES_STD would slow every other job
+  # for a feature most builds will never enable.
+  #
+  # And it is here at all because `tabular` was in NEITHER feature set when it
+  # was written: `full` does not include it and this file did not mention it, so
+  # 45 tests ran on one laptop and nowhere else. That is the standing hazard this
+  # repository already knows about — 27 declared features no CI job compiled —
+  # and the fix is to add the job when the feature lands, not later.
+  tabular-polars:
+    name: Tabular — Polars engine and cross-engine agreement
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: tabular-polars
+      # Both engines, so `tabular::both_engines_agree` is compiled at all. Those
+      # three tests exist only when both features are on, and they are the ones
+      # that would catch the two backends disagreeing.
+      - name: Test both engines
+        run: cargo test --features "tabular,tabular-polars" --lib tabular
+      - name: Clippy, both engines
+        run: cargo clippy --features "tabular,tabular-polars" --lib -- -D warnings
+      # Each engine alone must also build: enabling only `tabular-polars` once
+      # compiled NO module at all, because the umbrella feature always drags
+      # SQLite in and the gate read `cfg(feature = "tabular")`. A silent nothing,
+      # not an error.
+      - name: SQLite engine alone
+        run: cargo check --no-default-features --features "tabular" --lib
+      - name: Polars engine alone
+        run: cargo check --no-default-features --features "tabular-polars" --lib
 
   feature-matrix:
     name: Feature Matrix (${{ matrix.features }})
