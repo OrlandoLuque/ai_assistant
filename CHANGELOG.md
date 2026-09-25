@@ -5,6 +5,75 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v225 (2026-09-25) — V350: un cross-encoder de verdad, por el motor que ya llevabamos (0.2.309)
+
+`src/rerank_service.rs`. Esta crate tenia tres rerankers y ninguno usaba un modelo. El mejor de
+ellos, `CrossEncoderReranker`, puntua **solapamiento de conjuntos de palabras** por defecto:
+reordena resultados semanticos por vocabulario literal, que es lo que ya hizo la busqueda por
+palabras clave.
+
+Y mientras, `llama-server` — **el mismo binario que esta crate ya conoce como
+`AiProvider::LlamaCpp`** — acepta `--rerank` y sirve `POST /v1/rerank`. Medido en el build que
+embarca el kit:
+
+    --rerank, --reranking    enable reranking endpoint on server (default: disabled)
+    --pooling {none,mean,cls,last,rank}
+
+Asi que un cross-encoder autentico no necesitaba dependencia nueva de Rust, ni ONNX, ni codigo
+de inferencia. Necesitaba **un cliente**. Ungated, porque `ureq` y `serde_json` son dependencias
+incondicionales.
+
+Un formato cubre cuatro servicios: llama.cpp, Jina, Cohere y TEI hablan aproximadamente la misma
+forma (`results[]` con `index` y `relevance_score`).
+
+### Lo que se NIEGA a hacer, y por que
+
+- **Nunca cae a una heuristica.** Si el servicio no esta o contesta algo inservible, devuelve
+  error y decide quien llama. Puntuar solapamiento de palabras en silencio daria un orden
+  plausible **indistinguible de uno real** — que es el defecto que este modulo existe para
+  quitar, no para mudar de sitio. Es el patron de N55, y hay un test que lo comprueba contra un
+  puerto donde no escucha nadie.
+- **Valida cada indice.** Un indice fuera de la lista enviada es un error de protocolo, no algo
+  que recortar. Hay un fallo abierto (ggml-org/llama.cpp#16407) que reporta salidas de rerank
+  incorrectas con varios modelos, asi que la respuesta se trata como entrada no confiable.
+- **Ordena aunque el servicio ya deberia.** Un reranker cuya salida no viene ordenada es
+  indistinguible de uno cuyos scores estan mal.
+- **Reporta lo que no pudo puntuar** en `Reranking::unscored`, en su orden original.
+  Descartarlo en silencio es lo que hacia `rag_methods::LlmReranker`: diez documentos entraban y
+  salian cinco, en un metodo llamado `rerank`.
+
+### Verificacion, y el test que era decorativo
+
+13 tests, y **las SEIS mutaciones de los invariantes cazadas**: indice recortado en vez de
+rechazado, orden del servicio confiado, documentos sin puntuar descartados, score ausente por
+defecto a 0,0, `Debug` filtrando el bearer token, y el timeout sin llegar al agente.
+
+La ultima **sobrevivio en la primera pasada**, y el motivo merece quedar escrito. Mi borrador
+guardaba un `timeout` y luego llamaba a `ureq::post` directo, asi que el campo documentaba un
+comportamiento que el codigo no tenia — el defecto exacto de toda esta semana, reintroducido por
+mi al escribir el modulo que existe para quitarlo. Lo corregi a un `Agent` construido una vez,
+y escribi un test llamado `the_configured_timeout_reaches_the_agent`… **que solo comprobaba que
+la estructura recordaba el numero**. Un test cuyo nombre promete mas de lo que verifica es el
+mismo defecto con un tick verde.
+
+Ahora mide el reloj: levanta un `TcpListener`, acepta la conexion y **no contesta nunca**. Con el
+timeout aplicado falla en 300 ms; sin el, la mutacion tarda **10,0019 s** y el test lo dice con
+ese numero. (Y el puerto se busca en `18200..18300`, no con `bind(0)`: el rango efimero es el
+mismo del que sale el puerto de origen de una conexion saliente, y colisionan.)
+
+### Y dos enlaces que habrian sido enlaces a item privado
+
+El borrador citaba `crate::config::AiProvider::LlamaCpp`. Pero **`mod config;` es privado**
+(`lib.rs:159`) y la ruta publica es `crate::AiProvider`, via el `pub use` de la linea 368. Igual
+con `AiConfig`. Corregido antes de escribir el fichero, con una comprobacion de que no queda
+ninguna ruta por el modulo privado — la segunda clase de aviso que vigila la puerta de enlaces.
+
+### Lo que sigue
+
+**Nada del pipeline lo llama todavia**, y eso esta escrito en `docs/CAPABILITIES.md` como
+`parcial`, no como hecho. Cablearlo es N96, y antes conviene N102 (el corpus) para poder decir
+con numeros si mejora — que es justo lo que el modulo de V349 hace posible.
+
 ## [Unreleased] - v224 (2026-09-25) — V349: el instrumento que faltaba para poder afirmar algo del RAG (0.2.308)
 
 `src/retrieval_metrics.rs`. Hasta ahora la crate tenia fusion de rangos, tres rerankers, pesos

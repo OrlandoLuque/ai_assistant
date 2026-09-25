@@ -2052,6 +2052,12 @@ pub mod priority_queue;
 pub mod prompt_optimizer;
 pub mod quantization;
 pub mod regeneration;
+// Asking a real cross-encoder to rerank, over HTTP. Ungated: `ureq` and
+// `serde_json` are unconditional dependencies.
+//
+// A `//` comment and not `///` on purpose — see the note above
+// `pub mod retrieval_metrics;`.
+pub mod rerank_service;
 pub mod reranker;
 
 pub use reranker::{

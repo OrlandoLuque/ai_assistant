@@ -68,7 +68,7 @@ findings are what most of these notes are.
 | Cross-encoder reranking | `reranker::CrossEncoderReranker` | si | n/a | n/a | n/a | n/a | **parcial** | 2026-09-24 | its `default_scorer` is **Jaccard**, so it reranks semantic results by literal word overlap. N96 |
 | Diversity (MMR) | `reranker::DiversityReranker` | si | n/a | n/a | n/a | n/a | parcial | 2026-09-24 | exists; the pipeline never calls it |
 | Diversity (MMR), again | `rag_methods::MmrScorer` | si | n/a | n/a | n/a | n/a | **parcial** | 2026-09-24 | **a second MMR.** 14 references, all 14 inside `rag_methods.rs` — definition, its own `select`, eight tests. N109 |
-| Reranking with a real cross-encoder | — | **no** | no | no | no | no | **no** | 2026-09-24 | no model-backed reranker anywhere. The `llama-server` the kit already carries accepts `--rerank` and serves `/v1/rerank`; nothing asks it. N96 |
+| Reranking with a real cross-encoder | `rerank_service::HttpReranker` | si | no | no | no | no | **parcial** | 2026-09-25 | speaks Jina-shaped `/v1/rerank`, so llama.cpp `--rerank`, Jina, Cohere and TEI. **Nothing in the pipeline calls it yet** — that is N96. Never falls back to a heuristic; validates every returned index; reports what it could not score |
 | Cascade reranking | `reranker::CascadeReranker` | si | n/a | n/a | n/a | n/a | parcial | 2026-09-24 | same: exists, uncalled |
 | Sentence-window expansion | `RagPipeline::apply_sentence_window` | si | — | — | — | — | hecho | 2026-09-24 | neighbours inherit the hit's relevance |
 | Parent-document retrieval | `RagPipeline::apply_parent_document` | si | — | — | — | — | hecho | 2026-09-24 | parent inherits from its best child |
@@ -123,7 +123,7 @@ Checked 2026-09-24. Everything here is behind the `eval` feature.
 | HaluEval | `loaders::halueval` | si | si | no | no | — | hecho | 2026-09-24 | hallucination detection |
 | FactScore | `loaders::factscore` | si | si | no | no | — | hecho | 2026-09-24 | atomic-fact precision |
 | RAGAS | `loaders::ragas` | si | si | no | no | — | hecho | 2026-09-24 | RAG faithfulness / relevance |
-| **Retrieval quality (recall@k, MRR, nDCG)** | — | **no** | no | no | no | no | **no** | 2026-09-24 | **not one occurrence of any of the three in the crate.** N102 |
+| **Retrieval quality (recall@k, MRR, nDCG)** | `retrieval_metrics` | si | no | no | no | no | **parcial** | 2026-09-25 | the arithmetic exists and is mutation-tested; **no corpus and no caller yet**. Also `precision_at_k`, MAP, `summarise`. N102 |
 | Agentic / tool-use benchmarks | — | no | no | no | no | no | **no** | 2026-09-24 | own harness categories exist (`agentic_code`, `agentic_rust`); no public benchmark |
 | Prompt-injection / jailbreak suite | — | no | no | no | no | no | **no** | 2026-09-24 | the guardrails exist; nothing measures them against a public corpus |
 | Long-context suite | — | no | no | no | no | no | **no** | 2026-09-24 | FreshContext and the budget allocator are unmeasured |
