@@ -5,6 +5,69 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v229 (2026-09-26) — V353: el segundo motor, y las comprobaciones que suben de sitio (0.2.312)
+
+`src/tabular/polars_engine.rs`. Detras de `tabular-polars`, que no es el motor por defecto y no
+deberia serlo: **+49,3 MiB de binario y 397 crates**, medido. La razon para encenderlo es concreta
+y no es moda — **SQLite no lee Parquet**, y asi es como viaja la analitica en empresa.
+
+### La decision de arquitectura, que es lo importante de esta version
+
+`first_keyword`, `has_trailing_statement` y la lista blanca **subieron al modulo padre**, detras de
+`ensure_single_read_only_statement`. No es limpieza: es que **Polars SQL acepta `INSERT`, `DELETE`,
+`TRUNCATE` y `DROP TABLE`, y no tiene equivalente de `Statement::readonly()`** — no hay a quien
+preguntar si una sentencia escribe.
+
+O sea que el motor de Polars tiene **una capa menos disponible** que el de SQLite. Con copias
+propias en cada motor, el debil habria sido el que perdiera una comprobacion en silencio, y todos
+los tests habrian seguido verdes. Es la forma de [[project_masked_defect_pattern]]: proteger en
+todas las configuraciones, no solo en la que fallo. **Un motor puede añadir capas encima. No puede
+tener menos.**
+
+Y sqlite_engine.rs adelgazo 5.800 caracteres al dejar de tener copias.
+
+### Los tres tests que valen por el resto
+
+`tabular::both_engines_agree`, compilado **solo cuando las dos features estan activas** — que es el
+punto: es el test que cazaria una diferencia y no puede existir en una compilacion con un motor.
+
+- **los mismos datos**: seis consultas (`SUM`, `COUNT`, `AVG`, `MIN`/`MAX`, `WHERE`, `GROUP BY`) y
+  las mismas filas en ambos;
+- **la misma variante de error** para nueve escrituras y evasiones. No basta con que ambos fallen:
+  «SQL malo» y «me pediste escribir» son cosas distintas para quien llama;
+- **y los mismos permisos**. La otra mitad, y la que caza una guarda demasiado celosa: una que
+  rechaza SQL valido es igual de mala, porque la gente la rodea.
+
+Los nombres de columna **no** se comparan, y esta escrito por que: SQLite llama `SUM(importe)` a lo
+que Polars llama `importe`. Es cosmetica de dialectos, no desacuerdo sobre los datos.
+
+### Una trampa de features cazada antes de llegar a ningun sitio
+
+`tabular-polars` a solas **no compilaba el modulo en absoluto**. No daba error: daba **nada**. Quien
+activara solo Polars se llevaba una dependencia de 397 crates y ni un tipo, porque la puerta era
+`#[cfg(feature = "tabular")]` y la feature paraguas arrastra siempre SQLite.
+
+Ahora es `any(feature = "tabular", feature = "tabular-polars")`, y verificado:
+`--no-default-features --features tabular-polars` compila. Es la familia de
+[[feedback_dep_vs_feature_drift]] con otro disfraz — un silencio, no un error.
+
+### Dos decisiones del motor nuevo
+
+- **Un `u64` que no cabe en `i64` pasa a texto, no a numero truncado.** Truncar reportaria otra
+  cifra con total confianza; el texto no pierde nada.
+- **Los tipos que no conozco se renderizan, no se descartan.** Fechas, listas, estructuras salen
+  como texto. Perder una columna en silencio seria peor que enseñarla mal.
+
+### Verificacion
+
+45 tests de `tabular` (30 antes), 8.946 en la libreria, clippy `--all-targets -D warnings` limpio,
+y las tres combinaciones de features comprobadas por separado: `tabular` sola, `tabular-polars`
+sola, y ambas.
+
+**Cinco mutaciones, cinco cazadas.** Las dos primeras — desactivar la comprobacion compartida, e
+ignorar la lista blanca — rompen los tests de **AMBOS** motores, que es la prueba de que el reparto
+sostiene a los dos y no es decoracion.
+
 ## [Unreleased] - v228 (2026-09-26) — V352: preguntar a una tabla, tres afirmaciones falsas mias, y un AVG que mentia (0.2.311)
 
 `src/tabular/`: el trait `TableEngine`, los tipos y el motor de SQLite. Detras de la feature

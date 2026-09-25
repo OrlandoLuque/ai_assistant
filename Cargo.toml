@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.311"
+version = "0.2.312"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -143,7 +143,7 @@ tabular = ["tabular-sqlite"]
 tabular-sqlite = ["rusqlite", "csv"]
 # +49.3 MiB of binary and 397 crates, measured 2026-09-24. Only pay it if
 # you need Parquet or files that do not fit in memory.
-tabular-polars = []
+tabular-polars = ["polars"]
 
 # Research: academic search APIs (arXiv, Semantic Scholar, PubMed, OpenAlex, Crossref),
 # BibTeX, literature review, and the bridge that ingests found papers into the RAG index.
@@ -659,6 +659,13 @@ rusqlite = { version = "0.31", features = ["bundled"], optional = true }
 # Used instead of splitting on commas because quoted fields with embedded
 # commas and newlines are a classic source of silently wrong tables.
 csv = { version = "1", optional = true }
+# Tabular data, the expensive engine (feature `tabular-polars`). MEASURED
+# 2026-09-24 against a hello-world with the same release profile: 397 crates
+# in the graph vs 1, 756 s cold compile vs 1 s, and 49.4 MiB of binary vs
+# 131 KB. Only worth it for Parquet or files that do not fit in memory.
+polars = { version = "0.44", default-features = false, features = [
+    "lazy", "csv", "parquet", "sql", "dtype-full",
+], optional = true }
 # Optional AES-GCM for encrypted knowledge packages
 aes-gcm = { version = "0.10", optional = true }
 # Optional bincode for binary internal storage (faster than JSON)

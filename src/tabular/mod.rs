@@ -44,6 +44,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "tabular-polars")]
+pub mod polars_engine;
 #[cfg(feature = "tabular-sqlite")]
 pub mod sqlite_engine;
 
@@ -378,6 +380,173 @@ pub trait TableEngine: Send {
     fn engine_name(&self) -> &'static str;
 }
 
+// ---------------------------------------------------------------------------
+// Statement checks shared by every engine
+// ---------------------------------------------------------------------------
+
+/// Statement kinds any engine will run.
+///
+/// A whitelist, not a blacklist: a blacklist of dangerous keywords has to be
+/// complete to work, and it will not be. `PRAGMA` is absent deliberately — some
+/// pragmas only report, others change behaviour (`writable_schema = ON` lets you
+/// corrupt the schema), and telling them apart is exactly the kind of judgement
+/// that goes stale. Nothing is lost: [`TableEngine::describe`] covers the
+/// legitimate use and is better, because it answers from our own data.
+pub const ALLOWED_OPENINGS: &[&str] = &["SELECT", "WITH", "VALUES"];
+
+/// The first SQL keyword, uppercased, with leading comments and whitespace
+/// skipped.
+///
+/// Comments are skipped rather than rejected because `-- what this asks\nSELECT
+/// …` is perfectly legitimate, and a model that explains itself in a comment
+/// should not be refused. But they have to be skipped *correctly*, or
+/// `--\nATTACH` reads as no keyword at all.
+pub fn first_keyword(sql: &str) -> String {
+    let b = sql.as_bytes();
+    let mut i = 0usize;
+    loop {
+        while i < b.len() && (b[i] as char).is_whitespace() {
+            i += 1;
+        }
+        if i + 1 < b.len() && b[i] == b'-' && b[i + 1] == b'-' {
+            while i < b.len() && b[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        // An unterminated block comment runs to the end, which leaves no
+        // keyword — and no keyword is refused, which is the safe direction.
+        if i + 1 < b.len() && b[i] == b'/' && b[i + 1] == b'*' {
+            i += 2;
+            while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+                i += 1;
+            }
+            i = (i + 2).min(b.len());
+            continue;
+        }
+        break;
+    }
+    let start = i;
+    while i < b.len() && (b[i] as char).is_ascii_alphabetic() {
+        i += 1;
+    }
+    sql[start..i].to_ascii_uppercase()
+}
+
+/// Is there a second statement after the first `;`?
+///
+/// **Measured, and the reason this is ours and not the database's:** SQLite's
+/// `Connection::prepare` does *not* reject a second statement.
+/// `"SELECT 1; DROP TABLE ventas"` prepared fine, ran the `SELECT`, returned one
+/// row and **discarded the rest without a word**. The `DROP` never executed, so
+/// nothing was destroyed — but that is SQLite's design doing the work, not a
+/// check, and "the second half of your query was silently thrown away" is a
+/// wrong answer even when it is a safe one.
+///
+/// A plain search for `;` would be wrong: it appears inside string literals
+/// (`SELECT ';'`), inside quoted identifiers, and inside comments. So this walks
+/// the text tracking what it is inside, and only a top-level `;` counts.
+pub fn has_trailing_statement(sql: &str) -> bool {
+    let b = sql.as_bytes();
+    let mut i = 0usize;
+    let mut after_semicolon: Option<usize> = None;
+
+    while i < b.len() {
+        match b[i] {
+            // Single-quoted string.
+            //
+            // No special case for the `''` escape, deliberately: this scan only
+            // needs to know whether a character is inside a literal, and `''`
+            // flips that state twice with **no character between the two quotes**
+            // to misclassify. Handling it explicitly changed no answer — mutating
+            // that branch away was how the redundancy was found.
+            b'\'' => {
+                i += 1;
+                while i < b.len() && b[i] != b'\'' {
+                    i += 1;
+                }
+                i += 1;
+            }
+            // Double-quoted identifier, same reasoning.
+            b'"' => {
+                i += 1;
+                while i < b.len() && b[i] != b'"' {
+                    i += 1;
+                }
+                i += 1;
+            }
+            // SQLite also accepts [bracketed] and `backticked` identifiers.
+            b'[' => {
+                while i < b.len() && b[i] != b']' {
+                    i += 1;
+                }
+                i += 1;
+            }
+            b'`' => {
+                i += 1;
+                while i < b.len() && b[i] != b'`' {
+                    i += 1;
+                }
+                i += 1;
+            }
+            b'-' if i + 1 < b.len() && b[i + 1] == b'-' => {
+                while i < b.len() && b[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'/' if i + 1 < b.len() && b[i + 1] == b'*' => {
+                i += 2;
+                while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(b.len());
+            }
+            b';' => {
+                after_semicolon = Some(i + 1);
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+
+    // A trailing `;` on its own is fine — plenty of tools add one. Anything else
+    // after it is not, comments included: the simpler rule is easier to be sure
+    // about.
+    match after_semicolon {
+        None => false,
+        Some(rest) => !sql[rest..].trim().is_empty(),
+    }
+}
+
+/// The checks every engine must pass a query through before running it.
+///
+/// **Shared on purpose.** Polars' SQL dialect accepts `INSERT`, `DELETE` and
+/// `DROP`, and has no equivalent of SQLite's `Statement::readonly()`. If each
+/// engine carried its own checks, the Polars one would be born weaker than the
+/// SQLite one and every test would still pass — the shape of
+/// the masked-defect pattern this project keeps hitting: the one configuration
+/// that fused without reranking returned nothing, while five others looked fine.
+/// (Not a link — that name is a memory file, and `[…]` in rustdoc means a symbol.)
+///
+/// An engine may add layers **on top** of this. It may not have fewer.
+pub fn ensure_single_read_only_statement(sql: &str) -> Result<(), TableError> {
+    if has_trailing_statement(sql) {
+        return Err(TableError::MultipleStatements);
+    }
+    let opening = first_keyword(sql);
+    if !ALLOWED_OPENINGS.contains(&opening.as_str()) {
+        return Err(TableError::NotReadOnly(format!(
+            "a query must start with SELECT, WITH or VALUES; this one starts with {}",
+            if opening.is_empty() {
+                "no keyword at all".to_string()
+            } else {
+                opening
+            }
+        )));
+    }
+    Ok(())
+}
+
 /// Is `name` usable as a table identifier?
 ///
 /// Deliberately narrow: letters, digits and underscores, starting with a
@@ -390,6 +559,137 @@ pub fn is_valid_table_name(name: &str) -> bool {
         _ => return false,
     }
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// The two engines must agree, or one of them is wrong and nobody can tell which.
+///
+/// Compiled only when both are enabled. That is the whole point: this is the test
+/// that would catch a difference, and it cannot exist in a build that has one
+/// engine.
+#[cfg(all(test, feature = "tabular-sqlite", feature = "tabular-polars"))]
+mod both_engines_agree {
+    use super::*;
+    use std::io::Write;
+
+    fn csv_file(body: &str) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static N: AtomicUsize = AtomicUsize::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "ai_assistant_both_{}_{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let p = dir.join("ventas.csv");
+        let mut f = std::fs::File::create(&p).expect("create");
+        f.write_all(body.as_bytes()).expect("write");
+        p
+    }
+
+    const BODY: &str =
+        "region,trimestre,importe\nnorte,Q1,100\nsur,Q1,250\nnorte,Q3,400\nsur,Q3,50\n";
+
+    #[test]
+    fn the_same_questions_get_the_same_answers() {
+        let p = csv_file(BODY);
+
+        let mut sq = sqlite_engine::SqliteTableEngine::new().expect("sqlite");
+        sq.load("ventas", &p).expect("sqlite load");
+        let mut pl = polars_engine::PolarsTableEngine::new();
+        pl.load("ventas", &p).expect("polars load");
+
+        // Both must see the same shape.
+        let (a, b) = (
+            sq.describe("ventas").expect("a"),
+            pl.describe("ventas").expect("b"),
+        );
+        assert_eq!(a.row_count, b.row_count, "row counts differ");
+        assert_eq!(
+            a.columns.iter().map(|c| &c.name).collect::<Vec<_>>(),
+            b.columns.iter().map(|c| &c.name).collect::<Vec<_>>(),
+            "column names differ"
+        );
+
+        // And the same answers. Column NAMES are not compared: SQLite calls an
+        // aggregate `SUM(importe)` and Polars keeps `importe`, which is a
+        // cosmetic difference between dialects and not a disagreement about the
+        // data. Aliasing with AS is how a caller gets a stable name from either.
+        for sql in [
+            "SELECT SUM(importe) AS total FROM ventas",
+            "SELECT COUNT(*) AS n FROM ventas",
+            "SELECT AVG(importe) AS media FROM ventas",
+            "SELECT MIN(importe) AS lo, MAX(importe) AS hi FROM ventas",
+            "SELECT SUM(importe) AS total FROM ventas WHERE trimestre = 'Q3'",
+            "SELECT region, SUM(importe) AS total FROM ventas GROUP BY region ORDER BY region",
+        ] {
+            let ra = sq.query(sql, 100).expect("sqlite query");
+            let rb = pl.query(sql, 100).expect("polars query");
+            assert_eq!(ra.row_count, rb.row_count, "row count differs for: {sql}");
+            assert_eq!(
+                ra.rows, rb.rows,
+                "the two engines disagree about the DATA for: {sql}\n  \
+                 sqlite: {:?}\n  polars: {:?}",
+                ra.rows, rb.rows
+            );
+        }
+    }
+
+    #[test]
+    fn both_engines_refuse_the_same_statements() {
+        // A refusal that only one engine makes is a hole in the other, and the
+        // shared checks exist to make that impossible. This is the test that
+        // notices if somebody gives one engine its own copy again.
+        let p = csv_file(BODY);
+        let mut sq = sqlite_engine::SqliteTableEngine::new().expect("sqlite");
+        sq.load("ventas", &p).expect("load");
+        let mut pl = polars_engine::PolarsTableEngine::new();
+        pl.load("ventas", &p).expect("load");
+
+        for sql in [
+            "DELETE FROM ventas",
+            "UPDATE ventas SET importe = 0",
+            "DROP TABLE ventas",
+            "INSERT INTO ventas VALUES ('x', 'Q4', 1)",
+            "CREATE TABLE otra (a INTEGER)",
+            "PRAGMA table_info(ventas)",
+            "ATTACH DATABASE 'x.db' AS x",
+            "SELECT 1; DROP TABLE ventas",
+            "-- SELECT\nDROP TABLE ventas",
+        ] {
+            let ea = sq.query(sql, 10).expect_err("sqlite must refuse");
+            let eb = pl.query(sql, 10).expect_err("polars must refuse");
+            // The same variant, not merely both failing: "bad SQL" and "you
+            // asked me to write" are different statements to the caller.
+            assert_eq!(
+                std::mem::discriminant(&ea),
+                std::mem::discriminant(&eb),
+                "different refusals for {sql}: sqlite {ea:?} vs polars {eb:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn both_engines_allow_the_same_legitimate_queries() {
+        // The other half, and the one that catches a check grown too eager: a
+        // shared guard that refuses valid SQL is as bad as one that permits
+        // invalid SQL, because people route around it.
+        let p = csv_file(BODY);
+        let mut sq = sqlite_engine::SqliteTableEngine::new().expect("sqlite");
+        sq.load("ventas", &p).expect("load");
+        let mut pl = polars_engine::PolarsTableEngine::new();
+        pl.load("ventas", &p).expect("load");
+
+        for sql in [
+            "SELECT ';' AS punto",
+            "-- una nota\nSELECT COUNT(*) AS n FROM ventas",
+            "/* otra */ SELECT COUNT(*) AS n FROM ventas",
+            "SELECT COUNT(*) AS n FROM ventas;",
+            "WITH t AS (SELECT importe FROM ventas) SELECT SUM(importe) AS total FROM t",
+        ] {
+            assert!(sq.query(sql, 10).is_ok(), "sqlite refused: {sql}");
+            assert!(pl.query(sql, 10).is_ok(), "polars refused: {sql}");
+        }
+    }
 }
 
 #[cfg(test)]

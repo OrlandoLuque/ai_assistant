@@ -1593,7 +1593,12 @@ pub mod table_extraction;
 // finds tables INSIDE text; this asks questions of them.
 //
 // A `//` comment and not `///` — see the note above `pub mod retrieval_metrics;`.
-#[cfg(feature = "tabular")]
+// `any(...)` and not just `feature = "tabular"`: the umbrella feature defaults to
+// the free engine, so `tabular` always drags SQLite in. Somebody who wants only
+// Polars enables `tabular-polars`, and with a bare `feature = "tabular"` gate they
+// would get a dependency on 397 crates and **no module at all** — a silent
+// nothing, which is the `dep:` versus implicit-feature trap in another costume.
+#[cfg(any(feature = "tabular", feature = "tabular-polars"))]
 pub mod tabular;
 
 #[cfg(feature = "documents")]

@@ -53,8 +53,8 @@ use rusqlite::types::ValueRef;
 use rusqlite::{Connection, OpenFlags};
 
 use super::{
-    is_valid_table_name, Cell, ColumnInfo, LoadOptions, QueryResult, TableEngine, TableError,
-    TableInfo,
+    ensure_single_read_only_statement, is_valid_table_name, Cell, ColumnInfo, LoadOptions,
+    QueryResult, TableEngine, TableError, TableInfo,
 };
 
 /// The type a column was given after looking at its values.
@@ -224,147 +224,6 @@ fn survey_column(values: &[String], options: &LoadOptions) -> Survey {
     }
 }
 
-/// The first SQL keyword, uppercased, with leading comments and whitespace
-/// skipped.
-///
-/// Comments are skipped rather than rejected because `-- what this asks\nSELECT
-/// …` is perfectly legitimate, and a model that explains itself in a comment
-/// should not be refused. But they have to be skipped *correctly*, or
-/// `--\nATTACH` reads as no keyword at all.
-fn first_keyword(sql: &str) -> String {
-    let b = sql.as_bytes();
-    let mut i = 0usize;
-    loop {
-        // Whitespace.
-        while i < b.len() && (b[i] as char).is_whitespace() {
-            i += 1;
-        }
-        // Line comment.
-        if i + 1 < b.len() && b[i] == b'-' && b[i + 1] == b'-' {
-            while i < b.len() && b[i] != b'\n' {
-                i += 1;
-            }
-            continue;
-        }
-        // Block comment. An unterminated one runs to the end, which leaves no
-        // keyword — and no keyword is refused, which is the safe direction.
-        if i + 1 < b.len() && b[i] == b'/' && b[i + 1] == b'*' {
-            i += 2;
-            while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
-                i += 1;
-            }
-            i = (i + 2).min(b.len());
-            continue;
-        }
-        break;
-    }
-    let start = i;
-    while i < b.len() && (b[i] as char).is_ascii_alphabetic() {
-        i += 1;
-    }
-    sql[start..i].to_ascii_uppercase()
-}
-
-/// Is there a second statement after the first `;`?
-///
-/// **This exists because `Connection::prepare` does not reject one.** Measured:
-/// `"SELECT 1; DROP TABLE ventas"` prepared fine, ran the `SELECT`, returned one
-/// row, and **discarded the rest without a word**. `sqlite3_prepare_v2` stops at
-/// the first statement and hands back the tail; rusqlite does not surface it.
-///
-/// The `DROP` did not execute, so nothing was destroyed — but that is SQLite's
-/// design doing the work, not a check of ours, and "the second half of your query
-/// was silently thrown away" is a wrong answer even when it is a safe one.
-///
-/// A plain search for `;` would be wrong: it appears inside string literals
-/// (`SELECT ';'`), inside quoted identifiers, and inside comments. So this walks
-/// the text tracking what it is inside, and only a top-level `;` counts.
-fn has_trailing_statement(sql: &str) -> bool {
-    let b = sql.as_bytes();
-    let mut i = 0usize;
-    // Position just after a top-level `;`, if we have seen one.
-    let mut after_semicolon: Option<usize> = None;
-
-    while i < b.len() {
-        match b[i] {
-            // Single-quoted string.
-            //
-            // No special case for the `''` escape, and that is deliberate: this
-            // scan only needs to know whether a given character is inside a
-            // literal, and `''` flips that state twice with **no character
-            // between the two quotes** to misclassify. So close-then-open lands
-            // in exactly the same place.
-            //
-            // The first version did handle it explicitly, and mutating that
-            // branch away changed no answer — which is how the redundancy was
-            // found. Dead code with a plausible comment is worse than no code.
-            b'\'' => {
-                i += 1;
-                while i < b.len() && b[i] != b'\'' {
-                    i += 1;
-                }
-                i += 1;
-            }
-            // Double-quoted identifier, same reasoning.
-            b'"' => {
-                i += 1;
-                while i < b.len() && b[i] != b'"' {
-                    i += 1;
-                }
-                i += 1;
-            }
-            // SQLite also accepts [bracketed] and `backticked` identifiers.
-            b'[' => {
-                while i < b.len() && b[i] != b']' {
-                    i += 1;
-                }
-                i += 1;
-            }
-            b'`' => {
-                i += 1;
-                while i < b.len() && b[i] != b'`' {
-                    i += 1;
-                }
-                i += 1;
-            }
-            b'-' if i + 1 < b.len() && b[i + 1] == b'-' => {
-                while i < b.len() && b[i] != b'\n' {
-                    i += 1;
-                }
-            }
-            b'/' if i + 1 < b.len() && b[i + 1] == b'*' => {
-                i += 2;
-                while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
-                    i += 1;
-                }
-                i = (i + 2).min(b.len());
-            }
-            b';' => {
-                after_semicolon = Some(i + 1);
-                i += 1;
-            }
-            _ => i += 1,
-        }
-    }
-
-    // A trailing `;` on its own is fine — plenty of tools add one. What is not
-    // fine is anything else after it, comments included: `SELECT 1; -- x` is
-    // harmless, but allowing it means allowing the scan to stop early, and the
-    // simpler rule is easier to be sure about.
-    match after_semicolon {
-        None => false,
-        Some(rest) => !sql[rest..].trim().is_empty(),
-    }
-}
-
-/// Statement kinds this engine will run.
-///
-/// A whitelist, not a blacklist: a blacklist of dangerous keywords has to be
-/// complete to work, and it will not be. `PRAGMA` is absent deliberately —
-/// some pragmas only report, others change behaviour, and telling them apart is
-/// exactly the kind of judgement that goes stale.
-const ALLOWED_OPENINGS: &[&str] = &["SELECT", "WITH", "VALUES"];
-
 /// Quote an identifier for SQLite by doubling any embedded quote.
 ///
 /// Only ever called on names that already passed [`is_valid_table_name`] or
@@ -523,24 +382,10 @@ impl TableEngine for SqliteTableEngine {
     }
 
     fn query(&self, sql: &str, limit: usize) -> Result<QueryResult, TableError> {
-        if has_trailing_statement(sql) {
-            return Err(TableError::MultipleStatements);
-        }
-
-        // Checked BEFORE `prepare`, because preparing an `ATTACH` already opens
-        // the file: by the time SQLite could tell us anything, the damage of
-        // touching the filesystem is done.
-        let opening = first_keyword(sql);
-        if !ALLOWED_OPENINGS.contains(&opening.as_str()) {
-            return Err(TableError::NotReadOnly(format!(
-                "a query must start with SELECT, WITH or VALUES; this one starts with {}",
-                if opening.is_empty() {
-                    "no keyword at all".to_string()
-                } else {
-                    opening
-                }
-            )));
-        }
+        // The shared layers, before `prepare` — because preparing an `ATTACH`
+        // already opens the file, and by the time SQLite could tell us anything
+        // the damage of touching the filesystem is done.
+        ensure_single_read_only_statement(sql)?;
 
         let mut stmt = self.conn.prepare(sql).map_err(|e| match e {
             rusqlite::Error::MultipleStatement => TableError::MultipleStatements,
@@ -605,6 +450,9 @@ impl TableEngine for SqliteTableEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Only the tests exercise these directly; the engine reaches them through
+    // `ensure_single_read_only_statement`.
+    use crate::tabular::{first_keyword, has_trailing_statement};
     use std::io::Write;
 
     /// Write a fixture into a directory nobody else uses.

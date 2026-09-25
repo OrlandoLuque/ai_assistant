@@ -120,7 +120,8 @@ Added 2026-09-26. Behind the `tabular` feature, which defaults to
 | Describe a table's columns | `TableEngine::describe` | si | no | no | no | no | **parcial** | 2026-09-26 | the tool a model needs *before* `query`: one that does not know the column names invents SQL |
 | Say what counts as a missing value | `LoadOptions` | si | no | no | no | no | **parcial** | 2026-09-26 | only the empty field by default. Anything else is **reported, never guessed** |
 | Warn when an answer cannot be trusted | `QueryResult::warnings` | si | no | no | no | no | **parcial** | 2026-09-26 | required field. A mixed numeric column makes `AVG` and `COUNT` silently wrong; the result cannot come back without saying so |
-| Parquet, lazy evaluation, out-of-core | `tabular-polars` | **no** | no | no | no | no | **no** | 2026-09-26 | feature declared, engine not written. **+49.3 MiB** measured |
+| Parquet, lazy evaluation, out-of-core | `tabular::polars_engine` | si | no | no | no | no | **parcial** | 2026-09-26 | **+49.3 MiB** of binary and 397 crates, measured. SQLite cannot read Parquet — that is the whole reason |
+| The two engines agree | `tabular::both_engines_agree` tests | si | n/a | n/a | n/a | n/a | hecho | 2026-09-26 | same data for six queries, **same error variant** for nine refusals, and the same permissions. Compiled only when both features are on |
 | `list_tables` / `describe_table` / `query_table` as MCP tools | — | — | — | **no** | no | no | **no** | 2026-09-26 | waits on N39's registry consolidation, now decided |
 | Extract tables from inside text | `table_extraction` | si | — | — | — | — | hecho | 2026-09-26 | a different job: finds tables in prose. Does not query them |
 
