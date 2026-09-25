@@ -108,6 +108,33 @@ Three layers of the same thing, each invisible on its own:
 
 ---
 
+## Tabular data
+
+Added 2026-09-26. Behind the `tabular` feature, which defaults to
+`tabular-sqlite`. Enabling `tabular` with no engine is a `compile_error!`.
+
+| capability | lives in | API | CLI | MCP | GUI | srv | estado | verificado | notes |
+|---|---|---|---|---|---|---|---|---|---|
+| Load a CSV as a queryable table | `tabular::sqlite_engine` | si | no | no | no | no | **parcial** | 2026-09-26 | in-memory SQLite; quoted fields with commas and newlines survive |
+| Read-only SQL over loaded tables | `TableEngine::query` | si | no | no | no | no | **parcial** | 2026-09-26 | four independent layers; `PRAGMA` deliberately excluded |
+| Describe a table's columns | `TableEngine::describe` | si | no | no | no | no | **parcial** | 2026-09-26 | the tool a model needs *before* `query`: one that does not know the column names invents SQL |
+| Say what counts as a missing value | `LoadOptions` | si | no | no | no | no | **parcial** | 2026-09-26 | only the empty field by default. Anything else is **reported, never guessed** |
+| Warn when an answer cannot be trusted | `QueryResult::warnings` | si | no | no | no | no | **parcial** | 2026-09-26 | required field. A mixed numeric column makes `AVG` and `COUNT` silently wrong; the result cannot come back without saying so |
+| Parquet, lazy evaluation, out-of-core | `tabular-polars` | **no** | no | no | no | no | **no** | 2026-09-26 | feature declared, engine not written. **+49.3 MiB** measured |
+| `list_tables` / `describe_table` / `query_table` as MCP tools | — | — | — | **no** | no | no | **no** | 2026-09-26 | waits on N39's registry consolidation, now decided |
+| Extract tables from inside text | `table_extraction` | si | — | — | — | — | hecho | 2026-09-26 | a different job: finds tables in prose. Does not query them |
+
+### Two things the type system enforces
+
+`QueryResult` carries `sql_executed`, `row_count`, `truncated` and `warnings` as
+**required fields**. No engine can return a result without saying what it ran, how
+much came back, whether the limit cut it short, and whether there is a reason to
+distrust it. Not a rule in a comment — a struct that will not compile otherwise.
+
+### What is NOT wired
+Nothing reaches this from a shipped surface yet — no CLI, no MCP, no GUI. The rows
+say `parcial` for that reason and not out of modesty.
+
 ## Evaluation and benchmarks
 
 Checked 2026-09-24. Everything here is behind the `eval` feature.

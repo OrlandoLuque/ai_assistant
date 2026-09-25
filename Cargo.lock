@@ -103,7 +103,7 @@ dependencies = [
 
 [[package]]
 name = "ai_assistant"
-version = "0.2.310"
+version = "0.2.311"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -124,6 +124,7 @@ dependencies = [
  "chrono",
  "cpal",
  "criterion",
+ "csv",
  "dashmap",
  "ed25519-dalek",
  "eframe",

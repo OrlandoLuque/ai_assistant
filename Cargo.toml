@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.310"
+version = "0.2.311"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -128,6 +128,22 @@ server-tls = ["dep:rustls", "dep:rustls-pemfile"]
 # y los paquetes de conocimiento cifrados son ficheros zip. Declarado tras comprobar
 # cada uno con `cargo check --no-default-features --features rag`.
 rag = ["rusqlite", "aes-gcm", "embeddings", "analytics", "zip"]
+
+# Tabular data: query it, do not retrieve it. See src/tabular/mod.rs.
+#
+# `tabular` is the umbrella: the trait, the types and (later) the tools.
+# It defaults to the free engine. Enabling it with NO engine is a
+# compile_error!, because the alternative is failing at run time with a
+# confusing message.
+#
+# Named as implicit features ("rusqlite", "csv") and not "dep:...", to
+# match the rest of this file: writing dep: would silently disable the
+# cfg(feature = "...") gates elsewhere.
+tabular = ["tabular-sqlite"]
+tabular-sqlite = ["rusqlite", "csv"]
+# +49.3 MiB of binary and 397 crates, measured 2026-09-24. Only pay it if
+# you need Parquet or files that do not fit in memory.
+tabular-polars = []
 
 # Research: academic search APIs (arXiv, Semantic Scholar, PubMed, OpenAlex, Crossref),
 # BibTeX, literature review, and the bridge that ingests found papers into the RAG index.
@@ -639,6 +655,10 @@ pdf-extract = { version = "0.7", optional = true }
 egui = { version = "0.27", optional = true }
 # Optional SQLite for RAG storage
 rusqlite = { version = "0.31", features = ["bundled"], optional = true }
+# Tabular data (feature `tabular-sqlite`). Small: csv-core + memchr + itoa + ryu.
+# Used instead of splitting on commas because quoted fields with embedded
+# commas and newlines are a classic source of silently wrong tables.
+csv = { version = "1", optional = true }
 # Optional AES-GCM for encrypted knowledge packages
 aes-gcm = { version = "0.10", optional = true }
 # Optional bincode for binary internal storage (faster than JSON)

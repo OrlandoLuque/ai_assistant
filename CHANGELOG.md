@@ -5,6 +5,120 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v228 (2026-09-26) — V352: preguntar a una tabla, tres afirmaciones falsas mias, y un AVG que mentia (0.2.311)
+
+`src/tabular/`: el trait `TableEngine`, los tipos y el motor de SQLite. Detras de la feature
+`tabular`, que por defecto trae `tabular-sqlite` — cero bytes nuevos salvo el crate `csv`.
+Encenderla sin motor es un `compile_error!`, no un fallo confuso en ejecucion.
+
+**Por que RAG no sirve para tablas**, y no es «funciona mal» sino «no aplica»: trocear una tabla
+deja las cabeceras en el trozo 1; embeber numeros no significa nada; y la pregunta suele ser un
+AGREGADO, que no lo contesta recuperar nada. El modelo necesita una **herramienta**.
+
+### Lo que el tipo obliga a revelar
+
+`QueryResult` lleva **cuatro campos obligatorios**: `sql_executed`, `row_count`, `truncated` y
+`warnings`. Ninguna implementacion puede devolver un resultado sin decir que ejecuto, cuanto
+salio, si el tope lo corto y si hay razon para desconfiar. No es una norma en un comentario: es
+una estructura que no compila de otra forma.
+
+`truncated` importa mas de lo que parece: sin el, «10 filas» con tope 10 es indistinguible de una
+tabla con exactamente 10 coincidencias.
+
+### Y el defecto que encontro una pregunta del autor
+
+El autor pregunto que pasa si un CSV real usa `-` o `N/A` para «sin dato». La respuesta resulto
+ser peor que elegir un centinela. **Medido**, para una columna `10, N/A, 30`:
+
+| consulta | respuesta | lo correcto |
+|---|---|---|
+| `SUM` | **`40.0`** — un **float**, donde una columna de enteros da entero | 40 |
+| `AVG` | **13,33** — divide entre tres, porque `'N/A'` se convirtio en un cero real | 20 |
+| `COUNT` | **3** — `'N/A'` es texto, y el texto no es NULL | 2 |
+
+**Dos de las tres son silenciosamente incorrectas y la tercera cambia de tipo. Ninguna da error.**
+Un modelo leyendo ese `AVG` afirma una media equivocada con seguridad — el fallo exacto que este
+modulo existe para evitar — y basta **un** valor sin parsear entre mil para provocarlo.
+
+La respuesta, aprobada por el autor, es **no adivinar y obligar a revelar**:
+
+- `LoadOptions` deja **declarar** que cuenta como ausente. Por defecto solo el campo vacio, porque
+  `-`, `N/A`, `NULL`, `?` y `.` son todos plausibles y todos conjeturas, y **decidir cual
+  significa «sin dato» le toca a quien conoce los datos**.
+- Lo que no se declara se **reporta**: `ColumnInfo::unparseable` guarda los valores que no
+  encajaron y cuantas veces, asi que `describe()` los enseña en vez de callarlos.
+- Y `QueryResult::warnings` es **obligatorio**, asi que una consulta que toca una columna mixta
+  **no puede volver sin decirlo**. Declarado el marcador, los tres numeros vuelven a ser 40
+  entero, 20 y 2.
+
+Con el marcador declarado la coincidencia es **sin distinguir mayusculas y sin espacios**, porque
+un fichero que escribe `N/A` en una fila y ` n/a ` en la siguiente es el caso normal.
+
+### TRES afirmaciones falsas mias sobre SQLite, todas cazadas por mis propios tests
+
+**1. «`ATTACH` lo cubre `readonly()`».** Falso. SQLite clasifica `ATTACH` y `DETACH` como
+read-only porque no modifican el *contenido* de ninguna base. El test dio
+`BadQuery("unable to open database: C:/evil.db")`, o sea que **`prepare` tuvo exito** y solo fallo
+porque el fichero no existia. **Con el fichero presente habria funcionado.** El test se rehizo con
+un fichero que SI existe, que es la unica version que demuestra algo.
+
+**2. «`prepare` falla con mas de una sentencia».** Falso. `SELECT 1; DROP TABLE ventas` se
+ejecuto, devolvio una fila y **descarto el resto sin decir nada**. `TableError::MultipleStatements`
+era codigo muerto inalcanzable.
+
+**3. Y la del `AVG`**, que no estaba escrita como afirmacion pero era la suposicion de fondo: que
+una columna mal tipada daria error en vez de un numero.
+
+Ahora hay **cuatro capas independientes**: base en memoria (el limite que aguanta si todo lo demas
+falla), escaneo propio de sentencia unica, `Statement::readonly()`, y palabra inicial en **lista
+blanca** de tres (`SELECT`, `WITH`, `VALUES`). Lista blanca y no negra: la negra tiene que estar
+completa para servir, y no lo estara. `PRAGMA` queda fuera a proposito — algunos solo informan y
+otros cambian comportamiento, incluido `writable_schema = ON`, y distinguirlos es el tipo de
+criterio que caduca. No se pierde nada: `describe()` cubre el uso legitimo y ademas es mejor.
+
+### Lo que encontro la mutacion y los 25 tests verdes no
+
+**Cinco mutaciones, tres supervivientes en la primera pasada.** Cada una dijo algo distinto:
+
+- **`readonly()` se podia borrar entero sin romper nada**, porque la lista blanca ya rechaza
+  `DELETE`/`DROP`/`INSERT` por su palabra inicial. Faltaba el unico caso donde hace falta:
+  **`WITH ... INSERT`**, que abre con palabra permitida y escribe. Era el ejemplo que el propio
+  modulo citaba como justificacion, sin test.
+- **El manejo del escape `''` era codigo inerte**: tratarlo como cerrar-y-abrir invierte el estado
+  dos veces y no hay ningun caracter entre medias que clasificar mal. No faltaba un test, **sobraba
+  codigo**. Quitado.
+- **Las entradas de comentarios no discriminaban**: en `SELECT 1 -- ;` el `;` es lo ultimo, asi que
+  el resto queda vacio y ambas versiones contestan `false`.
+
+Tras cerrar los tres huecos: **cinco de cinco cazadas**, y 30 tests.
+
+Esa segunda merece subrayado porque cambia como hay que leer una mutacion que sobrevive: significa
+**falta un test**, o **el codigo es redundante**, o **la mutacion es equivalente**. Son tres
+acciones distintas, y asumir la primera lleva a proteger con tests codigo que deberia borrarse.
+
+### Detalles que deciden si esto sirve
+
+- **`csv` como dependencia en vez de partir por comas.** Campos entrecomillados con comas y saltos
+  dentro son una fuente clasica de tablas mal leidas sin que nada avise. Hay test.
+- **Un nombre de tabla que pudiera romper el SQL se rechaza al cargar**, no se escapa: hacer
+  irrepresentable el caso peligroso es mejor que escaparlo bien.
+- **`Cell::Null` se imprime `[null]`**, no en blanco: una celda vacia y un NULL se leen igual en
+  pantalla y no son la misma respuesta.
+- Y una carrera en mis propias pruebas: todas escribian `ventas.csv` en el mismo directorio y
+  `File::create` trunca, asi que un test pasaba en una ejecucion y fallaba en la siguiente.
+  Directorio unico por fixture.
+
+### Lo que NO esta cableado
+**Nada llega a esto desde una superficie que se envie**: ni CLI, ni MCP, ni interfaz.
+`docs/CAPABILITIES.md` lo dice como `parcial`. Las tres herramientas MCP esperan a N39.
+
+### Y una decision de arquitectura para el motor de Polars
+`first_keyword`, `has_trailing_statement` y la lista blanca **tienen que subir al modulo comun**.
+Polars SQL acepta `INSERT`/`DELETE`/`DROP` y **no tiene equivalente de `readonly()`**, asi que si
+cada motor lleva sus propias comprobaciones el de Polars nace mas debil que el de SQLite — el
+patron de [[project_masked_defect_pattern]]: proteger en todas las configuraciones, no solo en la
+que fallo.
+
 ## [Unreleased] - v226 (2026-09-25) — V351: las metricas dejan de ser inalcanzables (0.2.310)
 
 V349 anadio `recall@k`, MRR y nDCG. Y las dejo donde **nadie podia pedirselas**: publicas en la

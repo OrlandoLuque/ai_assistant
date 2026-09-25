@@ -1589,6 +1589,12 @@ pub mod feed_monitor;
 pub mod html_extraction;
 #[cfg(feature = "documents")]
 pub mod table_extraction;
+// Tabular data: query it rather than retrieve it. `table_extraction` above
+// finds tables INSIDE text; this asks questions of them.
+//
+// A `//` comment and not `///` — see the note above `pub mod retrieval_metrics;`.
+#[cfg(feature = "tabular")]
+pub mod tabular;
 
 #[cfg(feature = "documents")]
 pub use document_parsing::{
