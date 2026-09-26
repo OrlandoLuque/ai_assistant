@@ -5,6 +5,63 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v230 (2026-09-26) — V354: la medicion de Polars estaba incompleta, y CI lo dijo (0.2.313)
+
+CI se puso **ROJO** en los dos empujes anteriores, y lo dijo el job de Supply Chain, no el de
+tests. Local verde no era verde.
+
+## Lo que faltaba en la medicion
+
+V353 presento el coste de Polars como **+49,3 MiB y 397 crates**, medido. Eso era cierto y
+**estaba incompleto**. El coste real incluia dos avisos de seguridad que la version 0.44 arrastra:
+
+- **RUSTSEC-2025-0003** — `fast-float` 0.2.0: *segmentation fault* por falta de comprobacion de
+  limites, y **sin version corregida disponible**;
+- **RUSTSEC-2025-0020** — `pyo3` 0.21.2: riesgo de desbordamiento de bufer.
+
+Los dos **nuevos**: comprobado contra el `Cargo.lock` anterior, ninguno de los dos estaba.
+
+Y el primero importa mas que el segundo por donde vive: `fast-float` es lo que parsea numeros
+decimales desde texto, o sea **exactamente la ruta por la que entra un CSV que alguien suelta en
+el pendrive**. Un segfault ante entrada mal formada, ahi, no es papeleo.
+
+`pyo3` merece una nota aparte: son los **bindings de Python**, y no estaban en el grafo normal
+(`cargo tree -e normal -i pyo3` no imprime nada). Los ve `cargo audit` porque lee el
+`Cargo.lock`, no lo que se compila. **Una dependencia opcional pesada mete sus avisos en nuestro
+CI aunque nadie la active** — eso es una propiedad del sistema que conviene tener escrita.
+
+## La correccion: subir de version, no suprimir
+
+`polars` 0.44 -> **0.55**. Las versiones nuevas sustituyeron `fast-float` por **`fast-float2`**,
+el fork mantenido que se creo precisamente por ese aviso, y soltaron pyo3. Verificado en el lock:
+`fast-float` 0, `fast-float2` 1, `pyo3` 0. Y `cargo audit` **sale con 0**, con los mismos cinco
+avisos tolerados de antes — comprobado uno por uno que los cinco **ya estaban**, asi que esto no
+añade ninguno.
+
+**Suprimir no era una opcion.** Un `--ignore` sobre un segfault sin arreglo, en el parser al que
+le damos ficheros del usuario, es exactamente el patron de la supresion con motivo falso que este
+repositorio ya tiene documentado: parece revisado, y por eso nadie lo vuelve a leer.
+
+## El porte de 0.44 a 0.55, y una decision
+
+Cuatro cambios de API: `LazyFrame::scan_parquet` y `LazyCsvReader::new` toman ahora `PlRefPath` en
+vez de `&Path`, y `DataFrame::get_columns()` paso a `columns()`.
+
+El primero forzo una decision que es mejor que lo que habia: `PlRefPath` solo representa rutas
+**UTF-8 validas**, asi que ahora hay un `pl_path()` que **falla con un error explicito** en vez de
+convertir con perdida. Una conversion con perdida nombraria un fichero **distinto**, y leer el
+fichero equivocado es peor que negarse a leer.
+
+Los 45 tests pasan sin cambios, incluidos los tres de equivalencia entre motores. Un salto de once
+versiones menores y la unica rotura fue de firmas.
+
+## Y la leccion que va al modus-operandi
+
+**Medir el coste de una dependencia no es medir su tamaño.** El informe honesto de V353 —crates,
+tiempo, bytes— omitia la dimension que hizo fallar CI. La lista completa para la proxima:
+tamaño, tiempo de compilacion, **avisos de seguridad**, licencias, y que arrastra al lock aunque
+no se compile.
+
 ## [Unreleased] - v229 (2026-09-26) — V353: el segundo motor, y las comprobaciones que suben de sitio (0.2.312)
 
 `src/tabular/polars_engine.rs`. Detras de `tabular-polars`, que no es el motor por defecto y no

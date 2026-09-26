@@ -118,6 +118,20 @@ impl PolarsTableEngine {
     }
 }
 
+/// Turn a filesystem path into the form Polars 0.55 takes.
+///
+/// A path that is not valid UTF-8 **errors** rather than being converted
+/// lossily: a lossy conversion would silently name a *different* file, and
+/// reading the wrong file is worse than refusing to read.
+fn pl_path(path: &Path) -> Result<PlRefPath, TableError> {
+    path.to_str().map(PlRefPath::from).ok_or_else(|| {
+        TableError::Io(format!(
+            "this path is not valid UTF-8, which Polars cannot represent: {}",
+            path.display()
+        ))
+    })
+}
+
 /// Is this path a Parquet file?
 ///
 /// By extension, which is what the caller controls. Sniffing the magic bytes
@@ -177,7 +191,7 @@ impl TableEngine for PolarsTableEngine {
         }
 
         let frame = if looks_like_parquet(path) {
-            LazyFrame::scan_parquet(path, ScanArgsParquet::default())
+            LazyFrame::scan_parquet(pl_path(path)?, ScanArgsParquet::default())
                 .map_err(|e| TableError::Parse(e.to_string()))?
         } else {
             // The missing markers go to Polars, so it can type the column
@@ -185,7 +199,7 @@ impl TableEngine for PolarsTableEngine {
             // SQLite engine makes, reached through a different mechanism.
             let mut na: Vec<PlSmallStr> = vec![PlSmallStr::from_static("")];
             na.extend(options.na_values.iter().map(|s| PlSmallStr::from_str(s)));
-            LazyCsvReader::new(path)
+            LazyCsvReader::new(pl_path(path)?)
                 .with_has_header(true)
                 .with_null_values(Some(NullValues::AllColumns(na)))
                 .finish()
@@ -202,7 +216,7 @@ impl TableEngine for PolarsTableEngine {
             .map_err(|e| TableError::Parse(e.to_string()))?;
 
         let columns: Vec<ColumnInfo> = df
-            .get_columns()
+            .columns()
             .iter()
             .map(|series| {
                 let dtype = series.dtype();
@@ -284,7 +298,7 @@ impl TableEngine for PolarsTableEngine {
         let mut rows = Vec::with_capacity(take);
         for r in 0..take {
             let mut cells = Vec::with_capacity(columns.len());
-            for series in df.get_columns() {
+            for series in df.columns() {
                 let v = series
                     .get(r)
                     .map_err(|e| TableError::BadQuery(e.to_string()))?;
@@ -307,6 +321,34 @@ impl TableEngine for PolarsTableEngine {
     fn engine_name(&self) -> &'static str {
         "polars"
     }
+}
+
+/// For a non-numeric column, how many of its values would parse as numbers and
+/// which ones would not.
+fn count_numeric_and_rest(series: &Column) -> (usize, Vec<(String, usize)>) {
+    let mut numeric = 0usize;
+    let mut rest: Vec<(String, usize)> = Vec::new();
+    for i in 0..series.len() {
+        let Ok(v) = series.get(i) else { continue };
+        if matches!(v, AnyValue::Null) {
+            continue;
+        }
+        let text = match v {
+            AnyValue::String(s) => s.to_string(),
+            AnyValue::StringOwned(s) => s.to_string(),
+            other => other.to_string(),
+        };
+        let t = text.trim();
+        if t.parse::<f64>().is_ok() {
+            numeric += 1;
+        } else {
+            match rest.iter_mut().find(|(s, _)| s == t) {
+                Some((_, n)) => *n += 1,
+                None => rest.push((t.to_string(), 1)),
+            }
+        }
+    }
+    (numeric, rest)
 }
 
 #[cfg(test)]
@@ -507,32 +549,4 @@ mod tests {
         assert!(!looks_like_parquet(Path::new("ventas.csv")));
         assert!(!looks_like_parquet(Path::new("ventas")));
     }
-}
-
-/// For a non-numeric column, how many of its values would parse as numbers and
-/// which ones would not.
-fn count_numeric_and_rest(series: &Column) -> (usize, Vec<(String, usize)>) {
-    let mut numeric = 0usize;
-    let mut rest: Vec<(String, usize)> = Vec::new();
-    for i in 0..series.len() {
-        let Ok(v) = series.get(i) else { continue };
-        if matches!(v, AnyValue::Null) {
-            continue;
-        }
-        let text = match v {
-            AnyValue::String(s) => s.to_string(),
-            AnyValue::StringOwned(s) => s.to_string(),
-            other => other.to_string(),
-        };
-        let t = text.trim();
-        if t.parse::<f64>().is_ok() {
-            numeric += 1;
-        } else {
-            match rest.iter_mut().find(|(s, _)| s == t) {
-                Some((_, n)) => *n += 1,
-                None => rest.push((t.to_string(), 1)),
-            }
-        }
-    }
-    (numeric, rest)
 }

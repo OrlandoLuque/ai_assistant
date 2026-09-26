@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.312"
+version = "0.2.313"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -663,7 +663,14 @@ csv = { version = "1", optional = true }
 # 2026-09-24 against a hello-world with the same release profile: 397 crates
 # in the graph vs 1, 756 s cold compile vs 1 s, and 49.4 MiB of binary vs
 # 131 KB. Only worth it for Parquet or files that do not fit in memory.
-polars = { version = "0.44", default-features = false, features = [
+#
+# 0.55 and NOT 0.44, and the reason is not novelty. 0.44 pulled `fast-float`
+# 0.2.0 (RUSTSEC-2025-0003: segmentation fault from a missing bounds check, NO
+# fixed version) and `pyo3` 0.21.2 (RUSTSEC-2025-0020). The first sits exactly in
+# the code path that parses floats out of a CSV somebody handed us. 0.55 replaced
+# it with the maintained `fast-float2` fork and dropped pyo3 entirely; verified,
+# `cargo audit` adds no new advisory and no new warning.
+polars = { version = "0.55", default-features = false, features = [
     "lazy", "csv", "parquet", "sql", "dtype-full",
 ], optional = true }
 # Optional AES-GCM for encrypted knowledge packages
