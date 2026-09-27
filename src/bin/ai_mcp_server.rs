@@ -16,9 +16,15 @@
 //!
 //! So: every human-facing byte this binary emits goes to **stderr**. That is a constraint
 //! on the whole call tree, not just on this file, which is why the tool sets registered
-//! below are chosen from the ones that do not print. Document parsing is deliberately
-//! absent: `pdf-extract` writes "Unicode mismatch" straight to stdout (issue N52), and
-//! under this transport that is not cosmetic noise, it is a protocol violation.
+//! below are chosen from the ones that do not print.
+//!
+//! Document parsing was absent for that reason until V356: `pdf-extract` 0.7.12 wrote
+//! eleven `println!` straight to stdout, and under this transport that is not cosmetic
+//! noise, it is a protocol violation. **0.12.1 writes none** — upstream removed them, and
+//! the only one left is commented out inside a macro that expands to nothing. The blocker
+//! is gone; registering the document tools here is now a decision rather than an
+//! impossibility, and it has not been taken yet (N52 still has extraction *quality*
+//! unmeasured).
 //!
 //! # Usage
 //!
@@ -27,6 +33,7 @@
 //! ai_mcp_server --list-tools        # print the registered tools and exit
 //! ai_mcp_server --db tasks.sqlite   # task store location
 //! ai_mcp_server --allow-config-writes
+//! ai_mcp_server --table ventas=ventas.csv --table stock=stock.parquet
 //! ```
 //!
 //! Registering it with a client:
@@ -43,10 +50,17 @@ use std::sync::{Arc, Mutex};
 const NAME: &str = "ai_assistant";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+#[cfg_attr(test, derive(Debug))]
 struct Options {
     list_tools: bool,
     db_path: PathBuf,
     allow_config_writes: bool,
+    /// Tables to load, as `(name in SQL, file on disk)`.
+    ///
+    /// A `Vec` of pairs and not a map: the order the operator wrote them in is
+    /// the order they load, so the first error names the first bad file rather
+    /// than whichever one a hash map happened to reach first.
+    tables: Vec<(String, PathBuf)>,
 }
 
 impl Default for Options {
@@ -55,6 +69,7 @@ impl Default for Options {
             list_tools: false,
             db_path: PathBuf::from("ai_assistant_tasks.sqlite"),
             allow_config_writes: false,
+            tables: Vec::new(),
         }
     }
 }
@@ -73,7 +88,13 @@ OPTIONS:
     --list-tools             Print the registered tool names and exit
     --db <PATH>              Task store database (default: ai_assistant_tasks.sqlite)
     --allow-config-writes    Let the config tools modify configuration (default: read-only)
+    --table <NAME=PATH>      Load a CSV or Parquet file as a queryable table (repeatable)
     -h, --help               Show this help
+
+The table tools cannot open a file by themselves, on purpose: a model that could name
+any path would be able to read any spreadsheet on this machine and hand it back through
+query results. --table is how you choose what is queryable, and the name you give is
+the name to use in SQL.
 
 With no options it serves on stdio: newline-delimited JSON-RPC on stdin, replies on
 stdout. Diagnostics always go to stderr, because stdout belongs to the protocol."
@@ -90,6 +111,24 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
             "-h" | "--help" => {
                 print_help();
                 std::process::exit(0);
+            }
+            "--table" => {
+                i += 1;
+                let value = args
+                    .get(i)
+                    .ok_or_else(|| "--table needs NAME=PATH".to_string())?;
+                // `split_once` and not `split`: a Windows path contains no `=`,
+                // but a filename can, and splitting on every one would silently
+                // load the wrong file.
+                let (name, path) = value
+                    .split_once('=')
+                    .ok_or_else(|| format!("--table needs NAME=PATH, got: {value}"))?;
+                if name.is_empty() || path.is_empty() {
+                    return Err(format!(
+                        "--table needs both a name and a path, got: {value}"
+                    ));
+                }
+                opts.tables.push((name.to_string(), PathBuf::from(path)));
             }
             "--db" => {
                 i += 1;
@@ -209,6 +248,56 @@ fn build_server(opts: &Options) -> (McpServer, Vec<String>) {
     }
     #[cfg(not(feature = "rag"))]
     absent.push("knowledge tools: built without the `rag` feature".to_string());
+
+    // --- Table tools ---
+    //
+    // The files are loaded HERE, by the host, and the tools can only query what
+    // this loop put in. There is deliberately no `load_table` tool: see the module
+    // docs. A file that fails to load is reported and the rest still load -- one
+    // bad CSV is a reason to serve fewer tables, not none.
+    #[cfg(feature = "tabular-sqlite")]
+    if publish.publishes(ToolGroup::Tables) && !opts.tables.is_empty() {
+        // The trait, not the struct: `load` is a `TableEngine` method, so the trait
+        // has to be in scope. Imported inside the block so a build without the
+        // feature does not carry an unused import.
+        use ai_assistant::tabular::TableEngine as _;
+        match ai_assistant::tabular::sqlite_engine::SqliteTableEngine::new() {
+            Ok(mut engine) => {
+                let mut loaded = 0usize;
+                for (name, path) in &opts.tables {
+                    match engine.load(name, path) {
+                        Ok(info) => loaded += info.row_count.min(1),
+                        Err(e) => {
+                            absent.push(format!("table {name:?} from {}: {e}", path.display()))
+                        }
+                    }
+                }
+                if loaded > 0 {
+                    ai_assistant::mcp_protocol::table_tools::register_table_tools(
+                        &mut server,
+                        ai_assistant::mcp_protocol::table_tools::shared(engine),
+                    );
+                } else {
+                    absent.push(
+                        "table tools: every --table failed to load, so nothing is queryable"
+                            .to_string(),
+                    );
+                }
+            }
+            Err(e) => absent.push(format!("table tools: could not start the engine ({e})")),
+        }
+    }
+    #[cfg(feature = "tabular-sqlite")]
+    if publish.publishes(ToolGroup::Tables) && opts.tables.is_empty() {
+        // Not an error: serving three tools over zero tables would answer every
+        // question with "no such table", which reads like a broken server.
+        absent.push(
+            "table tools: no --table given, so there is nothing to query (pass --table NAME=PATH)"
+                .to_string(),
+        );
+    }
+    #[cfg(not(feature = "tabular-sqlite"))]
+    absent.push("table tools: built without the `tabular-sqlite` feature".to_string());
 
     // --- Research tools ---
     //
@@ -366,6 +455,62 @@ mod tests {
     /// builds that do not enable it.
     fn test_server() -> McpServer {
         McpServer::new(NAME, VERSION)
+    }
+
+    #[test]
+    fn table_is_parsed_as_name_equals_path() {
+        let opts = parse_args(&[
+            "--table".to_string(),
+            "ventas=data/ventas.csv".to_string(),
+            "--table".to_string(),
+            "stock=D:/x/stock.parquet".to_string(),
+        ])
+        .expect("valid");
+        assert_eq!(opts.tables.len(), 2, "repeatable");
+        assert_eq!(opts.tables[0].0, "ventas");
+        assert_eq!(opts.tables[0].1, PathBuf::from("data/ventas.csv"));
+        // A Windows path keeps its colon and its slashes; only the FIRST `=`
+        // separates, so a filename containing one still loads.
+        assert_eq!(opts.tables[1].1, PathBuf::from("D:/x/stock.parquet"));
+        let odd = parse_args(&["--table".to_string(), "t=a=b.csv".to_string()]).expect("valid");
+        assert_eq!(odd.tables[0].1, PathBuf::from("a=b.csv"));
+    }
+
+    #[test]
+    fn a_malformed_table_argument_is_refused_rather_than_guessed() {
+        // Each of these could be "helpfully" interpreted -- derive the name from
+        // the filename, treat the whole thing as a path -- and every such guess
+        // ends with the model querying a table the operator did not think they
+        // had exposed.
+        for bad in ["ventas.csv", "=ventas.csv", "ventas=", ""] {
+            let err = parse_args(&["--table".to_string(), bad.to_string()])
+                .expect_err(&format!("must refuse: {bad:?}"));
+            assert!(err.contains("--table"), "the error names the flag: {err}");
+        }
+        assert!(
+            parse_args(&["--table".to_string()]).is_err(),
+            "--table needs a value"
+        );
+    }
+
+    #[test]
+    fn a_table_that_does_not_exist_is_reported_and_does_not_stop_the_server() {
+        // The rule this whole function follows: a missing dependency means fewer
+        // tools, never no server. A client that gets nothing cannot tell a bad
+        // path from a crash.
+        let opts = Options {
+            tables: vec![("nope".to_string(), PathBuf::from("no_such_file_12345.csv"))],
+            ..Options::default()
+        };
+        let (server, absent) = build_server(&opts);
+        let resp = server.handle_request(
+            ai_assistant::mcp_protocol::types::McpRequest::new("ping").with_id(1u64),
+        );
+        assert!(resp.error.is_none(), "the server still answers");
+        assert!(
+            absent.iter().any(|a| a.contains("no_such_file_12345.csv")),
+            "the failure must name the file: {absent:?}"
+        );
     }
 
     #[test]

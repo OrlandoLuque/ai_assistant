@@ -5,6 +5,92 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v233 (2026-09-27) — V357: las tablas llegan al modelo, y sin poder abrir ficheros (0.2.316)
+
+El motor tabular existia desde V352 y **nadie lo llamaba**. Ya no: `ai_mcp_server` sirve tres
+herramientas MCP sobre el, y un cliente las ve por stdio JSON-RPC de verdad.
+
+## La decision de seguridad, que es lo primero
+
+**No hay herramienta `load_table`, a proposito.** Las tres son `list_tables`, `describe_table` y
+`query_table`, y el modelo solo puede consultar lo que el programa anfitrion cargo:
+
+    ai_mcp_server --table ventas=ventas.csv --table stock=stock.parquet
+
+Un `load_table` dejaria que cualquier prompt nombrara cualquier ruta de la maquina y se leyera el
+contenido de vuelta en los resultados. El modelo no lo necesita para su trabajo, y el radio de
+accion de equivocarse es **todos los CSV del disco**.
+
+Asi que la frontera es **qué ficheros eligio el anfitrion**, y se hace cumplir porque la herramienta
+**no existe**, no validando una ruta. Hay un test que lo afirma (`no tool may open a file from a
+model-supplied path`), porque una ausencia documentada en un comentario se pierde en cuanto alguien
+añade la herramienta «por comodidad».
+
+## Lo que el modelo ve, y por que
+
+| herramienta | lo que devuelve |
+|---|---|
+| `list_tables` | nombres, ficheros, filas, columnas — **y qué motor** responde |
+| `describe_table` | tipos, `mixed_numeric`, `non_numbers_nullified`, y los valores que no son numeros |
+| `query_table` | filas + `sql_executed` + `row_count` + `truncated` + `warnings` + `trustworthy` |
+
+- **El motor va en la respuesta** porque los dos dialectos difieren, y un modelo que sabe con cual
+  habla escribe SQL que funciona a la primera. La descripcion de `query_table` le dice ademas lo de
+  los alias, que es la unica diferencia que le va a morder.
+- **`describe_table` antes de `query_table`** no es cortesia: un modelo que no sabe los nombres de
+  las columnas se los inventa, y SQL inventado que **parsea** devuelve un numero con total
+  confianza.
+- **La divulgacion viaja completa.** Es la unica decision de diseño en la que se apoya todo el
+  modulo tabular, y dejarla caer aqui la habria deshecho.
+
+## Filas limitadas a 200, y el limite se anuncia
+
+Lo que nunca debe pasar es que **la tabla** entre en el prompt; entra la respuesta a una pregunta
+sobre ella. Un modelo que pide 100.000 filas se queda con 200 y con una nota `limit_applied` que
+dice cuanto pidio, cuanto se uso y por que — **no** con un error. Un error le enseña a reintentar
+con 9.999; el recorte anunciado le enseña algo.
+
+Y `truncated: true` a secas se lee como «se acabaron los datos», que es otra cosa. De ahi la nota
+aparte.
+
+## Un comentario que se habia vuelto falso
+
+La cabecera de `ai_mcp_server` decia que las herramientas de documentos estan ausentes porque
+`pdf-extract` escribe en stdout. **Desde V356 ya no es verdad**: 0.12.1 no escribe ninguno. El
+bloqueo se levanto, asi que registrarlas pasa a ser una **decision** en vez de una imposibilidad —
+y no la he tomado, porque de N52 queda sin medir la calidad de extraccion. Corregido en el
+comentario, que es donde alguien lo va a leer.
+
+## Verificacion
+
+**8.963 tests** (8.953 antes, +10), los diez nuevos por la **ruta real del protocolo**
+(`handle_request` con `tools/call`), no llamando al closure. Eso importa: `tools/call` envuelve el
+resultado en `content[0].text` como **cadena**, asi que un campo que serializa mal es invisible para
+un test que se salta el envoltorio.
+
+Mas tres tests del binario: el parseo de `--table NAME=PATH` (con el caso de un nombre de fichero
+que contiene `=`, que `split_once` resuelve y `split` habria roto), el rechazo de las cuatro formas
+malformadas, y que un fichero inexistente **se reporta y no tumba el servidor**.
+
+Y una prueba de punta a punta contra el binario compilado, cuatro tramas por stdin:
+
+    id=2  tablas=['ventas'] filas=4 engine=sqlite
+    id=3  norte 500, sur 300   fiable=True
+    id=4  ERROR: refused: this connection answers questions and never changes anything
+
+La cuarta es la que importa: la negativa del motor **no se puentea** por pasar por MCP. Y stdout
+quedo limpio — el JSON parseo, que es la unica forma de comprobarlo en un transporte donde stdout
+ES el protocolo.
+
+`clippy --all-targets -D warnings` limpio en `FEATURES_STD` y en los dos motores.
+
+## Lo que queda de N107
+
+- **CLI** para consultar fuera de MCP (`ai_cli table query` no existe).
+- **GUI**: el SQL ejecutado ya viaja, pero no hay sitio donde una persona lo lea.
+- **Eleccion automatica de motor**: un `.parquet` sigue necesitando elegir Polars a mano, aunque la
+  extension ya dice cual hace falta.
+
 ## [Unreleased] - v232 (2026-09-27) — V356: el comprobador miraba dos ficheros y habia tres (0.2.315)
 
 Esta entrada existe porque **CI se puso rojo justo despues de V355** y por una razon que merece

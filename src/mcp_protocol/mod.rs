@@ -9,11 +9,18 @@ pub mod benchmark_tools;
 pub mod client;
 #[cfg(feature = "rag")]
 pub mod knowledge_tools;
+
+// Three read-only tools over an already-loaded TableEngine. Gated on the engines
+// and not on a `tabular` umbrella: `tabular-polars` alone is a valid build, and
+// gating on the umbrella is exactly how the module compiled in no CI job at all
+// when it was first added.
 pub mod oauth;
 #[cfg(feature = "research")]
 pub mod research_tools;
 pub mod server;
 pub mod session;
+#[cfg(any(feature = "tabular-sqlite", feature = "tabular-polars"))]
+pub mod table_tools;
 pub mod transport;
 pub mod types;
 pub mod v2_annotations;

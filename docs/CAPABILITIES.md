@@ -124,7 +124,10 @@ Added 2026-09-26. Behind the `tabular` feature, which defaults to
 | Warn when an answer cannot be trusted | `QueryResult::warnings` | si | no | no | no | no | **parcial** | 2026-09-26 | required field. A mixed numeric column makes `AVG` and `COUNT` silently wrong; the result cannot come back without saying so |
 | Parquet, lazy evaluation, out-of-core | `tabular::polars_engine` | si | no | no | no | no | **parcial** | 2026-09-26 | **+49.3 MiB** of binary and 397 crates, measured. SQLite cannot read Parquet — that is the whole reason |
 | The two engines agree | `tabular::both_engines_agree` tests | si | n/a | n/a | n/a | n/a | hecho | 2026-09-27 | same data for six queries, **same error variant** for nine refusals, the same permissions, and since V355 the same right answer over a mixed column — by two different mechanisms. Compiled only when both features are on |
-| `list_tables` / `describe_table` / `query_table` as MCP tools | — | — | — | **no** | no | no | **no** | 2026-09-26 | waits on N39's registry consolidation, now decided |
+| `list_tables` as an MCP tool | `mcp_protocol::table_tools` | si | — | **si** | no | no | hecho | 2026-09-27 | names the engine too: the two dialects differ, and a model that knows which one it is talking to writes SQL that works first time |
+| `describe_table` as an MCP tool | `mcp_protocol::table_tools` | si | — | **si** | no | no | hecho | 2026-09-27 | reports `mixed_numeric` and `non_numbers_nullified`, which is what stops a model trusting an `AVG` it should not |
+| `query_table` as an MCP tool | `mcp_protocol::table_tools` | si | — | **si** | no | no | hecho | 2026-09-27 | echoes `sql_executed`, `row_count`, `truncated`, `warnings`, `trustworthy`. Rows capped at 200 and the cap is announced |
+| Choose which files a model may query | `ai_mcp_server --table NAME=PATH` | si | **si** | n/a | no | no | hecho | 2026-09-27 | **there is deliberately no `load_table` tool** — the host picks the files, so no prompt can name a path |
 | Extract tables from inside text | `table_extraction` | si | — | — | — | — | hecho | 2026-09-26 | a different job: finds tables in prose. Does not query them |
 
 ### Two things the type system enforces
@@ -148,8 +151,13 @@ than discovered by a user:
   prompt, never for comparison.
 
 ### What is NOT wired
-Nothing reaches this from a shipped surface yet — no CLI, no MCP, no GUI. The rows
-say `parcial` for that reason and not out of modesty.
+**MCP is wired since V356** — `ai_mcp_server --table ventas=ventas.csv` serves the
+three tools, and a client sees them over real stdio JSON-RPC. What is still missing:
+
+- **no CLI** for ad-hoc querying outside MCP (`ai_cli table query` does not exist);
+- **no GUI** surface, so the SQL a model ran has no place a human reads it yet;
+- **no automatic engine choice** — a `.parquet` path still needs the Polars engine
+  picked by hand, even though the extension says which one is required.
 
 ## Evaluation and benchmarks
 

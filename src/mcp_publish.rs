@@ -76,6 +76,8 @@ pub enum ToolGroup {
     Home,
     /// Speaker identification and voice gating.
     Voice,
+    /// Query CSV and Parquet files the host program loaded.
+    Tables,
 }
 
 impl ToolGroup {
@@ -92,6 +94,7 @@ impl ToolGroup {
             ToolGroup::Events,
             ToolGroup::Home,
             ToolGroup::Voice,
+            ToolGroup::Tables,
         ]
     }
 
@@ -108,6 +111,7 @@ impl ToolGroup {
             ToolGroup::Events => "events",
             ToolGroup::Home => "home",
             ToolGroup::Voice => "voice",
+            ToolGroup::Tables => "tables",
         }
     }
 
@@ -125,13 +129,20 @@ impl ToolGroup {
             ToolGroup::Events => "subscribe to event sources and change their rules",
             ToolGroup::Home => "read and operate devices in your home",
             ToolGroup::Voice => "identify speakers and control who the assistant listens to",
+            // Says "the tables loaded" and not "your spreadsheets": these tools
+            // cannot open a file. The host program chooses what is queryable, so
+            // publishing this group does not widen what is reachable.
+            ToolGroup::Tables => "run read-only SQL over the tables this server was given",
         }
     }
 
     /// What this group can do, which decides the default.
     pub fn risk(&self) -> Risk {
         match self {
-            ToolGroup::Knowledge | ToolGroup::Research => Risk::ReadOnly,
+            // Read-only and it is not a judgement call: the engine refuses
+            // anything that is not SELECT/WITH/VALUES at four independent layers,
+            // the database is in memory, and there is no tool that opens a file.
+            ToolGroup::Knowledge | ToolGroup::Research | ToolGroup::Tables => Risk::ReadOnly,
             ToolGroup::Config | ToolGroup::Tasks => Risk::Writes,
             // Each of these reaches outside the kit: a process on the machine,
             // a device in a house, or an agent that will keep going on its own.
