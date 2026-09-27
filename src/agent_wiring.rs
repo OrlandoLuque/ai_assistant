@@ -2209,11 +2209,12 @@ mod tests {
         let task = PoolTask::new("t1", "What is 1+1?");
         pool.spawn_agent("test-agent", task).unwrap();
 
-        // Give the thread time to complete
-        std::thread::sleep(std::time::Duration::from_millis(100));
-
-        let results = pool.drain_completed();
-        assert_eq!(results.len(), 1);
+        let results = drain_at_least(&mut pool, 1, DRAIN_TIMEOUT);
+        assert_eq!(
+            results.len(),
+            1,
+            "the pool did not report the finished task within {DRAIN_TIMEOUT:?}"
+        );
         assert_eq!(results[0].task_id, "t1");
         assert_eq!(results[0].agent_id, "test-agent");
         assert!(results[0].result.is_ok());
@@ -2246,10 +2247,12 @@ mod tests {
         assert!(pool.cancel_agent("test-agent"));
         assert!(!pool.cancel_agent("nonexistent"));
 
-        // Wait for completion
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        let results = pool.drain_completed();
-        assert_eq!(results.len(), 1);
+        let results = drain_at_least(&mut pool, 1, DRAIN_TIMEOUT);
+        assert_eq!(
+            results.len(),
+            1,
+            "the cancelled agent did not report within {DRAIN_TIMEOUT:?}"
+        );
         // The result should indicate cancellation (the agent completes normally
         // because simple tasks finish before the token is checked)
     }
@@ -2289,6 +2292,52 @@ mod tests {
         pool.drain_completed();
     }
 
+    /// Drain results until `want` of them have accumulated, or give up after
+    /// `timeout`.
+    ///
+    /// # Why this exists instead of `sleep` then `drain_completed`
+    ///
+    /// Three tests in this module used to do exactly that:
+    ///
+    /// ```text
+    /// std::thread::sleep(Duration::from_millis(200));
+    /// let results = pool.drain_completed();
+    /// assert_eq!(results.len(), 1);
+    /// ```
+    ///
+    /// A fixed sleep is a **bet on the scheduler**, and it is a bet that wins on
+    /// an idle machine and loses exactly when it matters. Measured 2026-09-27:
+    /// `test_pool_panic_recovery` failed in CI with `left: 0, right: 1` while
+    /// 5784 tests ran in parallel — 200 ms was not enough for the worker thread
+    /// to be scheduled, panic, be caught, and post its result. It reproduced on
+    /// the first local attempt under the same conditions.
+    ///
+    /// The deadline is generous on purpose: a slow pass costs a few seconds, and
+    /// a flaky failure costs a red CI that nobody can tell apart from a real
+    /// regression. The poll interval is short so the common case stays fast.
+    ///
+    /// Accumulating matters too — `drain_completed` *removes* what it returns, so
+    /// a naive retry would throw away the results of the earlier attempt.
+    fn drain_at_least(
+        pool: &mut AgentPool,
+        want: usize,
+        timeout: std::time::Duration,
+    ) -> Vec<PoolTaskResult> {
+        let deadline = std::time::Instant::now() + timeout;
+        let mut out = Vec::new();
+        loop {
+            out.extend(pool.drain_completed());
+            if out.len() >= want || std::time::Instant::now() >= deadline {
+                return out;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    /// How long the helpers above wait. One constant so the three call sites
+    /// cannot drift apart, and so raising it is one edit rather than a hunt.
+    const DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
     // ---- E10k: Panic recovery ----
 
     #[test]
@@ -2301,9 +2350,15 @@ mod tests {
         let task = PoolTask::new("t1", "trigger panic");
         pool.spawn_agent("test-agent", task).unwrap();
 
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        let results = pool.drain_completed();
-        assert_eq!(results.len(), 1);
+        // This is the one that went red in CI on 2026-09-27. See
+        // `drain_at_least` for the measurement.
+        let results = drain_at_least(&mut pool, 1, DRAIN_TIMEOUT);
+        assert_eq!(
+            results.len(),
+            1,
+            "the pool did not report the panicking agent within {DRAIN_TIMEOUT:?}; \
+             a panic that is never reported is the failure this test exists to catch"
+        );
         assert!(results[0].result.is_err());
         let err = results[0].result.as_ref().unwrap_err();
         assert!(

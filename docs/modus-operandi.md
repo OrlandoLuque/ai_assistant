@@ -109,6 +109,96 @@ See MEMORY.md for the full list of resolved name collisions.
 - `docs/IMPROVEMENTS_V*.md` — mark items HECHO/PARCIAL
 - **HTML docs** are in separate `ai_assistant-website` repo
 
+## Verification rules learned the hard way
+
+Every rule below has a **case** attached, and that is deliberate: a rule without its corpse
+reads as advice and gets skipped. They are grouped by the question they answer.
+
+### A. Before believing a green suite
+
+1. **Mutate before trusting a green.** A passing test suite says the tests pass, not that they
+   *discriminate*. `scripts/mutate.py --spec scripts/mutations/<module>.toml` runs the declared
+   mutations; `--dry-run` checks the specs still match the code without compiling anything (it
+   runs in CI); `--self-test` proves `--dry-run` actually fails on drift.
+2. **A surviving mutation means one of three things, and they need different actions:** no test
+   covers the invariant (**add the test**), the mutated code is redundant (**delete the code**),
+   or the mutation is behaviourally equivalent (**record why**). *Case: the `''` escape handling
+   in the SQLite engine was inert code — protecting it with a test would have preserved
+   something that should have gone.*
+3. **If a mutation's pattern appears N times, that is N mutations** — one per site, with a verdict
+   per site. *Case (V355): mutating both copies of the numeric-insert path at once reported
+   "killed", hiding that the `Real` branch had no test at all, so `10.5, -, 30` still produced a
+   wrong `AVG`.* Always set `occurrences` so the script refuses to run when the count disagrees.
+4. **A test name that promises more than its assertion is the same defect with a green tick.**
+   *Case: `the_configured_timeout_reaches_the_agent` only checked that the struct remembered the
+   number. Killing that mutation required measuring the clock — 10.0019 s without the timeout.*
+5. **"The test passes" is not "the test discriminates."** *Case: `SELECT 1 -- ;` passed for the
+   wrong reason — the `;` was last, so both the correct and the broken version answered the same.*
+
+### B. Claims, documentation and gates
+
+6. **No claim about somebody else's code without a test that proves it.** *Case: two confident
+   sentences about SQLite (`readonly()` covers `ATTACH`; `prepare` rejects a second statement),
+   both false, and a security layer built on one of them.*
+7. **A suppression whose written reason is false looks reviewed, so nobody re-reads it.** *Case
+   (V356): a RUSTSEC ignore said "no pdf-extract release uses lopdf >= 0.42 yet" — 0.12.1 did.
+   The entry's own revisit condition had been met for weeks.* Check the claim, not that a claim
+   exists.
+8. **Before tightening a gate, find out whether its slack was deliberate.** *Case (V358): raised
+   `clippy --lib` to `--lib --tests` believing the `--lib` was an oversight; it exposed **109
+   pre-existing errors** (N79) and turned CI red.* If the slack is not argued anywhere, the fix
+   is to **write the argument** plus its upgrade condition — not to tighten blindly.
+9. **Re-run the gate after touching what the gate watches.** *Case (V359): documented in V358,
+   did not re-run the doc-link gate, and the next red was a broken link of mine.*
+10. **A capability is not done until a surface calls it.** Five cases in one week
+    (`RrfFusion::fuse`, `rag_methods::LlmReranker`, `search_knowledge_hybrid`, `MmrScorer`,
+    `reranker::CascadeReranker`). See the closure cycle in N116.
+
+### C. Features and CI
+
+11. **A superset of features does not substitute for each set CI builds.** Passing on `A` and on
+    `A+B` says **nothing** about `B` alone. Enumerate them:
+    ```bash
+    grep -nE "^\s+run: cargo (test|clippy|check)" .github/workflows/ci.yml
+    ```
+    That is 19 invocations over five feature sets plus a matrix — including `--test '*'`,
+    `--doc` and `FEATURES_NETWORK`, none of which a `FEATURES_STD --lib` run touches.
+    *Case (V357): verified `tabular` and `tabular,tabular-polars`, and the red was in
+    `FEATURES_MIN`.*
+12. **A test that asserts on feature-gated behaviour needs the same gate — and its complement.**
+    *Case: a test asserted on what `build_server` reports as absent; with no tabular engine the
+    whole block is `cfg`-ed out, so it asserted something no build did.* The complement (without
+    the feature, the server must **say so**) is what stops the gate hiding the hole.
+13. **Do not theorise about why CI failed — ask it.** The order is
+    `gh run view <id> --json jobs` → which job → `--log-failed` → **and then** a theory.
+    *Case: found a broken clippy locally, assumed it was CI's, fixed it, still red — that job
+    runs `--lib`, which does not compile `#[cfg(test)]`, so it could never have seen what I
+    "fixed". A local failure found the same afternoon is a second bug, not evidence.*
+
+### D. Reading tool output
+
+14. **One `cargo` at a time.** Two processes over the same `target/` produce
+    `failed to rename archive file: Acceso denegado (os error 5)`, which reads like a broken test
+    and is not one. *Case: a false "3 failures" in `FEATURES_MIN`.*
+15. **The output filter must let the failure's NAME through.** Never `tail`, never `head`: save
+    the **complete** log to a file and filter by pattern (`FAILED|panicked|failures:`). *Case: a
+    `tail -3` lost the name of the flaky test in N122, and a `tail -8` hid a failure block the
+    same day.*
+16. **When a gate's output does not add up, capture the tool's raw output before obeying it.**
+    *Case: the doc-link gate reported 1 broken link when there were 8, and blamed an unrelated
+    file.*
+17. **Counting a type's name is not counting its use.** *Case: `grep -c ParamSchema` returned 0
+    in `browser_tools.rs` because the schemas go through a constructor — nearly wrote that the
+    file declared none.*
+
+### E. Syntax that leaks between contexts
+
+18. **`[[name]]` belongs to tasks and to the memory directory. In rustdoc `[...]` means a
+    symbol**, so a memory link there becomes a broken intra-doc link. And a type reached only
+    *indirectly* in code is **not in scope** for a short rustdoc link — use the full path.
+    *Case (V359): `[ColumnInfo::is_mixed_numeric]` from `table_tools`, where `ColumnInfo` is only
+    ever touched through `TableInfo::columns`.*
+
 ## Test commands
 
 ```bash

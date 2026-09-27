@@ -5,6 +5,72 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v236 (2026-09-27) — V360: la inestabilidad, cazada a la primera y con nombre (0.2.319)
+
+**Mi diagnostico de V359 era falso en lo central: no hay ningun aborto.**
+
+## Lo que es
+
+Un bucle que corre exactamente lo que corre el job `Feature Matrix (autonomous,scheduler)` lo cazo
+en la **primera vuelta**:
+
+    agent_wiring::tests::test_pool_panic_recovery ... FAILED
+    assertion `left == right` failed
+      left: 0
+     right: 1
+
+```rust
+std::thread::sleep(Duration::from_millis(200));   // una apuesta al planificador
+let results = pool.drain_completed();
+assert_eq!(results.len(), 1);
+```
+
+Bajo 5784 tests en paralelo, 200 ms no bastan para que el hilo trabajador se planifique, entre en
+panico, sea capturado y publique su resultado. El test **no aborta**: falla, e imprime su nombre.
+
+## Por que crei que abortaba
+
+**El log remoto de GitHub estaba truncado y lo lei como completo.** `--log` de ese job daba 4594
+lineas con **4032** ` ... ok` de 5784 tests: se habia comido ~1750 lineas, entre ellas el `FAILED`.
+Vi «el proceso muere a mitad sin nombrar nada» donde lo que habia era un log incompleto.
+
+Es la misma leccion que ya tenia escrita —*el filtro no puede esconder el nombre del fallo*— en una
+forma que no habia previsto: **no basta con no filtrar yo; hay que preguntarse si la fuente esta
+completa.** Un log remoto tiene limite de tamaño. Reproducir en local, con el log entero en fichero,
+es lo que contesta.
+
+## El arreglo
+
+Un ayudante `drain_at_least(pool, want, timeout)` que **sondea con plazo** en vez de dormir una vez,
+acumulando entre llamadas — `drain_completed` *retira* lo que devuelve, asi que un reintento ingenuo
+tiraria lo de la vuelta anterior.
+
+Aplicado a los **tres** sitios del fichero con ese patron, no solo al que se puso rojo: los otros dos
+esperaban 100 y 200 ms para afirmar `results.len() == 1`, o sea la misma apuesta con otro numero.
+
+**Verificado: 15 vueltas seguidas en verde, 5784/5784 cada una**, donde antes fallo a la primera.
+
+## Y el inventario, que es un hallazgo aparte
+
+`src/` tiene **65 sitios** con «dormir y afirmar a <=4 lineas». No todos son el mismo defecto, y el
+criterio es: **si el sleep se alarga bajo carga, la afirmacion se vuelve mas cierta, menos cierta, o
+le da igual?**
+
+- mas cierta (`>=`, `is_expired()`, `is_stale()`) -> **segura**, la carga solo ayuda;
+- menos cierta (`<`, `!is_expired()`) -> **trampa**, hay que mirar el margen;
+- indiferente (longitudes, desigualdad de dos valores) -> el sleep solo separa marcas de tiempo;
+- **un conteo o una presencia que otro hilo debe producir** -> esta es la inestable.
+
+Intente clasificarlos automaticamente **dos veces** y las dos fallaron de formas que puedo nombrar:
+la primera por palabras del contexto, marcando `assert!(entry.is_expired())` como inestable cuando es
+la direccion segura; la segunda por la direccion de la afirmacion, colando `assert_eq!(nonce.len(), 12)`
+—que no espera a nadie— entre los que esperan. Un triaje que se presenta como cierto y no lo es es
+el defecto que este repositorio persigue, asi que **no lo presento como cierto**.
+
+Lo correcto no es juzgarlos, es **medirlos**: correr la bateria en bucle y recoger los nombres que
+fallan alguna vez. Eso da una lista con evidencia en vez de una conjetura. Encolado en N122 con el
+inventario y el criterio.
+
 ## [Unreleased] - v235 (2026-09-27) — V359: un enlace que yo rompi, y una inestabilidad con nombre (0.2.318)
 
 Dos cosas, y solo una es mia.
