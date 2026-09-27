@@ -5,6 +5,66 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v235 (2026-09-27) — V359: un enlace que yo rompi, y una inestabilidad con nombre (0.2.318)
+
+Dos cosas, y solo una es mia.
+
+## El enlace roto: `ColumnInfo` no estaba en el ambito
+
+`src/mcp_protocol/table_tools.rs:24` enlazaba a `[ColumnInfo::is_mixed_numeric]`, y **`ColumnInfo` no
+esta en el ambito de ese modulo**: en el codigo solo lo alcanzo a traves de `TableInfo::columns`, nunca
+por nombre, asi que no esta importado y rustdoc no tiene contra que resolver. Puesto con ruta completa
+y con el motivo al lado, porque la trampa se repite: un tipo que se usa **solo indirectamente** no
+esta disponible para un enlace corto.
+
+Y lo que fallo de verdad fue el proceso, no el enlace: **documente en V358 y no volvi a pasar la
+puerta**. La puerta hizo su trabajo; yo no la llame.
+
+De paso, un aviso que NO toque: `redundant explicit link target` en `src/model_recommender.rs`, que es
+preexistente y de otro lint. Comprobado antes de decidir, en vez de arreglar de paso algo que no era
+del cambio.
+
+## La inestabilidad, ahora con evidencia (N122)
+
+El job `Feature Matrix (autonomous,scheduler)`:
+
+| ejecucion | commit | resultado |
+|---|---|---|
+| 1-2 | `49500aa`, `e28696f` | verde |
+| 3 | `c9b1d8f` | **rojo** |
+| 4 | `c9b1d8f`, **relanzado sin cambiar nada** | **verde** |
+
+La cuarta cierra el diagnostico: **mismo arbol, resultado distinto**. No es una regresion, y el diff
+de `c9b1d8f` era `ci.yml`, `CHANGELOG.md` y un `#[cfg]` en un BINARIO — ese job corre `--lib`.
+
+La firma dice que buscar: `running 5784 tests`, **4032** lineas ` ... ok`, y entonces
+`process didn't exit successfully` con exit **101**, **sin ninguna linea `FAILED`, sin bloque
+`failures:`, sin `panicked at`**. Un test que falla imprime su nombre; esto no imprime nada, o sea que
+el binario **aborta a mitad**. El 101 apunta a un `abort()`, no al OOM killer (que daria 137).
+
+Es casi seguro lo mismo que el 2026-09-26 dio 8945/1 y cuyo nombre se perdio por filtrar con `tail`.
+**Tarea N122** con la evidencia, los tres candidatos por probabilidad y el plan: `--test-threads=1`
+con `RUST_BACKTRACE=full`, que en serie deja al culpable como el ultimo que imprimio «ok».
+
+Mientras N122 no este: **un rojo de ese job no significa que el ultimo commit rompiera algo.**
+Relanzarlo es lo primero a probar.
+
+## Y el metodo, que es lo que de verdad fallo esta tarde
+
+**Cuatro empujes con CI rojo**, y las cuatro veces por suponer en vez de preguntar al log:
+
+| intento | mi teoria | lo que era |
+|---|---|---|
+| 1 | el tercer fichero de supresiones | correcto, y no el unico fallo |
+| 2 | el clippy de `tabular-polars` a secas | **no**: ese job corre `--lib`, que ni compila los tests |
+| 3 | subir ese `--lib` es una mejora | **109 errores de N79** |
+| 4 | — | **un test mio** en `FEATURES_MIN`, el mismo en las tres |
+
+El orden correcto: `gh run view <id> --json jobs` → que job → `--log-failed` → **y entonces** una
+teoria. Y `grep -nE "^\s+run: cargo (test|clippy|check)"` sobre `ci.yml` da **19 invocaciones** en
+cinco conjuntos de features mas una matriz: **un superconjunto no sustituye a cada conjunto**, porque
+pasar en `A` y en `A+B` no dice nada de `B` solo.
+
 ## [Unreleased] - v234 (2026-09-27) — V358: la eleccion de motor, y el conjunto de features que no verifique (0.2.317)
 
 ## El fallo, primero — y una correccion a lo que escribi en esta misma entrada

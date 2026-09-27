@@ -21,7 +21,10 @@
 //! A model that does not know the column names invents them, and invented SQL
 //! that happens to parse returns a number with complete confidence. `describe`
 //! also reports which columns are mixed numeric, which is what stops the model
-//! trusting an `AVG` it should not — see [`ColumnInfo::is_mixed_numeric`].
+//! trusting an `AVG` it should not — see
+//! [`crate::tabular::ColumnInfo::is_mixed_numeric`]. The full path is needed
+//! because `ColumnInfo` is never named in this module's code, only reached through
+//! `TableInfo::columns`, so it is not in scope for rustdoc to resolve against.
 //!
 //! # The disclosure travels
 //!
