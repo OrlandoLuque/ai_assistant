@@ -480,6 +480,9 @@ mod tests {
         McpServer::new(NAME, VERSION)
     }
 
+    // The three --table tests are NOT gated: parsing an argument is the binary's
+    // own job and works in every build. What it does with the result is gated, and
+    // that is the test below.
     #[test]
     fn table_is_parsed_as_name_equals_path() {
         let opts = parse_args(&[
@@ -516,6 +519,12 @@ mod tests {
         );
     }
 
+    // Gated on the engines: without them the whole table-tools block is compiled
+    // out, so `absent` never mentions the file and this asserted something no
+    // build was doing. It failed at FEATURES_MIN, which has neither engine --
+    // the third feature-set miss of one session, and the one CI step I had not
+    // enumerated.
+    #[cfg(any(feature = "tabular-sqlite", feature = "tabular-polars"))]
     #[test]
     fn a_table_that_does_not_exist_is_reported_and_does_not_stop_the_server() {
         // The rule this whole function follows: a missing dependency means fewer
@@ -533,6 +542,23 @@ mod tests {
         assert!(
             absent.iter().any(|a| a.contains("no_such_file_12345.csv")),
             "the failure must name the file: {absent:?}"
+        );
+    }
+
+    #[cfg(not(any(feature = "tabular-sqlite", feature = "tabular-polars")))]
+    #[test]
+    fn without_an_engine_the_server_says_the_table_tools_are_absent() {
+        // The other half, and the one that makes the gate above honest: a build
+        // without either engine must REPORT that, not stay quiet. An operator who
+        // passes --table and gets silence cannot tell a missing feature from a bug.
+        let opts = Options {
+            tables: vec![("t".to_string(), PathBuf::from("whatever.csv"))],
+            ..Options::default()
+        };
+        let (_server, absent) = build_server(&opts);
+        assert!(
+            absent.iter().any(|a| a.contains("tabular-sqlite")),
+            "the absence must name the feature that would fix it: {absent:?}"
         );
     }
 

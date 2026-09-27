@@ -7,14 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] - v234 (2026-09-27) — V358: la eleccion de motor, y el conjunto de features que no verifique (0.2.317)
 
-## El fallo, primero
+## El fallo, primero — y una correccion a lo que escribi en esta misma entrada
 
-**CI se puso rojo en V357** y lo predije en local antes de verlo, por casualidad: verifique con
-`tabular` y con `tabular,tabular-polars`, y **no con `tabular-polars` a secas**, que es un job de CI.
+**CI se puso rojo en V357.** Encontre en local un fallo de clippy con `tabular-polars` a secas,
+**supuse que era el de CI**, lo arregle, empuje... y **siguio rojo**. Dos veces mas.
 
-Seis errores de codigo muerto: los ayudantes del modulo de tests de `table_tools` solo los usaban
-tests gateados a `tabular-sqlite`, asi que en una build solo-Polars no los usaba nadie — y bajo
-`-D warnings` eso no es un aviso, es un fallo de compilacion.
+El fallo real era otro, y era el mismo en las tres ejecuciones: **un test mio**,
+`a_table_that_does_not_exist_is_reported_and_does_not_stop_the_server`, que afirma sobre el `absent`
+de `build_server`. En `FEATURES_MIN` no hay ningun motor tabular, asi que el bloque entero esta
+`#[cfg]`-fuera, `absent` nunca menciona el fichero, y el test afirmaba algo que ninguna build hacia.
+
+Y la guinda: el job de `tabular-polars` de CI corre clippy con **`--lib`**, no `--all-targets`, asi
+que **nunca podria haber visto** el codigo muerto que yo «arregle». Un fallo local encontrado la
+misma tarde no es evidencia sobre lo que fallo en CI: es un segundo defecto.
+
+Lo que habria evitado las tres: **leer `ci.yml` y enumerar los comandos** en vez de adivinar.
+`grep -nE "^\s+run: cargo (test|clippy|check)"` da hoy **19 invocaciones** sobre cinco conjuntos de
+features mas una matriz — incluidos `--test '*'`, `--doc` y `FEATURES_NETWORK`, que un
+`FEATURES_STD --lib` no toca. Y **preguntarle a `gh run view` qué job fallo** antes de formar una
+teoria.
+
+Arreglado gateando el test a los motores, **y** con su complemento: una build sin ningun motor debe
+**decir** que no hay herramientas de tablas, porque un operador que pasa `--table` y recibe silencio
+no puede distinguir una feature ausente de un fallo.
+
+## Y el problema de codigo muerto, que era real aunque no fuera el rojo
+
+Seis errores con `tabular-polars` a secas y `--all-targets`: los ayudantes del modulo de tests de
+`table_tools` solo los usaban tests gateados a `tabular-sqlite`.
 
 Lo que revela es mas interesante que el aviso: **las herramientas MCP de tablas solo se habian
 probado contra SQLite**, y `ai_mcp_server` les va a dar un motor Polars en cuanto alguien pase un
@@ -44,10 +64,48 @@ salvo el camino barato, y el binario ya pago por Polars si la feature esta. La a
 por fichero) significaria que una consulta **no puede hacer JOIN entre dos ficheros**, que es
 exactamente lo que una persona pregunta de dos hojas de calculo.
 
+## Y una puerta que intente apretar y no se podia todavia
+
+El job de `tabular-polars` hacia `clippy --lib`, que **no compila `#[cfg(test)]`** — por eso no podia
+ver el codigo muerto de arriba — y sus dos pasos de «cada motor por separado» hacian `cargo check` en
+vez de clippy. Ninguna de las dos cosas estaba argumentada, asi que las subi.
+
+Medido: `clippy --no-default-features --features "tabular" --lib --tests` da **109 errores**, y
+ninguno es de `tabular`. `src/server.rs` 82, `src/lib.rs` 25, `src/assistant/mod.rs` 24, y el resto
+repartido; casi todos `unresolved import crate::mcp_protocol` o `crate::websocket_streaming`. **Es
+N79**: con features estrechas la libreria compila y sus tests no, porque el codigo de test alcanza
+modulos gateados detras de features que el conjunto estrecho no activa.
+
+Asi que el `--lib` de esos dos pasos **era portante** y yo lo tome por un descuido. Revertidos — y
+ahora el motivo esta escrito en el propio workflow, con la condicion de subida («UPGRADE THESE TO
+`clippy --lib --tests` when N79 lands») y con el hueco que dejan mientras tanto declarado: lo cubre el
+clippy de los dos motores juntos, que si compila los tests.
+
+Lo que **si** se queda apretado es ese clippy de los dos motores, ahora `--lib --tests`. Es el paso
+que habria cazado el codigo muerto, y pasa.
+
 ## Verificacion, esta vez con los conjuntos que CI usa
 
-`clippy --all-targets -D warnings` limpio en **los tres**: `tabular`, `tabular-polars` y los dos
-juntos. 8.946 tests con `FEATURES_STD`; 35 / 23 / 55 tests de `tabular` en las tres combinaciones.
+Esta vez enumerando los comandos de `ci.yml` en vez de adivinando, y con el log completo en fichero
+para que ningun filtro pueda esconder un bloque `failures:`:
+
+| paso de CI | resultado |
+|---|---|
+| `test FEATURES_STD --lib` | 8.946 verdes |
+| `test FEATURES_STD --test '*'` (integracion) | rc=0, 9 binarios |
+| `test FEATURES_STD --doc` (doctests) | rc=0 |
+| `test FEATURES_MIN` (completo) | rc=0, **cero** `FAILED`, 16 binarios |
+| `clippy FEATURES_STD --all-targets` | limpio |
+| `clippy FEATURES_NETWORK --all-targets` | limpio |
+| `clippy FEATURES_MIN` | limpio |
+| `test tabular` en las tres combinaciones | 35 / 23 / 55 |
+| `clippy tabular+polars --lib --tests` | limpio |
+| los dos «motor solo» como CI los corre | 0 errores |
+
+Y una trampa que conviene reconocer: contando lineas con `FAILED` me salieron **tres** en
+`FEATURES_MIN`, y eran `failed to rename archive file: Acceso denegado` — **dos `cargo` peleandose por
+el mismo `target/`**, porque tenia un trabajo de fondo vivo. Un `cargo` a la vez: rc=0. Ese error se
+lee como un test roto y no lo es.
 
 ## [Unreleased] - v233 (2026-09-27) — V357: las tablas llegan al modelo, y sin poder abrir ficheros (0.2.316)
 

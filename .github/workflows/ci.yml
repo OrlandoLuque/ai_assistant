@@ -367,12 +367,39 @@ jobs:
       # that would catch the two backends disagreeing.
       - name: Test both engines
         run: cargo test --features "tabular,tabular-polars" --lib tabular
+      # `--lib --tests` and not `--lib`: V358 wrote six pieces of dead code into
+      # this module's TEST module, reachable only in a Polars-only build, and this
+      # job — the only one that compiles that combination — could not see them,
+      # because `--lib` does not compile `#[cfg(test)]`. Every other clippy step in
+      # this file uses `--all-targets` for exactly that reason (two examples had
+      # rotted before anyone noticed).
+      #
+      # `--lib --tests` rather than `--all-targets`: examples and benches never
+      # mention `tabular`, and building them against the 397-crate Polars graph
+      # would cost minutes to check nothing.
       - name: Clippy, both engines
-        run: cargo clippy --features "tabular,tabular-polars" --lib -- -D warnings
+        run: cargo clippy --features "tabular,tabular-polars" --lib --tests -- -D warnings
       # Each engine alone must also build: enabling only `tabular-polars` once
       # compiled NO module at all, because the umbrella feature always drags
       # SQLite in and the gate read `cfg(feature = "tabular")`. A silent nothing,
       # not an error.
+      #
+      # `check --lib` and NOT `clippy --lib --tests`, and this is load-bearing:
+      # measured 2026-09-27, adding `--tests` here produces **109 compile errors**,
+      # none of them in `tabular` — `unresolved import crate::mcp_protocol` and
+      # `crate::websocket_streaming` out of `src/server.rs` (82), `src/lib.rs` (25)
+      # and `src/assistant/mod.rs` (24). That is N79: with narrow features the
+      # LIBRARY compiles and its TESTS do not, because test code reaches for
+      # modules gated behind features the narrow set does not enable.
+      #
+      # So these two steps deliberately ask the smaller question, and the reason is
+      # written here rather than left to be rediscovered: I upgraded them to
+      # `--tests` in V358 believing the `--lib` was an oversight, and turned CI red
+      # on a pre-existing condition that has its own task.
+      #
+      # UPGRADE THESE TO `clippy --lib --tests -- -D warnings` when N79 lands. The
+      # gap they leave meanwhile is covered by the both-engines clippy above, which
+      # does compile `#[cfg(test)]`.
       - name: SQLite engine alone
         run: cargo check --no-default-features --features "tabular" --lib
       - name: Polars engine alone
