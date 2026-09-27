@@ -4344,13 +4344,33 @@ Total gastado: $175
 mod what_the_knowledge_base_actually_stores {
     use super::*;
 
+    /// A database of its own, for one test.
+    ///
+    /// # Why a counter and not `line!()`
+    ///
+    /// This used to be `process::id() + line!()`, which *looks* like it derives a
+    /// distinct name per test and does not: **`line!()` expands where it is
+    /// written**, so every caller of this function got the same number and
+    /// therefore the same directory. The three tests in this module run in
+    /// parallel, so one would `remove_dir_all` the directory while another had its
+    /// database open — measured 2026-09-27, one failure in 13 full runs:
+    ///
+    /// ```text
+    /// the database opens: No se puede crear un archivo que ya existe. (os error 183)
+    /// ```
+    ///
+    /// The counter makes the name unique per *call*, which is what was intended.
+    /// And the `remove_dir_all` is gone: a name that is already unique has nothing
+    /// to clean up, and removing a directory another thread is using was the race
+    /// itself.
     fn temp_base() -> RagDb {
-        // off-drive: a test needs somewhere to put a database file.
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static N: AtomicUsize = AtomicUsize::new(0);
         let dir = std::env::temp_dir().join(format!(
-            "ai_assistant_kb_{}",
-            std::process::id() as u64 + line!() as u64
+            "ai_assistant_kb_{}_{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
         ));
-        let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("temp dir");
         RagDb::open(&dir.join("kb.db")).expect("the database opens")
     }

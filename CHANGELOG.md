@@ -5,6 +5,61 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v237 (2026-09-27) — V361: `line!()` no es la linea de quien llama (0.2.320)
+
+Medir en vez de juzgar dio su segundo hallazgo en la vuelta 12 de 23, y es de otra clase que el de
+V360.
+
+## El defecto
+
+```rust
+fn temp_base() -> RagDb {
+    let dir = std::env::temp_dir().join(format!(
+        "ai_assistant_kb_{}",
+        std::process::id() as u64 + line!() as u64   // <-- aqui
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    RagDb::open(&dir.join("kb.db")).expect("the database opens")
+}
+```
+
+Eso **parece** derivar un nombre distinto por test y no lo hace: **`line!()` se expande donde esta
+escrito**, no en quien llama. Asi que los **tres** tests del modulo recibian el mismo numero y por
+tanto el mismo directorio. Corren en paralelo, uno hacia `remove_dir_all` mientras otro tenia su base
+de datos abierta, y salia:
+
+    the database opens: No se puede crear un archivo que ya existe. (os error 183)
+
+Una de 13 vueltas completas.
+
+## El arreglo
+
+Un contador atomico, que da unicidad **por llamada** — que era la intencion. Y **fuera el
+`remove_dir_all`**: un nombre ya unico no tiene nada que limpiar, y borrar un directorio que otro hilo
+esta usando *era* la carrera. Es el mismo patron que ya usaban los ayudantes `csv_file` del modulo
+tabular; aqui faltaba.
+
+El idioma `process::id() + line!()` aparece **una sola vez** en todo `src/`, comprobado, asi que no
+hay mas sitios con esta forma exacta.
+
+## Estado de la medicion de N122
+
+**23 vueltas de la bateria completa** (8.950 arrancados, 8.946 pasados, 4 ignorados). Una roja: esta,
+en la vuelta 12. **Once verdes seguidas** desde el arreglo.
+
+Y las dos inestabilidades encontradas son de **clases distintas**, que es lo que justifica medir en
+vez de clasificar por patron:
+
+| | V360 | V361 |
+|---|---|---|
+| forma | `sleep` fijo esperando a otro hilo | nombre de directorio no unico |
+| se ve en | `assert_eq!(len, 1)` con 0 | `os error 183` al abrir |
+| un grep de «dormir y afirmar» | **lo habria encontrado** | **no** |
+
+O sea: el inventario de 65 sitios de «dormir y afirmar» **no es el conjunto de los inestables**. Hay
+inestables fuera de el, y sitios dentro que no lo son. Medir es lo que distingue.
+
 ## [Unreleased] - v236 (2026-09-27) — V360: la inestabilidad, cazada a la primera y con nombre (0.2.319)
 
 **Mi diagnostico de V359 era falso en lo central: no hay ningun aborto.**
