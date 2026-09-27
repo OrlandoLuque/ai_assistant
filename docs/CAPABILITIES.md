@@ -128,6 +128,8 @@ Added 2026-09-26. Behind the `tabular` feature, which defaults to
 | `describe_table` as an MCP tool | `mcp_protocol::table_tools` | si | — | **si** | no | no | hecho | 2026-09-27 | reports `mixed_numeric` and `non_numbers_nullified`, which is what stops a model trusting an `AVG` it should not |
 | `query_table` as an MCP tool | `mcp_protocol::table_tools` | si | — | **si** | no | no | hecho | 2026-09-27 | echoes `sql_executed`, `row_count`, `truncated`, `warnings`, `trustworthy`. Rows capped at 200 and the cap is announced |
 | Choose which files a model may query | `ai_mcp_server --table NAME=PATH` | si | **si** | n/a | no | no | hecho | 2026-09-27 | **there is deliberately no `load_table` tool** — the host picks the files, so no prompt can name a path |
+| Pick the engine a file needs | `tabular::engine_for` | si | si | n/a | no | no | hecho | 2026-09-27 | Parquet → Polars, else SQLite. Without Polars a `.parquet` gets `NeedsEngine` **naming the feature**, not a parse error inside a CSV reader |
+| One engine for a mixed set of files | `ai_mcp_server` | — | si | n/a | no | no | hecho | 2026-09-27 | if anything is Parquet, Polars reads them all — it reads CSV too. One engine per file would stop a query JOINing across two files |
 | Extract tables from inside text | `table_extraction` | si | — | — | — | — | hecho | 2026-09-26 | a different job: finds tables in prose. Does not query them |
 
 ### Two things the type system enforces
@@ -156,8 +158,10 @@ three tools, and a client sees them over real stdio JSON-RPC. What is still miss
 
 - **no CLI** for ad-hoc querying outside MCP (`ai_cli table query` does not exist);
 - **no GUI** surface, so the SQL a model ran has no place a human reads it yet;
-- **no automatic engine choice** — a `.parquet` path still needs the Polars engine
-  picked by hand, even though the extension says which one is required.
+- ~~no automatic engine choice~~ — **done in V358**: `tabular::engine_for(path)` picks
+  Polars for Parquet and SQLite otherwise, and a build without Polars asked for a
+  `.parquet` gets `TableError::NeedsEngine` naming the feature instead of a parse
+  failure inside a CSV reader.
 
 ## Evaluation and benchmarks
 
