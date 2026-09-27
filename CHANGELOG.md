@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v234 (2026-09-27) — V358: la eleccion de motor, y el conjunto de features que no verifique (0.2.317)
+
+## El fallo, primero
+
+**CI se puso rojo en V357** y lo predije en local antes de verlo, por casualidad: verifique con
+`tabular` y con `tabular,tabular-polars`, y **no con `tabular-polars` a secas**, que es un job de CI.
+
+Seis errores de codigo muerto: los ayudantes del modulo de tests de `table_tools` solo los usaban
+tests gateados a `tabular-sqlite`, asi que en una build solo-Polars no los usaba nadie — y bajo
+`-D warnings` eso no es un aviso, es un fallo de compilacion.
+
+Lo que revela es mas interesante que el aviso: **las herramientas MCP de tablas solo se habian
+probado contra SQLite**, y `ai_mcp_server` les va a dar un motor Polars en cuanto alguien pase un
+`.parquet`. Un motor sin probar detras de una interfaz probada es la forma de defecto que este
+repositorio lleva una semana encontrando.
+
+Asi que el arreglo no es gatear los ayudantes: son **dos tests nuevos sobre Polars** (las consultas
+funcionan; las escrituras se rechazan igual, que importa porque Polars tiene **una capa de seguridad
+menos** disponible que SQLite) y el test de la ausencia de `load_table` **generalizado a cualquier
+motor** — es una propiedad de seguridad del modulo, no del motor que haya detras.
+
+## Y la eleccion automatica de motor
+
+`is_parquet_path` vivia dentro de `polars_engine` y era **privada**, asi que una build solo-SQLite no
+podia hacerse la pregunta: darle un Parquet fallaba dentro del lector de CSV con un mensaje sobre un
+campo mal formado, y el lector se va a mirar sus datos cuando la respuesta estaba en sus features.
+Subida al modulo padre, como las comprobaciones de sentencia en V353.
+
+`engine_for(path)` elige: **Parquet -> Polars**, todo lo demas -> SQLite cuando esta (cuesta cero) y
+Polars cuando es el unico. Y cuando hace falta Polars y no esta, devuelve `TableError::NeedsEngine`
+**nombrando la feature** y por que — no un fallo de parseo cincuenta lineas dentro del lector de CSV
+de otro.
+
+En `ai_mcp_server`: **un solo motor para todas las tablas**, elegido por el requisito mas estricto
+del conjunto. Si algo es Parquet, Polars lee todas — tambien lee CSV, asi que no se pierde nada
+salvo el camino barato, y el binario ya pago por Polars si la feature esta. La alternativa (un motor
+por fichero) significaria que una consulta **no puede hacer JOIN entre dos ficheros**, que es
+exactamente lo que una persona pregunta de dos hojas de calculo.
+
+## Verificacion, esta vez con los conjuntos que CI usa
+
+`clippy --all-targets -D warnings` limpio en **los tres**: `tabular`, `tabular-polars` y los dos
+juntos. 8.946 tests con `FEATURES_STD`; 35 / 23 / 55 tests de `tabular` en las tres combinaciones.
+
 ## [Unreleased] - v233 (2026-09-27) — V357: las tablas llegan al modelo, y sin poder abrir ficheros (0.2.316)
 
 El motor tabular existia desde V352 y **nadie lo llamaba**. Ya no: `ai_mcp_server` sirve tres

@@ -55,9 +55,19 @@ pub const DEFAULT_ROWS: usize = 25;
 /// for a tool a model calls a few times per turn.
 pub type SharedEngine = Arc<Mutex<Box<dyn TableEngine + Send>>>;
 
-/// Wrap an engine for use by these tools.
+/// Wrap a concrete engine for use by these tools.
 pub fn shared<E: TableEngine + Send + 'static>(engine: E) -> SharedEngine {
     Arc::new(Mutex::new(Box::new(engine)))
+}
+
+/// Wrap an engine that is already boxed.
+///
+/// Needed because [`crate::tabular::engine_for`] returns a `Box<dyn TableEngine>`
+/// -- it chose the engine from the file's extension, so the concrete type is not
+/// known to the caller. Without this the caller would have to match on the engine
+/// name and re-open a concrete one, which is the choice happening twice.
+pub fn shared_boxed(engine: Box<dyn TableEngine + Send>) -> SharedEngine {
+    Arc::new(Mutex::new(engine))
 }
 
 /// Register the three tabular tools on a server.
@@ -357,10 +367,86 @@ mod tests {
         (server, path)
     }
 
-    #[cfg(feature = "tabular-sqlite")]
+    /// A server over whatever engine `engine_for` picks for the path.
+    ///
+    /// Used by the Polars tests below. They exist because until V358 these tools
+    /// were only ever tested against SQLite, while `ai_mcp_server` will hand them
+    /// a Polars engine the moment a `.parquet` is passed -- and an untested engine
+    /// behind a tested interface is the shape of defect this repository keeps
+    /// finding.
+    #[cfg(any(feature = "tabular-sqlite", feature = "tabular-polars"))]
+    fn server_over(name: &str, path: &std::path::Path) -> McpServer {
+        let mut engine = crate::tabular::engine_for(path).expect("an engine for this file");
+        engine.load(name, path).expect("load");
+        let mut server = McpServer::new("test", "0");
+        register_table_tools(&mut server, shared_boxed(engine));
+        initialised(&server);
+        server
+    }
+
+    #[cfg(feature = "tabular-polars")]
+    #[test]
+    fn the_tools_work_over_the_polars_engine_too() {
+        let path = csv_file("ventas_polars.csv", BODY);
+        let server = server_over("ventas", &path);
+
+        let listed = call(&server, "list_tables", serde_json::json!({}));
+        assert_eq!(listed["tables"][0]["row_count"], 4);
+        // With BOTH engines compiled in, a .csv goes to the cheap one. This test
+        // asserts whichever one `engine_for` chose actually answered, rather than
+        // hard-coding a name that depends on the feature set.
+        let engine_name = listed["engine"].as_str().expect("engine name");
+        assert!(
+            engine_name == "polars" || engine_name == "sqlite",
+            "unexpected engine: {engine_name}"
+        );
+
+        let out = call(
+            &server,
+            "query_table",
+            serde_json::json!({
+                "sql": "SELECT region, SUM(importe) AS total FROM ventas GROUP BY region                         ORDER BY total DESC"
+            }),
+        );
+        assert_eq!(out["row_count"], 2);
+        assert_eq!(out["rows"][0][0], "norte");
+        assert_eq!(out["rows"][0][1], 500);
+        assert_eq!(out["trustworthy"], true);
+    }
+
+    #[cfg(feature = "tabular-polars")]
+    #[test]
+    fn a_write_is_refused_over_the_polars_engine_as_well() {
+        // The Polars engine has ONE FEWER safety layer available than SQLite --
+        // there is no `Statement::readonly()` equivalent -- so "the shared checks
+        // still hold here" is the thing worth asserting, not assuming.
+        let path = csv_file("ventas_polars_w.csv", BODY);
+        let server = server_over("ventas", &path);
+        for sql in [
+            "DROP TABLE ventas",
+            "DELETE FROM ventas",
+            "SELECT 1; DROP TABLE ventas",
+        ] {
+            let err = try_call(&server, "query_table", serde_json::json!({"sql": sql}))
+                .expect_err(&format!("must refuse: {sql}"));
+            assert!(!err.is_empty(), "a refusal must say something: {sql}");
+        }
+        let after = call(
+            &server,
+            "query_table",
+            serde_json::json!({"sql": "SELECT COUNT(*) AS n FROM ventas"}),
+        );
+        assert_eq!(after["rows"][0][0], 4, "the table survived");
+    }
+
+    // Not gated on one engine: the absence of a file-opening tool is a security
+    // property of this module, not of whichever engine happens to be behind it, so
+    // it is asserted in every build that can compile the module at all.
+    #[cfg(any(feature = "tabular-sqlite", feature = "tabular-polars"))]
     #[test]
     fn the_three_tools_are_registered_and_load_table_is_not() {
-        let (server, _p) = server_with_ventas();
+        let path = csv_file("ventas_names.csv", BODY);
+        let server = server_over("ventas", &path);
         let names = tool_names(&server);
         for expected in ["list_tables", "describe_table", "query_table"] {
             assert!(

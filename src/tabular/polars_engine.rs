@@ -50,8 +50,8 @@ use polars::prelude::*;
 use polars::sql::SQLContext;
 
 use super::{
-    ensure_single_read_only_statement, is_valid_table_name, mixed_column_warnings, Cell,
-    ColumnInfo, LoadOptions, MixedColumns, QueryResult, TableEngine, TableError, TableInfo,
+    ensure_single_read_only_statement, is_parquet_path, is_valid_table_name, mixed_column_warnings,
+    Cell, ColumnInfo, LoadOptions, MixedColumns, QueryResult, TableEngine, TableError, TableInfo,
 };
 
 /// Tables held as lazy frames, queried through Polars' SQL layer.
@@ -123,12 +123,6 @@ fn pl_path(path: &Path) -> Result<PlRefPath, TableError> {
 /// By extension, which is what the caller controls. Sniffing the magic bytes
 /// would be more robust and is worth doing the day somebody hits it; today the
 /// wrong guess produces a clear parse error rather than a wrong answer.
-fn looks_like_parquet(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.eq_ignore_ascii_case("parquet") || e.eq_ignore_ascii_case("pq"))
-        .unwrap_or(false)
-}
 
 /// Turn one Polars value into the engine-neutral [`Cell`].
 ///
@@ -176,7 +170,7 @@ impl TableEngine for PolarsTableEngine {
             return Err(TableError::DuplicateTable(name.to_string()));
         }
 
-        let frame = if looks_like_parquet(path) {
+        let frame = if is_parquet_path(path) {
             LazyFrame::scan_parquet(pl_path(path)?, ScanArgsParquet::default())
                 .map_err(|e| TableError::Parse(e.to_string()))?
         } else {
@@ -712,10 +706,10 @@ mod tests {
 
     #[test]
     fn parquet_is_recognised_by_extension() {
-        assert!(looks_like_parquet(Path::new("ventas.parquet")));
-        assert!(looks_like_parquet(Path::new("VENTAS.PARQUET")));
-        assert!(looks_like_parquet(Path::new("v.pq")));
-        assert!(!looks_like_parquet(Path::new("ventas.csv")));
-        assert!(!looks_like_parquet(Path::new("ventas")));
+        assert!(is_parquet_path(Path::new("ventas.parquet")));
+        assert!(is_parquet_path(Path::new("VENTAS.PARQUET")));
+        assert!(is_parquet_path(Path::new("v.pq")));
+        assert!(!is_parquet_path(Path::new("ventas.csv")));
+        assert!(!is_parquet_path(Path::new("ventas")));
     }
 }

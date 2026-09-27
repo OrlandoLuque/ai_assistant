@@ -255,27 +255,46 @@ fn build_server(opts: &Options) -> (McpServer, Vec<String>) {
     // this loop put in. There is deliberately no `load_table` tool: see the module
     // docs. A file that fails to load is reported and the rest still load -- one
     // bad CSV is a reason to serve fewer tables, not none.
-    #[cfg(feature = "tabular-sqlite")]
+    #[cfg(any(feature = "tabular-sqlite", feature = "tabular-polars"))]
     if publish.publishes(ToolGroup::Tables) && !opts.tables.is_empty() {
-        // The trait, not the struct: `load` is a `TableEngine` method, so the trait
-        // has to be in scope. Imported inside the block so a build without the
-        // feature does not carry an unused import.
-        use ai_assistant::tabular::TableEngine as _;
-        match ai_assistant::tabular::sqlite_engine::SqliteTableEngine::new() {
-            Ok(mut engine) => {
+        // No `TableEngine` import: `engine_for` hands back a `Box<dyn TableEngine>`,
+        // and a boxed trait object resolves its own methods.
+        use ai_assistant::tabular::{engine_for, is_parquet_path};
+
+        // ONE engine for every table, chosen by the strictest requirement in the
+        // set. If anything is Parquet, Polars reads all of them -- it handles CSV
+        // too, so nothing is lost but the cheap path, and the binary has already
+        // paid for Polars if the feature is on.
+        //
+        // The alternative -- one engine per file -- would mean the tools holding
+        // several engines and a query being unable to JOIN across two files, which
+        // is exactly the question a person asks of two spreadsheets.
+        let deciding = opts
+            .tables
+            .iter()
+            .find(|(_, path)| is_parquet_path(path))
+            .or_else(|| opts.tables.first());
+
+        match deciding.map(|(_, path)| engine_for(path)) {
+            Some(Ok(mut engine)) => {
+                let chosen = engine.engine_name();
                 let mut loaded = 0usize;
                 for (name, path) in &opts.tables {
                     match engine.load(name, path) {
-                        Ok(info) => loaded += info.row_count.min(1),
+                        Ok(_) => loaded += 1,
                         Err(e) => {
                             absent.push(format!("table {name:?} from {}: {e}", path.display()))
                         }
                     }
                 }
                 if loaded > 0 {
+                    eprintln!(
+                        "[mcp] {loaded} of {} table(s) loaded with the {chosen} engine",
+                        opts.tables.len()
+                    );
                     ai_assistant::mcp_protocol::table_tools::register_table_tools(
                         &mut server,
-                        ai_assistant::mcp_protocol::table_tools::shared(engine),
+                        ai_assistant::mcp_protocol::table_tools::shared_boxed(engine),
                     );
                 } else {
                     absent.push(
@@ -284,10 +303,14 @@ fn build_server(opts: &Options) -> (McpServer, Vec<String>) {
                     );
                 }
             }
-            Err(e) => absent.push(format!("table tools: could not start the engine ({e})")),
+            // The interesting failure: a `.parquet` in a build without Polars. The
+            // error names the feature, so the operator is not sent looking at their
+            // data for a problem that is in their build.
+            Some(Err(e)) => absent.push(format!("table tools: {e}")),
+            None => unreachable!("the list was checked non-empty above"),
         }
     }
-    #[cfg(feature = "tabular-sqlite")]
+    #[cfg(any(feature = "tabular-sqlite", feature = "tabular-polars"))]
     if publish.publishes(ToolGroup::Tables) && opts.tables.is_empty() {
         // Not an error: serving three tools over zero tables would answer every
         // question with "no such table", which reads like a broken server.
@@ -296,8 +319,8 @@ fn build_server(opts: &Options) -> (McpServer, Vec<String>) {
                 .to_string(),
         );
     }
-    #[cfg(not(feature = "tabular-sqlite"))]
-    absent.push("table tools: built without the `tabular-sqlite` feature".to_string());
+    #[cfg(not(any(feature = "tabular-sqlite", feature = "tabular-polars")))]
+    absent.push("table tools: built without `tabular-sqlite` or `tabular-polars`".to_string());
 
     // --- Research tools ---
     //

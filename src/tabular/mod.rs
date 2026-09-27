@@ -396,11 +396,35 @@ pub enum TableError {
     DuplicateTable(String),
     /// The name cannot be used as a SQL identifier.
     BadTableName(String),
+    /// The file needs an engine this build does not contain.
+    ///
+    /// Separate from [`Self::Parse`] on purpose. SQLite handed a Parquet file
+    /// fails somewhere inside the CSV reader with a message about a malformed
+    /// field, which sends the reader looking at their data instead of at their
+    /// feature flags. The extension already said which engine was needed; saying
+    /// so is the whole value of this variant.
+    NeedsEngine {
+        /// What was asked for.
+        path: PathBuf,
+        /// The Cargo feature that would provide it.
+        feature: &'static str,
+        /// Why that engine and not another, in one clause.
+        because: &'static str,
+    },
 }
 
 impl std::fmt::Display for TableError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::NeedsEngine {
+                path,
+                feature,
+                because,
+            } => write!(
+                f,
+                "{} needs the `{feature}` feature: {because}. Rebuild with it enabled,                  or convert the file first.",
+                path.display()
+            ),
             Self::Io(e) => write!(f, "cannot read the file: {e}"),
             Self::Parse(e) => write!(f, "cannot parse the file as a table: {e}"),
             Self::NoSuchTable { asked, available } => {
@@ -647,6 +671,66 @@ pub fn ensure_single_read_only_statement(sql: &str) -> Result<(), TableError> {
         )));
     }
     Ok(())
+}
+
+/// Does this path name a Parquet file?
+///
+/// # Why this is in the parent module
+///
+/// It lived inside `polars_engine` and was private, which meant a build with only
+/// the SQLite engine could not ask the question — so handing that build a Parquet
+/// file failed somewhere inside the CSV reader, with a message about a malformed
+/// field. The reader then goes looking at their data, and the answer was in their
+/// feature flags all along.
+///
+/// Extension only, and deliberately: reading the magic bytes would need the file
+/// open, and the point is to answer **before** choosing an engine. A `.csv` that is
+/// really Parquet will still fail, and it will fail at parse time, which is where a
+/// lie about a file's contents belongs.
+pub fn is_parquet_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("parquet") || e.eq_ignore_ascii_case("pq"))
+        .unwrap_or(false)
+}
+
+/// Open the engine this file needs, or say which feature would provide it.
+///
+/// - **Parquet** needs Polars. SQLite cannot read it, and that is the concrete
+///   reason the expensive engine exists.
+/// - **Everything else** (CSV and anything the CSV reader can handle) goes to
+///   SQLite when it is available, because it costs nothing, and falls back to
+///   Polars when it is the only engine compiled in.
+///
+/// The error case is the one worth having: a build without `tabular-polars` asked
+/// to open a `.parquet` gets [`TableError::NeedsEngine`] naming the feature, rather
+/// than a parse failure fifty lines into somebody else's CSV reader.
+#[cfg(any(feature = "tabular-sqlite", feature = "tabular-polars"))]
+pub fn engine_for(path: &Path) -> Result<Box<dyn TableEngine + Send>, TableError> {
+    if is_parquet_path(path) {
+        #[cfg(feature = "tabular-polars")]
+        {
+            return Ok(Box::new(polars_engine::PolarsTableEngine::new()));
+        }
+        #[cfg(not(feature = "tabular-polars"))]
+        {
+            return Err(TableError::NeedsEngine {
+                path: path.to_path_buf(),
+                feature: "tabular-polars",
+                because: "SQLite cannot read Parquet",
+            });
+        }
+    }
+
+    #[cfg(feature = "tabular-sqlite")]
+    {
+        return sqlite_engine::SqliteTableEngine::new()
+            .map(|e| Box::new(e) as Box<dyn TableEngine + Send>);
+    }
+    #[cfg(all(not(feature = "tabular-sqlite"), feature = "tabular-polars"))]
+    {
+        Ok(Box::new(polars_engine::PolarsTableEngine::new()))
+    }
 }
 
 /// Is `name` usable as a table identifier?
@@ -965,6 +1049,79 @@ mod both_engines_agree {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_extension_decides_which_engine_can_read_it() {
+        assert!(is_parquet_path(Path::new("ventas.parquet")));
+        assert!(
+            is_parquet_path(Path::new("VENTAS.PARQUET")),
+            "case-insensitive"
+        );
+        assert!(is_parquet_path(Path::new("v.pq")), "the short spelling too");
+        assert!(is_parquet_path(Path::new("/a/b/c.parquet")), "a full path");
+        assert!(!is_parquet_path(Path::new("ventas.csv")));
+        assert!(!is_parquet_path(Path::new("ventas")), "no extension at all");
+        assert!(
+            !is_parquet_path(Path::new("parquet")),
+            "a FILE called parquet is not a parquet file"
+        );
+        assert!(
+            !is_parquet_path(Path::new("ventas.parquet.csv")),
+            "the LAST extension is the one that counts"
+        );
+    }
+
+    #[cfg(any(feature = "tabular-sqlite", feature = "tabular-polars"))]
+    #[test]
+    fn engine_for_picks_the_cheap_engine_for_a_csv() {
+        let engine = engine_for(Path::new("ventas.csv")).expect("a csv needs no special engine");
+        // Whichever one this build has. With both, SQLite wins because it costs
+        // nothing; the expensive engine is not a default.
+        #[cfg(feature = "tabular-sqlite")]
+        assert_eq!(engine.engine_name(), "sqlite");
+        #[cfg(all(not(feature = "tabular-sqlite"), feature = "tabular-polars"))]
+        assert_eq!(engine.engine_name(), "polars");
+    }
+
+    #[cfg(feature = "tabular-polars")]
+    #[test]
+    fn a_parquet_file_gets_polars_when_polars_is_there() {
+        let engine = engine_for(Path::new("ventas.parquet")).expect("polars is compiled in");
+        assert_eq!(engine.engine_name(), "polars");
+    }
+
+    #[cfg(all(feature = "tabular-sqlite", not(feature = "tabular-polars")))]
+    #[test]
+    fn a_parquet_file_names_the_missing_feature_instead_of_failing_to_parse() {
+        // The whole reason this function exists. Before it, SQLite was handed the
+        // file and failed inside the CSV reader with a message about a malformed
+        // field -- which sends the reader looking at their data when the answer was
+        // in their feature flags.
+        // `match` and not `expect_err`: the Ok side is a `Box<dyn TableEngine>`,
+        // which has no `Debug` -- and giving a trait object one just so a test can
+        // print it would be the tail wagging the dog.
+        let err = match engine_for(Path::new("ventas.parquet")) {
+            Err(e) => e,
+            Ok(engine) => panic!(
+                "expected a refusal, got the {} engine",
+                engine.engine_name()
+            ),
+        };
+        match &err {
+            TableError::NeedsEngine { feature, .. } => assert_eq!(*feature, "tabular-polars"),
+            other => panic!("wrong error: {other:?}"),
+        }
+        let message = format!("{err}");
+        assert!(message.contains("tabular-polars"), "{message}");
+        assert!(
+            message.contains("ventas.parquet"),
+            "and the file: {message}"
+        );
+        assert!(
+            message.contains("SQLite cannot read Parquet"),
+            "and WHY, so nobody goes looking for a bug: {message}"
+        );
+    }
 
     #[test]
     fn a_table_name_must_be_a_plain_identifier() {
