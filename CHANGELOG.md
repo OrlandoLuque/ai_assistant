@@ -5,6 +5,79 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v232 (2026-09-27) — V356: el comprobador miraba dos ficheros y habia tres (0.2.315)
+
+Esta entrada existe porque **CI se puso rojo justo despues de V355** y por una razon que merece
+quedar escrita: la puerta que debia avisarme **no podia**.
+
+## El fallo
+
+V355 borro la supresion de RUSTSEC-2026-0187 de `deny.toml` y de `.github/workflows/ci.yml`,
+ejecuto `scripts/check_rustsec_ignores.py`, salio **OK**, empuje, y **Supply Chain fallo**.
+
+Habia un **tercer** fichero: `.github/workflows/supply-chain.yml`, que tiene su propio job de
+`cargo audit` con su propia lista, para que un barrido programado no dependa del workflow
+principal de CI.
+
+Y lo que importa: **habia dos comprobadores de la misma regla**.
+
+| comprobador | ficheros que miraba |
+|---|---|
+| bloque de shell dentro de `supply-chain.yml` | **tres** |
+| `scripts/check_rustsec_ignores.py` | **dos** |
+
+El debil es el que ejecuta una persona en local. Su mensaje de exito decia «identical in deny.toml
+and ci.yml», que era **verdad** — y por eso pase por encima. Un mensaje correcto que responde a
+una pregunta mas pequena que la que hace falta.
+
+## El arreglo
+
+**Un solo comprobador.** El bloque de shell se borra; el script crece al tercer fichero y compara
+**cada** fichero contra `deny.toml` por separado, no contra la union — una union se satisface
+cuando el ID esta en *algun* sitio, que es exactamente el estado en el que qué puerta te caza
+depende de qué workflow corrio. Y el mensaje de exito ahora **nombra los ficheros que comparo**.
+
+El job de `supply-chain.yml` pasa a ser `python3 scripts/check_rustsec_ignores.py`: local y CI
+hacen la misma pregunta porque son el mismo codigo.
+
+Verificado **rompiendo cada uno de los tres** por separado y exigiendo rc=1 en los tres, mas rc=0
+con los tres en orden. Una puerta que solo se ha ejecutado contra entrada buena no es una puerta.
+
+## Y N117: `scripts/mutate.py`
+
+La mutacion deja de ser artesanal. `scripts/mutate.py` + `scripts/mutations/tabular.toml` con las
+**nueve** mutaciones de V355 declaradas, y con las tres cosas que me costaron errores esa misma
+noche metidas en el diseno:
+
+- **`occurrences`**: si el patron aparece N veces, son **N mutaciones**, una por sitio, con
+  veredicto por sitio. Mutar los dos sitios a la vez fue lo que casi me hizo escribir «nueve de
+  nueve» sobre un hueco.
+- **`NOT_COMPILED` como veredicto propio**: una mutacion que no compila **no prueba nada**, porque
+  el test no llego a correr. Y se detecta con `error[E` y `could not compile`, no con `'error: '`,
+  que casa con el propio `error: test failed` de cargo — o sea, con las mutaciones que SI murieron.
+- **Especificaciones en fichero TOML**, nunca cadenas dentro de un heredoc de shell.
+
+Y dos cosas mas:
+
+- **`expect = "survives"` exige un `note`.** Una mutacion que sobrevive a proposito es una
+  afirmacion, y una afirmacion sin argumento no es revisable.
+- **`--dry-run`**: valida que cada especificacion sigue casando con el codigo, **sin compilar
+  nada**. Eso es lo que se podra poner en CI, porque la parte caras es un `cargo test` por
+  mutacion. Es tambien la parte que se podre: un `before` es una linea copiada del fuente, y en
+  cuanto alguien la edita la especificacion deja de probar **nada**, en silencio.
+
+`--self-test` demuestra que `--dry-run` **falla** con cada clase de deriva. Y su primera version
+se saboteaba sola: usaba `scripts/mutate.py` como fixture, asi que cada cadena que buscaba estaba
+escrita en el fichero por ser parte del codigo — «una cadena que seguro no aparece» aparecia, y la
+que debia aparecer una vez aparecia dos. Tres de cuatro casos fallaban por eso. Ahora el fixture
+es un fichero temporal de cuatro lineas.
+
+## Verificacion
+
+Bateria del harness **694 tests verdes** (3 saltados) con `full,browser` en perfil `release`, que
+es la que cubre el cambio de `pdf-extract` de punta a punta. `--self-test` 6 de 6, `--dry-run` 9 de
+9, el comprobador de supresiones caza la deriva en los tres ficheros.
+
 ## [Unreleased] - v231 (2026-09-27) — V355: el AVG deja de mentir, en los dos motores (0.2.314)
 
 V352 **midio** el defecto y V353 lo **aviso**. Lo que pediste era otra cosa: que el numero fuera

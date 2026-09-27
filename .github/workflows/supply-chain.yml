@@ -67,7 +67,6 @@ jobs:
             --ignore RUSTSEC-2024-0436 \
             --ignore RUSTSEC-2025-0134 \
             --ignore RUSTSEC-2026-0002 \
-            --ignore RUSTSEC-2026-0187 \
             --ignore RUSTSEC-2026-0194 \
             --ignore RUSTSEC-2026-0195 \
             --ignore RUSTSEC-2026-0192 \
@@ -84,34 +83,15 @@ jobs:
         # and deny.toml ([advisories].ignore) must match. Drift between
         # them means an advisory was silenced in one place but not the
         # other.
-        run: |
-          set -euo pipefail
-          # Match the ENTRIES, not every mention of an ID. The naive version
-          # grepped the whole file, so prose counted: V276 deleted an ignore and
-          # left a comment saying which one, and this job read that comment as a
-          # still-present entry and reported drift against the file that had no
-          # such comment. An ignore list you cannot write about is not the goal.
-          extract_yaml() {
-            grep -oE '^[[:space:]]*--ignore[[:space:]]+RUSTSEC-[0-9]+-[0-9]+' "$1" \
-              | grep -oE 'RUSTSEC-[0-9]+-[0-9]+' | sort -u
-          }
-          extract_toml() {
-            sed -n '/\[advisories\]/,/^\[/p' "$1" \
-              | grep -oE '^[[:space:]]*"RUSTSEC-[0-9]+-[0-9]+"' \
-              | grep -oE 'RUSTSEC-[0-9]+-[0-9]+' | sort -u
-          }
-          ci_list=$(extract_yaml .github/workflows/ci.yml)
-          sc_list=$(extract_yaml .github/workflows/supply-chain.yml)
-          dy_list=$(extract_toml deny.toml)
-          if [ "$ci_list" != "$sc_list" ] || [ "$ci_list" != "$dy_list" ]; then
-            echo "::error::ignore lists drift detected"
-            echo "ci.yml:"; echo "$ci_list"
-            echo "supply-chain.yml:"; echo "$sc_list"
-            echo "deny.toml:"; echo "$dy_list"
-            exit 1
-          fi
-          echo "All three ignore lists agree:"
-          echo "$ci_list"
+        #
+        # This used to be an inline shell block comparing all three, while
+        # scripts/check_rustsec_ignores.py compared only two -- and the two-way
+        # one is what a human runs locally. On 2026-09-27 an ignore was deleted
+        # from ci.yml and deny.toml, the local script said OK, and THIS job
+        # caught the third file after the push. Two implementations of one rule
+        # is one implementation and one liability, so the shell went and the
+        # script grew the third file: now local and CI ask the same question.
+        run: python3 scripts/check_rustsec_ignores.py
 
   sbom:
     name: SBOM (CycloneDX)

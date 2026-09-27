@@ -1,11 +1,21 @@
 #!/usr/bin/env python3
-"""Keep the three places that talk about suppressed advisories agreeing.
+"""Keep every place that talks about suppressed advisories agreeing.
 
 Every ``--ignore RUSTSEC-XXXX-NNNN`` is a promise that the advisory does not
-apply to our usage. The promise is made in two files that nothing kept in step:
+apply to our usage. The promise is made in THREE files that nothing kept in step:
 
 * ``deny.toml`` — the ``ignore`` array read by ``cargo deny``.
 * ``.github/workflows/ci.yml`` — the ``--ignore`` flags passed to ``cargo audit``.
+* ``.github/workflows/supply-chain.yml`` — a second ``cargo audit`` job, which
+  exists so a scheduled supply-chain run does not depend on the main CI workflow.
+
+**This script used to compare only the first two**, while an inline shell block in
+``supply-chain.yml`` compared all three. Two implementations of one rule, and the
+weaker one was the one a human runs locally: on 2026-09-27 I deleted an ignore
+from ``ci.yml`` and ``deny.toml``, ran this script, got OK, pushed, and CI went
+red on the third file. So the shell block is gone and this is the only
+implementation — because that is the shape of defect this repository keeps
+finding, and having it inside the *checker* was the joke.
 
 They agree today. Nothing made them, and they have drifted before: an advisory
 suppressed in one tool and enforced in the other means the gate that catches it
@@ -24,7 +34,7 @@ suppressed, and told by implication that it is.
 
 What this script checks:
 
-1. The two lists contain exactly the same advisory IDs.
+1. All the lists contain exactly the same advisory IDs.
 2. Every entry in ``deny.toml`` carries a comment above it saying why.
 3. No ID is counted from a comment — only from the array itself.
 
@@ -100,20 +110,45 @@ def ci_entries(path: Path) -> list[str]:
     return re.findall(r"--ignore\s+(RUSTSEC-\d{4}-\d{4})", text)
 
 
+DEFAULT_AUDIT_FILES = (
+    ".github/workflows/ci.yml",
+    ".github/workflows/supply-chain.yml",
+)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--deny", default="deny.toml")
-    parser.add_argument("--ci", default=".github/workflows/ci.yml")
+    parser.add_argument(
+        "--audit",
+        action="append",
+        default=[],
+        metavar="FILE",
+        help=(
+            "a workflow passing --ignore flags to cargo audit; repeatable. "
+            f"Defaults to all of: {', '.join(DEFAULT_AUDIT_FILES)}"
+        ),
+    )
+    # Kept so an existing invocation does not break, but it no longer means
+    # "the one file to check" -- adding a file must not silently drop the others,
+    # which is how a three-way check became a two-way one.
+    parser.add_argument("--ci", default=None, help="alias for --audit (deprecated)")
     args = parser.parse_args()
 
+    audit_names = list(args.audit)
+    if args.ci:
+        audit_names.append(args.ci)
+    if not audit_names:
+        audit_names = list(DEFAULT_AUDIT_FILES)
+
     deny_path = Path(args.deny)
-    ci_path = Path(args.ci)
-    for path in (deny_path, ci_path):
+    audit_paths = [Path(name) for name in dict.fromkeys(audit_names)]
+    for path in (deny_path, *audit_paths):
         if not path.is_file():
             sys.exit(f"not found: {path}")
 
     deny_list, undocumented = deny_entries(deny_path)
-    ci_list = ci_entries(ci_path)
+    audit_lists = {path: ci_entries(path) for path in audit_paths}
 
     problems: list[str] = []
 
@@ -121,18 +156,22 @@ def main() -> int:
     if duplicates:
         problems.append(f"{deny_path}: listed twice: {', '.join(sorted(duplicates))}")
 
-    only_deny = sorted(set(deny_list) - set(ci_list))
-    only_ci = sorted(set(ci_list) - set(deny_list))
-    if only_deny:
-        problems.append(
-            f"suppressed for `cargo deny` but NOT for `cargo audit`: {', '.join(only_deny)}\n"
-            f"    Add `--ignore <id>` in {ci_path}, or drop it from {deny_path}."
-        )
-    if only_ci:
-        problems.append(
-            f"suppressed for `cargo audit` but NOT for `cargo deny`: {', '.join(only_ci)}\n"
-            f"    Add it to the ignore array in {deny_path}, or drop the flag in {ci_path}."
-        )
+    # Compared file by file against deny.toml rather than against a union: a union
+    # is satisfied when an ID is present SOMEWHERE, which is exactly the state
+    # that makes which-gate-catches-it depend on which workflow ran.
+    for path, audit_list in audit_lists.items():
+        only_deny = sorted(set(deny_list) - set(audit_list))
+        only_audit = sorted(set(audit_list) - set(deny_list))
+        if only_deny:
+            problems.append(
+                f"suppressed in {deny_path} but NOT in {path}: {', '.join(only_deny)}\n"
+                f"    Add `--ignore <id>` in {path}, or drop it from {deny_path}."
+            )
+        if only_audit:
+            problems.append(
+                f"suppressed in {path} but NOT in {deny_path}: {', '.join(only_audit)}\n"
+                f"    Add it to the ignore array in {deny_path}, or drop the flag in {path}."
+            )
 
     if undocumented:
         problems.append(
@@ -151,10 +190,11 @@ def main() -> int:
         )
         return 1
 
-    print(
-        f"OK - {len(deny_list)} suppressed advisories, identical in "
-        f"{deny_path} and {ci_path}, each with a reason."
-    )
+    # Names every file it actually compared. The previous message named two files
+    # while a second checker compared three, so "OK - identical in deny.toml and
+    # ci.yml" was true and still let a real drift through.
+    where = ", ".join(str(path) for path in (deny_path, *audit_paths))
+    print(f"OK - {len(deny_list)} suppressed advisories, identical in {where}, each with a reason.")
     return 0
 
 

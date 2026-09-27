@@ -1,0 +1,98 @@
+# Mutations for the tabular query layer (src/tabular/).
+#
+# These are the nine that were run by hand on 2026-09-27 (V355) while fixing the
+# AVG/COUNT defect, written down so they cannot be forgotten. The one that
+# mattered is M2: its `before` appears TWICE (the Integer branch and the Real
+# branch of the numeric insert path), the Integer one died immediately and the
+# Real one SURVIVED -- no test loaded a column of decimals with a missing marker,
+# so `10.5, -, 30` could be typed REAL with the dash stored as text and AVG lied
+# again with nothing failing. `occurrences = 2` is there to make the script refuse
+# to run if that ever collapses back to one site.
+#
+# Run: python scripts/mutate.py --spec scripts/mutations/tabular.toml
+#
+# Nine mutations means nine `cargo test` runs. The `filter` keeps each one to the
+# tabular tests rather than the whole 8.9k-test library.
+
+features = "tabular"
+filter = "tabular"
+
+[[mutation]]
+id = "M1"
+file = "src/tabular/sqlite_engine.rs"
+invariant = "the default policy types a mixed numeric column numerically, not as text"
+before = "MixedColumns::NullifyForArithmetic => numeric,"
+after = "MixedColumns::NullifyForArithmetic => Inferred::Text,"
+occurrences = 1
+
+[[mutation]]
+id = "M2"
+file = "src/tabular/sqlite_engine.rs"
+invariant = "a value that does not parse in a numeric column becomes NULL, not text -- on BOTH the Integer and the Real branch"
+before = "                                    .unwrap_or(rusqlite::types::Value::Null),"
+after = "                                    .unwrap_or_else(|_| rusqlite::types::Value::Text(s.to_string())),"
+occurrences = 2
+
+[[mutation]]
+id = "M3"
+file = "src/tabular/sqlite_engine.rs"
+invariant = "non_numbers_nullified reports what happened, so it cannot be hard-coded true"
+before = "non_numbers_nullified: s.inferred != Inferred::Text,"
+after = "non_numbers_nullified: true,"
+occurrences = 1
+
+[[mutation]]
+id = "M4"
+file = "src/tabular/mod.rs"
+invariant = "the two warnings are not interchangeable: saying AVG is wrong when the values were nulled misleads as much as silence"
+before = "            if col.non_numbers_nullified {"
+after = "            if !col.non_numbers_nullified {"
+occurrences = 1
+
+[[mutation]]
+id = "M5"
+file = "src/tabular/polars_engine.rs"
+features = "tabular-polars"
+invariant = "the polars engine actually applies the non-strict cast it decided on"
+before = "let (frame, df) = if casts.is_empty() {"
+after = "let (frame, df) = if true {"
+occurrences = 1
+
+[[mutation]]
+id = "M6"
+file = "src/tabular/polars_engine.rs"
+features = "tabular-polars"
+invariant = "a mixed column of decimals becomes f64, not i64 -- casting 10.5 to Int64 nulls it"
+before = """Some(if all_int {
+                    DataType::Int64"""
+after = """Some(if true {
+                    DataType::Int64"""
+occurrences = 1
+
+[[mutation]]
+id = "M7"
+file = "src/tabular/polars_engine.rs"
+features = "tabular-polars"
+invariant = "non_numbers_nullified is read off the dtype before/after, not from the flag we set when asking"
+before = "let nullified = after != before && series.dtype().is_numeric();"
+after = "let nullified = true;"
+occurrences = 1
+
+[[mutation]]
+id = "M8"
+file = "src/tabular/polars_engine.rs"
+features = "tabular-polars"
+invariant = "all_int asks what the CAST can do, so a value that is whole but unparseable as i64 must not count as int"
+before = """            if t.parse::<i64>().is_err() {
+                all_int = false;
+            }"""
+after = "            let _ = &mut all_int;"
+occurrences = 1
+
+[[mutation]]
+id = "M9"
+file = "src/tabular/mod.rs"
+invariant = "a table name must start with a letter -- the check is not just 'alphanumeric or underscore'"
+before = "        Some(c) if c.is_ascii_alphabetic() => {}"
+after = "        Some(c) if c.is_ascii_alphanumeric() => {}"
+occurrences = 1

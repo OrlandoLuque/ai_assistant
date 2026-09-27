@@ -51,3 +51,8 @@ rag_debug/
 # The rule that goes with the folder: stage files by NAME. Never `git add -A`,
 # never `git add .`. An untracked file in this repo is a deliberate state.
 _private/
+
+# Python bytecode from the scripts/ gates. Showed up for the first time in V356,
+# when one gate script imported another; never wanted in the repository.
+__pycache__/
+*.pyc
