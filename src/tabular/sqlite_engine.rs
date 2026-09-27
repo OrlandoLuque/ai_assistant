@@ -53,8 +53,8 @@ use rusqlite::types::ValueRef;
 use rusqlite::{Connection, OpenFlags};
 
 use super::{
-    ensure_single_read_only_statement, is_valid_table_name, Cell, ColumnInfo, LoadOptions,
-    QueryResult, TableEngine, TableError, TableInfo,
+    ensure_single_read_only_statement, is_valid_table_name, mixed_column_warnings, Cell,
+    ColumnInfo, LoadOptions, MixedColumns, QueryResult, TableEngine, TableError, TableInfo,
 };
 
 /// The type a column was given after looking at its values.
@@ -114,46 +114,15 @@ impl SqliteTableEngine {
     /// not a number makes `AVG` and `COUNT` silently wrong (see
     /// [`ColumnInfo::is_mixed_numeric`]).
     ///
-    /// Whether the query "touches" the column is decided by looking for its name
-    /// in the SQL text. That is approximate — the name could appear inside a
-    /// string literal — and the inaccuracy is deliberately on the noisy side. A
-    /// warning that shows up once too often is an annoyance; one that fails to
-    /// show up is a confidently wrong number in front of somebody who trusted
-    /// it.
+    /// The text itself is built by [`mixed_column_warnings`] so both engines
+    /// cannot drift; what this engine contributes is the sentence about *its own*
+    /// coercion rule.
     fn warnings_for(&self, sql: &str) -> Vec<String> {
-        let lowered = sql.to_lowercase();
-        let mut out = Vec::new();
-        for table in self.tables.values() {
-            for col in table.mixed_numeric_columns() {
-                if !lowered.contains(&col.name.to_lowercase()) {
-                    continue;
-                }
-                let examples: Vec<String> = col
-                    .unparseable
-                    .iter()
-                    .take(3)
-                    .map(|(v, n)| format!("{v:?} x{n}"))
-                    .collect();
-                let more = col.unparseable.len().saturating_sub(3);
-                out.push(format!(
-                    "column {:?} of table {:?} holds {} numbers and {} values that are not \
-                     numbers ({}{}), so it was stored as text. SQLite coerces those to zero in \
-                     aggregates: AVG divides by every row instead of skipping them, and COUNT \
-                     includes them. Reload with LoadOptions::treating_as_missing to make them NULL.",
-                    col.name,
-                    table.name,
-                    col.numeric_values,
-                    col.unparseable_count(),
-                    examples.join(", "),
-                    if more > 0 {
-                        format!(", and {more} more")
-                    } else {
-                        String::new()
-                    },
-                ));
-            }
-        }
-        out
+        mixed_column_warnings(
+            self.tables.values(),
+            sql,
+            "SQLite coerces text to a real zero in aggregates rather than erroring.",
+        )
     }
 }
 
@@ -179,24 +148,22 @@ struct Survey {
 fn survey_column(values: &[String], options: &LoadOptions) -> Survey {
     let mut numeric_values = 0usize;
     let mut all_int = true;
-    let mut all_real = true;
     let mut unparseable: Vec<(String, usize)> = Vec::new();
 
+    // `all_int` describes only the values that PARSED. Whether the ones that did
+    // not parse force the column to text is `MixedColumns`' decision, applied
+    // below — not a property of the numbers.
     for v in values {
         let t = v.trim();
         if options.is_missing(t) {
             continue;
         }
-        let is_int = t.parse::<i64>().is_ok();
-        let is_real = t.parse::<f64>().is_ok();
-        if is_real {
+        if t.parse::<f64>().is_ok() {
             numeric_values += 1;
-            if !is_int {
+            if t.parse::<i64>().is_err() {
                 all_int = false;
             }
         } else {
-            all_int = false;
-            all_real = false;
             match unparseable.iter_mut().find(|(s, _)| s == t) {
                 Some((_, n)) => *n += 1,
                 None => unparseable.push((t.to_string(), 1)),
@@ -204,17 +171,28 @@ fn survey_column(values: &[String], options: &LoadOptions) -> Survey {
         }
     }
 
-    let inferred = if numeric_values == 0 {
-        Inferred::Text
-    } else if all_int {
+    let numeric = if all_int {
         Inferred::Integer
-    } else if all_real {
-        Inferred::Real
     } else {
-        // Numbers AND something else. TEXT is the only type that stores both
-        // without losing anything — and `Survey::unparseable` is what stops that
-        // being a silent decision.
+        Inferred::Real
+    };
+    let inferred = if numeric_values == 0 {
+        // Nothing numeric at all: honest text, and not "mixed".
         Inferred::Text
+    } else if unparseable.is_empty() {
+        numeric
+    } else {
+        // Numbers AND something else. The caller's policy decides.
+        match options.mixed {
+            // A column that holds numbers is a numeric column, and a value in it
+            // that is not a number is not a number. Storing those as NULL is what
+            // makes SUM, AVG and COUNT right; `Survey::unparseable` is what keeps
+            // it from being silent.
+            MixedColumns::NullifyForArithmetic => numeric,
+            // Asked to keep the marker text, so text it is — and every query
+            // touching the column carries a warning saying what that costs.
+            MixedColumns::KeepAsText => Inferred::Text,
+        }
     };
 
     Survey {
@@ -324,19 +302,20 @@ impl TableEngine for SqliteTableEngine {
                             if options.is_missing(s) {
                                 return rusqlite::types::Value::Null;
                             }
+                            // A value that does not parse in a numeric column
+                            // becomes NULL, not text. The first version fell back
+                            // to `Value::Text`, which SQLite happily stores in an
+                            // INTEGER column — and that is precisely the silent
+                            // path that made AVG divide by the wrong count.
                             match t {
                                 Inferred::Integer => s
                                     .parse::<i64>()
                                     .map(rusqlite::types::Value::Integer)
-                                    .unwrap_or_else(|_| {
-                                        rusqlite::types::Value::Text(s.to_string())
-                                    }),
+                                    .unwrap_or(rusqlite::types::Value::Null),
                                 Inferred::Real => s
                                     .parse::<f64>()
                                     .map(rusqlite::types::Value::Real)
-                                    .unwrap_or_else(|_| {
-                                        rusqlite::types::Value::Text(s.to_string())
-                                    }),
+                                    .unwrap_or(rusqlite::types::Value::Null),
                                 Inferred::Text => rusqlite::types::Value::Text(s.to_string()),
                             }
                         })
@@ -360,6 +339,11 @@ impl TableEngine for SqliteTableEngine {
                     declared_type: s.inferred.sql().to_string(),
                     numeric_values: s.numeric_values,
                     unparseable: s.unparseable.clone(),
+                    // Read off the type the column actually got, not off the
+                    // policy that was asked for: the insert path nulls what does
+                    // not parse exactly when the column is not TEXT, so this is
+                    // the same fact stated where a caller can see it.
+                    non_numbers_nullified: s.inferred != Inferred::Text,
                 })
                 .collect(),
         };
@@ -849,69 +833,131 @@ mod tests {
     }
 
     #[test]
-    fn what_one_unparseable_value_does_to_a_numeric_column() {
-        // The case a real CSV will hit on day one: a column of numbers with a
-        // single "N/A". Inference makes the whole column TEXT, and then SQLite
-        // COERCES text to numbers in aggregates instead of refusing. This test
-        // exists to record what actually happens, because the answer decides
-        // whether the module is safe to expose to a model.
+    fn by_default_the_arithmetic_over_a_mixed_column_is_right() {
+        // The case a real CSV hits on day one: a column of numbers with a single
+        // "N/A". This is the DEFAULT policy, and it exists because the previous
+        // behaviour returned three answers of which two were silently wrong —
+        // see the test below for exactly how wrong.
         let p = csv_file("na.csv", "a,importe\nx,10\ny,N/A\nz,30\n");
         let mut e = SqliteTableEngine::new().expect("engine");
         let info = e.load("na", &p).expect("load");
+
         assert_eq!(
-            info.columns[1].declared_type, "TEXT",
-            "one unparseable value turns the column to TEXT"
+            info.columns[1].declared_type, "INTEGER",
+            "a column that holds numbers is a numeric column"
         );
 
-        // SUM's VALUE happens to be right: 'N/A' coerces to 0, which for a sum
-        // is the same as skipping it. But the TYPE changed: SQLite returns
-        // INTEGER when every input is an integer and REAL otherwise, so one
-        // stray 'N/A' anywhere in the column turns every sum of it into a
-        // float. A caller that matched on `Cell::Int` now falls through.
         let sum = e.query("SELECT SUM(importe) FROM na", 10).expect("q");
-        assert_eq!(sum.rows[0][0], Cell::Float(40.0));
-
-        // AVG is NOT. It divides by three because 'N/A' coerced to a real 0,
-        // where a NULL would have been skipped. 40/3 instead of 40/2.
+        assert_eq!(sum.rows[0][0], Cell::Int(40), "an integer, not a float");
         let avg = e.query("SELECT AVG(importe) FROM na", 10).expect("q");
-        match &avg.rows[0][0] {
-            Cell::Float(v) => assert!(
-                (v - 13.333_333_333_333_334).abs() < 1e-9,
-                "AVG over a coerced 'N/A' gives {v}; a NULL would have given 20"
-            ),
-            other => panic!("expected a float, got {other:?}"),
-        }
-
-        // And COUNT of the column counts it, because TEXT 'N/A' is not NULL.
+        assert_eq!(avg.rows[0][0], Cell::Float(20.0), "40/2, not 40/3");
         let n = e.query("SELECT COUNT(importe) FROM na", 10).expect("q");
-        assert_eq!(
-            n.rows[0][0],
-            Cell::Int(3),
-            "COUNT sees three values where only two are numbers"
-        );
+        assert_eq!(n.rows[0][0], Cell::Int(2), "the NULL is not counted");
 
-        // NONE of the three errors. So the only thing standing between this and
-        // a confidently wrong answer is that the result SAYS SO — which is why
-        // `warnings` is a required field and not a log line.
-        for r in [&sum, &avg, &n] {
-            assert!(!r.is_trustworthy(), "a query over a mixed column must warn");
-            let w = r.warnings.join(" ");
-            assert!(
-                w.contains("importe"),
-                "the warning must name the column: {w}"
-            );
-            assert!(
-                w.contains("\"N/A\" x1"),
-                "and the values that did not fit: {w}"
-            );
-            assert!(w.contains("AVG"), "and what it does to aggregates: {w}");
-        }
-
-        // The column is reported, not guessed at.
+        // Right numbers, and still not silent: the values that were nulled are
+        // reported, because losing the cell must not mean losing the fact.
         let col = &info.columns[1];
         assert!(col.is_mixed_numeric());
         assert_eq!(col.numeric_values, 2);
         assert_eq!(col.unparseable, vec![("N/A".to_string(), 1)]);
+
+        for r in [&sum, &avg, &n] {
+            assert!(!r.is_trustworthy(), "the caller must be told what happened");
+            let w = r.warnings.join(" ");
+            assert!(w.contains("importe"), "the warning names the column: {w}");
+            assert!(w.contains("\"N/A\" x1"), "and the value: {w}");
+            assert!(
+                w.contains("STORED AS NULL"),
+                "and says what was done, not that AVG is broken: {w}"
+            );
+            assert!(
+                !w.contains("KEPT AS TEXT"),
+                "the other policy's warning must not appear: {w}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_column_of_decimals_with_a_marker_stays_real_and_nulls_the_marker() {
+        // The REAL branch of the insert path, which the integer test above cannot
+        // reach. Found by mutation: replacing `Value::Null` with `Value::Text` in
+        // this branch alone broke nothing, while the same change one line up broke
+        // a test immediately. One invariant, two branches, one of them uncovered.
+        let p = csv_file(
+            "dec.csv",
+            "a,importe
+x,10.5
+y,-
+z,30
+",
+        );
+        let mut e = SqliteTableEngine::new().expect("engine");
+        let info = e.load("d", &p).expect("load");
+        assert_eq!(
+            info.columns[1].declared_type, "REAL",
+            "one decimal makes the whole column real"
+        );
+
+        let r = e
+            .query(
+                "SELECT SUM(importe), COUNT(importe), AVG(importe) FROM d",
+                10,
+            )
+            .expect("q");
+        assert_eq!(r.rows[0][0], Cell::Float(40.5), "10.5 was not truncated");
+        assert_eq!(r.rows[0][1], Cell::Int(2), "and the dash is not counted");
+        assert_eq!(r.rows[0][2], Cell::Float(20.25), "40.5/2, not 40.5/3");
+        assert!(!r.is_trustworthy(), "and it says so");
+    }
+
+    #[test]
+    fn keeping_a_mixed_column_as_text_is_what_makes_avg_and_count_lie() {
+        // The other policy, and the measurement that justifies not making it the
+        // default. SQLite coerces text to a real zero in aggregates instead of
+        // erroring, so:
+        let p = csv_file("na_text.csv", "a,importe\nx,10\ny,N/A\nz,30\n");
+        let mut e = SqliteTableEngine::new().expect("engine");
+        let info = e
+            .load_with("na", &p, &LoadOptions::default().keeping_mixed_as_text())
+            .expect("load");
+        assert_eq!(info.columns[1].declared_type, "TEXT");
+
+        // SUM's VALUE survives — 'N/A' coerces to 0, which for a sum is the same
+        // as skipping it — but its TYPE does not: SQLite returns INTEGER only
+        // when every input is an integer, so one stray value turns every sum of
+        // the column into a float.
+        let sum = e.query("SELECT SUM(importe) FROM na", 10).expect("q");
+        assert_eq!(sum.rows[0][0], Cell::Float(40.0));
+
+        // AVG is simply wrong: 40/3, because the coerced zero is a real value.
+        let avg = e.query("SELECT AVG(importe) FROM na", 10).expect("q");
+        match &avg.rows[0][0] {
+            Cell::Float(v) => assert!(
+                (v - 13.333_333_333_333_334).abs() < 1e-9,
+                "AVG over a coerced 'N/A' gives {v}; the right answer is 20"
+            ),
+            other => panic!("expected a float, got {other:?}"),
+        }
+
+        // And COUNT counts it, because text is not NULL.
+        let n = e.query("SELECT COUNT(importe) FROM na", 10).expect("q");
+        assert_eq!(n.rows[0][0], Cell::Int(3));
+
+        // None of the three errors. So the only thing between this and a
+        // confidently wrong answer is that the result SAYS SO.
+        for r in [&sum, &avg, &n] {
+            assert!(!r.is_trustworthy());
+            let w = r.warnings.join(" ");
+            assert!(w.contains("KEPT AS TEXT"), "{w}");
+            assert!(w.contains("AVG"), "and what that does to aggregates: {w}");
+        }
+
+        // What this policy buys: the marker itself is queryable.
+        let marker = e
+            .query("SELECT a FROM na WHERE importe = 'N/A'", 10)
+            .expect("q");
+        assert_eq!(marker.row_count, 1);
+        assert_eq!(marker.rows[0][0], Cell::Text("y".to_string()));
     }
 
     #[test]
@@ -997,7 +1043,20 @@ mod tests {
 
         assert_eq!(t(&["1", "2"]).inferred, Inferred::Integer);
         assert_eq!(t(&["1", "2.5"]).inferred, Inferred::Real);
-        assert_eq!(t(&["1", "x"]).inferred, Inferred::Text);
+        // Numbers and something else: the default types it numerically and the
+        // stray value becomes NULL. That is the fix for AVG, and it is a policy,
+        // so both branches are pinned.
+        assert_eq!(t(&["1", "x"]).inferred, Inferred::Integer);
+        assert_eq!(t(&["1", "2.5", "x"]).inferred, Inferred::Real);
+        assert_eq!(
+            survey_column(
+                &["1".to_string(), "x".to_string()],
+                &LoadOptions::default().keeping_mixed_as_text()
+            )
+            .inferred,
+            Inferred::Text,
+            "asked to keep the text, keeps the text"
+        );
         assert_eq!(
             t(&["1", ""]).inferred,
             Inferred::Integer,
@@ -1020,5 +1079,10 @@ mod tests {
         let words = t(&["norte", "sur"]);
         assert_eq!(words.numeric_values, 0);
         assert!(!words.unparseable.is_empty());
+        assert_eq!(
+            words.inferred,
+            Inferred::Text,
+            "no numbers at all means honest text, whatever the policy"
+        );
     }
 }

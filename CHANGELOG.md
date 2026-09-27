@@ -5,6 +5,129 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v231 (2026-09-27) — V355: el AVG deja de mentir, en los dos motores (0.2.314)
+
+V352 **midio** el defecto y V353 lo **aviso**. Lo que pediste era otra cosa: que el numero fuera
+**correcto**. Aqui esta, y con el la parte que no habia visto venir.
+
+## La decision, en una frase
+
+**Una columna que tiene numeros es una columna numerica, y un valor dentro de ella que no es un
+numero no es un numero** — sea `N/A`, `-`, `?`, `n/d` o lo que a alguien se le ocurriera escribir
+ese dia. Leerlo como ausente para la aritmetica **no es adivinar**: es la unica lectura coherente.
+
+Lo que se pierde es poder consultar el texto literal de esas celdas, asi que va con salida
+explicita: `LoadOptions::keeping_mixed_as_text()`. Y las dos politicas tienen su aviso, distinto,
+porque son dos cosas distintas.
+
+| columna `10, N/A, 30` | antes | ahora (por defecto) |
+|---|---|---|
+| `SUM` | `40.0` — *float* donde una columna de enteros da entero | **`40`**, entero |
+| `AVG` | **13,33** — divide entre tres | **`20`** |
+| `COUNT` | **3** — el texto no es NULL | **`2`** |
+
+La alternativa que descarte era pedirle al que carga que declarara el marcador. Es honesta y **no
+basta**: nadie puede enumerar de antemano lo que hay en los CSV del mundo, y quien no lee el aviso
+se queda con 13,33 y se lo cree.
+
+## Los dos motores, por dos mecanismos, con el mismo resultado
+
+- **SQLite** tipa la columna desde un sondeo e inserta `NULL` donde no parsea.
+- **Polars** aplica un `cast` **no estricto**, que convierte en `null` lo que no convierte.
+
+Que coincidan **es un test**, no una suposicion: `both_engines_agree` compara las tres agregaciones
+y exige que ambos motores emitan el **mismo** aviso de los dos posibles. Y `AVG` lleva ademas el
+valor literal `20.0`, porque dos motores de acuerdo en 13,33 pasarian la comparacion y seguirian
+siendo el fallo.
+
+## Lo que la mutacion encontro y yo no
+
+Nueve mutaciones, y la que importa: sustituir `Value::Null` por `Value::Text` en el camino de
+insercion — **el codigo exacto que habia antes del arreglo**. El patron aparece **dos veces**, rama
+`Integer` y rama `Real`, y las mute por separado a proposito. La de `Integer` murio al instante.
+**La de `Real` sobrevivio**: ningun test cubria una columna de decimales con marcador. Con
+`10.5, -, 30` se podia declarar `REAL` y meter el guion como texto, y `AVG` volvia a mentir sin que
+nada fallara. Test añadido; ahora mueren las nueve.
+
+Mutarlas juntas habria dado «MUERTA» y habria tapado el hueco. Esa es la leccion, y no es sobre
+tablas: **si el patron aparece N veces, son N mutaciones.**
+
+## Una diferencia entre motores que habria llegado al usuario como «esto esta roto»
+
+`SELECT SUM(x), COUNT(x)` funciona en SQLite y **da error en Polars**: las dos columnas de salida
+se llamarian `x`. La encontre porque un test mio fallo por una razon que no tenia nada que ver con
+lo que probaba.
+
+No la tapo reescribiendo el SQL de nadie — poner alias por su cuenta cambia la forma de su
+resultado, y cambia un error claro por uno confuso. Va **documentada**, con un test en
+`both_engines_agree` que fija las dos mitades (SQLite acepta, Polars rechaza, con alias los dos), y
+la forma portable escrita donde se lee: `SELECT SUM(x) AS s, COUNT(x) AS n`.
+
+## Y el aviso subio al modulo padre
+
+Los dos motores tenian su copia del texto y **ya habian derivado**: uno explicaba la consecuencia
+para `AVG` y el otro no. Es la forma de defecto enmascarado que este repositorio ya conoce — el
+camino mas debil es el que pierde la comprobacion en silencio y todos los tests siguen pasando. Es
+la misma razon por la que V353 subio las comprobaciones de sentencia. Ahora hay un solo generador,
+`mixed_column_warnings`, y cada motor aporta **solo** su frase: que hace *el* con un no-numero
+dentro de una agregacion.
+
+`ColumnInfo` lleva un campo nuevo, `non_numbers_nullified`, y es un **hecho sobre los datos
+cargados, no una copia de la politica pedida**: un motor al que se le pide anular y no puede tiene
+que reportar `false`, porque de ese campo depende el aviso que lee quien confia en el numero.
+
+## Y una supresion de seguridad que habia dejado de ser verdad
+
+`cargo audit` local saco **cuatro vulnerabilidades**. Susto y falsa alarma: las cuatro estaban ya
+en la lista de supresiones de CI con su motivo escrito — mi ejecucion local no pasaba los
+`--ignore`. Pero al leerlas una por una, **el motivo de una era falso**:
+
+> *"no pdf-extract release uses lopdf >= 0.42 yet"*
+
+`pdf-extract` **0.12.1 depende de `lopdf ^0.42`**. La condicion de revision que la nota se puso a
+si misma («revisar cuando pdf-extract suba lopdf») se habia cumplido, y nadie la habia releido —
+que es exactamente para lo que sirve una supresion con motivo falso: parece revisada.
+
+Asi que **0.7.12 -> 0.12.1**, `lopdf` 0.34 -> **0.42**, y la entrada **borrada** de los dos
+ficheros en vez de renovada. Igual que RUSTSEC-2026-0222 en V276: cuando el bloqueo se levanta, la
+entrada se borra.
+
+Coste: **+7 crates** (`cbc`, `ecb`, `block-padding`, `stringprep`, `unicode-bidi`,
+`unicode-properties` — el cifrado que lopdf 0.42 trae — y `cff-parser`), **ningun aviso nuevo**,
+7.169 tests de `documents` verdes y `scripts/check_rustsec_ignores.py` conforme: 8 supresiones,
+identicas en los dos ficheros, cada una con su razon.
+
+### Y de paso, la mitad de N52
+
+N52 existe porque `pdf-extract` **escribe en stdout**, y en `ai_mcp_server` y `ai_acp` **stdout es
+el protocolo**: un `println!` de una libreria rompe el JSON-RPC. Contado en 0.7.12: **once
+`println!` vivos** (lineas 461, 479, 548, 791, 796, 841, 846, 1724, 1874, 1905 y 1908; los tres
+`eprintln!` van a stderr y no molestan).
+
+En **0.12.1: cero**. Upstream los quito y el unico que queda esta **comentado** dentro de la macro
+`dlog!`, que expande a `{}`. Comprobado leyendo la macro, no deduciendo del recuento — que era la
+parte facil de equivocarse, porque en 0.7.12 esa misma macro tambien tenia su `println!` comentado
+y los once de verdad estaban fuera de ella.
+
+Queda de N52 la parte de **calidad de extraccion**, que no he medido.
+
+## Verificacion
+
+**8.953 tests** en la libreria con los dos motores (8.946 antes, +7), `clippy --all-targets
+-D warnings` limpio en `FEATURES_STD` y en los dos motores, `cargo fmt` limpio, enlaces de
+documentacion 0, `cargo audit` 0. **Nueve mutaciones, nueve cazadas** — una de ellas solo despues
+de añadir el test que le faltaba.
+
+Nota sobre el numero: el 8.946 de V354 se midio **con `tabular-polars` activo**. Con
+`FEATURES_STD` a secas son 8.931, y lo comprobe volviendo a HEAD y midiendo con el mismo comando
+antes de escribir esta linea, porque un recuento que baja sin explicacion es un defecto o es una
+medicion mal etiquetada, y hay que saber cual.
+
+## Lo que sigue faltando de N107
+
+Sin cambios: las **tres herramientas MCP**, el **sitio de presentacion** de la consulta ejecutada
+(el dato ya viaja) y la **eleccion automatica de motor** (Parquet -> Polars).
+
 ## [Unreleased] - v230 (2026-09-26) — V354: la medicion de Polars estaba incompleta, y CI lo dijo (0.2.313)
 
 CI se puso **ROJO** en los dos empujes anteriores, y lo dijo el job de Supply Chain, no el de

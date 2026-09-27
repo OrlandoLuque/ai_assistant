@@ -50,8 +50,8 @@ use polars::prelude::*;
 use polars::sql::SQLContext;
 
 use super::{
-    ensure_single_read_only_statement, is_valid_table_name, Cell, ColumnInfo, LoadOptions,
-    QueryResult, TableEngine, TableError, TableInfo,
+    ensure_single_read_only_statement, is_valid_table_name, mixed_column_warnings, Cell,
+    ColumnInfo, LoadOptions, MixedColumns, QueryResult, TableEngine, TableError, TableInfo,
 };
 
 /// Tables held as lazy frames, queried through Polars' SQL layer.
@@ -95,26 +95,12 @@ impl PolarsTableEngine {
     /// — but "usually" is not a guarantee across versions, and a caller that
     /// switches engines must not lose a warning by doing so.
     fn warnings_for(&self, sql: &str) -> Vec<String> {
-        let lowered = sql.to_lowercase();
-        let mut out = Vec::new();
-        for table in self.tables.values() {
-            for col in table.mixed_numeric_columns() {
-                if !lowered.contains(&col.name.to_lowercase()) {
-                    continue;
-                }
-                out.push(format!(
-                    "column {:?} of table {:?} holds {} numbers and {} values that are not \
-                     numbers, so it was read as text. Aggregates over it are not the aggregates \
-                     of the numbers. Reload with LoadOptions::treating_as_missing to make them \
-                     NULL.",
-                    col.name,
-                    table.name,
-                    col.numeric_values,
-                    col.unparseable_count(),
-                ));
-            }
-        }
-        out
+        mixed_column_warnings(
+            self.tables.values(),
+            sql,
+            "Polars' SQL usually errors on arithmetic over text instead of coercing it, but \
+             \"usually\" is not a guarantee across versions.",
+        )
     }
 }
 
@@ -215,26 +201,93 @@ impl TableEngine for PolarsTableEngine {
             .collect()
             .map_err(|e| TableError::Parse(e.to_string()))?;
 
-        let columns: Vec<ColumnInfo> = df
-            .columns()
-            .iter()
-            .map(|series| {
-                let dtype = series.dtype();
-                let numeric = dtype.is_numeric();
-                // Polars types the column for us, so "unparseable" means
-                // something different here than in SQLite: a text column in a
-                // file whose other values are numbers. Counted the same way so
-                // the two engines report the same thing.
-                let (numeric_values, unparseable) = if numeric {
-                    (series.len() - series.null_count(), Vec::new())
+        // Survey first, decide second. Polars types the columns itself, so
+        // "unparseable" means something slightly different here than in SQLite —
+        // a *text* column in a file whose other values are numbers — but it is
+        // counted the same way so both engines report the same thing.
+        let mut surveys: Vec<(
+            String,
+            String,
+            usize,
+            Vec<(String, usize)>,
+            Option<DataType>,
+        )> = Vec::new();
+        for series in df.columns() {
+            let dtype = series.dtype();
+            if dtype.is_numeric() {
+                surveys.push((
+                    series.name().to_string(),
+                    format!("{dtype}"),
+                    series.len() - series.null_count(),
+                    Vec::new(),
+                    None,
+                ));
+                continue;
+            }
+            let (numeric_values, unparseable, all_int) = count_numeric_and_rest(series);
+            // Mixed: numbers AND something else. Same policy as the SQLite
+            // engine, reached through a different mechanism — a non-strict cast,
+            // which turns what does not convert into null.
+            let cast_to = if numeric_values > 0
+                && !unparseable.is_empty()
+                && options.mixed == MixedColumns::NullifyForArithmetic
+            {
+                Some(if all_int {
+                    DataType::Int64
                 } else {
-                    count_numeric_and_rest(series)
-                };
+                    DataType::Float64
+                })
+            } else {
+                None
+            };
+            surveys.push((
+                series.name().to_string(),
+                format!("{dtype}"),
+                numeric_values,
+                unparseable,
+                cast_to,
+            ));
+        }
+
+        // Apply the casts to the LAZY frame, so queries see the numeric column —
+        // and re-collect only to read back the real dtypes, because reporting the
+        // type we asked for rather than the one we got is how a claim goes stale.
+        let casts: Vec<Expr> = surveys
+            .iter()
+            .filter_map(|(name, _, _, _, cast)| {
+                cast.as_ref().map(|d| col(name.as_str()).cast(d.clone()))
+            })
+            .collect();
+        let (frame, df) = if casts.is_empty() {
+            (frame, df)
+        } else {
+            let frame = frame.with_columns(casts);
+            let df = frame
+                .clone()
+                .collect()
+                .map_err(|e| TableError::Parse(e.to_string()))?;
+            (frame, df)
+        };
+
+        let columns: Vec<ColumnInfo> = surveys
+            .into_iter()
+            .zip(df.columns())
+            .map(|((name, before, numeric_values, unparseable, _), series)| {
+                debug_assert_eq!(name, series.name().as_str(), "column order changed");
+                let after = format!("{}", series.dtype());
+                // The type BEFORE against the type AFTER, and not the flag we set
+                // when asking for the cast: an engine that asked to nullify and
+                // did not get it must report that it did not, because this is what
+                // decides the warning a caller reads.
+                let nullified = after != before && series.dtype().is_numeric();
                 ColumnInfo {
-                    name: series.name().to_string(),
-                    declared_type: format!("{dtype}"),
+                    name,
+                    declared_type: after,
+                    // And the survey is kept whatever the cast did: losing the
+                    // cell must not mean losing the fact that it was there.
                     numeric_values,
                     unparseable,
+                    non_numbers_nullified: nullified,
                 }
             })
             .collect();
@@ -325,8 +378,15 @@ impl TableEngine for PolarsTableEngine {
 
 /// For a non-numeric column, how many of its values would parse as numbers and
 /// which ones would not.
-fn count_numeric_and_rest(series: &Column) -> (usize, Vec<(String, usize)>) {
+/// Returns `(numeric values, the rest grouped by value, whether every numeric
+/// value was an integer)`.
+///
+/// The third element decides `Int64` against `Float64` for the cast, and it
+/// matters: a column of whole numbers that comes back as `10.0` reads as a
+/// rounded measurement rather than a count.
+fn count_numeric_and_rest(series: &Column) -> (usize, Vec<(String, usize)>, bool) {
     let mut numeric = 0usize;
+    let mut all_int = true;
     let mut rest: Vec<(String, usize)> = Vec::new();
     for i in 0..series.len() {
         let Ok(v) = series.get(i) else { continue };
@@ -341,6 +401,12 @@ fn count_numeric_and_rest(series: &Column) -> (usize, Vec<(String, usize)>) {
         let t = text.trim();
         if t.parse::<f64>().is_ok() {
             numeric += 1;
+            // `parse::<i64>()` and not "has no dot": `1e3` parses as a float and
+            // is a whole number, but casting the *text* to Int64 gives null, so
+            // the question is what the cast can do, not what the value means.
+            if t.parse::<i64>().is_err() {
+                all_int = false;
+            }
         } else {
             match rest.iter_mut().find(|(s, _)| s == t) {
                 Some((_, n)) => *n += 1,
@@ -348,7 +414,7 @@ fn count_numeric_and_rest(series: &Column) -> (usize, Vec<(String, usize)>) {
             }
         }
     }
-    (numeric, rest)
+    (numeric, rest, all_int)
 }
 
 #[cfg(test)]
@@ -508,19 +574,122 @@ mod tests {
     }
 
     #[test]
-    fn a_mixed_numeric_column_warns_here_too() {
-        // Polars is stricter than SQLite and may error rather than coerce, but a
-        // caller must not lose the warning by switching engines.
+    fn by_default_the_arithmetic_over_a_mixed_column_is_right_here_too() {
+        // The same fix as the SQLite engine, reached by a different mechanism: a
+        // non-strict cast, which turns what does not convert into null. The
+        // NUMBERS are what must match across engines, not the mechanism.
         let p = csv_file("na.csv", "a,importe\nx,10\ny,N/A\nz,30\n");
         let mut e = PolarsTableEngine::new();
         let info = e.load("na", &p).expect("load");
-        assert!(
-            info.columns[1].is_mixed_numeric(),
-            "two numbers and one non-number: {:?}",
-            info.columns[1]
+
+        assert_eq!(
+            info.columns[1].declared_type, "i64",
+            "whole numbers stay whole: a count that comes back 10.0 reads as a \
+             rounded measurement"
         );
+        assert!(
+            info.columns[1].non_numbers_nullified,
+            "and the fact is recorded, because it decides the warning"
+        );
+
+        let sum = e.query("SELECT SUM(importe) FROM na", 10).expect("q");
+        assert_eq!(sum.rows[0][0], Cell::Int(40));
+        let avg = e.query("SELECT AVG(importe) FROM na", 10).expect("q");
+        assert_eq!(avg.rows[0][0], Cell::Float(20.0), "40/2, not 40/3");
+        let n = e.query("SELECT COUNT(importe) FROM na", 10).expect("q");
+        assert_eq!(n.rows[0][0], Cell::Int(2), "the NULL is not counted");
+
+        // Right, and still not silent: the survey survives the cast.
+        assert!(info.columns[1].is_mixed_numeric());
         assert_eq!(info.columns[1].numeric_values, 2);
         assert_eq!(info.columns[1].unparseable, vec![("N/A".to_string(), 1)]);
+        for r in [&sum, &avg, &n] {
+            assert!(!r.is_trustworthy(), "the caller must be told");
+            let w = r.warnings.join(" ");
+            assert!(w.contains("STORED AS NULL"), "{w}");
+            assert!(!w.contains("KEPT AS TEXT"), "the other policy's text: {w}");
+        }
+    }
+
+    #[test]
+    fn a_mixed_column_kept_as_text_warns_and_says_what_polars_does() {
+        // The other policy. Polars usually *errors* on arithmetic over text
+        // rather than coercing it, which is better than SQLite's silence — but
+        // "usually" is not a guarantee across versions, so the warning is not
+        // conditional on it.
+        let p = csv_file("na_text.csv", "a,importe\nx,10\ny,N/A\nz,30\n");
+        let mut e = PolarsTableEngine::new();
+        let info = e
+            .load_with("na", &p, &LoadOptions::default().keeping_mixed_as_text())
+            .expect("load");
+        assert_eq!(info.columns[1].declared_type, "str");
+        assert!(!info.columns[1].non_numbers_nullified);
+
+        // What the caller gets is either an error or a number that lies. Which
+        // one is Polars' business; what is OURS is that the warning is there
+        // either way, so this asserts the warning and not the outcome.
+        let w = e.warnings_for("SELECT AVG(importe) FROM na").join(" ");
+        assert!(w.contains("KEPT AS TEXT"), "{w}");
+        assert!(w.contains("Polars"), "and whose coercion rule applies: {w}");
+        assert!(w.contains("AVG divides by every row"), "{w}");
+
+        // And this is what the policy buys: the marker is queryable.
+        let marker = e
+            .query("SELECT a FROM na WHERE importe = 'N/A'", 10)
+            .expect("q");
+        assert_eq!(marker.row_count, 1);
+        assert_eq!(marker.rows[0][0], Cell::Text("y".to_string()));
+    }
+
+    #[test]
+    fn a_column_of_decimals_with_a_marker_becomes_a_float_not_an_integer() {
+        // The `all_int` decision has a second branch and it needs its own case:
+        // typing 10.5 as Int64 would null it, so the count would come back 1 and
+        // the sum would be 30 — wrong, and warned about for the wrong reason.
+        let p = csv_file("dec.csv", "a,importe\nx,10.5\ny,-\nz,30\n");
+        let mut e = PolarsTableEngine::new();
+        let info = e
+            .load_with(
+                "d",
+                &p,
+                &LoadOptions::treating_as_missing(Vec::<String>::new()),
+            )
+            .expect("load");
+        assert_eq!(info.columns[1].declared_type, "f64");
+        let r = e
+            .query("SELECT SUM(importe) AS s, COUNT(importe) AS n FROM d", 10)
+            .expect("q");
+        assert_eq!(r.rows[0][0], Cell::Float(40.5), "10.5 survived");
+        assert_eq!(r.rows[0][1], Cell::Int(2), "and only the dash is missing");
+    }
+
+    #[test]
+    fn two_aggregates_over_one_column_need_aliases_here() {
+        // Found by a test of mine that failed for a reason that had nothing to do
+        // with what it was testing. Pinned because it is the kind of difference
+        // that reaches a user as "the tool is broken". That the SQLite engine
+        // accepts the same query is proved in `super::both_engines_agree`, where
+        // both are present — asserting it from here would be a claim about code
+        // this build does not contain.
+        let e = loaded();
+        let err = e
+            .query("SELECT SUM(importe), COUNT(importe) FROM ventas", 10)
+            .expect_err("polars refuses two unaliased aggregates over one column");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("duplicate"),
+            "and it says why, which is what makes it fixable: {msg}"
+        );
+        // The same query with aliases is fine, so the fix is in the SQL and not
+        // in the engine — which is why this engine does not rewrite it. Silently
+        // aliasing somebody else's columns would change the shape of their result.
+        let ok = e
+            .query(
+                "SELECT SUM(importe) AS s, COUNT(importe) AS n FROM ventas",
+                10,
+            )
+            .expect("aliased");
+        assert_eq!(ok.row_count, 1);
     }
 
     #[test]

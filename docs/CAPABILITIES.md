@@ -118,10 +118,12 @@ Added 2026-09-26. Behind the `tabular` feature, which defaults to
 | Load a CSV as a queryable table | `tabular::sqlite_engine` | si | no | no | no | no | **parcial** | 2026-09-26 | in-memory SQLite; quoted fields with commas and newlines survive |
 | Read-only SQL over loaded tables | `TableEngine::query` | si | no | no | no | no | **parcial** | 2026-09-26 | four independent layers; `PRAGMA` deliberately excluded |
 | Describe a table's columns | `TableEngine::describe` | si | no | no | no | no | **parcial** | 2026-09-26 | the tool a model needs *before* `query`: one that does not know the column names invents SQL |
-| Say what counts as a missing value | `LoadOptions` | si | no | no | no | no | **parcial** | 2026-09-26 | only the empty field by default. Anything else is **reported, never guessed** |
+| Get the RIGHT number from a column with a missing marker | `MixedColumns` (default) | si | no | no | no | no | **parcial** | 2026-09-27 | `10, N/A, 30` gives `SUM 40`, `AVG 20`, `COUNT 2`. Before: `40.0`, **13.33**, **3** — two of three silently wrong |
+| Keep the marker text queryable instead | `LoadOptions::keeping_mixed_as_text` | si | no | no | no | no | **parcial** | 2026-09-27 | the opt-out, for when the marker itself is data. Carries its own, different warning |
+| Say what counts as a missing value | `LoadOptions::treating_as_missing` | si | no | no | no | no | **parcial** | 2026-09-26 | for markers that must not even be *reported*, like a `-` you know means zero rows |
 | Warn when an answer cannot be trusted | `QueryResult::warnings` | si | no | no | no | no | **parcial** | 2026-09-26 | required field. A mixed numeric column makes `AVG` and `COUNT` silently wrong; the result cannot come back without saying so |
 | Parquet, lazy evaluation, out-of-core | `tabular::polars_engine` | si | no | no | no | no | **parcial** | 2026-09-26 | **+49.3 MiB** of binary and 397 crates, measured. SQLite cannot read Parquet — that is the whole reason |
-| The two engines agree | `tabular::both_engines_agree` tests | si | n/a | n/a | n/a | n/a | hecho | 2026-09-26 | same data for six queries, **same error variant** for nine refusals, and the same permissions. Compiled only when both features are on |
+| The two engines agree | `tabular::both_engines_agree` tests | si | n/a | n/a | n/a | n/a | hecho | 2026-09-27 | same data for six queries, **same error variant** for nine refusals, the same permissions, and since V355 the same right answer over a mixed column — by two different mechanisms. Compiled only when both features are on |
 | `list_tables` / `describe_table` / `query_table` as MCP tools | — | — | — | **no** | no | no | **no** | 2026-09-26 | waits on N39's registry consolidation, now decided |
 | Extract tables from inside text | `table_extraction` | si | — | — | — | — | hecho | 2026-09-26 | a different job: finds tables in prose. Does not query them |
 
@@ -131,6 +133,19 @@ Added 2026-09-26. Behind the `tabular` feature, which defaults to
 **required fields**. No engine can return a result without saying what it ran, how
 much came back, whether the limit cut it short, and whether there is a reason to
 distrust it. Not a rule in a comment — a struct that will not compile otherwise.
+
+### Where the two engines do not agree
+
+Held to the same answers by a test module, so what survives is documented rather
+than discovered by a user:
+
+- **`SELECT SUM(x), COUNT(x)` errors on Polars and works on SQLite** — both output
+  columns would be called `x`. The portable form is `SELECT SUM(x) AS s, COUNT(x)
+  AS n`, and that is what generated SQL should use. Not papered over by rewriting
+  the caller's SQL: aliasing somebody's columns changes the shape of their result.
+- **Aggregate column names and type names differ** (`SUM(x)` against `x`,
+  `INTEGER` against `i64`). `ColumnInfo::declared_type` is for a human or a
+  prompt, never for comparison.
 
 ### What is NOT wired
 Nothing reaches this from a shipped surface yet — no CLI, no MCP, no GUI. The rows

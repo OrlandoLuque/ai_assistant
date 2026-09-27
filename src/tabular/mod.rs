@@ -39,6 +39,26 @@
 //!
 //! SQLite cannot read Parquet. That — not novelty — is the concrete reason the
 //! second engine exists.
+//!
+//! ## Where the two do not agree, and what to write instead
+//!
+//! Both engines are held to the same answers by a cross-engine test module, and
+//! the differences that survive it are these:
+//!
+//! - **Two aggregates over one column need aliases.** `SELECT SUM(x), COUNT(x)`
+//!   works on SQLite and **errors on Polars**, because both output columns would
+//!   be called `x`. `SELECT SUM(x) AS s, COUNT(x) AS n` works on both, so that is
+//!   the portable form — and the form any generated SQL should use.
+//! - **Aggregate column names differ** even when the values do not: SQLite calls
+//!   the result `SUM(x)` and Polars keeps `x`. Cosmetic, and `AS` fixes it.
+//! - **Type names differ**: `INTEGER`/`REAL`/`TEXT` against `i64`/`f64`/`str`.
+//!   [`ColumnInfo::declared_type`] is therefore for a human or a prompt, never
+//!   for comparison — that is what [`ColumnInfo::non_numbers_nullified`] and the
+//!   counts are for.
+//!
+//! None of these is papered over by rewriting the caller's SQL. Silently
+//! aliasing somebody's columns changes the shape of their result, which trades a
+//! clear error for a confusing one.
 
 use std::path::{Path, PathBuf};
 
@@ -113,6 +133,16 @@ pub struct ColumnInfo {
     /// `numeric_values > 0` is the dangerous case — see
     /// [`Self::is_mixed_numeric`].
     pub unparseable: Vec<(String, usize)>,
+    /// Are the values listed in `unparseable` **NULL** in the loaded table?
+    ///
+    /// A fact about the data as loaded, not a copy of the requested policy: an
+    /// engine that was asked for [`MixedColumns::NullifyForArithmetic`] and could
+    /// not deliver it must report `false` here, because the warning a caller
+    /// receives — and therefore whether they trust the number — is decided by
+    /// this field.
+    ///
+    /// `false` for a column that is honestly text, where nothing was nullified.
+    pub non_numbers_nullified: bool,
 }
 
 impl ColumnInfo {
@@ -169,20 +199,82 @@ impl TableInfo {
     }
 }
 
-/// What to treat as "no value" when loading.
+/// What to do with a column that holds numbers **and** something else.
 ///
-/// There is no way to know what a real CSV uses. An empty field is the only
-/// unambiguous case, so it is the only default; `-`, `N/A`, `NULL`, `?` and `.`
-/// are all plausible and all guesses, and **guessing which one means "missing"
-/// is a decision that belongs to whoever knows the data**.
+/// This exists because of three measurements, all on SQLite, for a column
+/// `10, N/A, 30` stored as text:
 ///
-/// What the loader does instead of guessing is *report*: a column that holds
-/// numbers and something else is recorded in [`ColumnInfo::unparseable`], so the
-/// caller can see the candidates and say which ones count.
+/// | query | answer | correct |
+/// |---|---|---|
+/// | `SUM` | `40.0`, a **float** where an integer column gives an integer | 40 |
+/// | `AVG` | **13.33** — divides by three, because `'N/A'` coerced to a real zero | 20 |
+/// | `COUNT` | **3** — text is not NULL | 2 |
+///
+/// Two of the three are silently wrong and **none of them errors**.
+///
+/// # Why the default decides instead of asking
+///
+/// The first version made the caller declare the marker with
+/// [`LoadOptions::treating_as_missing`] and reported the rest. That is honest and
+/// it is not enough: `-`, `N/A`, `?`, `.`, `n/d`, `#N/A` and a blank are all in
+/// use in real files, nobody can list them in advance, and a caller who does not
+/// read the warning gets 13.33 and believes it.
+///
+/// So the default reasons from the data instead: **a column that holds numbers is
+/// a numeric column, and a value inside it that is not a number is not a number**
+/// — whatever the marker happens to be. Reading it as absent for arithmetic is not
+/// a guess; it is the only coherent reading. What it costs is the ability to query
+/// the literal text of those cells, so it costs a warning too, and
+/// [`MixedColumns::KeepAsText`] is there for when the marker itself is data.
+///
+/// Both engines implement this and by different means — SQLite types the column
+/// from a survey and inserts NULL, Polars applies a non-strict cast — so the
+/// agreement is a test, not an assumption.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MixedColumns {
+    /// Type the column numerically and store the non-numbers as NULL.
+    ///
+    /// The default, and the reasoning is narrower than it looks: **a column that
+    /// holds numbers is a numeric column, and a value inside it that is not a
+    /// number is not a number** — whatever it is. Treating it as absent *for
+    /// arithmetic* is not a guess about what `N/A` means; it is the only
+    /// coherent reading, and it makes `SUM`, `AVG` and `COUNT` right.
+    ///
+    /// What is lost is the literal text of those cells: you cannot then ask
+    /// `WHERE importe = 'N/A'`. Nothing is lost from the *report* —
+    /// [`ColumnInfo::unparseable`] still lists every value and its count, and
+    /// the query warns — so the information survives even though the cell does
+    /// not.
+    #[default]
+    NullifyForArithmetic,
+    /// Keep the column as text, exactly as the file had it.
+    ///
+    /// Choose this when the marker itself is data — when `-` and `N/A` mean
+    /// different things and you need to tell them apart. The cost is the table
+    /// above: aggregates over the column are not the aggregates of its numbers,
+    /// and the warning says so on every query that touches it.
+    KeepAsText,
+}
+
+/// What to treat as "no value" when loading, and what to do with mixed columns.
+///
+/// There is no way to know what a real CSV uses for "missing". An empty field is
+/// the only unambiguous case, so it is the only *declared* default; `-`, `N/A`,
+/// `NULL`, `?` and `.` are all plausible and all guesses, and **guessing which
+/// one means "missing" is a decision that belongs to whoever knows the data**.
+///
+/// So the loader does two things instead of guessing, and they are different:
+///
+/// - it **reports** every value that did not parse, in
+///   [`ColumnInfo::unparseable`], so the caller sees the candidates;
+/// - and for *arithmetic* it applies [`MixedColumns`], which does not need to
+///   know what `N/A` means in order to know that it is not a number.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct LoadOptions {
     /// Values to store as NULL. The empty string is always included.
     pub na_values: Vec<String>,
+    /// What to do with a column holding both numbers and non-numbers.
+    pub mixed: MixedColumns,
 }
 
 impl LoadOptions {
@@ -194,7 +286,17 @@ impl LoadOptions {
     {
         Self {
             na_values: values.into_iter().map(Into::into).collect(),
+            ..Self::default()
         }
+    }
+
+    /// Keep mixed columns as text, marker values and all.
+    ///
+    /// The opposite of the default. See [`MixedColumns::KeepAsText`] for what it
+    /// costs.
+    pub fn keeping_mixed_as_text(mut self) -> Self {
+        self.mixed = MixedColumns::KeepAsText;
+        self
     }
 
     /// Is `value` a missing marker?
@@ -561,6 +663,87 @@ pub fn is_valid_table_name(name: &str) -> bool {
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+/// The warnings a query over mixed columns must carry, built once for every engine.
+///
+/// # Why this is not each engine's own business
+///
+/// Both engines had their own copy of this text for one version, and they had
+/// already drifted: one of them described the consequence for `AVG` and the other
+/// did not. That is the masked-defect shape this project keeps meeting — the
+/// weaker path is the one that quietly loses the check, and every test still
+/// passes. The statement checks were lifted here for the same reason.
+///
+/// `coercion_detail` is the one genuinely engine-specific sentence: what *this*
+/// engine does with a non-number inside an aggregate. It is a parameter and not a
+/// branch here, because the list of engines is open and the invariant is not: the
+/// column gets named, the values get listed, and the result says which of the two
+/// things happened to them.
+///
+/// Whether a query "touches" a column is decided by looking for its name in the
+/// SQL text. That is approximate — the name could appear inside a string literal
+/// — and the inaccuracy is deliberately on the noisy side. A warning that shows up
+/// once too often is an annoyance; one that fails to show up is a confidently
+/// wrong number in front of somebody who trusted it.
+pub fn mixed_column_warnings<'a, I>(tables: I, sql: &str, coercion_detail: &str) -> Vec<String>
+where
+    I: IntoIterator<Item = &'a TableInfo>,
+{
+    let lowered = sql.to_lowercase();
+    let mut out = Vec::new();
+    for table in tables {
+        for col in table.mixed_numeric_columns() {
+            if !lowered.contains(&col.name.to_lowercase()) {
+                continue;
+            }
+            let examples: Vec<String> = col
+                .unparseable
+                .iter()
+                .take(3)
+                .map(|(v, n)| format!("{v:?} x{n}"))
+                .collect();
+            let more = col.unparseable.len().saturating_sub(3);
+            let listed = format!(
+                "{}{}",
+                examples.join(", "),
+                if more > 0 {
+                    format!(", and {more} more")
+                } else {
+                    String::new()
+                }
+            );
+            // Two different warnings, because two different things happened.
+            // Saying "AVG is wrong" when the values were nulled would be as
+            // misleading as staying quiet when they were not.
+            if col.non_numbers_nullified {
+                out.push(format!(
+                    "column {:?} of table {:?} had {} values that are not numbers ({}), \
+                     STORED AS NULL so the arithmetic is right. Aggregates skip them, which \
+                     is what you want — but the original text is not queryable. Reload with \
+                     LoadOptions::keeping_mixed_as_text() if the marker itself is data.",
+                    col.name,
+                    table.name,
+                    col.unparseable_count(),
+                    listed,
+                ));
+            } else {
+                out.push(format!(
+                    "column {:?} of table {:?} holds {} numbers and {} values that are not \
+                     numbers ({}), and was KEPT AS TEXT. {} So AVG divides by every row instead \
+                     of skipping them and COUNT includes them: the aggregates of this column are \
+                     not the aggregates of its numbers.",
+                    col.name,
+                    table.name,
+                    col.numeric_values,
+                    col.unparseable_count(),
+                    listed,
+                    coercion_detail.trim(),
+                ));
+            }
+        }
+    }
+    out
+}
+
 /// The two engines must agree, or one of them is wrong and nobody can tell which.
 ///
 /// Compiled only when both are enabled. That is the whole point: this is the test
@@ -632,6 +815,93 @@ mod both_engines_agree {
                 ra.rows, rb.rows
             );
         }
+    }
+
+    #[test]
+    fn a_mixed_column_gives_both_engines_the_same_right_answer() {
+        // The whole point of the `MixedColumns` policy, checked where it can be
+        // checked: two engines, two completely different mechanisms — SQLite
+        // types the column from a survey and inserts NULL, Polars applies a
+        // non-strict cast — and the numbers must come out identical.
+        let p = csv_file("region,importe\nnorte,10\nsur,N/A\nnorte,30\n");
+
+        let mut sq = sqlite_engine::SqliteTableEngine::new().expect("sqlite");
+        let a = sq.load("m", &p).expect("sqlite load");
+        let mut pl = polars_engine::PolarsTableEngine::new();
+        let b = pl.load("m", &p).expect("polars load");
+
+        // The type NAMES differ by dialect ("INTEGER" against "i64") and that is
+        // cosmetic. What must agree is the survey and what was done with it.
+        for (e, c) in [("sqlite", &a.columns[1]), ("polars", &b.columns[1])] {
+            assert_eq!(c.numeric_values, 2, "{e} miscounted the numbers");
+            assert_eq!(c.unparseable, vec![("N/A".to_string(), 1)], "{e}");
+            assert!(
+                c.non_numbers_nullified,
+                "{e} did not nullify the non-number"
+            );
+            assert!(c.is_mixed_numeric(), "{e}");
+        }
+
+        for sql in [
+            "SELECT SUM(importe) AS s FROM m",
+            "SELECT AVG(importe) AS a FROM m",
+            "SELECT COUNT(importe) AS n FROM m",
+        ] {
+            let (ra, rb) = (
+                sq.query(sql, 10).expect("sqlite"),
+                pl.query(sql, 10).expect("polars"),
+            );
+            assert_eq!(
+                ra.rows, rb.rows,
+                "the engines disagree for {sql}: sqlite {:?} against polars {:?}",
+                ra.rows, rb.rows
+            );
+            // And neither is allowed to be quiet about it.
+            for (e, r) in [("sqlite", &ra), ("polars", &rb)] {
+                assert!(!r.is_trustworthy(), "{e} returned no warning for {sql}");
+                assert!(
+                    r.warnings.iter().any(|w| w.contains("STORED AS NULL")),
+                    "{e} used the wrong warning of the two: {:?}",
+                    r.warnings
+                );
+            }
+        }
+
+        // AVG is the one that was wrong before the policy existed, so it gets the
+        // literal value and not just "they agree": two engines agreeing on 13.33
+        // would pass the comparison above and still be the bug.
+        let avg = sq.query("SELECT AVG(importe) AS a FROM m", 10).expect("q");
+        assert_eq!(avg.rows[0][0], Cell::Float(20.0), "40/2");
+    }
+
+    #[test]
+    fn two_unaliased_aggregates_over_one_column_split_the_engines() {
+        // The claim `polars_engine` cannot make on its own: this query works on
+        // one engine and errors on the other. Documented rather than papered
+        // over, because rewriting somebody's SQL to hide it would change the
+        // shape of their result.
+        let p = csv_file(BODY);
+        let mut sq = sqlite_engine::SqliteTableEngine::new().expect("sqlite");
+        sq.load("ventas", &p).expect("load");
+        let mut pl = polars_engine::PolarsTableEngine::new();
+        pl.load("ventas", &p).expect("load");
+
+        let sql = "SELECT SUM(importe), COUNT(importe) FROM ventas";
+        let ok = sq.query(sql, 10).expect("sqlite accepts it");
+        assert_eq!(ok.row_count, 1);
+        let err = pl.query(sql, 10).expect_err("polars refuses it");
+        assert!(
+            format!("{err}").contains("duplicate"),
+            "and says why: {err}"
+        );
+
+        // With aliases, both. So the portable form is the aliased one, and that
+        // is what our own SQL and any generated SQL should use.
+        let aliased = "SELECT SUM(importe) AS s, COUNT(importe) AS n FROM ventas";
+        assert_eq!(
+            sq.query(aliased, 10).expect("sqlite").rows,
+            pl.query(aliased, 10).expect("polars").rows
+        );
     }
 
     #[test]

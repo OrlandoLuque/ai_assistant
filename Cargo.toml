@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.313"
+version = "0.2.314"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -649,7 +649,7 @@ urlencoding = "2"
 zip = { version = "2", optional = true, default-features = false, features = ["deflate"] }
 
 # Optional PDF support for document parsing
-pdf-extract = { version = "0.7", optional = true }
+pdf-extract = { version = "0.12", optional = true }
 
 # Optional egui support for widgets
 egui = { version = "0.27", optional = true }
