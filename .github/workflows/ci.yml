@@ -206,6 +206,26 @@ jobs:
       - name: Run feature/dep drift checker
         run: python3 scripts/check_feature_dep_drift.py --manifest Cargo.toml --root src
 
+  mutation-specs:
+    name: Mutation specs still match the code
+    runs-on: ubuntu-latest
+    # V356: the mutation specs in scripts/mutations/ are `before` strings copied
+    # out of source files. The moment one of those lines is edited -- a rename, a
+    # `cargo fmt` reflow, a refactor moving a match arm -- the spec stops matching
+    # and therefore stops testing anything, silently.
+    #
+    # Only the --dry-run half runs here: it compiles nothing and takes seconds.
+    # The expensive half is one `cargo test` per mutation and stays manual, run
+    # when a module or an invariant changes. --self-test proves --dry-run actually
+    # fails on each kind of drift, because a gate that has only met good input is
+    # not a gate.
+    steps:
+      - uses: actions/checkout@v5
+      - name: The gate proves it discriminates
+        run: python3 scripts/mutate.py --self-test
+      - name: Every mutation spec still matches its code
+        run: python3 scripts/mutate.py --all --dry-run
+
   openapi-routes:
     name: OpenAPI vs routes
     runs-on: ubuntu-latest

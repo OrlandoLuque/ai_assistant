@@ -72,6 +72,17 @@ escrita en el fichero por ser parte del codigo — «una cadena que seguro no ap
 que debia aparecer una vez aparecia dos. Tres de cuatro casos fallaban por eso. Ahora el fixture
 es un fichero temporal de cuatro lineas.
 
+### Y cableado a CI en el mismo empuje
+
+Job `mutation-specs` en `ci.yml`, dos pasos: `--self-test` primero (la puerta demuestra que
+discrimina) y `--all --dry-run` despues. **Sin compilar nada**, segundos.
+
+Iba a dejarlo encolado «para no tocar el workflow dos veces». Eso habria creado el **sexto** caso de
+la forma de defecto que este repositorio persigue: capacidad construida, probada, documentada y sin
+conectar. Los cinco anteriores de esta semana fueron `RrfFusion::fuse`, `rag_methods::LlmReranker`,
+`search_knowledge_hybrid`, `MmrScorer` y `reranker::CascadeReranker`. No hacia falta un sexto para
+aprender la leccion.
+
 ## Verificacion
 
 Bateria del harness **694 tests verdes** (3 saltados) con `full,browser` en perfil `release`, que
