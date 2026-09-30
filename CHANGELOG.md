@@ -5,6 +5,64 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v240 (2026-10-01) — V364: tres agentes, y el primero existe porque una puerta no puede hacer su trabajo (0.2.323)
+
+Tres definiciones nuevas en `.claude/agents/`, dos pedidas por el autor y una decidida por él.
+
+## `prior-art-finder` — ¿esto ya existe, con cualquier nombre?
+
+Se ejecuta **antes** de implementar. Busca el equivalente que ya está en la crate, incluido el
+que se llama de otra forma, y dice si hay que extender, unificar o escribir de verdad algo nuevo.
+
+Existe porque **una puerta mecánica no puede hacer este trabajo**. `check_duplicate_types.py`
+(V362) compara nombres; `StepStatus` y `PlanStepStatus` eran el mismo concepto y jamás los habría
+emparejado. La palabra del autor fue exactamente esa: «pueden haber cosas equivalentes con otro
+nombre». Una expresión regular encuentra ortografía repetida; **solo alguien leyendo encuentra la
+misma idea escrita distinta**, y ese es el caso que hace daño, porque nada lo señala y las dos
+copias siguen separándose.
+
+Lleva seis ángulos de búsqueda, no uno, porque cada uno es ciego a lo que encuentran los otros:
+por nombre y sinónimos (`Judge`/`Evaluator`/`Scorer`/`Rater`/`Grader`/`Critic` son un concepto con
+seis palabras), por forma de la firma, **por la constante o la fórmula** (un RRF lleva un `60.0`;
+los números sobreviven a los renombrados mejor que los identificadores), por la dependencia, por
+la prosa de la documentación y por el flag de feature. Y una regla: *nunca* decir «no existe»
+tras un solo ángulo, porque la negativa confiada es la respuesta cara — es la que produjo tres
+RRF.
+
+## `stub-auditor` — promesas que el código no cumple
+
+Lo otro que pidió el autor: «que monitorice que no creen stubs, TODOs y demás». Seis clases, y el
+TODO escrito es **la menos interesante de las seis**, porque al menos es honesto. Las peligrosas
+son las que devuelven éxito: el `sha256_hex` que era FNV, el `LlmNli` corriendo Jaccard, cuatro
+herramientas MCP devolviendo marcadores de posición, el OCR devolviendo su propio mensaje de error
+como texto de la página, `MmrScorer` escrito y probado y sin un solo llamante.
+
+La pregunta que aplica a cada respaldo: **¿puede el llamante saber que ocurrió?** Si no, eso es el
+hallazgo, sea razonable o no el respaldo.
+
+Y la regla que cierra el círculo: **un test verde no es evidencia de nada aquí**. Los seis casos
+tenían tests que pasaban, porque un test escrito contra el stub pasa.
+
+## `oracle-auditor` — N131, separado del `mutation-designer` por decisión del autor
+
+Audita los comprobadores del banco de pruebas: el código que decide correcto o incorrecto. Mutar
+un comprobador y mutar el código bajo prueba se parecen y no son el mismo trabajo — una mutación
+que sobrevive en código normal significa que los tests son débiles; un **oráculo** débil significa
+que *todos* los números que el banco imprimió son sospechosos, incluidos los ya escritos en
+`docs/MODEL_BENCHMARKS.md` y ya usados para elegir un modelo.
+
+Medido: **2 de 12 oráculos de Rust y 4 de 11 de Python aceptaban respuestas plausibles y
+equivocadas**, con las puntuaciones ya registradas.
+
+El patrón es siempre el mismo — **un caso separador que falta** — y el agente lleva la tabla de
+las diez formas que se repiten, incluida la que más pesa en generación de código: **una sola
+entrada de prueba no distingue una solución de una tabla de consulta.**
+
+Tres reglas que no se negocian: respuestas erróneas **concretas** (escribir la cadena que pasa y
+no debería, no «esto podría ser más estricto»); auditar todos los oráculos y **decir el número**;
+y nunca proponer relajar un oráculo para que un modelo pase — si un oráculo estricto rechaza una
+respuesta correcta, el arreglo es el caso separador, jamás el umbral.
+
 ## [Unreleased] - v239 (2026-10-01) — V363: StepStatus eran TRES, y la tercera se llamaba de otra forma (0.2.322)
 
 «Desduplicar también StepStatus» — y al mirarlo eran tres, no dos.
