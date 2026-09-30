@@ -25,16 +25,16 @@
 #                 spec; self_correction's is a loop-exit reason. Cannot merge."
 
 [untriaged]
-# 35 divergent enum names: one spelling, different variants, so two things that
+# 34 divergent enum names: one spelling, different variants, so two things that
 # look interchangeable and are not. Frozen, not blessed.
 #
 # What is already known about three of them, from the sweep that found the list:
 #
-#   StepStatus  agent_graph has Running/Completed/Failed/Skipped; task_planning has
-#               Pending/InProgress/Done/Blocked/Skipped. The graph one CANNOT
-#               express "blocked", so a step waiting on a resource has no state but
-#               Failed — which is the exact hole N132's "resource unavailable -> put
-#               the task on hold" needs. Being unified by explicit request.
+#   StepStatus  UNIFIED in V363 and removed from this list: the ratchet reported it
+#               as a stale entry, which is how debt is meant to leave. It turned
+#               out to be THREE enums, not two -- `agent::PlanStepStatus` was the
+#               same concept spelled differently, and a name-comparing gate is
+#               blind to that by construction. See src/step_status.rs.
 #   IceState    ICE is RFC 8445. distributed_rag and p2p carry two different
 #               SUBSETS of one standard state machine, which is a defect in at
 #               least one of them.
@@ -70,7 +70,6 @@ names = [
   "ResponseStyle",
   "RiskLevel",
   "StepKind",
-  "StepStatus",
   "StepType",
   "StopReason",
   "Subsystem",

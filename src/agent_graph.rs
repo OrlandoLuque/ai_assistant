@@ -46,26 +46,11 @@ impl std::fmt::Display for EdgeType {
 // ---------------------------------------------------------------------------
 
 /// Execution status of a single trace step.
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub enum StepStatus {
-    Running,
-    Completed,
-    Failed,
-    Skipped,
-}
-
-impl std::fmt::Display for StepStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let label = match self {
-            Self::Running => "Running",
-            Self::Completed => "Completed",
-            Self::Failed => "Failed",
-            Self::Skipped => "Skipped",
-        };
-        write!(f, "{}", label)
-    }
-}
+///
+/// Re-exported from [`crate::step_status`], which is the single definition. This
+/// module used to declare its own with `Running/Completed/Failed/Skipped` and no
+/// `Blocked`, so a step waiting on a resource had no state but `Failed`.
+pub use crate::step_status::StepStatus;
 
 // ---------------------------------------------------------------------------
 // GraphError
@@ -428,7 +413,7 @@ impl TraceStep {
             output_summary: String::new(),
             timestamp,
             duration_ms: 0,
-            status: StepStatus::Running,
+            status: StepStatus::InProgress,
             metadata: HashMap::new(),
         }
     }
@@ -679,9 +664,14 @@ mod tests {
 
     #[test]
     fn test_step_status_display() {
-        assert_eq!(StepStatus::Running.to_string(), "Running");
+        // Los nombres son los del enum unificado. El rename Running -> InProgress
+        // dejo esta cadena esperada en "Running" y el compilador NO lo ve: una
+        // cadena obsoleta compila y falla en ejecucion.
+        assert_eq!(StepStatus::InProgress.to_string(), "InProgress");
         assert_eq!(StepStatus::Completed.to_string(), "Completed");
-        assert_eq!(StepStatus::Failed.to_string(), "Failed");
+        // Failed lleva la razon, asi que Display la incluye y as_str no.
+        assert_eq!(StepStatus::failed("boom").to_string(), "Failed: boom");
+        assert_eq!(StepStatus::failed("boom").as_str(), "Failed");
         assert_eq!(StepStatus::Skipped.to_string(), "Skipped");
     }
 
@@ -866,7 +856,7 @@ mod tests {
             .with_status(StepStatus::Completed);
         let s3 = TraceStep::new("a1", "verify")
             .with_duration(50)
-            .with_status(StepStatus::Failed);
+            .with_status(StepStatus::failed("verificacion fallida"));
 
         trace.record(s1);
         trace.record(s2);

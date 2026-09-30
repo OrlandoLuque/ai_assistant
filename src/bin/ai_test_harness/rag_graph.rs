@@ -2106,7 +2106,7 @@ pub(crate) fn tests_multi_layer_graph() -> CategoryResult {
 pub(crate) fn tests_agent_graph_quality() -> CategoryResult {
     use ai_assistant::{
         AgentGraph, EdgeType, ExecutionTrace, GraphAgentEdge, GraphAgentNode, GraphAnalytics,
-        GraphError, GraphStepStatus, TraceStep,
+        GraphError, StepStatus, TraceStep,
     };
 
     println!("\n{}", bold(&cyan("▶ Agent Graph Quality")));
@@ -2229,22 +2229,22 @@ pub(crate) fn tests_agent_graph_quality() -> CategoryResult {
         let mut trace = ExecutionTrace::new();
         let mut step_start = TraceStep::new("start", "process");
         step_start.duration_ms = 10;
-        step_start.status = GraphStepStatus::Completed;
+        step_start.status = StepStatus::Completed;
         trace.record(step_start);
 
         let mut step_fast = TraceStep::new("fast", "process");
         step_fast.duration_ms = 50;
-        step_fast.status = GraphStepStatus::Completed;
+        step_fast.status = StepStatus::Completed;
         trace.record(step_fast);
 
         let mut step_slow = TraceStep::new("slow", "process");
         step_slow.duration_ms = 500;
-        step_slow.status = GraphStepStatus::Completed;
+        step_slow.status = StepStatus::Completed;
         trace.record(step_slow);
 
         let mut step_end = TraceStep::new("end", "process");
         step_end.duration_ms = 10;
-        step_end.status = GraphStepStatus::Completed;
+        step_end.status = StepStatus::Completed;
         trace.record(step_end);
 
         let critical = GraphAnalytics::critical_path(&g, &trace);
@@ -2261,17 +2261,17 @@ pub(crate) fn tests_agent_graph_quality() -> CategoryResult {
 
         let mut fast = TraceStep::new("agent_fast", "action");
         fast.duration_ms = 10;
-        fast.status = GraphStepStatus::Completed;
+        fast.status = StepStatus::Completed;
         trace.record(fast);
 
         let mut slow = TraceStep::new("agent_slow", "action");
         slow.duration_ms = 1000;
-        slow.status = GraphStepStatus::Completed;
+        slow.status = StepStatus::Completed;
         trace.record(slow);
 
         let mut medium = TraceStep::new("agent_mid", "action");
         medium.duration_ms = 200;
-        medium.status = GraphStepStatus::Completed;
+        medium.status = StepStatus::Completed;
         trace.record(medium);
 
         // Threshold 500ms — only slow should be a bottleneck
@@ -2288,7 +2288,7 @@ pub(crate) fn tests_agent_graph_quality() -> CategoryResult {
         for (id, dur) in &[("ag1", 100u64), ("ag2", 200), ("ag3", 300)] {
             let mut step = TraceStep::new(id, "work");
             step.duration_ms = *dur;
-            step.status = GraphStepStatus::Completed;
+            step.status = StepStatus::Completed;
             trace.record(step);
         }
 
@@ -2353,7 +2353,7 @@ pub(crate) fn tests_agent_graph_quality() -> CategoryResult {
         for (i, (id, _, _)) in nodes.iter().enumerate() {
             let mut step = TraceStep::new(id, "process");
             step.duration_ms = durations[i];
-            step.status = GraphStepStatus::Completed;
+            step.status = StepStatus::Completed;
             trace.record(step);
         }
 

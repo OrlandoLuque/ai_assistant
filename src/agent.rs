@@ -412,16 +412,14 @@ pub struct PlanStep {
     pub status: PlanStepStatus,
 }
 
-/// Plan step status
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[non_exhaustive]
-pub enum PlanStepStatus {
-    Pending,
-    InProgress,
-    Completed,
-    Failed(String),
-    Skipped,
-}
+/// Plan step status.
+///
+/// `PlanStepStatus` is now an alias for the one [`crate::step_status::StepStatus`].
+/// It used to be a third declaration of the same concept, spelled differently --
+/// which is why the name-comparing duplicate gate never paired it with the two
+/// called `StepStatus`. It was the only one of the three that kept the failure
+/// reason, and the only one with no `Blocked` state.
+pub use crate::step_status::StepStatus as PlanStepStatus;
 
 impl PlanningAgent {
     /// Create a new planning agent
@@ -481,7 +479,7 @@ impl PlanningAgent {
     /// Mark a step as failed
     pub fn fail_step(&mut self, step_num: usize, error: String) {
         if let Some(step) = self.plan.iter_mut().find(|s| s.step == step_num) {
-            step.status = PlanStepStatus::Failed(error);
+            step.status = PlanStepStatus::Failed { error };
         }
     }
 
@@ -508,7 +506,10 @@ impl PlanningAgent {
                 PlanStepStatus::Pending => "⏳",
                 PlanStepStatus::InProgress => "🔄",
                 PlanStepStatus::Completed => "✅",
-                PlanStepStatus::Failed(_) => "❌",
+                PlanStepStatus::Failed { .. } => "❌",
+                // Nuevo estado del enum unificado: un paso puede estar
+                // esperando un recurso sin haber fracasado.
+                PlanStepStatus::Blocked => "⏸️",
                 PlanStepStatus::Skipped => "⏭️",
             };
             summary.push_str(&format!("{} {}. {}\n", status, step.step, step.description));
@@ -1174,7 +1175,7 @@ mod tests {
         agent.fail_step(1, "Something went wrong".to_string());
 
         let step1 = agent.plan().iter().find(|s| s.step == 1).unwrap();
-        assert!(matches!(step1.status, PlanStepStatus::Failed(_)));
+        assert!(matches!(step1.status, PlanStepStatus::Failed { .. }));
     }
 
     #[test]
@@ -1276,7 +1277,7 @@ mod tests {
             PlanStepStatus::Pending,
             PlanStepStatus::InProgress,
             PlanStepStatus::Completed,
-            PlanStepStatus::Failed("error".to_string()),
+            PlanStepStatus::failed("error"),
             PlanStepStatus::Skipped,
         ];
 
@@ -1285,8 +1286,9 @@ mod tests {
                 PlanStepStatus::Pending => assert_eq!(status, PlanStepStatus::Pending),
                 PlanStepStatus::InProgress => assert_eq!(status, PlanStepStatus::InProgress),
                 PlanStepStatus::Completed => assert_eq!(status, PlanStepStatus::Completed),
-                PlanStepStatus::Failed(ref msg) => assert_eq!(msg, "error"),
+                PlanStepStatus::Failed { ref error } => assert_eq!(error, "error"),
                 PlanStepStatus::Skipped => assert_eq!(status, PlanStepStatus::Skipped),
+                PlanStepStatus::Blocked => assert_eq!(status, PlanStepStatus::Blocked),
             }
         }
     }

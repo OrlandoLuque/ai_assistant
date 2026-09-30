@@ -819,8 +819,8 @@ pub use agent_memory::{
 #[cfg(feature = "multi-agent")]
 pub use agent::{
     create_builtin_agent_tools, AgentCallback, AgentConfig, AgentContext, AgentExecutor,
-    AgentResult, AgentState, AgentStep, AgentTool, LoggingCallback, PlanStep, PlanStepStatus,
-    PlanningAgent, ReactAgent,
+    AgentResult, AgentState, AgentStep, AgentTool, LoggingCallback, PlanStep, PlanningAgent,
+    ReactAgent,
 };
 
 // =============================================================================
@@ -2082,6 +2082,8 @@ pub mod request_signing;
 pub mod response_ranking;
 pub mod routing;
 pub mod smart_suggestions;
+pub mod step_status;
+pub use step_status::StepStatus;
 pub mod summarization;
 pub mod task_planning;
 pub mod text_transform;
@@ -2105,7 +2107,7 @@ pub use dag_executor::{
 
 pub use agent_graph::{
     AgentEdge as GraphAgentEdge, AgentGraph, AgentNode as GraphAgentNode, EdgeType, ExecutionTrace,
-    GraphAnalytics, GraphError, StepStatus as GraphStepStatus, TraceStep,
+    GraphAnalytics, GraphError, TraceStep,
 };
 
 // Export all lightweight modules
@@ -2362,8 +2364,7 @@ pub use decision_tree::{
 };
 
 pub use task_planning::{
-    PlanBuilder, PlanStep as TaskPlanStep, PlanStore, PlanSummary, StepNote, StepPriority,
-    StepStatus, TaskPlan,
+    PlanBuilder, PlanStep as TaskPlanStep, PlanStore, PlanSummary, StepNote, StepPriority, TaskPlan,
 };
 
 pub use request_coalescing::{

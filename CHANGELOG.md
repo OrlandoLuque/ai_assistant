@@ -5,6 +5,105 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v239 (2026-10-01) — V363: StepStatus eran TRES, y la tercera se llamaba de otra forma (0.2.322)
+
+«Desduplicar también StepStatus» — y al mirarlo eran tres, no dos.
+
+| dónde | estados |
+|---|---|
+| `agent_graph::StepStatus` | Running, Completed, Failed, Skipped |
+| `task_planning::StepStatus` | Pending, InProgress, Done, **Blocked**, Skipped |
+| `agent::PlanStepStatus` | Pending, InProgress, Completed, **Failed(String)**, Skipped |
+
+**La tercera es invisible a la puerta de V362 por construcción.** `check_duplicate_types.py`
+compara nombres, no significado, y lo dice en su propia cabecera; `PlanStepStatus` es el mismo
+concepto escrito distinto, así que jamás lo habría emparejado con los dos `StepStatus`. El autor
+lo había avisado con estas palabras: «pueden haber cosas equivalentes con otro nombre». Este es
+el primer caso que lo demuestra, y salió en el primer nombre que miré.
+
+## Lee las columnas, no las filas
+
+- **Un paso de plan no podía fracasar.** `task_planning` no tenía `Failed` **en absoluto**, así
+  que un paso cuyo trabajo estallaba no tenía adónde ir salvo `Skipped` o una mentira.
+- **Un paso de grafo no podía esperar.** `agent_graph` no tenía `Blocked`, así que un paso
+  esperando un recurso no disponible no tenía más estado que `Failed` — que es tirar a la basura
+  la diferencia entre «reintentar luego» y «rendirse».
+- **Dos de las tres perdían la razón.** Solo `PlanStepStatus` llevaba el texto del error; las
+  otras registraban *que* falló y no *por qué*.
+
+## El tipo único
+
+`src/step_status.rs`, siempre compilado, con la unión de los seis estados: `Pending`,
+`InProgress`, `Blocked`, `Completed`, `Failed { error }`, `Skipped`. Las tres rutas viejas son
+ahora re-exportaciones, `PlanStepStatus` incluido como alias.
+
+`Failed` lleva la razón **no opcional**: dos de los tres enums guardaban solo que algo falló, que
+es exactamente la información que no tiene quien decide si reintentar.
+
+Dos `serde(alias)` para no romper datos ya escritos: `"Done"` → `Completed` y `"Running"` →
+`InProgress`. Con su test, y con la comprobación de que al **serializar** sale el nombre nuevo —
+un alias es de solo lectura, o se convierte en el formato en vez de ser una vía de migración.
+
+## Lo que el compilador encontró, y lo que no
+
+Repuntar los tres módulos y dejar que el compilador enumere dio **14 errores** en cuatro
+ficheros, incluido `task_board.rs`, que no había visto. Y luego, al ser el enum `#[non_exhaustive]`
+con un estado nuevo, forzó **cuatro `match` no exhaustivos** en el código de planes: cuatro sitios
+que nunca contemplaron que un paso pueda fracasar. Cada uno era una decisión, no un arm que
+rellenar:
+
+- `progress()` — un paso fallido está **resuelto**, no logrado, así que cuenta 1.0 igual que
+  `Skipped`. Documentado explícitamente: un plan de cinco pasos fallidos informa 100 % ahí, y ese
+  número solo sería una mentira sobre el resultado. Quien quiera la tasa de éxito tiene
+  `PlanSummary::failed`.
+- `PlanSummary` gana el campo `failed`, **y la suma de `total_steps`** — que es la suma de los
+  contadores. Sin eso el total habría quedado corto en silencio: un bug aritmético que el
+  compilador no caza.
+- Dos marcadores de render (`[x!]`) en `task_planning` y `task_board`.
+
+**Lo que el compilador NO vio:** el rename `Running` → `InProgress` dejó un
+`assert_eq!(StepStatus::InProgress.to_string(), "Running")` que compila perfectamente y falla en
+ejecución. Una cadena esperada obsoleta no es un error de tipos. Lo encontré buscando a mano las
+cadenas literales de los ficheros tocados, no por el compilador.
+
+## La puerta de V362 hizo su trabajo al día siguiente de nacer
+
+Tras el cambio: **214 nombres, 34 divergentes** (eran 215 y 35). Y la puerta avisó por su cuenta:
+
+```
+1 baseline entries no longer duplicate — remove them from
+scripts/duplicate_types_baseline.toml so the ratchet keeps tightening: StepStatus
+```
+
+Así es como la deuda tiene que salir de la lista: porque el trinquete lo dice, no porque alguien
+se acuerde.
+
+## Dos cosas que CI puso en rojo y no eran de este trabajo
+
+1. **`RUSTSEC-2026-0314`** (publicado el 24/09) en `wasmtime-wasi 46.0.3`: un invitado puede hacer
+   entrar en pánico al anfitrión por desbordamiento de fecha en el sistema de ficheros. **La línea
+   46 no tiene parche.** Subido a **49.0.1**, que es literalmente la versión que el aviso da como
+   corregida — y compila sin tocar una línea de código: la API que usamos es estable de 46 a 49.
+   Arreglado con una subida de versión, nunca con `--ignore`.
+2. **Un meta-comprobador me cazó a mí.** «Check the list of checkers is true» falló porque añadí
+   una puerta en V362 y no la declaré en `docs/README.md`:
+
+   ```
+   - check_duplicate_types.py corre en CI y no aparece en docs/README.md.
+   - docs/README.md dice "All ten run in CI" y son eleven (11).
+   ```
+
+   Exactamente para lo que se puso en V340. Corregido, y ahora son once en CI y doce en `scripts/`.
+
+## Verificación
+
+- `cargo clippy --all-targets -- -D warnings` con `FEATURES_STD`: limpio.
+- `cargo check --features skill-forge`: limpio con wasmtime 49.
+- **8952 tests pasados, 0 fallidos** (+6, los del módulo nuevo).
+- `cargo audit` con los mismos `--ignore` que CI: el 0314 ya no aparece.
+- `check_checkers_documented.py`: OK.
+- `check_duplicate_types.py`: 34 divergentes, ninguno nuevo.
+
 ## [Unreleased] - v238 (2026-10-01) — V362: 215 nombres duplicados, y 35 que no significan lo mismo (0.2.321)
 
 «A saber cuántas cosas estarán duplicadas» era una pregunta medible, así que la medí.

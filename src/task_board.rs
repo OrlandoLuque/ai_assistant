@@ -340,7 +340,7 @@ impl TaskBoard {
                     .plan
                     .find_step(&id)
                     .map(|s| s.status.clone())
-                    .unwrap_or(StepStatus::Done);
+                    .unwrap_or(StepStatus::Completed);
                 if let Some(state) = self.execution_state.get_mut(&id) {
                     state.progress = 1.0;
                 }
@@ -469,7 +469,9 @@ impl TaskBoard {
                     .plan
                     .steps
                     .iter()
-                    .filter(|s| s.status != StepStatus::Done && s.status != StepStatus::Skipped)
+                    .filter(|s| {
+                        s.status != StepStatus::Completed && s.status != StepStatus::Skipped
+                    })
                     .map(|s| s.id.clone())
                     .collect();
                 for id in ids {
@@ -492,7 +494,7 @@ impl TaskBoard {
                         self.plan
                             .find_step(dep_id)
                             .map(|d| {
-                                d.status == StepStatus::Done || d.status == StepStatus::Skipped
+                                d.status == StepStatus::Completed || d.status == StepStatus::Skipped
                             })
                             .unwrap_or(true)
                     })
@@ -671,8 +673,9 @@ impl TaskBoard {
             let status_icon = match step.status {
                 StepStatus::Pending => "[ ]",
                 StepStatus::InProgress => "[~]",
-                StepStatus::Done => "[x]",
+                StepStatus::Completed => "[x]",
                 StepStatus::Blocked => "[!]",
+                StepStatus::Failed { .. } => "[x!]",
                 StepStatus::Skipped => "[-]",
             };
             let agent = self
@@ -881,7 +884,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             board.plan().find_step(&id).unwrap().status,
-            StepStatus::Done
+            StepStatus::Completed
         );
     }
 

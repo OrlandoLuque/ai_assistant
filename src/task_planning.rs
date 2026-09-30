@@ -24,15 +24,11 @@ use uuid::Uuid;
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Status of a plan step.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
-pub enum StepStatus {
-    Pending,
-    InProgress,
-    Done,
-    Blocked,
-    Skipped,
-}
+///
+/// Re-exported from [`crate::step_status`], which is the single definition. This
+/// module used to declare its own with no `Failed` variant at all, so a plan step
+/// whose work blew up had nowhere to go but `Skipped`.
+pub use crate::step_status::StepStatus;
 
 /// Priority level of a plan step.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -149,13 +145,22 @@ impl PlanStep {
 
     /// Calculate progress recursively.
     ///
-    /// - Leaf nodes: Done=1.0, InProgress=0.5, Skipped=1.0, Blocked/Pending=0.0
+    /// This measures how much of the plan is **resolved**, not how much of it
+    /// succeeded: `Completed`, `Skipped` and `Failed` all count as 1.0 because
+    /// none of them will move again. A caller that needs the success rate must
+    /// read [`PlanSummary::failed`] -- a plan of five failed steps reports 100 %
+    /// here, and that number alone would be a lie about the outcome.
+    ///
+    /// - Leaf nodes: `Completed`/`Skipped`/`Failed` = 1.0, `InProgress` = 0.5,
+    ///   `Blocked`/`Pending` = 0.0
     /// - Parent nodes: average of children's progress
     pub fn progress(&self) -> f32 {
         if self.is_leaf() {
             match self.status {
-                StepStatus::Done => 1.0,
+                StepStatus::Completed => 1.0,
                 StepStatus::Skipped => 1.0,
+                // Resolved, not achieved. See the note above.
+                StepStatus::Failed { .. } => 1.0,
                 StepStatus::InProgress => 0.5,
                 StepStatus::Pending | StepStatus::Blocked => 0.0,
             }
@@ -187,7 +192,7 @@ impl PlanStep {
 
     /// Count done steps recursively (including self if done).
     pub fn done_count(&self) -> usize {
-        let self_count = if self.status == StepStatus::Done {
+        let self_count = if self.status == StepStatus::Completed {
             1
         } else {
             0
@@ -263,9 +268,10 @@ impl PlanStep {
     fn to_markdown_lines(&self, depth: usize, lines: &mut Vec<String>) {
         let indent = "  ".repeat(depth);
         let marker = match self.status {
-            StepStatus::Done => "[x]",
+            StepStatus::Completed => "[x]",
             StepStatus::InProgress => "[~]",
             StepStatus::Blocked => "[!]",
+            StepStatus::Failed { .. } => "[x!]",
             StepStatus::Pending | StepStatus::Skipped => "[ ]",
         };
         lines.push(format!("{}- {} {}", indent, marker, self.title));
@@ -285,7 +291,7 @@ impl PlanStep {
         if self.is_leaf() && self.status == StepStatus::Pending {
             let all_resolved = self.blocked_by.iter().all(|blocker_id| {
                 find_in_steps(plan_steps, blocker_id)
-                    .map(|s| s.status == StepStatus::Done)
+                    .map(|s| s.status == StepStatus::Completed)
                     .unwrap_or(true)
             });
             if all_resolved {
@@ -324,6 +330,13 @@ pub struct PlanSummary {
     pub pending: usize,
     pub blocked: usize,
     pub skipped: usize,
+    /// Steps that ended unsuccessfully.
+    ///
+    /// New with the unified `StepStatus`: the plan enum had no `Failed` variant
+    /// at all, so this count had nowhere to come from and `total_steps` -- which
+    /// is the SUM of the counters -- would have silently undercounted once one
+    /// existed.
+    pub failed: usize,
     pub progress_percent: f32,
 }
 
@@ -407,7 +420,7 @@ impl TaskPlan {
     /// Mark a step as Done and set its completed_at timestamp.
     pub fn complete_step(&mut self, id: &str) -> bool {
         if let Some(step) = self.find_step_mut(id) {
-            step.status = StepStatus::Done;
+            step.status = StepStatus::Completed;
             step.completed_at = Some(Utc::now());
             step.updated_at = Utc::now();
             self.updated_at = Utc::now();
@@ -547,7 +560,7 @@ impl TaskPlan {
     /// Recursive helper to check if all steps are Done or Skipped.
     fn all_steps_complete(&self, steps: &[PlanStep]) -> bool {
         steps.iter().all(|s| {
-            let status_ok = s.status == StepStatus::Done || s.status == StepStatus::Skipped;
+            let status_ok = s.status == StepStatus::Completed || s.status == StepStatus::Skipped;
             status_ok && self.all_steps_complete(&s.children)
         })
     }
@@ -559,6 +572,7 @@ impl TaskPlan {
         let mut pending = 0;
         let mut blocked = 0;
         let mut skipped = 0;
+        let mut failed = 0;
         self.count_statuses(
             &self.steps,
             &mut done,
@@ -566,8 +580,9 @@ impl TaskPlan {
             &mut pending,
             &mut blocked,
             &mut skipped,
+            &mut failed,
         );
-        let total_steps = done + in_progress + pending + blocked + skipped;
+        let total_steps = done + in_progress + pending + blocked + skipped + failed;
         let progress_percent = if total_steps > 0 {
             self.progress() * 100.0
         } else {
@@ -580,6 +595,7 @@ impl TaskPlan {
             pending,
             blocked,
             skipped,
+            failed,
             progress_percent,
         }
     }
@@ -593,16 +609,26 @@ impl TaskPlan {
         pending: &mut usize,
         blocked: &mut usize,
         skipped: &mut usize,
+        failed: &mut usize,
     ) {
         for step in steps {
             match step.status {
-                StepStatus::Done => *done += 1,
+                StepStatus::Completed => *done += 1,
                 StepStatus::InProgress => *in_progress += 1,
                 StepStatus::Pending => *pending += 1,
                 StepStatus::Blocked => *blocked += 1,
                 StepStatus::Skipped => *skipped += 1,
+                StepStatus::Failed { .. } => *failed += 1,
             }
-            self.count_statuses(&step.children, done, in_progress, pending, blocked, skipped);
+            self.count_statuses(
+                &step.children,
+                done,
+                in_progress,
+                pending,
+                blocked,
+                skipped,
+                failed,
+            );
         }
     }
 
@@ -882,7 +908,7 @@ mod tests {
     #[test]
     fn test_progress_leaf_steps() {
         let mut step_done = PlanStep::new("Done step");
-        step_done.status = StepStatus::Done;
+        step_done.status = StepStatus::Completed;
         assert_eq!(step_done.progress(), 1.0);
 
         let mut step_in_progress = PlanStep::new("WIP step");
@@ -904,7 +930,7 @@ mod tests {
     #[test]
     fn test_progress_parent_step() {
         let mut child1 = PlanStep::new("Child 1");
-        child1.status = StepStatus::Done;
+        child1.status = StepStatus::Completed;
 
         let child2 = PlanStep::new("Child 2"); // Pending
 
@@ -972,7 +998,7 @@ mod tests {
         assert_eq!(plan.find_step(&id).unwrap().status, StepStatus::InProgress);
 
         assert!(plan.complete_step(&id));
-        assert_eq!(plan.find_step(&id).unwrap().status, StepStatus::Done);
+        assert_eq!(plan.find_step(&id).unwrap().status, StepStatus::Completed);
         assert!(plan.find_step(&id).unwrap().completed_at.is_some());
 
         assert!(plan.reset_step(&id));
@@ -1025,9 +1051,9 @@ mod tests {
         let mut plan = TaskPlan::new("Progress Test");
 
         let mut s1 = PlanStep::new("Step 1");
-        s1.status = StepStatus::Done;
+        s1.status = StepStatus::Completed;
         let mut s2 = PlanStep::new("Step 2");
-        s2.status = StepStatus::Done;
+        s2.status = StepStatus::Completed;
 
         plan.add_step(s1);
         plan.add_step(s2);
@@ -1081,7 +1107,7 @@ mod tests {
         let mut plan = TaskPlan::new("Lists Test");
 
         let mut s1 = PlanStep::new("Done");
-        s1.status = StepStatus::Done;
+        s1.status = StepStatus::Completed;
         let s2 = PlanStep::new("Pending 1");
         let s3 = PlanStep::new("Pending 2");
         let mut s4 = PlanStep::new("Blocked");
@@ -1105,7 +1131,7 @@ mod tests {
         let mut plan = TaskPlan::new("Summary Test");
 
         let mut s1 = PlanStep::new("Done");
-        s1.status = StepStatus::Done;
+        s1.status = StepStatus::Completed;
         let mut s2 = PlanStep::new("WIP");
         s2.status = StepStatus::InProgress;
         let s3 = PlanStep::new("Pending");
@@ -1160,7 +1186,7 @@ mod tests {
         let mut plan = TaskPlan::new("Markdown Plan").with_description("A test plan");
 
         let mut done_step = PlanStep::new("Completed Task");
-        done_step.status = StepStatus::Done;
+        done_step.status = StepStatus::Completed;
         let mut wip_step = PlanStep::new("Working On");
         wip_step.status = StepStatus::InProgress;
         let pending_step = PlanStep::new("Todo");
@@ -1228,7 +1254,7 @@ mod tests {
     fn test_is_complete_with_skipped() {
         let mut plan = TaskPlan::new("Complete Check");
         let mut s1 = PlanStep::new("Done");
-        s1.status = StepStatus::Done;
+        s1.status = StepStatus::Completed;
         let mut s2 = PlanStep::new("Skipped");
         s2.status = StepStatus::Skipped;
         plan.add_step(s1);
@@ -1276,10 +1302,10 @@ mod tests {
     fn test_deeply_nested_progress() {
         // Root -> A (Done), B -> B1 (Done), B2 (Pending)
         let mut a = PlanStep::new("A");
-        a.status = StepStatus::Done;
+        a.status = StepStatus::Completed;
 
         let mut b1 = PlanStep::new("B1");
-        b1.status = StepStatus::Done;
+        b1.status = StepStatus::Completed;
         let b2 = PlanStep::new("B2"); // Pending
 
         let b = PlanStep::new("B").with_child(b1).with_child(b2);
@@ -1363,7 +1389,7 @@ mod tests {
         let mut plan = TaskPlan::new("Summary Test");
         plan.add_step(PlanStep::new("Step A"));
         let mut step_b = PlanStep::new("Step B");
-        step_b.status = StepStatus::Done;
+        step_b.status = StepStatus::Completed;
         plan.add_step(step_b);
         store.upsert(plan);
 

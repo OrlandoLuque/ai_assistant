@@ -96,8 +96,14 @@ Documentation drifts silently, so some of it is enforced:
 - `scripts/check_bench_budget.py` — benchmark budgets.
 - `scripts/check_rustsec_ignores.py` — the suppressed-advisory lists in `deny.toml` and
   `ci.yml` must match, and each entry must have a reason written above it.
+- `scripts/check_duplicate_types.py` — refuses a **new** enum name declared twice with
+  different variants. 215 duplicated type names measured on 2026-10-01, of which 35 are
+  divergent enums; those are frozen in `scripts/duplicate_types_baseline.toml` under
+  `[untriaged]`, which says in the file that nobody judged them. It compares **names**,
+  not meaning: `StepStatus` and `PlanStepStatus` were the same concept and it could
+  never have paired them.
 
-All ten run in CI. `scripts/check_release_ready.py` is the eleventh checker in
+All eleven run in CI. `scripts/check_release_ready.py` is the twelfth checker in
 `scripts/` and is **not** wired to CI — it is a pre-release manual step.
 
 And that paragraph is itself checked, by `scripts/check_checkers_documented.py`: the
