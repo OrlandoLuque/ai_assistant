@@ -1,0 +1,80 @@
+# Baseline for scripts/check_duplicate_types.py
+#
+# Two sections, because "someone decided this is fine" and "nobody has looked at
+# this yet" are different claims and collapsing them would let this file lie.
+#
+#   [allowed]   — judged. One reason per name, and the checker REFUSES an entry
+#                 whose reason is empty. An unargued exemption reads as reviewed
+#                 to whoever finds it next, and then nobody re-reads it.
+#   [untriaged] — frozen, NOT judged. The pre-existing list, kept so the count
+#                 cannot grow while it is being worked through.
+#
+# Names that are structurally unconfusable are NOT listed here: the checker
+# classifies `src/bin/*.rs`-only declarations as SEPARATE_BINARIES (separate crate
+# roots, no shared scope — `Tab` in three GUI binaries) and sibling `#[cfg]` inline
+# modules as CFG_ALTERNATIVES. Putting those in a baseline would imply a judgement
+# that was never needed.
+
+[allowed]
+# Deliberately empty. The 35 names below were MEASURED on 2026-10-01 and not one
+# of them was triaged, so writing 35 invented reasons here would have made the
+# file look reviewed when it was not. An entry belongs here once someone has read
+# both declarations and can say why the difference is right, in this shape:
+#
+#   StopReason = "acp.rs is the Agent Client Protocol's wire enum, fixed by the
+#                 spec; self_correction's is a loop-exit reason. Cannot merge."
+
+[untriaged]
+# 35 divergent enum names: one spelling, different variants, so two things that
+# look interchangeable and are not. Frozen, not blessed.
+#
+# What is already known about three of them, from the sweep that found the list:
+#
+#   StepStatus  agent_graph has Running/Completed/Failed/Skipped; task_planning has
+#               Pending/InProgress/Done/Blocked/Skipped. The graph one CANNOT
+#               express "blocked", so a step waiting on a resource has no state but
+#               Failed — which is the exact hole N132's "resource unavailable -> put
+#               the task on hold" needs. Being unified by explicit request.
+#   IceState    ICE is RFC 8445. distributed_rag and p2p carry two different
+#               SUBSETS of one standard state machine, which is a defect in at
+#               least one of them.
+#   LogLevel    distributed_log has Trace/Debug/Info/Warn/Error, events has
+#               Debug/Info/Warn — a subset, so a Trace or Error event has nowhere
+#               to go.
+names = [
+  "AudioFormat",
+  "AuditEventType",
+  "BackendError",
+  "Capability",
+  "ChangeType",
+  "CompressionError",
+  "CompressionLevel",
+  "ConfigError",
+  "DiversityMetric",
+  "EnsembleStrategy",
+  "EntityType",
+  "EvictionPolicy",
+  "ExportFormat",
+  "GateAction",
+  "IceState",
+  "ImageFormat",
+  "IntegrityResult",
+  "LogLevel",
+  "MemoryType",
+  "MergeStrategy",
+  "OutputFormat",
+  "OverflowAction",
+  "ParameterType",
+  "ProviderStatus",
+  "QueueError",
+  "ResponseStyle",
+  "RiskLevel",
+  "StepKind",
+  "StepStatus",
+  "StepType",
+  "StopReason",
+  "Subsystem",
+  "TaskStatus",
+  "TaskType",
+  "WarningSeverity",
+]

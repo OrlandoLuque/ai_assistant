@@ -5,6 +5,92 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v238 (2026-10-01) — V362: 215 nombres duplicados, y 35 que no significan lo mismo (0.2.321)
+
+«A saber cuántas cosas estarán duplicadas» era una pregunta medible, así que la medí.
+
+## Lo que hay
+
+`scripts/check_duplicate_types.py` recorre los 559 ficheros de `src/` y cuenta cada `struct`,
+`enum`, `trait` y `type` declarado más de una vez. **215 nombres**, repartidos en cinco clases,
+y solo una falla la construcción:
+
+| clase | cuántos | qué significa |
+|---|---|---|
+| **DIVERGENT** | **35** | mismo nombre, **distintas variantes**: dos cosas que parecen intercambiables y no lo son |
+| CLONED | 3 | mismo nombre y mismas variantes en dos ficheros — un arreglo en una copia no llega a la otra |
+| REPEATED | 149 | structs, traits y alias: no hay variantes que comparar, se informa y nada más |
+| CFG_ALTERNATIVES | 3 | un fichero, módulos hermanos con `#[cfg]` — exactamente uno compila |
+| SEPARATE_BINARIES | 25 | uno por `src/bin/*.rs`, raíces de crate distintas: no comparten ámbito |
+
+Las dos últimas clases **no gastan una exención**: son hechos estructurales, y meterlas en un
+baseline daría a entender que alguien las pesó.
+
+## Los tres clones, que son el hallazgo más limpio
+
+`CaptureMode` (`audio_priority_protocol` / `group_queue_runtime`), `ContainerError`
+(`container_executor` / `container_tools`) y `OverflowLevel` (`context_composer` /
+`context_window`): enums **idénticos** duplicados. Es la forma exacta con la que el arreglo de
+RRF de V316 aterrizó en una de tres implementaciones (N99).
+
+## La puerta se autocomprobó y encontró un fallo mío
+
+El escáner leía las variantes partiendo el cuerpo del enum en las comas de profundidad 0 —
+y **la coma de un comentario también es una coma de profundidad 0**. El
+`/// Auto-record via VAD, queue on silence.` de `CaptureMode` partía la lista en mitad de una
+frase y el enum devolvía **cero** variantes de cuatro.
+
+Lo grave no es la versión que vacía la lista: una coma en el doc comment de la variante *tercera*
+tira solo algunas, y una lista parcial **es indistinguible de una diferencia real**. Es decir, la
+puerta habría denunciado una divergencia entre dos enums idénticos y quien fuera a mirar no
+habría encontrado nada mal en el código. Es justo lo que pasó: `CaptureMode` salía como
+DIVERGENT y es un clon.
+
+Arreglado quitando comentarios antes de partir (respetando `//` dentro de una cadena, que
+`#[doc = "see http://x"]` existe), con los dos casos en el `--self-test`: 10 de 10.
+
+## El baseline tiene dos secciones a propósito
+
+«Lo revisé y está bien» y «nadie ha mirado esto» son afirmaciones distintas, y juntarlas
+dejaría mentir al fichero:
+
+- `[allowed]` exige una razón por nombre, y el checker **rechaza** una vacía.
+- `[untriaged]` son los 35 medidos, congelados para que no crezcan, y **dice en el fichero que
+  nadie los juzgó**.
+
+`[allowed]` está vacía a propósito. Escribir 35 razones inventadas habría hecho que el fichero
+pareciera revisado sin estarlo — que es exactamente cómo sobrevivió una supresión cuya razón
+escrita era falsa sobre 1607 líneas que no compilaban.
+
+## Tres divergencias que ya sé que son defectos
+
+- **`StepStatus`** — `agent_graph` tiene `Running/Completed/Failed/Skipped`; `task_planning`
+  tiene `Pending/InProgress/Done/Blocked/Skipped`. El del grafo **no puede expresar
+  «bloqueado»**, así que un paso que espera un recurso no tiene más estado que `Failed`. Es el
+  hueco exacto que necesita el «recurso no disponible → poner la tarea en hold» de N132.
+- **`IceState`** — ICE es el RFC 8445. `distributed_rag` y `p2p` llevan dos **subconjuntos
+  distintos** de una misma máquina de estados estándar.
+- **`LogLevel`** — `distributed_log` tiene `Trace/Debug/Info/Warn/Error`; `events` tiene
+  `Debug/Info/Warn`, así que un evento `Trace` o `Error` no tiene dónde ir.
+
+## Lo que esta puerta NO hace
+
+Compara **nombres**, no significado. `RrfFusion` y `reciprocal_rank_fuse` son la misma idea y no
+comparten un carácter, así que jamás las emparejaría. Está escrito en la cabecera del script
+porque una puerta que parece encontrar duplicación y solo encuentra ortografía repetida es peor
+que ninguna: alguien se fiará.
+
+## Verificación
+
+- `--self-test`: 10 casos verdes, incluidos los dos del bug de la coma y los dos rechazos del
+  baseline (razón vacía, y un nombre en las dos secciones).
+- **Discrimina**: con `IceState` fuera del baseline, la puerta lo nombra y `main()` devuelve 1.
+  El primer intento de esta medición dio un `rc=1` **ambiguo** — el mensaje de ayuda llamaba a
+  `relative_to` con un baseline fuera del repo y petaba, y Python también sale con 1 ante una
+  excepción. Arreglado con `baseline_label()`.
+- Pasando, la puerta es **callada**: volcar los 35 en cada ejecución verde entrena a saltarse la
+  sección donde aparecería el 36.
+
 ## [Unreleased] - v237 (2026-09-27) — V361: `line!()` no es la linea de quien llama (0.2.320)
 
 Medir en vez de juzgar dio su segundo hallazgo en la vuelta 12 de 23, y es de otra clase que el de

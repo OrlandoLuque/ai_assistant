@@ -270,6 +270,30 @@ jobs:
       - name: Run binary-inventory checker
         run: python3 scripts/check_binaries_documented.py
 
+  duplicate-types:
+    name: Duplicate type names
+    runs-on: ubuntu-latest
+    # V362: fail when a NEW enum name is declared twice with different variants.
+    # Measured on 2026-10-01: 215 duplicated type names, of which 35 are divergent
+    # enums. Every one of them was found by accident while looking for something
+    # else — three RRF implementations where the V316 fix reached one (N99), three
+    # LLM-as-a-judge implementations wired to nothing, and `StepStatus` where the
+    # `agent_graph` copy cannot express "blocked" at all.
+    #
+    # The ratchet freezes those 35 in [untriaged] and refuses a 36th. It does NOT
+    # bless them: [untriaged] says in the file that nobody judged them, which is
+    # why it is a separate section from [allowed] — an exemption with an invented
+    # reason reads as reviewed and then nobody re-reads it.
+    steps:
+      - uses: actions/checkout@v5
+      # The self-test runs first and is not a formality: it caught a comma inside a
+      # doc comment splitting the variant list, which made a four-variant enum read
+      # as zero and invented a divergence between two identical enums.
+      - name: Self-test the duplicate-type scanner
+        run: python3 scripts/check_duplicate_types.py --self-test
+      - name: Run duplicate-type ratchet
+        run: python3 scripts/check_duplicate_types.py
+
   audit:
     name: Security Audit
     runs-on: ubuntu-latest
