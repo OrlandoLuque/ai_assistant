@@ -1,0 +1,90 @@
+# Mutations for src/retrieval_eval.rs — the corpus loader and run producer.
+#
+# This module is a MEASUREMENT INSTRUMENT, which is why it gets mutated before it
+# is trusted: anything it gets wrong is inherited by every number produced from
+# here on, and a wrong retrieval score does not look wrong. The precedent is N14,
+# where 2 of 12 Rust oracles and 4 of 11 Python oracles accepted plausible wrong
+# answers and the scores had already been recorded.
+#
+# M1 and M2 are the pair that matters. They mutate the two halves of ONE guard —
+# the one that refuses a run in which no returned id belongs to the corpus —
+# because its two failure directions are opposite and need separate tests:
+#
+#   M1 makes the guard never fire  -> an id-space mismatch is reported as
+#                                     "recall@10 = 0.000", a real-looking result.
+#   M2 makes the guard over-fire   -> a retriever that legitimately matched
+#                                     nothing is reported as broken wiring,
+#                                     sending the reader to the wrong place.
+#
+# Run: python scripts/mutate.py --spec scripts/mutations/retrieval_eval.toml
+
+features = "full"
+filter = "retrieval_eval"
+
+[[mutation]]
+id = "M1"
+file = "src/retrieval_eval.rs"
+invariant = "a run where EVERY returned id is unknown to the corpus is refused, not scored as zero"
+before = "    if returned > 0 && unknown_ids == returned {"
+after = "    if returned > 0 && unknown_ids > returned {"
+occurrences = 1
+
+[[mutation]]
+id = "M2"
+file = "src/retrieval_eval.rs"
+invariant = "a retriever that returned NOTHING is not an id-space mismatch -- it has no ids to be wrong about"
+before = "    if returned > 0 && unknown_ids == returned {"
+after = "    if unknown_ids == returned {"
+occurrences = 1
+
+[[mutation]]
+id = "M3"
+file = "src/retrieval_eval.rs"
+invariant = "the qrels header is detected by CONTENT; skipping row 0 by position eats the first judgement of a header-less file"
+before = """        if i == 0
+            && cols
+                .first()
+                .is_some_and(|c| c.eq_ignore_ascii_case("query-id"))
+        {"""
+after = "        if i == 0 {"
+occurrences = 1
+
+[[mutation]]
+id = "M4"
+file = "src/retrieval_eval.rs"
+invariant = "each query gets ITS OWN judgements; sharing one query's grades silently reweights the whole run"
+before = "            grades: corpus.qrels.get(&q.id).cloned().unwrap_or_default(),"
+after = "            grades: corpus.qrels.values().next().cloned().unwrap_or_default(),"
+occurrences = 1
+
+[[mutation]]
+id = "M5"
+file = "src/retrieval_eval.rs"
+invariant = "a grade of 0.0 is judged-irrelevant, so a query with only zeros is still unscorable"
+before = "                    .is_none_or(|g| !g.values().any(|v| *v > 0.0))"
+after = "                    .is_none_or(|g| g.is_empty())"
+occurrences = 1
+
+[[mutation]]
+id = "M6"
+file = "src/retrieval_eval.rs"
+invariant = "a duplicated document id is refused rather than last-wins, which would change which text is indexed"
+before = "        if !seen.insert(raw.id.clone()) {\n            return Err(CorpusError::DuplicateId(raw.id));\n        }\n        out.push(CorpusDoc {"
+after = "        seen.insert(raw.id.clone());\n        out.push(CorpusDoc {"
+occurrences = 1
+
+[[mutation]]
+id = "M7"
+file = "src/retrieval_eval.rs"
+invariant = "qrels naming a document outside the corpus are reported -- they cap recall below 1.0 invisibly"
+before = "                if *grade > 0.0 && !ids.contains(did.as_str()) {"
+after = "                if false && *grade > 0.0 && !ids.contains(did.as_str()) {"
+occurrences = 1
+
+[[mutation]]
+id = "M8"
+file = "src/retrieval_eval.rs"
+invariant = "indexable_text joins title and body; indexing the body alone is a different corpus"
+before = "            format!(\"{}\\n\\n{}\", self.title, self.text)"
+after = "            self.text.clone()"
+occurrences = 1

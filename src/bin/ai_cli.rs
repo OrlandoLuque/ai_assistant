@@ -4346,10 +4346,13 @@ fn cmd_benchmark_calibrate(args: &[String]) -> ExitCode {
 // =============================================================================
 
 fn print_retrieval_usage() {
-    println!("Usage: ai_cli retrieval score <file.json> [options]\n");
-    println!("Scores a retrieval run against its relevance judgements.\n");
+    println!("Usage: ai_cli retrieval <score|corpus> ... [options]\n");
+    println!("Subcommands:");
+    println!("  score <file.json>    score a run against its relevance judgements");
+    println!("  corpus <dir>         inspect a BEIR-layout corpus BEFORE measuring with it");
+    println!();
     println!("Options:");
-    println!("  --k <n>      cut-off for the @k metrics (default: 10)");
+    println!("  --k <n>      cut-off for the @k metrics (default: 10)   [score]");
     println!("  --json       machine-readable output");
     println!();
     println!("File format:");
@@ -4366,6 +4369,15 @@ fn print_retrieval_usage() {
     println!();
     println!("  A reranker cannot change recall — it reorders what it was given.");
     println!("  Compare retrievers with recall@k and rerankers with MRR or nDCG.");
+    println!();
+    println!("Corpus layout (BEIR, as published by BEIR/NanoBEIR/MIRACL/MessIRve):");
+    println!("  <dir>/corpus.jsonl      {{\"_id\": \"d1\", \"title\": \"…\", \"text\": \"…\"}}");
+    println!("  <dir>/queries.jsonl     {{\"_id\": \"q1\", \"text\": \"…\"}}");
+    println!("  <dir>/qrels/test.tsv    query-id<TAB>corpus-id<TAB>score");
+    println!();
+    println!("  `corpus` exists to be run FIRST: it reports unjudged queries and");
+    println!("  judgements pointing outside the collection. Both cap the scores in");
+    println!("  ways the score report cannot distinguish from a bad retriever.");
 }
 
 fn cmd_retrieval(args: &[String]) -> ExitCode {
@@ -4379,12 +4391,121 @@ fn cmd_retrieval(args: &[String]) -> ExitCode {
     }
     match args[0].as_str() {
         "score" => cmd_retrieval_score(&args[1..]),
+        "corpus" => cmd_retrieval_corpus(&args[1..]),
         other => {
             eprintln!("Error: unknown retrieval subcommand '{}'\n", other);
             print_retrieval_usage();
             ExitCode::from(1)
         }
     }
+}
+
+/// Inspect a judged corpus before trusting any score computed from it.
+///
+/// Both numbers this prints cap the achievable scores, and neither is visible in
+/// the score report: an unjudged query is dropped from every average, and a
+/// judgement naming a document the corpus file does not contain makes recall@k
+/// unreachable. "recall@10 = 0.41" looks the same either way.
+fn cmd_retrieval_corpus(args: &[String]) -> ExitCode {
+    use ai_assistant::retrieval_eval::load_beir_dir;
+
+    let mut dir: Option<&String> = None;
+    let mut as_json = false;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--json" => as_json = true,
+            "--help" | "-h" => {
+                print_retrieval_usage();
+                return ExitCode::SUCCESS;
+            }
+            other if other.starts_with('-') => {
+                eprintln!("Error: unknown flag '{}'\n", other);
+                print_retrieval_usage();
+                return ExitCode::from(1);
+            }
+            other => {
+                if dir.is_some() {
+                    eprintln!("Error: more than one directory given ('{}')", other);
+                    return ExitCode::from(1);
+                }
+                dir = Some(&args[i]);
+            }
+        }
+        i += 1;
+    }
+
+    let Some(dir) = dir else {
+        eprintln!("Error: no corpus directory given\n");
+        print_retrieval_usage();
+        return ExitCode::from(1);
+    };
+
+    let corpus = match load_beir_dir(std::path::Path::new(dir)) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return ExitCode::from(1);
+        }
+    };
+
+    let unjudged = corpus.unjudged_queries();
+    let outside = corpus.qrels_outside_corpus();
+    let judged = corpus.queries.len() - unjudged.len();
+
+    if as_json {
+        let out = serde_json::json!({
+            "name": corpus.name,
+            "docs": corpus.docs.len(),
+            "queries": corpus.queries.len(),
+            "queries_judged": judged,
+            "queries_unjudged": unjudged.len(),
+            "qrels_outside_corpus": outside.len(),
+            "unjudged_query_ids": unjudged,
+        });
+        match serde_json::to_string_pretty(&out) {
+            Ok(s) => println!("{}", s),
+            Err(e) => {
+                eprintln!("Error: cannot serialise: {}", e);
+                return ExitCode::from(1);
+            }
+        }
+    } else {
+        println!("Corpus '{}'", corpus.name);
+        println!("  documents        {}", corpus.docs.len());
+        println!("  queries          {}", corpus.queries.len());
+        println!("  queries judged   {}", judged);
+        if !unjudged.is_empty() {
+            println!(
+                "  queries UNJUDGED {}  (dropped from every average: {})",
+                unjudged.len(),
+                unjudged
+                    .iter()
+                    .take(5)
+                    .copied()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+                    + if unjudged.len() > 5 { ", …" } else { "" }
+            );
+        }
+        if !outside.is_empty() {
+            println!(
+                "  qrels OUTSIDE the corpus {}  (unreachable, so recall@k cannot reach 1.0)",
+                outside.len()
+            );
+            for (q, d) in outside.iter().take(5) {
+                println!("      {} -> {}", q, d);
+            }
+        }
+        if unjudged.is_empty() && outside.is_empty() {
+            println!("\nEvery query is judged and every judgement is reachable.");
+        }
+    }
+
+    // Exit 0 either way: an unjudged query is a property of the dataset, not a
+    // failure of this command. Returning non-zero would make a legitimately
+    // partial public corpus look like a broken one in a script.
+    ExitCode::SUCCESS
 }
 
 fn cmd_retrieval_score(args: &[String]) -> ExitCode {

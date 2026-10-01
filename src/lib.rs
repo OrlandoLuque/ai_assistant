@@ -282,6 +282,9 @@ pub mod rank_fusion;
 // broke eight links in `retrieval_metrics` at once, and the gate reported one of
 // the eight. The module documents itself; this line just says where it is.
 pub mod retrieval_metrics;
+// Running a retriever over a judged corpus to PRODUCE a run for the module above
+// to score. Ungated. Same `//`-not-`///` reason as its neighbour.
+pub mod retrieval_eval;
 pub use ice::IceCandidateType;
 #[cfg(feature = "autonomous")]
 pub mod inspector;

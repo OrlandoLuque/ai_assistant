@@ -5,6 +5,113 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v241 (2026-10-01) — V365: N102, el instrumento que convierte cinco métricas en una medición (0.2.324)
+
+`retrieval_metrics` (V349/V351) **puntúa** una ejecución. No producía ninguna: leía un `RunFile` que
+había escrito *otro*, y hasta ahora no había otro. Ese era el hueco, y es el paso que la propia
+tarea llamaba «el que convierte esto en ingeniería».
+
+```text
+  corpus + consultas + qrels   ──▶  run_corpus(corpus, retriever)  ──▶  RunFile
+                                                                           │
+                                                      retrieval_metrics::summarise
+```
+
+## `src/retrieval_eval.rs`, sin gatear
+
+- `CorpusDoc`, `CorpusQuery`, `RetrievalCorpus { docs, queries, qrels }`.
+- Lectores del formato **BEIR** — `corpus.jsonl`, `queries.jsonl`, `qrels/test.tsv` — porque BEIR,
+  NanoBEIR, MIRACL y MessIRve publican todos ese mismo formato, así que un cargador lee los cuatro.
+- `trait Retriever`: un método, y todo el contrato está en el tipo de retorno — ids **del corpus**,
+  el mejor primero.
+- `run_corpus(corpus, retriever, k) -> CorpusRun`.
+
+**Analizar está separado de adquirir a propósito.** Las funciones toman `&str` y son puras, así que
+el cargador entero se prueba sin red y sin ficheros. Y eso contesta la nota de diseño que N108 dejó
+abierta: `BenchmarkLoader` mete *descargar* y *analizar* en un mismo trait, que es exactamente por
+qué un conjunto de datos que se **genera** en vez de descargarse no encaja ahí. De dónde vienen los
+bytes es problema de quien llama.
+
+`BenchmarkLoader` tampoco servía por forma: es de tipo pregunta-respuesta (una muestra = un prompt
++ verdad de referencia), y un corpus de recuperación son **tres** cosas. Cinco mil documentos a
+indexar no caben en un `Vec<BenchmarkSample>`.
+
+## El peligro por el que existe el módulo
+
+**Un recuperador que devuelve ids de otro espacio puntúa 0,0, y un 0,0 tiene toda la pinta de ser
+un resultado.**
+
+No es hipotético. La recuperación léxica de la crate corre sobre SQLite FTS5, y
+`KnowledgeChunk::id` es un `i64` autoincremental — **no** el `doc_id` del corpus. Un adaptador que
+devuelva ids de fila produce una ejecución donde ningún id es conocido por los juicios, así que
+todas las consultas puntúan cero, y el informe dice «recall@10 = 0.000» con la misma seguridad con
+la que reportaría un fallo real.
+
+Así que `run_corpus` **rechaza** una ejecución en la que ni un id devuelto pertenezca al corpus, y
+cuenta los desconocidos en el resto. Un instrumento de medida cuyo error de cableado más probable
+es indistinguible de una mala puntuación no es un instrumento.
+
+Las **dos direcciones** del mismo guardián tienen su test, porque fallan al contrario:
+
+| si el guardián… | lo que pasa |
+|---|---|
+| nunca dispara | un desajuste de ids se lee como «recall@10 = 0,000» |
+| dispara de más | un recuperador que legítimamente no encontró nada se lee como cableado roto |
+
+Y hay un tercer caso que **no** es ninguno de los dos: cero ids devueltos son cero ids sobre los
+que equivocarse. Eso es `empty_results`, no un desajuste, porque mandar al lector a revisar su
+cableado cuando lo que pasa es que su recuperador no casa nada es mandarlo al sitio equivocado.
+
+## Dos cosas que limitan la nota y que el informe de puntuación no puede distinguir
+
+`ai_cli retrieval corpus <dir>` existe para ejecutarse **primero**, que es la razón por la que el
+autor decidió el corpus público antes de anotar a mano: validar que el instrumento no está roto
+antes de gastar el esfuerzo.
+
+- **Consultas sin juzgar** — se descuelgan de todas las medias. Un corpus donde la mayoría no está
+  juzgada produce un informe sobre los juicios, no sobre el recuperador.
+- **Juicios que apuntan fuera del corpus** — una descarga parcial, o qrels de una partición contra
+  el corpus de otra. Esos documentos no se pueden recuperar nunca, así que el recall queda limitado
+  por debajo de 1,0 y el límite es invisible.
+
+Probado contra un corpus construido a mano con **las dos trampas puestas a propósito**, y las cazó.
+
+## Detalles que son decisiones, no detalles
+
+- **La cabecera del TSV se detecta por contenido, no por posición.** Saltarse la fila 0 a ciegas se
+  come el primer juicio de un fichero sin cabecera, lo que baja el recall en un documento por
+  corpus y no se parece nunca a un error. Con su test y su mutación.
+- **Un id duplicado se rechaza**, no gana el último: un duplicado cambia en silencio qué texto se
+  indexa y el fichero sigue teniendo buena pinta.
+- **Un grado de 0,0 es juzgado-irrelevante**, así que una consulta con solo ceros sigue sin poder
+  puntuarse. Si no, parecería medible.
+- **El orden de particiones es `test`, `dev`, `train`** y es deliberado: `test` es la que reportan
+  los artículos, así que un directorio con las dos se habría puntuado con la que el sistema de
+  ficheros listase primero.
+- `indexable_text()` une título y cuerpo, que es lo que indexan las referencias de BEIR. Indexar
+  solo el cuerpo es legítimo y **es otra cosa**: comparar una ejecución título+cuerpo contra una de
+  solo-cuerpo compara dos corpus.
+
+## Verificación
+
+- **16 tests**, y **8 de 8 mutaciones muertas**, cada una por un test con nombre
+  (`scripts/mutations/retrieval_eval.toml`). Se mutaciona *antes* de confiar en él porque es un
+  instrumento de medida: lo que se equivoque aquí lo heredan todos los números de aquí en adelante,
+  y una puntuación de recuperación equivocada no parece equivocada. El precedente es N14.
+- `cargo clippy --all-targets -- -D warnings` limpio; **8968 tests, 0 fallidos**.
+- Ejecutado de verdad por CLI, en texto y en JSON.
+
+## Lo que falta de N102, y lo que lo bloquea
+
+**Falta un adaptador**: no se embarca ninguna implementación de `Retriever`, así que hoy la aporta
+quien llama. El siguiente incremento es el adaptador sobre SQLite FTS5, que es donde el peligro del
+espacio de ids deja de ser teórico — y el mapeo tiene sitio natural, porque `KnowledgeChunk.source`
+es una cadena y puede llevar el `doc_id` del corpus.
+
+Y el aviso que no se puede saltar: **N105 va antes de sacar conclusiones**, no antes de construir.
+Medir hoy «semántico contra léxico» compararía TF-IDF con BM25 y concluiría que el semántico no
+aporta nada — una conclusión sobre el embebedor presentada como una sobre la fusión.
+
 ## [Unreleased] - v240 (2026-10-01) — V364: tres agentes, y el primero existe porque una puerta no puede hacer su trabajo (0.2.323)
 
 Tres definiciones nuevas en `.claude/agents/`, dos pedidas por el autor y una decidida por él.
