@@ -5,6 +5,79 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v242 (2026-10-01) — V366: el pre-vuelo del mutador aprobaba mutaciones que la ejecución real no podía aplicar (0.2.325)
+
+**Corrección de V365.** Ahí escribí «8 de 8 mutaciones muertas». El número era real cuando lo medí,
+y **dejó de serlo al pasar `cargo fmt` por el fichero**: al repetir la medición salieron **6 muertas
+y 2 `NOT_APPLIED`**, y el `--dry-run` seguía diciendo que las ocho anclas coincidían.
+
+## El defecto, que estaba en mi propia herramienta
+
+Dos caminos de `scripts/mutate.py` leían el mismo fichero de formas distintas:
+
+| camino | cómo leía | qué veía un `\n` del ancla |
+|---|---|---|
+| `--dry-run` | `read_text()` | **coincide** — Python traduce CRLF a `\n` |
+| ejecución real (`apply_one`) | `read_bytes().decode()` | **no coincide** — el fichero tiene `\r\n` |
+
+En un árbol de trabajo con CRLF —o sea, **cualquier `git checkout` de Windows con
+`core.autocrlf`**— un `before` multilínea coincide en la comprobación previa y falla en la real.
+Resultado: **toda mutación multilínea de este repositorio era inaplicable, y la comprobación que
+existe justo para detectar un ancla desfasada era la que decía que no se había desfasado.**
+
+Eso es peor que un fallo normal. Un `NOT_APPLIED` sí se imprime, así que no era del todo
+silencioso; lo grave es que el **pre-vuelo daba luz verde**, y el pre-vuelo es lo que se corre
+antes de fiarse del número.
+
+Se vio porque entre dos ejecuciones separadas por un `cargo fmt` el mismo spec pasó de 8/8 a 6/8:
+yo había escrito el fichero con LF y rustfmt lo reescribió con CRLF.
+
+## El arreglo
+
+Una función, `read_for_matching(raw: bytes)`, y **los dos caminos la llaman**. Normaliza `\r\n` a
+`\n` para comparar; la copia mutada se escribe con LF y el original se restaura byte a byte, así
+que el árbol de trabajo conserva su convención.
+
+Una función con dos llamantes y no dos lecturas equivalentes: es la misma lección que la lista de
+avisos RUSTSEC, donde una regla con dos verificadores distintos acabó dando dos respuestas.
+
+## El test, y el primer intento que no servía
+
+El caso nuevo falla si se revierte el arreglo — comprobado revirtiéndolo:
+
+```
+with the bug back, rc = 1
+    FAIL 0 site(s) (wanted 1) -- a multi-line needle in a CRLF file
+    ok   1 site(s) (wanted 1) -- the same needle in an LF file
+    ok   1 site(s) (wanted 1) -- a single-line needle is unaffected
+    ok   0 site(s) (wanted 0) -- a needle that is genuinely absent stays absent
+```
+
+Pero **el primer test que escribí no discriminaba**, y por un motivo que merece quedar escrito: lo
+rutée por `--dry-run`, que era **la mitad sana**. Su `read_text()` ya normalizaba, así que el caso
+pasaba con el fallo puesto y sin él. Un test que no puede fallar se lee como cobertura. El que
+sirve ataca `read_for_matching` directamente, que es donde vivía el defecto.
+
+Y un tropiezo de segundo orden por el camino: la plantilla del spec del autotest escribe el `before`
+como cadena TOML de una línea, donde un salto de línea literal es **ilegal**, así que el caso
+multilínea moría en el analizador de TOML en vez de ejercitar el comparador — fallaba por algo que
+no tenía nada que ver con lo que medía. De ahí `toml_escape()`.
+
+## Y una cosa que un `kill` dejó a medias
+
+La primera ejecución de las ocho mutaciones pasó del tiempo máximo de la herramienta y la mataron a
+mitad, lo que **dejó la mutación M8 aplicada en el árbol de trabajo** (`indexable_text` devolviendo
+solo el cuerpo). Comitear eso habría metido una mutación como código real, cambiando en silencio
+qué texto se indexa. Lo cacé comprobando `git diff` antes de comitear, no por suerte.
+
+`mutate.py` restaura en un `finally`, pero un `finally` no sobrevive a un SIGTERM. Esto va al
+modus-operandi: **después de matar una ejecución de mutaciones, comprobar `git diff` antes de
+cualquier otra cosa.**
+
+## Medición repetida
+
+Con el arreglo puesto, las ocho vuelven a aplicarse y el número honesto de V365 se restablece.
+
 ## [Unreleased] - v241 (2026-10-01) — V365: N102, el instrumento que convierte cinco métricas en una medición (0.2.324)
 
 `retrieval_metrics` (V349/V351) **puntúa** una ejecución. No producía ninguna: leía un `RunFile` que

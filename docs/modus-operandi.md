@@ -134,6 +134,20 @@ reads as advice and gets skipped. They are grouped by the question they answer.
    number. Killing that mutation required measuring the clock — 10.0019 s without the timeout.*
 5. **"The test passes" is not "the test discriminates."** *Case: `SELECT 1 -- ;` passed for the
    wrong reason — the `;` was last, so both the correct and the broken version answered the same.*
+6. **Route the test through the path that actually breaks.** Before believing a new test, revert
+   the fix and check the test fails. *Case (V366): a `mutate.py` defect lived in `apply_one`,
+   which decoded raw bytes; the first test for it went through `--dry-run`, whose `read_text()`
+   already normalised newlines. The test passed with the bug present and absent — and a test that
+   cannot fail reads as coverage.*
+7. **After killing a mutation run, `git diff` before anything else.** The script restores in a
+   `finally`, and a `finally` does not survive a SIGTERM. *Case (V365): a run killed by the tool
+   timeout left mutation M8 applied in the working tree, so the next commit would have shipped a
+   mutation as real code — silently changing which text gets indexed.*
+8. **A mutation spec's `before` is coupled to the formatter.** `cargo fmt` reflowing a line turns
+   a mutation into `NOT_APPLIED`, which tests nothing. *Case (V365/V366): the same spec scored
+   8/8 and then 6/8 across a `cargo fmt`, and worse, `--dry-run` reported all eight fine because
+   it read the file with different newline handling than the real run. Re-run `--dry-run` **after**
+   `cargo fmt`, not before.*
 
 ### B. Claims, documentation and gates
 

@@ -232,6 +232,40 @@ def sites_of(text: str, needle: str) -> list[int]:
         start = found + 1
 
 
+def toml_escape(value: str) -> str:
+    r"""Escape a needle for a one-line TOML basic string.
+
+    A literal newline is illegal inside `"…"`, so the self-test's multi-line
+    case died in the TOML parser rather than exercising the matcher — the test
+    failed for a reason that had nothing to do with what it was testing.
+    """
+    return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+
+def read_for_matching(raw: bytes) -> str:
+    """Decode a source file into the form every `before` is matched against.
+
+    **One function, two callers, on purpose.** `--dry-run` and the real run used
+    to read the same file differently: the pre-flight via `read_text()`, which
+    applies Python's universal-newline translation, and the real run via
+    `read_bytes().decode()`, which does not. On a CRLF working tree -- which is
+    every Windows checkout with `core.autocrlf` -- a multi-line `before` written
+    with `\\n` therefore **matched in the pre-flight and failed in the real run**.
+
+    That made every multi-line mutation in this repository unmeasurable while
+    `--dry-run` reported all of them fine, which is worse than a plain bug: the
+    check that exists to catch a drifted anchor was the thing saying it had not
+    drifted. Found on 2026-10-01 when `cargo fmt` rewrote a freshly-written
+    LF file as CRLF and two of eight mutations turned into NOT_APPLIED between
+    one run and the next.
+
+    Normalising here and writing the mutated copy with `newline="\\n"` is safe:
+    the original bytes are restored verbatim afterwards, so the working tree
+    keeps whatever convention it had.
+    """
+    return raw.decode("utf-8").replace("\r\n", "\n")
+
+
 def apply_one(mutation: Mutation, verbose: bool) -> list[tuple[str, str, str]]:
     """Mutate one site at a time. Returns [(site label, verdict, detail)]."""
     if not mutation.file.exists():
@@ -239,7 +273,7 @@ def apply_one(mutation: Mutation, verbose: bool) -> list[tuple[str, str, str]]:
 
     original = _remember(mutation.file)
     try:
-        text = original.decode("utf-8")
+        text = read_for_matching(original)
     except UnicodeDecodeError:
         return [(mutation.id, NOT_APPLIED, "file is not UTF-8")]
 
@@ -339,7 +373,9 @@ def dry_run(specs: list[Path]) -> int:
                 print(f"!! {name}: no such file: {show(mutation.file)}")
                 problems += 1
                 continue
-            text = mutation.file.read_text(encoding="utf-8")
+            # The SAME reader the real run uses. Anything else and this
+            # pre-flight can pass on a file the real run cannot mutate.
+            text = read_for_matching(mutation.file.read_bytes())
             found = len(sites_of(text, mutation.before))
             if found == 0:
                 print(
@@ -428,7 +464,10 @@ def self_test() -> int:
             path.write_text(
                 SELF_TEST_SPEC.format(
                     file=target.as_posix(),
-                    before=before,
+                    # Escaped for TOML: a literal newline is illegal inside a
+                    # one-line basic string, so the multi-line case would die in
+                    # the parser instead of testing the matcher.
+                    before=toml_escape(before),
                     after="omega",
                     occurrences=occurrences,
                 ),
@@ -439,11 +478,35 @@ def self_test() -> int:
             failures += 0 if ok else 1
             print(f"  {'ok ' if ok else 'FAIL'} exit {got} (wanted {expected_rc}) -- {label}")
 
+    # The matcher itself, on bytes, because the bug it guards against lives in
+    # `apply_one` and NOT in `--dry-run`.
+    #
+    # Worth spelling out, because the first version of this test checked the
+    # wrong half: `--dry-run` read via `read_text()`, whose universal-newline
+    # translation already turned CRLF into `\n`, so a multi-line needle matched
+    # there whether the bug was present or not. The broken path was `apply_one`,
+    # which decoded raw bytes and kept `\r\n` — so on a CRLF working tree the
+    # pre-flight reported eight of eight mutations fine while two of them came
+    # back NOT_APPLIED from the real run. A test routed through the healthy path
+    # cannot fail, and a test that cannot fail reads as coverage.
+    crlf_cases = [
+        ("a multi-line needle in a CRLF file", b"one\r\ntwo\r\nthree\r\n", "one\ntwo", 1),
+        ("the same needle in an LF file", b"one\ntwo\nthree\n", "one\ntwo", 1),
+        ("a single-line needle is unaffected", b"one\r\ntwo\r\n", "two", 1),
+        ("a needle that is genuinely absent stays absent", b"one\r\ntwo\r\n", "one\nthree", 0),
+    ]
+    for label, raw, needle, want in crlf_cases:
+        got = len(sites_of(read_for_matching(raw), needle))
+        ok = got == want
+        failures += 0 if ok else 1
+        print(f"  {'ok ' if ok else 'FAIL'} {got} site(s) (wanted {want}) -- {label}")
+
     print()
     if failures:
         print(f"{failures} self-test case(s) failed: --dry-run does not catch what it claims to.")
         return 1
-    print("--dry-run fails on all three kinds of drift and passes on a good spec.")
+    print("--dry-run fails on all three kinds of drift and passes on a good spec,")
+    print("and the matcher finds a multi-line needle whatever the line endings are.")
     return 0
 
 
