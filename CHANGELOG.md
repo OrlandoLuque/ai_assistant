@@ -5,6 +5,98 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v243 (2026-10-01) — V367: lo medido es ya el recuperador del producto, no un juguete (0.2.326)
+
+Paso 4 de N102. V365 dejó el arnés y el `trait Retriever` sin una sola implementación: el que
+llamara tenía que traer la suya. Ahora el recuperador de la crate **es** lo que se mide.
+
+```
+ai_cli retrieval corpus <dir>   # 1. ¿es fiable el corpus?
+ai_cli retrieval run <dir>      # 2. indexar, correr las consultas, puntuar
+ai_cli retrieval score <f.json> # 3. re-puntuar a otra k sin re-indexar
+```
+
+## Los tres peligros del adaptador, y ninguno era el obvio
+
+**1. El espacio de ids** — ya lo rechazaba `run_corpus`, y el mapeo tiene sitio natural:
+`index_document(source, content)` toma `source` como cadena, así que cada documento se indexa con
+su id del corpus y `retrieve` lo lee de vuelta. `KnowledgeChunk::id` es un `i64` autoincremental y
+devolverlo habría dado cero en todo.
+
+**2. Un documento son varios trozos.** `index_document` parte cualquier cosa de más de ~400
+tokens, así que un documento puede ocupar tres de los diez primeros puestos. Sin deduplicar es un
+error de puntuación **en las dos direcciones**: infla precision@k (tres huecos, un documento) y
+hunde recall@k (esos huecos no pueden contener los documentos que se perdieron). `dedup_by_document`
+se queda con la primera aparición, porque el orden ya es el mejor-primero y el mejor trozo de un
+documento es el que le ganó el puesto. Se pide `k * 5` trozos para compensar, y si un documento
+acapara todo **se devuelven menos de `k` en vez de rellenar** — inventar ids para llegar a `k`
+sería fabricar recuperaciones que luego se puntúan.
+
+**3. `max_tokens` trunca en silencio.** `search_knowledge` acumula `token_count` y hace `break` al
+agotar el presupuesto, así que un presupuesto modesto devuelve una lista más corta, y eso aterriza
+en el informe como un recall más bajo y **se lee como «el recuperador no los encontró»**. De ahí
+`NO_TOKEN_BUDGET`: la evaluación quiere el orden, no un presupuesto de contexto.
+
+## El test que falló, y por qué estaba bien que fallara
+
+El primer test del adaptador dio `recall = 0.0` con `unknown_ids = 0`. O sea, el instrumento dijo
+**«el recuperador no encontró nada»** y no «el cableado está roto» — exactamente la distinción que
+V365 construyó.
+
+Y la causa es real: **FTS5 no hace stemming**, así que `"purring animal"` no casa con `"Cats purr."`
+Mis consultas de juguete estaban escritas para un recuperador guionizado. No debilité la aserción:
+le di consultas justas (recall 1,0) y **fijé la limitación como test propio**, porque es
+precisamente el hueco que la recuperación semántica viene a cerrar y lo que el conjunto dorado
+existe para cuantificar. Si ese test empieza a pasar, el tokenizador cambió y todas las notas
+léxicas registradas son de otro recuperador.
+
+## Primera medición real, y lo que NO demuestra
+
+Sobre un corpus de cuatro documentos con dos trampas puestas a propósito:
+
+| | léxico | híbrido |
+|---|---|---|
+| recall@5 | 0,7500 | 0,7500 |
+| MRR | 1,0000 | 1,0000 |
+| MAP | 0,7500 | 0,7500 |
+| nDCG@5 | 0,8066 | 0,8066 |
+
+Idénticos, que es lo que predice el aviso de N105: sin servicio de embeddings la mitad «semántica»
+es TF-IDF y la fusión no reordena nada. **Pero con cuatro documentos eso no demuestra gran cosa** —
+la fusión apenas tiene nada que reordenar. Es coherente con la hipótesis, no una medición de ella.
+
+Los cinco números comprobados a mano: `recall@5 = (1/1 + 1/2)/2 = 0,75` (el `d99` de los qrels no
+está en el corpus, así que limita el recall de q2 y el informe lo dice); `MAP = (1,0 + 0,5)/2`;
+`nDCG@5 = (1 + 1/(1 + 1/log₂3))/2 = 0,8066`, que cuadra al cuarto decimal.
+
+## Dos cosas que encontré comprobando, no construyendo
+
+**`precision@k` no es comparable con los artículos.** Divide por cuántos documentos se devolvieron,
+no por `k`. Está documentado a propósito —no penalizar a un recuperador por los puestos que nunca
+reclamó— así que **no es un defecto**, pero BEIR e `ir_measures` dividen por `k`, y el corpus
+público se eligió justamente porque «da un número comparable con el resto del mundo». Cuatro de las
+cinco columnas lo cumplen y esa no. Encolado como **N136** con las tres opciones, y el momento de
+decidirlo es ahora: hasta hoy **no había ni un número de recuperación registrado** que re-medir.
+
+**Y escribí deuda declarada yo mismo.** Puse un `#[cfg(not(feature = "rag"))]` con un mensaje
+amable para cuando falte la feature… y `ai_cli` declara `required-features = ["rag"]`, así que esa
+rama **no se puede compilar nunca**. Un respaldo que parece cubrir un caso y es inalcanzable por
+construcción: la forma exacta que el agente `stub-auditor` existe para encontrar. Borrada, con el
+motivo escrito donde estaba.
+
+## Verificación
+
+- **22 tests** en el módulo (+4), `clippy --all-targets -D warnings` limpio, **8972 tests, 0
+  fallidos**.
+- El bucle entero ejecutado de verdad por CLI en los dos modos, con `--out` y el re-puntuado a otra
+  `k` comprobado (`nDCG@1 = 1,0` contra `nDCG@5 = 0,8066`, que es lo correcto: a k=1 el ideal de q2
+  solo cuenta un documento relevante).
+
+## Lo que queda de N102
+
+Los **~30 consultas propias** sobre la documentación de este proyecto (paso 5, anotación a mano), y
+la **comparación** de recuperadores (paso 6), que sigue necesitando N105 antes de concluir nada.
+
 ## [Unreleased] - v242 (2026-10-01) — V366: el pre-vuelo del mutador aprobaba mutaciones que la ejecución real no podía aplicar (0.2.325)
 
 **Corrección de V365.** Ahí escribí «8 de 8 mutaciones muertas». El número era real cuando lo medí,

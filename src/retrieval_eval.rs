@@ -412,6 +412,162 @@ pub trait Retriever {
     }
 }
 
+/// Collapse a ranked list of chunk sources into a ranked list of **documents**.
+///
+/// The crate's lexical retrieval returns *chunks*, and `index_document` splits
+/// anything over ~400 tokens, so one document can occupy several of the top
+/// positions. Left alone that is a silent scoring error in both directions: it
+/// inflates precision@k (three slots, one document) and suppresses recall@k
+/// (those slots cannot hold the documents that were missed).
+///
+/// First occurrence wins, because the ranking is already best-first and a
+/// document's best chunk is the one that earned its place.
+pub fn dedup_by_document(ranked: impl IntoIterator<Item = String>, k: usize) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::with_capacity(k);
+    for id in ranked {
+        if out.len() >= k {
+            break;
+        }
+        if seen.insert(id.clone()) {
+            out.push(id);
+        }
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// The crate's own lexical retriever, as a `Retriever`
+// ---------------------------------------------------------------------------
+
+/// Adapter over the crate's SQLite/FTS5 retrieval, so a run measures the
+/// **product** rather than a toy scorer written for the benchmark.
+///
+/// Behind `--features rag` because that is where [`crate::rag::RagDb`] lives.
+#[cfg(feature = "rag")]
+pub mod sqlite {
+    use std::path::Path;
+
+    use super::{dedup_by_document, RetrievalCorpus, Retriever};
+    use crate::rag::RagDb;
+
+    /// Which of the crate's two search paths to measure.
+    ///
+    /// Named separately from any "hybrid" config because **"hybrid" is not one
+    /// retriever**: its behaviour depends on the BM25/semantic weights, and a
+    /// report that says "hybrid" without them cannot be reproduced.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Mode {
+        /// `search_knowledge` — BM25 over FTS5 only.
+        Lexical,
+        /// `search_knowledge_hybrid` — BM25 fused with the semantic score.
+        ///
+        /// **Read this before comparing it against `Lexical`:** without an
+        /// embedding service configured, the "semantic" half is TF-IDF cosine,
+        /// so the comparison is BM25 against TF-IDF and any conclusion about
+        /// embeddings would be a conclusion about the *absence* of embeddings.
+        /// That is what N105 unblocks.
+        Hybrid,
+    }
+
+    /// A token budget large enough not to truncate a ranked list.
+    ///
+    /// Not cosmetic. `search_knowledge` accumulates `token_count` and **breaks**
+    /// out of the loop once the budget is spent, so a modest `max_tokens`
+    /// silently returns a shorter list — which lands in the report as a lower
+    /// recall and reads as "the retriever did not find them". Evaluation wants
+    /// the ranking, not a context budget.
+    pub const NO_TOKEN_BUDGET: usize = 1_000_000_000;
+
+    /// How many chunks to ask for per requested document.
+    ///
+    /// Asking for exactly `k` chunks can yield fewer than `k` distinct documents
+    /// once chunks collapse, which would under-report recall for a reason that
+    /// has nothing to do with retrieval. Over-fetching does not fix that in
+    /// general — a single document could in principle own every chunk — so
+    /// [`SqliteRetriever::retrieve`] may still return fewer than `k`, and that is
+    /// honest rather than padded.
+    pub const CHUNK_OVERFETCH: usize = 5;
+
+    /// The crate's lexical (or hybrid) retrieval, driven over a judged corpus.
+    pub struct SqliteRetriever {
+        db: RagDb,
+        mode: Mode,
+        max_tokens: usize,
+        indexed_docs: usize,
+    }
+
+    impl SqliteRetriever {
+        /// Index every document of `corpus` into a database at `db_path`.
+        ///
+        /// **The id mapping lives here**: each document is indexed with its
+        /// corpus id as the `source`, and [`SqliteRetriever::retrieve`] reads
+        /// that same field back. `KnowledgeChunk::id` is an autoincrementing row
+        /// id and returning it would produce a run that scores zero everywhere —
+        /// the hazard this module's parent exists to refuse.
+        ///
+        /// Indexes `title + body`, matching the BEIR baselines.
+        pub fn index(corpus: &RetrievalCorpus, db_path: &Path, mode: Mode) -> Result<Self, String> {
+            let db = RagDb::open(db_path).map_err(|e| format!("cannot open {db_path:?}: {e}"))?;
+            for doc in &corpus.docs {
+                db.index_document(&doc.id, &doc.indexable_text())
+                    .map_err(|e| format!("cannot index document {:?}: {e}", doc.id))?;
+            }
+            Ok(Self {
+                db,
+                mode,
+                max_tokens: NO_TOKEN_BUDGET,
+                indexed_docs: corpus.docs.len(),
+            })
+        }
+
+        /// Override the token budget. See [`NO_TOKEN_BUDGET`] before lowering it.
+        pub fn with_max_tokens(mut self, max_tokens: usize) -> Self {
+            self.max_tokens = max_tokens;
+            self
+        }
+
+        /// How many documents were indexed.
+        pub fn indexed_docs(&self) -> usize {
+            self.indexed_docs
+        }
+    }
+
+    impl Retriever for SqliteRetriever {
+        fn retrieve(&self, query: &str, k: usize) -> Result<Vec<String>, String> {
+            let want_chunks = k.saturating_mul(CHUNK_OVERFETCH).max(k);
+            let sources: Vec<String> = match self.mode {
+                Mode::Lexical => self
+                    .db
+                    .search_knowledge(query, self.max_tokens, want_chunks)
+                    .map_err(|e| e.to_string())?
+                    .into_iter()
+                    .map(|c| c.source)
+                    .collect(),
+                Mode::Hybrid => self
+                    .db
+                    .search_knowledge_hybrid(query, self.max_tokens, want_chunks)
+                    .map_err(|e| e.to_string())?
+                    .into_iter()
+                    .map(|r| r.chunk.source)
+                    .collect(),
+            };
+            Ok(dedup_by_document(sources, k))
+        }
+
+        fn describe(&self) -> String {
+            match self.mode {
+                Mode::Lexical => "sqlite-fts5-bm25 (title+body)".to_string(),
+                Mode::Hybrid => {
+                    "sqlite-fts5-hybrid (title+body; semantic half is TF-IDF without an \
+                     embedding service)"
+                        .to_string()
+                }
+            }
+        }
+    }
+}
+
 /// A produced run, plus what went wrong quietly while producing it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CorpusRun {
@@ -751,6 +907,150 @@ mod tests {
             parse_qrels_tsv("query-id\tcorpus-id\tscore\n"),
             Err(CorpusError::Empty("qrels"))
         );
+    }
+
+    #[test]
+    fn dedup_keeps_the_first_occurrence_and_honours_k() {
+        // The chunk-collapse hazard, tested on the pure function so the case is
+        // deterministic. "d1" owning ranks 1 and 2 must not cost "d2" a slot.
+        let ranked = ["d1", "d1", "d2", "d3", "d2"].map(String::from);
+        assert_eq!(
+            dedup_by_document(ranked.clone(), 10),
+            vec!["d1", "d2", "d3"]
+        );
+        assert_eq!(dedup_by_document(ranked, 2), vec!["d1", "d2"]);
+    }
+
+    #[test]
+    fn dedup_may_return_fewer_than_k_and_does_not_pad() {
+        // One document owning every chunk. Returning fewer is honest; inventing
+        // ids to reach k would fabricate retrievals that then get scored.
+        let all_one = ["d1", "d1", "d1"].map(String::from);
+        assert_eq!(dedup_by_document(all_one, 3), vec!["d1"]);
+    }
+
+    #[cfg(feature = "rag")]
+    #[test]
+    fn the_sqlite_retriever_returns_corpus_ids_and_is_scorable() {
+        use super::sqlite::{Mode, SqliteRetriever};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        // An atomic counter and not `line!()`: `line!()` expands where it is
+        // WRITTEN, so two tests in one file sharing a helper got the same
+        // directory and raced. That cost a flaky test once already.
+        static N: AtomicUsize = AtomicUsize::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "ai_retrieval_eval_{}_{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let db_path = dir.join("kb.sqlite");
+
+        // A corpus whose QUERIES SHARE TERMS WITH THE DOCUMENTS, because the
+        // retriever under test is BM25 and BM25 is a bag of words. The shared
+        // fixture above was written for a scripted retriever and its
+        // "purring animal" matches nothing in "Cats purr." — which is a true
+        // statement about lexical retrieval, not a bug, and is pinned as its own
+        // test below.
+        let c = RetrievalCorpus {
+            name: "lexical-toy".into(),
+            docs: parse_corpus_jsonl(
+                "{\"_id\": \"d1\", \"title\": \"Cats\", \"text\": \"Cats purr when content.\"}\n\
+                 {\"_id\": \"d2\", \"title\": \"Dogs\", \"text\": \"Dogs bark at strangers.\"}\n\
+                 {\"_id\": \"d3\", \"title\": \"Birds\", \"text\": \"Birds sing at dawn.\"}",
+            )
+            .expect("corpus parses"),
+            queries: parse_queries_jsonl(
+                "{\"_id\": \"q1\", \"text\": \"purr\"}\n\
+                 {\"_id\": \"q2\", \"text\": \"bark\"}",
+            )
+            .expect("queries parse"),
+            qrels: parse_qrels_tsv("q1\td1\t1\nq2\td2\t1\n").expect("qrels parse"),
+        };
+
+        let r = SqliteRetriever::index(&c, &db_path, Mode::Lexical).expect("indexes");
+        assert_eq!(r.indexed_docs(), 3);
+
+        // The whole point: ids the qrels can judge, not `1`/`2`/`3` row ids.
+        let hits = r.retrieve("purr", 10).expect("retrieves");
+        assert!(
+            hits.iter().all(|h| c.docs.iter().any(|d| &d.id == h)),
+            "returned ids must be corpus ids, got {hits:?}"
+        );
+        assert_eq!(hits.first().map(String::as_str), Some("d1"), "got {hits:?}");
+
+        // End to end, which is the claim that matters: a real retriever over a
+        // real index produces a run the metrics can score.
+        let run = run_corpus(&c, &r, 10).expect("run_corpus accepts the real adapter");
+        let report = crate::retrieval_metrics::summarise(&run.file.queries, 10);
+        assert_eq!(run.unknown_ids, 0, "no id outside the corpus");
+        assert_eq!(
+            run.empty_results, 0,
+            "both queries share terms with a document"
+        );
+        assert_eq!(report.scored, 2);
+        assert!(
+            (report.recall_at_k - 1.0).abs() < 1e-9,
+            "each query's one relevant document is the only one containing its term, \
+             so recall@10 must be 1.0; report was {report:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(feature = "rag")]
+    #[test]
+    fn the_lexical_retriever_misses_a_morphological_variant_and_says_so_honestly() {
+        // Not a defect — a measured property of the thing being measured, pinned
+        // here because the whole point of the golden set is to quantify it.
+        //
+        // FTS5's default tokenizer does not stem, so "purring" does not reach
+        // "purr". The lexical retriever returns NOTHING, and the instrument
+        // reports that as `empty_results`, NOT as an id-space mismatch: a
+        // retriever that matched nothing has no ids to be wrong about. Those two
+        // would send a reader to completely different places.
+        //
+        // This gap is exactly what semantic retrieval is supposed to close, and
+        // it cannot be measured honestly until N105 gives us real embeddings —
+        // today "semantic" is TF-IDF cosine, which does not stem either.
+        use super::sqlite::{Mode, SqliteRetriever};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static N: AtomicUsize = AtomicUsize::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "ai_retrieval_eval_morph_{}_{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let c = RetrievalCorpus {
+            name: "morphology".into(),
+            docs: parse_corpus_jsonl(
+                "{\"_id\": \"d1\", \"title\": \"\", \"text\": \"Cats purr when content.\"}",
+            )
+            .expect("corpus parses"),
+            queries: parse_queries_jsonl("{\"_id\": \"q1\", \"text\": \"purring\"}")
+                .expect("queries parse"),
+            qrels: parse_qrels_tsv("q1\td1\t1\n").expect("qrels parse"),
+        };
+        let r = SqliteRetriever::index(&c, &dir.join("kb.sqlite"), Mode::Lexical).expect("indexes");
+
+        assert!(
+            r.retrieve("purring", 10).expect("retrieves").is_empty(),
+            "BM25 over FTS5 does not stem; if this starts passing, the tokenizer \
+             changed and every recorded lexical score is from a different retriever"
+        );
+
+        let run = run_corpus(&c, &r, 10).expect("finding nothing is still a run");
+        assert_eq!(run.empty_results, 1);
+        assert_eq!(run.unknown_ids, 0);
+        let report = crate::retrieval_metrics::summarise(&run.file.queries, 10);
+        assert_eq!(report.scored, 1, "the query IS judged, it just missed");
+        assert_eq!(report.recall_at_k, 0.0);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

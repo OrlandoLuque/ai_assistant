@@ -4346,14 +4346,20 @@ fn cmd_benchmark_calibrate(args: &[String]) -> ExitCode {
 // =============================================================================
 
 fn print_retrieval_usage() {
-    println!("Usage: ai_cli retrieval <score|corpus> ... [options]\n");
+    println!("Usage: ai_cli retrieval <score|corpus|run> ... [options]\n");
     println!("Subcommands:");
-    println!("  score <file.json>    score a run against its relevance judgements");
     println!("  corpus <dir>         inspect a BEIR-layout corpus BEFORE measuring with it");
+    println!("  run <dir>            index it with our own retriever, run every query, score");
+    println!("  score <file.json>    re-score a saved run, at another k, without re-indexing");
     println!();
     println!("Options:");
-    println!("  --k <n>      cut-off for the @k metrics (default: 10)   [score]");
-    println!("  --json       machine-readable output");
+    println!("  --k <n>              cut-off for the @k metrics (default: 10)  [run, score]");
+    println!("  --mode lexical|hybrid  which search path to measure (default: lexical)  [run]");
+    println!("  --out <file.json>    save the run so `score` can re-score it        [run]");
+    println!(
+        "  --db <file.sqlite>   where to build the index (default: <dir>/retrieval_eval.sqlite)"
+    );
+    println!("  --json               machine-readable output");
     println!();
     println!("File format:");
     println!("  {{\"queries\": [");
@@ -4392,12 +4398,217 @@ fn cmd_retrieval(args: &[String]) -> ExitCode {
     match args[0].as_str() {
         "score" => cmd_retrieval_score(&args[1..]),
         "corpus" => cmd_retrieval_corpus(&args[1..]),
+        "run" => cmd_retrieval_run(&args[1..]),
         other => {
             eprintln!("Error: unknown retrieval subcommand '{}'\n", other);
             print_retrieval_usage();
             ExitCode::from(1)
         }
     }
+}
+
+/// Index a judged corpus with the crate's own retriever, run every query, score it.
+///
+/// The whole loop in one command, which is the point: `corpus` says whether the
+/// corpus can be trusted, `run` produces a number, and `score` re-scores a saved
+/// run at another `k` without re-indexing.
+///
+/// No `#[cfg(feature = "rag")]` and no fallback branch: `ai_cli` declares
+/// `required-features = ["rag"]` in `Cargo.toml`, so this binary cannot be built
+/// without it. A `cfg(not(feature = "rag"))` arm here would be code that can
+/// never compile, which is the same "handles a case it cannot reach" shape the
+/// stub-auditor exists to find -- and I wrote one before checking.
+fn cmd_retrieval_run(args: &[String]) -> ExitCode {
+    use ai_assistant::retrieval_eval::sqlite::{Mode, SqliteRetriever};
+    use ai_assistant::retrieval_eval::{load_beir_dir, run_corpus};
+
+    let mut dir: Option<&String> = None;
+    let mut mode = Mode::Lexical;
+    let mut k = 10usize;
+    let mut out: Option<&String> = None;
+    let mut db: Option<&String> = None;
+    let mut as_json = false;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--k" => match args.get(i + 1).and_then(|s| s.parse::<usize>().ok()) {
+                Some(n) if n > 0 => {
+                    k = n;
+                    i += 1;
+                }
+                _ => {
+                    eprintln!("Error: --k requires a positive number");
+                    return ExitCode::from(1);
+                }
+            },
+            "--mode" => match args.get(i + 1).map(String::as_str) {
+                Some("lexical") => {
+                    mode = Mode::Lexical;
+                    i += 1;
+                }
+                Some("hybrid") => {
+                    mode = Mode::Hybrid;
+                    i += 1;
+                }
+                other => {
+                    eprintln!(
+                        "Error: --mode takes 'lexical' or 'hybrid', got {:?}",
+                        other.unwrap_or("nothing")
+                    );
+                    return ExitCode::from(1);
+                }
+            },
+            "--out" => match args.get(i + 1) {
+                Some(p) => {
+                    out = Some(p);
+                    i += 1;
+                }
+                None => {
+                    eprintln!("Error: --out requires a path");
+                    return ExitCode::from(1);
+                }
+            },
+            "--db" => match args.get(i + 1) {
+                Some(p) => {
+                    db = Some(p);
+                    i += 1;
+                }
+                None => {
+                    eprintln!("Error: --db requires a path");
+                    return ExitCode::from(1);
+                }
+            },
+            "--json" => as_json = true,
+            "--help" | "-h" => {
+                print_retrieval_usage();
+                return ExitCode::SUCCESS;
+            }
+            other if other.starts_with('-') => {
+                eprintln!("Error: unknown flag '{}'\n", other);
+                print_retrieval_usage();
+                return ExitCode::from(1);
+            }
+            other => {
+                if dir.is_some() {
+                    eprintln!("Error: more than one corpus directory given ('{}')", other);
+                    return ExitCode::from(1);
+                }
+                dir = Some(&args[i]);
+            }
+        }
+        i += 1;
+    }
+
+    let Some(dir) = dir else {
+        eprintln!("Error: no corpus directory given\n");
+        print_retrieval_usage();
+        return ExitCode::from(1);
+    };
+
+    let corpus = match load_beir_dir(std::path::Path::new(dir)) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return ExitCode::from(1);
+        }
+    };
+
+    // The index is a file, and re-indexing the same corpus into an existing one
+    // is a no-op per document (`needs_reindex`), so a default inside the corpus
+    // directory is both cheap on re-runs and obvious to delete.
+    let db_path = db
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::Path::new(dir).join("retrieval_eval.sqlite"));
+
+    let retriever = match SqliteRetriever::index(&corpus, &db_path, mode) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return ExitCode::from(1);
+        }
+    };
+
+    let run = match run_corpus(&corpus, &retriever, k) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return ExitCode::from(1);
+        }
+    };
+
+    if let Some(path) = out {
+        match serde_json::to_string_pretty(&run.file)
+            .map_err(|e| e.to_string())
+            .and_then(|s| std::fs::write(path, s).map_err(|e| e.to_string()))
+        {
+            Ok(()) => {}
+            Err(e) => {
+                eprintln!("Error: cannot write '{}': {}", path, e);
+                return ExitCode::from(1);
+            }
+        }
+    }
+
+    let report = ai_assistant::retrieval_metrics::summarise(&run.file.queries, k);
+
+    if as_json {
+        let payload = serde_json::json!({
+            "corpus": corpus.name,
+            "retriever": run.retriever,
+            "documents": retriever.indexed_docs(),
+            "unknown_ids": run.unknown_ids,
+            "empty_results": run.empty_results,
+            "report": report,
+        });
+        match serde_json::to_string_pretty(&payload) {
+            Ok(s) => println!("{}", s),
+            Err(e) => {
+                eprintln!("Error: cannot serialise: {}", e);
+                return ExitCode::from(1);
+            }
+        }
+        return ExitCode::SUCCESS;
+    }
+
+    println!("Corpus '{}' — {}", corpus.name, run.retriever);
+    println!("  documents indexed {}", retriever.indexed_docs());
+    println!("  queries run       {}", run.file.queries.len());
+    if run.empty_results > 0 {
+        // Printed before the scores and only when true: "the retriever returned
+        // nothing" and "the retriever returned the wrong things" are different
+        // findings and the averages below cannot tell them apart.
+        println!(
+            "  queries with NO result {}  (the retriever matched nothing, which is \
+             not the same as ranking badly)",
+            run.empty_results
+        );
+    }
+    if run.unknown_ids > 0 {
+        println!(
+            "  returned ids NOT in the corpus {}  (each costs precision and can never \
+             earn recall)",
+            run.unknown_ids
+        );
+    }
+    println!("  recall@{:<10} {:.4}", k, report.recall_at_k);
+    println!("  precision@{:<7} {:.4}", k, report.precision_at_k);
+    println!("  MRR               {:.4}", report.mrr);
+    println!("  MAP               {:.4}", report.map);
+    println!("  nDCG@{:<12} {:.4}", k, report.ndcg_at_k);
+    if report.skipped > 0 {
+        println!(
+            "  queries SKIPPED   {}  (unjudged; left out of every average)",
+            report.skipped
+        );
+    }
+    if let Some(path) = out {
+        println!(
+            "\nrun written to {} — re-score it at another k with `retrieval score`",
+            path
+        );
+    }
+    ExitCode::SUCCESS
 }
 
 /// Inspect a judged corpus before trusting any score computed from it.
