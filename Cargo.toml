@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.326"
+version = "0.2.327"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -771,12 +771,17 @@ bytes = { version = "1", optional = true }
 
 # === V96: Self-Learning deps ===
 # Wasmtime runtime for Skill Forge WASM execution (fuel + ResourceLimiter)
-# 49.0.1 y no 46: RUSTSEC-2026-0314 (2026-09-24) afecta a wasmtime-wasi 46.x -- un
-# invitado puede hacer entrar en panico al anfitrion por desbordamiento de fecha en
-# el sistema de ficheros -- y la linea 46 NO tiene parche. Las versiones corregidas
-# son >=36.0.16 <37, >=48.0.3 <49 o >=49.0.1.
-wasmtime = { version = "49.0.1", optional = true, default-features = false, features = ["cranelift", "runtime"] }
-wasmtime-wasi = { version = "49.0.1", optional = true }
+# 49.0.2, y la historia importa porque se movio dos veces en dos dias:
+#   46.x  -> afectada por RUSTSEC-2026-0314 (24/09), sin parche en su linea.
+#   49.0.1 -> la version que ESE aviso daba como corregida (V363).
+#   49.0.2 -> RUSTSEC-2026-0321/0322/0323 aparecieron el 05/10 contra 49.0.1
+#             (corrupcion del monton del GC, desbordamiento de pila nativa por un
+#             numero de resultados sin validar, y relleno sin inicializar copiado
+#             a la memoria del invitado en fd_readdir).
+# Wasmtime publica avisos a menudo: ESPERAR un rojo de Supply Chain cada pocas
+# semanas aqui, y arreglarlo subiendo la version. Nunca con --ignore.
+wasmtime = { version = "49.0.2", optional = true, default-features = false, features = ["cranelift", "runtime"] }
+wasmtime-wasi = { version = "49.0.2", optional = true }
 # Ed25519 signatures for skill integrity and ledger event attestation
 ed25519-dalek = { version = "2", optional = true, default-features = false, features = ["std", "rand_core"] }
 # Blake3 for hash-chained ledger prev_hash and content hashing

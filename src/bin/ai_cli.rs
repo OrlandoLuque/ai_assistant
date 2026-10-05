@@ -4419,11 +4419,11 @@ fn cmd_retrieval(args: &[String]) -> ExitCode {
 /// never compile, which is the same "handles a case it cannot reach" shape the
 /// stub-auditor exists to find -- and I wrote one before checking.
 fn cmd_retrieval_run(args: &[String]) -> ExitCode {
-    use ai_assistant::retrieval_eval::sqlite::{Mode, SqliteRetriever};
+    use ai_assistant::retrieval_eval::sqlite::{SearchPath, SqliteRetriever};
     use ai_assistant::retrieval_eval::{load_beir_dir, run_corpus};
 
     let mut dir: Option<&String> = None;
-    let mut mode = Mode::Lexical;
+    let mut mode = SearchPath::Lexical;
     let mut k = 10usize;
     let mut out: Option<&String> = None;
     let mut db: Option<&String> = None;
@@ -4444,11 +4444,11 @@ fn cmd_retrieval_run(args: &[String]) -> ExitCode {
             },
             "--mode" => match args.get(i + 1).map(String::as_str) {
                 Some("lexical") => {
-                    mode = Mode::Lexical;
+                    mode = SearchPath::Lexical;
                     i += 1;
                 }
                 Some("hybrid") => {
-                    mode = Mode::Hybrid;
+                    mode = SearchPath::Hybrid;
                     i += 1;
                 }
                 other => {

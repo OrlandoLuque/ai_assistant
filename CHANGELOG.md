@@ -5,6 +5,85 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v244 (2026-10-05) — V368: mi propia puerta me cazó un commit después de escribirla (0.2.327)
+
+CI se puso rojo por dos cosas independientes y ninguna era un test.
+
+## 1. La puerta de duplicados hizo exactamente su trabajo, contra mí
+
+V367 introdujo un `pub enum Mode` en el adaptador. Ya había un `enum Mode` en
+`src/bin/ai_virtual_mic.rs`, con otras variantes. La puerta de V362 lo nombró y devolvió 1:
+
+```
+DIVERGENT and in neither section of the baseline:
+  - Mode
+```
+
+Y lo clasificó bien: no son dos binarios (uno es de la librería), así que ese binario puede
+importar el mío y tener el suyo, con el riesgo de sombra que eso trae.
+
+**El arreglo es renombrar, no meterlo en `[allowed]`.** `Mode` era un nombre perezoso; ahora es
+`SearchPath`, que dice qué es. La propia puerta lo deja escrito: *«`[untriaged]` es la lista
+congelada y no es sitio para poner uno nuevo»*. Doce días de vida y ya ha pagado.
+
+## 2. `wasmtime` se movió DOS veces en dos días
+
+- 24/09 — `RUSTSEC-2026-0314` contra la línea 46, sin parche. V363 subió a **49.0.1**, que era
+  literalmente la versión que ese aviso daba como corregida.
+- 05/10 — **`RUSTSEC-2026-0321`, `0322` y `0323`** aparecen contra **49.0.1**: corrupción del
+  montón del GC, desbordamiento de pila nativa por un número de resultados sin validar, y relleno
+  sin inicializar copiado a la memoria del invitado en `fd_readdir`.
+
+A **49.0.2**, que compila sin tocar código. Y la lección va al `Cargo.toml` en vez de a mi memoria:
+**esperar un rojo de Supply Chain cada pocas semanas aquí**, con la historia de las tres subidas
+escrita al lado de la dependencia para que nadie la reconstruya otra vez. Por subida de versión,
+nunca con `--ignore`.
+
+## Y la pregunta del autor, que destapó algo más serio que lo que preguntaba
+
+> «antes de arreglarlo, mira a ver quién usaba ésto y si necesitaba el troceamiento»
+
+Medido: **lo necesitan los tres consumidores, y al nivel de pasaje.**
+
+| quién | qué hace con los trozos |
+|---|---|
+| `assistant/rag.rs` | los inyecta en un prompt |
+| `ai_cli` | `search_knowledge(&question, 8000, top_k)` — presupuesto real |
+| `mcp_protocol/knowledge_tools` | los devuelve por MCP con `max_tokens` |
+
+Un documento de 50 páginas no cabe en el contexto, y traer *la parte* relevante es el punto del
+RAG. Así que el troceado no se toca y la deduplicación va **en el borde de la evaluación**:
+colapsar a documentos dentro del producto rompería el RAG, porque un prompt que necesita tres
+pasajes de un documento quiere los tres. Verificado que `dedup_by_document` solo se usa en
+`retrieval_eval.rs` y que `git diff` sobre `rag.rs`, `assistant/` y `mcp_protocol/` está vacío.
+
+**Lo serio es lo que se deduce:** estamos puntuando un recuperador de **pasajes** con un banco que
+juzga **documentos**, así que una regla de agregación es inevitable. «Gana el primer trozo» es
+*max-passage*, que es lo que usan las referencias de BEIR, pero es una elección entre varias
+—*sum-of-passages*, *mean-of-passages*— y **las tres dan números distintos sobre los mismos
+datos**: un documento con cinco trozos medianamente relevantes gana con `sum` y pierde con `max`.
+
+Escrito en el doc comment de `dedup_by_document`, y encolado como **N138**: cualquier cifra de aquí
+es «max-passage sobre trozos de ~400 tokens», y un informe que lo omite no es reproducible. Hoy
+`describe()` dice `title+body` y **no dice la agregación**.
+
+Es el segundo motivo por el que la comparación con la literatura todavía no es honesta. El primero
+es N136, el denominador de `precision@k`.
+
+## Y una tercera, de la misma pregunta
+
+`ai_cli` declara `required-features = ["rag"]`, así que **cualquier** rama
+`#[cfg(not(feature = "rag"))]` dentro de ese binario es código que no se puede compilar nunca.
+Encolado como **N137**, con la parte que importa: barrer los 41 binarios buscando más ramas
+inalcanzables por su propio `required-features`, y decidir si se gatean los subcomandos en vez del
+binario entero.
+
+## Verificación
+
+`clippy --all-targets -D warnings` limpio; `cargo check --features skill-forge` limpio con
+wasmtime 49.0.2; `cargo audit` con los mismos `--ignore` que CI sin errores (5 avisos permitidos);
+las tres puertas de Python en verde, incluida la de duplicados que ya no tiene nada nuevo.
+
 ## [Unreleased] - v243 (2026-10-01) — V367: lo medido es ya el recuperador del producto, no un juguete (0.2.326)
 
 Paso 4 de N102. V365 dejó el arnés y el `trait Retriever` sin una sola implementación: el que

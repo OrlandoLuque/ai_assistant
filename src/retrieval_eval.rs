@@ -422,6 +422,24 @@ pub trait Retriever {
 ///
 /// First occurrence wins, because the ranking is already best-first and a
 /// document's best chunk is the one that earned its place.
+///
+/// # This is where two different units of retrieval meet
+///
+/// **The chunking is not a wart to be removed.** Every real consumer needs it and
+/// needs it at the passage level: `assistant::rag` injects the text into a
+/// prompt, `ai_cli` asks with an 8000-token budget, and the MCP knowledge tool
+/// takes `max_tokens` from its caller. A 50-page document does not fit in a
+/// context window, and retrieving *the relevant part* is the entire point. So
+/// dedup belongs **here, at the evaluation boundary** — never in `rag.rs`.
+/// Collapsing to documents inside the product would break RAG, because a prompt
+/// that needs three passages of one document wants all three.
+///
+/// And the honest caveat that follows: we are scoring a **passage** retriever
+/// with a **document**-level benchmark, so an aggregation rule is unavoidable.
+/// "First chunk wins" is max-passage, which is what BEIR baselines use — but it
+/// is one choice among several (sum-of-passages, mean-of-passages), and the
+/// scores differ between them. Any number produced here is "max-passage over
+/// ~400-token chunks", and a report that omits that is not reproducible.
 pub fn dedup_by_document(ranked: impl IntoIterator<Item = String>, k: usize) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut out = Vec::with_capacity(k);
@@ -457,7 +475,7 @@ pub mod sqlite {
     /// retriever**: its behaviour depends on the BM25/semantic weights, and a
     /// report that says "hybrid" without them cannot be reproduced.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum Mode {
+    pub enum SearchPath {
         /// `search_knowledge` — BM25 over FTS5 only.
         Lexical,
         /// `search_knowledge_hybrid` — BM25 fused with the semantic score.
@@ -492,7 +510,7 @@ pub mod sqlite {
     /// The crate's lexical (or hybrid) retrieval, driven over a judged corpus.
     pub struct SqliteRetriever {
         db: RagDb,
-        mode: Mode,
+        mode: SearchPath,
         max_tokens: usize,
         indexed_docs: usize,
     }
@@ -507,7 +525,11 @@ pub mod sqlite {
         /// the hazard this module's parent exists to refuse.
         ///
         /// Indexes `title + body`, matching the BEIR baselines.
-        pub fn index(corpus: &RetrievalCorpus, db_path: &Path, mode: Mode) -> Result<Self, String> {
+        pub fn index(
+            corpus: &RetrievalCorpus,
+            db_path: &Path,
+            mode: SearchPath,
+        ) -> Result<Self, String> {
             let db = RagDb::open(db_path).map_err(|e| format!("cannot open {db_path:?}: {e}"))?;
             for doc in &corpus.docs {
                 db.index_document(&doc.id, &doc.indexable_text())
@@ -537,14 +559,14 @@ pub mod sqlite {
         fn retrieve(&self, query: &str, k: usize) -> Result<Vec<String>, String> {
             let want_chunks = k.saturating_mul(CHUNK_OVERFETCH).max(k);
             let sources: Vec<String> = match self.mode {
-                Mode::Lexical => self
+                SearchPath::Lexical => self
                     .db
                     .search_knowledge(query, self.max_tokens, want_chunks)
                     .map_err(|e| e.to_string())?
                     .into_iter()
                     .map(|c| c.source)
                     .collect(),
-                Mode::Hybrid => self
+                SearchPath::Hybrid => self
                     .db
                     .search_knowledge_hybrid(query, self.max_tokens, want_chunks)
                     .map_err(|e| e.to_string())?
@@ -557,8 +579,8 @@ pub mod sqlite {
 
         fn describe(&self) -> String {
             match self.mode {
-                Mode::Lexical => "sqlite-fts5-bm25 (title+body)".to_string(),
-                Mode::Hybrid => {
+                SearchPath::Lexical => "sqlite-fts5-bm25 (title+body)".to_string(),
+                SearchPath::Hybrid => {
                     "sqlite-fts5-hybrid (title+body; semantic half is TF-IDF without an \
                      embedding service)"
                         .to_string()
@@ -932,7 +954,7 @@ mod tests {
     #[cfg(feature = "rag")]
     #[test]
     fn the_sqlite_retriever_returns_corpus_ids_and_is_scorable() {
-        use super::sqlite::{Mode, SqliteRetriever};
+        use super::sqlite::{SearchPath, SqliteRetriever};
         use std::sync::atomic::{AtomicUsize, Ordering};
 
         // An atomic counter and not `line!()`: `line!()` expands where it is
@@ -969,7 +991,7 @@ mod tests {
             qrels: parse_qrels_tsv("q1\td1\t1\nq2\td2\t1\n").expect("qrels parse"),
         };
 
-        let r = SqliteRetriever::index(&c, &db_path, Mode::Lexical).expect("indexes");
+        let r = SqliteRetriever::index(&c, &db_path, SearchPath::Lexical).expect("indexes");
         assert_eq!(r.indexed_docs(), 3);
 
         // The whole point: ids the qrels can judge, not `1`/`2`/`3` row ids.
@@ -1014,7 +1036,7 @@ mod tests {
         // This gap is exactly what semantic retrieval is supposed to close, and
         // it cannot be measured honestly until N105 gives us real embeddings —
         // today "semantic" is TF-IDF cosine, which does not stem either.
-        use super::sqlite::{Mode, SqliteRetriever};
+        use super::sqlite::{SearchPath, SqliteRetriever};
         use std::sync::atomic::{AtomicUsize, Ordering};
 
         static N: AtomicUsize = AtomicUsize::new(0);
@@ -1035,7 +1057,8 @@ mod tests {
                 .expect("queries parse"),
             qrels: parse_qrels_tsv("q1\td1\t1\n").expect("qrels parse"),
         };
-        let r = SqliteRetriever::index(&c, &dir.join("kb.sqlite"), Mode::Lexical).expect("indexes");
+        let r = SqliteRetriever::index(&c, &dir.join("kb.sqlite"), SearchPath::Lexical)
+            .expect("indexes");
 
         assert!(
             r.retrieve("purring", 10).expect("retrieves").is_empty(),
