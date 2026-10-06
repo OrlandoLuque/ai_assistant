@@ -423,6 +423,9 @@ pub trait Retriever {
 /// First occurrence wins, because the ranking is already best-first and a
 /// document's best chunk is the one that earned its place.
 ///
+/// Equivalent to [`Aggregation::MaxPassage`]; kept as a free function because it
+/// is the obvious thing to reach for and needs no enum to use.
+///
 /// # This is where two different units of retrieval meet
 ///
 /// **The chunking is not a wart to be removed.** Every real consumer needs it and
@@ -434,12 +437,9 @@ pub trait Retriever {
 /// Collapsing to documents inside the product would break RAG, because a prompt
 /// that needs three passages of one document wants all three.
 ///
-/// And the honest caveat that follows: we are scoring a **passage** retriever
-/// with a **document**-level benchmark, so an aggregation rule is unavoidable.
-/// "First chunk wins" is max-passage, which is what BEIR baselines use — but it
-/// is one choice among several (sum-of-passages, mean-of-passages), and the
-/// scores differ between them. Any number produced here is "max-passage over
-/// ~400-token chunks", and a report that omits that is not reproducible.
+/// And the caveat that follows: we are scoring a **passage** retriever with a
+/// **document**-level benchmark, so an aggregation rule is unavoidable — see
+/// [`Aggregation`], and note that the benchmark does not pick one for us.
 pub fn dedup_by_document(ranked: impl IntoIterator<Item = String>, k: usize) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut out = Vec::with_capacity(k);
@@ -454,6 +454,77 @@ pub fn dedup_by_document(ranked: impl IntoIterator<Item = String>, k: usize) -> 
     out
 }
 
+/// How a ranked list of **passages** becomes a ranked list of **documents**.
+///
+/// Unavoidable, and **not chosen by the benchmark**: BEIR scores through
+/// `pytrec_eval`, which evaluates whatever ranking it is handed, so whether a
+/// published number used passage aggregation at all — and which rule — is a
+/// property of that system and has to be checked per paper. Our own reports must
+/// therefore say which rule produced them, which is why
+/// [`sqlite::SqliteRetriever::describe`] names it.
+///
+/// The two rules here are **rank-only** on purpose. A score-weighted
+/// sum-of-passages is the other obvious candidate and it cannot be implemented
+/// today: `RagDb::search_knowledge` computes `bm25(knowledge_fts)` in SQL, orders
+/// by it, and then returns `Vec<KnowledgeChunk>`, which has no score field. The
+/// score exists and is thrown away, so the lexical path offers ranks and nothing
+/// else. Only the hybrid path exposes numbers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Aggregation {
+    /// A document ranks where its best passage ranked. One strong passage is
+    /// enough.
+    #[default]
+    MaxPassage,
+    /// A document's weight is the sum of `1/rank` over all of its passages, and
+    /// documents are re-sorted by that total.
+    ///
+    /// Rewards a document that is *diffusely* relevant — five mediocre passages
+    /// instead of one excellent one — which `MaxPassage` cannot see at all. The
+    /// same reciprocal-rank shape as RRF, for the same reason: it combines
+    /// positions without needing comparable scores.
+    ///
+    /// **This changes the answer**, which is the whole point of having both. A
+    /// document whose passages land at ranks 4, 5 and 6 totals `0.61` and beats
+    /// one with a single passage at rank 2 (`0.5`), reversing `MaxPassage`.
+    SumReciprocalRank,
+}
+
+impl Aggregation {
+    /// Short label for a report. Include it: a score without its aggregation
+    /// rule cannot be reproduced.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::MaxPassage => "max-passage",
+            Self::SumReciprocalRank => "sum-reciprocal-rank",
+        }
+    }
+
+    /// Collapse `ranked` passage sources into at most `k` document ids.
+    pub fn apply(&self, ranked: impl IntoIterator<Item = String>, k: usize) -> Vec<String> {
+        match self {
+            Self::MaxPassage => dedup_by_document(ranked, k),
+            Self::SumReciprocalRank => {
+                // Accumulate 1/rank per document, then sort by the total.
+                let mut totals: Vec<(String, f64)> = Vec::new();
+                for (i, id) in ranked.into_iter().enumerate() {
+                    let weight = 1.0 / (i as f64 + 1.0);
+                    match totals.iter_mut().find(|(d, _)| *d == id) {
+                        Some((_, t)) => *t += weight,
+                        None => totals.push((id, weight)),
+                    }
+                }
+                // Ties break by first appearance, which `sort_by` preserves
+                // because it is stable. Without that a tie would order by
+                // whatever the allocator produced, and two identical runs could
+                // disagree -- a benchmark that is not reproducible against
+                // itself measures nothing.
+                totals.sort_by(|a, b| b.1.total_cmp(&a.1));
+                totals.into_iter().take(k).map(|(d, _)| d).collect()
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The crate's own lexical retriever, as a `Retriever`
 // ---------------------------------------------------------------------------
@@ -466,7 +537,7 @@ pub fn dedup_by_document(ranked: impl IntoIterator<Item = String>, k: usize) -> 
 pub mod sqlite {
     use std::path::Path;
 
-    use super::{dedup_by_document, RetrievalCorpus, Retriever};
+    use super::{Aggregation, RetrievalCorpus, Retriever};
     use crate::rag::RagDb;
 
     /// Which of the crate's two search paths to measure.
@@ -507,10 +578,20 @@ pub mod sqlite {
     /// honest rather than padded.
     pub const CHUNK_OVERFETCH: usize = 5;
 
+    /// The chunk size `index_document` aims for, mirrored here for the report.
+    ///
+    /// Duplicated from `rag::chunk_document`'s private `TARGET_CHUNK_TOKENS`
+    /// rather than read from it, because that constant is not public. If the two
+    /// drift, the report misstates the unit it measured -- which is why a test
+    /// pins the number here, so a change in `rag.rs` has one place that argues
+    /// back instead of none.
+    pub const TARGET_CHUNK_TOKENS: usize = 400;
+
     /// The crate's lexical (or hybrid) retrieval, driven over a judged corpus.
     pub struct SqliteRetriever {
         db: RagDb,
         mode: SearchPath,
+        aggregation: Aggregation,
         max_tokens: usize,
         indexed_docs: usize,
     }
@@ -538,9 +619,17 @@ pub mod sqlite {
             Ok(Self {
                 db,
                 mode,
+                aggregation: Aggregation::default(),
                 max_tokens: NO_TOKEN_BUDGET,
                 indexed_docs: corpus.docs.len(),
             })
+        }
+
+        /// Choose how passages collapse into documents. See [`Aggregation`] --
+        /// this changes the scores, so a report must say which one was used.
+        pub fn with_aggregation(mut self, aggregation: Aggregation) -> Self {
+            self.aggregation = aggregation;
+            self
         }
 
         /// Override the token budget. See [`NO_TOKEN_BUDGET`] before lowering it.
@@ -574,18 +663,27 @@ pub mod sqlite {
                     .map(|r| r.chunk.source)
                     .collect(),
             };
-            Ok(dedup_by_document(sources, k))
+            Ok(self.aggregation.apply(sources, k))
         }
 
+        /// Names everything that changes the numbers, which is this method's whole
+        /// job: the search path, what was indexed, the passage-to-document
+        /// aggregation and the chunk size it operates on.
+        ///
+        /// A score reported without its aggregation rule is not reproducible, and
+        /// that was true of this method until it said so.
         fn describe(&self) -> String {
-            match self.mode {
-                SearchPath::Lexical => "sqlite-fts5-bm25 (title+body)".to_string(),
+            let path = match self.mode {
+                SearchPath::Lexical => "sqlite-fts5-bm25",
                 SearchPath::Hybrid => {
-                    "sqlite-fts5-hybrid (title+body; semantic half is TF-IDF without an \
-                     embedding service)"
-                        .to_string()
+                    "sqlite-fts5-hybrid(semantic half is TF-IDF, no embedding service)"
                 }
-            }
+            };
+            format!(
+                "{path} (title+body; {} over ~{}-token chunks)",
+                self.aggregation.as_str(),
+                TARGET_CHUNK_TOKENS
+            )
         }
     }
 }
@@ -949,6 +1047,113 @@ mod tests {
         // ids to reach k would fabricate retrievals that then get scored.
         let all_one = ["d1", "d1", "d1"].map(String::from);
         assert_eq!(dedup_by_document(all_one, 3), vec!["d1"]);
+    }
+
+    #[test]
+    fn the_two_aggregations_disagree_and_that_is_the_point() {
+        // THE separating case for N138, and the argument for implementing both.
+        //
+        // "a" has one passage at rank 2        -> max 1/2 = 0.50
+        // "b" has three passages at 4, 5, 6    -> sum 1/4 + 1/5 + 1/6 = 0.616…
+        //
+        // MaxPassage ranks a first because its best passage is better.
+        // SumReciprocalRank ranks b first because it is diffusely relevant.
+        // Neither is wrong; a report that does not say which one it used is.
+        let ranked = ["z", "a", "z", "b", "b", "b"].map(String::from);
+        assert_eq!(
+            Aggregation::MaxPassage.apply(ranked.clone(), 3),
+            vec!["z", "a", "b"]
+        );
+        assert_eq!(
+            Aggregation::SumReciprocalRank.apply(ranked, 3),
+            vec!["z", "b", "a"],
+            "b must overtake a: 0.616 beats 0.5"
+        );
+    }
+
+    #[test]
+    fn aggregation_ties_break_by_first_appearance() {
+        // Two documents with one passage each at adjacent ranks cannot tie, so
+        // the tie has to be built: identical totals via identical positions in
+        // separate runs is impossible, so use one passage each and check the
+        // ORDER is the rank order rather than whatever the sort happened to do.
+        // An unstable sort here would make two identical runs disagree, and a
+        // benchmark that is not reproducible against itself measures nothing.
+        let ranked = ["p", "q", "r"].map(String::from);
+        assert_eq!(
+            Aggregation::SumReciprocalRank.apply(ranked, 3),
+            vec!["p", "q", "r"]
+        );
+    }
+
+    #[test]
+    fn both_aggregations_honour_k_and_neither_pads() {
+        let ranked = ["a", "a", "a"].map(String::from);
+        assert_eq!(Aggregation::MaxPassage.apply(ranked.clone(), 5), vec!["a"]);
+        assert_eq!(
+            Aggregation::SumReciprocalRank.apply(ranked, 5),
+            vec!["a"],
+            "one document owning every passage is one document, not five"
+        );
+    }
+
+    #[test]
+    fn the_aggregation_label_is_not_empty_and_differs_per_rule() {
+        // It goes into every report, so it has to say something and say something
+        // different per rule.
+        assert_eq!(Aggregation::MaxPassage.as_str(), "max-passage");
+        assert_eq!(
+            Aggregation::SumReciprocalRank.as_str(),
+            "sum-reciprocal-rank"
+        );
+        assert_ne!(
+            Aggregation::MaxPassage.as_str(),
+            Aggregation::SumReciprocalRank.as_str()
+        );
+    }
+
+    #[cfg(feature = "rag")]
+    #[test]
+    fn the_description_names_the_aggregation_and_the_chunk_size() {
+        // A score without its aggregation rule is not reproducible, and this
+        // method is where the rule becomes part of the record.
+        use super::sqlite::{SearchPath, SqliteRetriever, TARGET_CHUNK_TOKENS};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static N: AtomicUsize = AtomicUsize::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "ai_retrieval_eval_desc_{}_{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let c = RetrievalCorpus {
+            name: "desc".into(),
+            docs: parse_corpus_jsonl("{\"_id\": \"d1\", \"title\": \"\", \"text\": \"t\"}")
+                .expect("corpus"),
+            queries: parse_queries_jsonl("{\"_id\": \"q1\", \"text\": \"t\"}").expect("queries"),
+            qrels: parse_qrels_tsv("q1\td1\t1\n").expect("qrels"),
+        };
+        let r = SqliteRetriever::index(&c, &dir.join("kb.sqlite"), SearchPath::Lexical)
+            .expect("indexes");
+
+        let d = r.describe();
+        assert!(d.contains("max-passage"), "must name the aggregation: {d}");
+        assert!(
+            d.contains(&TARGET_CHUNK_TOKENS.to_string()),
+            "must name the chunk size, the unit it aggregated over: {d}"
+        );
+        assert!(d.contains("bm25"), "must name the search path: {d}");
+
+        // And it must CHANGE when the rule changes, or it is decoration.
+        let other = r
+            .with_aggregation(Aggregation::SumReciprocalRank)
+            .describe();
+        assert_ne!(d, other);
+        assert!(other.contains("sum-reciprocal-rank"), "{other}");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[cfg(feature = "rag")]

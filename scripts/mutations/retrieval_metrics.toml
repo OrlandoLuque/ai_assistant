@@ -1,0 +1,82 @@
+# Mutations for the metrics themselves and for the passage->document aggregation.
+#
+# These are ORACLES: they decide what counts as a good retrieval, so anything
+# wrong here is inherited by every score produced from now on and a wrong
+# retrieval score does not look wrong. Precedent is N14, where 2 of 12 Rust and
+# 4 of 11 Python checkers accepted plausible wrong answers and the numbers had
+# already been recorded.
+#
+# M1 and M2 are the pair that matters for N136: the whole reason
+# `precision_at_k_strict` exists is its denominator and its treatment of an empty
+# list, and those are exactly the two things that make it comparable with a
+# published number. Mutating them must break a test by name or the distinction is
+# decorative.
+#
+# Run: python scripts/mutate.py --spec scripts/mutations/retrieval_metrics.toml
+
+features = "full"
+filter = "retrieval_"
+
+[[mutation]]
+id = "M1"
+file = "src/retrieval_metrics.rs"
+invariant = "strict precision divides by k, flat -- that IS the TREC/BEIR definition and the only reason this function exists"
+before = "    Some(hits as f64 / k as f64)"
+after = "    Some(hits as f64 / top.len().max(1) as f64)"
+occurrences = 1
+
+[[mutation]]
+id = "M2"
+file = "src/retrieval_metrics.rs"
+invariant = "an empty retrieved list is 0.0 strictly, never None: a None is dropped from the averages, so a retriever that found nothing half the time would be judged only where it answered"
+before = """pub fn precision_at_k_strict(
+    retrieved: &[String],
+    relevant: &HashSet<String>,
+    k: usize,
+) -> Option<f64> {
+    if k == 0 {
+        return None;
+    }"""
+after = """pub fn precision_at_k_strict(
+    retrieved: &[String],
+    relevant: &HashSet<String>,
+    k: usize,
+) -> Option<f64> {
+    if k == 0 || retrieved.is_empty() {
+        return None;
+    }"""
+occurrences = 1
+
+[[mutation]]
+id = "M3"
+file = "src/retrieval_metrics.rs"
+invariant = "the report carries the strict precision as its own number, not a copy of the loose one"
+before = "        precision_at_k_strict: precision_strict / n,"
+after = "        precision_at_k_strict: precision / n,"
+occurrences = 1
+
+[[mutation]]
+id = "M4"
+file = "src/retrieval_eval.rs"
+invariant = "sum-reciprocal-rank weights by 1/rank, so a diffusely relevant document can overtake one with a single better passage"
+before = "                    let weight = 1.0 / (i as f64 + 1.0);"
+after = "                    let weight = 1.0;"
+occurrences = 1
+
+[[mutation]]
+id = "M5"
+file = "src/retrieval_eval.rs"
+invariant = "documents are re-sorted by the accumulated total; without it sum-reciprocal-rank silently degenerates into max-passage"
+before = "                totals.sort_by(|a, b| b.1.total_cmp(&a.1));"
+after = "                // mutation: no re-sort"
+occurrences = 1
+
+[[mutation]]
+id = "M6"
+file = "src/retrieval_eval.rs"
+invariant = "describe() names the aggregation; a score reported without its rule is not reproducible"
+before = """                "{path} (title+body; {} over ~{}-token chunks)",
+                self.aggregation.as_str(),"""
+after = """                "{path} (title+body; {} over ~{}-token chunks)",
+                "","""
+occurrences = 1

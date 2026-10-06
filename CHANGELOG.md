@@ -5,6 +5,94 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v245 (2026-10-05) — V369: N136 y N138, los dos motivos por los que un número nuestro no se podía poner al lado de uno publicado (0.2.328)
+
+Antes de generar una sola cifra sobre el corpus público, porque después habría que re-medirla.
+
+## N136 — `precision@k` dividía por otra cosa
+
+`precision_at_k` divide por **cuántos documentos volvieron**, no por `k`. Es deliberado —no
+penalizar a un recuperador por los puestos que nunca reclamó— y **no es un defecto**. Pero
+verificado con fuente: BEIR puntúa con `pytrec_eval`, que sigue la convención TREC y usa **`k`
+como denominador incluso en una lista más corta**.
+
+Las dos divergen exactamente cuando el recuperador devuelve menos de `k`, y divergen mucho. En el
+corpus de juguete, medido:
+
+```
+precision@5  0.2000  <- definición TREC/BEIR, denominador k
+precision@5  1.0000     sobre lo que volvió; NO comparable con un artículo
+```
+
+Elegida la opción (c) de las tres encoladas: **`precision_at_k_strict` nueva, junto a la que ya
+estaba**, las dos en el informe y las dos en el CLI con la etiqueta de cuál es cuál. Aditivo, no
+cambia ningún número existente —y no había ninguno que cambiar, que es por lo que el momento era
+ahora—.
+
+Un detalle que no es cosmético: con denominador fijo, **una lista vacía vale 0,0 y no `None`**. Un
+`None` se cae de las medias, así que un recuperador que no encuentra nada en la mitad de las
+consultas quedaría juzgado solo donde sí contestó, y halagado.
+
+## N138 — y el banco no elige la regla por nosotros
+
+Puntuamos un recuperador de **pasajes** con un banco que juzga **documentos**, así que una regla de
+agregación es inevitable. Y `pytrec_eval` evalúa **el ranking que le des**, de modo que si una cifra
+publicada usó agregación, y cuál, es propiedad de *ese* sistema y hay que comprobarlo artículo por
+artículo. Corrige una afirmación que yo había escrito en V367 —«es lo que usan las referencias de
+BEIR»— que no estaba respaldada.
+
+Dos reglas, implementadas las dos:
+
+| regla | qué premia |
+|---|---|
+| `max-passage` (por defecto) | el documento vale lo que su mejor pasaje |
+| `sum-reciprocal-rank` | suma `1/rango` de todos sus pasajes: premia al documento **difusamente** relevante |
+
+**Dan respuestas opuestas**, y eso es el argumento para tener las dos. Con un documento con un
+pasaje en el puesto 2 (`0,50`) contra otro con tres en 4, 5 y 6 (`0,616`), `max` prefiere el primero
+y `sum` el segundo. Ninguna está mal; **un informe que no dice cuál usó, sí**.
+
+Las dos son **solo de rango** a propósito. La suma ponderada por puntuación es la otra candidata
+obvia y hoy no se puede: `search_knowledge` calcula `bm25(knowledge_fts)` en el SQL, ordena por él,
+y devuelve `Vec<KnowledgeChunk>`, que **no tiene campo de puntuación**. La calcula y la tira. Solo
+la ruta híbrida expone números.
+
+Y `describe()` ahora dice todo lo que mueve la cifra:
+
+```
+sqlite-fts5-bm25 (title+body; max-passage over ~400-token chunks)
+```
+
+## Lo que la medición NO demostró
+
+Las dos agregaciones dan **números idénticos** en el corpus de juguete. No es que la regla no
+importe: esos documentos tienen menos de 400 tokens, así que **cada uno es un solo trozo**, y con un
+trozo por documento las dos reglas son matemáticamente la misma. El corpus de juguete **no puede**
+discriminarlas; el test unitario sí, con una lista sintética multitrozo. La diferencia real solo
+aparecerá con documentos largos.
+
+## Y la pregunta que lo originó
+
+> «antes de arreglarlo, mira a ver quién usaba ésto y si necesitaba el troceamiento»
+
+Medido antes de tocar nada, y la respuesta fue que sí: los tres consumidores lo necesitan **al nivel
+de pasaje**. Así que el troceado no se toca y la deduplicación vive en el borde de la evaluación.
+Esa pregunta es la que destapó N138, que es un problema de validez y no de limpieza.
+
+## Verificación
+
+- `--self-test` del mutador aparte, **6 de 6 mutaciones muertas** en
+  `scripts/mutations/retrieval_metrics.toml`, cada una por un test con nombre. M1 y M2 son el par
+  que importa: el denominador y el tratamiento de la lista vacía son **las dos únicas razones** por
+  las que `precision_at_k_strict` existe, así que mutarlas tenía que romper algo o la distinción
+  sería decorativa.
+- **23 especificaciones de mutación** coinciden con el código (`--all --dry-run`), corrido
+  **después** de `cargo fmt` y no antes, que es la regla A.8 que salió de V366.
+- `clippy --all-targets -D warnings` limpio; **8981 tests, 0 fallidos**; las puertas de duplicados y
+  de CLI documentado en verde.
+- El CLI ejecutado de verdad en las dos agregaciones, y comprobado que **rechaza** una tercera
+  inventada (`--aggregation mean-of-passages` → error y código 1).
+
 ## [Unreleased] - v244 (2026-10-05) — V368: mi propia puerta me cazó un commit después de escribirla (0.2.327)
 
 CI se puso rojo por dos cosas independientes y ninguna era un test.

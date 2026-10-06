@@ -123,12 +123,25 @@ pub fn recall_at_k(retrieved: &[String], relevant: &HashSet<String>, k: usize) -
     Some(hits as f64 / relevant.len() as f64)
 }
 
-/// Fraction of the top `k` that is relevant.
+/// Fraction of **what came back** that is relevant. **Not the TREC definition.**
+///
+/// The denominator is how many distinct documents were actually returned, not
+/// `k` — a retriever that returns three documents for `k = 10` is not penalised
+/// for the seven it never claimed.
+///
+/// That is a deliberate choice and it is **not comparable with published
+/// numbers**. BEIR scores through `pytrec_eval`, which follows the TREC
+/// convention: the denominator is always `k`, *even on a shorter run*. The two
+/// disagree exactly when a retriever returns fewer than `k` documents, and they
+/// disagree a lot — one relevant hit out of one returned document at `k = 5` is
+/// `1.0` here and `0.2` there.
+///
+/// Use [`precision_at_k_strict`] for anything compared against a paper, and this
+/// one to ask "of what it gave me, how much was useful". `recall@k`, MRR, MAP and
+/// nDCG@k have no such divergence — they are comparable as they stand.
 ///
 /// Returns `None` for `k == 0` and for an empty retrieved list: dividing by the
-/// size of nothing is undefined. Note the denominator is how many distinct
-/// documents were actually returned, not `k` — a retriever that returns three
-/// documents for `k = 10` is not penalised for the seven it never claimed.
+/// size of nothing is undefined.
 pub fn precision_at_k(retrieved: &[String], relevant: &HashSet<String>, k: usize) -> Option<f64> {
     if k == 0 {
         return None;
@@ -139,6 +152,31 @@ pub fn precision_at_k(retrieved: &[String], relevant: &HashSet<String>, k: usize
     }
     let hits = top.iter().filter(|id| relevant.contains(**id)).count();
     Some(hits as f64 / top.len() as f64)
+}
+
+/// Fraction of `k` that is relevant — **the TREC and BEIR definition**.
+///
+/// The denominator is `k`, flat, even when the retriever returned fewer. That is
+/// what `pytrec_eval` computes and therefore what every published BEIR P@k means,
+/// so this is the one to quote next to somebody else's number.
+///
+/// Returns `None` only for `k == 0`. An empty retrieved list is `0.0` here and
+/// **not** `None`, unlike [`precision_at_k`]: with a fixed denominator, returning
+/// nothing is a score of zero rather than an undefined quantity. That difference
+/// matters more than it looks — a `None` is dropped from the averages, so a
+/// retriever that found nothing for half the queries would be flattered by being
+/// judged only on the half where it answered.
+pub fn precision_at_k_strict(
+    retrieved: &[String],
+    relevant: &HashSet<String>,
+    k: usize,
+) -> Option<f64> {
+    if k == 0 {
+        return None;
+    }
+    let top = top_k_unique(retrieved, k);
+    let hits = top.iter().filter(|id| relevant.contains(**id)).count();
+    Some(hits as f64 / k as f64)
 }
 
 /// `1 / position` of the first relevant document, counting from one.
@@ -370,8 +408,17 @@ pub struct RetrievalReport {
     pub skipped: usize,
     /// Mean recall@k.
     pub recall_at_k: f64,
-    /// Mean precision@k.
+    /// Mean precision@k with **our** denominator: how many documents came back.
+    ///
+    /// Not comparable with a paper. See [`precision_at_k`] for why, and
+    /// [`RetrievalReport::precision_at_k_strict`] for the one that is.
     pub precision_at_k: f64,
+    /// Mean precision@k with the **TREC/BEIR** denominator: `k`, flat.
+    ///
+    /// This is the number to put next to somebody else's. It is always lower than
+    /// or equal to the one above, and strictly lower whenever the retriever
+    /// returned fewer than `k` documents.
+    pub precision_at_k_strict: f64,
     /// Mean reciprocal rank.
     pub mrr: f64,
     /// Mean average precision.
@@ -395,6 +442,7 @@ pub fn summarise(queries: &[QueryRun], k: usize) -> RetrievalReport {
     let mut scored = 0usize;
     let mut skipped = 0usize;
     let (mut recall, mut precision, mut mrr, mut map, mut ndcg) = (0.0, 0.0, 0.0, 0.0, 0.0);
+    let mut precision_strict = 0.0;
 
     for q in queries {
         let relevant = relevant_from_grades(&q.grades);
@@ -405,6 +453,7 @@ pub fn summarise(queries: &[QueryRun], k: usize) -> RetrievalReport {
         scored += 1;
         recall += recall_at_k(&q.retrieved, &relevant, k).unwrap_or(0.0);
         precision += precision_at_k(&q.retrieved, &relevant, k).unwrap_or(0.0);
+        precision_strict += precision_at_k_strict(&q.retrieved, &relevant, k).unwrap_or(0.0);
         mrr += reciprocal_rank(&q.retrieved, &relevant);
         map += average_precision(&q.retrieved, &relevant).unwrap_or(0.0);
         ndcg += ndcg_at_k(&q.retrieved, &q.grades, k).unwrap_or(0.0);
@@ -417,6 +466,7 @@ pub fn summarise(queries: &[QueryRun], k: usize) -> RetrievalReport {
         skipped,
         recall_at_k: recall / n,
         precision_at_k: precision / n,
+        precision_at_k_strict: precision_strict / n,
         mrr: mrr / n,
         map: map / n,
         ndcg_at_k: ndcg / n,
@@ -570,6 +620,67 @@ mod tests {
             got < 0.85,
             "missing the best document must cost real score, got {got}"
         );
+    }
+
+    #[test]
+    fn the_two_precisions_differ_exactly_when_the_list_is_short() {
+        // THE separating case, and the reason both exist. One relevant hit out of
+        // one returned document at k = 5:
+        //   ours   = 1/1 = 1.0   "of what it gave me, all of it was useful"
+        //   TREC   = 1/5 = 0.2   "of the five slots asked for, one was useful"
+        // A number compared against a paper must be the second one.
+        let retrieved = ids(&["d1"]);
+        let relevant = rel(&["d1"]);
+        assert_eq!(precision_at_k(&retrieved, &relevant, 5), Some(1.0));
+        assert_eq!(precision_at_k_strict(&retrieved, &relevant, 5), Some(0.2));
+
+        // And they agree when the list is full, which is why the divergence went
+        // unnoticed: every example with k documents returned looks identical.
+        let full = ids(&["d1", "d2", "d3", "d4", "d5"]);
+        assert_eq!(
+            precision_at_k(&full, &relevant, 5),
+            precision_at_k_strict(&full, &relevant, 5)
+        );
+    }
+
+    #[test]
+    fn an_empty_list_is_zero_strictly_and_undefined_loosely() {
+        // Not a quirk — it decides whether a query counts. `None` is dropped from
+        // the averages, so a retriever that found nothing for half the queries
+        // would be judged only on the half where it answered, and flattered.
+        // With a fixed denominator, finding nothing is a score of zero.
+        let empty: Vec<String> = Vec::new();
+        let relevant = rel(&["d1"]);
+        assert_eq!(precision_at_k(&empty, &relevant, 5), None);
+        assert_eq!(precision_at_k_strict(&empty, &relevant, 5), Some(0.0));
+        // k == 0 is undefined for both: there is no "top zero".
+        assert_eq!(precision_at_k_strict(&ids(&["d1"]), &relevant, 0), None);
+    }
+
+    #[test]
+    fn strict_precision_is_never_above_the_loose_one() {
+        // The invariant worth pinning: same numerator, denominator k >= returned,
+        // so strict <= loose always. If this ever flips, one of them is wrong.
+        let relevant = rel(&["d1", "d3"]);
+        for n in 1..=6usize {
+            let retrieved: Vec<String> = (1..=n).map(|i| format!("d{i}")).collect();
+            let loose = precision_at_k(&retrieved, &relevant, 5).unwrap_or(0.0);
+            let strict = precision_at_k_strict(&retrieved, &relevant, 5).unwrap_or(0.0);
+            assert!(
+                strict <= loose + 1e-12,
+                "with {n} returned: strict {strict} must not exceed loose {loose}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_report_carries_both_precisions() {
+        // So nobody has to recompute one of them from the other, which is
+        // impossible anyway without knowing how many documents came back.
+        let runs = vec![QueryRun::binary("q1", ids(&["d1"]), ["d1".to_string()])];
+        let r = summarise(&runs, 5);
+        assert_eq!(r.precision_at_k, 1.0);
+        assert_eq!(r.precision_at_k_strict, 0.2);
     }
 
     #[test]

@@ -4355,6 +4355,10 @@ fn print_retrieval_usage() {
     println!("Options:");
     println!("  --k <n>              cut-off for the @k metrics (default: 10)  [run, score]");
     println!("  --mode lexical|hybrid  which search path to measure (default: lexical)  [run]");
+    println!("  --aggregation max-passage|sum-reciprocal-rank                            [run]");
+    println!("                       how PASSAGES collapse into DOCUMENTS. Changes the scores:");
+    println!("                       we retrieve passages and the benchmark judges documents,");
+    println!("                       so a report without this rule is not reproducible.");
     println!("  --out <file.json>    save the run so `score` can re-score it        [run]");
     println!(
         "  --db <file.sqlite>   where to build the index (default: <dir>/retrieval_eval.sqlite)"
@@ -4420,10 +4424,12 @@ fn cmd_retrieval(args: &[String]) -> ExitCode {
 /// stub-auditor exists to find -- and I wrote one before checking.
 fn cmd_retrieval_run(args: &[String]) -> ExitCode {
     use ai_assistant::retrieval_eval::sqlite::{SearchPath, SqliteRetriever};
+    use ai_assistant::retrieval_eval::Aggregation;
     use ai_assistant::retrieval_eval::{load_beir_dir, run_corpus};
 
     let mut dir: Option<&String> = None;
     let mut mode = SearchPath::Lexical;
+    let mut aggregation = Aggregation::MaxPassage;
     let mut k = 10usize;
     let mut out: Option<&String> = None;
     let mut db: Option<&String> = None;
@@ -4479,6 +4485,24 @@ fn cmd_retrieval_run(args: &[String]) -> ExitCode {
                     return ExitCode::from(1);
                 }
             },
+            "--aggregation" => match args.get(i + 1).map(String::as_str) {
+                Some("max-passage") => {
+                    aggregation = Aggregation::MaxPassage;
+                    i += 1;
+                }
+                Some("sum-reciprocal-rank") => {
+                    aggregation = Aggregation::SumReciprocalRank;
+                    i += 1;
+                }
+                other => {
+                    eprintln!(
+                        "Error: --aggregation takes 'max-passage' or 'sum-reciprocal-rank', \
+                         got {:?}",
+                        other.unwrap_or("nothing")
+                    );
+                    return ExitCode::from(1);
+                }
+            },
             "--json" => as_json = true,
             "--help" | "-h" => {
                 print_retrieval_usage();
@@ -4522,7 +4546,7 @@ fn cmd_retrieval_run(args: &[String]) -> ExitCode {
         .unwrap_or_else(|| std::path::Path::new(dir).join("retrieval_eval.sqlite"));
 
     let retriever = match SqliteRetriever::index(&corpus, &db_path, mode) {
-        Ok(r) => r,
+        Ok(r) => r.with_aggregation(aggregation),
         Err(e) => {
             eprintln!("Error: {}", e);
             return ExitCode::from(1);
@@ -4592,7 +4616,16 @@ fn cmd_retrieval_run(args: &[String]) -> ExitCode {
         );
     }
     println!("  recall@{:<10} {:.4}", k, report.recall_at_k);
-    println!("  precision@{:<7} {:.4}", k, report.precision_at_k);
+    // Both precisions, the TREC one first and labelled, because that is what a
+    // paper means. Printing only ours invited a comparison that does not hold.
+    println!(
+        "  precision@{:<7} {:.4}  <- TREC/BEIR definition, denominator k",
+        k, report.precision_at_k_strict
+    );
+    println!(
+        "  precision@{:<7} {:.4}     over what came back; NOT comparable with a paper",
+        k, report.precision_at_k
+    );
     println!("  MRR               {:.4}", report.mrr);
     println!("  MAP               {:.4}", report.map);
     println!("  nDCG@{:<12} {:.4}", k, report.ndcg_at_k);
