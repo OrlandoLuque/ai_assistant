@@ -5,6 +5,72 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v246 (2026-10-08) — V370: el ancla de una mutación dejaba de coincidir cada vez que el formateador movía una línea (0.2.329)
+
+Dos veces en cuatro días: V366 y V369, las dos un `M3`, las dos por un reflow de `cargo fmt`. Y el
+impuesto cae justo sobre las especificaciones que guardan los invariantes más delicados, porque esas
+son las largas.
+
+## El arreglo
+
+`sites_of` compara con **cualquier** cantidad de espacio en blanco donde el ancla tenga uno, y
+devuelve **tramos** `(inicio, fin)` en vez de desplazamientos. Lo segundo es obligatorio por lo
+primero: con comparación flexible la longitud encontrada ya no es `len(before)`, y usar la del ancla
+cortaría el número equivocado de caracteres **del mismo fichero que está a punto de compilar**.
+
+Tres detalles que no son detalles:
+
+- **El ancla se recorta por los extremos.** Un patrón que empezara por `\s+` se comería el salto de
+  línea anterior, y al empalmar el reemplazo encima uniría dos líneas: un error de sintaxis, o sea
+  un `NOT_COMPILED`, que **no prueba nada** y parece otro problema. Recortando, la indentación
+  original nunca entra en el match y se conserva.
+- **La red de seguridad es `occurrences`.** Aflojar la comparación solo puede hacer que un ancla
+  coincida en *más* sitios, y un spec que declara cuántos espera se niega a ejecutarse si el número
+  no cuadra. Sin eso este cambio sería un mal trato; con eso, un match ensanchado se caza antes de
+  correr un solo test.
+- **CRLF deja de importar por sí solo**: un `\r\n` es espacio en blanco. `read_for_matching` (V366)
+  pasa a ser cinturón y tirantes en vez de la única defensa, y se queda: dos razones independientes
+  para acertar con los saltos de línea es el número correcto en un script que reescribe ficheros en
+  sitio.
+
+Y **la opción (d) que había propuesto —exigir `cargo fmt --check` antes del dry-run— deja de hacer
+falta**: si el reflow ya no rompe nada, no hay que ordenar el formateo. Un cambio en vez de dos.
+
+## Los dos tests nuevos, y por qué son dos
+
+```
+ok  1 site(s) (wanted 1) -- a needle cargo fmt reflowed across lines still matches
+ok  0 site(s) (wanted 0) -- loosening whitespace does not invent a match
+```
+
+El primero es la razón del cambio. El segundo es su **límite**: el espacio puede variar, los
+**tokens** no. Sin él, «coincide más flojo» podría significar en silencio «coincide con otra cosa»,
+y lo único entre eso y un veredicto equivocado sería el conteo de ocurrencias.
+
+Comprobado que discrimina revirtiendo la tolerancia: falla **solo** el caso del reflow, y los otros
+cinco siguen verdes. Un test que pasa con el fallo puesto y sin él se lee como cobertura — lección
+de V366, aplicada esta vez antes de dar nada por bueno.
+
+## Prior art, porque la pregunta era buena
+
+**`cargo-mutants`** es la herramienta estándar de mutación para Rust: parsea el **AST** y genera las
+mutaciones por tipo y operador, sin configuración y **sin anclas de texto** — el problema del reflow
+no existe allí. No la sustituye: genera mutaciones *mecánicas* (`==`↔`!=`, `&&`↔`||`, borrar brazos
+de `match`, devolver `Default`) y no puede expresar «este invariante importa y este es el cambio
+mínimo que lo rompe», que es lo que hacen nuestras especificaciones declaradas **con su razón
+escrita**. Son dos trabajos distintos.
+
+Encolado como **N139**, y con lo que hay que medir antes de nada: cada mutante es una ejecución
+completa de tests, así que a lo bruto es inviable con 8981 tests. La opción que lo hace práctico es
+**`--in-diff`** —mutar solo lo que toca el diff—, que encaja exactamente con el «un commit por
+cambio coherente» de este proyecto.
+
+## Verificación
+
+`--self-test` con **12 casos**, incluidos los dos nuevos; **23 especificaciones de mutación** siguen
+coincidiendo con su conteo de ocurrencias exacto (`--all --dry-run`), que es la comprobación de que
+aflojar no ensanchó ningún match real.
+
 ## [Unreleased] - v245 (2026-10-05) — V369: N136 y N138, los dos motivos por los que un número nuestro no se podía poner al lado de uno publicado (0.2.328)
 
 Antes de generar una sola cifra sobre el corpus público, porque después habría que re-medirla.

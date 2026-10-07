@@ -72,6 +72,7 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import re
 import signal
 import subprocess
 import sys
@@ -222,14 +223,43 @@ def run_tests(mutation: Mutation) -> tuple[bool, list[str], str]:
     return compiled, failing, out
 
 
-def sites_of(text: str, needle: str) -> list[int]:
-    out, start = [], 0
-    while True:
-        found = text.find(needle, start)
-        if found < 0:
-            return out
-        out.append(found)
-        start = found + 1
+def needle_regex(needle: str) -> re.Pattern[str]:
+    r"""A pattern matching `needle` with **any** run of whitespace where it has one.
+
+    Why, measured: a spec's `before` is coupled to the formatter. `cargo fmt`
+    reflowing one line turns a mutation into `NOT_APPLIED`, which tests nothing —
+    and that happened **twice in four days** (V366 and V369, both a multi-line
+    anchor broken by a reflow). Re-anchoring by hand each time is a tax on exactly
+    the specs that guard the trickiest invariants, because those are the long ones.
+
+    Leading and trailing whitespace are **stripped**, so the pattern never consumes
+    the indentation before the match. That matters: a pattern starting with `\s+`
+    would eat the preceding newline, and splicing the replacement over it would
+    join two lines and produce a syntax error — a `NOT_COMPILED`, which proves
+    nothing and looks like a different problem.
+
+    This also makes CRLF irrelevant on its own (a `\r\n` is just whitespace), so
+    `read_for_matching` is now belt and braces rather than the only defence. Kept
+    anyway: two independent reasons to be right about newlines is the correct
+    number for a file this script rewrites in place.
+
+    **The safety net is `occurrences`.** Loosening the match can only ever make a
+    needle match in MORE places, and a spec that says how many sites it expects
+    refuses to run when the count disagrees. Without that this would be a bad
+    trade; with it, a widened match is caught before a single test runs.
+    """
+    parts = re.split(r"\s+", needle.strip())
+    return re.compile(r"\s+".join(re.escape(p) for p in parts))
+
+
+def sites_of(text: str, needle: str) -> list[tuple[int, int]]:
+    """`(start, end)` of every match. Spans, not offsets.
+
+    The caller splices `after` over `text[start:end]`, and with whitespace-tolerant
+    matching the matched length is no longer `len(needle)` — using the needle's
+    length would cut the wrong number of characters and corrupt the file.
+    """
+    return [(m.start(), m.end()) for m in needle_regex(needle).finditer(text)]
 
 
 def toml_escape(value: str) -> str:
@@ -296,14 +326,21 @@ def apply_one(mutation: Mutation, verbose: bool) -> list[tuple[str, str, str]]:
         ]
 
     results: list[tuple[str, str, str]] = []
-    for index, offset in enumerate(sites, start=1):
+    for index, (start, end) in enumerate(sites, start=1):
         # One site per run. Mutating every site at once asks "does at least one
         # of these have a test?", which passes as soon as the easiest one is
         # covered -- and the uncovered site is always on the branch nobody
         # thought about.
         label = mutation.id if len(sites) == 1 else f"{mutation.id}[{index}/{len(sites)}]"
-        line_no = text.count("\n", 0, offset) + 1
-        mutated = text[:offset] + mutation.after + text[offset + len(mutation.before):]
+        line_no = text.count("\n", 0, start) + 1
+        # Splice over the MATCHED span, not `len(before)`: with whitespace-tolerant
+        # matching those differ, and using the needle's length would cut the wrong
+        # number of characters out of the very file it is about to compile.
+        #
+        # `after.strip()` for the same reason the pattern strips: the match starts
+        # at the first non-space character, so the original indentation is still
+        # there and the replacement must not bring its own.
+        mutated = text[:start] + mutation.after.strip() + text[end:]
         mutation.file.write_text(mutated, encoding="utf-8", newline="\n")
         try:
             compiled, failing, out = run_tests(mutation)
@@ -494,6 +531,26 @@ def self_test() -> int:
         ("the same needle in an LF file", b"one\ntwo\nthree\n", "one\ntwo", 1),
         ("a single-line needle is unaffected", b"one\r\ntwo\r\n", "two", 1),
         ("a needle that is genuinely absent stays absent", b"one\r\ntwo\r\n", "one\nthree", 0),
+        # THE case this whole change exists for. A spec written against
+        # `if x == 0 && y {` on one line, and `cargo fmt` has since split it over
+        # three. Exact matching returns zero sites and reports NOT_APPLIED, which
+        # tests nothing and reads as "the code moved".
+        (
+            "a needle cargo fmt reflowed across lines still matches",
+            b"    if x == 0\n        && y\n    {\n        go();\n    }\n",
+            "if x == 0 && y {",
+            1,
+        ),
+        # And the limit of the tolerance: whitespace may vary, TOKENS may not.
+        # Without this, "it matches more loosely" could quietly mean "it matches
+        # something else", and the only thing between that and a wrong verdict
+        # would be the occurrence count.
+        (
+            "loosening whitespace does not invent a match",
+            b"if x == 0 {\n",
+            "if x == 1 {",
+            0,
+        ),
     ]
     for label, raw, needle, want in crlf_cases:
         got = len(sites_of(read_for_matching(raw), needle))
