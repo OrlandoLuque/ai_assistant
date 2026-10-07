@@ -152,6 +152,18 @@ Entra aquí, como mínimo:
   público un repo o una página.
 - **Terceros y datos**: CLA, DPIA, textos de privacidad, condiciones de uso, cualquier cosa
   que afirme algo sobre datos personales o sobre derechos de otros.
+- **NUNCA metas en el repositorio material de terceros.** Norma estricta del autor
+  (2026-10-08), sin excepciones y sin pedir permiso para saltársela: corpus de evaluación
+  (NFCorpus, TREC-COVID, MLDR, MIRACL, MessIRve…), conjuntos de datos, pesos de modelos,
+  GGUF, fuentes tipográficas, iconos, fragmentos de código ajeno. **Comitearlos es
+  redistribuirlos**, cada uno tiene su licencia y este repositorio es público.
+  - Lo que sí se hace: **descargar cuando se necesiten** a una caché fuera del repo, y
+    poder **limpiarla con comodidad** (`ai_cli retrieval fetch --list` / `--remove`).
+  - El registro de cada fuente lleva su **licencia escrita al lado**, para que nadie tenga
+    que buscarla, y `.gitignore` no es la salvaguarda: la salvaguarda es no descargar nunca
+    dentro del árbol de trabajo.
+  - Esto se aplica también a lo que «solo es para una prueba»: una prueba que necesita un
+    corpus lo descarga, no lo trae comiteado.
 - **Afirmaciones legales en documentación**: qué licencia aplica, qué se puede o no hacer con
   el código, si algo se distribuyó o no. Si una frase de este tipo está desfasada, **dilo y
   propón la corrección**; corregir un hecho verificable (con la evidencia delante) es

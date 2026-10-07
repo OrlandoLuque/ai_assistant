@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.329"
+version = "0.2.330"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -217,6 +217,13 @@ full = [
     # V261: adding it put the subsystem under `-D warnings` for the first time
     # and immediately exposed a validator that approved everything.
     "self-correction",
+    # Anadida en V371: la feature existia como stub declarado y SIN UN SOLO
+    # consumidor -- nada en src/ usaba cfg(feature = "zip"). Su primer uso real
+    # es `ai_cli retrieval fetch`, que desempaqueta un corpus publico de
+    # evaluacion, y ai_cli se construye con `full`. Coste: zip 2 con
+    # default-features = false y solo "deflate", que apoya en flate2, que ya
+    # estaba y no es opcional.
+    "zip",
 ]
 
 # Binary storage: bincode + gzip for internal data (faster, smaller than JSON)

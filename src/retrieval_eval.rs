@@ -526,6 +526,371 @@ impl Aggregation {
 }
 
 // ---------------------------------------------------------------------------
+// Fetching a public corpus, on demand, into a cache OUTSIDE the repository
+// ---------------------------------------------------------------------------
+
+/// Downloading a judged corpus when it is needed, and deleting it when it is not.
+///
+/// # Nothing here ever writes into the repository
+///
+/// **Strict rule, no exceptions:** third-party material is never committed.
+/// Committing a corpus *is* redistributing it, each one carries its own licence,
+/// and this repository is public. So the corpus is downloaded to a cache under
+/// the user's data directory, and `.gitignore` is **not** the safeguard — not
+/// downloading into the tree is.
+///
+/// The other half of the rule is that cleanup has to be comfortable, because a
+/// corpus nobody can find is a corpus nobody deletes: [`installed`] reports what
+/// is on disk and what it costs, and [`remove`] deletes one.
+///
+/// # Explicit, never automatic
+///
+/// Fetching is a command the user runs, not something `run_corpus` triggers when
+/// a directory is missing. Two reasons and both matter: a silent download of
+/// someone else's data is a decision the user should make, and **CI must never
+/// fetch** — a network dependency in CI is flaky *and* a redistribution question
+/// nobody reviewed. No test in this module touches the network; the ones that
+/// cover unpacking build their own archive on disk.
+#[cfg(feature = "zip")]
+pub mod fetch {
+    use std::fs;
+    use std::io::{Read, Write};
+    use std::path::{Path, PathBuf};
+
+    /// Where a public corpus comes from, and everything needed to decide whether
+    /// to use it.
+    ///
+    /// The fields that look like trivia are the ones that cost a night to learn:
+    /// `avg_doc_words` decides whether the corpus can answer a question about
+    /// passage-to-document aggregation at all, and `licence` is here so nobody has
+    /// to go looking for it before deciding what a use is allowed to be.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct CorpusSource {
+        /// Short name, and the directory it unpacks into.
+        pub name: &'static str,
+        /// Where the archive lives.
+        pub url: &'static str,
+        /// Licence **as published upstream**. Written down rather than looked up,
+        /// because a use decision made without it is a guess.
+        pub licence: &'static str,
+        /// Compressed size in bytes, for a sanity check after download and so the
+        /// user knows what they are about to pull.
+        pub archive_bytes: u64,
+        /// Documents in the collection.
+        pub docs: usize,
+        /// Queries in the test split.
+        pub queries: usize,
+        /// Mean document length in **words**, as published.
+        ///
+        /// Compare against `sqlite::TARGET_CHUNK_TOKENS`: a corpus whose documents
+        /// are shorter than one chunk **cannot** discriminate between
+        /// passage-to-document aggregation rules, because every document is one
+        /// passage and all the rules collapse to the same answer. Measured the
+        /// hard way on a four-document toy corpus that reported both rules as
+        /// identical and proved nothing.
+        pub avg_doc_words: usize,
+        /// One line on what this corpus is for.
+        pub note: &'static str,
+    }
+
+    impl CorpusSource {
+        /// Whether documents are long enough to split into several passages, and
+        /// therefore whether this corpus can tell two aggregation rules apart.
+        ///
+        /// A words-to-tokens ratio of roughly 0.75 words per token is the usual
+        /// English rule of thumb, so the comparison is deliberately generous: this
+        /// answers "could it possibly chunk", and a `false` is a solid no.
+        pub fn can_discriminate_aggregation(&self) -> bool {
+            self.avg_doc_words > super::sqlite::TARGET_CHUNK_TOKENS
+        }
+    }
+
+    /// The corpora this crate knows how to fetch.
+    ///
+    /// BEIR's own distribution, which ships exactly the layout
+    /// [`super::load_beir_dir`] reads, so there is no format conversion step to get
+    /// wrong. Verified reachable on 2026-10-07.
+    pub const KNOWN: &[CorpusSource] = &[
+        CorpusSource {
+            name: "nfcorpus",
+            url: "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/nfcorpus.zip",
+            licence: "see BEIR (CC BY-SA 4.0 for the BEIR packaging; NFCorpus is from Boteva et al. 2016)",
+            archive_bytes: 2_448_432,
+            docs: 3_633,
+            queries: 323,
+            avg_doc_words: 232,
+            note: "Smallest practical BEIR set and the most queries per megabyte: 323 judged \
+                   queries in 2.3 MiB. Start here to validate the instrument. Documents are \
+                   SHORTER than one chunk, so it cannot discriminate aggregation rules.",
+        },
+        CorpusSource {
+            name: "trec-covid",
+            url: "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/trec-covid.zip",
+            licence: "see BEIR; TREC-COVID is built on CORD-19 (Wang et al. 2020)",
+            archive_bytes: 0,
+            docs: 171_332,
+            queries: 50,
+            avg_doc_words: 161,
+            note: "171k documents for only 50 queries -- a lot of indexing for a thin \
+                   statistical signal. Registered for completeness, not recommended first.",
+        },
+    ];
+
+    /// Look a corpus up by name.
+    pub fn source(name: &str) -> Option<&'static CorpusSource> {
+        KNOWN.iter().find(|s| s.name == name)
+    }
+
+    /// Why a fetch failed.
+    #[derive(Debug)]
+    pub enum FetchError {
+        /// No corpus of that name is registered.
+        Unknown(String),
+        /// The download failed or the server answered something unusable.
+        Download { url: String, reason: String },
+        /// The archive was not the size the registry expects.
+        ///
+        /// Not pedantry: a truncated download unpacks into a corpus that is
+        /// *partly* there, and a partial corpus produces a believable score from
+        /// missing documents.
+        WrongSize { expected: u64, got: u64 },
+        /// The archive could not be opened or a member could not be written.
+        Unpack(String),
+        /// A member's path escapes the destination directory.
+        ///
+        /// A zip may contain `../../etc/passwd`. This is refused rather than
+        /// sanitised, because an archive that tries it is not an archive we want
+        /// half of.
+        UnsafePath(String),
+        /// The archive unpacked but does not contain the three files a BEIR corpus
+        /// needs, so nothing downstream could read it.
+        NotBeirLayout(String),
+        /// A filesystem operation failed.
+        Io(String),
+    }
+
+    impl std::fmt::Display for FetchError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                Self::Unknown(n) => {
+                    let names: Vec<&str> = KNOWN.iter().map(|s| s.name).collect();
+                    write!(f, "unknown corpus {n:?}; known: {}", names.join(", "))
+                }
+                Self::Download { url, reason } => write!(f, "cannot download {url}: {reason}"),
+                Self::WrongSize { expected, got } => write!(
+                    f,
+                    "archive is {got} bytes, expected {expected}. A truncated download \
+                     unpacks into a corpus that is only partly there, and a partial corpus \
+                     produces a believable score from missing documents"
+                ),
+                Self::Unpack(e) => write!(f, "cannot unpack: {e}"),
+                Self::UnsafePath(p) => write!(
+                    f,
+                    "archive member {p:?} escapes the destination directory; refusing the \
+                     whole archive"
+                ),
+                Self::NotBeirLayout(what) => write!(
+                    f,
+                    "unpacked, but {what} -- nothing downstream could read this"
+                ),
+                Self::Io(e) => write!(f, "{e}"),
+            }
+        }
+    }
+
+    impl std::error::Error for FetchError {}
+
+    /// Default cache directory, **outside** the repository.
+    ///
+    /// Under the OS data directory, falling back to the temp directory, so a fetch
+    /// never has a reason to write next to the source tree.
+    pub fn default_cache_dir() -> PathBuf {
+        let base = std::env::var_os("LOCALAPPDATA")
+            .or_else(|| std::env::var_os("XDG_DATA_HOME"))
+            .or_else(|| std::env::var_os("HOME"))
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        base.join("ai_assistant").join("corpora")
+    }
+
+    /// Download and unpack `source` into `cache_dir/<name>`, returning that path.
+    ///
+    /// Idempotent: if the three BEIR files are already there, nothing is
+    /// downloaded. That is what makes it safe to put in a script.
+    pub fn fetch(source: &CorpusSource, cache_dir: &Path) -> Result<PathBuf, FetchError> {
+        let dest = cache_dir.join(source.name);
+        if looks_like_beir(&dest).is_ok() {
+            return Ok(dest);
+        }
+        fs::create_dir_all(&dest).map_err(|e| FetchError::Io(e.to_string()))?;
+
+        let bytes = download(source.url)?;
+        // Checked before unpacking, not after: a truncated archive should never
+        // get as far as producing files somebody might then measure.
+        if source.archive_bytes != 0 && bytes.len() as u64 != source.archive_bytes {
+            return Err(FetchError::WrongSize {
+                expected: source.archive_bytes,
+                got: bytes.len() as u64,
+            });
+        }
+        unpack_flat(&bytes, &dest)?;
+        looks_like_beir(&dest).map_err(FetchError::NotBeirLayout)?;
+        Ok(dest)
+    }
+
+    fn download(url: &str) -> Result<Vec<u8>, FetchError> {
+        let resp = ureq::get(url)
+            .timeout(std::time::Duration::from_secs(600))
+            .call()
+            .map_err(|e| FetchError::Download {
+                url: url.to_string(),
+                reason: e.to_string(),
+            })?;
+        let mut buf = Vec::new();
+        resp.into_reader()
+            .read_to_end(&mut buf)
+            .map_err(|e| FetchError::Download {
+                url: url.to_string(),
+                reason: e.to_string(),
+            })?;
+        Ok(buf)
+    }
+
+    /// Unpack, flattening the archive's own top-level directory.
+    ///
+    /// BEIR's zips wrap everything in `<name>/`, so unpacking verbatim would give
+    /// `cache/nfcorpus/nfcorpus/corpus.jsonl` and the loader would not find it.
+    /// Flattening one level is the fix, and it is a *decision*: an archive with
+    /// two top-level directories would lose that distinction, which is why the
+    /// layout is verified afterwards instead of assumed.
+    fn unpack_flat(archive: &[u8], dest: &Path) -> Result<(), FetchError> {
+        let reader = std::io::Cursor::new(archive);
+        let mut zip =
+            zip::ZipArchive::new(reader).map_err(|e| FetchError::Unpack(e.to_string()))?;
+        for i in 0..zip.len() {
+            let mut member = zip
+                .by_index(i)
+                .map_err(|e| FetchError::Unpack(e.to_string()))?;
+            // `enclosed_name` is the zip-slip guard: it returns None for a member
+            // whose path escapes the destination (`../../etc/passwd`). Refusing
+            // beats sanitising -- an archive that tries it is not one we want half
+            // of.
+            let raw = member
+                .enclosed_name()
+                .ok_or_else(|| FetchError::UnsafePath(member.name().to_string()))?;
+            let mut parts = raw.components();
+            parts.next(); // drop the archive's own top-level directory
+            let relative: PathBuf = parts.collect();
+            if relative.as_os_str().is_empty() {
+                continue;
+            }
+            let out = dest.join(&relative);
+            if member.is_dir() {
+                fs::create_dir_all(&out).map_err(|e| FetchError::Io(e.to_string()))?;
+                continue;
+            }
+            if let Some(parent) = out.parent() {
+                fs::create_dir_all(parent).map_err(|e| FetchError::Io(e.to_string()))?;
+            }
+            let mut f = fs::File::create(&out).map_err(|e| FetchError::Io(e.to_string()))?;
+            let mut buf = Vec::new();
+            member
+                .read_to_end(&mut buf)
+                .map_err(|e| FetchError::Unpack(e.to_string()))?;
+            f.write_all(&buf)
+                .map_err(|e| FetchError::Io(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    /// Unpack an in-memory archive, for the tests that must not touch the network.
+    ///
+    /// A thin `pub(crate)` door onto [`unpack_flat`] rather than making that
+    /// public: unpacking an arbitrary archive into an arbitrary directory is not
+    /// something a library consumer should be handed, and the zip-slip guard and
+    /// the one-level flattening are only correct *as part of* a fetch.
+    #[doc(hidden)]
+    pub fn unpack_for_test(archive: &[u8], dest: &Path) -> Result<(), FetchError> {
+        unpack_flat(archive, dest)
+    }
+
+    /// Check a directory is a readable BEIR corpus, for the same tests.
+    #[doc(hidden)]
+    pub fn verify_layout_for_test(dir: &Path) -> Result<(), String> {
+        looks_like_beir(dir)
+    }
+
+    /// The three files a BEIR corpus needs, or a sentence saying which is missing.
+    fn looks_like_beir(dir: &Path) -> Result<(), String> {
+        if !dir.join("corpus.jsonl").is_file() {
+            return Err("there is no corpus.jsonl".to_string());
+        }
+        if !dir.join("queries.jsonl").is_file() {
+            return Err("there is no queries.jsonl".to_string());
+        }
+        let splits = ["test.tsv", "dev.tsv", "train.tsv"];
+        if !splits.iter().any(|s| dir.join("qrels").join(s).is_file()) {
+            return Err("there is no qrels/test.tsv, dev.tsv or train.tsv".to_string());
+        }
+        Ok(())
+    }
+
+    /// What is in the cache and what it costs: `(name, bytes on disk)`.
+    ///
+    /// Exists so cleanup is possible. A corpus nobody can find is a corpus nobody
+    /// deletes, and 171k documents do not announce themselves.
+    pub fn installed(cache_dir: &Path) -> Vec<(String, u64)> {
+        let mut out = Vec::new();
+        let Ok(entries) = fs::read_dir(cache_dir) else {
+            return out;
+        };
+        for e in entries.flatten() {
+            if e.path().is_dir() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                out.push((name, dir_size(&e.path())));
+            }
+        }
+        out.sort();
+        out
+    }
+
+    fn dir_size(dir: &Path) -> u64 {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return 0;
+        };
+        entries
+            .flatten()
+            .map(|e| {
+                let p = e.path();
+                if p.is_dir() {
+                    dir_size(&p)
+                } else {
+                    e.metadata().map(|m| m.len()).unwrap_or(0)
+                }
+            })
+            .sum()
+    }
+
+    /// Delete a cached corpus, returning how many bytes went.
+    ///
+    /// Refuses a name with a path separator in it. The caller passes a corpus name,
+    /// and a function that deletes a directory tree should never be reachable with
+    /// `../..` in its argument.
+    pub fn remove(name: &str, cache_dir: &Path) -> Result<u64, FetchError> {
+        if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
+            return Err(FetchError::UnsafePath(name.to_string()));
+        }
+        let dir = cache_dir.join(name);
+        if !dir.is_dir() {
+            return Err(FetchError::Unknown(name.to_string()));
+        }
+        let size = dir_size(&dir);
+        fs::remove_dir_all(&dir).map_err(|e| FetchError::Io(e.to_string()))?;
+        Ok(size)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // The crate's own lexical retriever, as a `Retriever`
 // ---------------------------------------------------------------------------
 
@@ -1279,6 +1644,194 @@ mod tests {
         assert_eq!(report.recall_at_k, 0.0);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(feature = "zip")]
+    mod fetching {
+        use super::super::fetch::{installed, remove, source, FetchError, KNOWN};
+        use std::io::Write;
+        use std::path::PathBuf;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        fn tmp(tag: &str) -> PathBuf {
+            static N: AtomicUsize = AtomicUsize::new(0);
+            let d = std::env::temp_dir().join(format!(
+                "ai_fetch_{}_{}_{}",
+                tag,
+                std::process::id(),
+                N.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&d).expect("temp dir");
+            d
+        }
+
+        #[test]
+        fn the_registry_says_which_corpora_can_answer_the_aggregation_question() {
+            // The field that cost a night to learn. NFCorpus averages 232 words,
+            // under one ~400-token chunk, so every document is one passage and all
+            // the aggregation rules collapse to the same answer. Registering that
+            // as DATA means the next person does not have to rediscover it by
+            // running a measurement that proves nothing.
+            let nf = source("nfcorpus").expect("registered");
+            assert!(
+                !nf.can_discriminate_aggregation(),
+                "NFCorpus documents are shorter than one chunk"
+            );
+            assert!(
+                !KNOWN.iter().any(|s| s.can_discriminate_aggregation()),
+                "no registered corpus has long documents yet -- that is exactly what \
+                 N138 is still waiting for, and this test is how it stops being a \
+                 surprise"
+            );
+        }
+
+        #[test]
+        fn every_registered_source_carries_its_licence_and_a_url() {
+            // A licence nobody wrote down is a use decision made by guessing, and
+            // this is third-party material in a public project.
+            for s in KNOWN {
+                assert!(!s.licence.is_empty(), "{} has no licence", s.name);
+                assert!(
+                    s.url.starts_with("https://"),
+                    "{} must be fetched over TLS, got {:?}",
+                    s.name,
+                    s.url
+                );
+                assert!(!s.note.is_empty(), "{} has no note", s.name);
+            }
+        }
+
+        #[test]
+        fn an_unknown_name_lists_the_known_ones() {
+            // The error a typo produces should answer the question it raises.
+            let e = remove("does-not-exist", &tmp("unknown")).expect_err("must fail");
+            assert!(matches!(e, FetchError::Unknown(_)));
+            assert!(e.to_string().contains("nfcorpus"), "{e}");
+        }
+
+        #[test]
+        fn remove_refuses_a_name_that_is_a_path() {
+            // `remove` deletes a directory tree. It must be unreachable with `..`
+            // in its argument, whatever the caller thought it was passing.
+            for bad in ["../..", "a/b", "a\\b", ".."] {
+                let e = remove(bad, &tmp("escape")).expect_err("must refuse");
+                assert!(
+                    matches!(e, FetchError::UnsafePath(_)),
+                    "{bad:?} should be refused as a path, got {e}"
+                );
+            }
+        }
+
+        #[test]
+        fn installed_reports_sizes_and_remove_reclaims_them() {
+            // The cleanup half of the strict no-vendoring rule: a corpus nobody can
+            // find is a corpus nobody deletes.
+            let cache = tmp("cleanup");
+            let corpus = cache.join("fake");
+            std::fs::create_dir_all(corpus.join("qrels")).expect("dirs");
+            std::fs::write(corpus.join("corpus.jsonl"), b"0123456789").expect("write");
+            std::fs::write(corpus.join("qrels").join("test.tsv"), b"01234").expect("write");
+
+            let listed = installed(&cache);
+            assert_eq!(listed.len(), 1);
+            assert_eq!(listed[0].0, "fake");
+            assert_eq!(
+                listed[0].1, 15,
+                "must count nested files, not just the top level"
+            );
+
+            let freed = remove("fake", &cache).expect("removes");
+            assert_eq!(freed, 15);
+            assert!(installed(&cache).is_empty());
+            let _ = std::fs::remove_dir_all(&cache);
+        }
+
+        /// A zip built here, so the unpack tests never touch the network.
+        fn build_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
+            let mut buf = Vec::new();
+            {
+                let mut w = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+                let opts: zip::write::FileOptions<'_, ()> = zip::write::FileOptions::default();
+                for (name, body) in entries {
+                    w.start_file(*name, opts).expect("start");
+                    w.write_all(body).expect("write");
+                }
+                w.finish().expect("finish");
+            }
+            buf
+        }
+
+        #[test]
+        fn unpacking_flattens_the_archives_own_top_level_directory() {
+            // BEIR wraps everything in `<name>/`, so unpacking verbatim would give
+            // `cache/nfcorpus/nfcorpus/corpus.jsonl` and the loader would not find
+            // it -- a corpus that downloaded "fine" and cannot be read.
+            let zipped = build_zip(&[
+                (
+                    "nfcorpus/corpus.jsonl",
+                    b"{\"_id\": \"d1\", \"text\": \"t\"}",
+                ),
+                (
+                    "nfcorpus/queries.jsonl",
+                    b"{\"_id\": \"q1\", \"text\": \"t\"}",
+                ),
+                ("nfcorpus/qrels/test.tsv", b"q1\td1\t1\n"),
+            ]);
+            let dest = tmp("flatten");
+            super::super::fetch::unpack_for_test(&zipped, &dest).expect("unpacks");
+            assert!(dest.join("corpus.jsonl").is_file(), "flattened one level");
+            assert!(dest.join("qrels").join("test.tsv").is_file());
+            assert!(
+                !dest.join("nfcorpus").exists(),
+                "the archive's own directory must not survive"
+            );
+
+            // And the whole point: the existing loader can now read it.
+            let c = super::super::load_beir_dir(&dest).expect("loads");
+            assert_eq!(c.docs.len(), 1);
+            let _ = std::fs::remove_dir_all(&dest);
+        }
+
+        #[test]
+        fn a_member_escaping_the_destination_is_refused_whole() {
+            // Zip-slip. `../../pwned` must not be written, and the archive is
+            // refused rather than sanitised: one that tries this is not one we
+            // want half of.
+            //
+            // Note the doubled prefix: the first component is dropped as the
+            // archive's own top-level directory, so the escape has to survive
+            // that to be a real test of the guard rather than of the flattening.
+            let zipped = build_zip(&[("x/../../pwned", b"nope")]);
+            let dest = tmp("slip");
+            let e = super::super::fetch::unpack_for_test(&zipped, &dest).expect_err("must refuse");
+            assert!(
+                matches!(e, FetchError::UnsafePath(_)),
+                "expected UnsafePath, got {e}"
+            );
+            assert!(
+                !dest
+                    .parent()
+                    .map(|p| p.join("pwned").exists())
+                    .unwrap_or(false),
+                "nothing may be written outside the destination"
+            );
+            let _ = std::fs::remove_dir_all(&dest);
+        }
+
+        #[test]
+        fn an_archive_without_the_three_files_is_reported_not_accepted() {
+            // Unpacking successfully is not the same as having a corpus. Without
+            // this, a changed upstream layout would produce an empty directory and
+            // the failure would surface later as "corpus.jsonl: not found" from a
+            // completely different part of the program.
+            let zipped = build_zip(&[("x/README.md", b"nothing useful")]);
+            let dest = tmp("layout");
+            super::super::fetch::unpack_for_test(&zipped, &dest).expect("unpacks");
+            let e = super::super::fetch::verify_layout_for_test(&dest)
+                .expect_err("must report the missing file");
+            assert!(e.contains("corpus.jsonl"), "{e}");
+            let _ = std::fs::remove_dir_all(&dest);
+        }
     }
 
     #[test]

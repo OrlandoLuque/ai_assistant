@@ -4346,8 +4346,11 @@ fn cmd_benchmark_calibrate(args: &[String]) -> ExitCode {
 // =============================================================================
 
 fn print_retrieval_usage() {
-    println!("Usage: ai_cli retrieval <score|corpus|run> ... [options]\n");
+    println!("Usage: ai_cli retrieval <fetch|corpus|run|score> ... [options]\n");
     println!("Subcommands:");
+    println!("  fetch [name]         download a public corpus on demand; no name lists them");
+    println!("  fetch --list         what is cached and what it costs on disk");
+    println!("  fetch --remove <n>   delete a cached corpus");
     println!("  corpus <dir>         inspect a BEIR-layout corpus BEFORE measuring with it");
     println!("  run <dir>            index it with our own retriever, run every query, score");
     println!("  score <file.json>    re-score a saved run, at another k, without re-indexing");
@@ -4363,7 +4366,12 @@ fn print_retrieval_usage() {
     println!(
         "  --db <file.sqlite>   where to build the index (default: <dir>/retrieval_eval.sqlite)"
     );
+    println!("  --cache <dir>        where corpora live (default: under the user data dir)");
     println!("  --json               machine-readable output");
+    println!();
+    println!("A downloaded corpus is NEVER written into the repository: committing one is");
+    println!("redistributing it, each carries its own licence, and this repo is public.");
+    println!("Fetching is explicit — `run` never downloads, and CI never reaches the network.");
     println!();
     println!("File format:");
     println!("  {{\"queries\": [");
@@ -4403,12 +4411,171 @@ fn cmd_retrieval(args: &[String]) -> ExitCode {
         "score" => cmd_retrieval_score(&args[1..]),
         "corpus" => cmd_retrieval_corpus(&args[1..]),
         "run" => cmd_retrieval_run(&args[1..]),
+        "fetch" => cmd_retrieval_fetch(&args[1..]),
         other => {
             eprintln!("Error: unknown retrieval subcommand '{}'\n", other);
             print_retrieval_usage();
             ExitCode::from(1)
         }
     }
+}
+
+/// Download a public corpus on demand, list what is cached, or delete one.
+///
+/// **Never writes into the repository.** Third-party material is not committed
+/// here — committing a corpus is redistributing it, each carries its own licence,
+/// and this repository is public. So it lands in a cache under the user's data
+/// directory, and the other half of that rule is that cleanup has to be easy:
+/// `--list` shows what is installed and what it costs, `--remove` deletes it.
+///
+/// Explicit on purpose: `retrieval run` never triggers a download. A silent fetch
+/// of someone else's data is a decision the user should make, and CI must never
+/// reach the network.
+#[cfg(feature = "zip")]
+fn cmd_retrieval_fetch(args: &[String]) -> ExitCode {
+    use ai_assistant::retrieval_eval::fetch;
+
+    let mut name: Option<&String> = None;
+    let mut cache: Option<&String> = None;
+    let mut list = false;
+    let mut remove: Option<&String> = None;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--list" => list = true,
+            "--cache" => match args.get(i + 1) {
+                Some(p) => {
+                    cache = Some(p);
+                    i += 1;
+                }
+                None => {
+                    eprintln!("Error: --cache requires a path");
+                    return ExitCode::from(1);
+                }
+            },
+            "--remove" => match args.get(i + 1) {
+                Some(n) => {
+                    remove = Some(n);
+                    i += 1;
+                }
+                None => {
+                    eprintln!("Error: --remove requires a corpus name");
+                    return ExitCode::from(1);
+                }
+            },
+            "--help" | "-h" => {
+                print_retrieval_usage();
+                return ExitCode::SUCCESS;
+            }
+            other if other.starts_with('-') => {
+                eprintln!("Error: unknown flag '{}'\n", other);
+                print_retrieval_usage();
+                return ExitCode::from(1);
+            }
+            other => {
+                if name.is_some() {
+                    eprintln!("Error: more than one corpus name given ('{}')", other);
+                    return ExitCode::from(1);
+                }
+                name = Some(&args[i]);
+            }
+        }
+        i += 1;
+    }
+
+    let cache_dir = cache
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(fetch::default_cache_dir);
+
+    if let Some(victim) = remove {
+        return match fetch::remove(victim, &cache_dir) {
+            Ok(freed) => {
+                println!("removed '{}' — {:.1} MiB freed", victim, mib(freed));
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                ExitCode::from(1)
+            }
+        };
+    }
+
+    if list || name.is_none() {
+        println!("cache: {}", cache_dir.display());
+        let have = fetch::installed(&cache_dir);
+        if have.is_empty() {
+            println!("  (nothing downloaded)");
+        } else {
+            let total: u64 = have.iter().map(|(_, b)| *b).sum();
+            for (n, bytes) in &have {
+                println!("  {:<14} {:>8.1} MiB", n, mib(*bytes));
+            }
+            println!("  {:<14} {:>8.1} MiB total", "", mib(total));
+            println!("\nDelete one with: ai_cli retrieval fetch --remove <name>");
+        }
+
+        println!("\nAvailable to download:");
+        for s in fetch::KNOWN {
+            // The aggregation flag is printed because it is the question a corpus
+            // is usually being chosen to answer, and getting it wrong costs a
+            // whole measurement that proves nothing.
+            println!(
+                "  {:<14} {:>6} docs, {:>4} queries, ~{} words/doc{}",
+                s.name,
+                s.docs,
+                s.queries,
+                s.avg_doc_words,
+                if s.can_discriminate_aggregation() {
+                    "  [documents long enough to split into passages]"
+                } else {
+                    "  [documents SHORTER than one chunk: cannot compare aggregation rules]"
+                }
+            );
+            println!("                 licence: {}", s.licence);
+            println!("                 {}", s.note);
+        }
+        return ExitCode::SUCCESS;
+    }
+
+    let Some(name) = name else {
+        return ExitCode::SUCCESS; // unreachable: handled above
+    };
+    let Some(src) = fetch::source(name) else {
+        let names: Vec<&str> = fetch::KNOWN.iter().map(|s| s.name).collect();
+        eprintln!(
+            "Error: unknown corpus '{}'; known: {}",
+            name,
+            names.join(", ")
+        );
+        return ExitCode::from(1);
+    };
+
+    println!(
+        "Fetching '{}' ({:.1} MiB) from {}",
+        src.name,
+        mib(src.archive_bytes),
+        src.url
+    );
+    println!("  licence: {}", src.licence);
+    match fetch::fetch(src, &cache_dir) {
+        Ok(dir) => {
+            println!("ready: {}", dir.display());
+            println!("\n  ai_cli retrieval corpus {}", dir.display());
+            println!("  ai_cli retrieval run    {}", dir.display());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            ExitCode::from(1)
+        }
+    }
+}
+
+/// Bytes as MiB, so a size is readable without counting digits.
+#[cfg(feature = "zip")]
+fn mib(bytes: u64) -> f64 {
+    bytes as f64 / (1024.0 * 1024.0)
 }
 
 /// Index a judged corpus with the crate's own retriever, run every query, score it.

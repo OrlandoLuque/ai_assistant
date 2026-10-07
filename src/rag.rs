@@ -933,7 +933,10 @@ impl RagDb {
             top_k
         );
         crate::diag_trace!("[rag] search_knowledge: query={:.300}", query);
-        let search_terms = prepare_fts_query(query);
+        // No searchable terms means no results, not an error and not everything.
+        let Some(search_terms) = prepare_fts_query(query) else {
+            return Ok(Vec::new());
+        };
 
         // Join with knowledge_sources to get priority, order by priority DESC then BM25 score
         let mut stmt = self.conn.prepare(
@@ -1007,7 +1010,10 @@ impl RagDb {
             return Ok(Vec::new());
         }
 
-        let search_terms = prepare_fts_query(query);
+        // No searchable terms means no results, not an error and not everything.
+        let Some(search_terms) = prepare_fts_query(query) else {
+            return Ok(Vec::new());
+        };
 
         // Build source filter
         let placeholders: Vec<String> = sources
@@ -1122,7 +1128,10 @@ impl RagDb {
         );
         crate::diag_trace!("[rag] hybrid_search: query={:.300}", query);
         // Get BM25 results with scores
-        let search_terms = prepare_fts_query(query);
+        // No searchable terms means no results, not an error and not everything.
+        let Some(search_terms) = prepare_fts_query(query) else {
+            return Ok(Vec::new());
+        };
 
         let mut stmt = self.conn.prepare(
             "SELECT k.id, k.source, k.section, k.content, k.token_count,
@@ -1479,7 +1488,10 @@ impl RagDb {
         max_tokens: usize,
         exclude_in_context: bool,
     ) -> Result<Vec<StoredMessage>> {
-        let search_terms = prepare_fts_query(query);
+        // No searchable terms means no results, not an error and not everything.
+        let Some(search_terms) = prepare_fts_query(query) else {
+            return Ok(Vec::new());
+        };
 
         let sql = if exclude_in_context {
             "SELECT m.id, m.session_id, m.role, m.content, m.timestamp, m.token_count, m.in_context
@@ -2050,17 +2062,37 @@ pub fn suggest_chunk_boundaries_with_llm(
 }
 
 /// Prepare a search query for FTS5
-fn prepare_fts_query(query: &str) -> String {
+fn prepare_fts_query(query: &str) -> Option<String> {
+    // A HYPHEN IS A SEPARATOR, NOT A CHARACTER.
+    //
+    // It used to be kept, and that made every query containing a hyphenated word
+    // fail with a SQL error from FTS5: `anti-nutrient*` is parsed as a column
+    // filter, so the whole search returns `no such column: nutrient`. Measured on
+    // 2026-10-08 against NFCorpus, query PLAIN-16 ("Phytates in Beans:
+    // Anti-Nutrient or Anti-Cancer?"), which is the first real query set this
+    // function had ever been pointed at.
+    //
+    // The blast radius was every caller: the assistant's RAG, `ai_cli`, and the
+    // MCP knowledge tool all go through here, and "state-of-the-art", "COVID-19"
+    // and "e-mail" are not unusual things to ask about.
+    //
+    // Replacing it with a space -- rather than deleting it, which would weld
+    // "anti-nutrient" into "antinutrient" and match nothing -- yields `anti*` and
+    // `nutrient*`, which is consistent with this function's OR-everything design.
+    // Checked against SQLite directly: of the characters this filter kept, and of
+    // FTS5's operator words (`and`, `or`, `not`, `near`), **only** the hyphen
+    // breaks the query. `_` and digits are safe.
+    let spaced = query.replace('-', " ");
     // Split into words, filter short words, add wildcards for prefix matching
-    let terms: Vec<String> = query
+    let terms: Vec<String> = spaced
         .split_whitespace()
         .filter(|w| w.len() >= 2)
         .map(|w| {
             // Keep only alphanumeric characters and basic punctuation that's safe for FTS5
-            // Remove: " * ( ) : ? ! . , ; ' ` ~ @ # $ % ^ & [ ] { } < > / \ | + =
+            // Remove: " * ( ) : ? ! . , ; ' ` ~ @ # $ % ^ & [ ] { } < > / \ | + = -
             let escaped: String = w
                 .chars()
-                .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+                .filter(|c| c.is_alphanumeric() || *c == '_')
                 .collect();
             escaped.to_lowercase()
         })
@@ -2069,10 +2101,17 @@ fn prepare_fts_query(query: &str) -> String {
         .collect();
 
     if terms.is_empty() {
-        // Fallback to match anything if query is too short
-        "*".to_string()
+        // `None`, not a wildcard. The old fallback was `"*"`, meant as "match
+        // anything" -- and **`*` is not a valid FTS5 query**: it answers
+        // "unknown special query" and the search fails with a SQL error. Any
+        // input that reduces to nothing hit it: `"a"`, `"A & B"`, `"--"`.
+        //
+        // And matching everything would have been the wrong intent anyway. A
+        // search for no terms should return nothing, not the whole corpus: the
+        // caller would then build a prompt out of arbitrary documents.
+        None
     } else {
-        terms.join(" OR ")
+        Some(terms.join(" OR "))
     }
 }
 
@@ -2656,45 +2695,101 @@ Here is how to use it.
 
     #[test]
     fn test_prepare_fts_query() {
-        assert_eq!(prepare_fts_query("hello world"), "hello* OR world*");
-        assert_eq!(prepare_fts_query("a"), "*"); // Too short
-        assert_eq!(prepare_fts_query("test:query"), "testquery*");
+        assert_eq!(
+            prepare_fts_query("hello world"),
+            Some("hello* OR world*".to_string())
+        );
+        assert_eq!(prepare_fts_query("a"), None); // Too short
+        assert_eq!(
+            prepare_fts_query("test:query"),
+            Some("testquery*".to_string())
+        );
         // Test punctuation removal
-        assert_eq!(prepare_fts_query("What is a CCU?"), "what* OR is* OR ccu*");
-        assert_eq!(prepare_fts_query("Hello, world!"), "hello* OR world*");
-        assert_eq!(prepare_fts_query("test (example)"), "test* OR example*");
+        assert_eq!(
+            prepare_fts_query("What is a CCU?"),
+            Some("what* OR is* OR ccu*".to_string())
+        );
+        assert_eq!(
+            prepare_fts_query("Hello, world!"),
+            Some("hello* OR world*".to_string())
+        );
+        assert_eq!(
+            prepare_fts_query("test (example)"),
+            Some("test* OR example*".to_string())
+        );
     }
 
     #[test]
     fn test_prepare_fts_query_special_chars() {
         // Test various punctuation marks that users might include
-        assert_eq!(prepare_fts_query("What's this?"), "whats* OR this*");
-        assert_eq!(prepare_fts_query("price: $100"), "price* OR 100*");
-        assert_eq!(prepare_fts_query("test@email.com"), "testemailcom*");
-        assert_eq!(prepare_fts_query("50% discount!"), "50* OR discount*");
-        assert_eq!(prepare_fts_query("item #123"), "item* OR 123*");
-        assert_eq!(prepare_fts_query("A & B"), "*"); // Both too short after filtering
-        assert_eq!(prepare_fts_query("foo && bar"), "foo* OR bar*");
-        assert_eq!(prepare_fts_query("[test]"), "test*");
-        assert_eq!(prepare_fts_query("{value}"), "value*");
-        assert_eq!(prepare_fts_query("path/to/file"), "pathtofile*"); // slashes removed
+        assert_eq!(
+            prepare_fts_query("What's this?"),
+            Some("whats* OR this*".to_string())
+        );
+        assert_eq!(
+            prepare_fts_query("price: $100"),
+            Some("price* OR 100*".to_string())
+        );
+        assert_eq!(
+            prepare_fts_query("test@email.com"),
+            Some("testemailcom*".to_string())
+        );
+        assert_eq!(
+            prepare_fts_query("50% discount!"),
+            Some("50* OR discount*".to_string())
+        );
+        assert_eq!(
+            prepare_fts_query("item #123"),
+            Some("item* OR 123*".to_string())
+        );
+        assert_eq!(prepare_fts_query("A & B"), None); // Both too short after filtering
+        assert_eq!(
+            prepare_fts_query("foo && bar"),
+            Some("foo* OR bar*".to_string())
+        );
+        assert_eq!(prepare_fts_query("[test]"), Some("test*".to_string()));
+        assert_eq!(prepare_fts_query("{value}"), Some("value*".to_string()));
+        assert_eq!(
+            prepare_fts_query("path/to/file"),
+            Some("pathtofile*".to_string())
+        ); // slashes removed
     }
 
     #[test]
     fn test_prepare_fts_query_unicode() {
         // Unicode letters should be preserved
-        assert_eq!(prepare_fts_query("café résumé"), "café* OR résumé*");
-        assert_eq!(prepare_fts_query("日本語 テスト"), "日本語* OR テスト*");
+        assert_eq!(
+            prepare_fts_query("café résumé"),
+            Some("café* OR résumé*".to_string())
+        );
+        assert_eq!(
+            prepare_fts_query("日本語 テスト"),
+            Some("日本語* OR テスト*".to_string())
+        );
     }
 
     #[test]
     fn test_prepare_fts_query_hyphen_underscore() {
-        // Hyphens and underscores should be preserved
+        // A HYPHEN IS NOW A SEPARATOR, and this test used to assert the opposite.
+        //
+        // It pinned the defect in place: `cross-chassis*` makes FTS5 answer
+        // "no such column: chassis", so **every** query containing a hyphenated
+        // word failed with a SQL error — the assistant's RAG, `ai_cli` and the MCP
+        // knowledge tool all go through here. Found on 2026-10-08 by the first
+        // real query set this function had ever been pointed at: NFCorpus
+        // PLAIN-16, "Phytates in Beans: Anti-Nutrient or Anti-Cancer?".
+        //
+        // The underscore IS still preserved — checked against SQLite directly,
+        // `_` is safe inside an FTS5 bareword and the hyphen is the only
+        // character this filter kept that is not.
         assert_eq!(
             prepare_fts_query("cross-chassis upgrade"),
-            "cross-chassis* OR upgrade*"
+            Some("cross* OR chassis* OR upgrade*".to_string())
         );
-        assert_eq!(prepare_fts_query("user_name test"), "user_name* OR test*");
+        assert_eq!(
+            prepare_fts_query("user_name test"),
+            Some("user_name* OR test*".to_string())
+        );
     }
 
     fn create_temp_db() -> (RagDb, PathBuf) {
@@ -3980,6 +4075,61 @@ Total gastado: $175
         assert!((config.semantic_weight - 0.4).abs() < 0.01);
         assert!(!config.semantic_enabled);
         assert!((config.min_semantic_score - 0.1).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_hyphenated_query_does_not_crash_the_search() {
+        // The real query that found this, verbatim from NFCorpus (PLAIN-16). It
+        // used to make `search_knowledge` return `no such column: nutrient` --
+        // a SQL error surfacing to whoever asked a question with a hyphen in it.
+        //
+        // This asserts the SEARCH SUCCEEDS, not that the string looks right:
+        // `prepare_fts_query` is private and its output is only wrong in a way
+        // FTS5 can judge, so the only honest oracle is FTS5 itself.
+        // Own temp directory, with an atomic counter and not `line!()`: `line!()`
+        // expands where it is WRITTEN, so two tests sharing a helper got the same
+        // directory and raced. That cost a flaky test once already (V361).
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static N: AtomicUsize = AtomicUsize::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "ai_rag_hyphen_{}_{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let db = RagDb::open(&dir.join("kb.db")).expect("the database opens");
+        db.index_document(
+            "d1",
+            "Phytates in beans are an anti nutrient and anti cancer.",
+        )
+        .expect("indexes");
+
+        for query in [
+            "Phytates in Beans: Anti-Nutrient or Anti-Cancer?",
+            "state-of-the-art retrieval",
+            "COVID-19 symptoms",
+            "e-mail",
+            "--",
+        ] {
+            let got = db.search_knowledge(query, 100_000, 10);
+            assert!(
+                got.is_ok(),
+                "query {query:?} must not produce a SQL error, got {:?}",
+                got.err()
+            );
+        }
+
+        // And the hyphenated terms must still FIND the document, or the fix would
+        // have traded a crash for a silent miss.
+        let hits = db
+            .search_knowledge("Anti-Nutrient", 100_000, 10)
+            .expect("searches");
+        assert!(
+            !hits.is_empty(),
+            "splitting on the hyphen must still match the indexed text"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

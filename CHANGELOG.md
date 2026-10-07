@@ -5,6 +5,94 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v247 (2026-10-08) — V371: el primer número comparable con la literatura, y dos defectos que solo un corpus real podía encontrar (0.2.330)
+
+**nDCG@10 = 0,2979** en NFCorpus con nuestro BM25 sobre FTS5, sobre 323 consultas juzgadas. BEIR
+reporta Anserini BM25 en **0,325**. Un 8 % relativo por debajo, en el rango correcto — que es
+exactamente lo que el paso 2 de N102 venía a comprobar.
+
+## Norma estricta nueva, por decisión del autor
+
+**Nunca se mete material de terceros en el repositorio.** Sin excepciones y sin pedir permiso para
+saltárselas: corpus, conjuntos de datos, pesos de modelos, GGUF, tipografías, código ajeno.
+Comitearlo **es** redistribuirlo, cada uno lleva su licencia y este repositorio es público. Está en
+`CLAUDE.md` dentro de la PARADA OBLIGATORIA, donde se lee al empezar cada sesión, y se aplica
+también a lo que «solo es para una prueba»: una prueba que necesita un corpus lo descarga.
+
+La otra mitad de la norma, que el autor pidió explícitamente, es que **limpiar sea cómodo**:
+
+```
+ai_cli retrieval fetch            # qué hay disponible, con licencia y tamaño
+ai_cli retrieval fetch nfcorpus   # 2,3 MiB a una caché FUERA del repo
+ai_cli retrieval fetch --list     # qué está instalado y lo que cuesta en disco
+ai_cli retrieval fetch --remove nfcorpus
+```
+
+Explícito a propósito: `retrieval run` **nunca** descarga, y CI nunca toca la red. Ningún test de
+este módulo usa red — los que cubren el desempaquetado construyen su propio archivo.
+
+**Cero dependencias nuevas.** `ureq` y `flate2` ya estaban y no son opcionales; `zip` existía como
+feature **declarada y sin un solo consumidor** (nada en `src/` usaba `cfg(feature = "zip")`). Su
+primer uso real es esto, y por eso entra en `full`.
+
+## El registro lleva el dato que me costó una noche aprender
+
+`avg_doc_words`, y un `can_discriminate_aggregation()` que lo compara contra el tamaño de trozo.
+**NFCorpus promedia 232 palabras y TREC-COVID 161**, los dos por debajo de un trozo de ~400 tokens,
+así que **ninguno de los dos puede responder a N138**: cada documento es un pasaje y todas las
+reglas de agregación colapsan en la misma respuesta. Eso ahora es un dato del programa y un test,
+no una cosa que yo sepa.
+
+El corpus que **sí** sirve es **MLDR** (`Shitao/MLDR`): recuperación de documentos largos, 13
+idiomas incluido el español, **4.737 tokens de media** — unos doce trozos por documento. Queda
+anotado en N138 porque viene en parquet de HuggingFace y necesita conversión, no el zip de BEIR.
+
+## Y lo que solo aparece al apuntar el instrumento a consultas de verdad
+
+**Defecto 1, y es grande: cualquier consulta con una palabra con guion fallaba con un error de
+SQL.** `prepare_fts_query` conservaba el guion, y en FTS5 `anti-nutrient*` se interpreta como un
+filtro de columna: *«no such column: nutrient»*. Lo encontró la consulta PLAIN-16 de NFCorpus
+—«Phytates in Beans: Anti-Nutrient or Anti-Cancer?»—, la primera tanda de consultas reales a la que
+esa función se había apuntado nunca.
+
+El radio de impacto era **todos** los consumidores: el RAG del asistente, `ai_cli` y la herramienta
+MCP de conocimiento pasan por ahí, y «state-of-the-art», «COVID-19» o «e-mail» no son cosas raras
+que preguntar. Comprobado contra SQLite directamente: de los caracteres que el filtro conservaba, y
+de las palabras-operador de FTS5 (`and`, `or`, `not`, `near`), **solo el guion** rompe. El guion
+pasa a ser separador —no se borra, que soldaría «anti-nutrient» en «antinutrient» y no casaría
+nada—.
+
+**Defecto 2, preexistente e independiente, y lo encontró mi propio test:** una consulta que se
+queda sin términos caía al comodín `"*"`, y **`*` no es una consulta FTS5 válida**: SQLite contesta
+*«unknown special query»*. Lo disparaba cualquier entrada que se reduzca a nada: `"a"`, `"A & B"`,
+`"--"`. `prepare_fts_query` devuelve ahora `Option`, y sin términos los cuatro llamantes devuelven
+lista vacía. Buscar nada debe devolver nada, no el corpus entero — con lo que el llamante habría
+montado un prompt con documentos arbitrarios.
+
+## Tres tests clavaban los defectos en su sitio
+
+`prepare_fts_query("a") == "*"`, `("A & B") == "*"` y uno titulado *«hyphens and underscores should
+be preserved»* que afirmaba exactamente el comportamiento roto. **Corregidos diciendo por qué
+cambian**, no borrados: un test que fija un defecto es peor que no tenerlo, porque parece
+protección.
+
+## Verificación
+
+- **8990 tests, 0 fallidos** (+9); `clippy --all-targets -D warnings` limpio.
+- **23 especificaciones de mutación** coinciden; puertas de duplicados y de checkers en verde.
+- El guardián de **zip-slip** (`enclosed_name`) tiene su test con `x/../../pwned`, y solo puede
+  pasar si el guardián dispara: `UnsafePath` lo produce **únicamente** esa rama.
+- El bucle entero ejecutado de punta a punta contra el corpus descargado: 3.633 documentos
+  indexados, 3.237 consultas corridas, **2.914 descartadas por no estar juzgadas** — que es lo que
+  `retrieval corpus` avisa antes de medir, y la razón de que ese comando exista.
+
+## Lo que queda de N102
+
+Las ~30 consultas propias (paso 5) y la comparación de recuperadores (paso 6, bloqueada por N105).
+Y una ineficiencia que la medición destapó: se corren 3.237 consultas para puntuar 323, porque BEIR
+mete todas las particiones en un `queries.jsonl`. No cambia ningún número, pero multiplica por diez
+el tiempo — anotado.
+
 ## [Unreleased] - v246 (2026-10-08) — V370: el ancla de una mutación dejaba de coincidir cada vez que el formateador movía una línea (0.2.329)
 
 Dos veces en cuatro días: V366 y V369, las dos un `M3`, las dos por un reflow de `cargo fmt`. Y el
