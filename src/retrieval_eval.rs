@@ -540,8 +540,14 @@ impl Aggregation {
 /// downloading into the tree is.
 ///
 /// The other half of the rule is that cleanup has to be comfortable, because a
-/// corpus nobody can find is a corpus nobody deletes: [`installed`] reports what
-/// is on disk and what it costs, and [`remove`] deletes one.
+/// corpus nobody can find is a corpus nobody deletes: [`fetch::installed`]
+/// reports what is on disk and what it costs, and [`fetch::remove`] deletes one.
+///
+/// Qualified with the module name on purpose. This is an **outer** doc comment on
+/// `pub mod fetch`, so rustdoc resolves its links in the PARENT scope — a bare
+/// `[`installed`]` dangles and renders as dead text. Same family as the trap
+/// recorded in V352, where four lines of courtesy on a `pub mod x;` broke eight
+/// links inside that module at once.
 ///
 /// # Explicit, never automatic
 ///

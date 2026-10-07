@@ -5,6 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v248 (2026-10-08) — V372: mis propias puertas cazaron las tres cosas que V371 rompió (0.2.331)
+
+Ninguna era un test del código nuevo. Las tres las encontró una puerta que ya existía.
+
+## 1. La clase V152, y la provoqué yo
+
+`check_feature_dep_drift.py` falló con un mensaje que se explica solo:
+
+> *feature "documents" lists "dep:zip" but "zip" is a feature with cfg(feature="zip") gates in src/.
+> Building "documents" enables the dependency but leaves those cfg gates OFF.*
+
+Y es exacto: hasta V371 **nada en `src/` usaba `cfg(feature = "zip")`**, así que un `dep:zip` era
+inocuo. Al escribir las primeras puertas con ese nombre, convertí dos referencias existentes en una
+rotura silenciosa — `documents` y `backup` habrían activado la dependencia dejando `retrieval fetch`
+invisible. Arreglado como dice el checker: `"dep:zip"` → `"zip"`.
+
+## 2. Mi justificación para tocar `full` era falsa
+
+Añadí `"zip"` a `full` diciendo que `ai_cli` lo necesitaba. **`rag` ya incluía `zip`**, y `full`
+incluye `rag`: la cadena `full → rag → zip` ya lo daba. Quitado. Una entrada redundante con una
+razón escrita que no se sostiene es justo lo que llevo una semana encontrando en otros sitios.
+
+(De paso, un reemplazo global de `"dep:zip"` por `"zip"` dejó `zip = ["zip"]` — una feature
+referenciándose a sí misma. Restaurada: esa línea **es** la que declara la dependencia opcional y
+tiene que seguir diciendo `dep:zip`.)
+
+## 3. Dos enlaces de documentación muertos, y la misma trampa de V352
+
+`[`installed`]` y `[`remove`]` desde el doc del módulo `fetch`. El doc es un `///` **exterior** sobre
+`pub mod fetch`, y rustdoc resuelve sus enlaces en el ámbito del **padre**, así que un nombre sin
+cualificar no existe. Es la misma familia que V352, donde cuatro líneas de cortesía sobre un
+`pub mod x;` rompieron ocho enlaces de dentro de ese módulo. Cualificados a `fetch::installed` y
+`fetch::remove`, **con el motivo escrito al lado** para que el siguiente no lo repita.
+
+## Lo que esto dice del ciclo
+
+Las tres salieron de `cargo clippy`, `check_feature_dep_drift.py` y `check_doc_links.py` — no de
+pensarlo mejor. Y la primera es el caso más limpio de por qué una puerta tiene que explicar *la
+clase* de fallo y no solo señalar la línea: su mensaje contenía el diagnóstico completo y la
+corrección, y por eso costó un minuto en vez de media hora.
+
+## Verificación
+
+`clippy --all-targets -D warnings` limpio; **8990 tests, 0 fallidos**; feature/dep drift OK (85
+features gateadas contra 98 definiciones); enlaces intra-doc **0 (baseline 0)**; 23 especificaciones
+de mutación coinciden.
+
 ## [Unreleased] - v247 (2026-10-08) — V371: el primer número comparable con la literatura, y dos defectos que solo un corpus real podía encontrar (0.2.330)
 
 **nDCG@10 = 0,2979** en NFCorpus con nuestro BM25 sobre FTS5, sobre 323 consultas juzgadas. BEIR

@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.330"
+version = "0.2.331"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -95,7 +95,7 @@ tools = ["rusqlite"]
 # NOTE: references the `pdf-extract` FEATURE (not `dep:pdf-extract`) so the
 # cfg(feature = "pdf-extract") gates in document_parsing/parser.rs light up.
 # With `dep:` only, the crate compiled but PDF parsing returned an error.
-documents = ["dep:zip", "pdf-extract"]
+documents = ["zip", "pdf-extract"]
 
 # Evaluation and benchmarking: fine-tuning, metrics, A/B testing
 eval = []
@@ -217,13 +217,6 @@ full = [
     # V261: adding it put the subsystem under `-D warnings` for the first time
     # and immediately exposed a validator that approved everything.
     "self-correction",
-    # Anadida en V371: la feature existia como stub declarado y SIN UN SOLO
-    # consumidor -- nada en src/ usaba cfg(feature = "zip"). Su primer uso real
-    # es `ai_cli retrieval fetch`, que desempaqueta un corpus publico de
-    # evaluacion, y ai_cli se construye con `full`. Coste: zip 2 con
-    # default-features = false y solo "deflate", que apoya en flate2, que ya
-    # estaba y no es opcional.
-    "zip",
 ]
 
 # Binary storage: bincode + gzip for internal data (faster, smaller than JSON)
@@ -611,7 +604,7 @@ pdf-extract = ["dep:pdf-extract"]
 # `backup::{create,verify,restore}_backup` library API. Opt-in to
 # avoid pulling crypto deps for users who only need providers.
 backup = [
-    "dep:zip",
+    "zip",
     # FEATURE not dep: so cfg(feature = "aes-gcm") gates in
     # content_encryption.rs light up under backup-only builds too
     # (same V152 drift class the lint now guards — caught here in V154).
