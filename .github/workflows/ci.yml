@@ -127,6 +127,21 @@ jobs:
         # depend on features; only whether it compiles does.
         run: python3 scripts/check_doc_imports.py
 
+      # The self-test runs first and is not a formality: the first version of this
+      # gate PASSED while the README still carried the false completeness claim it
+      # was written to refuse, because the pattern meant to catch it had a
+      # lookbehind that never matched the capitalisation actually present.
+      - name: Self-test the README-numbers gate
+        run: python3 scripts/check_readme_numbers.py --self-test
+
+      - name: Check the README's front-page numbers
+        # Added V373. Four of the five figures on the front page UNDERSTATED the
+        # work (6,095 tests against 8,990; 423K lines against 558K; 61 features
+        # against 98) and the fifth claimed the whole tree was complete, which was
+        # not stale but false. The README is the first thing anyone reads and
+        # nothing checked it. Both directions of drift are the same defect.
+        run: python3 scripts/check_readme_numbers.py
+
       - name: Check the list of checkers is true
         # Added V340. docs/README.md has a section on the automated checks that
         # keep the docs honest, and it had drifted twice: "all three run in CI"

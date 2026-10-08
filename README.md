@@ -4,19 +4,36 @@
 
 # ai_assistant
 
-A comprehensive Rust library for LLM integration — local and cloud. 19 providers, 5-tier RAG, multi-agent orchestration, autonomous agents, distributed computing, anti-hallucination pipeline, academic research APIs, and 49+ MCP tools. Single crate, zero-runtime, ~423K LOC.
+A comprehensive Rust library for LLM integration — local and cloud. 19 providers, 5-tier RAG, multi-agent orchestration, autonomous agents, distributed computing, anti-hallucination pipeline, academic research APIs, and 49+ MCP tools. Single crate, zero-runtime, 558K lines across 574 source files.
 
 ![Rust](https://img.shields.io/badge/Rust-Edition%202021-orange)
 ![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)
-![Tests](https://img.shields.io/badge/tests-6095-brightgreen)
-![LOC](https://img.shields.io/badge/LOC-~423K-blue)
+![Tests](https://img.shields.io/badge/tests-8990-brightgreen)
+![LOC](https://img.shields.io/badge/LOC-558K-blue)
+![Gates](https://img.shields.io/badge/CI%20gates-12-blue)
 
-> **Status: Experimental**
+> **Status: not production-validated. Single author. Use at your own risk.**
 >
-> This project compiles and passes 6,095+ tests, but it has not been validated in production
-> or real-world usage. Developed iteratively with AI assistance, some modules may be
-> incomplete, loosely wired, or tested only at a surface level. A comprehensive review is
-> pending. **Use at your own risk.**
+> It has never run in production and has no external users, so treat every capability as
+> unproven in the field. What it does have is **verification you can check yourself**, because
+> the honest answer to "is this any good?" is a measurement and not an adjective:
+>
+> - **8,990 tests** (`cargo test --features full --lib`), and **11 automated gates** in CI —
+>   not just compile-and-test. They enforce that the documentation does not lie: every
+>   `ai_cli` command shown in the docs is accepted by the binary, every `use` in a Markdown
+>   code fence resolves, every intra-doc link points at a symbol that exists, the binary
+>   inventory matches `Cargo.toml`, and the list of gates itself is checked against the gates
+>   that run.
+> - **Mutation testing** (`scripts/mutate.py`), because a green suite proves the tests pass,
+>   not that they would notice if the code were wrong. Each spec pairs an invariant with the
+>   smallest change that breaks it, *and the reason it matters*.
+> - **A documented defect-class habit.** The recurring failure here was capability that was
+>   built, tested, documented — and never connected, or silently degraded to a weaker path.
+>   The sweeps that hunted it, what they found, and the gates added so it cannot come back are
+>   in [`CHANGELOG.md`](CHANGELOG.md) and [`docs/modus-operandi.md`](docs/modus-operandi.md).
+>
+> Known gaps are tracked rather than hidden: see [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md),
+> which marks each capability `hecho` / `parcial` / `no` and says what is missing.
 
 ## Quick Start
 
@@ -213,9 +230,14 @@ The table below is a selection, not the inventory.
 
 ### Code Quality
 - **Zero `.unwrap()` in production**: Proper error handling across all files
-- **6,095+ tests**: Comprehensive unit tests with 0 clippy warnings
-- **369 source files**: Fully implemented — zero stubs or TODOs
-- **61 feature flags**: Granular dependency control
+- **8,990 tests**, and `clippy --all-targets -- -D warnings` clean across two feature sets
+- **574 source files**, 558K lines. This line used to claim the whole tree was complete, with
+  nothing half-finished in it, and that was false — capability built and never connected is the
+  recurring defect class here. The honest version is that it gets hunted in documented sweeps
+  and then gated: `docs/CAPABILITIES.md` marks what is `hecho` / `parcial` / `no`, and
+  `CHANGELOG.md` records each sweep and what it found
+- **98 feature flags**: granular dependency control, with the minimum supported set compiled
+  in CI so "it builds with everything on" is not the only thing verified
 - **~423,000 lines of Rust**: Single crate, modular architecture
 - **Security audited**: 300+ attack vectors catalogued and mitigated (exhaustive multi-pass audit)
 
@@ -1869,8 +1891,8 @@ cargo run --features "server-axum" --bin ai_proxy -- --backends "localhost:8091,
 | Cold start | <100 ms | 5-10 s |
 | GC pauses | None | Unpredictable |
 | Runtime deps | None | Python + pip |
-| Modules | 369 | ~50 |
-| Tests | 6,095 | Varies |
+| Modules | 574 | ~50 |
+| Tests | 8,990 | Varies |
 
 See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for detailed comparisons.
 

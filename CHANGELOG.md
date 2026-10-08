@@ -5,6 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v249 (2026-10-08) — V373: la portada se medía a ojo, y cuatro de sus cinco cifras se quedaban cortas (0.2.332)
+
+El README es lo primero que lee cualquiera, y **nada lo comprobaba**. Medido hoy:
+
+| la portada decía | el árbol tenía |
+|---|---|
+| `tests-6095` | **8.990** ejecutados |
+| `~423K LOC` | **558K** |
+| `61 feature flags` | **98** |
+| `369 source files` | **574** |
+| «Fully implemented — zero stubs or TODOs» | **falso, no desfasado** |
+
+**Cuatro de las cinco se quedaban cortas y una se pasaba, y son el mismo defecto.** La quinta es la
+que importa: capacidad construida y nunca cableada es la clase de defecto recurrente de este
+proyecto, y hay **dos barridos documentados** que fueron a buscarla exactamente ahí y la
+encontraron. Afirmar lo contrario en la portada no es una cifra vieja, es una afirmación que el
+propio `CHANGELOG` desmiente.
+
+## La puerta: `scripts/check_readme_numbers.py`
+
+Comprueba ficheros fuente, líneas (con 1 % de tolerancia), features y el número de puertas de CI, y
+**se niega por nombre** a tres afirmaciones: `zero stubs`, `fully implemented` y `production-ready`.
+
+Sin escotilla para citar una de esas frases y desmentirla. La primera versión tenía un lookbehind
+`(?<!not ")` para eso y **falló con la mayúscula del propio README** — así que reescribí la prosa en
+lugar de afinar el regex. Una comprobación tonta que no se puede engañar vale más que una lista que
+sí.
+
+**Lo que NO comprueba, y decirlo es el punto.** El recuento de tests no: hacerlo bien exige correr
+la batería, y una puerta lenta se salta. Contar atributos `#[test]` daría **otro número** —
+**10.138 declarados contra 8.990 que se ejecutan** bajo el conjunto de features de CI, un 11 % de
+diferencia— y una puerta que verifica una aproximación aparentando verificar la cifra real es peor
+que no tenerla. El precedente es `docs/README.md` diciendo «all three run in CI» mientras corrían
+cinco: un «OK» más estrecho que la pregunta que parece contestar. Así que el mensaje de éxito
+**nombra** las cuatro cifras que verificó.
+
+## Y la puerta se demuestra a sí misma
+
+`--self-test`, **11 casos**, cada uno un README equivocado de una forma concreta: cuenta vieja,
+cifra borrada en vez de corregida, LOC un 24 % fuera, LOC medio por ciento fuera (debe **pasar**), y
+la forma exacta que derrotó a la primera versión — `Not "zero stubs"` con mayúscula.
+
+No es una formalidad: **la primera versión de esta puerta pasaba** mientras el README seguía
+llevando la afirmación falsa que existía para rechazar.
+
+## Dos cifras que la propia puerta destapó
+
+- `CI%20gates-11` contaba **invocaciones**, no puertas distintas: `check_rustsec_ignores.py` y
+  `check_duplicate_types.py` se invocan dos veces cada uno. Daba 13 contra las 11 que conoce
+  `check_checkers_documented.py`. **Dos puertas discrepando sobre un número es exactamente lo que
+  este fichero existe para impedir**, así que ahora cuenta como cuenta la que lleva la lista.
+- Y al cablearse, la cuenta pasa a **12** — la puerta se cuenta a sí misma, y las dos coinciden.
+
 ## [Unreleased] - v248 (2026-10-08) — V372: mis propias puertas cazaron las tres cosas que V371 rompió (0.2.331)
 
 Ninguna era un test del código nuevo. Las tres las encontró una puerta que ya existía.

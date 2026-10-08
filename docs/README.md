@@ -102,8 +102,16 @@ Documentation drifts silently, so some of it is enforced:
   `[untriaged]`, which says in the file that nobody judged them. It compares **names**,
   not meaning: `StepStatus` and `PlanStepStatus` were the same concept and it could
   never have paired them.
+- `scripts/check_readme_numbers.py` — the front page's own figures: source files, lines,
+  feature flags and the number of gates in this list. It was written after four of those
+  five numbers were found to **understate** the work (6,095 tests against 8,990; 423K
+  lines against 558K) while the fifth claimed the whole tree was complete with nothing
+  half-finished in it — which was not stale but false. It also refuses that claim, and
+  "production-ready", by name. **The test count is not checked**, and the script's own
+  docstring says why: getting it right needs the suite to run, and counting `#[test]`
+  attributes instead would verify an approximation while appearing to verify the number.
 
-All eleven run in CI. `scripts/check_release_ready.py` is the twelfth checker in
+All twelve run in CI. `scripts/check_release_ready.py` is the thirteenth checker in
 `scripts/` and is **not** wired to CI — it is a pre-release manual step.
 
 And that paragraph is itself checked, by `scripts/check_checkers_documented.py`: the
