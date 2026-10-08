@@ -5,6 +5,66 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v250 (2026-10-08) — V374: tres tests que pasaban el hash por la misma función en los dos lados (0.2.333)
+
+Salió de repasar lo que la web afirma de este código. `framework_comparison.html` presume de
+«todo desde cero en Rust puro», así que fui a ver qué hay realmente. Hay **seis** copias del
+compresor de SHA-256 en `src/` —localizadas por su primera constante, `0x428a2f98`— y a la vez
+`sha2`, `hmac` y `aes-gcm` declaradas como dependencias opcionales. Encolado como **N141**.
+
+## El defecto: `compute_proof.rs`
+
+Cinco de las seis tenían vectores conocidos. La sexta, ninguno. Y sus tres tests son todos de esta
+forma:
+
+```rust
+let proof = ComputeProof::generate("hello world", ...);  // hashea
+assert!(proof.verify_hash("hello world"));               // re-hashea y compara
+```
+
+**El hash pasa por la misma función en los dos lados.** Cualquier función determinista que separe
+ese puñado de cadenas los pasa los tres. **FNV-1a los pasa.** Y eso no es una hipótesis: un barrido
+anterior de esta misma crate encontró una función llamada `sha256_hex` que calculaba FNV, con un
+comentario encima diciendo SHA-256.
+
+Importa porque **en este módulo el hash ES la propiedad de seguridad**: `verify_hash` es lo que
+llama un verificador externo para decidir que un resultado de LLM no está falsificado.
+
+## Lo que se ha hecho
+
+`sha256_matches_published_vectors`, con los valores esperados **de fuera de la crate** (`hashlib`,
+que coincide con FIPS 180-4). Longitudes elegidas por los límites del relleno, que es donde un
+SHA-256 artesanal se rompe: **55** bytes es el último que mete su campo de longitud en el primer
+bloque, **56** fuerza un segundo bloque y **64** fuerza un bloque entero de puro relleno. Más los
+dos vectores canónicos y el de dos bloques de FIPS.
+
+**La implementación resultó correcta** — es la de `binary_integrity.rs` reescrita, mismo algoritmo
+con otra sintaxis. Pero eso ha pasado de «lo he leído y parece bien» a hecho verificado.
+
+## Y la prueba se demuestra en parejas
+
+`scripts/mutations/compute_proof.toml`, **5 de 5**. Cada mutación aparece dos veces con distinto
+`filter`:
+
+| id | qué | veredicto |
+|---|---|---|
+| M1 | estado inicial corrompido, solo el test nuevo | **muere** |
+| M1b | el mismo cambio, solo los tres tests viejos | **sobrevive** |
+| M2 | longitud del relleno en bytes y no en bits | **muere** |
+| M2b | el mismo cambio, solo los tres viejos | **sobrevive** |
+| M3 | partir la escritura de 64 bits en dos mitades | **sobrevive** (de verdad) |
+
+Las entradas `b` **no** afirman equivalencia, y su `note` lo dice: afirman que ese conjunto de tests
+es **ciego**. Pasa de ser una sospecha a una medición anotada.
+
+## La puerta me corrigió a mí
+
+Mi primer M2 escribía cuatro ceros y luego los 32 bits bajos de la longitud. **Sobrevivió**, y por
+un momento lo leí como que mi test nuevo era débil. No: los 32 bits altos de una longitud en bits
+son cero para cualquier mensaje por debajo de 512 MiB, así que **los bytes escritos son los mismos**
+— mi mutación era equivalente y el runner tenía razón. Se queda como **M3**, con el motivo escrito,
+para que el siguiente no gaste una ejecución en descubrirlo ni lea su supervivencia como un agujero.
+
 ## [Unreleased] - v249 (2026-10-08) — V373: la portada se medía a ojo, y cuatro de sus cinco cifras se quedaban cortas (0.2.332)
 
 El README es lo primero que lee cualquiera, y **nada lo comprobaba**. Medido hoy:

@@ -1,0 +1,102 @@
+# Mutations for the hand-rolled SHA-256 in src/compute_proof.rs.
+#
+# WHY THIS SPEC IS SHAPED IN PAIRS
+# --------------------------------
+# The module had three tests and all three passed the output through
+# `sha256_bytes` on BOTH sides -- `generate` hashes it, `verify_hash` re-hashes
+# it and compares -- so any deterministic function that separates the handful of
+# strings they use satisfies all three. FNV-1a does. That is not hypothetical:
+# an earlier sweep in this crate found a function named `sha256_hex` computing
+# FNV, with a comment above it claiming SHA-256.
+#
+# So each mutation appears TWICE, with a different `filter`:
+#
+#   * `<id>`  runs only `sha256_matches_published_vectors` and must DIE --
+#     the known-answer test earns its place or it does not exist.
+#   * `<id>b` runs only the three original `test_*` and is expected to
+#     SURVIVE -- which records, as a measurement rather than a worry, that
+#     those three cannot tell a corrupted SHA-256 from a correct one.
+#
+# The `b` entries are NOT claims of behavioural equivalence. Each says so in
+# its `note`, because `expect = "survives"` usually means "equivalent" and here
+# it means "this test set is blind".
+#
+# This module's hash IS the security property: `ComputeProof::verify_hash` is
+# what a downstream verifier calls to decide an LLM result was not forged.
+#
+# Run: python scripts/mutate.py --spec scripts/mutations/compute_proof.toml
+
+features = "full"
+filter = "compute_proof::tests::sha256_matches_published_vectors"
+
+# ---------------------------------------------------------------------------
+# M1 -- the initial hash state. Changing one word makes this a different hash
+# function that is still deterministic, still injective, still 32 bytes wide.
+# This is exactly the shape of the FNV precedent.
+# ---------------------------------------------------------------------------
+
+[[mutation]]
+id = "M1"
+file = "src/compute_proof.rs"
+invariant = "the FIPS 180-4 initial state, which is what makes the output SHA-256 rather than some other 256-bit function"
+before = "            0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,"
+after = "            0x6a09e668, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,"
+occurrences = 1
+
+[[mutation]]
+id = "M1b"
+file = "src/compute_proof.rs"
+filter = "compute_proof::tests::test_"
+expect = "survives"
+note = "NOT equivalent -- M1 proves the same change is caught by the known-answer test. This entry records that the three original tests cannot catch it, because they hash with the mutated function on both sides of every comparison."
+invariant = "the three original tests are blind to the hash being a different function"
+before = "            0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,"
+after = "            0x6a09e668, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,"
+occurrences = 1
+
+# ---------------------------------------------------------------------------
+# M2 -- the padding length field, which SHA-256 appends as the message length in
+# BITS. Writing the length in bytes is the classic hand-rolled-SHA bug, and it
+# is why the known-answer test uses 55, 56 and 64 bytes: the three lengths that
+# exercise the padding boundaries.
+# ---------------------------------------------------------------------------
+
+[[mutation]]
+id = "M2"
+file = "src/compute_proof.rs"
+invariant = "the appended length is in bits, not bytes, per FIPS 180-4"
+before = "        let bit_len = (data.len() as u64) * 8;"
+after = "        let bit_len = data.len() as u64;"
+occurrences = 1
+
+[[mutation]]
+id = "M2b"
+file = "src/compute_proof.rs"
+filter = "compute_proof::tests::test_"
+expect = "survives"
+note = "NOT equivalent -- M2 proves the same change is caught by the known-answer test. Recorded here because a wrong padding field is the classic hand-rolled-SHA defect and the original tests pass straight through it."
+invariant = "the three original tests are blind to a wrong padding length field"
+before = "        let bit_len = (data.len() as u64) * 8;"
+after = "        let bit_len = data.len() as u64;"
+occurrences = 1
+
+# ---------------------------------------------------------------------------
+# M3 -- a REAL equivalence, kept because the first version of this spec claimed
+# it was a defect and the runner disagreed. Writing four zero bytes and then the
+# low 32 bits of the length is byte-for-byte identical to the big-endian u64 for
+# every message under 512 MiB, so no test can distinguish it and none should.
+#
+# It stays here as the recorded reason that the obvious mutation of this line
+# proves nothing -- so the next person does not spend a run finding out, and
+# does not read its survival as a hole in the test.
+# ---------------------------------------------------------------------------
+
+[[mutation]]
+id = "M3"
+file = "src/compute_proof.rs"
+expect = "survives"
+note = "Genuinely equivalent: the high 32 bits of a bit length are zero for any input below 512 MiB, so the bytes written are the same. Unreachable in practice, not untested."
+invariant = "splitting the 64-bit length write into a zero half and a 32-bit half changes nothing observable"
+before = "        padded.extend_from_slice(&bit_len.to_be_bytes());"
+after = "        padded.extend_from_slice(&[0u8; 4]);\n        padded.extend_from_slice(&(bit_len as u32).to_be_bytes());"
+occurrences = 1

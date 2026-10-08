@@ -178,4 +178,72 @@ mod tests {
         assert_eq!(p1.result_hash, p2.result_hash);
         assert_ne!(p1.nonce, p2.nonce);
     }
+
+    /// The three tests above pass the output through `sha256_bytes` on **both**
+    /// sides — `generate` hashes it, `verify_hash` re-hashes it and compares — so
+    /// any deterministic, injective-on-these-inputs function satisfies all three.
+    /// FNV-1a would. That is not a hypothetical: an earlier sweep in this crate
+    /// found a function named `sha256_hex` that was computing FNV.
+    ///
+    /// This one is the only test here that can tell the difference, because the
+    /// expected values come from outside the crate (`hashlib`, which agrees with
+    /// FIPS 180-4). The lengths are chosen for the padding boundaries, which is
+    /// where a hand-rolled SHA-256 goes wrong: 55 bytes is the last that fits its
+    /// length field in the first block, 56 forces a second block, and 64 forces a
+    /// whole extra block of pure padding.
+    ///
+    /// The comment above the implementation says it mirrors the one in
+    /// `binary_integrity.rs`. They are the same algorithm written two different
+    /// ways — six copies of the SHA-256 compression function live in `src/`, and
+    /// this test only vouches for this one.
+    #[test]
+    fn sha256_matches_published_vectors() {
+        let hex = |b: &[u8; 32]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+
+        for (input, want) in [
+            (
+                "".as_bytes(),
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            ),
+            (
+                "abc".as_bytes(),
+                "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            ),
+            (
+                // The FIPS 180-4 two-block vector.
+                "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq".as_bytes(),
+                "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
+            ),
+        ] {
+            assert_eq!(
+                hex(&ComputeProof::sha256_bytes(input)),
+                want,
+                "SHA-256 of {} byte(s) does not match the published digest",
+                input.len()
+            );
+        }
+
+        // The padding boundaries, as repeated bytes so the lengths are the point.
+        for (len, want) in [
+            (
+                55,
+                "9f4390f8d30c2dd92ec9f095b65e2b9ae9b0a925a5258e241c9f1e910f734318",
+            ),
+            (
+                56,
+                "b35439a4ac6f0948b6d6f9e3c6af0f5f590ce20f1bde7090ef7970686ec6738a",
+            ),
+            (
+                64,
+                "ffe054fe7ae0cb6dc65c3af9b61d5209f439851db43d0ba5997337df154668eb",
+            ),
+        ] {
+            let input = vec![b'a'; len];
+            assert_eq!(
+                hex(&ComputeProof::sha256_bytes(&input)),
+                want,
+                "SHA-256 of {len} 'a' bytes does not match the published digest"
+            );
+        }
+    }
 }
