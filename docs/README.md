@@ -111,18 +111,33 @@ Documentation drifts silently, so some of it is enforced:
   docstring says why: getting it right needs the suite to run, and counting `#[test]`
   attributes instead would verify an approximation while appearing to verify the number.
 
-All twelve run in CI. Two more live in `scripts/` and are **not** wired to it:
+All twelve run in CI **here**. Three more live in `scripts/` and no job in this repository
+runs them:
 
 - `scripts/check_release_ready.py` — a pre-release step that needs a human to read it.
+
+The other two guard [the website](https://ai-assistant.runawaybrains.com), and are run by
+**that** repository's own CI (`.github/workflows/consistency.yml` there), which checks out both
+repositories — the facts are measured in this tree and asserted over there, so nothing can
+check one against the other from a single checkout. Both import from the checkers above rather
+than counting or resolving anything themselves: one measurement, one resolver, several
+documents.
+
+- `scripts/check_website_numbers.py` — the hero badges and the `<meta>` descriptions. The
+  website carried the identical stale set the README did (369 source files, 61 feature flags,
+  `~520K LoC`), because the digits sit bare inside `<span class="num">` and in the text search
+  engines show, which a plain word sweep walks past. **Prose is deliberately out of scope**:
+  the site states current and historical figures in the same sentences with nothing marking
+  which is which, two heuristics were tried and measured, and neither separates them — so the
+  script says so where it would otherwise check, instead of approximating.
 - `scripts/check_website_examples.py` — the same question as `check_doc_imports.py`, asked of
-  the `<pre><code>` blocks on [the website](https://ai-assistant.runawaybrains.com), which were
-  a **fourth** uncompiled population of example code and in the same state the Markdown fences
-  were before V340: six imports named types the crate does not have, on `quickstart.html` and
-  `developer_guide.html` among them — the first pages a stranger reads. It does not
-  reimplement the resolver, it imports it, so the two cannot drift into disagreeing about what
-  the crate contains. It is manual because the website is a separate repository and a CI job
-  here cannot see it without cloning; that trade-off is N142.
-  Run it with `python scripts/check_website_examples.py ../ai_assistant-website`.
+  the `<pre><code>` blocks. They were a **fourth** uncompiled population of example code, in
+  the state the Markdown fences were in before V340: six imports named types the crate does not
+  have, on `quickstart.html` and `developer_guide.html` among them — the first pages a stranger
+  reads.
+
+Run either locally with, e.g.,
+`python scripts/check_website_examples.py ../ai_assistant-website`.
 
 And that paragraph is itself checked, by `scripts/check_checkers_documented.py`: the
 list above, the scripts on disk and the steps in the workflows must agree, including

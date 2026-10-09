@@ -29,9 +29,18 @@ WORKFLOWS = ".github/workflows"
 # them as manual, and the count of CI-wired ones must exclude them.
 MANUAL = {
     "check_release_ready.py": "pre-release manual step, needs a human to read the output",
+    # Both are run by the WEBSITE repository's CI (.github/workflows/
+    # consistency.yml there), which checks out both repositories. They are
+    # "manual" from here because no job in THIS repository runs them -- and
+    # saying "manual" when something else runs them automatically would be
+    # the narrower-than-the-question kind of true, so it is spelled out.
     "check_website_examples.py": (
-        "needs a checkout of ai_assistant-website, which is a separate repository; "
-        "wiring it would couple this CI to cloning that one (N142)"
+        "run by ai_assistant-website's own CI, which checks out both repos; "
+        "no job here runs it"
+    ),
+    "check_website_numbers.py": (
+        "run by ai_assistant-website's own CI, which checks out both repos; "
+        "no job here runs it"
     ),
 }
 

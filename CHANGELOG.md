@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v255 (2026-10-09) - V379: N142 -- la web tiene CI por primera vez, y lo corre ella clonando esto (0.2.338)
+
+`ai_assistant-website` **no tenia ni un workflow**, y por eso sus badges de portada llevaban el
+mismo conjunto viejo que el README (369 ficheros, 61 features, `~520K LoC`) hasta ayer.
+
+La dificultad real: **las cifras se miden en este arbol y se afirman alla**. Desde un solo
+checkout no hay manera de comparar, y guardar una copia de las cifras en el repo de la web solo
+mueve la deriva. Asi que los checkers viven con la medicion -- `check_website_numbers.py` hace
+`from check_readme_numbers import measured` -- y el **CI de la web clona este repositorio**.
+
+**El acoplamiento, dicho y no descubierto luego:** ese trabajo depende de que `ai_assistant` siga
+siendo publico. Lo es, deliberadamente y por una norma permanente del `CLAUDE.md` de aqui, asi
+que el acoplamiento corre **a favor** de la regla. Y si algun dia cambiara, el trabajo **falla**,
+no pasa en silencio, que es el comportamiento que se quiere de el.
+
+## Lo que comprueba, y lo que se niega a aproximar
+
+Las **dos** superficies donde un visitante lee una cifra como afirmacion de hoy, y las dos por las
+que un barrido de texto pasa de largo: los digitos desnudos en `<span class="num">` y los
+`<meta description>` (el texto que ensena Google).
+
+**La PROSA queda fuera de alcance, y el script lo dice en el sitio donde la comprobaria.** El
+motivo es medido, no una excusa: la web afirma cifras actuales e historicas en las mismas frases
+sin nada que las distinga -- *«5350 tests, 285 source files»* es un registro correcto de v12 y se
+lee igual que una afirmacion sobre hoy. Probe **dos** heuristicas y las medi: una ventana de 260
+caracteres alrededor (quedaban 2 falsos positivos) y la linea que lo contiene (4). Ninguna separa
+las dos cosas, **porque el marcado tampoco las separa**. Hacerla comprobable significa marcar los
+bloques historicos en el HTML, unas 100 lineas en dos paginas; eso esta escrito en N142 en vez de
+adivinado aqui.
+
+Y de paso cayo codigo muerto mio: al estrechar el alcance, `is_historical` dejo de usarse. Una
+funcion que nadie llama con un comentario explicando una heuristica que no corre es exactamente la
+clase de deuda declarada que este proyecto lleva un mes barriendo. Borrada.
+
+## Demostrado que discrimina, en las dos superficies
+
+| sabotaje | resultado |
+|---|---|
+| badge `574` -> `369` | **rc=1**, *«badge says 369 source files, the tree has 574»* |
+| `<meta>` `98 feature flags` -> `61` | **rc=1**, y el mensaje recuerda que es el texto que ensena Google |
+
+Restaurados los dos, vuelve a 0.
+
+## Y el meta-checker me obligo a documentarlo, dos veces
+
+`check_checkers_documented.py` fallo al anadir cada script hasta que aparecio en `docs/README.md`.
+Ahi esta la distincion que importa: son «manuales» **desde aqui** porque ningun trabajo de ESTE
+repositorio los corre, pero el CI del otro si. Llamarlos manuales a secas seria verdad y mas
+estrecho que la pregunta, que es el defecto que V375 arreglo en la propia puerta del README.
+
 ## [Unreleased] - v254 (2026-10-09) - V378: una CUARTA poblacion de codigo de ejemplo, y estaba igual que las otras tres (0.2.337)
 
 V340 encontro que los bloques ```rust de los `.md` eran una tercera poblacion que nada compilaba:
