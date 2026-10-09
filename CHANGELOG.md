@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v260 (2026-10-09) - V384: un «Supply Chain» rojo que decia «Docker Hub dijo que no» (0.2.343)
+
+`EmbarkStudios/cargo-deny-action@v2` construye una imagen de Docker, asi que necesita que Docker
+Hub **este disponible y dispuesto**. El 2026-10-09 no fue ninguna de las dos cosas:
+
+| intento | error |
+|---|---|
+| V383 | **429** -- limite de descargas sin autenticar. Once pushes en un dia, cada uno tirando de la misma imagen. Culpa mia. |
+| reintento, una hora despues | **504** del servicio de autenticacion de Docker Hub. No es culpa de nadie de aqui. |
+
+Dos errores distintos, **un solo punto de fallo**.
+
+## Por que esto importa mas que un trabajo inestable
+
+Los otros tres trabajos pasaron, **`cargo-audit` incluido**, que es el que busca vulnerabilidades.
+No habia ningun hallazgo. Pero:
+
+1. **Un «Supply Chain: failure» en rojo se lee como «hay una vulnerabilidad»**, en un repositorio
+   publico, por cualquiera que mire la pestana de Actions. Lo que ocurria era que Docker Hub
+   contestaba que no.
+2. **Un trabajo que no arranca no prueba nada** -- ni que las licencias esten bien ni que no lo
+   esten. Es exactamente la distincion del `NOT_APPLIED` de V383: no es «deny encontro algo», es
+   «deny nunca corrio». Y si algun dia aparece una licencia prohibida de verdad, **el rojo es
+   identico**.
+
+## El cambio, y lo que deliberadamente NO cambia
+
+`cargo install cargo-deny --locked` y `cargo deny check advisories licenses bans sources`. **Misma
+herramienta, mismo `deny.toml`, las mismas cuatro comprobaciones**: lo unico que cambia es como se
+instala. Con su propia clave de cache, porque este trabajo compila una herramienta y no la crate,
+y compartir clave con los trabajos de build desalojaria a uno u otro.
+
+**El disparador no se toca.** Si `cargo-deny` deberia correr en cada push o solo cuando cambian
+`Cargo.lock`/`Cargo.toml`/`deny.toml` es una pregunta distinta, con consecuencias sobre cuando se
+detecta algo, y esta en **N145** para que la decida el autor.
+
+Verificado: el YAML parsea, `check_rustsec_ignores.py` sigue viendo las **ocho supresiones
+identicas en los tres ficheros** -- `deny.toml`, `ci.yml` y este -- y el meta-checker pasa.
+
 ## [Unreleased] - v259 (2026-10-09) - V383: cuatro mutaciones para el codigo de V377 y V380 (0.2.342)
 
 Las escribi ayer y **no las comitee sin ejecutarlas**: una especificacion de mutacion sin correr

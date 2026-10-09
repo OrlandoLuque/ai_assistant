@@ -37,14 +37,35 @@ jobs:
   cargo-deny:
     name: cargo-deny
     runs-on: ubuntu-latest
+    # Installed from crates.io rather than run through
+    # `EmbarkStudios/cargo-deny-action`, which builds a Docker image and so
+    # needs Docker Hub to be both willing and up. On 2026-10-09 it was neither:
+    # eleven pushes in a day hit the unauthenticated pull rate limit (429), and
+    # the rerun an hour later got a 504 from `auth.docker.io`.
+    #
+    # The reason this matters more than a flaky job: **a red "Supply Chain" is
+    # read as "there is a vulnerability"**, and both failures meant "Docker Hub
+    # said no". A job that never starts proves nothing -- not that the licences
+    # are fine, not that they are not -- and if a genuinely banned licence ever
+    # appears, the red looks identical.
+    #
+    # Same tool, same `deny.toml`, same four checks: only the installation
+    # changed. The trigger is deliberately untouched (see N145 for the separate
+    # question of whether this should run on every push at all).
     steps:
       - uses: actions/checkout@v5
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: dtolnay/rust-toolchain@1.98.0
+      - uses: Swatinem/rust-cache@v2
         with:
-          # Each check has its own job-style summary so a license
-          # failure stays separate from an advisory failure in the
-          # GitHub PR UI.
-          command: check advisories licenses bans sources
+          # Its own cache key: this job compiles a tool, not the crate, and
+          # sharing a key with the build jobs would evict one or the other.
+          key: cargo-deny
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+      - name: Check advisories, licenses, bans and sources
+        # One command, four checks. Each gets its own section in the output so
+        # a licence failure stays legible next to an advisory failure.
+        run: cargo deny check advisories licenses bans sources
 
   cargo-audit:
     name: cargo-audit (mirror of CI audit)
