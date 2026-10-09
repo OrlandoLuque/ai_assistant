@@ -118,14 +118,67 @@ def _restore_all() -> None:
             print(f"!! could not restore {path}: {exc}", file=sys.stderr)
 
 
+# The guards above are POSIX-shaped, and this project is developed on Windows.
+# A `TerminateProcess` -- which is what a harness timeout or Task Manager does
+# -- delivers no SIGTERM to Python, runs no `atexit` hook and unwinds no
+# `finally`. Measured twice: a ten-minute tool timeout left M8 applied in
+# `retrieval_eval.rs` both times, and only `git diff` before committing caught
+# it. Same family as the kit's `Drop` not surviving `TerminateProcess`, which
+# is why that one uses a Job Object.
+#
+# You cannot catch the kill, so make the NEXT run notice. A sentinel naming
+# every file currently mutated is written before the first edit and deleted
+# after the last; if it is still there at startup, the previous run died with
+# the tree sabotaged and this one refuses to add to the confusion.
+_SENTINEL = Path(__file__).resolve().parent / ".mutate-in-progress"
+
+
+def _write_sentinel() -> None:
+    try:
+        _SENTINEL.write_text(
+            "\n".join(str(p) for p in _ORIGINALS) + "\n", encoding="utf-8"
+        )
+    except OSError:  # pragma: no cover - filesystem trouble
+        pass
+
+
+def _clear_sentinel() -> None:
+    try:
+        _SENTINEL.unlink(missing_ok=True)
+    except OSError:  # pragma: no cover
+        pass
+
+
+def check_interrupted_run() -> int:
+    """Refuse to start if a previous run was killed mid-mutation."""
+    if not _SENTINEL.is_file():
+        return 0
+    listed = _SENTINEL.read_text(encoding="utf-8").strip()
+    print(
+        "REFUSING TO RUN: a previous mutation run did not finish.\n\n"
+        "Its sentinel is still here, which means the process was killed "
+        "between applying a mutation\nand restoring the file -- on Windows a "
+        "timeout does that without any handler running.\n\n"
+        "Files it had open:\n"
+        + "\n".join(f"  {line}" for line in listed.splitlines())
+        + "\n\nCheck them and restore, then delete the sentinel:\n"
+        f"  git diff {listed.splitlines()[0] if listed else ''}\n"
+        "  git checkout -- <file>\n"
+        f"  rm {_SENTINEL}\n"
+    )
+    return 1
+
+
 def _install_guards() -> None:
     atexit.register(_restore_all)
+    atexit.register(_clear_sentinel)
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
             previous = signal.getsignal(sig)
 
             def handler(signum, frame, _previous=previous):
                 _restore_all()
+                _clear_sentinel()
                 if callable(_previous):
                     _previous(signum, frame)
                 else:
@@ -302,6 +355,7 @@ def apply_one(mutation: Mutation, verbose: bool) -> list[tuple[str, str, str]]:
         return [(mutation.id, NOT_APPLIED, f"no such file: {mutation.file}")]
 
     original = _remember(mutation.file)
+    _write_sentinel()
     try:
         text = read_for_matching(original)
     except UnicodeDecodeError:
@@ -598,6 +652,10 @@ def main() -> int:
 
     if args.dry_run:
         return dry_run(specs)
+
+    # Before anything: did the previous run die with the tree mutated?
+    if check_interrupted_run():
+        return 1
 
     _install_guards()
 

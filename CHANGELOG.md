@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v257 (2026-10-09) - V381: la proteccion de `mutate.py` tenia forma POSIX, y esto es Windows (0.2.340)
+
+**Segunda vez** que un timeout de diez minutos deja una mutacion aplicada en el arbol: las dos
+veces M8 en `retrieval_eval.rs`, y las dos veces lo caza `git diff` antes de comitear. Eso deja de
+ser mala suerte y es un defecto del instrumento.
+
+Lo desconcertante es que la proteccion **ya existia**: `atexit`, un `finally` y manejadores de
+`SIGINT`/`SIGTERM`, con el contenido verificado despues de restaurar. El diagnostico:
+
+> **`TerminateProcess` no entrega `SIGTERM` a Python.** No corre el `atexit`, no desenrolla el
+> `finally` y no llama a ningun manejador. Y `TerminateProcess` es exactamente lo que hace el
+> timeout de una herramienta, o el Administrador de tareas.
+
+Misma familia que [[project_kit_bundled_engine]], donde el `Drop` del kit no sobrevive a un
+`TerminateProcess` y por eso hay un Job Object.
+
+## No se puede atrapar la muerte, asi que se entera la siguiente
+
+Un **centinela** con los ficheros actualmente mutados, escrito antes de la primera edicion y
+borrado despues de la ultima. Si sigue ahi al arrancar, la ejecucion anterior murio con el arbol
+saboteado y esta **se niega a correr**, nombrando los ficheros y las tres ordenes para arreglarlo.
+
+Es deliberadamente tonto: no intenta restaurar por su cuenta: el fichero pudo cambiar por otros
+motivos entre las dos ejecuciones, y restaurar a ciegas un trabajo ajeno es peor que parar.
+
+Demostrado que discrimina: con el centinela puesto a mano, la ejecucion se niega y lista el
+fichero; sin el, el autotest pasa como siempre.
+
+Y `.gitignore` lo excluye **con el motivo escrito al lado**: si ese fichero llega a comitearse,
+tambien se comiteo una mutacion.
+
 ## [Unreleased] - v256 (2026-10-09) - V380: MLDR registrado, y NO era parquet (0.2.339)
 
 Dije que MLDR «viene en parquet de HuggingFace y necesita conversion». **No es parquet.** Son JSONL

@@ -56,3 +56,7 @@ _private/
 # when one gate script imported another; never wanted in the repository.
 __pycache__/
 *.pyc
+
+# Sentinel written by scripts/mutate.py while a mutation is applied. If this
+# is ever committed, a mutation was left in the tree too.
+scripts/.mutate-in-progress
