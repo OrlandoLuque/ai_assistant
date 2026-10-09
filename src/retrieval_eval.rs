@@ -656,6 +656,27 @@ pub mod fetch {
     use std::io::{Read, Write};
     use std::path::{Path, PathBuf};
 
+    /// How a registered corpus is packaged upstream.
+    ///
+    /// Added when MLDR turned out not to ship a BEIR zip. It is an enum rather
+    /// than a second fetch function so that `KNOWN` stays one list: a corpus
+    /// you cannot find in the registry is a corpus nobody will use.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Layout {
+        /// One zip already containing `corpus.jsonl`, `queries.jsonl` and
+        /// `qrels/<split>.tsv`. BEIR's own packaging.
+        BeirZip,
+        /// MLDR: **three** separately-downloaded files, two of them gzipped, with
+        /// different field names and a four-column TREC qrels file.
+        ///
+        /// Converted to BEIR layout on the way in, because the alternative is a
+        /// second reader for every consumer downstream.
+        MldrGzip {
+            /// Language code, e.g. `es`. Picks the directory upstream.
+            lang: &'static str,
+        },
+    }
+
     /// Where a public corpus comes from, and everything needed to decide whether
     /// to use it.
     ///
@@ -667,7 +688,10 @@ pub mod fetch {
     pub struct CorpusSource {
         /// Short name, and the directory it unpacks into.
         pub name: &'static str,
-        /// Where the archive lives.
+        /// How it is packaged upstream.
+        pub layout: Layout,
+        /// Where the archive lives. For [`Layout::MldrGzip`] this is the
+        /// repository root the three files hang off, not a single archive.
         pub url: &'static str,
         /// Licence **as published upstream**. Written down rather than looked up,
         /// because a use decision made without it is a guess.
@@ -712,6 +736,7 @@ pub mod fetch {
     pub const KNOWN: &[CorpusSource] = &[
         CorpusSource {
             name: "nfcorpus",
+            layout: Layout::BeirZip,
             url: "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/nfcorpus.zip",
             licence: "see BEIR (CC BY-SA 4.0 for the BEIR packaging; NFCorpus is from Boteva et al. 2016)",
             archive_bytes: 2_448_432,
@@ -724,6 +749,7 @@ pub mod fetch {
         },
         CorpusSource {
             name: "trec-covid",
+            layout: Layout::BeirZip,
             url: "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/trec-covid.zip",
             licence: "see BEIR; TREC-COVID is built on CORD-19 (Wang et al. 2020)",
             archive_bytes: 0,
@@ -732,6 +758,42 @@ pub mod fetch {
             avg_doc_words: 161,
             note: "171k documents for only 50 queries -- a lot of indexing for a thin \
                    statistical signal. Registered for completeness, not recommended first.",
+        },
+        CorpusSource {
+            name: "mldr-es",
+            layout: Layout::MldrGzip { lang: "es" },
+            url: "https://huggingface.co/datasets/Shitao/MLDR/resolve/main",
+            licence: "MIT (declared on the dataset card). Built from Wikipedia, mC4 and \
+                      Pile by Chen et al. (BGE-M3, 2024)",
+            // The corpus file only. The queries (8 MiB) and the qrels (5 KiB) are
+            // not size-checked: a truncated 5 KiB TSV produces fewer judgements,
+            // which `corpus` reports as unjudged queries, where a truncated
+            // corpus silently removes documents a query needed.
+            // Measured from the server, not estimated. The first value written
+            // here was a mistyped 127_040_171 and the guard refused the real
+            // file -- which is the guard working: it cannot tell a truncated
+            // download from a wrong constant, and both deserve to stop.
+            archive_bytes: 126_690_465,
+            // Counted after downloading, not taken from the paper: the figure
+            // first written here was 200,000, which is MLDR's total across all
+            // thirteen languages and not what the Spanish file contains.
+            docs: 9_551,
+            queries: 200,
+            // Mean over ALL 9,551 documents. Two corrections live in this one
+            // number: the published ~4,737 tokens converts to ~3,550 words,
+            // which is low; and a 300-document sample said 2,084, which is less
+            // than half the truth, because the file is not shuffled. Measure the
+            // whole thing or do not quote a mean.
+            //
+            // Median 5,597, p10 948, p90 10,485, and **9,550 of 9,551 documents
+            // are longer than one ~300-word chunk** -- which is the entire point
+            // of this entry. See `can_discriminate_aggregation`.
+            avg_doc_words: 5_991,
+            note: "The only registered corpus with documents LONG enough to split into \
+                   several passages, so the only one that can tell two aggregation rules \
+                   apart (N138). Spanish, and 121 MiB -- one of MLDR's smaller languages \
+                   (English is 939 MiB). Not a BEIR zip: three gzipped files with other \
+                   field names, converted on the way in.",
         },
     ];
 
@@ -823,18 +885,161 @@ pub mod fetch {
         }
         fs::create_dir_all(&dest).map_err(|e| FetchError::Io(e.to_string()))?;
 
-        let bytes = download(source.url)?;
-        // Checked before unpacking, not after: a truncated archive should never
-        // get as far as producing files somebody might then measure.
-        if source.archive_bytes != 0 && bytes.len() as u64 != source.archive_bytes {
-            return Err(FetchError::WrongSize {
-                expected: source.archive_bytes,
-                got: bytes.len() as u64,
-            });
+        match source.layout {
+            Layout::BeirZip => {
+                let bytes = download(source.url)?;
+                // Checked before unpacking, not after: a truncated archive should
+                // never get as far as producing files somebody might then measure.
+                if source.archive_bytes != 0 && bytes.len() as u64 != source.archive_bytes {
+                    return Err(FetchError::WrongSize {
+                        expected: source.archive_bytes,
+                        got: bytes.len() as u64,
+                    });
+                }
+                unpack_flat(&bytes, &dest)?;
+            }
+            Layout::MldrGzip { lang } => fetch_mldr(source, lang, &dest)?,
         }
-        unpack_flat(&bytes, &dest)?;
         looks_like_beir(&dest).map_err(FetchError::NotBeirLayout)?;
         Ok(dest)
+    }
+
+    /// Download MLDR's three files and write them out as a BEIR directory.
+    ///
+    /// Converting here rather than teaching every consumer a second format: the
+    /// loader, the CLI and the tests all speak BEIR, and one more dialect is one
+    /// more thing that can be read slightly wrong somewhere.
+    fn fetch_mldr(source: &CorpusSource, lang: &str, dest: &Path) -> Result<(), FetchError> {
+        let base = source.url.trim_end_matches('/');
+
+        let corpus_gz = download(&format!("{base}/mldr-v1.0-{lang}/corpus.jsonl.gz"))?;
+        if source.archive_bytes != 0 && corpus_gz.len() as u64 != source.archive_bytes {
+            return Err(FetchError::WrongSize {
+                expected: source.archive_bytes,
+                got: corpus_gz.len() as u64,
+            });
+        }
+        let queries_gz = download(&format!("{base}/mldr-v1.0-{lang}/test.jsonl.gz"))?;
+        let qrels = download(&format!("{base}/qrels/qrels.mldr-v1.0-{lang}-test.tsv"))?;
+
+        let corpus = gunzip(&corpus_gz)?;
+        let queries = gunzip(&queries_gz)?;
+        let qrels = String::from_utf8_lossy(&qrels).into_owned();
+
+        fs::create_dir_all(dest.join("qrels")).map_err(|e| FetchError::Io(e.to_string()))?;
+        let write = |p: PathBuf, s: String| -> Result<(), FetchError> {
+            fs::write(&p, s).map_err(|e| FetchError::Io(format!("{}: {e}", p.display())))
+        };
+        write(dest.join("corpus.jsonl"), mldr_corpus_to_beir(&corpus)?)?;
+        write(dest.join("queries.jsonl"), mldr_queries_to_beir(&queries)?)?;
+        write(
+            dest.join("qrels").join("test.tsv"),
+            trec_qrels_to_beir(&qrels)?,
+        )?;
+        Ok(())
+    }
+
+    fn gunzip(bytes: &[u8]) -> Result<String, FetchError> {
+        use std::io::Read;
+        let mut out = String::new();
+        flate2::read::GzDecoder::new(bytes)
+            .read_to_string(&mut out)
+            .map_err(|e| FetchError::Unpack(format!("gzip: {e}")))?;
+        Ok(out)
+    }
+
+    /// `{"docid": …, "text": …}` -> `{"_id": …, "title": "", "text": …}`.
+    ///
+    /// `pub` so a test can check the shape without the network, which is the only
+    /// way any of this is checked: CI must never download 121 MiB.
+    pub fn mldr_corpus_to_beir(jsonl: &str) -> Result<String, FetchError> {
+        let mut out = String::with_capacity(jsonl.len());
+        for (n, line) in jsonl.lines().enumerate() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let v: serde_json::Value = serde_json::from_str(line)
+                .map_err(|e| FetchError::Unpack(format!("corpus line {}: {e}", n + 1)))?;
+            let id = v
+                .get("docid")
+                .and_then(|x| x.as_str())
+                .ok_or_else(|| FetchError::Unpack(format!("corpus line {}: no `docid`", n + 1)))?;
+            let text = v.get("text").and_then(|x| x.as_str()).unwrap_or("");
+            out.push_str(&serde_json::json!({ "_id": id, "title": "", "text": text }).to_string());
+            out.push('\n');
+        }
+        if out.is_empty() {
+            return Err(FetchError::Unpack("corpus is empty".into()));
+        }
+        Ok(out)
+    }
+
+    /// `{"query_id": …, "query": …, "positive_passages": […]}` -> `{"_id": …, "text": …}`.
+    ///
+    /// The passages are dropped on purpose. They are MLDR's *training* signal;
+    /// keeping them would let a retriever be scored against documents handed to
+    /// it with the question, which is not retrieval. The judgements come from
+    /// the qrels file, like every other corpus here.
+    pub fn mldr_queries_to_beir(jsonl: &str) -> Result<String, FetchError> {
+        let mut out = String::new();
+        for (n, line) in jsonl.lines().enumerate() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let v: serde_json::Value = serde_json::from_str(line)
+                .map_err(|e| FetchError::Unpack(format!("queries line {}: {e}", n + 1)))?;
+            let id = v.get("query_id").and_then(|x| x.as_str()).ok_or_else(|| {
+                FetchError::Unpack(format!("queries line {}: no `query_id`", n + 1))
+            })?;
+            let text = v.get("query").and_then(|x| x.as_str()).unwrap_or("");
+            out.push_str(&serde_json::json!({ "_id": id, "text": text }).to_string());
+            out.push('\n');
+        }
+        if out.is_empty() {
+            return Err(FetchError::Unpack("queries are empty".into()));
+        }
+        Ok(out)
+    }
+
+    /// Four-column TREC qrels -> the three BEIR expects.
+    ///
+    /// `q-es-8  Q0  doc-es-64  1` becomes `q-es-8  doc-es-64  1`, dropping the
+    /// `Q0` column that TREC carries and BEIR does not.
+    ///
+    /// **Not cosmetic, and the danger is narrower than it first looks — which
+    /// is worth knowing precisely.** Handed the four-column file,
+    /// [`super::parse_qrels_tsv`] reads `Q0` as the document and the document
+    /// as the grade. For MLDR that *fails loudly*, because `doc-es-64` is not a
+    /// number. But **TREC collections commonly use numeric document ids**, and
+    /// with those the same line parses cleanly into a judgement that is
+    /// completely wrong, with no error anywhere. Both cases are pinned by a
+    /// test; the first was measured after I had assumed the second applied to
+    /// everything.
+    pub fn trec_qrels_to_beir(tsv: &str) -> Result<String, FetchError> {
+        let mut out = String::new();
+        for (n, line) in tsv.lines().enumerate() {
+            let line = line.trim_end_matches('\r');
+            if line.trim().is_empty() {
+                continue;
+            }
+            let cols: Vec<&str> = line.split('\t').collect();
+            let (q, d, rel) = match cols.as_slice() {
+                [q, _q0, d, rel] => (*q, *d, *rel),
+                [q, d, rel] => (*q, *d, *rel),
+                _ => {
+                    return Err(FetchError::Unpack(format!(
+                        "qrels line {}: expected 3 or 4 tab-separated columns, found {}",
+                        n + 1,
+                        cols.len()
+                    )))
+                }
+            };
+            out.push_str(&format!("{q}\t{d}\t{rel}\n"));
+        }
+        if out.is_empty() {
+            return Err(FetchError::Unpack("qrels are empty".into()));
+        }
+        Ok(out)
     }
 
     fn download(url: &str) -> Result<Vec<u8>, FetchError> {
@@ -1776,11 +1981,23 @@ mod tests {
                 !nf.can_discriminate_aggregation(),
                 "NFCorpus documents are shorter than one chunk"
             );
-            assert!(
-                !KNOWN.iter().any(|s| s.can_discriminate_aggregation()),
-                "no registered corpus has long documents yet -- that is exactly what \
-                 N138 is still waiting for, and this test is how it stops being a \
-                 surprise"
+
+            // This assertion used to read "no registered corpus has long
+            // documents yet -- that is what N138 is waiting for, and this test
+            // is how it stops being a surprise". It failed the moment MLDR was
+            // registered, which is the test doing its job: the gap closed, and
+            // the assertion now records WHICH corpus closed it rather than
+            // being deleted.
+            let long: Vec<&str> = KNOWN
+                .iter()
+                .filter(|s| s.can_discriminate_aggregation())
+                .map(|s| s.name)
+                .collect();
+            assert_eq!(
+                long,
+                vec!["mldr-es"],
+                "exactly one registered corpus has documents longer than a chunk; \
+                 if that changes, say which and why here"
             );
         }
 
@@ -2075,5 +2292,143 @@ mod tests {
         assert_eq!(Split::from_str("validation"), Ok(Split::Dev));
         assert_eq!(Split::from_str("training"), Ok(Split::Train));
         assert!(Split::from_str("teest").is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // MLDR -> BEIR
+    //
+    // No network anywhere: the inputs are the real upstream shapes, copied from
+    // one line of each file, so the conversion is checked without CI ever
+    // downloading 121 MiB.
+    // -----------------------------------------------------------------------
+
+    #[cfg(feature = "zip")]
+    mod mldr {
+        use super::super::fetch::{mldr_corpus_to_beir, mldr_queries_to_beir, trec_qrels_to_beir};
+        use super::super::{parse_corpus_jsonl, parse_qrels_tsv, parse_queries_jsonl};
+
+        /// Upstream shape, abridged: MLDR keeps the passages it trained on in
+        /// the same record as the query.
+        const MLDR_QUERIES: &str = r#"{"query_id": "q-es-8", "query": "deidad solar eslava", "positive_passages": [{"docid": "doc-es-64", "text": "largo"}], "negative_passages": [{"docid": "doc-es-65", "text": "otro"}]}
+{"query_id": "q-es-9", "query": "ciclo anual", "positive_passages": [], "negative_passages": []}"#;
+
+        const MLDR_CORPUS: &str = r#"{"docid": "doc-es-64", "text": "Mitologia eslava. Fuentes."}
+{"docid": "doc-es-65", "text": "Sancho Perez de Paz."}"#;
+
+        /// Four columns, which is what TREC writes and BEIR does not.
+        const MLDR_QRELS: &str = "q-es-8\tQ0\tdoc-es-64\t1\nq-es-9\tQ0\tdoc-es-65\t1\n";
+
+        #[test]
+        fn the_three_files_convert_into_something_the_loader_can_read() {
+            let corpus = mldr_corpus_to_beir(MLDR_CORPUS).expect("corpus converts");
+            let docs = parse_corpus_jsonl(&corpus).expect("and parses as BEIR");
+            assert_eq!(docs.len(), 2);
+            assert_eq!(docs[0].id, "doc-es-64");
+            assert!(docs[0].text.contains("Mitologia"));
+
+            let queries = mldr_queries_to_beir(MLDR_QUERIES).expect("queries convert");
+            let qs = parse_queries_jsonl(&queries).expect("and parse as BEIR");
+            assert_eq!(qs.len(), 2);
+            assert_eq!(qs[0].id, "q-es-8");
+            assert_eq!(qs[0].text, "deidad solar eslava");
+
+            let qrels = trec_qrels_to_beir(MLDR_QRELS).expect("qrels convert");
+            let judged = parse_qrels_tsv(&qrels).expect("and parse as BEIR");
+            assert_eq!(judged["q-es-8"]["doc-es-64"], 1.0);
+        }
+
+        /// The reason `trec_qrels_to_beir` exists, and the shape of the danger
+        /// measured rather than assumed.
+        ///
+        /// I expected the unconverted four-column file to be read silently as
+        /// three columns -- `Q0` as the document id, the real id as the score.
+        /// It is not, **for MLDR**: the ids are strings, so the score column
+        /// fails to parse and the loader refuses the file. Good.
+        ///
+        /// But that safety is a property of MLDR's ids, not of the parser.
+        /// **TREC collections routinely use numeric document ids**, and with
+        /// those the same mistake parses cleanly into judgements that are
+        /// entirely wrong, with no error anywhere. Both halves are asserted
+        /// here so the next person reads the real boundary instead of my first
+        /// guess at it.
+        #[test]
+        fn the_unconverted_trec_column_is_caught_for_string_ids_and_not_for_numeric_ones() {
+            // MLDR: refused, because "doc-es-64" is not a score.
+            let e = parse_qrels_tsv(MLDR_QRELS).expect_err("string ids save us here");
+            assert!(format!("{e:?}").contains("not a number"), "{e:?}");
+
+            // Numeric ids: parses, and every judgement is nonsense. This is the
+            // case the conversion is actually protecting against.
+            let numeric = "q1\tQ0\t12345\t1\n";
+            let poisoned = parse_qrels_tsv(numeric).expect("it parses, which is the problem");
+            assert_eq!(
+                poisoned["q1"]["Q0"], 12345.0,
+                "the literal Q0 became the document, and the document became the grade"
+            );
+            assert!(!poisoned["q1"].contains_key("12345"));
+
+            // Converted, both are right.
+            for raw in [MLDR_QRELS, numeric] {
+                let ok =
+                    parse_qrels_tsv(&trec_qrels_to_beir(raw).expect("converts")).expect("parses");
+                assert!(ok.values().all(|m| !m.contains_key("Q0")), "{ok:?}");
+            }
+            let ok =
+                parse_qrels_tsv(&trec_qrels_to_beir(numeric).expect("converts")).expect("parses");
+            assert_eq!(ok["q1"]["12345"], 1.0);
+        }
+
+        /// The passages MLDR ships with each query are dropped, and that is a
+        /// correctness requirement, not tidiness: scoring a retriever against
+        /// documents that were handed to it with the question is not retrieval.
+        #[test]
+        fn the_queries_keep_no_trace_of_the_passages_they_shipped_with() {
+            let out = mldr_queries_to_beir(MLDR_QUERIES).expect("converts");
+            assert!(!out.contains("positive_passages"), "{out}");
+            assert!(!out.contains("negative_passages"), "{out}");
+            assert!(
+                !out.contains("doc-es-64"),
+                "a passage id leaked into the queries"
+            );
+        }
+
+        #[test]
+        fn a_three_column_qrels_file_still_works() {
+            // BEIR's own format, so the converter is safe to run on anything.
+            let out = trec_qrels_to_beir("q1\td1\t2\n").expect("converts");
+            assert_eq!(out, "q1\td1\t2\n");
+        }
+
+        #[test]
+        fn a_malformed_qrels_line_is_refused_rather_than_guessed_at() {
+            let e = trec_qrels_to_beir("q1\td1\n").expect_err("two columns is not a judgement");
+            assert!(format!("{e}").contains("3 or 4"), "{e}");
+        }
+
+        #[test]
+        fn a_record_without_an_id_is_an_error_not_a_skipped_line() {
+            // Silently dropping it would shrink the corpus and move the score.
+            let e = mldr_corpus_to_beir(r#"{"text": "no id here"}"#)
+                .expect_err("a document with no id cannot be judged");
+            assert!(format!("{e}").contains("docid"), "{e}");
+        }
+
+        /// MLDR is registered as the one corpus that can answer N138, so the
+        /// registry entry has to actually say that.
+        #[test]
+        fn the_registered_entry_is_the_one_that_can_discriminate_aggregation() {
+            let s = super::super::fetch::source("mldr-es").expect("registered");
+            assert!(
+                s.can_discriminate_aggregation(),
+                "mldr-es exists precisely because the BEIR pair cannot"
+            );
+            for other in ["nfcorpus", "trec-covid"] {
+                let o = super::super::fetch::source(other).expect("registered");
+                assert!(
+                    !o.can_discriminate_aggregation(),
+                    "{other} has documents shorter than one chunk"
+                );
+            }
+        }
     }
 }

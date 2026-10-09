@@ -5,6 +5,67 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v256 (2026-10-09) - V380: MLDR registrado, y NO era parquet (0.2.339)
+
+Dije que MLDR «viene en parquet de HuggingFace y necesita conversion». **No es parquet.** Son JSONL
+comprimidos con gzip mas un TSV de qrels, licencia **MIT**, y `flate2` ya estaba en el arbol.
+**Polars no hace falta para nada.** La correccion importa porque esa frase mia estaba decidiendo la
+prioridad de la tarea.
+
+## La diferencia de formato real: la cuarta columna
+
+Los qrels de MLDR son **TREC de cuatro columnas** (`qid Q0 docid rel`) y BEIR usa tres. Y aqui hay
+un matiz que **medi en vez de suponer**, porque supuse mal primero:
+
+- Dar el fichero sin convertir al parser **falla** con los ids de MLDR -- son texto, y
+  `doc-es-64` no es una puntuacion. Mi comentario decia que pasaria en silencio. Falso.
+- Pero **las colecciones TREC usan ids numericos de forma habitual**, y con esos la misma linea
+  parsea limpiamente en un juicio completamente equivocado: `Q0` se convierte en el documento y el
+  documento en la nota, sin error en ninguna parte.
+
+Las dos mitades estan clavadas con un test, para que el siguiente lea el limite real y no mi
+primera corazonada.
+
+## Lo que mide de verdad el corpus, contra lo que yo habia escrito
+
+| | yo decia | medido |
+|---|---|---|
+| documentos | 200.000 | **9.551** |
+| palabras/doc | 3.550 | **5.991** de media, 5.597 de mediana |
+
+El 200.000 era el total de MLDR en **trece idiomas**, no el fichero espanol. Y hay una segunda
+leccion: una muestra de los **300 primeros** documentos daba 2.084 palabras de media, **menos de la
+mitad** de la verdad, porque el fichero no esta barajado. O se mide entero o no se cita una media.
+
+Lo que no cambia es la conclusion: **9.550 de 9.551 documentos son mas largos que un trozo** de
+~300 palabras. Eso es exactamente lo que N138 llevaba semanas esperando.
+
+## Y la guardia de tamano cazo mi propia errata
+
+Escribi `archive_bytes: 127_040_171` donde el fichero tiene `126_690_465`, y se nego a descargar.
+Funcionando como debe: **no puede distinguir una descarga truncada de una constante mal puesta**, y
+las dos merecen parar.
+
+## Un test viejo hizo su trabajo al fallar
+
+`the_registry_says_which_corpora_can_answer_the_aggregation_question` afirmaba *«ningun corpus
+registrado tiene documentos largos todavia -- eso es lo que N138 espera, y este test es como deja
+de ser una sorpresa»*. Fallo en cuanto registre MLDR. Ahora afirma **cual** es el que cerro el
+hueco, en vez de borrarse.
+
+## Decisiones
+
+- **La conversion vive en el `fetch`, no en los consumidores.** El cargador, el CLI y los tests
+  hablan BEIR; un dialecto mas es una cosa mas que alguien puede leer ligeramente mal.
+- **Los pasajes que MLDR trae con cada consulta se tiran, y es correccion y no limpieza**:
+  puntuar un recuperador contra documentos que se le entregaron con la pregunta no es recuperacion.
+  Hay un test que exige que no quede ni rastro de ellos en `queries.jsonl`.
+- **Un registro sin id es un error, no una linea saltada.** Saltarla encogeria el corpus y moveria
+  la puntuacion.
+
+9 tests nuevos, **45 en el modulo**, ninguno toca la red: las entradas son las formas reales de
+upstream copiadas de una linea de cada fichero.
+
 ## [Unreleased] - v255 (2026-10-09) - V379: N142 -- la web tiene CI por primera vez, y lo corre ella clonando esto (0.2.338)
 
 `ai_assistant-website` **no tenia ni un workflow**, y por eso sus badges de portada llevaban el
