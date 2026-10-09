@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v259 (2026-10-09) - V383: cuatro mutaciones para el codigo de V377 y V380 (0.2.342)
+
+Las escribi ayer y **no las comitee sin ejecutarlas**: una especificacion de mutacion sin correr
+parece cobertura, que es el defecto que llevo la semana persiguiendo. Ahora **12 de 12**.
+
+| id | invariante | murio con |
+|---|---|---|
+| **M9** | el filtrado por particion no es un no-op | 3 tests, incluido `narrowing_to_the_split_does_not_move_the_score` |
+| **M10** | pedir una particion que no esta es un ERROR, no un repliegue | `asking_for_a_split_that_is_not_there_is_an_error_not_a_fallback` |
+| **M11** | la columna `Q0` de TREC se descarta | 2 tests, incluido el de los ids numericos |
+| **M12** | un documento sin id es un error, no una linea saltada | `a_record_without_an_id_is_an_error_not_a_skipped_line` |
+
+Y las ocho viejas siguen muriendo, **M8 incluida** -- la que dos veces se quedo colgada en el
+arbol por un timeout, y que motivo el centinela de V381.
+
+## M12 fallo primero, y ese fallo valia la pena
+
+Salio `NOT_APPLIED`: el ancla no coincidia. **Eso no prueba nada** -- los tests nunca corrieron
+con la mutacion puesta -- asi que es un fallo, no un aprobado, y el script lo dice en su propia
+salida.
+
+La causa: escribi el ancla como yo habia tecleado el codigo, una expresion encadenada, y
+`cargo fmt` la habia partido en cinco lineas antes de que yo corriera nada. **La tolerancia a
+espacios de `needle_regex` cubre el reflujo DENTRO de una linea, no una estructura de lineas
+distinta** -- eso ahora esta escrito al lado del ancla, con la forma post-`fmt`.
+
+Tercera vez hoy que el instrumento me corrige: la guardia de tamano cazo mi errata en los bytes
+de MLDR, el autotest de la puerta del README cazo mi lookbehind, y esto.
+
 ## [Unreleased] - v258 (2026-10-09) - V382: N138 contestado -- el mismo conjunto, otro orden (0.2.341)
 
 Medido sobre `mldr-es`: 9.551 documentos, 220.404 trozos (**23 por documento**), 200 consultas

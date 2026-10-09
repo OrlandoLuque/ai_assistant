@@ -88,3 +88,56 @@ invariant = "indexable_text joins title and body; indexing the body alone is a d
 before = "            format!(\"{}\\n\\n{}\", self.title, self.text)"
 after = "            self.text.clone()"
 occurrences = 1
+
+# ---------------------------------------------------------------------------
+# M9-M12: the split selection and the MLDR conversion (V377, V380).
+#
+# Both are instrument code in the same sense as the rest of this file: they
+# decide WHICH queries get scored and WHAT the judgements say, so an error here
+# is inherited by every number and does not look like an error.
+# ---------------------------------------------------------------------------
+
+[[mutation]]
+id = "M9"
+file = "src/retrieval_eval.rs"
+invariant = "narrowing to a split keeps only the queries that split judges -- running the whole file is the 10x cost the flag exists to remove, and silently keeping them would make the flag a no-op that reads as working"
+before = "        .filter(|q| qrels.contains_key(&q.id))"
+after = "        .filter(|_q| true)"
+occurrences = 1
+
+[[mutation]]
+id = "M10"
+file = "src/retrieval_eval.rs"
+invariant = "asking for a split that is not there is an ERROR, never a fall back to another one: answering a different question under the name the caller asked for is worse than refusing"
+before = """            if !p.is_file() {
+                return Err(CorpusError::Io {"""
+after = """            if false && !p.is_file() {
+                return Err(CorpusError::Io {"""
+occurrences = 1
+
+[[mutation]]
+id = "M11"
+file = "src/retrieval_eval.rs"
+invariant = "the TREC Q0 column is DROPPED, not kept: with numeric document ids, keeping it parses cleanly into judgements where Q0 is the document and the document is the grade"
+before = "                [q, _q0, d, rel] => (*q, *d, *rel),"
+after = "                [q, q0, d, _rel] => (*q, *q0, *d),"
+occurrences = 1
+
+[[mutation]]
+id = "M12"
+file = "src/retrieval_eval.rs"
+invariant = "a corpus record with no `docid` is an error, not a skipped line -- skipping shrinks the collection and moves every score that depended on the missing documents"
+# The anchor below is the POST-`cargo fmt` shape. The first version was written
+# as I had typed it -- one chained expression -- and `cargo fmt` had since split
+# it over five lines, so the run reported NOT_APPLIED. That verdict proves
+# nothing (the tests never ran), which is why it is a failure and not a pass:
+# the whitespace tolerance in `needle_regex` handles reflow *within* a line, not
+# a different line structure.
+before = """            let id = v
+                .get("docid")
+                .and_then(|x| x.as_str())
+                .ok_or_else(|| FetchError::Unpack(format!("corpus line {}: no `docid`", n + 1)))?;"""
+after = """            let Some(id) = v.get("docid").and_then(|x| x.as_str()) else {
+                continue;
+            };"""
+occurrences = 1
