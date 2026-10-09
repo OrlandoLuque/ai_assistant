@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v262 (2026-10-10) - V386: los dos paquetes retirados, fuera (0.2.345)
+
+Visibles **gracias a V385**: al pasar `cargo-deny` de 299 a 955 crates aparecio un segundo
+paquete *yanked* que llevaba detras de una feature opcional sin que nadie lo viera.
+
+```
+chacha20 0.10.0  ->  0.10.2     (via rand 0.10.1, desde lopdf/pdf-extract y object_store/polars)
+spin     0.9.8   ->  0.9.9      (via flume, desde nokhwa)
+```
+
+**«Yanked» quiere decir que su autor retiro esa version concreta de crates.io** -- normalmente
+por un fallo o por una publicacion equivocada. `cargo-deny` lo reporta como AVISO, no como
+error, asi que no rompia nada hoy; pero una version retirada es una que el upstream dice que
+no deberias estar usando, y cargo solo la conserva porque ya estaba en el lock: una resolucion
+desde cero nunca la habria elegido.
+
+## Dos bumps de parche y ninguna cascada
+
+Las dos tenian version compatible no retirada, comprobado en seco antes de tocar nada:
+`cargo update -p chacha20 -p spin --dry-run` movio exactamente **dos paquetes y dejo 326 sin
+cambiar**. Eso es lo que hacia barato el arreglo, y es por lo que se miro primero -- el coste
+de una dependencia no es su tamano, y un bump que arrastra puede traer mas de lo que quita
+(precedente: `project_dependency_cost_is_not_size`, donde un bump honesto trajo dos advisories,
+una de ellas un segfault sin arreglo).
+
+## Verificacion
+
+- Los avisos `yanked` pasan de **2 a cero**. El resto del informe, **identico**: 81
+  `duplicate`, 3 `license-not-encountered`, 1 `advisory-not-detected`, y `advisories ok,
+  bans ok, licenses ok, sources ok`.
+- `cargo check` con **FEATURES_STD** y con **FEATURES_NETWORK**: las dos limpias.
+- `cargo clippy --all-targets -- -D warnings` con FEATURES_STD: limpio.
+
 ## [Unreleased] - v261 (2026-10-10) - V385: «licenses ok» era verdad, y mucho mas pequeno que la pregunta (0.2.344)
 
 El log VERDE de V384 traia el hallazgo. Seis de las ocho supresiones de `[advisories]`
