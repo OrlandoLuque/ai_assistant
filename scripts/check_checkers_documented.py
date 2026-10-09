@@ -47,6 +47,13 @@ MANUAL = {
 WORDS = {
     1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six",
     7: "seven", 8: "eight", 9: "nine", 10: "ten", 11: "eleven", 12: "twelve",
+    # Stopped at twelve, which is exactly how many there were. The thirteenth
+    # (V385) made the fallback `str(want)` compare "thirteen" against "13" and
+    # report a mismatch between a number and itself: «dice "All thirteen run
+    # in CI" y son 13 (13)». Latent since the table was written: wrong answer,
+    # unreadable message, and only on the commit that fixes the real thing.
+    13: "thirteen", 14: "fourteen", 15: "fifteen", 16: "sixteen",
+    17: "seventeen", 18: "eighteen", 19: "nineteen", 20: "twenty",
 }
 
 

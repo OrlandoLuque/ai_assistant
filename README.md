@@ -10,7 +10,7 @@ A comprehensive Rust library for LLM integration — local and cloud. 19 provide
 ![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)
 ![Tests](https://img.shields.io/badge/tests-8991-brightgreen)
 ![LOC](https://img.shields.io/badge/LOC-558K-blue)
-![Gates](https://img.shields.io/badge/CI%20gates-12-blue)
+![Gates](https://img.shields.io/badge/CI%20gates-13-blue)
 
 > **Status: not production-validated. Single author. Use at your own risk.**
 >
@@ -18,7 +18,7 @@ A comprehensive Rust library for LLM integration — local and cloud. 19 provide
 > unproven in the field. What it does have is **verification you can check yourself**, because
 > the honest answer to "is this any good?" is a measurement and not an adjective:
 >
-> - **8,991 tests** (`cargo test --features full --lib`), and **12 automated gates** in CI —
+> - **8,991 tests** (`cargo test --features full --lib`), and **13 automated gates** in CI —
 >   not just compile-and-test. They enforce that the documentation does not lie: every
 >   `ai_cli` command shown in the docs is accepted by the binary, every `use` in a Markdown
 >   code fence resolves, every intra-doc link points at a symbol that exists, the binary

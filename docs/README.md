@@ -111,7 +111,17 @@ Documentation drifts silently, so some of it is enforced:
   docstring says why: getting it right needs the suite to run, and counting `#[test]`
   attributes instead would verify an approximation while appearing to verify the number.
 
-All twelve run in CI **here**. Three more live in `scripts/` and no job in this repository
+- `scripts/check_deny_graph.py` — `deny.toml` must walk the **whole** feature graph. It
+  did not: `all-features = false` meant `cargo deny` checked 299 of 955 crates, so the
+  licence, ban and source rules never saw the 656 behind optional features — 69 % of the
+  tree, in a crate with 95 feature flags. What makes it gate-worthy is that both
+  configurations print the same line, `advisories ok, bans ok, licenses ok, sources ok`:
+  the narrow one is not a weaker green, it is an identical one. The symptom that gave it
+  away was six suppressed advisories reporting `advisory-not-detected` — which looked
+  like six stale entries and was really five live advisories on crates nobody was
+  looking at.
+
+All thirteen run in CI **here**. Three more live in `scripts/` and no job in this repository
 runs them:
 
 - `scripts/check_release_ready.py` — a pre-release step that needs a human to read it.

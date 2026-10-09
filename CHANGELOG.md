@@ -5,6 +5,94 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v261 (2026-10-10) - V385: «licenses ok» era verdad, y mucho mas pequeno que la pregunta (0.2.344)
+
+El log VERDE de V384 traia el hallazgo. Seis de las ocho supresiones de `[advisories]`
+avisaban `advisory-not-detected`, que se lee como «seis entradas rancias». No lo eran.
+
+```
+[graph]
+all-features = false      # <- lo que habia
+```
+
+Medido el 2026-10-10 con `cargo tree -e no-dev --target all`:
+
+| grafo | crates |
+|---|---|
+| por defecto -- lo unico que `cargo deny` miraba | **299** |
+| con todas las features | **955** |
+| **nunca comprobadas** | **656** (el 69 % del arbol) |
+
+## La separacion que lo demuestra
+
+Las cinco crates de las seis advisories «no detectadas» -- `webbrowser`, `paste`,
+`rustls-pemfile`, `quick-xml`, `wayland-scanner` -- estan **fuera** del grafo por defecto y
+**dentro** del completo. Las dos que SI detectaba, `bincode` y `ttf-parser`, son las dos que
+estan **dentro** del grafo por defecto. **Seis contra dos, sin solape**: eso es un mecanismo,
+no una coincidencia. Al ampliar el grafo, los avisos bajan de **6 a 1**.
+
+No eran supresiones muertas: eran **advisories vivas sobre crates que nadie estaba mirando**.
+
+## Por que es mas grave que un aviso
+
+La cabecera de `deny.toml` dice para que existe el fichero: *«block GPL family + AGPL + SSPL
+-- a single GPL transitive contaminates a future commercial dual-license»*. Con 95 feature
+flags, casi todo lo que esta crate usa vive detras de una. **Una crate copyleft detras de
+cualquier feature opcional** -- `rag`, `distributed`, `gui-pro` -- **pasaba sin que nadie la
+viera**, y el resultado era `licenses ok`.
+
+Verdadero. Y mucho mas pequeno que la pregunta que parecia contestar. Es el patron de
+`project_two_checkers_one_rule`, esta vez en el fichero cuyo trabajo es precisamente eso.
+
+Ampliar el grafo tambien activo **cuatro `exceptions` que estaban inertes** -- `epaint` (las
+fuentes OFL / Ubuntu Font), `webpki-root-certs`, `whisper-rs` y `whisper-rs-sys` salian como
+`license-exception-not-encountered`, o sea que **esas licencias nunca se habian comprobado
+contra la lista de permitidas**. Y aparecio un segundo paquete *yanked* invisible.
+
+**No se relajo nada para que esto pasara.** La lista de licencias permitidas y las excepciones
+quedan byte a byte como estaban -- son decisiones ya tomadas y revisadas por el autor, y lo
+unico que cambia es que ahora surten efecto. Sobre las 955: `advisories ok, bans ok,
+licenses ok, sources ok`, cero errores.
+
+## La puerta, y por que hace falta una
+
+`scripts/check_deny_graph.py`, 9/9 en su self-test, y el caso que importa es el primero: con
+`all-features = false` **falla**. Hace falta porque las dos configuraciones imprimen **la misma
+linea**:
+
+```
+advisories ok, bans ok, licenses ok, sources ok
+```
+
+La estrecha no es un verde mas debil, es **el mismo verde**. Volver a `false` cuesta 656 crates
+de cobertura sin ninguna senal -- ni aviso, ni codigo de salida, ni una palabra distinta en el
+resumen. Nada mas lo notaria.
+
+## Dos cosas que la propia puerta descubrio al entrar
+
+1. **`check_checkers_documented.py` tenia un defecto latente**: su tabla de numeros en palabras
+   se detenia en `twelve`, que era exactamente cuantas puertas habia. La decimotercera hizo que
+   comparara `"thirteen"` con `"13"` y reportara un desajuste de un numero consigo mismo:
+   *«dice "All thirteen run in CI" y son 13 (13)»*. Respuesta incorrecta y mensaje ilegible,
+   y solo en el commit que arregla lo de verdad. Ampliada a veinte.
+2. **La web ya habia derivado**: `index.html` decia «12 automated gates» y la prosa esta
+   deliberadamente FUERA del alcance de `check_website_numbers.py` (V379 documento los dos
+   fallos heuristicos que lo justifican). Corregida a mano, que es la unica via que hay ahi.
+
+## Una rareza, escrita como rareza
+
+`RUSTSEC-2026-0002` (`lru` 0.12.5, unsound) sigue sin detectarse **incluso con el grafo
+completo**. No por ausencia -- `cargo deny --all-features list` muestra `lru@0.12.5` -- ni
+porque la supresion este trabajando: **borrando la entrada y re-ejecutando sigue diciendo
+`advisories ok`**. Es la unica con `informational = "unsound"`, que es el sospechoso obvio,
+pero **eso es una conjetura y no esta verificada**, asi que no se escribe como causa.
+
+Lo que si esta establecido, y es lo que necesita quien lea el fichero: la entrada **sostiene a
+`cargo-audit`** (que lee el lock entero y si la ve) y es **inerte para `cargo-deny`**. No se
+quita por la palabra `advisory-not-detected`. Su re-chequeo tambien se renovo con fecha: el
+plazo ha pasado, la condicion de upstream no -- seguimos en `lru` 0.12.5 y el parche esta en
+>= 0.16.3.
+
 ## [Unreleased] - v260 (2026-10-09) - V384: un «Supply Chain» rojo que decia «Docker Hub dijo que no» (0.2.343)
 
 `EmbarkStudios/cargo-deny-action@v2` construye una imagen de Docker, asi que necesita que Docker

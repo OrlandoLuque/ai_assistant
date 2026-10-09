@@ -11,7 +11,39 @@
 #     tolerance, no wildcard versions, no specific known-bad crates.
 
 [graph]
-all-features = false
+# V385 (N146) — this MUST stay `true`, and the reason is a measurement.
+# Taken 2026-10-10 with `cargo tree -e no-dev --target all`:
+#
+#   default feature graph ....  299 crates   <- all this file used to check
+#   every feature ............  955 crates
+#   never checked ............  656 crates   (69 % of the tree)
+#
+# With 95 feature flags, nearly everything this crate depends on sits behind
+# one of them. The header above states what this file exists to prevent: "a
+# single GPL transitive contaminates a future commercial dual-license". A
+# copyleft crate behind ANY optional feature — rag, distributed, gui-pro —
+# was invisible, and `licenses ok` came back true: true, and much smaller
+# than the question it looked like it was answering.
+#
+# What gave it away: six of the eight `[advisories].ignore` entries warned
+# `advisory-not-detected`. They were NOT stale. Five of the six are live
+# advisories on crates outside the default graph (webbrowser, paste,
+# rustls-pemfile, quick-xml, wayland-scanner), and the two that WERE detected
+# — bincode, ttf-parser — are the two crates inside it. Six against two with
+# no overlap is a mechanism, not a coincidence.
+#
+# Widening it also made four `exceptions` below start working: epaint (the OFL
+# / Ubuntu-Font assets), webpki-root-certs, whisper-rs and whisper-rs-sys were
+# all reported `license-exception-not-encountered`, i.e. those licences had
+# never actually been checked against the allow list. A second yanked crate
+# appeared too. Nothing here was relaxed to make this pass: the allow list and
+# the exceptions are byte-for-byte what they were, and `cargo deny check
+# advisories licenses bans sources` reports zero errors over all 955.
+#
+# Guarded by `scripts/check_deny_graph.py`, because setting this back to
+# `false` costs 656 crates of coverage and cargo-deny still prints "ok" —
+# there is nothing else that would notice.
+all-features = true
 no-default-features = false
 
 [output]
@@ -69,6 +101,23 @@ ignore = [
     # calling IterMut in a specific pattern inside tantivy's internals;
     # not reachable from our API surface.
     # Re-check by: 2026-09-01 OR when lancedb/tantivy bump lru >= 0.16.
+    #
+    # V385 re-check (2026-10-10): the DATE has passed, the UPSTREAM condition
+    # has not. Still lru 0.12.5, via tantivy 0.24.2 -> lance 2.0.0 / lancedb
+    # 0.26.2; the advisory is patched in >= 0.16.3, so we are still affected.
+    # Renewed, not deleted.
+    #
+    # And a measured oddity, written down because the alternative is a comment
+    # that quietly means something else than it says: cargo-deny does NOT
+    # report this advisory even over the full feature graph. Not because the
+    # crate is absent — `cargo deny --all-features list` shows lru@0.12.5 —
+    # and not because the suppression is doing the work: deleting this line
+    # and re-running still prints `advisories ok`. It is the only entry here
+    # with `informational = "unsound"`, which is the obvious suspect, but that
+    # is a guess and it is not verified, so it is not stated as the cause.
+    # What IS established: this entry is load-bearing for cargo-audit (which
+    # reads the whole lock and does see it) and inert for cargo-deny. Do not
+    # remove it on the strength of cargo-deny's `advisory-not-detected`.
     "RUSTSEC-2026-0002",
     # (RUSTSEC-2026-0187 was here -- lopdf stack overflow. DELETED in V355,
     #  not renewed: its own re-check condition had come true. pdf-extract

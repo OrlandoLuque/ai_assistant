@@ -60,6 +60,12 @@ jobs:
           # Its own cache key: this job compiles a tool, not the crate, and
           # sharing a key with the build jobs would evict one or the other.
           key: cargo-deny
+      - name: Check the config walks the whole feature graph
+        # Runs BEFORE the tool, and cheaply: if deny.toml has been narrowed
+        # back to the default feature graph, the run below would still pass
+        # and print the same "ok" line while checking 299 crates instead of
+        # 955. See N146 and the script's own docstring.
+        run: python3 scripts/check_deny_graph.py
       - name: Install cargo-deny
         run: cargo install cargo-deny --locked
       - name: Check advisories, licenses, bans and sources
