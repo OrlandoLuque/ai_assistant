@@ -4352,10 +4352,17 @@ fn print_retrieval_usage() {
     println!("  fetch --list         what is cached and what it costs on disk");
     println!("  fetch --remove <n>   delete a cached corpus");
     println!("  corpus <dir>         inspect a BEIR-layout corpus BEFORE measuring with it");
-    println!("  run <dir>            index it with our own retriever, run every query, score");
+    println!("  run <dir>            index it, run the split's queries, score");
     println!("  score <file.json>    re-score a saved run, at another k, without re-indexing");
     println!();
     println!("Options:");
+    println!("  --split test|dev|train                                         [run, corpus]");
+    println!("                       which judgements to score against (default: test, which");
+    println!("                       is what papers report). A BEIR directory ships ONE");
+    println!("                       queries.jsonl holding every split, so this picks the");
+    println!("                       query set too: on NFCorpus, 323 judged of 3,237. The");
+    println!("                       score is identical either way -- the unjudged ones were");
+    println!("                       always dropped from the averages -- it is 10x the time.");
     println!("  --k <n>              cut-off for the @k metrics (default: 10)  [run, score]");
     println!("  --mode lexical|hybrid  which search path to measure (default: lexical)  [run]");
     println!("  --aggregation max-passage|sum-reciprocal-rank                            [run]");
@@ -4592,9 +4599,10 @@ fn mib(bytes: u64) -> f64 {
 fn cmd_retrieval_run(args: &[String]) -> ExitCode {
     use ai_assistant::retrieval_eval::sqlite::{SearchPath, SqliteRetriever};
     use ai_assistant::retrieval_eval::Aggregation;
-    use ai_assistant::retrieval_eval::{load_beir_dir, run_corpus};
+    use ai_assistant::retrieval_eval::{load_beir_dir_split, run_corpus, Split};
 
     let mut dir: Option<&String> = None;
+    let mut split: Option<Split> = None;
     let mut mode = SearchPath::Lexical;
     let mut aggregation = Aggregation::MaxPassage;
     let mut k = 10usize;
@@ -4605,6 +4613,20 @@ fn cmd_retrieval_run(args: &[String]) -> ExitCode {
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
+            "--split" => match args.get(i + 1).map(|s| s.parse::<Split>()) {
+                Some(Ok(parsed)) => {
+                    split = Some(parsed);
+                    i += 1;
+                }
+                Some(Err(e)) => {
+                    eprintln!("Error: {}", e);
+                    return ExitCode::from(1);
+                }
+                None => {
+                    eprintln!("Error: --split requires test, dev or train");
+                    return ExitCode::from(1);
+                }
+            },
             "--k" => match args.get(i + 1).and_then(|s| s.parse::<usize>().ok()) {
                 Some(n) if n > 0 => {
                     k = n;
@@ -4697,7 +4719,7 @@ fn cmd_retrieval_run(args: &[String]) -> ExitCode {
         return ExitCode::from(1);
     };
 
-    let corpus = match load_beir_dir(std::path::Path::new(dir)) {
+    let corpus = match load_beir_dir_split(std::path::Path::new(dir), split) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Error: {}", e);
@@ -4818,14 +4840,29 @@ fn cmd_retrieval_run(args: &[String]) -> ExitCode {
 /// judgement naming a document the corpus file does not contain makes recall@k
 /// unreachable. "recall@10 = 0.41" looks the same either way.
 fn cmd_retrieval_corpus(args: &[String]) -> ExitCode {
-    use ai_assistant::retrieval_eval::load_beir_dir;
+    use ai_assistant::retrieval_eval::{load_beir_dir_split, Split};
 
     let mut dir: Option<&String> = None;
+    let mut split: Option<Split> = None;
     let mut as_json = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "--json" => as_json = true,
+            "--split" => match args.get(i + 1).map(|s| s.parse::<Split>()) {
+                Some(Ok(parsed)) => {
+                    split = Some(parsed);
+                    i += 1;
+                }
+                Some(Err(e)) => {
+                    eprintln!("Error: {}", e);
+                    return ExitCode::from(1);
+                }
+                None => {
+                    eprintln!("Error: --split requires test, dev or train");
+                    return ExitCode::from(1);
+                }
+            },
             "--help" | "-h" => {
                 print_retrieval_usage();
                 return ExitCode::SUCCESS;
@@ -4852,7 +4889,7 @@ fn cmd_retrieval_corpus(args: &[String]) -> ExitCode {
         return ExitCode::from(1);
     };
 
-    let corpus = match load_beir_dir(std::path::Path::new(dir)) {
+    let corpus = match load_beir_dir_split(std::path::Path::new(dir), split) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Error: {}", e);

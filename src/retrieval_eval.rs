@@ -348,13 +348,85 @@ pub fn parse_qrels_tsv(text: &str) -> Result<HashMap<String, HashMap<String, f64
     Ok(out)
 }
 
-/// Load a BEIR-layout directory: `corpus.jsonl`, `queries.jsonl`, and the first
-/// of `qrels/test.tsv`, `qrels/dev.tsv`, `qrels/train.tsv` that exists.
+/// Which BEIR judgement file to score against.
 ///
-/// The split order is deliberate and worth knowing: `test` is the one papers
-/// report, so a directory carrying both would otherwise be scored on whichever
-/// the filesystem happened to list first.
+/// A BEIR directory ships **one `queries.jsonl` holding every split's queries**
+/// and a separate `qrels/<split>.tsv` per split. NFCorpus, for instance, has
+/// 3,237 queries in that one file and 323 judged by `test`. Picking the split
+/// therefore picks the query set too — see [`load_beir_dir_split`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Split {
+    /// What published numbers report, and the default.
+    Test,
+    /// Development / validation.
+    Dev,
+    /// Training. Scoring on it is a different claim — say so if you report it.
+    Train,
+}
+
+impl Split {
+    /// The file name inside `qrels/`.
+    pub fn file_name(self) -> &'static str {
+        match self {
+            Split::Test => "test.tsv",
+            Split::Dev => "dev.tsv",
+            Split::Train => "train.tsv",
+        }
+    }
+
+    /// The name as written on the command line.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Split::Test => "test",
+            Split::Dev => "dev",
+            Split::Train => "train",
+        }
+    }
+}
+
+impl std::str::FromStr for Split {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "test" => Ok(Split::Test),
+            "dev" | "validation" | "val" => Ok(Split::Dev),
+            "train" | "training" => Ok(Split::Train),
+            other => Err(format!(
+                "unknown split '{other}' -- expected test, dev or train"
+            )),
+        }
+    }
+}
+
+/// Load a BEIR-layout directory, scoring against the first of
+/// `qrels/test.tsv`, `qrels/dev.tsv`, `qrels/train.tsv` that exists.
+///
+/// The order is deliberate: `test` is the one papers report, so a directory
+/// carrying both would otherwise be scored on whichever the filesystem listed
+/// first. Use [`load_beir_dir_split`] to say which one explicitly.
 pub fn load_beir_dir(dir: &Path) -> Result<RetrievalCorpus, CorpusError> {
+    load_beir_dir_split(dir, None)
+}
+
+/// Load a BEIR-layout directory, scoring against a named split.
+///
+/// `None` keeps [`load_beir_dir`]'s behaviour of taking the first split present.
+///
+/// **The queries are narrowed to the ones the chosen split judges.** This is not
+/// an optimisation bolted on afterwards: `queries.jsonl` holds every split's
+/// queries, so running the whole file means retrieving for queries that no
+/// judgement covers, and [`crate::retrieval_metrics::summarise`] drops them from
+/// every average anyway (counting them in `skipped`). On NFCorpus that is 3,237
+/// retrievals to score 323 — a tenfold cost for an identical number.
+///
+/// It belongs here rather than in [`run_corpus`] because this is where the BEIR
+/// quirk lives. `run_corpus` runs the queries it is handed; a caller that builds
+/// a [`RetrievalCorpus`] by hand may well mean to run unjudged ones.
+pub fn load_beir_dir_split(
+    dir: &Path,
+    split: Option<Split>,
+) -> Result<RetrievalCorpus, CorpusError> {
     let read = |p: std::path::PathBuf| -> Result<String, CorpusError> {
         std::fs::read_to_string(&p).map_err(|e| CorpusError::Io {
             path: p.display().to_string(),
@@ -362,21 +434,42 @@ pub fn load_beir_dir(dir: &Path) -> Result<RetrievalCorpus, CorpusError> {
         })
     };
     let docs = parse_corpus_jsonl(&read(dir.join("corpus.jsonl"))?)?;
-    let queries = parse_queries_jsonl(&read(dir.join("queries.jsonl"))?)?;
+    let all_queries = parse_queries_jsonl(&read(dir.join("queries.jsonl"))?)?;
 
-    let mut qrels_path = None;
-    for split in ["test.tsv", "dev.tsv", "train.tsv"] {
-        let p = dir.join("qrels").join(split);
-        if p.is_file() {
-            qrels_path = Some(p);
-            break;
+    let qrels_path = match split {
+        // Asked for by name: it is there or this is an error. Falling back to
+        // another split would answer a different question under the same name.
+        Some(s) => {
+            let p = dir.join("qrels").join(s.file_name());
+            if !p.is_file() {
+                return Err(CorpusError::Io {
+                    path: p.display().to_string(),
+                    reason: format!("the '{}' split is not in this corpus", s.as_str()),
+                });
+            }
+            p
         }
-    }
-    let qrels_path = qrels_path.ok_or_else(|| CorpusError::Io {
-        path: dir.join("qrels").display().to_string(),
-        reason: "no test.tsv, dev.tsv or train.tsv".to_string(),
-    })?;
+        None => [Split::Test, Split::Dev, Split::Train]
+            .iter()
+            .map(|s| dir.join("qrels").join(s.file_name()))
+            .find(|p| p.is_file())
+            .ok_or_else(|| CorpusError::Io {
+                path: dir.join("qrels").display().to_string(),
+                reason: "no test.tsv, dev.tsv or train.tsv".to_string(),
+            })?,
+    };
     let qrels = parse_qrels_tsv(&read(qrels_path)?)?;
+
+    // Keep only what this split judges. `qrels` may name a query with every
+    // grade 0 -- judged irrelevant is a judgement, and `summarise` is the one
+    // that decides such a query cannot be scored, not this function.
+    let queries: Vec<CorpusQuery> = all_queries
+        .into_iter()
+        .filter(|q| qrels.contains_key(&q.id))
+        .collect();
+    if queries.is_empty() {
+        return Err(CorpusError::Empty("queries"));
+    }
 
     let name = dir
         .file_name()
@@ -1849,5 +1942,138 @@ mod tests {
             }
             other => panic!("expected a malformed grade, got {other:?}"),
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Splits
+    // -----------------------------------------------------------------------
+
+    /// A BEIR directory whose `queries.jsonl` carries BOTH splits' queries,
+    /// which is the layout the real ones ship and the reason this exists.
+    fn write_two_split_corpus(tag: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("ai_assistant_split_{tag}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("qrels")).expect("mkdir");
+        std::fs::write(dir.join("corpus.jsonl"), CORPUS).expect("corpus");
+        std::fs::write(
+            dir.join("queries.jsonl"),
+            "{\"_id\": \"q1\", \"text\": \"purring animal\"}\n\
+             {\"_id\": \"q2\", \"text\": \"barking animal\"}\n\
+             {\"_id\": \"q3\", \"text\": \"singing animal\"}\n",
+        )
+        .expect("queries");
+        // test judges q1 only; dev judges q2 and q3.
+        std::fs::write(dir.join("qrels").join("test.tsv"), "q1\td1\t1\n").expect("test qrels");
+        std::fs::write(dir.join("qrels").join("dev.tsv"), "q2\td2\t1\nq3\td3\t1\n")
+            .expect("dev qrels");
+        dir
+    }
+
+    #[test]
+    fn a_split_selects_its_own_queries_not_the_whole_file() {
+        let dir = write_two_split_corpus("select");
+
+        let test = load_beir_dir_split(&dir, Some(Split::Test)).expect("test split loads");
+        assert_eq!(test.queries.len(), 1, "test judges one query");
+        assert_eq!(test.queries[0].id, "q1");
+
+        let dev = load_beir_dir_split(&dir, Some(Split::Dev)).expect("dev split loads");
+        assert_eq!(dev.queries.len(), 2, "dev judges two");
+
+        // All three documents stay: narrowing the QUERIES must not narrow the
+        // collection being searched, or the task gets easier and the score moves.
+        assert_eq!(test.docs.len(), 3);
+        assert_eq!(dev.docs.len(), 3);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The point of the change is that it is free: the same retriever must score
+    /// exactly the same with and without the unjudged queries, because
+    /// `summarise` was already dropping them. If this ever fails, the narrowing
+    /// is not an optimisation and the published number has to be re-derived.
+    #[test]
+    fn narrowing_to_the_split_does_not_move_the_score() {
+        use crate::retrieval_metrics::summarise;
+
+        let dir = write_two_split_corpus("score");
+        let narrowed = load_beir_dir_split(&dir, Some(Split::Test)).expect("narrowed");
+
+        // The same corpus with every query, which is what the loader used to do.
+        let mut everything = narrowed.clone();
+        everything.queries = parse_queries_jsonl(
+            "{\"_id\": \"q1\", \"text\": \"purring animal\"}\n\
+             {\"_id\": \"q2\", \"text\": \"barking animal\"}\n\
+             {\"_id\": \"q3\", \"text\": \"singing animal\"}\n",
+        )
+        .expect("queries");
+
+        let r = scripted(&[
+            ("purring animal", &["d1", "d2"]),
+            ("barking animal", &["d2"]),
+            ("singing animal", &["d3"]),
+        ]);
+
+        let a = summarise(
+            &run_corpus(&narrowed, &r, 10)
+                .expect("narrowed run")
+                .file
+                .queries,
+            10,
+        );
+        let b = summarise(
+            &run_corpus(&everything, &r, 10)
+                .expect("full run")
+                .file
+                .queries,
+            10,
+        );
+
+        assert_eq!(a.ndcg_at_k, b.ndcg_at_k, "nDCG must not move");
+        assert_eq!(a.recall_at_k, b.recall_at_k, "recall must not move");
+        assert_eq!(a.mrr, b.mrr, "MRR must not move");
+        // What DOES change is how much work was done, and how many queries the
+        // report had to throw away to get there.
+        assert_eq!(a.skipped, 0, "nothing to skip once narrowed");
+        assert_eq!(
+            b.skipped, 2,
+            "the two dev queries were retrieved for nothing"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn asking_for_a_split_that_is_not_there_is_an_error_not_a_fallback() {
+        let dir = write_two_split_corpus("missing");
+        // `train` does not exist here. Quietly scoring `test` instead would
+        // answer a different question under the name the caller asked for.
+        match load_beir_dir_split(&dir, Some(Split::Train)) {
+            Err(CorpusError::Io { reason, .. }) => {
+                assert!(reason.contains("train"), "{reason}");
+            }
+            other => panic!("expected a missing-split error, got {other:?}"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn no_split_given_prefers_test_which_is_what_papers_report() {
+        let dir = write_two_split_corpus("default");
+        let c = load_beir_dir(&dir).expect("loads");
+        assert_eq!(c.queries.len(), 1, "test, not dev");
+        assert_eq!(c.queries[0].id, "q1");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn split_names_parse_the_way_a_person_would_type_them() {
+        use std::str::FromStr;
+        assert_eq!(Split::from_str("test"), Ok(Split::Test));
+        assert_eq!(Split::from_str(" TEST "), Ok(Split::Test));
+        assert_eq!(Split::from_str("validation"), Ok(Split::Dev));
+        assert_eq!(Split::from_str("training"), Ok(Split::Train));
+        assert!(Split::from_str("teest").is_err());
     }
 }

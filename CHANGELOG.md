@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v253 (2026-10-09) - V377: `--split test|dev|train`, y la prueba de que no mueve el numero (0.2.336)
+
+Un directorio BEIR trae **un solo `queries.jsonl` con las consultas de TODAS las particiones** y un
+`qrels/<split>.tsv` por particion. Asi que elegir la particion elige tambien el conjunto de
+consultas, y hasta hoy se corrian las 3.237 de NFCorpus para puntuar **323**.
+
+## Lo primero: no cambia ningun resultado
+
+```
+nDCG@10 = 0,2979    recall@10 = 0,1417    MRR = 0,4984    MAP = 0,1129
+```
+
+**Identico al cuarto decimal** que la medicion de anoche, con 323 consultas en vez de 3.237. Tenia
+que serlo: `summarise` ya descartaba las no juzgadas de todas las medias y las contaba en `skipped`.
+Pero «tenia que serlo» no es una verificacion, asi que esta medido contra el corpus real.
+
+Y hay un test que lo clava: `narrowing_to_the_split_does_not_move_the_score` puntua el mismo
+recuperador con y sin las consultas sin juzgar y exige que nDCG, recall y MRR no se muevan. **Si
+alguna vez falla, el estrechamiento no es una optimizacion y el numero publicado hay que
+rederivarlo** -- eso esta escrito en el test.
+
+## Decisiones, con su motivo
+
+- **El filtrado vive en el cargador, no en `run_corpus`.** Ahi es donde esta la rareza de BEIR.
+  `run_corpus` corre las consultas que le den: quien construya un `RetrievalCorpus` a mano puede
+  querer correr las no juzgadas.
+- **Pedir una particion que no esta es un ERROR, no un repliegue.** Caer a otra contestaria una
+  pregunta distinta con el nombre que pidio el llamante. Sin particion sigue prefiriendo `test`,
+  que es la que reportan los articulos.
+- **Estrechar las CONSULTAS no estrecha la coleccion.** Los 3.633 documentos siguen indexados; si
+  menguaran, la tarea se haria mas facil y el numero se moveria. Hay un test que lo fija.
+- **`corpus` tambien acepta `--split`.** Inspeccionar una particion que luego no puedes puntuar es
+  la clase de desajuste que hace que un informe describa otra cosa que el numero de al lado.
+
+## Verificado
+
+38 tests del modulo (5 nuevos), 77 de `retrieval_*`; CLI documentado OK; 28 especificaciones de
+mutacion coinciden; enlaces intra-doc 0 (baseline 0). Y el bucle entero ejecutado contra NFCorpus
+descargado a la cache de fuera del repositorio: `fetch` -> `corpus --split dev` -> `run`.
+
 ## [Unreleased] - v252 (2026-10-09) - V376: N135, primer paso: `ToolCall` deja de estar escrito tres veces (0.2.335)
 
 Autorizado por el autor. Los tres eran **identicos campo por campo** (`id`, `name`, `arguments`) y
