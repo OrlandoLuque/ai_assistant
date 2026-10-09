@@ -5,6 +5,73 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v258 (2026-10-09) - V382: N138 contestado -- el mismo conjunto, otro orden (0.2.341)
+
+Medido sobre `mldr-es`: 9.551 documentos, 220.404 trozos (**23 por documento**), 200 consultas
+juzgadas. La pregunta llevaba semanas abierta porque **ningun corpus de BEIR podia contestarla**:
+en NFCorpus cada documento es UN trozo y todas las reglas colapsan en la misma respuesta.
+
+| | `max-passage` | `sum-reciprocal-rank` | diferencia |
+|---|---|---|---|
+| recall@10 | 0,9600 | 0,9600 | **identico** |
+| precision@10 | 0,0960 | 0,0960 | **identico** |
+| MRR | 0,9007 | 0,8876 | -0,0131 (**-1,5 %**) |
+| nDCG@10 | **0,9152** | 0,9053 | -0,0099 (**-1,1 %**) |
+
+## La respuesta, que no es un si ni un no
+
+**Las dos reglas devuelven el MISMO conjunto de diez documentos y lo ordenan DISTINTO.** El
+recall identico al cuarto decimal lo dice: los mismos diez, siempre. El nDCG y el MRR distintos
+dicen que no en el mismo sitio.
+
+Tiene la forma que cabia esperar. `max-passage` sube el documento que contiene *el* pasaje bueno;
+`sum-reciprocal-rank` lo diluye premiando al que tiene varios pasajes mediocres, y en una tarea
+donde la respuesta esta en un parrafo concreto eso empuja al correcto un poco hacia abajo.
+
+**Y por eso la eleccion hay que declararla.** Un 1,1 % de nDCG es mas de lo que mejoran muchos
+articulos de recuperacion. `describe()` ya nombra la regla en cada informe; ahora hay el numero
+que justifica por que.
+
+Tambien dice lo contrario, y conviene: **si solo importa si el documento correcto esta ahi**
+(recall), la regla es irrelevante. Dos conclusiones de una medicion, y las dos utiles.
+
+## Antes de interpretar el numero, tres comprobaciones
+
+1. **Las dos reglas son codigo genuinamente distinto**, con un test que las hace **invertir el
+   orden** en una entrada construida. Verificado ANTES de mirar el resultado, para que un
+   eventual «no hay diferencia» significara algo.
+2. **Hay un solo documento relevante por consulta**, con notas binarias -- contado sobre el
+   fichero de qrels, `{1: 200}`. Eso fuerza que MAP sea igual a MRR y que precision@10 sea
+   exactamente recall/10: 0,9600/10 = 0,0960. El instrumento es coherente consigo mismo.
+3. **Las consultas las genero GPT-3.5 a partir de los parrafos de los propios documentos** --
+   esta en la ficha del dataset. Comparten vocabulario con la respuesta por construccion, asi
+   que **un 0,92 de BM25 mide la tarea, no el recuperador**. Esta escrito en el registro, junto
+   con que MLDR es *known-item* y NFCorpus *ad-hoc*: comparar 0,9152 con 0,2979 seria un error.
+
+## Y una cifra ajena retirada de la portada
+
+El bloque de estado de la web decia *«nDCG@10 = 0.2979 on NFCorpus, against BEIR's published
+0.325 for Anserini BM25»*. El 0,2979 es nuestro y esta medido. **El 0,325 lo escribi de
+memoria**: esta en el articulo, no en el README de BEIR -- que solo trae el inventario, 323
+consultas y 3,6K documentos, que si coinciden con lo medido -- y no lo verifique.
+
+Probablemente sea correcto. Pero hoy he estado seguro y equivocado **cinco veces en este mismo
+repositorio**: el formato de MLDR, el efecto de la columna `Q0`, el numero de documentos, la
+longitud media y lo que mostraba `og-image.png`. Con ese historial no es defendible sostener en
+publico la cifra de un tercero sin comprobarla.
+
+Ahora dice lo que puedo sostener -- que el 0,2979 **se ejecuto** -- y enlaza el articulo. Lo
+mismo en `docs/CAPABILITIES.md`, donde estaba repetida. **El numero que se quita no era
+probablemente falso; es que no lo se, y esa es la diferencia.**
+
+## Lo que la medicion costo, y que no se explica solo
+
+74 minutos de indexado y 9 de consulta la primera vez; **mas de 45 minutos la segunda, sin nada
+que reindexar**. Descartado midiendo: no reescribe el fichero (mismo tamano, mismo mtime, WAL
+vacio), la comprobacion de salto sale pronto y hashea con FNV-1a, y la agregacion opera sobre
+cincuenta trozos. **No tengo explicacion**, y queda escrita como tal en **N144** junto con la
+falta de salida de progreso -- que es lo que habria permitido verlo en vez de deducirlo.
+
 ## [Unreleased] - v257 (2026-10-09) - V381: la proteccion de `mutate.py` tenia forma POSIX, y esto es Windows (0.2.340)
 
 **Segunda vez** que un timeout de diez minutos deja una mutacion aplicada en el arbol: las dos
