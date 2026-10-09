@@ -18,12 +18,12 @@ A comprehensive Rust library for LLM integration — local and cloud. 19 provide
 > unproven in the field. What it does have is **verification you can check yourself**, because
 > the honest answer to "is this any good?" is a measurement and not an adjective:
 >
-> - **8,990 tests** (`cargo test --features full --lib`), and **11 automated gates** in CI —
+> - **8,990 tests** (`cargo test --features full --lib`), and **12 automated gates** in CI —
 >   not just compile-and-test. They enforce that the documentation does not lie: every
 >   `ai_cli` command shown in the docs is accepted by the binary, every `use` in a Markdown
 >   code fence resolves, every intra-doc link points at a symbol that exists, the binary
->   inventory matches `Cargo.toml`, and the list of gates itself is checked against the gates
->   that run.
+>   inventory matches `Cargo.toml`, the front-page numbers above match the tree, and the list
+>   of gates itself is checked against the gates that run.
 > - **Mutation testing** (`scripts/mutate.py`), because a green suite proves the tests pass,
 >   not that they would notice if the code were wrong. Each spec pairs an invariant with the
 >   smallest change that breaks it, *and the reason it matters*.
@@ -31,6 +31,14 @@ A comprehensive Rust library for LLM integration — local and cloud. 19 provide
 >   built, tested, documented — and never connected, or silently degraded to a weaker path.
 >   The sweeps that hunted it, what they found, and the gates added so it cannot come back are
 >   in [`CHANGELOG.md`](CHANGELOG.md) and [`docs/modus-operandi.md`](docs/modus-operandi.md).
+>
+> **And it still needs more hammering.** Those sweeps were *manual*, which means they found a
+> lot and do not repeat themselves. Measured on 2026-10-09 across the 353 modules in `lib.rs`,
+> **five** — `data_source_client`, `container_tools`, `rerank_service`, `gdpr`, `redis_backend`,
+> 4,325 lines together — have no mention anywhere in the tree except their own `pub mod` line.
+> They are `pub`, so an external consumer could use them; nothing here does. **There is no gate
+> yet that would refuse a sixth**, and until there is, "it was swept" is a statement about the
+> past. Tracked as N143.
 >
 > Known gaps are tracked rather than hidden: see [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md),
 > which marks each capability `hecho` / `parcial` / `no` and says what is missing.

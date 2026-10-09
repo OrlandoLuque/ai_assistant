@@ -5,6 +5,63 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v251 (2026-10-09) — V375: la puerta de ayer tenia un punto ciego, y era el numero que ella misma movio (0.2.334)
+
+V373 subio el badge a `CI gates-12`. La frase del README doce lineas mas abajo seguia diciendo
+**«11 automated gates»**, y la puerta daba OK: **lee el badge y no la prosa**.
+
+Es la forma exacta de `project_two_checkers_one_rule` — la lista de RUSTSEC vive en tres ficheros
+y el checker que compara solo dos contesta que si a una pregunta mas pequena que la que parece.
+Un «OK» verdadero y mas estrecho que la pregunta es peor que un fallo.
+
+Ahora `stated()` saca **las dos** copias y tienen que coincidir entre si. Caso de autotest nuevo con
+el fallo que ocurrio de verdad — *«the badge updated but not the prose»* — y 12/12.
+
+## La pregunta del autor, contestada con un numero
+
+> «¿podemos asegurar que no se van a generar nuevos modulos infrautilizados? ¿hemos llegado a
+> hacer el barrido completo?»
+
+**No.** N22 y N56 fueron auditorias **manuales**: encontraron mucho y no se repiten solas. Medido
+hoy sobre los 353 modulos de `lib.rs`, **cinco** no aparecen en ningun sitio del arbol salvo su
+propia linea `pub mod`:
+
+| modulo | lineas |
+|---|---|
+| `container_tools` | 1.419 |
+| `data_source_client` | 1.379 |
+| `rerank_service` | 579 |
+| `gdpr` | 545 |
+| `redis_backend` | 403 |
+
+**4.325 lineas.** Son `pub`, asi que un tercero podria usarlas; aqui nadie lo hace. Y **no hay
+puerta que rechace un sexto**. Esta en el README, en el bloque de Status, porque «se barrio» es
+una afirmacion sobre el pasado. Encolado como **N143** con las tres opciones y la recomendada.
+
+### Y el instrumento me mintio tres veces antes de dar ese cinco
+
+Parte del hallazgo, porque es la leccion repetida:
+
+1. **20 huerfanos.** Buscaba `crate::X` y olvidaba `ai_assistant::X`: **cada binario de `src/bin/`
+   es una crate SEPARADA** y nombra la libreria por su nombre real. 13 de 20 eran culpa mia.
+2. **7.** `widgets` (5.027 lineas) salia huerfano y lo usa `ai_gui-pro`, con un **import agrupado**
+   `use ai_assistant::{..., widgets::{self, ...}}` que el regex no ve.
+3. `ffi` salia huerfano y **debe estarlo**: se llama desde C, no desde Rust.
+
+Por eso N143 dice que una puerta de texto no sirve aqui, y propone la via del compilador.
+
+## El og-image: mi aviso de ayer era falso
+
+Dije que `og-image.png` seguia diciendo 390K y 6.874 tests. **La imagen servida no tiene ninguna
+cifra** — es solo el logo desde el commit `774096c`. Lo que habia era el panel antiguo todavia en
+el fuente bajo `.content { display: none }`, con numeros que envejecieron ahi dentro y que leidos
+parecian la fuente de la imagen.
+
+Borrado, no re-ocultado: **una cifra que nada renderiza es una cifra que nada puede corregir**, y
+me costo una ronda entera de «hay que actualizar la imagen» sobre una imagen sin numeros.
+Comprobado que el render es **byte a byte identico** antes y despues de borrarlo, que es la prueba
+de que el bloque estaba muerto. Y el fichero lleva ahora escrito como regenerarlo.
+
 ## [Unreleased] - v250 (2026-10-08) — V374: tres tests que pasaban el hash por la misma función en los dos lados (0.2.333)
 
 Salió de repasar lo que la web afirma de este código. `framework_comparison.html` presume de

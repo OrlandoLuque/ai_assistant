@@ -87,6 +87,10 @@ def measured() -> dict[str, int]:
         # nobody checks is the loose end this project keeps finding elsewhere.
         # `check_binaries_documented.py` already holds docs/BINARIES.md to account.
         "ci_gates": len(gate_scripts),
+        # Same measurement, second place it is stated. Not redundant: the badge
+        # and the prose are two independent copies of one fact, and they drifted
+        # apart the first time the number moved.
+        "ci_gates_prose": len(gate_scripts),
     }
 
 
@@ -105,6 +109,13 @@ def stated(text: str) -> dict[str, int | None]:
         "loc": one(r"LOC-(\d[\d,]*)K-", scale=1000),
         "features": one(r"\*\*(\d[\d,]*) feature flags\*\*"),
         "ci_gates": one(r"CI%20gates-(\d+)-"),
+        # The SAME number in prose. The first version of this gate read only the
+        # badge, and the badge went to 12 while the sentence below it still said
+        # eleven -- a gate reporting OK about one of two places that state the
+        # same fact. Same shape as the RUSTSEC ignore list living in three files
+        # with two checkers: the narrower "OK" was true and smaller than the
+        # question. Both are parsed, and they must agree with each other.
+        "ci_gates_prose": one(r"\*\*(\d+) automated gates\*\*"),
     }
 
 
@@ -138,7 +149,7 @@ def problems_for(text: str, real: dict[str, int]) -> list[str]:
     claim = stated(text)
     problems: list[str] = []
 
-    for key in ("source_files", "features", "ci_gates"):
+    for key in ("source_files", "features", "ci_gates", "ci_gates_prose"):
         want, got = real[key], claim[key]
         if got is None:
             problems.append(
@@ -172,16 +183,27 @@ def problems_for(text: str, real: dict[str, int]) -> list[str]:
 # A gate nobody has seen fail is a gate nobody knows the polarity of: this file's
 # first version passed while the README still carried a false completeness claim,
 # because the pattern meant to refuse it had a lookbehind that never matched.
-SELF_TEST_REAL = {"source_files": 574, "loc": 558_000, "features": 98, "ci_gates": 12}
+SELF_TEST_REAL = {
+    "source_files": 574,
+    "loc": 558_000,
+    "features": 98,
+    "ci_gates": 12,
+    "ci_gates_prose": 12,
+}
 TRUE_README = (
     "![](tests-8990) ![](LOC-558K-blue) ![](CI%20gates-12-green)\n"
     "**574 source files**, 558K lines. **98 feature flags**.\n"
+    "There are **12 automated gates** in CI.\n"
 )
 SELF_TEST_CASES = [
     ("a README that matches the tree", TRUE_README, 0),
     ("a stale file count", TRUE_README.replace("**574 source", "**369 source"), 1),
     ("a stale feature count", TRUE_README.replace("**98 feature", "**61 feature"), 1),
-    ("a stale gate count", TRUE_README.replace("gates-12-", "gates-11-"), 1),
+    # Both copies of the gate count moved, so both are wrong: 2 problems.
+    ("a stale gate count in badge and prose",
+     TRUE_README.replace("gates-12-", "gates-11-").replace("**12 automated", "**11 automated"), 2),
+    # The one that actually happened: the badge was updated, the sentence was not.
+    ("the badge updated but not the prose", TRUE_README.replace("**12 automated", "**11 automated"), 1),
     ("LOC off by 24%", TRUE_README.replace("LOC-558K", "LOC-423K"), 1),
     # Half a per cent: a real commit moves the number this much, and failing the
     # build over it would train everyone to edit the figure without reading it.
@@ -191,7 +213,7 @@ SELF_TEST_CASES = [
     ("a production-ready claim", TRUE_README + "\nProduction ready.\n", 1),
     # The exact shape that defeated the first version of the gate.
     ('"zero stubs" quoted in order to be disowned', TRUE_README + '\nNot "zero stubs".\n', 1),
-    ("every number wrong at once", "nothing here\n", 4),
+    ("every number wrong at once", "nothing here\n", 5),
 ]
 
 
@@ -254,7 +276,7 @@ def main() -> int:
     print(
         f"OK - README states {claim['source_files']:,} source files, "
         f"~{real['loc'] // 1000}K lines, {claim['features']} features and "
-        f"{claim['ci_gates']} CI gates, and all four match the tree.\n"
+        f"{claim['ci_gates']} CI gates (badge and prose agree), and all five match the tree.\n"
         "NOT checked here (by design, see this file's header): the test count, which needs "
         "the suite to run."
     )
