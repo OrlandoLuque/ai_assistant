@@ -124,48 +124,19 @@ impl ToolDefinition {
     }
 }
 
-/// A call to a tool
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolCall {
-    /// Tool name
-    pub name: String,
-    /// Arguments provided
-    pub arguments: HashMap<String, Value>,
-    /// Call ID (for tracking)
-    pub id: String,
-}
-
-impl ToolCall {
-    pub fn new(name: &str, arguments: HashMap<String, Value>) -> Self {
-        Self {
-            name: name.to_string(),
-            arguments,
-            id: uuid::Uuid::new_v4().to_string(),
-        }
-    }
-
-    /// Get a string argument
-    pub fn get_string(&self, key: &str) -> Option<String> {
-        self.arguments
-            .get(key)
-            .and_then(|v| v.as_str().map(|s| s.to_string()))
-    }
-
-    /// Get a number argument
-    pub fn get_number(&self, key: &str) -> Option<f64> {
-        self.arguments.get(key).and_then(|v| v.as_f64())
-    }
-
-    /// Get an integer argument
-    pub fn get_integer(&self, key: &str) -> Option<i64> {
-        self.arguments.get(key).and_then(|v| v.as_i64())
-    }
-
-    /// Get a boolean argument
-    pub fn get_bool(&self, key: &str) -> Option<bool> {
-        self.arguments.get(key).and_then(|v| v.as_bool())
-    }
-}
+/// A call to a tool.
+///
+/// One type, defined in [`crate::unified_tools`]. This module and
+/// [`crate::tool_calling`] used to declare their own, identical field for field
+/// (`id`, `name`, `arguments`) and differing only in declaration order, which
+/// `serde` ignores — so the three were the same thing written three times, and
+/// nothing stopped them drifting apart.
+///
+/// The one behavioural difference went the right way: `get_string` now returns
+/// `Option<&str>` instead of `Option<String>`, so a caller that wants an owned
+/// value asks for it (`.map(str::to_string)`) and one that does not, does not
+/// allocate.
+pub use crate::unified_tools::ToolCall;
 
 /// Result of a tool execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -579,7 +550,7 @@ pub fn create_builtin_tools() -> Vec<(ToolDefinition, ToolHandler)> {
             Box::new(|call: &ToolCall| {
                 let expr = call.get_string("expression").unwrap_or_default();
                 // Simple evaluation (in production, use a proper math parser)
-                match simple_eval(&expr) {
+                match simple_eval(expr) {
                     Ok(result) => ToolResult::success(&call.id, &call.name, &result.to_string()),
                     Err(e) => ToolResult::error(&call.id, &call.name, &e),
                 }
@@ -598,9 +569,7 @@ pub fn create_builtin_tools() -> Vec<(ToolDefinition, ToolHandler)> {
                 })
                 .with_category("utility"),
             Box::new(|call: &ToolCall| {
-                let tz = call
-                    .get_string("timezone")
-                    .unwrap_or_else(|| "local".to_string());
+                let tz = call.get_string("timezone").unwrap_or("local");
                 let time = if tz.to_lowercase() == "utc" {
                     chrono::Utc::now()
                         .format("%Y-%m-%d %H:%M:%S UTC")
@@ -1570,7 +1539,7 @@ mod tests {
         args.insert("msg".to_string(), Value::String("hello".to_string()));
         let call = ToolCall::new("test", args);
 
-        assert_eq!(call.get_string("msg"), Some("hello".to_string()));
+        assert_eq!(call.get_string("msg"), Some("hello"));
         assert_eq!(call.get_string("missing"), None);
     }
 

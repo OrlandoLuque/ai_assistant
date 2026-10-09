@@ -56,13 +56,12 @@ pub enum ParameterType {
     Object,
 }
 
-/// Tool call request from model
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolCall {
-    pub id: String,
-    pub name: String,
-    pub arguments: HashMap<String, serde_json::Value>,
-}
+/// Tool call request from a model.
+///
+/// One type, defined in [`crate::unified_tools`]. See the note on
+/// [`crate::tools::ToolCall`]: this module, `tools` and `unified_tools` each
+/// declared their own and all three were identical.
+pub use crate::unified_tools::ToolCall;
 
 /// Tool call result
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -414,23 +413,12 @@ impl Default for ToolRegistry {
     }
 }
 
-// ── Interop with unified_tools ──
-
-impl From<ToolCall> for crate::unified_tools::ToolCall {
-    fn from(tc: ToolCall) -> Self {
-        crate::unified_tools::ToolCall::with_id(tc.id, tc.name, tc.arguments)
-    }
-}
-
-impl From<crate::unified_tools::ToolCall> for ToolCall {
-    fn from(tc: crate::unified_tools::ToolCall) -> Self {
-        Self {
-            id: tc.id,
-            name: tc.name,
-            arguments: tc.arguments,
-        }
-    }
-}
+// The two `From` impls that used to live here converted this module's
+// `ToolCall` to `unified_tools::ToolCall` and back, field for field. They are
+// gone because there is now one type and the conversion is the identity — which
+// is the clearest evidence the duplication was costing something: every seam
+// between the two vocabularies needed glue, and the glue needed keeping in step
+// with both sides.
 
 /// Builder for common tools
 pub struct CommonTools;

@@ -873,7 +873,7 @@ pub(crate) fn tests_tools() -> CategoryResult {
         let call = ai_assistant::ToolCall::new("get_weather", args);
         assert_eq_test!(call.name, "get_weather");
         let city = call.get_string("city");
-        assert_eq_test!(city, Some("Madrid".to_string()));
+        assert_eq_test!(city, Some("Madrid"));
         Ok(())
     }));
 

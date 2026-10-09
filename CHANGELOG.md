@@ -5,6 +5,64 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v252 (2026-10-09) - V376: N135, primer paso: `ToolCall` deja de estar escrito tres veces (0.2.335)
+
+Autorizado por el autor. Los tres eran **identicos campo por campo** (`id`, `name`, `arguments`) y
+solo cambiaba el ORDEN de declaracion, que `serde` ignora: el formato de cable no se mueve.
+
+`unified_tools::ToolCall` es el canonico; `tools` y `tool_calling` lo re-exportan. Los tres alias
+publicos de `lib.rs` -- `ToolCall`, `UnifiedToolCall`, `ToolInvocation` -- siguen existiendo y ahora
+apuntan al mismo tipo, asi que nada de fuera se rompe.
+
+## Lo que el compilador encontro, que es la prueba de que la duplicacion costaba
+
+**Tres errores, y dos eran el pegamento que la duplicacion obligaba a escribir**: dos impls `From`
+en `tool_calling.rs` que convertian su `ToolCall` al de `unified_tools` y de vuelta, campo por
+campo. Ahora la conversion es la identidad y los impls chocan entre si. Borrados.
+
+Cada costura entre los dos vocabularios necesitaba ese pegamento, y el pegamento habia que
+mantenerlo en paso con los dos lados.
+
+El tercer error fue una mejora real: `get_string` pasa de `Option<String>` a `Option<&str>`, asi que
+quien quiere el valor en propiedad lo pide y quien no, no asigna. Tres sitios ajustados.
+
+## Lo que queda de N135, que es lo gordo
+
+Los tres `ToolRegistry` **no** son equivalentes, y la diferencia importa:
+
+| modulo | consumidores | `execute` devuelve |
+|---|---|---|
+| `unified_tools` | 8 | **`Result<ToolOutput, ToolError>`** |
+| `tools` | 4 | `ToolResult` con un `success: bool` |
+| `tool_calling` | 2 | `ToolResult` con un `success: bool` |
+
+Dos de los tres **no pueden fallar**: meten el error en un campo y un llamante que no lo mire sigue
+con el texto del error como si fuera salida. Comprobado que `agentic_loop.rs:585` **si** lo mira, asi
+que es deuda de diseno y no un fallo vivo -- y conviene decirlo asi y no inflarlo.
+
+## Y una trampa de API que solo se ve desde fuera
+
+`lib.rs` re-exporta los tres juegos con los nombres **cruzados**:
+
+| nombre publico | lo que es de verdad |
+|---|---|
+| `ai_assistant::ToolCall` | `tools::ToolCall` |
+| `ai_assistant::ToolDef` | `tool_calling::Tool` |
+| `ai_assistant::ToolOutput` | `tool_calling::ToolResult` |
+| `ai_assistant::UnifiedToolDef` | `unified_tools::ToolDef` |
+
+Un tercero que importe `{ToolCall, ToolDef, ToolOutput}` se lleva tipos de **dos modulos distintos
+que no encajan entre si**. Es la clase de `project_external_consumption_blind_spot`: invisible desde
+dentro, porque dentro cada modulo usa el suyo. Tras este paso `ToolCall` ya es uno solo; los otros
+dos cruces siguen ahi y se cierran con el registro.
+
+## Verificado
+
+8991 tests (los 8990 mas el vector conocido de V374), 0 fallidos; `clippy --all-targets -D warnings`
+limpio con `FEATURES_STD`. Y la puerta del README gana una comprobacion mas: el recuento de tests
+aparece en **cuatro** sitios y, aunque su VALOR no se verifica (haria falta correr la bateria), los
+cuatro tienen que coincidir **entre si** -- que es el fallo que de verdad ocurre. 14/14 en autotest.
+
 ## [Unreleased] - v251 (2026-10-09) — V375: la puerta de ayer tenia un punto ciego, y era el numero que ella misma movio (0.2.334)
 
 V373 subio el badge a `CI gates-12`. La frase del README doce lineas mas abajo seguia diciendo

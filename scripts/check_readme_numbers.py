@@ -170,6 +170,23 @@ def problems_for(text: str, real: dict[str, int]) -> list[str]:
                 f"({drift:.1%} off, tolerance {LOC_TOLERANCE:.0%})"
             )
 
+    # The test count is NOT verified against the suite (see this file's header).
+    # But it is stated in FOUR places -- badge, status block, verification list,
+    # comparison table -- and the failure that actually happens is updating one
+    # and forgetting the rest. That needs no suite run: the four must agree with
+    # EACH OTHER. Same shape as the gate count above, which drifted between its
+    # badge and its sentence the first time it moved.
+    counts = {m.group(1).replace(",", "") for m in re.finditer(r"tests-(\d+)-", text)}
+    counts |= {m.group(1).replace(",", "") for m in re.finditer(r"\*\*(\d[\d,]*) tests\*\*", text)}
+    counts |= {m.group(1).replace(",", "") for m in re.finditer(r"\| Tests \| (\d[\d,]*) \|", text)}
+    if len(counts) > 1:
+        problems.append(
+            "the README states more than one test count: "
+            + ", ".join(f"{int(c):,}" for c in sorted(counts, key=int))
+            + ". The value is not checked here (it needs the suite to run), but the "
+            "four places that state it must agree with each other."
+        )
+
     # A claim of completeness is the one that was not merely stale but FALSE, and the
     # reason this file exists at all.
     for forbidden, why in FORBIDDEN:
@@ -191,9 +208,9 @@ SELF_TEST_REAL = {
     "ci_gates_prose": 12,
 }
 TRUE_README = (
-    "![](tests-8990) ![](LOC-558K-blue) ![](CI%20gates-12-green)\n"
+    "![](tests-8990-green) ![](LOC-558K-blue) ![](CI%20gates-12-green)\n"
     "**574 source files**, 558K lines. **98 feature flags**.\n"
-    "There are **12 automated gates** in CI.\n"
+    "There are **12 automated gates** in CI, and **8,990 tests**.\n"
 )
 SELF_TEST_CASES = [
     ("a README that matches the tree", TRUE_README, 0),
@@ -204,6 +221,11 @@ SELF_TEST_CASES = [
      TRUE_README.replace("gates-12-", "gates-11-").replace("**12 automated", "**11 automated"), 2),
     # The one that actually happened: the badge was updated, the sentence was not.
     ("the badge updated but not the prose", TRUE_README.replace("**12 automated", "**11 automated"), 1),
+    # The test count: the VALUE is not checked, but the places stating it must agree.
+    ("test count updated in the badge only",
+     TRUE_README.replace("tests-8990", "tests-8991"), 1),
+    ("test count consistent but not verified against the suite",
+     TRUE_README.replace("tests-8990", "tests-1").replace("**8,990 tests**", "**1 tests**"), 0),
     ("LOC off by 24%", TRUE_README.replace("LOC-558K", "LOC-423K"), 1),
     # Half a per cent: a real commit moves the number this much, and failing the
     # build over it would train everyone to edit the figure without reading it.
