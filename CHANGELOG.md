@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v254 (2026-10-09) - V378: una CUARTA poblacion de codigo de ejemplo, y estaba igual que las otras tres (0.2.337)
+
+V340 encontro que los bloques ```rust de los `.md` eran una tercera poblacion que nada compilaba:
+**86 de 1037 nombres importados estaban mal**, 48 en ninguna ruta, dos en la portada del README.
+`check_doc_imports.py` cerro eso.
+
+**La web es la cuarta, y estaba en el mismo estado.** Los mismos ejemplos viven otra vez como
+`<pre><code>` en `ai_assistant-website`, donde ninguna puerta llega -- y es la copia que un
+desconocido lee **antes** que el repositorio. 259 bloques, 92 nombres importados, **6 rotos**:
+
+| pagina | decia | es |
+|---|---|---|
+| `quickstart.html` | `ProviderType` | `AiProvider` |
+| `developer_guide.html` | `ProviderType` | `AiProvider` |
+| `developer_guide.html` | `AssistantConfig` | `AiConfig` |
+| `developer_guide.html` | `KpkgWriter` | `KpkgBuilder` |
+| `guide_research.html` | `CoVeVerifier` | `ChainOfVerification` |
+| `guide_research.html` | `MultiAgentOrchestrator` | `AgentOrchestrator` |
+
+`quickstart.html` y `developer_guide.html` son **las primeras paginas que alguien abre**: copiar
+ese bloque no compila. 17 sustituciones en total (el nombre equivocado sale tambien en el cuerpo
+del ejemplo, no solo en el `use`).
+
+## No reimplementa el resolutor: lo importa
+
+`check_website_examples.py` hace `from check_doc_imports import crate_surface, split_use`. Esa es
+la leccion de la lista de RUSTSEC, que vivia en tres ficheros con dos checkers distintos y el mas
+estrecho contestaba que si a una pregunta mas pequena. **Un resolutor, dos frentes**, y ninguna
+posibilidad de que discrepen sobre lo que contiene la crate.
+
+Un detalle del extractor que importa: el HTML lleva resaltado de sintaxis, asi que
+`ai_assistant::<span class="k">rag</span>` es **una ruta para quien lee y tres tokens para un
+regex**. Hay que quitar etiquetas y decodificar entidades antes de buscar nada.
+
+## Y demostrado que discrimina
+
+Metido un `ProviderTypeXYZ` a mano: la puerta falla con rc=1 y lo nombra con su pagina y linea.
+Restaurado, vuelve a 0. Una puerta cuyo fallo no se ha visto es una puerta de polaridad
+desconocida -- de eso iba V373.
+
+**Queda manual**, y esta dicho por que: la web es otro repositorio y un trabajo de CI de aqui no la
+ve sin clonarla, lo que acoplaria este CI a que aquel siga siendo publico. Es una decision con
+consecuencias, y va con N142 junto a la misma pregunta para las cifras de portada.
+
 ## [Unreleased] - v253 (2026-10-09) - V377: `--split test|dev|train`, y la prueba de que no mueve el numero (0.2.336)
 
 Un directorio BEIR trae **un solo `queries.jsonl` con las consultas de TODAS las particiones** y un

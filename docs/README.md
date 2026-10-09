@@ -111,8 +111,18 @@ Documentation drifts silently, so some of it is enforced:
   docstring says why: getting it right needs the suite to run, and counting `#[test]`
   attributes instead would verify an approximation while appearing to verify the number.
 
-All twelve run in CI. `scripts/check_release_ready.py` is the thirteenth checker in
-`scripts/` and is **not** wired to CI — it is a pre-release manual step.
+All twelve run in CI. Two more live in `scripts/` and are **not** wired to it:
+
+- `scripts/check_release_ready.py` — a pre-release step that needs a human to read it.
+- `scripts/check_website_examples.py` — the same question as `check_doc_imports.py`, asked of
+  the `<pre><code>` blocks on [the website](https://ai-assistant.runawaybrains.com), which were
+  a **fourth** uncompiled population of example code and in the same state the Markdown fences
+  were before V340: six imports named types the crate does not have, on `quickstart.html` and
+  `developer_guide.html` among them — the first pages a stranger reads. It does not
+  reimplement the resolver, it imports it, so the two cannot drift into disagreeing about what
+  the crate contains. It is manual because the website is a separate repository and a CI job
+  here cannot see it without cloning; that trade-off is N142.
+  Run it with `python scripts/check_website_examples.py ../ai_assistant-website`.
 
 And that paragraph is itself checked, by `scripts/check_checkers_documented.py`: the
 list above, the scripts on disk and the steps in the workflows must agree, including

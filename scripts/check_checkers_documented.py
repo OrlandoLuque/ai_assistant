@@ -29,6 +29,10 @@ WORKFLOWS = ".github/workflows"
 # them as manual, and the count of CI-wired ones must exclude them.
 MANUAL = {
     "check_release_ready.py": "pre-release manual step, needs a human to read the output",
+    "check_website_examples.py": (
+        "needs a checkout of ai_assistant-website, which is a separate repository; "
+        "wiring it would couple this CI to cloning that one (N142)"
+    ),
 }
 
 WORDS = {
