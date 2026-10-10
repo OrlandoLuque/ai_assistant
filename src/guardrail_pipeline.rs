@@ -2608,6 +2608,68 @@ mod tests {
         }
     }
 
+    /// A guard that panics instead of answering.
+    ///
+    /// Added in V391 because the fail-closed path had **no test at all**, and
+    /// it is the one whose comment says why it matters: *"a guard that panics
+    /// on crafted input could be an attack to bypass security"*. A mutation
+    /// turning its `passed: false` into `true` would have survived the whole
+    /// suite — and the bypass is free, because the attacker only has to find
+    /// one input that makes a guard panic.
+    struct PanickingGuard;
+    impl Guard for PanickingGuard {
+        fn name(&self) -> &str {
+            "panics"
+        }
+        fn stage(&self) -> GuardStage {
+            GuardStage::Both
+        }
+        fn check(&self, _text: &str) -> GuardCheckResult {
+            panic!("this guard panics on purpose");
+        }
+    }
+
+    #[test]
+    fn a_guard_that_panics_blocks_the_message_instead_of_being_skipped() {
+        let mut pipeline = GuardrailPipeline::new();
+        pipeline.add_guard(Box::new(PanickingGuard));
+
+        let result = pipeline.check_input("anything at all");
+
+        // Fail CLOSED. Skipping the guard would be the dangerous reading:
+        // whoever can make a guard panic would then pass unchecked.
+        assert!(
+            !result.passed,
+            "a panicking guard must block, not be skipped"
+        );
+        assert_eq!(result.blocked_by, Some("panics".to_string()));
+        assert_eq!(result.results.len(), 1);
+        // The reason has to say it was a panic and not a content decision, or
+        // whoever reads the log goes looking for toxic text that is not there.
+        match &result.results[0].action {
+            GuardAction::Block(reason) => assert!(
+                reason.to_lowercase().contains("panic"),
+                "the reason must name the panic, got {reason:?}"
+            ),
+            other => panic!("expected Block, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_panicking_guard_does_not_stop_the_pipeline_from_being_reused() {
+        // The fail-closed path returns early. If that left the pipeline in a
+        // poisoned state, one crafted input would disable guarding for every
+        // later message — a denial of the control rather than a bypass of it.
+        let mut pipeline = GuardrailPipeline::new();
+        pipeline.add_guard(Box::new(PanickingGuard));
+        assert!(!pipeline.check_input("first").passed);
+        assert!(!pipeline.check_input("second").passed);
+
+        let mut clean = GuardrailPipeline::new();
+        clean.add_guard(Box::new(PassGuard));
+        assert!(clean.check_input("fine").passed);
+    }
+
     struct PreSendOnlyGuard;
     impl Guard for PreSendOnlyGuard {
         fn name(&self) -> &str {

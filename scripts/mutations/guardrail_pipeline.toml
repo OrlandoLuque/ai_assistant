@@ -1,0 +1,70 @@
+# The guardrail mutations from V319/V321, recovered from the CHANGELOG where
+# they were the only place they lived (N126).
+#
+# This is a SECURITY control, and its failure mode is the worst kind: the
+# pipeline reports `passed = true` and the caller serves the text. Nothing
+# throws, nothing logs, and the only evidence is the content that got through.
+#
+# The defect V319 fixed: the loop consulted the guard's SCORE alone, so a guard
+# could return `GuardAction::Block` and be silently overruled whenever its score
+# fell under `block_threshold` (0.8 by default). With stock configuration that
+# left three dead bands -- ToxicityGuard 0.5..0.8, AttackGuard 0.7..0.8,
+# AbstentionGuard 0.2..0.3 -- so content the toxicity detector had flagged and
+# prompt injections the attack detector had rated high-risk went through.
+#
+# The fix keeps the threshold as a SECOND, independent trigger rather than
+# replacing it, which is why there are two mutations here and not one: both
+# halves of the union have to be load-bearing, or the union is decoration.
+#
+# Run: python scripts/mutate.py --spec scripts/mutations/guardrail_pipeline.toml
+
+features = "full"
+filter = "guardrail_pipeline::tests"
+
+[[mutation]]
+id = "M1"
+file = "src/guardrail_pipeline.rs"
+filter = "guardrail_pipeline::tests::a_block_is_obeyed_whatever_the_threshold_is"
+invariant = "a guard's `action` is its DECISION and the score only a magnitude: an explicit Block is obeyed whatever the threshold, and this is the exact pre-V319 defect -- a flagged prompt injection passing while `passed` came back true"
+before = """            let blocks = matches!(result.action, GuardAction::Block(_))
+                || result.score >= self.block_threshold;"""
+after = "            let blocks = result.score >= self.block_threshold;"
+occurrences = 1
+
+[[mutation]]
+id = "M2"
+file = "src/guardrail_pipeline.rs"
+filter = "guardrail_pipeline::tests::test_pipeline_threshold"
+invariant = "the threshold stays a second, independent trigger: it is what a guard that only SCORES relies on, and dropping it would silently disarm every such guard"
+before = """            let blocks = matches!(result.action, GuardAction::Block(_))
+                || result.score >= self.block_threshold;"""
+after = "            let blocks = matches!(result.action, GuardAction::Block(_));"
+occurrences = 1
+
+[[mutation]]
+id = "M3"
+file = "src/guardrail_pipeline.rs"
+filter = "guardrail_pipeline::tests::a_guard_that_panics_blocks_the_message_instead_of_being_skipped"
+invariant = "a guard that PANICS blocks the message instead of being skipped -- the comment says why, and it is the cheapest bypass there is: an attacker only has to find one input that makes a guard panic"
+# This path had NO test at all until V391, which is what writing the mutation
+# found: nothing in the module referred to a panicking guard, and the three
+# `panic!` occurrences in the test module were all assertion failures inside
+# other tests.
+#
+# What is NOT claimed here, because it was not measured: that the rest of the
+# suite would have let this mutation live. The honest statement is the one
+# above -- the invariant had no test -- and "ninety tests passed anyway" would
+# be a guess dressed as a result. The paired run that would establish it is
+# worth doing (filter the old tests only, `expect = "survives"`, as
+# compute_proof.toml does) and is not done yet.
+before = """                    return PipelineResult {
+                        passed: false,
+                        results: vec![panic_result],
+                        blocked_by: Some(guard_name),
+                    };"""
+after = """                    return PipelineResult {
+                        passed: true,
+                        results: vec![panic_result],
+                        blocked_by: None,
+                    };"""
+occurrences = 1

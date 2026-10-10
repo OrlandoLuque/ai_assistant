@@ -5,6 +5,68 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v267 (2026-10-11) - V391: el fail-closed de las guardas no tenia NINGUN test (0.2.350)
+
+N126, segundo incremento: `scripts/mutations/guardrail_pipeline.toml`, **3 de 3 muertas**. Y
+escribir la tercera encontro un hueco que es de seguridad, no de estilo.
+
+## Las dos mitades de la union, cada una con su mutacion
+
+V319 arreglo esto, y el comentario del codigo lo cuenta entero: el bucle consultaba **solo el
+score**, asi que una guarda podia devolver `GuardAction::Block` y quedar **silenciosamente
+revocada** si su score no llegaba al `block_threshold` (0,8 por defecto). Con la configuracion de
+serie eso dejaba **tres bandas muertas**:
+
+```
+ToxicityGuard   bloquea a score >= 0,5  -> banda muerta 0,5 .. 0,8
+AttackGuard     bloquea a riesgo > 0,7  -> banda muerta 0,7 .. 0,8
+AbstentionGuard bloquea bajo confianza 0,3, puntuando 1,0 - confianza -> 0,2 .. 0,3
+```
+
+Contenido que el detector de toxicidad habia marcado, e **inyecciones de prompt que el detector
+de ataques habia calificado de alto riesgo**, pasaban mientras el pipeline reportaba
+`passed = true`.
+
+El arreglo **conserva** el umbral como segundo disparador independiente en vez de sustituirlo, y
+por eso aqui hay **dos** mutaciones y no una: las dos mitades de la union tienen que sostener
+peso, o la union es decoracion. M1 quita la mitad de `Block` (el defecto pre-V319), M2 quita la
+del umbral (lo que necesita una guarda que **solo puntua**). Las dos mueren, con tests distintos.
+
+## Y la tercera: un hueco de seguridad sin cubrir
+
+El manejador de panico de una guarda **falla cerrado**, y su comentario dice por que: *«a guard
+that panics on crafted input could be an attack to bypass security»*. **No tenia ningun test.**
+Nada en el modulo mencionaba una guarda que entrara en panico -- las tres apariciones de `panic!`
+en el modulo de tests eran fallos de asercion de otros tests.
+
+Es el bypass mas barato que hay: al atacante le basta encontrar **una** entrada que haga cascar a
+una guarda.
+
+Dos tests nuevos, y el segundo no es adorno:
+- `a_guard_that_panics_blocks_the_message_instead_of_being_skipped`: falla cerrado, nombra la
+  guarda culpable, y el motivo **dice que fue un panico** y no una decision de contenido -- si no,
+  quien lea el registro se pone a buscar texto toxico que no existe.
+- `a_panicking_guard_does_not_stop_the_pipeline_from_being_reused`: la ruta de fallo cerrado
+  **retorna pronto**. Si eso dejara el pipeline envenenado, una sola entrada preparada
+  desactivaria el guardado para todos los mensajes posteriores -- que seria una **denegacion** del
+  control en vez de un bypass, y igual de util para quien ataca.
+
+## Lo que NO se afirma
+
+En el espec habia escrito que «la bateria entera pasaba con el fail-closed convertido en
+fail-open». **Eso no lo he medido**, y lo he corregido a lo que si esta establecido: el invariante
+no tenia test. «Noventa tests pasaban igual» seria una conjetura disfrazada de resultado. La
+ejecucion emparejada que lo establecria -- filtrar solo los tests viejos y `expect = "survives"`,
+como hace `compute_proof.toml` -- queda apuntada en el propio fichero y sin hacer.
+
+## Verificado
+
+- **9.020 tests** con `FEATURES_STD`, 0 fallidos (+2). **7.243** con `full`, **5.215** con el
+  minimo de ocho features -- las tres **medidas**, no sumadas.
+- `cargo clippy --all-targets -- -D warnings` limpio.
+- **3 de 3 mutaciones**, cada una nombrando el test que la mata.
+- El arbol limpio tras la ejecucion: sin centinela.
+
 ## [Unreleased] - v266 (2026-10-11) - V390: tres mutaciones SOBREVIVIERON, y una era culpa mia (0.2.349)
 
 N126, primer incremento. `scripts/mutate.py` existia desde V356 con **un solo** fichero de
