@@ -5,6 +5,97 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v263 (2026-10-10) - V387: N135 paso 2, y el bloqueo NO era el que yo habia escrito (0.2.346)
+
+Autorizado por el autor (el permiso de N135 cubre sus pasos). El paso 2 estaba anotado con dos
+opciones y una recomendacion mia: **(a)** que el llamante guarde el par, o **(b)** que
+`unified_tools::ToolOutput` gane `call_id` y `tool_name`. Recomendaba (b).
+
+**(b) era peor, y el codigo lo dice.** `ToolRegistry::execute_all` ya devuelve
+
+```rust
+Vec<(&'a ToolCall, Result<ToolOutput, ToolError>)>
+```
+
+El emparejamiento **ya estaba ahi** -- es (a), y estaba implementada. Y `ToolHandler` recibe el
+`&ToolCall`, asi que pedirle que devuelva el `call_id` seria hacerle repetir un dato que ya tiene
+de entrada: ceremonia en las ~40 llamadas que escriben `Ok(ToolOutput::text("ok"))` sin ver nunca
+un id. Mi nota estaba escrita desde la forma de los tipos y no desde la firma del registro.
+
+## El bloqueo de verdad: las imagenes
+
+Al mirar la firma aparecio lo que si bloqueaba, y es de otra clase:
+
+| | `tool_calling::ToolResult` | `unified_tools::ToolOutput` |
+|---|---|---|
+| `images` (feature `vision`) | **si** | **NO** |
+
+Y `agentic_loop.rs:459` hace `images: tool_result.images.clone()` -- **mete en la conversacion las
+imagenes que produce una herramienta** (una captura del navegador, una grafica) para que las vea un
+generador con vision. Migrar un consumidor al registro canonico habria **perdido esas imagenes en
+silencio**: la llamada sigue devolviendo Ok, el texto sigue llegando, y la captura no alcanza nunca
+al modelo. Es `project_declared_debt_audit` otra vez, esta vez a punto de crearlo yo.
+
+`ToolOutput` gana el campo con **exactamente la misma forma** que ya tenia `ToolResult`
+(`#[cfg(feature = "vision")]` + `serde(default, skip_serializing_if = "Vec::is_empty")`), mas
+`with_image` y `with_images`.
+
+## El puente, con su perdida escrita
+
+`ToolResult::from_unified(&call, result)`. El par viene de la **tupla**, no de un campo. La tabla
+de correspondencias esta en el rustdoc, y con ella lo que NO se conserva: **`ToolOutput::data` no
+tiene equivalente en el tipo viejo y se pierde**. Eso es un limite real del tipo antiguo, no un
+descuido, y hay un test que lo **afirma** en vez de dejar que alguien lo descubra.
+
+**Nueve tests.** El que mas importa es `an_error_lands_in_error_and_never_in_output`: el
+`success: bool` invita a exactamente un error -- escribir el texto del fallo en `output`, donde
+quien no mire `success` lo lee como la respuesta de la herramienta. V376 midio que **dos de los
+tres registros hacen justo eso**.
+
+Y uno de los nueve me cazo a mi: escribi el fixture con el texto `"ten rows"` y la clave `"rows"`,
+asi que afirmaba `output == "ten rows"` y `!output.contains("rows")` a la vez. Imposible. Fallo a
+la primera ejecucion, y lo que estaba mal era mi fixture, no la conversion. Queda dicho en el test.
+
+## Y de camino, el README tenia una cifra con el comando equivocado al lado
+
+La bateria dio **9.012** con `FEATURES_STD`, y el README decia **8.991** en sus cuatro sitios con
+`cargo test --features full --lib` al lado. Ese comando da **7.235**.
+
+Quien intente reproducir la cifra concluye que esta **inflada en 1.756** -- cuando la real, con el
+comando correcto, es **mayor**. Las tres son ciertas y miden cosas distintas:
+
+| conjunto | tests |
+|---|---|
+| `FEATURES_STD` (lo que corre CI) | **9.012** |
+| `--features full` a secas | 7.235 |
+| el minimo de ocho features | 5.207 |
+
+Corregidos los cuatro sitios y el comando. Y la puerta `check_readme_numbers.py` aprende a
+comprobarlo: **todo `cargo test --features` que el README muestre tiene que nombrar un conjunto que
+un trabajo de `ci.yml` ejecute de verdad**. Se comparan **conjuntos, no cadenas** -- un lector no
+puede teclear `$FEATURES_STD`, asi que el README deletrea la lista, y a cargo el orden le da igual.
+
+**En su primera ejecucion real encontro un segundo caso**: el bloque «Run tests» del README mandaba
+un subconjunto de **seis** features escrito a mano que CI no ejecuta nunca. Quien sigue el README
+corria una bateria mas estrecha que la de CI, obtenia un tercer numero, y si ese conjunto dejaba de
+compilar ninguna puerta lo habria dicho. Ahora es el de CI, con las otras dos cifras al lado para
+que nadie se sorprenda.
+
+**23/23 en el self-test**, incluidos los dos casos con la forma exacta de los dos fallos, el de
+«la lista deletreada en otro orden es el mismo conjunto» y el de «una expansion de matriz se salta,
+no se adivina».
+
+## Verificado
+
+- **9.012 tests** con `FEATURES_STD`, 0 fallidos. **7.235** con `full`. **5.207** sin `vision`
+  (el minimo de ocho features), que es lo que prueba que el `cfg` del campo nuevo esta bien puesto.
+- `cargo check` limpio con FEATURES_STD, FEATURES_NETWORK y FEATURES_MIN.
+- `cargo clippy --all-targets -- -D warnings` limpio.
+- Formato de cable: `{"content":"plain"}` comparado contra un **literal**, no con un round trip --
+  un round trip pasaria igual aunque la clave apareciera, porque nuestro propio deserializador la
+  leeria de vuelta. Y un payload escrito antes de que el campo existiera sigue cargando.
+- Enlaces intra-doc **0**; imports de documentacion OK; README OK; meta-checker OK.
+
 ## [Unreleased] - v262 (2026-10-10) - V386: los dos paquetes retirados, fuera (0.2.345)
 
 Visibles **gracias a V385**: al pasar `cargo-deny` de 299 a 955 crates aparecio un segundo

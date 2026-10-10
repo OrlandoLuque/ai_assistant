@@ -99,6 +99,63 @@ impl ToolResult {
     pub fn has_images(&self) -> bool {
         !self.images.is_empty()
     }
+
+    /// Build a `ToolResult` from what the canonical registry returns.
+    ///
+    /// N135's migration bridge. [`crate::unified_tools::ToolRegistry`] is the
+    /// registry to move onto — it is the only one of the three whose `execute`
+    /// returns a real `Result`, so an error cannot be mistaken for output — and
+    /// `execute_all` already hands back `(&ToolCall, Result<ToolOutput, ToolError>)`.
+    /// **The pairing lives in that tuple**, which is why `ToolOutput` does not
+    /// carry a `call_id`: the handler receives the call and would only be
+    /// echoing it back, and roughly forty handlers in this crate return
+    /// `ToolOutput::text(..)` without ever seeing an id.
+    ///
+    /// The mapping, in full:
+    ///
+    /// | `ToolResult` field | comes from |
+    /// |---|---|
+    /// | `call_id` | the call's `id` |
+    /// | `name` | the call's `name` |
+    /// | `success` | `result.is_ok()` |
+    /// | `output` | `ToolOutput::content`, or empty on error |
+    /// | `error` | the `ToolError`, rendered via `Display` |
+    /// | `images` | `ToolOutput::images` (N135 added that field) |
+    ///
+    /// **`ToolOutput::data` has no counterpart here and is dropped.** That is a
+    /// real limit of the older type, not an oversight, and
+    /// `unified_data_has_no_home_in_the_legacy_type` pins it so the loss is
+    /// asserted rather than discovered. Converting in this direction is for
+    /// compatibility at a boundary; the direction of travel is the other way.
+    pub fn from_unified(
+        call: &crate::unified_tools::ToolCall,
+        result: Result<crate::unified_tools::ToolOutput, crate::unified_tools::ToolError>,
+    ) -> Self {
+        match result {
+            Ok(out) => Self {
+                call_id: call.id.clone(),
+                name: call.name.clone(),
+                success: true,
+                output: out.content,
+                error: None,
+                #[cfg(feature = "vision")]
+                images: out.images,
+            },
+            // The error text goes to `error` and NOT to `output`. Putting it in
+            // `output` is the trap this whole type invites: a caller that does
+            // not read `success` would carry on with the error message as if it
+            // were the tool's answer.
+            Err(e) => Self {
+                call_id: call.id.clone(),
+                name: call.name.clone(),
+                success: false,
+                output: String::new(),
+                error: Some(e.to_string()),
+                #[cfg(feature = "vision")]
+                images: Vec::new(),
+            },
+        }
+    }
 }
 
 impl Tool {
@@ -578,6 +635,113 @@ fn evaluate_expression(expr: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ------------------------------------------------------------------
+    // N135 step 2: the bridge off the two registries that cannot fail.
+    // ------------------------------------------------------------------
+
+    fn unified_call() -> crate::unified_tools::ToolCall {
+        crate::unified_tools::ToolCall::with_id("call-7", "screenshot", HashMap::new())
+    }
+
+    #[test]
+    fn the_pairing_comes_from_the_call_not_from_a_field_on_the_output() {
+        let call = unified_call();
+        let out = crate::unified_tools::ToolOutput::text("captured");
+        let got = ToolResult::from_unified(&call, Ok(out));
+
+        // Both identifiers are read off the CALL. This is the whole reason
+        // `ToolOutput` needs no `call_id`: the registry already pairs them in
+        // `execute_all`, and a handler returning `ToolOutput::text("ok")`
+        // cannot invent an id it was never given.
+        assert_eq!(got.call_id, "call-7");
+        assert_eq!(got.name, "screenshot");
+        assert!(got.success);
+        assert_eq!(got.output, "captured");
+        assert!(got.error.is_none());
+    }
+
+    #[test]
+    fn an_error_lands_in_error_and_never_in_output() {
+        let call = unified_call();
+        let err = crate::unified_tools::ToolError::ExecutionFailed("disk on fire".into());
+        let got = ToolResult::from_unified(&call, Err(err));
+
+        assert!(!got.success);
+        assert_eq!(got.error.as_deref(), Some("execution failed: disk on fire"));
+        // The point of the test. `success: bool` invites exactly one mistake:
+        // writing the error text into `output`, where a caller that does not
+        // check `success` reads it as the tool's answer. V376 measured that
+        // two of the three registries do precisely that.
+        assert_eq!(
+            got.output, "",
+            "the error text must not be served as output"
+        );
+        assert!(
+            !got.output.contains("disk on fire"),
+            "the error must not reach `output` by any route"
+        );
+        // And the ids still come through on the failure path, which is where
+        // losing them would matter most: an unpaired failure cannot be
+        // reported against the call that caused it.
+        assert_eq!(got.call_id, "call-7");
+        assert_eq!(got.name, "screenshot");
+    }
+
+    #[test]
+    fn unified_data_has_no_home_in_the_legacy_type() {
+        let call = unified_call();
+        // The prose and the data deliberately share no vocabulary. The first
+        // version of this test used the text "ten rows" against the key
+        // "rows", so asserting `output == "ten rows"` and `!output.contains(
+        // "rows")` at once could never both hold — it failed on the first run
+        // and the fixture was the thing that was wrong, not the conversion.
+        let out = crate::unified_tools::ToolOutput::with_data(
+            "summary ready",
+            serde_json::json!({"rows": 10}),
+        );
+        let got = ToolResult::from_unified(&call, Ok(out));
+
+        // Asserted, not discovered. `ToolResult` has no structured-data field,
+        // so this direction of the conversion is lossy. The text survives; the
+        // JSON does not, and it is not smuggled into `output` either, because
+        // a caller parsing `output` as prose would then be parsing JSON.
+        assert_eq!(got.output, "summary ready");
+        for leaked in ["rows", "10", "{"] {
+            assert!(
+                !got.output.contains(leaked),
+                "data must not be stuffed into the text field to look lossless \
+                 (found {leaked:?} in {:?})",
+                got.output
+            );
+        }
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn images_survive_the_bridge() {
+        let call = unified_call();
+        let out = crate::unified_tools::ToolOutput::text("captured")
+            .with_image(crate::vision::ImageInput::from_url("https://e.test/a.png"));
+        let got = ToolResult::from_unified(&call, Ok(out));
+
+        // This is what N135 step 2 existed to fix. Before `ToolOutput` grew an
+        // `images` field, this assertion could not even be written: migrating
+        // a consumer onto the canonical registry dropped tool-produced
+        // screenshots in silence, because the registry still returned Ok and
+        // the text still arrived.
+        assert!(got.has_images());
+        assert_eq!(got.images.len(), 1);
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn a_failed_call_carries_no_images() {
+        let call = unified_call();
+        let err = crate::unified_tools::ToolError::NotFound("screenshot".into());
+        let got = ToolResult::from_unified(&call, Err(err));
+        assert!(!got.has_images());
+    }
 
     #[test]
     fn test_tool_creation() {

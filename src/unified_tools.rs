@@ -518,6 +518,20 @@ pub struct ToolOutput {
     /// Optional structured data.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<JsonValue>,
+    /// Image attachments emitted by the tool (a browser screenshot, a rendered
+    /// chart). Empty by default, and serialised only when non-empty, so every
+    /// payload written before this field existed stays byte-identical.
+    ///
+    /// N135 added it. Until then this type could not carry images while
+    /// [`crate::tool_calling::ToolResult`] could, and `agentic_loop` reads
+    /// `ToolResult::images` to put them in the conversation for a
+    /// vision-capable generator. Migrating a consumer onto this registry would
+    /// therefore have **dropped tool-produced images in silence** — the
+    /// registry call would still succeed, the text would still arrive, and the
+    /// screenshot would simply never reach the model.
+    #[cfg(feature = "vision")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<crate::vision::ImageInput>,
 }
 
 impl ToolOutput {
@@ -526,6 +540,8 @@ impl ToolOutput {
         Self {
             content: content.into(),
             data: None,
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         }
     }
 
@@ -534,7 +550,29 @@ impl ToolOutput {
         Self {
             content: content.into(),
             data: Some(data),
+            #[cfg(feature = "vision")]
+            images: Vec::new(),
         }
+    }
+
+    /// Attach an image to this output.
+    ///
+    /// Mirrors [`crate::tool_calling::ToolResult::with_image`] so a handler
+    /// reads the same either side of the migration.
+    #[cfg(feature = "vision")]
+    pub fn with_image(mut self, image: crate::vision::ImageInput) -> Self {
+        self.images.push(image);
+        self
+    }
+
+    /// Attach several images to this output.
+    #[cfg(feature = "vision")]
+    pub fn with_images(
+        mut self,
+        images: impl IntoIterator<Item = crate::vision::ImageInput>,
+    ) -> Self {
+        self.images.extend(images);
+        self
     }
 }
 
@@ -1572,6 +1610,68 @@ fn parse_atom(tokens: &[MathToken], pos: &mut usize) -> Result<f64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- ToolOutput: the images field added by N135 step 2 ---
+
+    #[test]
+    fn adding_the_images_field_did_not_move_the_wire_format() {
+        // The field is `skip_serializing_if = "Vec::is_empty"`, so an output
+        // with no images must serialise to exactly what it serialised to
+        // before the field existed. This is asserted against a literal rather
+        // than a round trip: a round trip would pass even if the key appeared,
+        // because our own deserialiser would happily read it back.
+        let out = ToolOutput::text("plain");
+        assert_eq!(
+            serde_json::to_string(&out).expect("serialises"),
+            r#"{"content":"plain"}"#
+        );
+
+        let with_data = ToolOutput::with_data("two", serde_json::json!({"n": 2}));
+        assert_eq!(
+            serde_json::to_string(&with_data).expect("serialises"),
+            r#"{"content":"two","data":{"n":2}}"#
+        );
+    }
+
+    #[test]
+    fn a_payload_written_before_the_field_existed_still_deserialises() {
+        // `serde(default)` is what makes the old shape readable. Without it a
+        // stored payload from any earlier version would fail to load, which is
+        // the kind of break that only shows up on someone else's disk.
+        let old = r#"{"content":"from before","data":null}"#;
+        let got: ToolOutput = serde_json::from_str(old).expect("old payload still reads");
+        assert_eq!(got.content, "from before");
+        #[cfg(feature = "vision")]
+        assert!(got.images.is_empty());
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn images_attached_to_an_output_are_kept_and_serialised() {
+        let out = ToolOutput::text("captured")
+            .with_image(crate::vision::ImageInput::from_url("https://e.test/a.png"));
+        assert_eq!(out.images.len(), 1);
+
+        // Present in the JSON only once there is something to write.
+        let json = serde_json::to_string(&out).expect("serialises");
+        assert!(json.contains("images"), "a non-empty list must be written");
+
+        let back: ToolOutput = serde_json::from_str(&json).expect("round trips");
+        assert_eq!(back.images.len(), 1);
+    }
+
+    #[cfg(feature = "vision")]
+    #[test]
+    fn with_images_appends_rather_than_replacing() {
+        let out = ToolOutput::text("two shots")
+            .with_image(crate::vision::ImageInput::from_url("https://e.test/a.png"))
+            .with_images(vec![
+                crate::vision::ImageInput::from_url("https://e.test/b.png"),
+                crate::vision::ImageInput::from_url("https://e.test/c.png"),
+            ]);
+        // Three, not two: the builder must not drop what was already attached.
+        assert_eq!(out.images.len(), 3);
+    }
 
     // --- ParamSchema ---
 

@@ -187,6 +187,15 @@ def problems_for(text: str, real: dict[str, int]) -> list[str]:
             "four places that state it must agree with each other."
         )
 
+    # A number is only reproducible if the command printed beside it is the one
+    # that produces it. V387 found the README offering `cargo test --features
+    # full --lib` next to "8,991 tests" -- and that command yields 7,235,
+    # because the figure comes from the much wider FEATURES_STD set CI runs.
+    # A reader who typed it would conclude the claim was inflated by 1,756,
+    # when the real number under the right command is HIGHER. The count itself
+    # cannot be checked here, but WHICH COMMAND is named can be.
+    problems.extend(_command_problems(text))
+
     # A claim of completeness is the one that was not merely stale but FALSE, and the
     # reason this file exists at all.
     for forbidden, why in FORBIDDEN:
@@ -194,6 +203,86 @@ def problems_for(text: str, real: dict[str, int]) -> list[str]:
             problems.append(f'the README claims "{forbidden}" again -- {why}')
 
     return problems
+
+
+# `cargo test ... --features <X>`. `--features` may be followed by a quoted
+# shell variable, a quoted list, or a bare word, so all three are accepted.
+_CARGO_TEST_FEATURES = re.compile(
+    r"cargo test[^`\n]*?--features\s+(\"[^\"]+\"|'[^']+'|\S+)"
+)
+# `FEATURES_STD: "full,autonomous,..."` in the workflow's `env:` block.
+_CI_ENV_FEATURES = re.compile(r"^\s*(FEATURES_\w+)\s*:\s*\"([^\"]+)\"", re.M)
+CI_WORKFLOW = ".github/workflows/ci.yml"
+
+
+def _resolve(raw: str, env: dict[str, str]) -> frozenset[str] | None:
+    """A `--features` argument as a SET of feature names, or None if unresolvable.
+
+    Compared as sets rather than strings for two reasons. The README spells the
+    list out — a reader cannot type `$FEATURES_STD` — while the workflow uses
+    the variable, so a textual comparison could never match even when the two
+    are the same set. And order carries no meaning to cargo, so two spellings
+    of one set must not read as two sets.
+    """
+    raw = raw.strip("\"'")
+    if "${{" in raw:
+        # A matrix expansion. Its value is only known per-job, so there is
+        # nothing to compare against and pretending otherwise would be a
+        # guess dressed as a check.
+        return None
+    for name, value in env.items():
+        raw = raw.replace(f"${{{name}}}", value).replace(f"${name}", value)
+    if "$" in raw:
+        return None
+    return frozenset(f.strip() for f in raw.split(",") if f.strip())
+
+
+def _feature_sets(text: str, env: dict[str, str]) -> set[frozenset[str]]:
+    out = set()
+    for m in _CARGO_TEST_FEATURES.finditer(text):
+        resolved = _resolve(m.group(1), env)
+        if resolved:
+            out.add(resolved)
+    return out
+
+
+def _command_problems(text: str, ci_text: str | None = None) -> list[str]:
+    if ci_text is None:
+        try:
+            ci_text = open(CI_WORKFLOW, encoding="utf-8").read()
+        except OSError:
+            return [f"no se puede leer {CI_WORKFLOW} para comparar los comandos"]
+
+    env = {m.group(1): m.group(2) for m in _CI_ENV_FEATURES.finditer(ci_text)}
+    readme_sets = _feature_sets(text, env)
+    if not readme_sets:
+        # Not a failure. The README is allowed not to name a command; it is
+        # naming the WRONG one that misleads.
+        return []
+
+    ci_sets = _feature_sets(ci_text, env)
+    if not ci_sets:
+        return [
+            f"{CI_WORKFLOW} no contiene ningun `cargo test --features` resoluble "
+            "-- si el workflow se reescribe, esta comprobacion hay que actualizarla"
+        ]
+
+    out: list[str] = []
+    for named in sorted(readme_sets - ci_sets, key=lambda s: sorted(s)):
+        shown = ",".join(sorted(named))
+        if len(shown) > 90:
+            shown = shown[:87] + "..."
+        out.append(
+            f"el README manda correr los tests con {len(named)} features "
+            f"({shown}) y ningun trabajo de {CI_WORKFLOW} usa ese conjunto. "
+            "Los conjuntos que CI prueba tienen "
+            + ", ".join(str(len(s)) for s in sorted(ci_sets, key=len))
+            + " features. Una cifra junto a un comando que no la produce es peor "
+            "que una cifra sin comando: invita a reproducirla y a concluir que "
+            "esta mal, y una bateria que solo corre quien lee el README no la "
+            "cubre ninguna puerta."
+        )
+    return out
 
 
 # Every case is a README that is WRONG in one specific way, plus one that is right.
@@ -238,6 +327,47 @@ SELF_TEST_CASES = [
     ("every number wrong at once", "nothing here\n", 5),
 ]
 
+# The command check gets its own cases because it needs a ci.yml to compare
+# against, which `problems_for` reads from disk. TRUE_README names no command
+# at all, so the cases above are unaffected by it either way.
+FAKE_CI = (
+    '  FEATURES_STD: "full,autonomous,scheduler"\n'
+    '  FEATURES_MIN: "tools,security"\n'
+    'run: cargo test --features "$FEATURES_STD" --lib\n'
+    'run: cargo test --no-default-features --features "$FEATURES_MIN"\n'
+    'run: cargo test --features "${{ matrix.features }}" --lib\n'
+)
+COMMAND_SELF_TEST = [
+    # The bug this check was written for, in the exact shape it was found.
+    ("the command names a feature set CI never tests",
+     "**8,991 tests** (`cargo test --features full --lib`)", 1),
+    # The second instance, found by the check on its first real run: the README's
+    # own "Run tests" block named a hand-written six-feature subset, so anyone
+    # following the README ran a narrower suite than CI and got a third number.
+    ("a hand-written subset in a Run tests block",
+     "# Run tests\ncargo test --features \"full,autonomous\" --lib", 1),
+    ("the command names the set CI runs",
+     '**9,012 tests** (`cargo test --features "$FEATURES_STD" --lib`)', 0),
+    ("quoting differences do not matter",
+     "**9,012 tests** (`cargo test --features $FEATURES_STD --lib`)", 0),
+    # The reason sets are compared and not strings: a reader cannot type
+    # `$FEATURES_STD`, so the README spells the list out — and cargo does not
+    # care about the order, so neither may this check.
+    ("the list spelled out, in another order, is the same set",
+     "`cargo test --features scheduler,full,autonomous --lib`", 0),
+    ("the minimum set is also one CI runs",
+     '`cargo test --no-default-features --features "$FEATURES_MIN"`', 0),
+    # Naming no command is allowed: it is naming the WRONG one that misleads.
+    ("no command named at all", "**9,012 tests**, measured", 0),
+    ("two commands, one of them wrong",
+     '`cargo test --features "$FEATURES_STD" --lib` and `cargo test --features gui --lib`', 1),
+    # A matrix expansion has no value until the job runs. Skipped, not guessed:
+    # resolving it to the literal string would make every README command look
+    # wrong against it, which is a check that fails for the wrong reason.
+    ("a matrix expansion is skipped, not guessed",
+     '`cargo test --features "${{ matrix.features }}" --lib`', 0),
+]
+
 
 def self_test() -> int:
     failures = 0
@@ -246,11 +376,16 @@ def self_test() -> int:
         ok = got == want
         failures += not ok
         print(f"  {'ok  ' if ok else 'FAIL'}  {name}: {got} problem(s), expected {want}")
+    for name, text, want in COMMAND_SELF_TEST:
+        got = len(_command_problems(text, FAKE_CI))
+        ok = got == want
+        failures += not ok
+        print(f"  {'ok  ' if ok else 'FAIL'}  {name}: {got} problem(s), expected {want}")
     print()
     if failures:
-        print(f"SELF-TEST FAILED: {failures} of {len(SELF_TEST_CASES)} cases")
+        print(f"SELF-TEST FAILED: {failures} of {len(SELF_TEST_CASES) + len(COMMAND_SELF_TEST)} cases")
         return 1
-    print(f"SELF-TEST OK: {len(SELF_TEST_CASES)}/{len(SELF_TEST_CASES)} cases")
+    print(f"SELF-TEST OK: {len(SELF_TEST_CASES) + len(COMMAND_SELF_TEST)} cases")
     return 0
 
 
@@ -299,8 +434,12 @@ def main() -> int:
         f"OK - README states {claim['source_files']:,} source files, "
         f"~{real['loc'] // 1000}K lines, {claim['features']} features and "
         f"{claim['ci_gates']} CI gates (badge and prose agree), and all five match the tree.\n"
-        "NOT checked here (by design, see this file's header): the test count, which needs "
-        "the suite to run."
+        "Also checked: every `cargo test --features` the README shows names a set that a job "
+        f"in {CI_WORKFLOW} really runs, compared as sets so order and `$VAR` spelling do not "
+        "matter.\n"
+        "NOT checked here (by design, see this file's header): the test count itself, which "
+        "needs the suite to run. Its four statements must agree with each other, and the "
+        "command beside it must be CI's -- both of which ARE checked."
     )
     return 0
 
