@@ -5,6 +5,87 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v264 (2026-10-10) - V388: un anclaje que cazaba CUATRO sitios, y tres no tenian test (0.2.347)
+
+`scripts/mutations/tool_bridge.toml`: ocho mutaciones para el puente de N135 y para el campo
+`images` que V387 anadio. **11 de 11 muertas**, y cada una nombra el test que la mato.
+
+Se mutaron por **lo que es este codigo**: existe para que los consumidores salgan de los dos
+registros cuyo `execute` no puede fallar, y **todos sus modos de fallo son silenciosos**. Una
+imagen perdida sigue devolviendo `Ok`. Un id intercambiado sigue devolviendo un resultado
+plausible. El texto de un error en `output` sigue leyendose como una respuesta. Nada de eso parece
+un error en el sitio de la llamada, que es la definicion de la clase de defecto que este proyecto
+no deja de encontrar.
+
+## El hallazgo vino del pre-vuelo, no de la ejecucion
+
+Escribi M2 con `occurrences = 1` y la comprobacion previa lo rechazo:
+
+```
+!! tool_bridge.toml M2: spec says 1 occurrence(s), src\tool_calling.rs has 4
+```
+
+El mismo par `success: false` / `output: String::new()` esta en `from_unified` **y en las tres
+rutas de fallo de `ToolRegistry::execute`**: herramienta no registrada, herramienta sin handler, y
+handler que devuelve `Err`.
+
+**Ninguna de las tres tenia test.** Todos los tests del modulo afirmaban `result.success` -- el
+camino feliz. Y es el registro que usan `agentic_loop` y `model_integration`, con un tipo que
+reporta el fallo **en un campo**: un cambio que pusiera `success: true`, o que escribiera el texto
+del error en `output`, **habria pasado la bateria entera**.
+
+Es exactamente la regla de `project_mutation_per_occurrence` — un patron que sale N veces son N
+sitios — y aqui **el desajuste era el hallazgo, no una molestia**. Borrar la entrada para ponerla
+en verde habria dejado el invariante sin guardar en tres sitios, que es lo que el propio mensaje
+de la herramienta avisa.
+
+## Cuatro tests nuevos
+
+| test | ruta |
+|---|---|
+| `executing_an_unregistered_tool_fails_and_says_which` | herramienta no registrada, **y el motivo nombra cual** |
+| `a_tool_registered_without_a_handler_fails_rather_than_returning_nothing` | `Tool::new` deja `handler: None`, asi que es alcanzable por quien registre una definicion y olvide el cuerpo |
+| `a_handler_that_returns_err_is_reported_as_a_failure` | el handler devuelve `Err` |
+| `a_handler_that_succeeds_reports_its_output_and_no_error` | **la mitad positiva**: sin ella las tres anteriores pasarian en un registro que reportara TODO como fallo, que es el defecto espejo y igual de silencioso |
+
+Los tres primeros comparten un `assert_failed_cleanly` que comprueba las cuatro cosas a la vez:
+`success == false`, que haya motivo y no este vacio, que **`output` quede vacio** y que el
+`call_id` siga permitiendo atribuir el fallo a su llamada.
+
+## Los once veredictos
+
+```
+M1        DIED  tool_calling.rs:151 -- an_error_lands_in_error_and_never_in_output
+M2[1/4]   DIED  tool_calling.rs:151 -- an_error_lands_in_error_and_never_in_output
+M2[2/4]   DIED  tool_calling.rs:292 -- executing_an_unregistered_tool_fails_and_says_which
+M2[3/4]   DIED  tool_calling.rs:307 -- a_tool_registered_without_a_handler_fails_rather_than_returning_nothing
+M2[4/4]   DIED  tool_calling.rs:329 -- a_handler_that_returns_err_is_reported_as_a_failure
+M3        DIED  tool_calling.rs:153 -- an_error_lands_in_error_and_never_in_output
+M4        DIED  tool_calling.rs:135 -- the_pairing_comes_from_the_call_not_from_a_field_on_the_output
+M5        DIED  tool_calling.rs:141 -- images_survive_the_bridge
+M6        DIED  unified_tools.rs:532 -- adding_the_images_field_did_not_move_the_wire_format
+M7        DIED  unified_tools.rs:533 -- a_payload_written_before_the_field_existed_still_deserialises
+M8        DIED  unified_tools.rs:570 -- with_images_appends_rather_than_replacing
+```
+
+**M5 es la que importa mas**: reproduce exactamente la degradacion silenciosa que V387 existia para
+evitar, y **antes de V387 no se podia ni escribir**, porque el campo no existia.
+
+Cada mutacion lleva su `filter` propio nombrando **el** test que debe matarla. Eso es mas fuerte
+que dejar correr la bateria del modulo: demuestra que el test escrito para el invariante es el que
+discrimina, y no un vecino que toca el mismo campo por casualidad. La excepcion es M2, que
+deliberadamente usa la bateria entera porque su invariante vive en cuatro sitios con cuatro
+guardianes distintos.
+
+## Verificado
+
+- **9.016 tests** con `FEATURES_STD`, 0 fallidos (eran 9.012; +4). **7.239** con `full`, **5.211**
+  con el minimo de ocho features.
+- `cargo clippy --all-targets -- -D warnings` limpio.
+- **El arbol quedo limpio tras la ejecucion**: sin centinela, y `git diff` de `unified_tools.rs`
+  **vacio** -- las mutaciones se revirtieron. Se comprueba porque ya fallo dos veces antes.
+- Las cuatro cifras del README actualizadas, y su puerta en verde.
+
 ## [Unreleased] - v263 (2026-10-10) - V387: N135 paso 2, y el bloqueo NO era el que yo habia escrito (0.2.346)
 
 Autorizado por el autor (el permiso de N135 cubre sus pasos). El paso 2 estaba anotado con dos

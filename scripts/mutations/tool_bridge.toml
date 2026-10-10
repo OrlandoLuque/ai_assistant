@@ -1,0 +1,152 @@
+# Mutations for N135's migration bridge: `ToolResult::from_unified` in
+# src/tool_calling.rs, and the `images` field V387 added to
+# `unified_tools::ToolOutput`.
+#
+# Mutated because of WHAT this code is for. It exists so consumers can move off
+# the two registries whose `execute` cannot fail, and every one of its failure
+# modes is silent: a dropped image still returns Ok, a swapped id still returns
+# a plausible result, an error text in `output` still reads as an answer. None
+# of that looks like an error at the call site, which is the definition of the
+# defect class this project keeps finding (project_declared_debt_audit).
+#
+# Every mutation names the ONE test that must kill it, via a per-mutation
+# `filter`. That is stronger than letting the whole module's suite run: it
+# proves the test written for the invariant is the test that discriminates, and
+# not some neighbour that happens to touch the same field.
+#
+# Run: python scripts/mutate.py --spec scripts/mutations/tool_bridge.toml
+
+features = "full"
+filter = "tool_calling::tests"
+
+# ---------------------------------------------------------------------------
+# The error path. V376 measured that two of the three registries put the error
+# in a field and carry on; this bridge is the seam where that must NOT happen.
+# ---------------------------------------------------------------------------
+
+[[mutation]]
+id = "M1"
+file = "src/tool_calling.rs"
+filter = "tool_calling::tests::an_error_lands_in_error_and_never_in_output"
+invariant = "the error text is never served as output -- a caller that does not read `success` would otherwise carry on with the failure message as if it were the tool's answer"
+before = """                success: false,
+                output: String::new(),
+                error: Some(e.to_string()),"""
+after = """                success: false,
+                output: e.to_string(),
+                error: Some(e.to_string()),"""
+occurrences = 1
+
+[[mutation]]
+id = "M2"
+file = "src/tool_calling.rs"
+# No per-mutation filter: this one needs the whole module's suite, because the
+# invariant lives in FOUR places and four different tests guard them.
+#
+# Written as `occurrences = 1` first, and the pre-flight refused it: the same
+# `success: false` / `output: String::new()` pair appears in `from_unified` AND
+# in the three failure paths of `ToolRegistry::execute`. That mismatch was the
+# finding, not a nuisance — none of those three had a test at all, in the
+# registry `agentic_loop` and `model_integration` use. V388 added them
+# (`executing_an_unregistered_tool_fails_and_says_which`,
+# `a_tool_registered_without_a_handler_fails_rather_than_returning_nothing`,
+# `a_handler_that_returns_err_is_reported_as_a_failure`), so all four sites are
+# now guarded and `mutate.py` gives a verdict per site.
+invariant = "a failure reports success = false; reporting true is the whole trap of a boolean status field, and it holds at all FOUR sites that build a failed ToolResult"
+before = """                success: false,
+                output: String::new(),"""
+after = """                success: true,
+                output: String::new(),"""
+occurrences = 4
+
+[[mutation]]
+id = "M3"
+file = "src/tool_calling.rs"
+filter = "tool_calling::tests::an_error_lands_in_error_and_never_in_output"
+invariant = "the error is reported; swallowing it leaves `success: false` with no reason, which sends the reader looking in the wrong place"
+before = "                error: Some(e.to_string()),"
+after = "                error: None,"
+occurrences = 1
+
+# ---------------------------------------------------------------------------
+# The pairing. This is the half I had wrongly proposed solving with a field on
+# `ToolOutput`; it is solved by reading the call, so reading it WRONG has to be
+# caught.
+# ---------------------------------------------------------------------------
+
+[[mutation]]
+id = "M4"
+file = "src/tool_calling.rs"
+filter = "tool_calling::tests::the_pairing_comes_from_the_call_not_from_a_field_on_the_output"
+invariant = "the id and the name are not interchangeable -- swapping them yields a result that pairs with no call and is named after one"
+before = """            Ok(out) => Self {
+                call_id: call.id.clone(),
+                name: call.name.clone(),"""
+after = """            Ok(out) => Self {
+                call_id: call.name.clone(),
+                name: call.id.clone(),"""
+occurrences = 1
+
+# ---------------------------------------------------------------------------
+# The images. THE mutation of this file: it reproduces exactly the silent
+# degradation V387 existed to prevent, and before V387 it could not even have
+# been written because the field did not exist.
+# ---------------------------------------------------------------------------
+
+[[mutation]]
+id = "M5"
+file = "src/tool_calling.rs"
+filter = "tool_calling::tests::images_survive_the_bridge"
+invariant = "tool-produced images cross the bridge; dropping them still returns Ok with the right text, so nothing at the call site looks wrong -- the screenshot simply never reaches the model"
+before = """                #[cfg(feature = "vision")]
+                images: out.images,"""
+after = """                #[cfg(feature = "vision")]
+                images: Vec::new(),"""
+occurrences = 1
+
+# ---------------------------------------------------------------------------
+# The serde attributes. Adding a field to a serialised type is where wire
+# compatibility breaks on someone else's disk rather than in CI, so both halves
+# of the guard get a mutation.
+# ---------------------------------------------------------------------------
+
+[[mutation]]
+id = "M6"
+file = "src/unified_tools.rs"
+filter = "unified_tools::tests::adding_the_images_field_did_not_move_the_wire_format"
+invariant = "an empty image list is not written, so every payload produced before the field existed stays byte-identical"
+before = """    #[cfg(feature = "vision")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<crate::vision::ImageInput>,"""
+after = """    #[cfg(feature = "vision")]
+    #[serde(default)]
+    pub images: Vec<crate::vision::ImageInput>,"""
+occurrences = 1
+
+[[mutation]]
+id = "M7"
+file = "src/unified_tools.rs"
+filter = "unified_tools::tests::a_payload_written_before_the_field_existed_still_deserialises"
+invariant = "a stored payload with no `images` key still loads; without `default` it fails to deserialise, and that break shows up on a user's disk and not in CI"
+before = """    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<crate::vision::ImageInput>,"""
+after = """    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<crate::vision::ImageInput>,"""
+occurrences = 1
+
+[[mutation]]
+id = "M8"
+file = "src/unified_tools.rs"
+filter = "unified_tools::tests::with_images_appends_rather_than_replacing"
+invariant = "`with_images` appends; replacing silently discards whatever an earlier `with_image` attached, and a builder that loses its own earlier calls reads as working"
+before = """    pub fn with_images(
+        mut self,
+        images: impl IntoIterator<Item = crate::vision::ImageInput>,
+    ) -> Self {
+        self.images.extend(images);"""
+after = """    pub fn with_images(
+        mut self,
+        images: impl IntoIterator<Item = crate::vision::ImageInput>,
+    ) -> Self {
+        self.images = images.into_iter().collect();"""
+occurrences = 1

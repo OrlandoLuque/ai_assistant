@@ -780,6 +780,102 @@ mod tests {
         assert!(result.success);
     }
 
+    // ------------------------------------------------------------------
+    // `ToolRegistry::execute` has THREE failure paths and, until V388, not one
+    // of them had a test: every test here asserted `result.success`, the happy
+    // path. Found by a mutation whose anchor matched FOUR times instead of one
+    // -- the same `success: false` / `output: String::new()` pair appears in
+    // `from_unified` and in these three -- which is the rule that a pattern
+    // occurring N times is N places, and the mismatch was the finding rather
+    // than a nuisance.
+    //
+    // It matters because this is the registry `agentic_loop` and
+    // `model_integration` use, and because the type reports failure in a
+    // FIELD: a change that set `success: true`, or that wrote the error text
+    // into `output`, would have passed the whole suite.
+    // ------------------------------------------------------------------
+
+    fn one_call(name: &str) -> ToolCall {
+        ToolCall {
+            id: "call-1".to_string(),
+            name: name.to_string(),
+            arguments: HashMap::new(),
+        }
+    }
+
+    fn assert_failed_cleanly(result: &ToolResult, because: &str) {
+        assert!(!result.success, "{because}: must report success = false");
+        let err = result
+            .error
+            .as_deref()
+            .unwrap_or_else(|| panic!("{because}: a failure must say why"));
+        assert!(!err.is_empty(), "{because}: the reason must not be empty");
+        // The trap of a boolean status field: the error text in `output` reads
+        // as the tool's answer to anyone who does not check `success`.
+        assert_eq!(
+            result.output, "",
+            "{because}: the error text must not be served as output"
+        );
+        // And the failure still has to be attributable to its call.
+        assert_eq!(result.call_id, "call-1");
+    }
+
+    #[test]
+    fn executing_an_unregistered_tool_fails_and_says_which() {
+        let registry = ToolRegistry::new();
+        let result = registry.execute(&one_call("nope"));
+        assert_failed_cleanly(&result, "unknown tool");
+        assert!(
+            result.error.as_deref().is_some_and(|e| e.contains("nope")),
+            "the reason must name the tool asked for, not just 'not found'"
+        );
+        assert_eq!(result.name, "nope");
+    }
+
+    #[test]
+    fn a_tool_registered_without_a_handler_fails_rather_than_returning_nothing() {
+        let mut registry = ToolRegistry::new();
+        // `Tool::new` leaves `handler: None`, so this is reachable by anyone
+        // who registers a definition and forgets to attach the behaviour --
+        // and the silent version of this bug is an empty successful result.
+        registry.register(Tool::new("declared", "a definition with no body"));
+        let result = registry.execute(&one_call("declared"));
+        assert_failed_cleanly(&result, "no handler");
+    }
+
+    #[test]
+    fn a_handler_that_returns_err_is_reported_as_a_failure() {
+        let mut registry = ToolRegistry::new();
+        registry.register(
+            Tool::new("explodes", "always fails")
+                .with_handler(|_args| Err("disk on fire".to_string())),
+        );
+        let result = registry.execute(&one_call("explodes"));
+        assert_failed_cleanly(&result, "handler error");
+        assert_eq!(result.error.as_deref(), Some("disk on fire"));
+        assert!(
+            !result.output.contains("disk on fire"),
+            "the handler's error must not reach `output` by any route"
+        );
+    }
+
+    #[test]
+    fn a_handler_that_succeeds_reports_its_output_and_no_error() {
+        // The positive half of the three above. Without it they would all pass
+        // on a registry that reported EVERYTHING as a failure, which is the
+        // mirror-image defect and just as silent.
+        let mut registry = ToolRegistry::new();
+        registry.register(
+            Tool::new("echo", "returns a fixed string")
+                .with_handler(|_args| Ok("the answer".to_string())),
+        );
+        let result = registry.execute(&one_call("echo"));
+        assert!(result.success);
+        assert_eq!(result.output, "the answer");
+        assert!(result.error.is_none());
+        assert_eq!(result.call_id, "call-1");
+    }
+
     #[test]
     fn test_parse_tool_calls_text_format() {
         let registry = ToolRegistry::new();
