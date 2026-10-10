@@ -1,0 +1,27 @@
+# The one mutation from V350, recovered from the CHANGELOG where it was the only
+# place it lived (N126).
+#
+# This one is declared first of the batch because its history IS the lesson:
+# **a test that checks a field was stored does not check the field is used.**
+#
+# The first draft of `HttpReranker` kept `endpoint.timeout` and then called
+# `ureq::post` directly, so the field documented a behaviour the code did not
+# have. The first version of the test only asserted the struct remembered the
+# number -- and this mutation **survived** it. Killing it required measuring the
+# clock: 10.0019 s without the timeout against a server that accepts the
+# connection, reads the request and then says nothing, which is the case a
+# connect-only timeout misses.
+#
+# Run: python scripts/mutate.py --spec scripts/mutations/rerank_service.toml
+
+features = "full"
+filter = "rerank_service::tests"
+
+[[mutation]]
+id = "M1"
+file = "src/rerank_service.rs"
+filter = "rerank_service::tests::the_configured_timeout_actually_bounds_the_request"
+invariant = "the configured timeout is built into the agent, which is the only way it applies to anything -- storing it and not using it makes `RerankEndpoint::timeout` document a behaviour the code does not have, and the request hangs for as long as the peer stays silent"
+before = "        let agent = ureq::AgentBuilder::new().timeout(endpoint.timeout).build();"
+after = "        let agent = ureq::AgentBuilder::new().build();"
+occurrences = 1

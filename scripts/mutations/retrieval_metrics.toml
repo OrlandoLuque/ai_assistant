@@ -1,82 +1,138 @@
-# Mutations for the metrics themselves and for the passage->document aggregation.
+# The V349 mutations for `src/retrieval_metrics.rs`, recovered from the CHANGELOG
+# where they were the only place they lived (N126).
 #
-# These are ORACLES: they decide what counts as a good retrieval, so anything
-# wrong here is inherited by every score produced from now on and a wrong
-# retrieval score does not look wrong. Precedent is N14, where 2 of 12 Rust and
-# 4 of 11 Python checkers accepted plausible wrong answers and the numbers had
-# already been recorded.
+# This module decides what every retrieval number in this project MEANS, so an
+# error here is inherited by every score and does not look like an error --
+# 0.9152 and 0.8891 are both perfectly plausible readings. Same reason
+# `retrieval_eval.toml` exists for the loader; this is the half that computes.
 #
-# M1 and M2 are the pair that matters for N136: the whole reason
-# `precision_at_k_strict` exists is its denominator and its treatment of an empty
-# list, and those are exactly the two things that make it comparable with a
-# published number. Mutating them must break a test by name or the distinction is
-# decorative.
+# Each mutation names the ONE test that must kill it. That is stronger than
+# letting the module's suite run: it proves the test written for the invariant
+# is the one that discriminates, and not a neighbour that touches the same
+# numbers.
 #
 # Run: python scripts/mutate.py --spec scripts/mutations/retrieval_metrics.toml
 
 features = "full"
-filter = "retrieval_"
+filter = "retrieval_metrics::tests"
+
+# ---------------------------------------------------------------------------
+# The two precisions. N136's finding: they have DIFFERENT denominators, and
+# quoting one next to a published number while computing the other is how a
+# comparison silently stops being a comparison.
+# ---------------------------------------------------------------------------
 
 [[mutation]]
 id = "M1"
 file = "src/retrieval_metrics.rs"
-invariant = "strict precision divides by k, flat -- that IS the TREC/BEIR definition and the only reason this function exists"
-before = "    Some(hits as f64 / k as f64)"
-after = "    Some(hits as f64 / top.len().max(1) as f64)"
+filter = "retrieval_metrics::tests::precision_divides_by_what_was_returned_not_by_k"
+invariant = "the loose precision divides by what was RETURNED; dividing by k turns it into the strict one and the two stop being two measurements"
+before = "    Some(hits as f64 / top.len() as f64)"
+after = "    Some(hits as f64 / k as f64)"
 occurrences = 1
 
 [[mutation]]
 id = "M2"
 file = "src/retrieval_metrics.rs"
-invariant = "an empty retrieved list is 0.0 strictly, never None: a None is dropped from the averages, so a retriever that found nothing half the time would be judged only where it answered"
-before = """pub fn precision_at_k_strict(
-    retrieved: &[String],
-    relevant: &HashSet<String>,
-    k: usize,
-) -> Option<f64> {
-    if k == 0 {
-        return None;
-    }"""
-after = """pub fn precision_at_k_strict(
-    retrieved: &[String],
-    relevant: &HashSet<String>,
-    k: usize,
-) -> Option<f64> {
-    if k == 0 || retrieved.is_empty() {
-        return None;
-    }"""
+filter = "retrieval_metrics::tests::the_two_precisions_differ_exactly_when_the_list_is_short"
+invariant = "the strict precision divides by k FLAT, even when fewer came back -- that is the TREC/BEIR definition and therefore the only one comparable with somebody else's P@k"
+before = "    Some(hits as f64 / k as f64)\n}\n\n/// `1 / position` of the first relevant document, counting from one."
+after = "    Some(hits as f64 / top.len().max(1) as f64)\n}\n\n/// `1 / position` of the first relevant document, counting from one."
 occurrences = 1
+
+# ---------------------------------------------------------------------------
+# Deduplication. A retriever that returns the same document twice must not be
+# rewarded for it, and this is the single line that stops it.
+# ---------------------------------------------------------------------------
 
 [[mutation]]
 id = "M3"
 file = "src/retrieval_metrics.rs"
-invariant = "the report carries the strict precision as its own number, not a copy of the loose one"
-before = "        precision_at_k_strict: precision_strict / n,"
-after = "        precision_at_k_strict: precision / n,"
+filter = "retrieval_metrics::tests::a_duplicate_cannot_inflate_recall"
+invariant = "a repeated document id counts once -- without the dedup, returning the one relevant document ten times reports perfect recall of a ten-document answer"
+before = """        if seen.insert(id.as_str()) {
+            out.push(id);"""
+after = """        if true {
+            out.push(id);"""
 occurrences = 1
 
 [[mutation]]
 id = "M4"
-file = "src/retrieval_eval.rs"
-invariant = "sum-reciprocal-rank weights by 1/rank, so a diffusely relevant document can overtake one with a single better passage"
-before = "                    let weight = 1.0 / (i as f64 + 1.0);"
-after = "                    let weight = 1.0;"
+file = "src/retrieval_metrics.rs"
+# First pinned to `k_larger_than_the_list_uses_what_is_there`, which CANNOT
+# distinguish this mutation: with k = 1000 over two documents neither `out.len()
+# == k` nor `out.len() >= k` ever fires, so both versions return the same list.
+# It survived, and the survivor was half my spec error and half a real gap --
+# NO test exercised `average_precision` over more than one retrieved document,
+# so the accumulation that defines AP was unverified. Test added in V390.
+filter = "retrieval_metrics::tests::average_precision_accumulates_over_every_position_not_just_the_first"
+invariant = "`k == 0` means no truncation (used by average_precision over the whole list), so the cut must be guarded -- without the guard, `out.len() == 0` is never true and nothing breaks, but with `k > 0` dropped the list truncates at the first element"
+before = "            if k > 0 && out.len() == k {"
+after = "            if out.len() >= k {"
 occurrences = 1
+
+# ---------------------------------------------------------------------------
+# What counts as relevant. Graded relevance uses 0 for "judged and not
+# relevant", which is a DIFFERENT statement from "not judged" -- and both are
+# non-relevant, which is why the filter is strictly above zero.
+# ---------------------------------------------------------------------------
 
 [[mutation]]
 id = "M5"
-file = "src/retrieval_eval.rs"
-invariant = "documents are re-sorted by the accumulated total; without it sum-reciprocal-rank silently degenerates into max-passage"
-before = "                totals.sort_by(|a, b| b.1.total_cmp(&a.1));"
-after = "                // mutation: no re-sort"
+file = "src/retrieval_metrics.rs"
+# Survived against the whole module: no test used a grade of exactly 0.0, so
+# `> 0.0` and `>= 0.0` were indistinguishable. Test added in V390.
+filter = "retrieval_metrics::tests::a_grade_of_exactly_zero_is_judged_irrelevant_and_not_relevant"
+invariant = "a grade of 0.0 is judged-irrelevant and must not become relevant; accepting >= 0.0 makes every judged document relevant and recall 1.0 for any retriever that returns anything judged"
+before = "        .filter(|(_, g)| **g > 0.0)"
+after = "        .filter(|(_, g)| **g >= 0.0)"
 occurrences = 1
+
+# ---------------------------------------------------------------------------
+# The denominators that make a score mean what it says.
+# ---------------------------------------------------------------------------
 
 [[mutation]]
 id = "M6"
-file = "src/retrieval_eval.rs"
-invariant = "describe() names the aggregation; a score reported without its rule is not reproducible"
-before = """                "{path} (title+body; {} over ~{}-token chunks)",
-                self.aggregation.as_str(),"""
-after = """                "{path} (title+body; {} over ~{}-token chunks)",
-                "","""
+file = "src/retrieval_metrics.rs"
+filter = "retrieval_metrics::tests::average_precision_divides_by_the_relevant_that_exist"
+invariant = "average precision divides by the relevant documents that EXIST, not by the ones found: one perfect hit out of five relevant documents is 0.2, not 1.0, and the second reading flatters every retriever that returns little"
+before = "    Some(sum / relevant.len() as f64)"
+after = "    Some(sum / (hits.max(1)) as f64)"
+occurrences = 1
+
+[[mutation]]
+id = "M7"
+file = "src/retrieval_metrics.rs"
+filter = "retrieval_metrics::tests::the_ideal_comes_from_every_graded_document_not_from_what_was_returned"
+invariant = "nDCG's ideal ranking is built from EVERY graded document, not from the ones retrieved -- building it from the returned set makes a retriever that found one good document out of twenty score 1.0, because it is compared against itself"
+before = "    let mut ideal: Vec<f64> = grades.values().copied().filter(|g| *g > 0.0).collect();"
+after = """    let mut ideal: Vec<f64> = top_k_unique(retrieved, k)
+        .into_iter()
+        .filter_map(|id| grades.get(id).copied())
+        .filter(|g| *g > 0.0)
+        .collect();"""
+occurrences = 1
+
+# ---------------------------------------------------------------------------
+# Undefined is not zero. The distinction a report lives or dies by: a `None`
+# is dropped from the averages, a 0.0 drags them down, and reporting an
+# unjudged query as a failed one is the easiest way to slander a retriever.
+# ---------------------------------------------------------------------------
+
+[[mutation]]
+id = "M8"
+file = "src/retrieval_metrics.rs"
+# Originally pinned to `summarise_skips_unjudged_queries_instead_of_averaging_
+# them_as_zero`, which never reaches this branch: `summarise` drops unjudged
+# queries BEFORE calling recall, so recall's own `None` is not what it tests.
+# It survived, and that was my spec error and not a missing test -- the
+# invariant is asserted one test over.
+filter = "retrieval_metrics::tests::an_unjudged_query_is_none_and_never_zero"
+invariant = "recall over an empty relevant set is UNDEFINED, not zero: 0/0 reported as 0.0 turns every unjudged query into a failed one, and the average of a run is then a statement about the judgements rather than the retriever"
+before = """pub fn recall_at_k(retrieved: &[String], relevant: &HashSet<String>, k: usize) -> Option<f64> {"""
+after = """pub fn recall_at_k(retrieved: &[String], relevant: &HashSet<String>, k: usize) -> Option<f64> {
+    if relevant.is_empty() {
+        return Some(0.0);
+    }"""
 occurrences = 1

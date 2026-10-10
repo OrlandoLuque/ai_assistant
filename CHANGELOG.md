@@ -5,6 +5,77 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v266 (2026-10-11) - V390: tres mutaciones SOBREVIVIERON, y una era culpa mia (0.2.349)
+
+N126, primer incremento. `scripts/mutate.py` existia desde V356 con **un solo** fichero de
+especificaciones: las mutaciones de los demas modulos se hicieron a mano y **vivian solo en el
+CHANGELOG**, o sea que no se volvian a ejecutar nunca. Recuperadas dos:
+
+| espec | mutaciones | resultado |
+|---|---|---|
+| `rerank_service.toml` | 1 | **1/1 muerta** |
+| `retrieval_metrics.toml` | 8 | 5/8 a la primera, **8/8 al cerrar los huecos** |
+
+## La de `rerank_service` es la que vale por su historia
+
+Quitar `.timeout(endpoint.timeout)` del `AgentBuilder`. Su interes no es que muera ahora, es que
+**sobrevivio** en V350: la primera version del test solo comprobaba que la estructura **recordaba**
+el numero. **Un test que comprueba que un campo se guardo no comprueba que el campo se use.**
+Matarla exigio medir el reloj -- 10,0019 s contra un servidor que acepta la conexion, lee la
+peticion y luego **no dice nada**, que es justo el caso que un timeout de solo-conexion no ve.
+
+Ahora esa leccion es un fichero re-ejecutable y no un parrafo en el historial.
+
+## Y en `retrieval_metrics`, tres supervivientes
+
+Este modulo decide **que significa** cada numero de recuperacion del proyecto, asi que un error
+aqui lo hereda cada puntuacion y **no parece un error**: 0,9152 y 0,8891 son los dos lecturas
+perfectamente plausibles. De los tres supervivientes, **uno era culpa mia y dos eran huecos
+reales**, y distinguirlo es todo el ejercicio:
+
+**M8 -- error MIO de especificacion.** Lo ancle a
+`summarise_skips_unjudged_queries_instead_of_averaging_them_as_zero`, y `summarise` **descarta las
+consultas no juzgadas ANTES** de llamar a `recall_at_k`, asi que ese test nunca llega a la rama.
+El invariante **si** estaba probado, un test mas abajo
+(`an_unjudged_query_is_none_and_never_zero`). Re-anclado: muere.
+
+**M5 -- hueco real.** `relevant_from_grades` filtra por **estrictamente** mayor que cero, y su
+propio comentario dice por que: la relevancia graduada usa 0 para *«juzgado y NO relevante»*, que
+es una afirmacion distinta de *«no juzgado»*. **Ningun test usaba una nota de exactamente 0,0**,
+asi que relajar el filtro a `>= 0.0` no cambiaba nada que nadie comprobara -- y habria hecho
+**relevante a todo documento juzgado**, con recall 1,0 para cualquier recuperador que devuelva
+algo que este en los juicios.
+
+**M4 -- hueco real, y mi filtro tambien estaba mal.** Lo ancle a
+`k_larger_than_the_list_uses_what_is_there`, que **no puede distinguirlo**: con k = 1000 sobre dos
+documentos ni `out.len() == k` ni `out.len() >= k` se cumplen nunca. Pero al buscar el test que si
+lo distinguia aparecio lo otro: **`average_precision` no tenia ningun test con mas de UN documento
+recuperado**, asi que la acumulacion `sum += hits / (i + 1)` -- que es *exactamente* lo que
+distingue la precision media de una precision en un corte -- estaba **sin verificar mas alla de la
+posicion uno**.
+
+## Dos tests nuevos, y por que son dos y no uno
+
+- `average_precision_accumulates_over_every_position_not_just_the_first`: aciertos en las
+  posiciones 2 y 4, `(1/2 + 2/4) / 2 = 0,5`; y los mismos dos documentos primero,
+  `(1/1 + 2/2) / 2 = 1,0`. La segunda mitad es la que ancla que **el orden importa**.
+- `a_grade_of_exactly_zero_is_judged_irrelevant_and_not_relevant`: una nota 0,0 y una 2,0 en el
+  mismo mapa, mas la consecuencia metrica -- recuperar solo el documento de nota cero es recall
+  **0,0 y no indefinido**, porque la consulta **si** esta juzgada.
+
+Los dos huecos eran **invisibles desde los nombres de los tests**: el modulo parecia cubierto a
+conciencia, con veintiun tests, y dos invariantes que sus propios comentarios enuncian no tenian
+nada que los afirmara.
+
+## Verificado
+
+- **9.018 tests** con `FEATURES_STD`, 0 fallidos (+2). **7.241** con `full`, **5.213** con el
+  minimo de ocho features.
+- `cargo clippy --all-targets -- -D warnings` limpio.
+- **9 de 9 mutaciones** entre los dos espec, cada una nombrando el test que la mata.
+- El arbol limpio tras las ejecuciones: sin centinela, y `rerank_service.rs` **sin diff alguno**.
+- Las cuatro cifras del README y la del `modus-operandi` al dia, con su puerta en verde.
+
 ## [Unreleased] - v265 (2026-10-10) - V389: las tres reglas de la jornada, donde se leen al empezar (0.2.348)
 
 N121 pedia esto: las reglas nuevas al `modus-operandi.md`, que es lo que se lee al abrir una

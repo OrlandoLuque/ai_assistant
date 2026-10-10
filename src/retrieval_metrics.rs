@@ -759,6 +759,72 @@ mod tests {
         ));
     }
 
+    // ------------------------------------------------------------------
+    // The two tests below exist because a mutation SURVIVED (V390, N126).
+    // Both gaps were invisible from the test names: the module looked
+    // thoroughly covered, and two invariants its own doc comments state had
+    // nothing asserting them.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn average_precision_accumulates_over_every_position_not_just_the_first() {
+        // Every existing AP test used a ONE-document retrieved list, so the
+        // accumulation `sum += hits / (i + 1)` -- which is the entire point of
+        // average precision, as opposed to precision at a single cut -- was
+        // never exercised past position one. A mutation that truncated
+        // `top_k_unique(retrieved, 0)` after its first element survived the
+        // whole suite.
+        let relevant = rel(&["d2", "d4"]);
+        // Hits at positions 2 and 4: (1/2 + 2/4) / 2 = 0.5.
+        let retrieved = ids(&["d1", "d2", "d3", "d4"]);
+        assert!(close(
+            average_precision(&retrieved, &relevant).expect("judged"),
+            0.5
+        ));
+
+        // And order matters, which is the other half: the same two documents
+        // first give (1/1 + 2/2) / 2 = 1.0.
+        let best_first = ids(&["d2", "d4", "d1", "d3"]);
+        assert!(close(
+            average_precision(&best_first, &relevant).expect("judged"),
+            1.0
+        ));
+    }
+
+    #[test]
+    fn a_grade_of_exactly_zero_is_judged_irrelevant_and_not_relevant() {
+        // `relevant_from_grades` filters on **strictly** above zero, and its
+        // doc comment says why: graded relevance uses 0 for "judged and not
+        // relevant", a different statement from "not judged" -- and both are
+        // non-relevant. No test used a 0.0 grade, so relaxing the filter to
+        // `>= 0.0` changed nothing anybody checked, and it would have made
+        // every judged document relevant.
+        let mut grades = HashMap::new();
+        grades.insert("d1".to_string(), 0.0); // judged, NOT relevant
+        grades.insert("d2".to_string(), 2.0); // judged, relevant
+
+        let run = QueryRun {
+            query_id: "q".to_string(),
+            retrieved: ids(&["d1"]),
+            grades: grades.clone(),
+        };
+        let relevant = relevant_from_grades(&run.grades);
+        assert_eq!(relevant.len(), 1, "only d2 is relevant");
+        assert!(relevant.contains("d2"));
+        assert!(
+            !relevant.contains("d1"),
+            "a grade of 0.0 means judged and not relevant"
+        );
+
+        // And the metric that follows from it: retrieving only the
+        // zero-graded document is recall 0.0 -- a real score, not undefined,
+        // because the query IS judged.
+        assert!(close(
+            recall_at_k(&run.retrieved, &relevant, 5).expect("the query is judged"),
+            0.0
+        ));
+    }
+
     #[test]
     fn summarise_skips_unjudged_queries_instead_of_averaging_them_as_zero() {
         let queries = vec![
