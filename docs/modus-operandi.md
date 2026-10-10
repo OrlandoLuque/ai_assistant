@@ -148,6 +148,15 @@ reads as advice and gets skipped. They are grouped by the question they answer.
    8/8 and then 6/8 across a `cargo fmt`, and worse, `--dry-run` reported all eight fine because
    it read the file with different newline handling than the real run. Re-run `--dry-run` **after**
    `cargo fmt`, not before.*
+9. **When the pre-flight says "says 1, file has N", go read the other N-1 sites.** The mismatch
+   is the finding; narrowing the anchor to make it pass is the wrong reflex, and only correct
+   after confirming the other sites are guarded. *Case (V388): writing one mutation for
+   `ToolResult::from_unified`, the same `success: false` / `output: String::new()` pair turned out
+   to appear **4** times -- the bridge plus the three failure paths of
+   `tool_calling::ToolRegistry::execute`, and **none of those three had a test**. Every test in
+   the module asserted `result.success`, the happy path, in the registry `agentic_loop` and
+   `model_integration` use.* And when adding the missing failure tests, add the **positive** one
+   too: three failure tests alone also pass on a thing that reports everything as a failure.
 
 ### B. Claims, documentation and gates
 
@@ -167,6 +176,25 @@ reads as advice and gets skipped. They are grouped by the question they answer.
 10. **A capability is not done until a surface calls it.** Five cases in one week
     (`RrfFusion::fuse`, `rag_methods::LlmReranker`, `search_knowledge_hybrid`, `MmrScorer`,
     `reranker::CascadeReranker`). See the closure cycle in N116.
+11. **A number in the documentation must carry the command that produces it, and that command
+    must be one CI runs.** *Case (V387): the README said "8,991 tests (`cargo test --features
+    full --lib`)" in four places. That command yields **7,235**, because the figure came from the
+    much wider FEATURES_STD set. Anyone reproducing it concludes the claim is inflated by 1,756 --
+    when the real number under the right command is **higher**.* Checked now by
+    `check_readme_numbers.py`, comparing feature **sets** and not strings. On its first real run
+    it found a second case: the README's own "Run tests" block named a hand-written six-feature
+    subset CI never runs, so a reader following the README ran a narrower suite and got a third
+    number.
+12. **A tool's scope is configuration, and its output does not state it. Ask what it looked at
+    before trusting what it said.** *Case (V385): `deny.toml` had `[graph] all-features = false`,
+    so `cargo deny` checked **299 of 955** crates -- 656 never examined for licences, bans or
+    sources, in a crate with 95 feature flags -- while printing the identical line, `advisories
+    ok, bans ok, licenses ok, sources ok`. The narrow configuration is not a weaker green, it is
+    the **same** green.* The symptom pointed the wrong way: six suppressed advisories reporting
+    `advisory-not-detected` looked like six stale entries and were five live advisories on crates
+    nobody was looking at. Related: `cargo-audit` reads the whole lock and `cargo-deny` reads a
+    configured graph, so the two do **not** cover the same thing, and a suppression can be
+    load-bearing for one and inert for the other.
 
 ### C. Features and CI
 
@@ -216,8 +244,12 @@ reads as advice and gets skipped. They are grouped by the question they answer.
 ## Test commands
 
 ```bash
-# Standard full test (most features)
-cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing" --lib
+# Standard full test -- this is FEATURES_STD, the set CI runs. It used to be a
+# hand-written subset of it (missing local-inference, ffi and tabular), which is
+# the V387 defect in the file that teaches how to work here: a command presented
+# as "the standard" that compiles fewer tests than CI and so reports a different
+# number. Keep it equal to FEATURES_STD in .github/workflows/ci.yml.
+cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing,local-inference,ffi,tabular" --lib
 
 # With distributed network
 cargo test --features "full,distributed-network" --lib
@@ -225,7 +257,16 @@ cargo test --features "full,distributed-network" --lib
 # P2P only
 cargo test --features "full,p2p" --lib -- p2p::
 
-# Quick check (lightweight features only)
+# Quick check (lightweight features only).
+#
+# The three commands above are DELIBERATELY narrower than FEATURES_STD and so
+# report fewer tests -- measured 2026-10-10: 9,016 under FEATURES_STD, 7,239
+# under `full` alone, 5,211 under the eight-feature minimum. That is fine for
+# focused work and wrong for a figure anyone publishes, which is why
+# `check_readme_numbers.py` refuses a test count in the README whose command is
+# not one CI runs. It does NOT police this file: an ad-hoc command here is a
+# convenience, not a claim, and telling the two apart automatically needs a
+# heuristic (V379 measured two and neither separated them).
 cargo test --features full --lib
 
 # --- Harness (V40 flags) ---

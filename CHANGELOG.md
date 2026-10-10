@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v265 (2026-10-10) - V389: las tres reglas de la jornada, donde se leen al empezar (0.2.348)
+
+N121 pedia esto: las reglas nuevas al `modus-operandi.md`, que es lo que se lee al abrir una
+sesion, y no solo en la memoria de quien las aprendio. Cada una con su **caso** al lado, porque
+el propio fichero lo dice en su cabecera: *una regla sin su cadaver se lee como un consejo y se
+salta*.
+
+| regla | caso |
+|---|---|
+| **A.9** Cuando el pre-vuelo dice «says 1, file has N», **ve a leer los otros N-1 sitios**. El desajuste es el hallazgo; estrechar el anclaje para que pase es el reflejo equivocado. | V388: el mismo par `success: false` / `output: String::new()` salia **4** veces, y **tres no tenian test** -- las tres rutas de fallo del registro que usan `agentic_loop` y `model_integration`. Y al anadir los que faltaban, anadir tambien **el positivo**: tres tests de fallo solos pasan en algo que reporta TODO como fallo. |
+| **B.11** Una cifra en la documentacion tiene que llevar **el comando que la produce**, y ese comando tiene que ser uno que corra CI. | V387: «8.991 tests (`cargo test --features full --lib`)» en cuatro sitios, y ese comando da **7.235**. Quien lo reproduce concluye que esta inflada en 1.756, cuando la real es **mayor**. |
+| **B.12** El alcance de una herramienta es **configuracion**, y su salida no lo dice. Pregunta **que miro** antes de creerte **que dijo**. | V385: `cargo deny` comprobaba **299 de 955** crates imprimiendo la linea identica. La configuracion estrecha no es un verde mas debil: es **el mismo verde**. |
+
+## Y el propio fichero tenia el defecto de B.11
+
+Su bloque **«Standard full test (most features)»** era otro subconjunto escrito a mano: le
+faltaban `local-inference`, `ffi` y `tabular` respecto a `FEATURES_STD`. O sea que el documento
+que ensena a trabajar aqui ofrecia como *el estandar* un comando que compila menos tests que CI
+y por tanto da otro numero. Igualado a `FEATURES_STD`.
+
+Los otros tres comandos de esa seccion -- `full,distributed-network`, `full,p2p` y `full` a secas
+-- **son deliberadamente mas estrechos**, y ahora lo dicen, con las tres cifras medidas al lado
+(9.016 / 7.239 / 5.211). Eso esta bien para trabajo enfocado y mal para una cifra publicada.
+
+**Y por eso la puerta NO vigila este fichero.** Un comando ad-hoc aqui es una comodidad, no una
+afirmacion, y distinguir las dos automaticamente necesita una heuristica: V379 midio dos para la
+prosa de la web y **ninguna separaba**. Queda escrito donde se decide, en vez de ampliarse el
+alcance y empezar a fallar por el motivo equivocado.
+
+Verificado: las puertas de documentacion, CLI documentado, meta-checker y README, todas en verde.
+
 ## [Unreleased] - v264 (2026-10-10) - V388: un anclaje que cazaba CUATRO sitios, y tres no tenian test (0.2.347)
 
 `scripts/mutations/tool_bridge.toml`: ocho mutaciones para el puente de N135 y para el campo
