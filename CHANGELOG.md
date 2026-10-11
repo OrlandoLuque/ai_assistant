@@ -5,6 +5,75 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v269 (2026-10-12) - V393: el `+1` de RRF es la DEFINICION, no un guardia (0.2.352)
+
+El autor leyo lo de V392 y objeto: *«sobre la division por 0, no se puede resolver de otra manera
+que no sea sumando 1? No suena preciso.»* **Tenia razon, y el arreglo es otro.**
+
+## Que era, y por que apoyarse en el `+1` estaba mal
+
+RRF puntua `1 / (k + rango)` con el rango contando desde **UNO**. El `+ 1.0` del codigo convierte
+el indice 0 del iterador en el rango 1: **es la definicion del algoritmo**, no una proteccion. Que
+ademas mantenga seguro `k = 0` es una **casualidad**, y V392 se apoyo en esa casualidad.
+
+Deja de funcionar un paso mas afuera:
+
+| `k` | denominador en el rango 1 | resultado |
+|---|---|---|
+| `0` | 1 | correcto por casualidad |
+| `-1` | **0** | puntuaciones **infinitas** |
+| `-2` | **-1** | puntuaciones negativas, y **el orden se invierte** |
+
+Y es alcanzable. `#[non_exhaustive]` impide escribir un literal de `RrfOptions` desde fuera de la
+crate, **pero `k` es un campo publico**: `let mut o = RrfOptions::default(); o.k = -1.0;` compila
+perfectamente. Un guardia en los dos constructores habria sido **dos implementaciones de una regla,
+y justo la que un llamante puede rodear**.
+
+## El arreglo: declarar el dominio donde se consume
+
+Una sola linea, en `fuse_ranked_ids`, donde el valor se usa:
+
+```rust
+let k = if options.k.is_finite() { options.k.max(0.0) } else { DEFAULT_K };
+```
+
+`k` es una constante de suavizado y **solo tiene sentido en `k >= 0`**. Se **acota** en vez de
+rechazar porque la funcion no devuelve ningun tipo de error y un panico en un paso de fusion es
+peor que un valor por defecto sensato. El dominio queda escrito al lado, junto con la aclaracion
+de que el `+ 1.0` es la definicion.
+
+`a_k_outside_its_domain_is_clamped_rather_than_dividing_by_zero` recorre
+**`-1`, `-2`, `-60`, `-inf`, `+inf` y `NaN`**, y de cada uno exige tres cosas: que no se pierda
+ningun documento, que toda puntuacion sea **finita y positiva**, y que **el orden se conserve** --
+que es lo que un denominador negativo rompia mientras cada puntuacion seguia pareciendo una
+puntuacion. Y asigna `options.k` **directamente**, que es la ruta que un guardia en el
+constructor no cubre.
+
+## Y lo otro que el autor pregunto: «nadie fija un valor absoluto»
+
+Que **los consumidores** no lo fijen es defendible: la salida va normalizada y la escala cruda es
+un detalle interno. Que **nadie** lo fije, ni la propia implementacion canonica, no lo es --
+significa que la formula se puede reparametrizar y ni un test protesta.
+
+`the_canonical_formula_is_pinned_to_its_exact_values` lo cierra donde corresponde, en el modulo
+dueno de la aritmetica: con `k = 0` las contribuciones son la serie armonica (1/1, 1/2, 1/3, 1/4),
+con el `k` del articulo el rango 1 vale **exactamente 1/61**, y dos listas que coinciden en un
+documento **suman**: 2/61, no el maximo. Los consumidores siguen afirmando solo orden, que es lo
+correcto para ellos.
+
+## Y una mutacion que volvio NOT_APPLIED, como debe
+
+Mover `options.k` a un local hizo que los tres anclajes de `rank_fusion.toml` dejaran de casar:
+**NOT_APPLIED, que no prueba nada**. Es la regla A.8 del modus-operandi funcionando. Anclajes
+actualizados --no los veredictos-- y vuelve a dar **3 de 3 como dice el espec**.
+
+## Verificado
+
+- **9.023 tests** con `FEATURES_STD`, **7.246** con `full`, **5.218** con el minimo. 0 fallidos.
+- `cargo clippy --all-targets -- -D warnings` limpio. Cazo de paso un `clone` innecesario mio
+  (`cloned_ref_to_slice_refs`) en el test nuevo.
+- `rank_fusion.toml` 3/3.
+
 ## [Unreleased] - v268 (2026-10-11) - V392: tres mutaciones invisibles, y el diseno del espec era mio y estaba mal (0.2.351)
 
 N126, tercer incremento: `scripts/mutations/rank_fusion.toml`. Y de los tres espec de esta noche

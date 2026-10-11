@@ -128,9 +128,33 @@ pub fn fuse_ranked_ids(lists: &[Vec<String>], options: &RrfOptions) -> Vec<(Stri
     let mut totals: HashMap<&str, f32> = HashMap::new();
     let mut order: Vec<&str> = Vec::new();
 
+    // `k` is sanitised HERE, where it is consumed, and not in the constructors.
+    // `RrfOptions::k` is a public field: `#[non_exhaustive]` stops an outside
+    // caller writing a struct literal, but nothing stops
+    // `let mut o = RrfOptions::default(); o.k = -1.0;`. Guarding the two
+    // constructors would be two implementations of one rule, and the one a
+    // caller can route around.
+    //
+    // The domain is `k >= 0` and finite. `k` is a smoothing constant; a
+    // negative one has no meaning in `1/(k + rank)`. Out-of-domain values are
+    // clamped rather than rejected because the function returns no error type
+    // and a panic in a fusion step is worse than a sane default.
+    //
+    // **The `+ 1.0` below is the DEFINITION, not a guard.** RRF counts ranks
+    // from one, so index 0 is rank 1. It happens to keep `k == 0` safe, and
+    // V392 leaned on that — which was imprecise, because it stops working one
+    // step further out: at `k == -1.0` the denominator is exactly zero
+    // (infinite scores) and below that it is negative, which **inverts the
+    // ordering** while every score still looks like a score.
+    let k = if options.k.is_finite() {
+        options.k.max(0.0)
+    } else {
+        DEFAULT_K
+    };
+
     for list in lists {
         for (rank_from_zero, id) in list.iter().enumerate() {
-            let contribution = 1.0 / (options.k + rank_from_zero as f32 + 1.0);
+            let contribution = 1.0 / (k + rank_from_zero as f32 + 1.0);
             match totals.get_mut(id.as_str()) {
                 Some(total) => *total += contribution,
                 None => {
@@ -207,6 +231,77 @@ mod tests {
             fused.iter().all(|(_, s)| (0.0..=1.0).contains(s)),
             "{fused:?}"
         );
+    }
+
+    #[test]
+    fn the_canonical_formula_is_pinned_to_its_exact_values() {
+        // V392 measured that NOT ONE of the three modules pinned an absolute
+        // RRF value, so the formula could be reparameterised and no test would
+        // object. The consumers asserting only ORDER is right -- the output is
+        // normalised and the raw scale is an internal detail -- but *nobody*
+        // asserting it is not. The canonical implementation owns that job.
+        //
+        // `1 / (k + rank)`, ranks from ONE. With k = 0 that is the harmonic
+        // series, which makes the expected values readable instead of a
+        // magic constant: 1/1, 1/2, 1/3, 1/4.
+        let raw = fuse_ranked_ids(&[ids(&["a", "b", "c", "d"])], &RrfOptions::raw(0.0));
+        for (i, (_, score)) in raw.iter().enumerate() {
+            let want = 1.0 / (i as f32 + 1.0);
+            assert!(
+                (score - want).abs() < 1e-6,
+                "rank {} should contribute exactly {want}, got {score} -- {raw:?}",
+                i + 1
+            );
+        }
+
+        // And at the documented default, the exact paper value: 1/(60+1).
+        let at_default = fuse_ranked_ids(&[ids(&["a"])], &RrfOptions::raw(DEFAULT_K));
+        assert!(
+            (at_default[0].1 - 1.0 / 61.0).abs() < 1e-9,
+            "k = 60 rank 1 is 1/61, got {:?}",
+            at_default[0].1
+        );
+
+        // Two lists agreeing on one document sum, they do not max.
+        let both = fuse_ranked_ids(&[ids(&["a"]), ids(&["a"])], &RrfOptions::raw(DEFAULT_K));
+        assert!(
+            (both[0].1 - 2.0 / 61.0).abs() < 1e-9,
+            "agreement adds: 2/61, got {:?}",
+            both[0].1
+        );
+    }
+
+    #[test]
+    fn a_k_outside_its_domain_is_clamped_rather_than_dividing_by_zero() {
+        // The author's objection, and it was right: leaning on the `+ 1.0` to
+        // keep the denominator off zero only works at exactly k == 0 and breaks
+        // one step further out. These are the inputs that used to produce
+        // infinities and inverted orderings, and `RrfOptions::k` is a public
+        // field, so they are reachable by assignment even though
+        // `#[non_exhaustive]` blocks a struct literal from outside.
+        let wanted = ids(&["a", "b", "c"]);
+        for bad in [
+            -1.0f32,
+            -2.0,
+            -60.0,
+            f32::NEG_INFINITY,
+            f32::INFINITY,
+            f32::NAN,
+        ] {
+            let mut options = RrfOptions::raw(DEFAULT_K);
+            options.k = bad; // the route a constructor guard would not cover
+            let got = fuse_ranked_ids(std::slice::from_ref(&wanted), &options);
+
+            assert_eq!(got.len(), 3, "k = {bad} lost documents: {got:?}");
+            assert!(
+                got.iter().all(|(_, s)| s.is_finite() && *s > 0.0),
+                "k = {bad} produced a non-finite or non-positive score: {got:?}"
+            );
+            // Order must still be the input order: a negative denominator used
+            // to invert it while every score still looked like a score.
+            let order: Vec<&str> = got.iter().map(|(id, _)| id.as_str()).collect();
+            assert_eq!(order, vec!["a", "b", "c"], "k = {bad} reordered: {got:?}");
+        }
     }
 
     #[test]

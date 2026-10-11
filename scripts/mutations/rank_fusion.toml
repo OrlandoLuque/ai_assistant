@@ -18,6 +18,13 @@
 # a division by zero) and dies. M2 and M3 are kept with `expect = "survives"`
 # and the reason written, which is a result and not a blank.
 #
+# V393 moved the anchored line: `options.k` became a local `k`, sanitised once at
+# the point of use, because the author pointed out that leaning on the `+ 1.0` to
+# avoid dividing by zero is imprecise -- it only holds at exactly k == 0 and
+# breaks at k <= -1 (infinite scores, then an inverted ordering). The first run
+# after that came back NOT_APPLIED for all three, which proves nothing and is
+# why the tool says so loudly: the anchors were updated, not the verdicts.
+#
 # Run: python scripts/mutate.py --spec scripts/mutations/rank_fusion.toml
 
 features = "full"
@@ -45,8 +52,8 @@ file = "src/rank_fusion.rs"
 # reachable from outside the crate -- and nothing pinned it. Test added in V392.
 filter = "rank_fusion::tests::a_k_of_zero_is_finite_because_ranks_start_at_one"
 invariant = "ranks count from ONE in `1 / (k + rank)`; counting from zero changes every score and, at small k, the order -- and the canonical implementation's own test must see it"
-before = "            let contribution = 1.0 / (options.k + rank_from_zero as f32 + 1.0);"
-after = "            let contribution = 1.0 / (options.k + rank_from_zero as f32);"
+before = "            let contribution = 1.0 / (k + rank_from_zero as f32 + 1.0);"
+after = "            let contribution = 1.0 / (k + rank_from_zero as f32);"
 occurrences = 1
 
 [[mutation]]
@@ -56,8 +63,8 @@ filter = "reranker::tests::test_rrf_k_parameter"
 expect = "survives"
 note = "Not equivalence and not laziness: `reranker`'s RRF tests assert only RELATIVE properties (gap_small > gap_large), and this mutation is an order-preserving monotone shift, so no order-only assertion can ever see it. Fixing it would mean making that module pin an absolute RRF value, which is NOT obviously desirable -- absolute RRF values are an implementation detail the normalisation exists to hide. Recorded so the next reader knows it was looked at. M1 covers the one input where the mutation is not cosmetic."
 invariant = "the SAME line, seen from `reranker`. It SURVIVES, and that is recorded rather than fixed: the sharing IS real (that module delegates to `fuse_ranked_ids`), but its tests assert only RELATIVE properties -- `gap_small > gap_large` -- so a monotone shift of every score is invisible from there. What this measures is the strength of the consumer's tests, not whether the formula is shared; my original framing, that three filters would prove the sharing, was wrong, because an order-preserving change cannot be seen by an order-only assertion."
-before = "            let contribution = 1.0 / (options.k + rank_from_zero as f32 + 1.0);"
-after = "            let contribution = 1.0 / (options.k + rank_from_zero as f32);"
+before = "            let contribution = 1.0 / (k + rank_from_zero as f32 + 1.0);"
+after = "            let contribution = 1.0 / (k + rank_from_zero as f32);"
 occurrences = 1
 
 [[mutation]]
@@ -67,6 +74,6 @@ filter = "rag_methods::tests::test_rrf_fusion"
 expect = "survives"
 note = "Same as M2, third consumer. Together the two say something worth knowing and not otherwise visible: NONE of the three modules pins an absolute RRF score, so the formula could be reparameterised without a single test objecting. That is defensible -- the output is normalised -- but it should be a decision and not a surprise."
 invariant = "the SAME line, seen from `rag_methods`: same verdict and same reason as M2. Kept as an entry instead of deleted, because `survives` with a written reason is a result -- it says this consumer pins ORDER and nothing else -- while deleting it would leave the next reader thinking nobody had looked."
-before = "            let contribution = 1.0 / (options.k + rank_from_zero as f32 + 1.0);"
-after = "            let contribution = 1.0 / (options.k + rank_from_zero as f32);"
+before = "            let contribution = 1.0 / (k + rank_from_zero as f32 + 1.0);"
+after = "            let contribution = 1.0 / (k + rank_from_zero as f32);"
 occurrences = 1
