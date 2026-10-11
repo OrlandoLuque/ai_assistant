@@ -1322,7 +1322,12 @@ impl BeaconScheduler {
 // ============================================================================
 
 /// What the user wants to do right now.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+///
+/// One type. [`crate::group_queue_runtime`] declared its own copy with the same
+/// four variants and re-exports this one instead (N133). The two differed in
+/// exactly one way — the runtime's derived `Serialize`/`Deserialize` — so the
+/// serde derives moved here rather than being dropped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum CaptureMode {
     /// Auto-record via VAD, queue on silence.
     Vad,

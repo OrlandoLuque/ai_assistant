@@ -5,6 +5,60 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v270 (2026-10-12) - V394: N133, y el tercer enum NO era un clon (0.2.353)
+
+Autorizado por el autor sin reservas (*«no hace falta que me preguntes para estas cosas»*). Mi
+propia nota de N133 decia **tres enums identicos**. Al mirarlos uno por uno, **dos lo eran y el
+tercero no**, y los dos que lo eran tampoco del todo.
+
+## `CaptureMode` -- y COMO sobrevivio la duplicacion
+
+`group_queue_runtime.rs` linea 17:
+
+```rust
+use crate::audio_priority_protocol::*;   // glob
+```
+
+y cinco lineas mas abajo, su propio `pub enum CaptureMode`. **El glob trae el tipo del protocolo
+al ambito y la declaracion local lo sombrea**, en silencio, sin un aviso de nadie. El binario
+`ai_virtual_mic` importa el local; el del protocolo quedaba inalcanzable en la practica.
+
+Y no eran identicos: el del runtime derivaba **`Serialize`/`Deserialize`** y el del protocolo no.
+Asi que los derives **se mueven al canonico** en vez de perderse. `audio_priority_protocol` es el
+modulo de bajo nivel y `group_queue_runtime` lo envuelve, asi que el protocolo es el dueno del
+vocabulario; el runtime lo re-exporta.
+
+## `OverflowLevel` -- clon exacto, con una asimetria util
+
+Mismas variantes, mismos derives, los dos `#[non_exhaustive]`. La unica diferencia: el de
+`context_window` lleva un `display_name()` y el de `context_composer` no, **asi que quien tuviera
+«el otro» estaba a un metodo del mismo tipo**. Canonico el de `context_window`; el composer lo
+re-exporta. Los dos alias de `lib.rs` --`WindowOverflowLevel` y `ComposerOverflowLevel`-- ahora
+nombran **un** tipo, que es lo que siempre parecieron nombrar.
+
+## `ContainerError` -- NO es un clon, y esto es el hallazgo
+
+| variante | `container_executor` | `container_tools` |
+|---|---|---|
+| `DockerNotAvailable` | `(String)` | **sin carga** |
+| `Timeout` | `(String)` | **sin carga** |
+| `IoError` | `std::io::Error` | **`String`** |
+
+La puerta `check_duplicate_types.py` los marco CLONED porque compara **nombres de variante**, y
+esos coinciden. **Las cargas no.** Es su punto ciego declarado, funcionando exactamente como esta
+escrito que funciona -- y mi nota de N133 lo leyo como «identicos» sin abrir los ficheros.
+
+Unificarlos **no es mecanico**: hay que elegir una forma y migrar **38 sitios de construccion** en
+`container_tools`, incluido convertir `IoError(String)` en `IoError(io::Error)`. `ai_assistant::
+ContainerError` es el de `container_executor` --el rico, y el unico publico-- asi que ese es el
+destino natural. **Queda pendiente y dicho, no hecho a medias.**
+
+## Verificado
+
+- **9.023 tests** con `FEATURES_STD`, 0 fallidos. Sin cambio: se borran declaraciones, no tests.
+- `cargo clippy --all-targets -- -D warnings` limpio.
+- `check_duplicate_types.py` OK, y los nombres duplicados bajan a **211**.
+
 ## [Unreleased] - v269 (2026-10-12) - V393: el `+1` de RRF es la DEFINICION, no un guardia (0.2.352)
 
 El autor leyo lo de V392 y objeto: *«sobre la division por 0, no se puede resolver de otra manera

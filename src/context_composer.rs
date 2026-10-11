@@ -120,18 +120,15 @@ impl Default for OverflowThresholds {
 }
 
 /// Severity of a context-window overflow.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[non_exhaustive]
-pub enum OverflowLevel {
-    /// Usage is within comfortable limits.
-    Normal,
-    /// Usage is approaching the budget.
-    Warning,
-    /// Usage is high — compaction recommended.
-    Critical,
-    /// Usage is at/near the hard limit.
-    Emergency,
-}
+///
+/// Defined in [`crate::context_window`] and re-exported here (N133). The two
+/// declarations were identical down to the derives and the `#[non_exhaustive]`;
+/// the difference was that `context_window`'s carried a `display_name()` and
+/// this one did not, so a caller holding "the other" `OverflowLevel` was one
+/// method short of the same type. `lib.rs` keeps both aliases —
+/// `WindowOverflowLevel` and `ComposerOverflowLevel` — and they now name one
+/// type, which is what they always read as.
+pub use crate::context_window::OverflowLevel;
 
 /// Recommended action for a given overflow level.
 #[derive(Debug, Clone)]

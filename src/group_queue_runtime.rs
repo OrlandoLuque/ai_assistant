@@ -18,17 +18,14 @@ use crate::audio_priority_protocol::*;
 use std::time::{Duration, Instant};
 
 /// Capture mode — how the user produces messages.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum CaptureMode {
-    /// Auto-record via VAD; message finalised on silence timeout.
-    Vad,
-    /// Record only while PTT key is held.
-    PushToTalk,
-    /// Live transmit, bypass queue (only allowed for authorized slots).
-    OverridePtt,
-    /// Continuous — chunks emitted every `max_message_ms`.
-    Continuous,
-}
+///
+/// Defined in [`crate::audio_priority_protocol`], the module this one wraps.
+/// It used to be declared here too, with the same four variants — and the
+/// `use crate::audio_priority_protocol::*;` above is **how that survived**: the
+/// glob brought the protocol's type into scope and this local declaration
+/// shadowed it, silently, with no warning from anywhere. The protocol owns the
+/// vocabulary; this module owns the runtime that drives it (N133).
+pub use crate::audio_priority_protocol::CaptureMode;
 
 /// High-level status exposed to the GUI.
 #[derive(Clone, Debug, PartialEq, Eq)]
