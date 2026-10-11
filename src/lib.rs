@@ -1524,8 +1524,26 @@ pub use unified_tools::{
     ParamType as UnifiedParamType, ProviderCapabilities as UnifiedProviderCapabilities,
     ProviderPlugin as UnifiedProviderPlugin, ProviderRegistry as UnifiedProviderRegistry,
     ToolBuilder, ToolCall as UnifiedToolCall, ToolChoice as UnifiedToolChoice,
-    ToolDef as UnifiedToolDef, ToolError as UnifiedToolError, ToolHandler as UnifiedToolHandler,
-    ToolOutput as UnifiedToolOutput, ToolRegistry as UnifiedToolRegistry,
+    ToolError as UnifiedToolError, ToolHandler as UnifiedToolHandler,
+    ToolRegistry as UnifiedToolRegistry,
+};
+
+// The canonical module owns the plain names (N135 / V396).
+//
+// Until now `ai_assistant::ToolDef` was `tool_calling::Tool` and
+// `ai_assistant::ToolOutput` was `tool_calling::ToolResult` — the LEGACY
+// module — while the canonical `unified_tools` types carried a `Unified`
+// prefix. So the obvious import gave you the module whose own header says
+// *"for new code, prefer unified_tools"*, and the deliberate one gave you the
+// framework. A third party importing `{ToolDef, ToolOutput, UnifiedToolDef}`
+// collected types from two modules that do not fit together.
+//
+// Swapped, which is cheap exactly once: the `Unified*` aliases were referenced
+// by **nothing** outside this file, and the legacy `ToolDef`/`ToolOutput` by
+// nothing at all. The legacy pair keeps a name that says what it is.
+#[cfg(feature = "tools")]
+pub use unified_tools::{
+    ToolDef, ToolDef as UnifiedToolDef, ToolOutput, ToolOutput as UnifiedToolOutput,
 };
 
 #[cfg(feature = "tools")]
@@ -1538,9 +1556,14 @@ pub use tools::{
 };
 
 #[cfg(feature = "tools")]
+// The legacy names say they are legacy. `tool_calling`'s own module header has
+// said "for new code, prefer unified_tools" since it was written; the root
+// aliases used to contradict it by handing out `ToolDef` and `ToolOutput` from
+// here. See the note on the `unified_tools` block above (N135 / V396).
 pub use tool_calling::{
-    CommonTools, ParameterType as ParamType, Tool as ToolDef, ToolCall as ToolInvocation,
-    ToolParameter as ToolParam, ToolRegistry as ToolRepo, ToolResult as ToolOutput,
+    CommonTools, ParameterType as LegacyParamType, Tool as LegacyToolDef,
+    ToolCall as ToolInvocation, ToolParameter as LegacyToolParam,
+    ToolRegistry as LegacyToolRegistry, ToolResult as LegacyToolResult,
 };
 
 #[cfg(feature = "tools")]

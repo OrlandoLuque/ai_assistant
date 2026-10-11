@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v272 (2026-10-12) - V396: el modulo canonico se queda los nombres sin adjetivo (0.2.355)
+
+Decision 1 del traspaso, autorizada: *«arregla. Estamos en fase experimental y no tengo usuarios
+conocidos de la libreria que no sea yo y tu.»*
+
+## Que estaba cruzado
+
+| nombre publico | lo que era | lo que es ahora |
+|---|---|---|
+| `ai_assistant::ToolDef` | `tool_calling::Tool` (**legado**) | `unified_tools::ToolDef` |
+| `ai_assistant::ToolOutput` | `tool_calling::ToolResult` (**legado**) | `unified_tools::ToolOutput` |
+| `ai_assistant::UnifiedToolDef` | `unified_tools::ToolDef` | **igual**, conservado como alias |
+| `ai_assistant::LegacyToolDef` | -- | `tool_calling::Tool`, y lo dice |
+
+El import obvio te daba el modulo **cuya propia cabecera dice** *«for new code, prefer
+unified_tools»*, y el deliberado --el que lleva `Unified` delante-- te daba el framework. Al
+reves de como se lee. Un tercero que importara `{ToolDef, ToolOutput, UnifiedToolDef}` se llevaba
+tipos de **dos modulos que no encajan entre si**: la clase
+`project_external_consumption_blind_spot`, invisible desde dentro porque dentro cada modulo usa
+el suyo.
+
+## Por que ahora es barato, y no lo sera siempre
+
+**Medido antes de tocar**: los alias `Unified*` no los referenciaba **nada** fuera de `lib.rs`, y
+`ToolDef`/`ToolOutput` **nada en absoluto**. Cero consumidores modificados. Los nombres `Unified*`
+**se conservan** como alias del mismo tipo, asi que ningun `use` existente se rompe aunque alguien
+lo tuviera; lo unico que cambia de significado son los dos cruzados, que nadie usaba.
+
+Esta es exactamente la ventana que el autor describe: en fase experimental, sin terceros, un
+renombrado de superficie publica cuesta cuatro lineas. Con un consumidor fuera, cuesta una
+migracion y una nota de release.
+
+## Lo que NO se toco, y por que
+
+`ai_assistant::ToolRegistry` sigue apuntando a `tools::ToolRegistry`, porque **si** tiene un
+consumidor (`src/bin/ai_test_harness/basics.rs:853`) y su API no es la del registro unificado.
+Moverlo es parte del **paso 3 de N135** --migrar a los consumidores-- y no de un renombrado de
+alias. Mezclar las dos cosas en un commit habria hecho imposible revertir una sin la otra.
+
+## Verificado
+
+- `cargo check --all-targets` y `clippy --all-targets -- -D warnings`: limpios.
+- **9.027 tests** con `FEATURES_STD`, 0 fallidos.
+- **92 doctests** pasan: son el unico sitio donde un alias de raiz mal resuelto se nota, porque
+  compilan **desde fuera** de la crate.
+- `check_doc_imports.py` OK -- cada `use` de los ejemplos de la documentacion nombra un tipo que
+  existe, incluidos los renombrados.
+
 ## [Unreleased] - v271 (2026-10-12) - V395: los tests que el autor pidio, en varias configuraciones (0.2.354)
 
 Pedidos uno a uno tras leer V390: *«mete tests con mas de un documento, con los que estimes
