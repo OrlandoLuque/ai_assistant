@@ -5,6 +5,63 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v268 (2026-10-11) - V392: tres mutaciones invisibles, y el diseno del espec era mio y estaba mal (0.2.351)
+
+N126, tercer incremento: `scripts/mutations/rank_fusion.toml`. Y de los tres espec de esta noche
+es el que mas me ha ensenado, porque **lo que falle fue mi propio diseno**.
+
+## Primero, una buena noticia medida
+
+N99 dejo escrito *«tres implementaciones de RRF, y el arreglo de V316 solo esta en una»*. **Esa
+unificacion es real hoy**: `rag_methods::RrfFusion::fuse` y
+`reranker::ReciprocalRankFusion::fuse` **delegan** en `rank_fusion::fuse_ranked_ids`. Hay **una**
+formula con dos adaptadores.
+
+## Y luego mi error de diseno
+
+Monte el espec para *demostrarlo*: **la misma mutacion de la misma linea**, con tres filtros, uno
+por modulo. Si las tres morian, el compartir quedaba medido. **Sobrevivieron las tres.**
+
+La razon no era que el compartir fuera falso. Era que **mi mutacion preserva el orden**: quitar el
+`+ 1.0` de `1 / (k + rank + 1)` es un **desplazamiento monotono** -- cambia todos los valores
+absolutos y no reordena nada. Y los tres modulos afirman **orden**:
+
+- `reranker`: `gap_small > gap_large`. Se cumple igual.
+- `rank_fusion`: la unica asercion sobre el valor crudo es una desigualdad con **6x de margen**
+  (1/61 = 0,0164 contra un suelo de 0,1). Y la salida por defecto esta **normalizada**, asi que
+  arriba vale 1,0 en los dos casos.
+
+**Una asercion que solo mira el orden no puede ver un cambio que conserva el orden.** Tres filtros
+no podian demostrar nada de eso, y escribirlo asi fue un error de razonamiento mio, no un hallazgo
+del codigo.
+
+## Lo que SI midieron, que no era visible de otro modo
+
+**Ninguno de los tres modulos fija un valor absoluto de RRF.** La formula se podria
+reparametrizar entera sin que un solo test protestara. Es defendible --para eso esta la
+normalizacion-- pero deberia ser **una decision y no una sorpresa**, y ahora esta escrito.
+
+## El unico sitio donde la mutacion no es cosmetica
+
+`k = 0`. Ahi quitar el `+ 1.0` es una **division por cero**, y `RrfOptions::with_k` y `::raw` son
+publicas y aceptan cualquier `f32`, asi que es alcanzable desde fuera de la crate. **Nada lo
+fijaba.** Test nuevo `a_k_of_zero_is_finite_because_ranks_start_at_one`: comprueba que todo sale
+finito, que el primer rango contribuye exactamente 1,0, y que la forma sigue decayendo
+(1/1, 1/2, 1/3). Con el, M1 muere.
+
+M2 y M3 se quedan con `expect = "survives"` **y su `note` obligatoria** -- la herramienta se niega
+a aceptar un superviviente esperado sin explicacion escrita, que es exactamente la disciplina que
+hace falta. Un `survives` razonado **es un resultado**; borrar la entrada para dejar el fichero en
+verde dejaria al siguiente lector creyendo que nadie miro.
+
+## Verificado
+
+- **9.021 tests** con `FEATURES_STD`, **7.244** con `full`, **5.216** con el minimo -- las tres
+  medidas. 0 fallidos.
+- `cargo clippy --all-targets -- -D warnings` limpio.
+- **3 de 3 mutaciones se comportan como dice el espec** (una muere, dos sobreviven documentadas).
+- Arbol limpio tras la ejecucion: sin centinela.
+
 ## [Unreleased] - v267 (2026-10-11) - V391: el fail-closed de las guardas no tenia NINGUN test (0.2.350)
 
 N126, segundo incremento: `scripts/mutations/guardrail_pipeline.toml`, **3 de 3 muertas**. Y

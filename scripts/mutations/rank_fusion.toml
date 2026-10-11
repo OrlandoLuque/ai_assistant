@@ -1,0 +1,72 @@
+# The RRF mutations from V316/V99, recovered from the CHANGELOG (N126) -- and
+# designed around what writing them found.
+#
+# N99's finding was "three implementations of RRF, and the V316 fix only landed
+# in one". **That unification is now real**: `rag_methods::RrfFusion::fuse` and
+# `reranker::ReciprocalRankFusion::fuse` both delegate to
+# `rank_fusion::fuse_ranked_ids`. There is ONE formula with two adapters.
+#
+# So the spec is the same mutation of the same single line, run against three
+# test filters -- one per module. **The design did not do what I claimed it
+# would**, and that is written at each entry: all three survived, because the
+# mutation preserves ORDER and all three modules' tests assert order. An
+# order-only assertion cannot see an order-preserving change, so three filters
+# can never have proved the sharing. What they DID measure is that none of the
+# three consumers pins an absolute RRF value.
+#
+# M1 is now pinned to the one input where the mutation is not cosmetic (`k = 0`,
+# a division by zero) and dies. M2 and M3 are kept with `expect = "survives"`
+# and the reason written, which is a result and not a blank.
+#
+# Run: python scripts/mutate.py --spec scripts/mutations/rank_fusion.toml
+
+features = "full"
+filter = "rank_fusion::tests"
+
+# The mutation: drop the `+ 1.0` that makes ranks count from ONE. RRF is
+# `1 / (k + rank)` with rank starting at 1; counting from zero shifts every
+# contribution up by one position's worth, which changes every fused score and,
+# at small k, the ORDER. It cannot panic and it cannot divide by zero with a
+# sane k, so nothing shouts -- the numbers are simply different, and different
+# retrieval numbers look exactly like retrieval numbers.
+
+[[mutation]]
+id = "M1"
+file = "src/rank_fusion.rs"
+# First pinned to `a_larger_k_flattens_the_difference_between_ranks`, and it
+# SURVIVED -- as did M2 and M3. The diagnosis, which took longer than writing
+# the spec: the mutation is a **monotone shift**. It changes every absolute
+# score and reorders nothing, the default output is normalised so the top is
+# 1.0 either way, and the one raw assertion in the module is an inequality with
+# a 6x margin (1/61 = 0.0164 against a 0.1 floor). Invisible, everywhere.
+#
+# Except at ONE input: `k = 0`, where dropping the `+ 1.0` divides by zero.
+# `RrfOptions::with_k` and `::raw` are public and take any f32, so that is
+# reachable from outside the crate -- and nothing pinned it. Test added in V392.
+filter = "rank_fusion::tests::a_k_of_zero_is_finite_because_ranks_start_at_one"
+invariant = "ranks count from ONE in `1 / (k + rank)`; counting from zero changes every score and, at small k, the order -- and the canonical implementation's own test must see it"
+before = "            let contribution = 1.0 / (options.k + rank_from_zero as f32 + 1.0);"
+after = "            let contribution = 1.0 / (options.k + rank_from_zero as f32);"
+occurrences = 1
+
+[[mutation]]
+id = "M2"
+file = "src/rank_fusion.rs"
+filter = "reranker::tests::test_rrf_k_parameter"
+expect = "survives"
+note = "Not equivalence and not laziness: `reranker`'s RRF tests assert only RELATIVE properties (gap_small > gap_large), and this mutation is an order-preserving monotone shift, so no order-only assertion can ever see it. Fixing it would mean making that module pin an absolute RRF value, which is NOT obviously desirable -- absolute RRF values are an implementation detail the normalisation exists to hide. Recorded so the next reader knows it was looked at. M1 covers the one input where the mutation is not cosmetic."
+invariant = "the SAME line, seen from `reranker`. It SURVIVES, and that is recorded rather than fixed: the sharing IS real (that module delegates to `fuse_ranked_ids`), but its tests assert only RELATIVE properties -- `gap_small > gap_large` -- so a monotone shift of every score is invisible from there. What this measures is the strength of the consumer's tests, not whether the formula is shared; my original framing, that three filters would prove the sharing, was wrong, because an order-preserving change cannot be seen by an order-only assertion."
+before = "            let contribution = 1.0 / (options.k + rank_from_zero as f32 + 1.0);"
+after = "            let contribution = 1.0 / (options.k + rank_from_zero as f32);"
+occurrences = 1
+
+[[mutation]]
+id = "M3"
+file = "src/rank_fusion.rs"
+filter = "rag_methods::tests::test_rrf_fusion"
+expect = "survives"
+note = "Same as M2, third consumer. Together the two say something worth knowing and not otherwise visible: NONE of the three modules pins an absolute RRF score, so the formula could be reparameterised without a single test objecting. That is defensible -- the output is normalised -- but it should be a decision and not a surprise."
+invariant = "the SAME line, seen from `rag_methods`: same verdict and same reason as M2. Kept as an entry instead of deleted, because `survives` with a written reason is a result -- it says this consumer pins ORDER and nothing else -- while deleting it would leave the next reader thinking nobody had looked."
+before = "            let contribution = 1.0 / (options.k + rank_from_zero as f32 + 1.0);"
+after = "            let contribution = 1.0 / (options.k + rank_from_zero as f32);"
+occurrences = 1

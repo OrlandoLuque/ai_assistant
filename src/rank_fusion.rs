@@ -210,6 +210,35 @@ mod tests {
     }
 
     #[test]
+    fn a_k_of_zero_is_finite_because_ranks_start_at_one() {
+        // Found by a mutation (V392): dropping the `+ 1.0` from
+        // `1 / (k + rank + 1)` survived every test in this module AND in both
+        // consumers, because it is a monotone shift — it changes every absolute
+        // score and reorders nothing, the output is normalised so the top is
+        // 1.0 either way, and the one raw assertion is an inequality with a 6x
+        // margin (0.0164 against a 0.1 floor).
+        //
+        // There is exactly one input where the `+ 1.0` is not cosmetic: `k = 0`,
+        // where removing it divides by zero. `with_k` and `raw` are public and
+        // take any `f32`, so that is reachable from outside the crate — and
+        // nothing pinned it.
+        let raw = fuse_ranked_ids(&[ids(&["a", "b", "c"])], &RrfOptions::raw(0.0));
+        assert!(
+            raw.iter().all(|(_, s)| s.is_finite()),
+            "k = 0 must stay finite: ranks count from one, so the smallest \
+             denominator is 1 and not 0 — {raw:?}"
+        );
+        // The first rank is the undiscounted one: 1 / (0 + 0 + 1) = 1.0.
+        assert!(
+            (raw[0].1 - 1.0).abs() < f32::EPSILON,
+            "at k = 0 the first rank contributes exactly 1.0, got {raw:?}"
+        );
+        // And the shape still decays: 1/1, 1/2, 1/3.
+        assert!((raw[1].1 - 0.5).abs() < f32::EPSILON, "{raw:?}");
+        assert!((raw[2].1 - 1.0 / 3.0).abs() < 1e-6, "{raw:?}");
+    }
+
+    #[test]
     fn normalising_does_not_reorder() {
         // All RRF determines is the ordering. Dividing by a positive constant
         // must leave it untouched, or the fix would be changing the answer
