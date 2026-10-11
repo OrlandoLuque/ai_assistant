@@ -260,8 +260,8 @@ cargo test --features "full,p2p" --lib -- p2p::
 # Quick check (lightweight features only).
 #
 # The three commands above are DELIBERATELY narrower than FEATURES_STD and so
-# report fewer tests -- measured 2026-10-12: 9,023 under FEATURES_STD, 7,246
-# under `full` alone, 5,218 under the eight-feature minimum. That is fine for
+# report fewer tests -- measured 2026-10-12: 9,027 under FEATURES_STD, 7,250
+# under `full` alone, 5,222 under the eight-feature minimum. That is fine for
 # focused work and wrong for a figure anyone publishes, which is why
 # `check_readme_numbers.py` refuses a test count in the README whose command is
 # not one CI runs. It does NOT police this file: an ad-hoc command here is a

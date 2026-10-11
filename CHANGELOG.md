@@ -5,6 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v271 (2026-10-12) - V395: los tests que el autor pidio, en varias configuraciones (0.2.354)
+
+Pedidos uno a uno tras leer V390: *«mete tests con mas de un documento, con los que estimes
+oportuno, en varias configuraciones si lo crees apropiado»* y *«mete tests que usen una nota de
+relevancia de exactamente 0,0»*. Cuatro tests nuevos y **una mutacion**, que es la parte que
+convierte un test en una guarda.
+
+## Precision media: seis formas de lista, y el par que dice para que sirve
+
+`average_precision_over_several_shapes_of_list` recorre seis casos, cada uno con el valor
+esperado escrito **como la aritmetica y no como un decimal**, para que se pueda comprobar sin
+fiarse de mi:
+
+| caso | esperado |
+|---|---|
+| todo relevante y en orden | `1.0` |
+| el unico relevante, **ultimo** | `1/3` |
+| el unico relevante, **primero** | `1.0` |
+| nada relevante recuperado | `0.0` -- un cero **genuino**, no indefinido |
+| tres de cinco, intercalados en 1, 3 y 5 | `(1/1 + 2/3 + 3/5) / 5` |
+| un **duplicado** del acierto | `1.0`, porque la deduplicacion va antes |
+
+Y `average_precision_is_order_sensitive_where_recall_is_not` es el par que explica **para que
+existe AP**: los mismos documentos y el mismo conjunto relevante en dos ordenes. **El recall no
+los distingue** --el test lo afirma-- y AP tiene que distinguirlos: `1.0` contra
+`(1/3 + 1/2) / 2`.
+
+## La nota 0,0, en todas las metricas y no solo en el ayudante
+
+`a_zero_grade_behaves_the_same_in_every_metric`: un documento juzgado con **0,0** y otro con 3,0.
+Recuperar solo el de cero da **0,0 real** en recall, las dos precisiones, MRR, MAP y nDCG --
+nunca `None`, que lo sacaria de los promedios y **halagaria** al recuperador. Y recuperarlo
+**primero** no desplaza al bueno: el MRR sigue siendo 1/2.
+
+`a_query_whose_every_grade_is_zero_is_unscorable_not_failed` cubre la configuracion que separa
+*«juzgado y todo irrelevante»* de *«sin juzgar»*: **las dos** tienen conjunto relevante vacio, las
+dos son inpuntuables, y `summarise` las cuenta en `skipped` -- 1 puntuada, 2 saltadas,
+`is_complete()` falso, y el promedio es el valor de la puntuable **sin diluir**.
+
+## Y lo de `summarise`: no habia nada que arreglar
+
+El autor leyo el apartado 4 de V390 como «algo va mal en summarise». **No iba mal**: el salto era
+correcto y ya estaba afirmado; lo que estaba mal era **mi anclaje** de la mutacion M8, que apunto
+a un test que nunca alcanza la rama. Lo que si faltaba, y es lo que se anade, es una mutacion
+**para el salto mismo** (M9), de modo que el invariante quede guardado por derecho propio y no
+como efecto colateral de un test dirigido a otro sitio. **9 de 9** en el espec.
+
+## Verificado
+
+- **9.027 tests** con `FEATURES_STD`, **7.250** con `full`, **5.222** con el minimo. 0 fallidos.
+- `cargo clippy --all-targets -- -D warnings` limpio.
+- `retrieval_metrics.toml` **9/9**; arbol limpio, sin centinela.
+
 ## [Unreleased] - v270 (2026-10-12) - V394: N133, y el tercer enum NO era un clon (0.2.353)
 
 Autorizado por el autor sin reservas (*«no hace falta que me preguntes para estas cosas»*). Mi

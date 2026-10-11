@@ -792,6 +792,146 @@ mod tests {
     }
 
     #[test]
+    fn a_zero_grade_behaves_the_same_in_every_metric() {
+        // Requested after V390: one test with a 0.0 grade was the minimum, and
+        // the distinction has to hold in every metric that reads grades, not
+        // just in the helper that extracts them.
+        let mut grades = HashMap::new();
+        grades.insert("zero".to_string(), 0.0); // judged, NOT relevant
+        grades.insert("good".to_string(), 3.0); // judged, relevant
+        let relevant = relevant_from_grades(&grades);
+
+        // Retrieving only the zero-graded document: judged, so a real 0.0
+        // everywhere — never `None`, which would drop the query from averages
+        // and flatter the retriever.
+        let only_zero = ids(&["zero"]);
+        assert!(close(
+            recall_at_k(&only_zero, &relevant, 5).expect("judged"),
+            0.0
+        ));
+        assert!(close(
+            precision_at_k(&only_zero, &relevant, 5).expect("returned one"),
+            0.0
+        ));
+        assert!(close(
+            precision_at_k_strict(&only_zero, &relevant, 5).expect("k > 0"),
+            0.0
+        ));
+        assert!(close(reciprocal_rank(&only_zero, &relevant), 0.0));
+        assert!(close(
+            average_precision(&only_zero, &relevant).expect("judged"),
+            0.0
+        ));
+        // nDCG: the zero grade contributes zero gain, and the ideal is built
+        // from the 3.0 that exists but was not returned.
+        assert!(close(
+            ndcg_at_k(&only_zero, &grades, 5).expect("judged"),
+            0.0
+        ));
+
+        // Retrieving the zero-graded document FIRST must not displace the good
+        // one in any score: it adds nothing, it does not subtract either.
+        let zero_then_good = ids(&["zero", "good"]);
+        assert!(close(
+            recall_at_k(&zero_then_good, &relevant, 5).expect("judged"),
+            1.0
+        ));
+        // Found at position two: 1/2.
+        assert!(close(reciprocal_rank(&zero_then_good, &relevant), 0.5));
+    }
+
+    #[test]
+    fn a_query_whose_every_grade_is_zero_is_unscorable_not_failed() {
+        // The configuration that separates "judged and all irrelevant" from
+        // "not judged": both have an empty RELEVANT set, so both are
+        // unscorable — and `summarise` has to skip them rather than average
+        // them in as zero, which would make the report a statement about the
+        // judgements instead of the retriever.
+        let mut all_zero = HashMap::new();
+        all_zero.insert("a".to_string(), 0.0);
+        all_zero.insert("b".to_string(), 0.0);
+        assert!(relevant_from_grades(&all_zero).is_empty());
+
+        let runs = vec![
+            QueryRun::graded("judged-all-irrelevant", ids(&["a", "b"]), all_zero),
+            QueryRun::graded("not-judged-at-all", ids(&["a"]), HashMap::new()),
+            QueryRun::binary("scorable", ids(&["x"]), ids(&["x"])),
+        ];
+        let report = summarise(&runs, 10);
+
+        assert_eq!(report.scored, 1, "only the scorable query counts");
+        assert_eq!(report.skipped, 2, "both unscorable shapes are skipped");
+        assert!(!report.is_complete(), "a skipped query means incomplete");
+        // And the average is the scorable query's own value, undiluted.
+        assert!(close(report.recall_at_k, 1.0), "{report:?}");
+    }
+
+    #[test]
+    fn average_precision_over_several_shapes_of_list() {
+        // Requested after V390: the accumulation deserves more than one shape.
+        // Each case is `(retrieved, relevant, expected, why)`, and the expected
+        // value is written as the arithmetic rather than a decimal so a reader
+        // can check it without trusting me.
+        let cases: Vec<(Vec<&str>, Vec<&str>, f64, &str)> = vec![
+            // Everything relevant, in order: precision is 1.0 at every hit.
+            (
+                vec!["a", "b", "c"],
+                vec!["a", "b", "c"],
+                1.0,
+                "all relevant",
+            ),
+            // The only relevant document is LAST: 1/3, divided by one relevant.
+            (vec!["x", "y", "a"], vec!["a"], 1.0 / 3.0, "relevant last"),
+            // The only relevant document is FIRST: the undiscounted case.
+            (vec!["a", "x", "y"], vec!["a"], 1.0, "relevant first"),
+            // Nothing relevant was retrieved: a genuine zero, not undefined --
+            // the retriever was asked and answered badly.
+            (vec!["x", "y"], vec!["a"], 0.0, "nothing relevant retrieved"),
+            // Interleaved, three of five relevant found at 1, 3, 5:
+            // (1/1 + 2/3 + 3/5) / 3.
+            (
+                vec!["a", "x", "b", "y", "c"],
+                vec!["a", "b", "c", "d", "e"],
+                (1.0 + 2.0 / 3.0 + 3.0 / 5.0) / 5.0,
+                "three of five, interleaved",
+            ),
+            // A duplicate must not create a second hit: dedup happens first, so
+            // this is the same list as "relevant first".
+            (vec!["a", "a", "x"], vec!["a"], 1.0, "duplicate of the hit"),
+        ];
+
+        for (retrieved, relevant, want, why) in cases {
+            let got = average_precision(&ids(&retrieved), &rel(&relevant))
+                .unwrap_or_else(|| panic!("{why}: judged, so not None"));
+            assert!(
+                close(got, want),
+                "{why}: expected {want}, got {got} (retrieved {retrieved:?}, relevant {relevant:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn average_precision_is_order_sensitive_where_recall_is_not() {
+        // The pair that says what AP is FOR. Same documents, same relevant set,
+        // two orders: recall cannot tell them apart and AP must.
+        let relevant = rel(&["a", "b"]);
+        let good = ids(&["a", "b", "x", "y"]);
+        let bad = ids(&["x", "y", "a", "b"]);
+
+        assert!(close(
+            recall_at_k(&good, &relevant, 4).expect("judged"),
+            recall_at_k(&bad, &relevant, 4).expect("judged")
+        ));
+
+        let ap_good = average_precision(&good, &relevant).expect("judged");
+        let ap_bad = average_precision(&bad, &relevant).expect("judged");
+        assert!(close(ap_good, 1.0), "best possible order is 1.0: {ap_good}");
+        // (1/3 + 2/4) / 2
+        assert!(close(ap_bad, (1.0 / 3.0 + 0.5) / 2.0), "{ap_bad}");
+        assert!(ap_good > ap_bad, "{ap_good} should beat {ap_bad}");
+    }
+
+    #[test]
     fn a_grade_of_exactly_zero_is_judged_irrelevant_and_not_relevant() {
         // `relevant_from_grades` filters on **strictly** above zero, and its
         // doc comment says why: graded relevance uses 0 for "judged and not

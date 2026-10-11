@@ -136,3 +136,28 @@ after = """pub fn recall_at_k(retrieved: &[String], relevant: &HashSet<String>, 
         return Some(0.0);
     }"""
 occurrences = 1
+
+# ---------------------------------------------------------------------------
+# M9: `summarise`'s own skip, guarded in its own right.
+#
+# V390 pinned M8 to this function's test by mistake -- `summarise` drops
+# unjudged queries BEFORE calling recall, so that test never reached recall's
+# `None`. The author read the write-up as "something is wrong with summarise".
+# Nothing was: the skip is correct and was already asserted. What was missing is
+# a mutation for the skip ITSELF, so the invariant is guarded here and not only
+# as a side effect of a test aimed somewhere else.
+# ---------------------------------------------------------------------------
+
+[[mutation]]
+id = "M9"
+file = "src/retrieval_metrics.rs"
+filter = "retrieval_metrics::tests::a_query_whose_every_grade_is_zero_is_unscorable_not_failed"
+invariant = "an unscorable query is SKIPPED, not averaged in as zero: counting it drags every mean down and turns the report into a statement about the completeness of the judgements rather than about the retriever"
+before = """        if relevant.is_empty() {
+            skipped += 1;
+            continue;
+        }"""
+after = """        if relevant.is_empty() {
+            skipped += 1;
+        }"""
+occurrences = 1
