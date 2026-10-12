@@ -5,6 +5,70 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v273 (2026-10-13) - V397: cinco SHA-256 a mano pasan a ser uno, y `sha2` era la respuesta equivocada (0.2.356)
+
+N141, con la direccion aprobada por el autor (*«lo mejor... entiendo que con 1 copia tenemos,
+no?»*). Correcto -- y la copia que debia quedar **no** es la que yo habia escrito en la nota.
+
+## Mi nota anterior estaba mal por los dos lados
+
+Decia «seis copias» y que **`sha2` ya es dependencia y ya esta compilada**, asi que usarla seria
+gratis. Las dos mitades eran falsas:
+
+- Son **cinco** implementaciones a mano (`compute_proof`, `binary_integrity`, `request_signing`,
+  `cloud_connectors`, `mcp_protocol::v2_oauth`), mas tres ficheros que **ya usan `sha2`
+  correctamente** porque estan tras features que la garantizan (`ai_proxy`, `config_security`,
+  `secure_backup`). Y `aws_auth` usa `sha2` + `hmac` tras `aws-bedrock`, que tambien es correcto.
+- **`sha2` es OPCIONAL**: `sha2 = { version = "0.10", optional = true }`, activada por `security`,
+  `gdpr`, `aws-bedrock` y alguna mas. Y **cuatro de los cinco modulos no tienen gate ninguno**.
+
+`cargo check --no-default-features` **compila** -- la crate se construye con **cero features**, y
+eso es algo que debe seguir funcionando. Desde codigo sin gate, `sha2` **no existe**. Por eso
+estaban escritas a mano: no era descuido, era la unica opcion.
+
+## Asi que: una copia nuestra, sin gate
+
+`src/sha256.rs`, ungated, con la implementacion que **ya tenia** el test contra digests publicados,
+mas `sha256_hex` que tres de las cinco duplicaban por su cuenta. Las cinco funciones **conservan su
+nombre y su firma** y delegan en una linea, asi que **no cambia un solo sitio de llamada**.
+
+Las alternativas, y por que no:
+
+| opcion | por que no |
+|---|---|
+| hacer `sha2` no-opcional | la pagan **todos** los builds, incluido el kit portable, y era justo la reserva del autor |
+| gatear los cuatro modulos | no tienen ninguna razon para estar gateados |
+| a mano donde no hay feature, `sha2` donde si | **dos implementaciones por diseno**: exactamente lo que se estaba quitando |
+
+## Lo que el compilador encontro al delegar, que es la prueba de que la duplicacion costaba
+
+Con `-D warnings`, nueve errores de codigo muerto:
+
+- **`binary_integrity::sha256`**: su unico llamante era su propio `sha256_hex`, que ahora delega.
+- **Las ocho piezas de `request_signing`** -- `K`, `H_INIT`, `ch`, `maj` y las cuatro sigmas --
+  que estaban *fuera* de la funcion. 45 lineas. Su `hmac_sha256` sigue necesitando un SHA-256 y
+  ahora usa **el que los vectores publicados avalan**.
+
+## El espec de mutacion siguio a su codigo
+
+`compute_proof.toml` apuntaba al compresor borrado: el primer `--dry-run` dio **5 de 5
+NOT_APPLIED**, que no prueba nada. Re-anclado a `src/sha256.rs`, con **cuatro espacios menos** de
+indentacion porque la funcion salio de un `impl` a nivel de modulo.
+
+Y el emparejamiento de V374 ahora dice **mas** que antes: los `*b` corren los tests viejos de
+`compute_proof`, que llegan al compresor **a traves de la delegacion**. Siguen ciegos, y ese
+veredicto superviviente lo dice de los cuatro antiguos sitios de llamada **de una vez**. **5 de 5
+como dice el espec.**
+
+## Verificado
+
+- `cargo check --no-default-features` (**cero features**) limpio -- la comprobacion que motiva
+  todo el diseno.
+- **9.029 tests** con `FEATURES_STD`, **7.252** con `full`, **5.224** con el minimo. 0 fallidos.
+- `cargo clippy --all-targets -- -D warnings` limpio, tras retirar las 46 lineas de codigo muerto
+  que la delegacion dejo al descubierto.
+- `compute_proof.toml` **5/5**; arbol limpio, sin centinela.
+
 ## [Unreleased] - v272 (2026-10-12) - V396: el modulo canonico se queda los nombres sin adjetivo (0.2.355)
 
 Decision 1 del traspaso, autorizada: *«arregla. Estamos en fase experimental y no tengo usuarios

@@ -658,100 +658,13 @@ const SHA256_H0: [u32; 8] = [
 /// Minimal SHA-256 implementation for AWS SigV4 signing.
 /// Based on FIPS 180-4 specification.
 fn sha256(data: &[u8]) -> [u8; 32] {
-    // Pre-processing: pad the message
-    let bit_len = (data.len() as u64) * 8;
-    let mut msg = data.to_vec();
-
-    // Append bit '1' (byte 0x80)
-    msg.push(0x80);
-
-    // Append zeros until message length is 56 mod 64
-    while msg.len() % 64 != 56 {
-        msg.push(0x00);
-    }
-
-    // Append original length in bits as 64-bit big-endian
-    msg.extend_from_slice(&bit_len.to_be_bytes());
-
-    // Process each 512-bit (64-byte) block
-    let mut h = SHA256_H0;
-
-    for chunk in msg.chunks_exact(64) {
-        // Create message schedule W[0..63]
-        let mut w = [0u32; 64];
-        for i in 0..16 {
-            w[i] = u32::from_be_bytes([
-                chunk[i * 4],
-                chunk[i * 4 + 1],
-                chunk[i * 4 + 2],
-                chunk[i * 4 + 3],
-            ]);
-        }
-        for i in 16..64 {
-            let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
-            let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
-            w[i] = w[i - 16]
-                .wrapping_add(s0)
-                .wrapping_add(w[i - 7])
-                .wrapping_add(s1);
-        }
-
-        // Initialize working variables
-        let mut a = h[0];
-        let mut b = h[1];
-        let mut c = h[2];
-        let mut d = h[3];
-        let mut e = h[4];
-        let mut f = h[5];
-        let mut g = h[6];
-        let mut hh = h[7];
-
-        // Compression function
-        for i in 0..64 {
-            let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
-            let ch = (e & f) ^ ((!e) & g);
-            let temp1 = hh
-                .wrapping_add(s1)
-                .wrapping_add(ch)
-                .wrapping_add(SHA256_K[i])
-                .wrapping_add(w[i]);
-            let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
-            let maj = (a & b) ^ (a & c) ^ (b & c);
-            let temp2 = s0.wrapping_add(maj);
-
-            hh = g;
-            g = f;
-            f = e;
-            e = d.wrapping_add(temp1);
-            d = c;
-            c = b;
-            b = a;
-            a = temp1.wrapping_add(temp2);
-        }
-
-        // Add the compressed chunk to the current hash value
-        h[0] = h[0].wrapping_add(a);
-        h[1] = h[1].wrapping_add(b);
-        h[2] = h[2].wrapping_add(c);
-        h[3] = h[3].wrapping_add(d);
-        h[4] = h[4].wrapping_add(e);
-        h[5] = h[5].wrapping_add(f);
-        h[6] = h[6].wrapping_add(g);
-        h[7] = h[7].wrapping_add(hh);
-    }
-
-    // Produce the final hash value (big-endian)
-    let mut result = [0u8; 32];
-    for i in 0..8 {
-        result[i * 4..i * 4 + 4].copy_from_slice(&h[i].to_be_bytes());
-    }
-    result
+    // Delegates to `crate::sha256` (N141).
+    crate::sha256::sha256(data)
 }
 
 /// SHA-256 hash as lowercase hex string.
 fn sha256_hex(data: &[u8]) -> String {
-    let hash = sha256(data);
-    hash.iter().map(|b| format!("{:02x}", b)).collect()
+    crate::sha256::sha256_hex(data)
 }
 
 /// HMAC-SHA256 using standard HMAC construction: H((K XOR opad) || H((K XOR ipad) || message))

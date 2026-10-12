@@ -339,6 +339,9 @@ pub mod semantic_dedup;
 pub mod server;
 #[cfg(feature = "server-axum")]
 pub mod server_axum;
+/// SHA-256 in one place. Ungated on purpose: four of its five former callers
+/// are ungated modules, and `sha2` is an optional dependency (N141).
+pub mod sha256;
 #[cfg(feature = "skill-forge")]
 pub mod skill_forge;
 pub mod slash_commands;
