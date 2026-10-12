@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v274 (2026-10-13) - V398: 575 ficheros, no 574 -- y empuje con la puerta en rojo (0.2.357)
+
+`src/sha256.rs` es un fichero nuevo, asi que la cuenta de la portada subio de 574 a 575 y
+`check_readme_numbers.py` lo canto. **Y yo lo empuje de todas formas**, porque en la orden puse
+
+```
+python scripts/check_readme_numbers.py 2>&1 | head -1 && git commit ...
+```
+
+y **el codigo de salida de una tuberia es el del ultimo mandato**: `head` devuelve 0 siempre. El
+`&&` nunca vio el fallo. La puerta funciono perfectamente; lo que fallo fue como la mire -- un
+`| head` convirtio una comprobacion en un adorno.
+
+Es la misma forma que el resto de esta semana: **un «OK» que no era un OK**. Y la leccion
+practica, que va al modus-operandi: **nunca encadenar `&&` detras de una tuberia** cuando lo que
+importa es el codigo de salida.
+
+Arreglado antes de que CI lo viera rojo. La cuenta de 575 esta medida, no incrementada a mano.
+
 ## [Unreleased] - v273 (2026-10-13) - V397: cinco SHA-256 a mano pasan a ser uno, y `sha2` era la respuesta equivocada (0.2.356)
 
 N141, con la direccion aprobada por el autor (*«lo mejor... entiendo que con 1 copia tenemos,

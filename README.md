@@ -242,7 +242,7 @@ The table below is a selection, not the inventory.
 - **9,029 tests** under the feature set CI runs. `--features full` on its own builds 7,252 of
   them and the eight-feature minimum 5,224, which is why a single number needs the command
   next to it. `clippy --all-targets -- -D warnings` clean across two feature sets
-- **574 source files**, 558K lines. This line used to claim the whole tree was complete, with
+- **575 source files**, 558K lines. This line used to claim the whole tree was complete, with
   nothing half-finished in it, and that was false — capability built and never connected is the
   recurring defect class here. The honest version is that it gets hunted in documented sweeps
   and then gated: `docs/CAPABILITIES.md` marks what is `hecho` / `parcial` / `no`, and
