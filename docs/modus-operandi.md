@@ -232,6 +232,13 @@ reads as advice and gets skipped. They are grouped by the question they answer.
 17. **Counting a type's name is not counting its use.** *Case: `grep -c ParamSchema` returned 0
     in `browser_tools.rs` because the schemas go through a constructor — nearly wrote that the
     file declared none.*
+18. **Never chain `&&` behind a pipe when the exit code is what matters.** A pipeline's status is
+    the status of its **last** command, so `gate.py | head -1 && git commit` commits whatever the
+    gate said: `head` always succeeds. *Case (V398): `check_readme_numbers.py` correctly refused
+    a stale file count, printed FAIL, and the `&&` never saw it — the commit went out and only a
+    second look caught it before CI did.* Run the gate as its own command and read its status, or
+    use `set -o pipefail`. This is rule 15's twin: there the filter hid the failure's **name**,
+    here it hid its **exit code**, and both turn a check into decoration.
 
 ### E. Syntax that leaks between contexts
 

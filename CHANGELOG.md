@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v275 (2026-10-13) - V399: la leccion de V398 donde se lee al empezar (0.2.358)
+
+Regla **D.18** del modus-operandi, con su caso al lado:
+
+> **Nunca encadenar `&&` detras de una tuberia cuando lo que importa es el codigo de salida.** El
+> estado de una tuberia es el de su **ultimo** mandato, asi que `gate.py | head -1 && git commit`
+> comitea diga lo que diga la puerta: `head` siempre tiene exito.
+
+Y queda emparejada con la **D.15**, que ya estaba y dice «el filtro de salida tiene que dejar
+pasar el NOMBRE del fallo; nunca `tail`, nunca `head`». Son la misma trampa por dos caminos: alli
+el filtro escondio el **nombre** del fallo, aqui su **codigo de salida**. Las dos convierten una
+comprobacion en un adorno.
+
+Lo escribo en el fichero que se lee al abrir sesion y no solo en el CHANGELOG, porque esto me ha
+pasado **hoy** teniendo la D.15 delante -- la conocia para `tail` y no la habia generalizado.
+
 ## [Unreleased] - v274 (2026-10-13) - V398: 575 ficheros, no 574 -- y empuje con la puerta en rojo (0.2.357)
 
 `src/sha256.rs` es un fichero nuevo, asi que la cuenta de la portada subio de 574 a 575 y
