@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v276 (2026-10-13) - V400: TRES vulnerabilidades reales en quinn-proto, publicadas hoy (0.2.359)
+
+**Este rojo si era una vulnerabilidad.** Y lo encontre porque el autor insistio en comprobar que
+CI acabara en verde -- la regla que entro al plan nocturno ayer.
+
+`cargo-deny` y `cargo-audit` fallaron los dos; la comprobacion de sincronizacion de listas paso.
+Eso descarta infraestructura y senala la base de datos RustSec, que se actualiza **sin que
+nosotros cambiemos nada**:
+
+| advisory | que permite |
+|---|---|
+| `RUSTSEC-2026-0341` | sortear la guardia contra agotamiento de memoria al reensamblar streams |
+| `RUSTSEC-2026-0339` | crecimiento sin limite de los retiros de ID de conexion pendientes |
+| (tercera) | tramas DATAGRAM de longitud cero sortean el limite del bufer de recepcion |
+
+Las tres en **`quinn-proto`**, la implementacion de QUIC, y las tres de la misma familia:
+**denegacion de servicio por memoria**. Teniamos 0.11.15; parcheadas en **>= 0.11.17**.
+
+## Arreglado subiendo, no silenciando
+
+`cargo update -p quinn-proto`: **0.11.15 -> 0.11.19**, por encima de lo requerido. Arrastra siete
+paquetes mas dentro de rangos compatibles (`fastbloom`, `jni`, `rand_pcg`,
+`rustls-platform-verifier` 0.6.2 -> 0.7.1, `simd_cesu8`), que es mas de lo que parecia al empezar
+-- y es por lo que se mira el alcance **antes** de aplicar, no despues.
+
+**Y se comprueba que el bump no traiga advisories nuevas**, que es la leccion de
+`project_dependency_cost_is_not_size`: en su dia un bump honesto trajo dos, una de ellas un
+segfault sin arreglo. Aqui: `cargo deny check advisories` -> **`advisories ok`**.
+
+## Por que esto valida la regla de ayer
+
+La regla que el autor pidio --*comprobar que CI este verde antes de dejar llegar la suspension*--
+tiene exactamente este caso como justificacion. Sin ella, tres vulnerabilidades de DoS publicadas
+hoy se habrian quedado en un rojo sin dueno hasta mañana, y con la pestana de Actions de un
+repositorio **publico** diciendo «failure» mientras tanto.
+
+## Verificado
+
+- `cargo check` con **FEATURES_NETWORK**, que es donde vive `quinn`: limpio.
+- **9.029 tests** con `FEATURES_STD`, 0 fallidos.
+- `cargo clippy --all-targets -- -D warnings` limpio.
+- `cargo deny check advisories`: **ok**.
+
 ## [Unreleased] - v275 (2026-10-13) - V399: la leccion de V398 donde se lee al empezar (0.2.358)
 
 Regla **D.18** del modus-operandi, con su caso al lado:
