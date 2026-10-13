@@ -5,6 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v282 (2026-10-14) - V406: triados los 34 enums divergentes, y 19 de ellos son trabajo real (0.2.365)
+
+N134. `[untriaged]` decia literalmente que nadie los habia juzgado, y el proposito de esa seccion
+es que la cuenta no crezca mientras se trabaja -- no congelarla para siempre.
+
+## El dato que parte la poblacion en dos
+
+Extraidas las variantes de **todas** las declaraciones de los 34 nombres, el solape de conjuntos
+separa dos cosas que la puerta no puede distinguir, porque compara NOMBRES:
+
+- **Solape cero o uno, y modulos de dominios ajenos** -> la misma palabra para conceptos
+  distintos. Aceptable, y pasa a `[allowed]` **con la razon escrita**. Once nombres.
+- **Solape alto, o solape cero pero el MISMO trabajo** -> la misma idea que derivo. Eso es trabajo,
+  no coincidencia. Diecinueve nombres, y se quedan en `[untriaged]` con una linea cada uno
+  diciendo que dice la evidencia.
+
+Ejemplos del primer grupo, para que se vea el criterio: `Capability` es un **permiso que pide** una
+skill (NetFetch, FileRead) contra una **capacidad que ofrece** el anfitrion WASM (Filesystem,
+Threads) -- direcciones opuestas, cero variantes comunes. `CompressionLevel` es un dial de esfuerzo
+de zlib (Fast, Best) contra cuanto contexto **descartar** (Light, Aggressive): uno comprime bytes
+sin perdida, el otro tira significado.
+
+Del segundo: `IceState` comparte 5 de 7 variantes **y es un enum de PROTOCOLO** (ICE de WebRTC).
+Dos ortografias de una maquina de estados estandar es el peligro, no el diseño. `WarningSeverity`
+son Info/Warning/{Error, Critical}: una palabra de diferencia. `ParameterType` comparte 5 de 7 y
+dice `Float` donde el otro dice `Number` -- y es parte de la triplicacion del registro de
+herramientas, asi que se resuelve en N135 y no aqui.
+
+Y tres que la puerta cuenta pero donde solo hay UNA declaracion `pub enum` en `src/`
+(`AudioFormat`, `ImageFormat`, `StepType`): se quedan congelados. Juzgarlos a partir de un
+recuento que no entiendo seria peor que dejarlos.
+
+## Lo que NO se hizo, y es el punto
+
+**No se han escrito once razones plausibles para los diecinueve dificiles.** La cabecera de este
+mismo fichero advierte de eso: *«una exencion sin argumentar se lee como revisada, y entonces nadie
+la vuelve a leer»*. El juicio se hizo con la lista completa de variantes y el modulo de cada una,
+que basta cuando los conjuntos no comparten nada y los dominios son ajenos, y **no basta** en los
+otros casos. Mover uno de los diecinueve a `[allowed]` exige leer las dos declaraciones enteras.
+
+## Deuda congelada: 34 -> 23
+
+Y un fallo mio por el camino que la puerta caza: al escribir el triaje se me cayo
+`CompressionError` de las dos listas, y la puerta lo marco `!!` -- nombre divergente que no esta ni
+bendecido ni congelado. Es exactamente para lo que sirve. Anadido a `[untriaged]` con su nota
+(2 de 4 compartidas, los dos son fallos de compresion).
+
+## Verificado
+
+- `check_duplicate_types.py`: OK, sin divergentes nuevos, 23 congelados.
+- El fichero parsea como TOML (el primer intento genero `[untriaged][untriaged]` por aritmetica de
+  corte, y `tomllib` lo rechazo en la linea 41).
+
 ## [Unreleased] - v281 (2026-10-14) - V405: el bot del repaso mensual recomendaba romper el build (0.2.364)
 
 Sale de que el autor pidiera contexto sobre las cinco issues abiertas: *«1. dame mas contexto,

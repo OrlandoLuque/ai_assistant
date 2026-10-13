@@ -16,63 +16,84 @@
 # that was never needed.
 
 [allowed]
-# Deliberately empty. The 35 names below were MEASURED on 2026-10-01 and not one
-# of them was triaged, so writing 35 invented reasons here would have made the
-# file look reviewed when it was not. An entry belongs here once someone has read
-# both declarations and can say why the difference is right, in this shape:
+# Triaged 2026-10-14 (N134). The judgement was made from the FULL variant list
+# of every declaration plus the module each lives in -- that is enough when the
+# variant sets share nothing and the two modules are in unrelated domains, and
+# it is NOT enough otherwise. The names where it was not enough deliberately
+# stayed in [untriaged] below rather than being blessed with a plausible reason,
+# because a reason that was never checked is exactly what this file's header
+# warns about.
 #
-#   StopReason = "acp.rs is the Agent Client Protocol's wire enum, fixed by the
-#                 spec; self_correction's is a loop-exit reason. Cannot merge."
+# The signal that drove the split is variant-set overlap: these eleven share
+# zero or one variant with their namesake AND sit in unrelated subsystems.
+BackendError = "container_backend's is a container runtime failure (ImageNotFound, PolicyViolation); local_inference's is an inference backend failure (NotImplemented, ModelNotFound). Two unrelated kinds of backend, one overlapping variant (`Io`) by coincidence."
+Capability = "skill_forge/capability's is a PERMISSION a skill requests (NetFetch, FileRead, ToolCall); wasm's is a HOST feature a module can use (Filesystem, Threads, Sqlite). Zero shared variants, opposite directions: one is asked for, the other offered."
+CompressionLevel = "cache_compression's is a zlib-style effort dial (Fast, Default, Best, Custom); context_budget's is how aggressively to DISCARD context (Light, Medium, Aggressive). One compresses bytes losslessly, the other drops meaning."
+ConfigError = "error.rs's is the crate's config loading failure (MissingValue, LoadFailed); prompt_breeder/config's is validation of an evolutionary-search configuration (PopulationTooSmall, ParetoNeedsMultipleObjectives). Zero overlap and no shared vocabulary."
+GateAction = "agent_methodology's is what the AGENT does next (Retry, AskUser, Abort); quality_gates' is how a gate REPORTS (Fail, Warn, Log). One is control flow, the other a severity."
+MergeStrategy = "entity_enrichment's resolves conflicting entity attributes (KeepHighestConfidence, Manual); multi_layer_graph's is CRDT conflict resolution (Ours, Theirs, Union). The second is a standard CRDT vocabulary and cannot borrow the first's."
+OutputFormat = "document_pipeline's is a FILE format to write (Pdf, Docx, Epub); output_validation's is the SHAPE expected of a model's answer (PlainText, Json, Table). Zero overlap."
+OverflowAction = "context_composer's is what to do when the CONTEXT WINDOW overflows (Compact, Checkpoint, NewSession); feedback_loop/queue's is what a bounded QUEUE does when full (DroppedOldest, NoDrop)."
+StepKind = "recipes' is a step in a user-authored recipe (Prompt, Tool, Recipe, Shell); skill_forge/declarative's is a node in a generated skill plan (Plan, Branch, Return). Different authors, different executors."
+StopReason = "acp.rs's is the Agent Client Protocol's WIRE enum, fixed by the spec (EndTurn, MaxTokens, Refusal); self_correction's is why a correction LOOP exited (AllPassed, TokenBudgetExhausted, QualityRegression). The first cannot change without breaking the protocol."
+Subsystem = "scalability_monitor's names things whose SIZE is watched (VectorDbHnsw, EmbeddingCache); storage_context's names things that PERSIST (Bandit, Tiers, Snapshots). Overlapping membership would be a coincidence, not a contract."
 
 [untriaged]
-# 34 divergent enum names: one spelling, different variants, so two things that
-# look interchangeable and are not. Frozen, not blessed.
+# 22 names left, down from 34. NOT blessed -- the opposite: these are
+# the ones where the two declarations look like the SAME IDEA that drifted, so
+# each is real work rather than a coincidence of naming. One line per name with
+# what the overlap says, so the next person starts from the evidence:
 #
-# What is already known about three of them, from the sweep that found the list:
+#   AuditEventType     both are audit events and share SessionCreated/SessionDeleted; server.rs's six look like a subset of security/audit's twenty.
+#   CompressionError   2 of 4 shared and both are compression failures (cache_compression,
+#                      streaming_compression). Same idea, two vocabularies.
+#   ChangeType         3 of 4 variants shared; diff.rs adds `Equal` and content_versioning is a strict subset. Looks like one type.
+#   DiversityMetric    zero literal overlap and the same job: measure how different two texts are. Jaccard and cosine appear in both, at different granularity.
+#   EnsembleStrategy   zero literal overlap but the SAME job: combine several model outputs. MajorityVote/Voting and WeightedAverage/WeightedVoting are the same idea spelled twice.
+#   EntityType         both classify entities (NER against knowledge graph) and share Person/Organization/Location.
+#   EvictionPolicy     both are cache eviction and both start with Lru.
+#   ExportFormat       THREE declarations, all with `Json`. distributed_log, export and opentelemetry_integration each invented their own.
+#   IceState           5 of 7 shared, and it is a PROTOCOL enum (WebRTC ICE). Two spellings of a standard state machine is the hazard, not the design.
+#   IntegrityResult    zero literal overlap and the same job: report whether an integrity check passed. Valid/Ok and HashMismatch/Tampered are the same outcomes renamed.
+#   LogLevel           events.rs's three are a strict subset of distributed_log's five.
+#   MemoryType         both classify a memory; share Fact/Preference.
+#   ParameterType      5 of 7 shared; tool_calling says `Float` where tools says `Number`. This is part of the tool-registry triplication (N135) and should be resolved there, not here.
+#   ProviderStatus     zero literal overlap, but widgets' is the GUI showing provider health while fallback's IS provider health. The GUI should probably render the real one instead of its own.
+#   QueueError         FOUR declarations across four queues. Individually defensible, collectively a smell: `Full` and `PriorityFull` and `QueueFull` are the same error.
+#   ResponseStyle      both describe the style of a generated answer; share Technical.
+#   RiskLevel          4 of 6 shared; the only difference is `Safe` against `None` for the bottom of the scale.
+#   TaskStatus         both are task lifecycle; share Pending/InProgress. mcp_task_tools' three look like a coarse view of multi_agent's six.
+#   TaskType           8 of 18 shared, and BOTH classify a task in order to pick a model (auto_model_selection, routing). Same job, two vocabularies.
+#   WarningSeverity    Info/Warning/{Error,Critical}. One word apart.
 #
-#   StepStatus  UNIFIED in V363 and removed from this list: the ratchet reported it
-#               as a stale entry, which is how debt is meant to leave. It turned
-#               out to be THREE enums, not two -- `agent::PlanStepStatus` was the
-#               same concept spelled differently, and a name-comparing gate is
-#               blind to that by construction. See src/step_status.rs.
-#   IceState    ICE is RFC 8445. distributed_rag and p2p carry two different
-#               SUBSETS of one standard state machine, which is a defect in at
-#               least one of them.
-#   LogLevel    distributed_log has Trace/Debug/Info/Warn/Error, events has
-#               Debug/Info/Warn — a subset, so a Trace or Error event has nowhere
-#               to go.
+# And three the gate counts but where only ONE `pub enum` exists in src/.
+# Re-examine before judging: probably a non-pub declaration, a cfg sibling, or
+# one inside src/bin (separate crate root). Judging them from a miscount would
+# be worse than leaving them frozen: AudioFormat, ImageFormat, StepType.
+#
+# Tracked as N134. Moving one here to [allowed] needs a reason that survives
+# reading BOTH declarations in full, not just their variant names.
 names = [
   "AudioFormat",
   "AuditEventType",
-  "BackendError",
-  "Capability",
   "ChangeType",
   "CompressionError",
-  "CompressionLevel",
-  "ConfigError",
   "DiversityMetric",
   "EnsembleStrategy",
   "EntityType",
   "EvictionPolicy",
   "ExportFormat",
-  "GateAction",
   "IceState",
   "ImageFormat",
   "IntegrityResult",
   "LogLevel",
   "MemoryType",
-  "MergeStrategy",
-  "OutputFormat",
-  "OverflowAction",
   "ParameterType",
   "ProviderStatus",
   "QueueError",
   "ResponseStyle",
   "RiskLevel",
-  "StepKind",
   "StepType",
-  "StopReason",
-  "Subsystem",
   "TaskStatus",
   "TaskType",
   "WarningSeverity",
