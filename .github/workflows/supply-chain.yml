@@ -66,6 +66,20 @@ jobs:
         # and print the same "ok" line while checking 299 crates instead of
         # 955. See N146 and the script's own docstring.
         run: python3 scripts/check_deny_graph.py
+      - name: Check every suppression's re-check deadline is still in the future
+        # N149. Each `[advisories].ignore` entry asserts that an advisory does
+        # not affect us; that assertion expires. The written policy already
+        # demanded a re-check trigger per entry, and on 2026-10-13 six of the
+        # eight dates had passed with ONE re-check recorded between them --
+        # while the monthly review workflow had dutifully opened five tracking
+        # issues that were all still open. A nag in the Issues tab is not a
+        # forcing function; a red run is.
+        #
+        # This step can fail with no code change, the day a deadline passes.
+        # That is the mechanism, not a bug. The fix is never to push the date
+        # out on its own: re-measure, correct the reason if the measurement
+        # contradicts it, then set a new date.
+        run: python3 scripts/check_recheck_dates.py
       - name: Install cargo-deny
         run: cargo install cargo-deny --locked
       - name: Check advisories, licenses, bans and sources

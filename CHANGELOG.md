@@ -5,7 +5,118 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] - v276 (2026-10-13) - V400: TRES vulnerabilidades reales en quinn-proto, publicadas hoy (0.2.359)
+## [Unreleased] - v277 (2026-10-13) - V401: seis supresiones vencidas, cinco razones falsas, y la puerta que faltaba (0.2.360)
+
+N149. Sale de tirar del hilo de V400: si la base de advisories se mueve sola, **que pasa con las
+ocho que tenemos silenciadas**. La politica escrita en `deny.toml` exige por cada entrada (a) por
+que no aplica y (b) un disparador de re-chequeo. Se cumplia. Y aun asi:
+
+| | |
+|---|---|
+| entradas en `[advisories].ignore` | 8 |
+| con la fecha de re-chequeo **vencida** | **6** |
+| con re-chequeo registrado | 1 (lru, V385) |
+
+## El forzador existia, funcionaba, y no servia para nada
+
+`.github/workflows/rustsec-review-monthly.yml` se escribio justamente para esto. **No esta roto**:
+se ejecuto el dia 1 de junio, julio, agosto, septiembre y octubre de 2026, y abrio su issue de
+seguimiento cada vez. **Las cinco issues siguen abiertas.** Un aviso en la pestana de Issues de un
+repositorio con un unico desarrollador no fuerza nada; lo que para el trabajo es un rojo.
+
+Asi que la parte mecanica --la fecha-- pasa a CI: **`scripts/check_recheck_dates.py`**, puerta 14,
+**16/16** en su self-test. Y el re-chequeo ahora **mueve la fecha** en vez de anotar una linea
+debajo de una fecha caducada, que es lo que hizo V385 con `lru` y lo que la dejaba
+permanentemente vencida mientras se leia como recien revisada.
+
+Dos cosas que la puerta dice de si misma, porque callarlas seria el defecto que persigue:
+
+- **Puede ponerse roja sin que nadie cambie una linea**, el dia que vence un plazo. Es el
+  mecanismo, igual que la caducidad de un certificado. Para no emboscar, dentro de los 21 dias
+  previos avisa y **no** falla.
+- Las entradas cuyo disparador es **solo** un evento upstream las **nombra y no las falla**: no
+  hay nada mecanico que comparar. Decirlo es el punto; una puerta que pasa en silencio sobre lo
+  que no sabe comprobar se lee como una cobertura que no tiene.
+
+## Y al re-chequear a mano: CINCO de las ocho razones escritas eran falsas
+
+Esto es lo que de verdad justifica la noche. Una supresion con razon escrita **parece revisada**,
+asi que nadie la vuelve a leer -- la leccion de V355 con `lopdf`, otra vez y a escala.
+
+**`quick-xml` (RUSTSEC-2026-0194 / -0195), la peor.** La razon decia: *purely transitive via
+wayland-scanner (the Linux GUI file-dialog chain)* y *the only consumer parses trusted,
+build-time wayland protocol XML, so the DoS is not reachable from crate input*. Con **solo
+`--features tabular-polars`**, sin nada de GUI:
+
+```
+quick-xml 0.39.4
+  object_store 0.13.2        <- features "cloud" y "http" ACTIVADAS
+    polars-io "cloud" <- "file_cache" <- polars-stream <- polars-lazy
+      polars <- ai_assistant (feature "csv")
+```
+
+Lo mete **nuestra propia feature**, por el cliente de object stores en la nube, cuyo XML llega
+**de la red** desde el endpoint S3-compatible al que se le apunte. `wayland-scanner` tambien lo
+declara, pero no es quien pone 0.39.4 en el grafo -- y todo el argumento de confianza se apoyaba
+en el. Alcanzable: `pl_path` en `src/tabular/polars_engine.rs` pasa el `&Path` como cadena y no
+distingue ruta local de URL, asi que un `s3://` o un `https://` llega ahi. Hace falta apuntar el
+motor tabular a un object store hostil, y lo peor es quemar CPU en esa llamada: menos grave de lo
+que parece al leerlo, mas que *no reachable from crate input*. Renovada con **correa corta** y la
+condicion correcta (`object_store` >= quick-xml 0.41, que hoy no existe: 0.13.2 es la ultima).
+
+**`paste` (RUSTSEC-2024-0436).** Decia *pulled in transitively by macro-heavy crates (egui...)* y
+su condicion era *when egui drops the `paste` dep*. Medido: **22 dependientes, y egui no es
+ninguno** -- datafusion (ocho crates), la familia gemm (siete), lance-bitpacking, tokenizers,
+nokhwa, pulp, random_word, macro_rules_attribute. Hacer N37 no quitaria ni uno. **La condicion no
+podia cumplirse nunca.**
+
+**`ttf-parser` (RUSTSEC-2026-0192).** Igual: *transitive via egui/epaint/ab_glyph*, a re-chequear
+*when egui drops ttf-parser*. Hay **dos raices independientes** y la segunda no tiene nada que ver
+con la GUI: `lopdf 0.42 <- pdf-extract <- ai_assistant`, la extraccion de texto de PDF. Sobreviviria
+a N37 intacta.
+
+**`rustls-pemfile` (RUSTSEC-2025-0134).** Decia *only present transitively via reqwest's TLS
+backend*. Falso por los dos lados: los dependientes son **nosotros mismos** (lo declaramos,
+`rustls-pemfile = { version = "2", optional = true }`, para `server-tls`) y `bollard`. **reqwest no
+esta en la cadena.** Esperar a que reqwest lo suelte era esperar a un crate que nunca lo tuvo.
+
+**`bincode` (RUSTSEC-2025-0141).** La razon no es falsa, pero esconde lo que importa: el lock lleva
+**las dos versiones**, 1.3.3 declarada por nosotros y 2.0.1 que arrastra `polars-utils`. O sea que
+2.x ya se compila en cualquier build con `tabular-polars`, y la advisory es sobre la copia que es
+solo nuestra. Nada de upstream nos bloquea.
+
+**La que aguanto:** `webbrowser` (RUSTSEC-2026-0257). Un unico dependiente, `egui-winit 0.27.2`
+pidiendo `^0.8.3`, fix en 1.2.2, bloqueada de verdad por N37. Exactamente lo que decia.
+
+## La herramienta que cambia la respuesta
+
+`cargo metadata` lista lo que cada crate **declara**, incluidas opcionales apagadas, y por eso
+nombraba `wayland-scanner` y `object_store` como si fueran equivalentes. La pregunta real la
+contesta **`cargo tree -e features -i <crate>`**, que resuelve features. Es regla **D.20** del
+modus-operandi, con **D.19** al lado para el plazo que nadie hace cumplir.
+
+## Tambien corregido aqui
+
+- **La entrada de V400 de arriba**: decia TRES vulnerabilidades y son **CINCO**; decia que se
+  publicaron *hoy* y son de **agosto y septiembre** (entraron en la base RustSec anoche a las
+  20:05, las seis de golpe en el commit `ffa3dd5a`); y daba `>= 0.11.17` cuando dos de ellas
+  necesitan `>= 0.11.18`. El 0.11.19 que se aplico las cubre las diez que hay del crate, pero por
+  haber subido mas de lo que la tabla pedia.
+- **La regla D.18**, que se atribuia haber cazado el fallo del `| head` *antes que CI*. No: el
+  trabajo `Tests` de la ejecucion 9892b43 se puso **rojo** en
+  `Check the README's front-page numbers`. Equivocarse en un casi-fallo **en la direccion que
+  favorece a quien escribe** es como una regla pierde el peso de su caso.
+
+## Verificado
+
+- `scripts/check_recheck_dates.py --self-test` **16/16**; sobre el fichero real, OK con las 8.
+- `check_deny_graph.py`, `check_rustsec_ignores.py` (los 3 ficheros) y
+  `check_checkers_documented.py` (17 scripts, 14 en CI, 17 documentados): OK.
+- `cargo deny check advisories`: **ok**.
+- `cargo check --no-default-features` y con **FEATURES_STD**: limpios.
+- `cargo clippy --all-targets -- -D warnings`: limpio.
+
+## [Unreleased] - v276 (2026-10-13) - V400: CINCO vulnerabilidades reales en quinn-proto (0.2.359)
 
 **Este rojo si era una vulnerabilidad.** Y lo encontre porque el autor insistio en comprobar que
 CI acabara en verde -- la regla que entro al plan nocturno ayer.
@@ -14,14 +125,35 @@ CI acabara en verde -- la regla que entro al plan nocturno ayer.
 Eso descarta infraestructura y senala la base de datos RustSec, que se actualiza **sin que
 nosotros cambiemos nada**:
 
-| advisory | que permite |
-|---|---|
-| `RUSTSEC-2026-0341` | sortear la guardia contra agotamiento de memoria al reensamblar streams |
-| `RUSTSEC-2026-0339` | crecimiento sin limite de los retiros de ID de conexion pendientes |
-| (tercera) | tramas DATAGRAM de longitud cero sortean el limite del bufer de recepcion |
+> **CORREGIDO el 2026-10-13 (V401).** Esta entrada decia **TRES** y eran **CINCO**, decia que
+> se habian publicado **hoy** y las vulnerabilidades son de **agosto y septiembre**, y daba
+> **>= 0.11.17** como version parcheada cuando dos de las cinco necesitan **>= 0.11.18**. El
+> arreglo que se aplico es correcto --0.11.19-- pero lo es por haber subido por encima de lo que
+> la tabla pedia, no porque la tabla estuviera bien. Lo de abajo es la medicion, contra los
+> ficheros de la propia base RustSec.
 
-Las tres en **`quinn-proto`**, la implementacion de QUIC, y las tres de la misma familia:
-**denegacion de servicio por memoria**. Teniamos 0.11.15; parcheadas en **>= 0.11.17**.
+| advisory | parcheada en | que permite |
+|---|---|---|
+| `RUSTSEC-2026-0341` | >= 0.11.17 | sortear la guardia contra agotamiento de memoria al reensamblar streams |
+| `RUSTSEC-2026-0339` | >= 0.11.17 | crecimiento sin limite de los retiros de ID de conexion pendientes |
+| `RUSTSEC-2026-0342` | >= 0.11.17 | tramas DATAGRAM de longitud cero sortean el limite del bufer de recepcion |
+| `RUSTSEC-2026-0340` | >= 0.11.18 | el retardo minimo de ACK del par puede hacer **panic** con ACK_FREQUENCY |
+| `RUSTSEC-2026-0338` | >= 0.11.18 | un par remoto puede hacer **panic** con tramas STREAM de longitud cero |
+
+Las cinco en **`quinn-proto`**, la implementacion de QUIC. Y no son todas de la misma familia:
+tres son agotamiento de memoria y **dos son panics provocables por el par remoto**, que en una
+libreria es un aborto del proceso, no una ralentizacion. Teniamos 0.11.15.
+
+## Lo que la fecha revela, y es peor que el rojo
+
+Las cinco llevan fecha de **2026-08-17** (tres) y **2026-09-14** (dos). Lo que paso anoche no fue
+que se descubrieran: fue que **entraron en la base de RustSec**, las seis del crate de golpe, en
+un solo commit (`ffa3dd5a`, 2026-10-12 20:05). Hasta ese momento `cargo audit` decia `ok` con
+cinco DoS reales en el lock, porque lo que comprueba es *si algo del lock esta en RustSec* -- y no
+es lo mismo que *si tiene vulnerabilidades conocidas*. Casi dos meses de diferencia, medidos.
+
+Eso no es un fallo de RustSec ni algo que se arregle desde aqui; es el alcance real de la puerta,
+y conviene tenerlo escrito al lado del verde.
 
 ## Arreglado subiendo, no silenciando
 
@@ -37,8 +169,8 @@ segfault sin arreglo. Aqui: `cargo deny check advisories` -> **`advisories ok`**
 ## Por que esto valida la regla de ayer
 
 La regla que el autor pidio --*comprobar que CI este verde antes de dejar llegar la suspension*--
-tiene exactamente este caso como justificacion. Sin ella, tres vulnerabilidades de DoS publicadas
-hoy se habrian quedado en un rojo sin dueno hasta mañana, y con la pestana de Actions de un
+tiene exactamente este caso como justificacion. Sin ella, cinco vulnerabilidades de DoS se
+habrian quedado en un rojo sin dueno hasta mañana, y con la pestana de Actions de un
 repositorio **publico** diciendo «failure» mientras tanto.
 
 ## Verificado

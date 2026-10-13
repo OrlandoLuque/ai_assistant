@@ -235,10 +235,31 @@ reads as advice and gets skipped. They are grouped by the question they answer.
 18. **Never chain `&&` behind a pipe when the exit code is what matters.** A pipeline's status is
     the status of its **last** command, so `gate.py | head -1 && git commit` commits whatever the
     gate said: `head` always succeeds. *Case (V398): `check_readme_numbers.py` correctly refused
-    a stale file count, printed FAIL, and the `&&` never saw it — the commit went out and only a
-    second look caught it before CI did.* Run the gate as its own command and read its status, or
-    use `set -o pipefail`. This is rule 15's twin: there the filter hid the failure's **name**,
-    here it hid its **exit code**, and both turn a check into decoration.
+    a stale file count, printed FAIL, and the `&&` never saw it — so the commit went out, and the
+    `Tests` job of CI went **red** on it.* (This rule first said the mistake was caught "before CI
+    did". It was not: run 9892b43 failed on `Check the README's front-page numbers`, and the
+    correction landed one commit later. Getting a near-miss wrong in the direction that flatters
+    the author is how a rule loses the weight of its case.) Run the gate as its own command and
+    read its status, or use `set -o pipefail`. This is rule 15's twin: there the filter hid the
+    failure's **name**, here it hid its **exit code**, and both turn a check into decoration.
+19. **A deadline nobody enforces is a comment.** If a policy says "re-check by *date*", something
+    has to **fail** on that date. *Case (V401): `deny.toml`'s eight advisory suppressions each
+    carried a reason and a re-check trigger, exactly as the policy demands — and six of the dates
+    had passed with one re-check recorded between them. The monthly workflow built to force the
+    review was not broken: it ran every month from June to October 2026 and opened a tracking
+    issue each time, and all five issues were still open.* A nag in the Issues tab of a
+    one-developer repository produces no force; a red run does. And re-checking those six found
+    **five of the eight written reasons false or naming the wrong cause**, two with a condition
+    that could never come true — which is the second half of the lesson: an entry that carries a
+    reason *looks* reviewed, so nobody re-reads it. The renewal must **move the deadline**, not
+    append a note under an expired one.
+20. **Ask the resolved graph, not the declared dependencies.** `cargo metadata` lists what every
+    crate *declares*, including optional dependencies that are switched off, so it will happily
+    name a crate that has nothing to do with your build. *Case (V401): the quick-xml suppression
+    blamed a Linux GUI chain for a crate that `cargo tree --features tabular-polars -e features -i
+    quick-xml` shows arriving through `polars` → `object_store` with `cloud` and `http` enabled —
+    network XML, not build-time protocol files, which inverted the whole trust argument.* Use
+    `cargo tree -e features -i <crate>`; it answers the question actually being asked.
 
 ### E. Syntax that leaks between contexts
 

@@ -121,7 +121,20 @@ Documentation drifts silently, so some of it is enforced:
   like six stale entries and was really five live advisories on crates nobody was
   looking at.
 
-All thirteen run in CI **here**. Three more live in `scripts/` and no job in this repository
+- `scripts/check_recheck_dates.py` — every suppressed advisory carries a `Re-check by:`
+  date, and that date must be in the future. The policy demanding one was already written
+  and already followed; what was missing was anything that enforced it. Measured
+  2026-10-13: **six of the eight dates had passed**, with one re-check recorded between
+  them. The monthly review workflow was not broken — it ran every month from June to
+  October 2026 and opened a tracking issue each time, and **all five issues are still
+  open**. A forcing function that writes to the Issues tab of a one-developer repository
+  produces no force. Re-checking the six by hand then found that **five of the eight
+  written reasons were false or named the wrong cause**, two of them with a condition that
+  could never come true — so this gate is also the reason those got corrected. Note it can
+  go red with no code change, the day a deadline passes; that is the mechanism, and an
+  entry within three weeks of its deadline warns instead of failing.
+
+All fourteen run in CI **here**. Three more live in `scripts/` and no job in this repository
 runs them:
 
 - `scripts/check_release_ready.py` — a pre-release step that needs a human to read it.

@@ -10,7 +10,7 @@ A comprehensive Rust library for LLM integration — local and cloud. 19 provide
 ![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)
 ![Tests](https://img.shields.io/badge/tests-9029-brightgreen)
 ![LOC](https://img.shields.io/badge/LOC-558K-blue)
-![Gates](https://img.shields.io/badge/CI%20gates-13-blue)
+![Gates](https://img.shields.io/badge/CI%20gates-14-blue)
 
 > **Status: not production-validated. Single author. Use at your own risk.**
 >
@@ -19,7 +19,7 @@ A comprehensive Rust library for LLM integration — local and cloud. 19 provide
 > the honest answer to "is this any good?" is a measurement and not an adjective:
 >
 > - **9,029 tests** (`cargo test --features "$FEATURES_STD" --lib` — the set
->   [`ci.yml`](.github/workflows/ci.yml) defines and runs), and **13 automated gates** in CI —
+>   [`ci.yml`](.github/workflows/ci.yml) defines and runs), and **14 automated gates** in CI —
 >   not just compile-and-test. They enforce that the documentation does not lie: every
 >   `ai_cli` command shown in the docs is accepted by the binary, every `use` in a Markdown
 >   code fence resolves, every intra-doc link points at a symbol that exists, the binary

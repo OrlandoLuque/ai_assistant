@@ -57,9 +57,22 @@ db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 # Mirror of the .github/workflows/ci.yml audit job ignore list. Each
 # entry must come with: (a) reason it does not apply or cannot be
-# fixed today, (b) a re-check trigger (date OR upstream event). The
-# monthly workflow `.github/workflows/rustsec-review-monthly.yml`
-# verifies these are still relevant; the runbook
+# fixed today, (b) a `Re-check by:` DATE, and optionally the upstream
+# event that would let the entry be deleted instead of renewed.
+#
+# The date is not optional any more, and that is V401's doing. The rule
+# used to read "date OR upstream event", and on 2026-10-13 six of the
+# eight dates had passed with one re-check recorded between them — while
+# two of the event-only conditions turned out to be impossible to meet
+# (one named a crate that does not even pull the dependency). An event
+# with no deadline is not a trigger, it is a hope.
+#
+# A re-check MOVES the date forward; it does not add a note under a date
+# that has already passed. `scripts/check_recheck_dates.py` fails CI on
+# any date in the past, so the field is always a promise about the future.
+# `.github/workflows/rustsec-review-monthly.yml` opens a monthly tracking
+# issue with the same list — useful, and NOT a gate: its five issues from
+# June to October 2026 are all still open. The runbook
 # `docs/runbooks/rustsec-handling.md` is the policy.
 ignore = [
     # webbrowser 0.8.15: on Unix, a hostile `BROWSER` environment variable can
@@ -70,8 +83,15 @@ ignore = [
     # piece of work, not a lock bump. Unix-only, and it needs an attacker who
     # already controls the process environment; the egui features are not in
     # `full`. Same blocker as RUSTSEC-2026-0192 below.
-    # Re-check by: when the egui stack is upgraded past 0.27 (tracked as N37) —
-    # then DELETE this entry, do not renew it.
+    # Re-check by: 2027-03-15 OR when the egui stack is upgraded past 0.27
+    # (tracked as N37) — then DELETE this entry, do not renew it.
+    #
+    # V401 re-check (2026-10-13): measured, and this is the ONE entry whose
+    # written reason survived contact with the graph unchanged. `cargo tree
+    # --all-features -i webbrowser` gives exactly one dependant,
+    # egui-winit 0.27.2, requiring `^0.8.3`; the lock still has 0.8.15 and the
+    # fix is 1.2.2. Renewed. It also gained the date it did not have: the
+    # condition was correct and still unfalsifiable on its own schedule.
     "RUSTSEC-2026-0257",
     # RUSTSEC-2026-0222 (wasmtime) was here. It said to DELETE the entry rather
     # than renew it once the toolchain moved, and V276 moved it: Rust 1.98 and
@@ -83,17 +103,54 @@ ignore = [
     # for on-disk caches).
     # Re-check by: 2026-08-01 OR when bincode 2.x ships a 1.x-compat
     # serde shim.
+    #
+    # V401 re-check (2026-10-13): still 1.3.3 and the migration is still ours
+    # to do, but the framing above hid the part that matters. The lock carries
+    # BOTH versions: 1.3.3 declared by us (`bincode = { version = "1" }`, and
+    # `cargo tree -i bincode@1.3.3` shows ai_assistant as the only dependant)
+    # and 2.0.1 pulled by polars-utils. So 2.x is already compiled in any build
+    # with `tabular-polars`, and the advisory is on the copy that is ours alone.
+    # Nothing upstream blocks this: the re-check condition as written ("when
+    # bincode 2.x ships a 1.x-compat serde shim") describes a convenience we are
+    # waiting for, not a dependency we are stuck behind. Renewed because the
+    # on-disk format break is real, not because we cannot move.
+    # Re-check by: 2027-01-15
     "RUSTSEC-2025-0141",
-    # paste unmaintained. Pulled in transitively by macro-heavy crates
-    # (egui, several proc-macro deps). Source code is small and
-    # audited; replacement crate `paste-rs` not yet adopted upstream.
+    # paste unmaintained. Pulled in transitively by macro-heavy crates.
+    # Source code is small and audited; replacement crate `paste-rs` not yet
+    # adopted upstream.
     # Re-check by: 2026-08-01 OR when egui drops the `paste` dep.
+    #
+    # V401 re-check (2026-10-13): the reason was right about the shape and
+    # WRONG about the cause, and the old re-check condition could never fire.
+    # It said "egui, several proc-macro deps" and keyed the review on egui
+    # dropping it. Measured with `cargo tree --all-features -i paste`: 22
+    # dependants, and **egui is not one of them**. The real ones are datafusion
+    # (eight crates), the gemm family (seven), lance-bitpacking, tokenizers
+    # (0.22 and 0.23), nokhwa, pulp, random_word and macro_rules_attribute.
+    # Upgrading egui — the work tracked as N37 — would not remove a single one.
+    # Renewed on a date, with no upstream condition at all: with 22 independent
+    # dependants there is no one event to wait for, and pretending otherwise is
+    # what produced a trigger nobody could ever pull.
+    # Re-check by: 2027-02-15
     "RUSTSEC-2024-0436",
-    # rustls-pemfile unmaintained warning. Our code uses
-    # rustls-pki-types directly where the API moved; rustls-pemfile is
-    # only present transitively via reqwest's TLS backend.
+    # rustls-pemfile unmaintained warning. Our code uses rustls-pki-types
+    # directly where the API moved.
     # Re-check by: 2026-08-01 OR when reqwest publishes a version that
     # drops the rustls-pemfile dep.
+    #
+    # V401 re-check (2026-10-13): the old reason was false in both halves. It
+    # said rustls-pemfile is "only present transitively via reqwest's TLS
+    # backend". Measured with `cargo tree --all-features -i rustls-pemfile`:
+    # two dependants, **ai_assistant itself** — we declare it, `rustls-pemfile
+    # = { version = "2", optional = true }`, for PEM loading under
+    # `server-tls` — and bollard. reqwest is not in the chain at all. So it is
+    # not transitive-only, and waiting for reqwest to drop it would have waited
+    # forever on a crate that never had it.
+    # Still an `unmaintained` warning rather than a vulnerability, and 2.2.0 is
+    # the latest release; the honest statement is that there is nowhere to
+    # upgrade to, not that somebody else is holding us back.
+    # Re-check by: 2027-01-15
     "RUSTSEC-2025-0134",
     # lru 0.12.5 unsound IterMut (Stacked Borrows violation). Purely
     # transitive: tantivy -> lance/lancedb; no direct lru usage in this
@@ -118,6 +175,19 @@ ignore = [
     # What IS established: this entry is load-bearing for cargo-audit (which
     # reads the whole lock and does see it) and inert for cargo-deny. Do not
     # remove it on the strength of cargo-deny's `advisory-not-detected`.
+    #
+    # V401 re-check (2026-10-13): the measurement above still holds, and V385
+    # made a procedural mistake worth naming — it recorded the re-check and
+    # left `Re-check by: 2026-09-01` in place, so the entry stayed permanently
+    # overdue while reading as freshly reviewed. That is what the new gate
+    # fails on. A re-check moves the date.
+    # Also new since V385: a SECOND lru advisory, RUSTSEC-2026-0253 (potential
+    # use-after-free from missing panic safety in `LruCache::pop()`), is now in
+    # the database for 0.12.5. It is NOT in this list and does not need to be:
+    # cargo-audit classes it `unsound`, which it only warns about, and
+    # cargo-deny does not report it. Noted so the next reader is not surprised
+    # by a second id on the same crate.
+    # Re-check by: 2027-02-15
     "RUSTSEC-2026-0002",
     # (RUSTSEC-2026-0187 was here -- lopdf stack overflow. DELETED in V355,
     #  not renewed: its own re-check condition had come true. pdf-extract
@@ -125,22 +195,72 @@ ignore = [
     #  The note said "no pdf-extract release uses lopdf >= 0.42 yet", which had
     #  stopped being true -- and a suppression whose written reason is false
     #  looks reviewed, so nobody re-reads it.)
-    # quick-xml 0.39.2 quadratic run time when checking a start tag for
-    # duplicate attribute names. Purely transitive via wayland-scanner
-    # (the Linux GUI file-dialog chain rfd -> ashpd -> wayland-client ->
-    # wayland-scanner), which pins quick-xml ^0.39 and cannot reach the
-    # fixed >= 0.41. quick-xml is not used directly anywhere in src/; the
-    # only consumer parses trusted, build-time wayland protocol XML, so the
-    # DoS is not reachable from crate input.
-    # Re-check by: 2026-10-01 OR when wayland-scanner bumps quick-xml >= 0.41.
+    # quick-xml quadratic run time when checking a start tag for duplicate
+    # attribute names. Still a DoS, still transitive, still unreachable from a
+    # lock bump — and the reason this entry used to give was wrong about
+    # everything load-bearing.
+    #
+    # V401 re-check (2026-10-13). What the old note claimed: "purely transitive
+    # via wayland-scanner (the Linux GUI file-dialog chain rfd -> ashpd ->
+    # wayland-client -> wayland-scanner)" and "the only consumer parses trusted,
+    # build-time wayland protocol XML, so the DoS is not reachable from crate
+    # input". What `cargo tree -e features -i quick-xml` actually says, with
+    # ONLY `--features tabular-polars` and no GUI feature in sight:
+    #
+    #     quick-xml 0.39.4
+    #       object_store 0.13.2   (features "cloud" and "http" ENABLED)
+    #         polars-io feature "cloud" <- "file_cache" <- polars-stream
+    #           polars-lazy <- polars <- ai_assistant (feature "csv")
+    #
+    # So the crate is in the build because of OUR OWN `tabular-polars`, through
+    # the cloud object-store client, whose XML comes off the network from
+    # whatever S3-compatible endpoint it is pointed at — not from a build-time
+    # protocol file. wayland-scanner does declare `^0.39` too, but it is not
+    # what puts 0.39.4 in the graph, and the entire trust argument rested on it.
+    #
+    # Reachability, stated honestly rather than dismissed: `pl_path` in
+    # src/tabular/polars_engine.rs hands polars a `&Path` as a plain string and
+    # does not distinguish local paths from cloud URLs, so a caller that passes
+    # `s3://...` or `https://...` does reach this code. It needs the caller to
+    # aim the tabular engine at a hostile or compromised object store, and the
+    # worst case is CPU burn in that call. Lower severity than it first looks,
+    # higher than "not reachable from crate input".
+    # The fix is quick-xml >= 0.41 and object_store 0.13.2 pins `^0.39`; 0.13.2
+    # is already the newest release (`cargo update --dry-run` moves nothing), so
+    # there is no lock bump available. Renewed on a SHORT leash because this is
+    # the one entry whose reachability is a real question.
+    # Re-check by: 2026-12-15 OR when object_store ships a release on
+    # quick-xml >= 0.41 and polars picks it up.
     "RUSTSEC-2026-0194",
-    # quick-xml (same crate/version, second DoS): unbounded namespace-
-    # declaration allocation in NsReader. Same transitive constraint.
+    # quick-xml, same crate and version, second DoS: unbounded namespace-
+    # declaration allocation in NsReader. Same chain, same reachability, same
+    # blocker as RUSTSEC-2026-0194 above — see that entry for the measurement.
+    # It had NO trigger line of its own, which is how it survived every review:
+    # "same transitive constraint" inherits a reason but not a deadline.
+    # Re-check by: 2026-12-15 OR when object_store ships a release on
+    # quick-xml >= 0.41 and polars picks it up.
     "RUSTSEC-2026-0195",
-    # ttf-parser 0.25.1 unmaintained, no safe upgrade (transitive via
-    # egui/epaint/ab_glyph; egui has not migrated to skrifa). cargo-deny
-    # denies unmaintained where cargo-audit only warns.
+    # ttf-parser 0.25.1 unmaintained. cargo-deny denies unmaintained where
+    # cargo-audit only warns, which is why this is here at all.
     # Re-check by: 2026-10-01 OR when egui drops ttf-parser.
+    #
+    # V401 re-check (2026-10-13): still 0.25.1, and the old re-check condition
+    # could never have cleared it. It read "when egui drops ttf-parser", naming
+    # one root; `cargo tree --all-features -i ttf-parser` shows TWO independent
+    # ones:
+    #
+    #     ttf-parser 0.25.1
+    #       lopdf 0.42.0 <- pdf-extract 0.12.1 <- ai_assistant
+    #       owned_ttf_parser 0.25.1 <- ab_glyph <- epaint <- egui <- ai_assistant
+    #
+    # The second is the egui path the note described. The first is the PDF text
+    # extraction path, which has nothing to do with the GUI and would keep the
+    # crate even after N37 upgrades egui past 0.27. A condition that cannot
+    # come true is worse than no condition: it reads as a plan.
+    # Renewed with both roots written down, so whoever does N37 is not misled
+    # into expecting this entry to disappear with it.
+    # Re-check by: 2027-03-15 OR when BOTH lopdf and the egui stack drop it,
+    # or ttf-parser gets a maintainer again.
     "RUSTSEC-2026-0192",
 ]
 
