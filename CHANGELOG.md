@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v283 (2026-10-14) - V407: los tres que la puerta contaba y mi grep no, y el grep era el equivocado (0.2.366)
+
+Cola de V406. Tres nombres -- `AudioFormat`, `ImageFormat`, `StepType` -- quedaron congelados
+porque la puerta los contaba con dos declaraciones y mi extractor encontraba una. Dije que juzgar
+desde un recuento que no entiendo seria peor que dejarlos, y lo era; lo que faltaba era entenderlo.
+
+## El grep estaba mal, no la puerta
+
+Las tres segundas declaraciones existen y estan **dentro de un `mod inner { ... }` indentado**. Mi
+regex era `^pub enum`, anclada a la columna 0, y un ancla asi **no puede ver un modulo anidado**.
+
+Es la misma trampa que escondio la mitad de los ejemplos de documentacion roto en V340, y van tres
+veces esta semana que una expresion anclada a la columna 0 me devuelve media poblacion. La busqueda
+correcta es `grep -rn "enum <Nombre>"`, sin ancla, y esta escrita en el baseline para el siguiente.
+
+## Y con las dos declaraciones delante, los tres se juzgan
+
+| nombre | el dato que decide |
+|---|---|
+| `AudioFormat` | `speech` es una lista de **ficheros/codecs** (Wav, Mp3, Ogg, Flac, Pcm, Opus, Aac); `voice_agent` es el **formato de cable** de un trozo de voz (Pcm16, Wav, Ogg, Mp3). El delator es **Pcm16 contra Pcm**: un formato de cable tiene que fijar profundidad de bits y endianness, una lista de formatos de fichero no debe. Los tres nombres que coinciden lo hacen porque esos contenedores existen en los dos mundos. |
+| `ImageFormat` | `image_extraction` es lo que se **encontro dentro** de un documento (Jpeg, Png, Gif, Bmp, Tiff, **Unknown**); `media_generation` es lo que un modelo puede **producir** (Png, Jpeg, WebP, Svg). El delator es `Unknown`: un extractor lo necesita y un generador no puede tenerlo. Y las colas son disjuntas por lo mismo -- nadie genera Tiff, nadie encuentra Svg en un escaneo. |
+| `StepType` | `cot_parsing` clasifica un paso de **razonamiento en texto** (Understanding, Decomposition, Verification, Conclusion); `distillation` registra una **accion ejecutada con su carga** (LlmCall, ToolUse, Decision). Cero variantes comunes y categorias distintas de cosa: uno lee prosa, el otro apunta conducta. |
+
+Deuda congelada: **23 -> 20**.
+
+## Un tropiezo mio, y el fichero lo caza dos veces
+
+Al insertar las tres entradas ordenadas alfabeticamente, el script calculo los desplazamientos
+sobre un corte del fichero y los aplico al fichero entero: aterrizaron **dentro del comentario de
+cabecera** y le comieron la `#` a una linea. `tomllib` lo rechazo en la linea 12. Restaurado desde
+el commit de V406 y rehecho con la insercion simple -- antes de `[untriaged]`, sin ordenar.
+
+Es el segundo error de aritmetica de corte en dos commits (V406 genero `[untriaged][untriaged]`).
+La leccion no es «ten mas cuidado»: es que **manipular TOML con cortes de cadena es la herramienta
+equivocada**, y lo unico que lo ha cazado las dos veces es que el fichero se parsea despues.
+
+## Verificado
+
+- `check_duplicate_types.py`: OK, sin divergentes nuevos, **20** congelados.
+- El fichero parsea como TOML.
+
 ## [Unreleased] - v282 (2026-10-14) - V406: triados los 34 enums divergentes, y 19 de ellos son trabajo real (0.2.365)
 
 N134. `[untriaged]` decia literalmente que nadie los habia juzgado, y el proposito de esa seccion

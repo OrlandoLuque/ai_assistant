@@ -38,6 +38,10 @@ StepKind = "recipes' is a step in a user-authored recipe (Prompt, Tool, Recipe, 
 StopReason = "acp.rs's is the Agent Client Protocol's WIRE enum, fixed by the spec (EndTurn, MaxTokens, Refusal); self_correction's is why a correction LOOP exited (AllPassed, TokenBudgetExhausted, QualityRegression). The first cannot change without breaking the protocol."
 Subsystem = "scalability_monitor's names things whose SIZE is watched (VectorDbHnsw, EmbeddingCache); storage_context's names things that PERSIST (Bandit, Tiers, Snapshots). Overlapping membership would be a coincidence, not a contract."
 
+AudioFormat = "speech's is a FILE/codec list (Wav, Mp3, Ogg, Flac, Pcm, Opus, Aac); voice_agent's is the WIRE format of a streamed voice chunk (Pcm16, Wav, Ogg, Mp3). The tell is Pcm16 against Pcm: a wire format must pin bit depth and endianness, a file-format list must not. Three names overlap because those containers exist in both worlds."
+ImageFormat = "image_extraction's is what was FOUND inside a document (Jpeg, Png, Gif, Bmp, Tiff, Unknown); media_generation's is what a model can PRODUCE (Png, Jpeg, WebP, Svg). The tell is 'Unknown': an extractor needs it and a generator cannot have it. The tails are disjoint for the same reason - nobody generates Tiff, nobody finds Svg in a scan."
+StepType = "cot_parsing's classifies a REASONING step in text (Understanding, Decomposition, Verification, Conclusion); distillation's records an EXECUTED action with its payload (LlmCall, ToolUse, Decision). Zero shared variants and different kinds of thing: one reads prose, the other logs behaviour."
+
 [untriaged]
 # 22 names left, down from 34. NOT blessed -- the opposite: these are
 # the ones where the two declarations look like the SAME IDEA that drifted, so
@@ -66,15 +70,17 @@ Subsystem = "scalability_monitor's names things whose SIZE is watched (VectorDbH
 #   TaskType           8 of 18 shared, and BOTH classify a task in order to pick a model (auto_model_selection, routing). Same job, two vocabularies.
 #   WarningSeverity    Info/Warning/{Error,Critical}. One word apart.
 #
-# And three the gate counts but where only ONE `pub enum` exists in src/.
-# Re-examine before judging: probably a non-pub declaration, a cfg sibling, or
-# one inside src/bin (separate crate root). Judging them from a miscount would
-# be worse than leaving them frozen: AudioFormat, ImageFormat, StepType.
+# RESOLVED 2026-10-14 (V407). AudioFormat, ImageFormat and StepType were the
+# three the gate counted at two declarations where a quick grep found one. The
+# GREP was wrong, not the gate: all three second declarations sit inside an
+# indented `mod inner { ... }`, and the regex was anchored to column 0. Same
+# trap as the column-0 regexes that once hid half the broken doc examples - a
+# `^pub enum` anchor cannot see a nested module. All three are judged now and
+# live in [allowed]; search with `grep -rn "enum <Name>"`, without the anchor.
 #
 # Tracked as N134. Moving one here to [allowed] needs a reason that survives
 # reading BOTH declarations in full, not just their variant names.
 names = [
-  "AudioFormat",
   "AuditEventType",
   "ChangeType",
   "CompressionError",
@@ -84,7 +90,6 @@ names = [
   "EvictionPolicy",
   "ExportFormat",
   "IceState",
-  "ImageFormat",
   "IntegrityResult",
   "LogLevel",
   "MemoryType",
@@ -93,7 +98,6 @@ names = [
   "QueueError",
   "ResponseStyle",
   "RiskLevel",
-  "StepType",
   "TaskStatus",
   "TaskType",
   "WarningSeverity",
