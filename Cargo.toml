@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.362"
+version = "0.2.363"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -64,7 +64,7 @@ multi-agent = []
 
 # Security features: guardrails, PII detection, content moderation, access control
 # V78: pulls sha2 so ai_proxy's gateway audit log can hash API keys.
-security = ["dep:sha2"]
+security = []
 
 # Analytics: metrics, telemetry, engagement tracking, conversation analytics
 # `analysis.rs` usa `crate::embeddings` para agrupar conversaciones por similitud,
@@ -110,7 +110,7 @@ p2p = ["distributed"]
 # Real distributed networking: QUIC transport, consistent hashing, failure detection,
 # Merkle sync, node security (mutual TLS), replication, LAN discovery.
 # Not in 'full' by default due to heavy deps (quinn/rustls). Opt-in: --features distributed-network
-distributed-network = ["distributed", "dep:quinn", "dep:rustls", "dep:rcgen", "dep:sha2", "dep:tokio", "dep:bincode", "dep:getrandom"]
+distributed-network = ["distributed", "dep:quinn", "dep:rustls", "dep:rcgen", "dep:tokio", "dep:bincode", "dep:getrandom"]
 
 # GPU sharing: distributed LLM inference network (provider, gateway, or both).
 # Not in 'full' by default — requires distributed-network. Opt-in: --features gpu-sharing
@@ -156,7 +156,7 @@ egui-widgets = ["egui"]
 # Generic — usable by any local provider that loads GGUF (llama.cpp,
 # LM Studio, Kobold.cpp, LocalAI, text-gen-webui). For Ollama, the
 # module also exposes a Modelfile helper.
-auto-download = ["dep:sha2"]
+auto-download = []
 
 # Minimum supported feature set — the smallest combination the crate builds with:
 #
@@ -281,7 +281,7 @@ browser = ["autonomous"]
 distributed-agents = ["autonomous", "distributed-network"]
 
 # AWS Bedrock provider: SigV4 authentication for Bedrock runtime API
-aws-bedrock = ["dep:hmac", "dep:sha2"]
+aws-bedrock = ["dep:hmac"]
 
 # pgvector: PostgreSQL vector database backend
 # Note: actual postgres connectivity is via ureq REST or user-supplied connection.
@@ -538,7 +538,6 @@ skill-forge = [
     "dep:ed25519-dalek",
     "dep:blake3",
     "dep:hkdf",
-    "dep:sha2",
     "security",
 ]
 
@@ -609,7 +608,6 @@ backup = [
     # content_encryption.rs light up under backup-only builds too
     # (same V152 drift class the lint now guards — caught here in V154).
     "aes-gcm",
-    "dep:sha2",
     "dep:ed25519-dalek",
     "dep:hkdf",
 ]
@@ -626,7 +624,7 @@ backup = [
 #
 # Pulls only `sha2` so audit records can carry a SHA-256 hash of the
 # erased user_id rather than the raw value. No other dep cost.
-gdpr = ["dep:sha2"]
+gdpr = []
 
 [dependencies]
 anyhow = "1"
@@ -692,7 +690,16 @@ rustls-pemfile = { version = "2", optional = true }
 # Optional certificate generation for node identity
 rcgen = { version = "0.13", optional = true }
 # Optional SHA-256 for Merkle tree hashing
-sha2 = { version = "0.10", optional = true }
+# NO opcional desde V404, y la razon es una medicion: hacerla obligatoria
+# anade UN crate y nada mas -- sus ocho dependencias (typenum, generic-array,
+# version_check, cfg-if, digest, cpufeatures, block-buffer, crypto-common)
+# ya estaban todas en el lock. Coste: 0,57 s de compilacion y 85 KiB de
+# fuente. A cambio, `src/sha256.rs` deja de ser 150 lineas de cripto escrita
+# a mano en un repositorio publico, y gana la aceleracion por hardware:
+# medido en esta maquina, 7,4x a 8,8x mas rapido (1,7 GiB/s contra 200 MiB/s).
+# Comprobado ademas que `cargo check --no-default-features` sigue limpio, que
+# era la restriccion por la que estaba opcional.
+sha2 = "0.10"
 # Optional tiktoken for exact OpenAI tokenizer (cl100k_base, o200k_base). Adds ~4MB.
 tiktoken-rs = { version = "0.6", optional = true }
 # Optional LanceDB for embedded vector database (Tier 2)

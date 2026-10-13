@@ -1,38 +1,52 @@
 // Required Notice: Copyright (c) 2026 Orlando Jose Luque Moraira (Lander)
 // Licensed under PolyForm Noncommercial 1.0.0 — see LICENSE file.
 
-//! SHA-256, in one place.
+//! SHA-256, in one place, over the `sha2` crate.
 //!
-//! # Why this module exists, and why it is not the `sha2` crate
+//! # Why this module exists at all
 //!
 //! The compression function was written **five times** in `src/`:
 //! `compute_proof`, `binary_integrity`, `request_signing`, `cloud_connectors`
 //! and `mcp_protocol::v2_oauth`. Same algorithm, three different names
 //! (`sha256_bytes`, `sha256`, `sha256_hash`), and **one** of the five had a test
-//! against published digests. The other four were a promise.
+//! against published digests. The other four were a promise. V397 collapsed
+//! them onto one hand-written implementation here; V404 replaced that
+//! implementation with `sha2`.
 //!
-//! The obvious fix is `sha2`, and it is wrong here. `sha2` is an **optional**
-//! dependency (`security = ["dep:sha2"]`, among others), and four of the five
-//! callers live in modules with **no feature gate at all** — this crate compiles
-//! with zero features, and `cargo check --no-default-features` is part of what
-//! must keep working. Reaching for `sha2` from ungated code would mean either
-//! making it unconditional (every build, including the portable kit, pays for
-//! it) or gating four modules that have no reason to be gated.
+//! The module stays rather than having the callers use `sha2` directly, and
+//! that is deliberate: the five call sites keep the names and signatures they
+//! have always had, the published-vector test below keeps guarding them, and a
+//! future change of implementation is one file instead of five.
 //!
-//! So: one hand-written implementation, ungated, with the tests that make it
-//! trustworthy. Callers that already have `sha2` available keep using it —
-//! `config_security`, `secure_backup` and `ai_proxy` do, and they are gated
-//! behind features that imply it.
+//! # Why `sha2` now, when V397 argued against it
 //!
-//! # What makes this copy the one that survived
+//! V397 kept a hand-written copy because `sha2` was an **optional** dependency
+//! and four of the five callers live in modules with no feature gate, while
+//! `cargo check --no-default-features` has to keep working. That reasoning was
+//! sound about the constraint and wrong about its weight, and three
+//! measurements settled it (2026-10-13, V404):
 //!
-//! [`sha256`] carries the only test in the crate that can tell a correct
-//! SHA-256 from a plausible one: digests from FIPS 180-4 and from `hashlib`,
-//! including the **padding boundaries** at 55, 56 and 64 bytes. 56 is where the
-//! length field no longer fits in the first block, so an off-by-one in the
-//! padding loop produces a wrong digest for exactly those lengths and a right
-//! one everywhere else — which is why a test on `"abc"` alone proves very
-//! little.
+//! | question | answer |
+//! |---|---|
+//! | dependencies added by making `sha2` non-optional | **one**: `sha2` itself. All eight of its deps were already in the lock |
+//! | compile time added | **0.57 s** (from `cargo build --timings`) |
+//! | `cargo check --no-default-features` | **clean** with `sha2` non-optional |
+//! | speed, this machine | `sha2` is **7.4x–8.8x** faster: ~1.7 GiB/s against ~200 MiB/s |
+//!
+//! The 8x is hardware acceleration: `sha2` pulls `cpufeatures` to detect the
+//! x86 SHA extensions at run time, which a scalar loop cannot use. And the
+//! change removes roughly 150 lines of hand-rolled cryptography from a public
+//! repository, which is worth something on its own.
+//!
+//! # What this module does NOT give you
+//!
+//! Hashing, not authentication. [`request_signing`](crate::request_signing)
+//! builds HMAC-SHA256 on top of this; whether its signature *comparison* is
+//! constant-time is a separate question and is tracked as its own task. A hash
+//! has no secret-dependent branches, so this function is safe to feed secret
+//! data; comparing the result with `==` is not.
+
+use sha2::{Digest, Sha256};
 
 /// SHA-256 of a byte slice.
 ///
@@ -45,101 +59,16 @@
 /// assert_eq!(digest.len(), 32);
 /// ```
 pub fn sha256(data: &[u8]) -> [u8; 32] {
-    let mut h: [u32; 8] = [
-        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
-        0x5be0cd19,
-    ];
-
-    const K: [u32; 64] = [
-        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
-        0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
-        0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
-        0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
-        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
-        0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
-        0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
-        0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
-        0xc67178f2,
-    ];
-
-    // Padding: the 0x80 terminator, zeroes up to 56 bytes mod 64, then the
-    // length in BITS as a big-endian u64. The `56` is the whole subtlety: the
-    // length needs the last eight bytes of a block, so a message of 56..64
-    // bytes spills into a second block that is pure padding.
-    let bit_len = (data.len() as u64) * 8;
-    let mut padded = data.to_vec();
-    padded.push(0x80);
-    while (padded.len() % 64) != 56 {
-        padded.push(0x00);
-    }
-    padded.extend_from_slice(&bit_len.to_be_bytes());
-
-    for chunk in padded.chunks(64) {
-        let mut w = [0u32; 64];
-        for i in 0..16 {
-            w[i] = u32::from_be_bytes([
-                chunk[4 * i],
-                chunk[4 * i + 1],
-                chunk[4 * i + 2],
-                chunk[4 * i + 3],
-            ]);
-        }
-        for i in 16..64 {
-            let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
-            let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
-            w[i] = w[i - 16]
-                .wrapping_add(s0)
-                .wrapping_add(w[i - 7])
-                .wrapping_add(s1);
-        }
-
-        let (mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut hh) =
-            (h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]);
-
-        for i in 0..64 {
-            let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
-            let ch = (e & f) ^ ((!e) & g);
-            let temp1 = hh
-                .wrapping_add(s1)
-                .wrapping_add(ch)
-                .wrapping_add(K[i])
-                .wrapping_add(w[i]);
-            let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
-            let maj = (a & b) ^ (a & c) ^ (b & c);
-            let temp2 = s0.wrapping_add(maj);
-
-            hh = g;
-            g = f;
-            f = e;
-            e = d.wrapping_add(temp1);
-            d = c;
-            c = b;
-            b = a;
-            a = temp1.wrapping_add(temp2);
-        }
-
-        h[0] = h[0].wrapping_add(a);
-        h[1] = h[1].wrapping_add(b);
-        h[2] = h[2].wrapping_add(c);
-        h[3] = h[3].wrapping_add(d);
-        h[4] = h[4].wrapping_add(e);
-        h[5] = h[5].wrapping_add(f);
-        h[6] = h[6].wrapping_add(g);
-        h[7] = h[7].wrapping_add(hh);
-    }
-
-    let mut result = [0u8; 32];
-    for (i, val) in h.iter().enumerate() {
-        result[4 * i..4 * i + 4].copy_from_slice(&val.to_be_bytes());
-    }
-    result
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    hasher.finalize().into()
 }
 
 /// SHA-256 as lowercase hex, which is how every caller that prints it wants it.
 ///
-/// Three of the five copies had their own version of this two-line helper; a
-/// fourth formatted the bytes inline at each call site.
+/// Three of the five former copies had their own version of this two-line
+/// helper; a fourth formatted the bytes inline at each call site. `sha2` does
+/// not provide it, so it stays here.
 pub fn sha256_hex(data: &[u8]) -> String {
     sha256(data)
         .iter()
@@ -153,9 +82,11 @@ mod tests {
 
     #[test]
     fn matches_published_vectors() {
-        // Moved here with the implementation (N141 / V397). It was the only
-        // test in the crate vouching for any of the five copies, and it
-        // vouched for exactly one of them.
+        // Kept across BOTH implementation changes (V397 hand-written, V404
+        // `sha2`), and that is the point of it: the test is what makes either
+        // implementation trustworthy, so it must not be tied to one of them.
+        // It was once the only test in the crate vouching for any of the five
+        // copies, and it vouched for exactly one.
         for (input, want) in [
             (
                 "".as_bytes(),
@@ -181,7 +112,9 @@ mod tests {
 
         // The padding boundaries. 56 is the one that matters: the length field
         // needs the last eight bytes of a block, so at 56 the message spills
-        // into a second block of pure padding.
+        // into a second block of pure padding. These caught nothing in `sha2`
+        // and were not expected to — they are here so that swapping the
+        // implementation again cannot quietly reintroduce an off-by-one.
         for (len, want) in [
             (
                 55,
@@ -222,10 +155,28 @@ mod tests {
     #[test]
     fn the_same_input_hashes_the_same_way_every_time() {
         // Guards against anything stateful creeping in: the function takes no
-        // &mut self and must be a pure function of its input.
+        // &mut self and must be a pure function of its input. With `sha2` the
+        // risk moved rather than vanished -- a misused `Digest` can carry state
+        // between calls if the hasher is reused instead of recreated.
         let a = sha256(b"determinism");
         let b = sha256(b"determinism");
         assert_eq!(a, b);
         assert_ne!(sha256(b"determinism"), sha256(b"determinisn"));
+    }
+
+    #[test]
+    fn a_long_input_hashes_the_same_as_the_same_input_fed_in_one_go() {
+        // New in V404. `sha2` is an incremental API and this module hides that
+        // behind a one-shot function; this pins that the hiding is correct for
+        // an input far larger than one block, where an implementation that
+        // mishandled buffering would diverge.
+        let big = vec![0x5au8; 1_000_003]; // deliberately not a multiple of 64
+        let once = sha256(&big);
+        let mut h = Sha256::new();
+        for chunk in big.chunks(7919) {
+            h.update(chunk);
+        }
+        let streamed: [u8; 32] = h.finalize().into();
+        assert_eq!(once, streamed, "one-shot and incremental must agree");
     }
 }

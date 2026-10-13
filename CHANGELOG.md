@@ -5,6 +5,88 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v280 (2026-10-14) - V404: SHA-256 pasa a `sha2`, y mi razon para no hacerlo era la regla equivocada (0.2.363)
+
+El autor pregunto lo que habia que preguntar: *«no nos vale mas la pena usar ese crate
+directamente? Seguro que la regla incluia crates de terceros y no productos instalables de
+terceros?»*. Las dos mitades dan en el clavo.
+
+## La regla que invoque no aplicaba
+
+V397 defendio una implementacion propia apoyandose en la norma de no meter material de terceros.
+**Esa norma habla de COMITEAR**: corpus, conjuntos de datos, pesos, GGUF, fuentes tipograficas,
+codigo ajeno. Una dependencia de Cargo no es eso -- se declara en `Cargo.toml` y la descarga
+cargo. (Y la ironia: buscando «productos instalables de terceros» aparecieron 43 MB de
+instaladores -- VBCABLE y Voicemeeter -- dentro del arbol de trabajo, en `extras/`. Esos SI eran
+el caso de la norma, y ya estan fuera.)
+
+La restriccion real era otra y mas estrecha: `sha2` era **opcional** y cuatro de los cinco
+modulos no tienen feature, con `cargo check --no-default-features` como requisito. Eso es una
+restriccion del grafo de features, **negociable con una medicion**, no una prohibicion.
+
+## Las tres mediciones que la zanjan
+
+| pregunta | respuesta medida |
+|---|---|
+| dependencias que anade hacer `sha2` no-opcional | **UNA**: `sha2`. Sus ocho (typenum, generic-array, version_check, cfg-if, digest, cpufeatures, block-buffer, crypto-common) **ya estaban todas en el lock** |
+| tiempo de compilacion | **0,57 s** (de `cargo build --timings`) |
+| `cargo check --no-default-features` | **limpio** con `sha2` no-opcional |
+| velocidad, en esta maquina | **7,4x a 8,8x** mas rapida |
+
+El detalle de la velocidad, con un crate de usar y tirar fuera del repo y una copia **literal**
+de `src/sha256.rs` para que la comparacion sea del codigo real (y verificando primero que las dos
+coinciden en 0/3/55/56/64/1000 bytes, porque comparar dos funciones que discrepan no mide nada):
+
+```
+64 B     nuestra 0,712 us   86 MiB/s  |  sha2 0,096 us    633 MiB/s   7,4x
+1 KiB    nuestra 4,92  us  199 MiB/s  |  sha2 0,627 us  1.557 MiB/s   7,8x
+64 KiB   nuestra 304   us  205 MiB/s  |  sha2 36,1  us  1.733 MiB/s   8,4x
+1 MiB    nuestra 5,19  ms  193 MiB/s  |  sha2 0,591 ms  1.692 MiB/s   8,8x
+```
+
+El 8x es aceleracion por hardware: `sha2` arrastra `cpufeatures` para detectar las instrucciones
+SHA del procesador en tiempo de ejecucion, que un bucle escalar no puede usar.
+
+## Lo que se hizo, y lo que deliberadamente NO
+
+`src/sha256.rs` **se queda** como el unico sitio, pero su cuerpo pasa a delegar en `sha2`. Asi los
+cinco sitios de llamada no cambian ni una linea, el test de vectores publicados sigue de red, y un
+futuro cambio de implementacion es un fichero en vez de cinco. 231 -> 182 lineas, y unas 150 de
+ellas eran criptografia escrita a mano **en un repositorio publico**: eso vale por si solo.
+
+Un test nuevo, y es el que la nueva forma exige: `sha2` es una API **incremental**
+(new/update/finalize) y este modulo la esconde detras de una funcion de un disparo.
+`a_long_input_hashes_the_same_as_the_same_input_fed_in_one_go` compara el camino de un disparo
+contra el incremental sobre 1.000.003 bytes -- deliberadamente no multiplo de 64 -- en trozos de
+7.919. **9.030 tests.**
+
+## El espec de mutacion: re-apuntado, no borrado
+
+`compute_proof.toml` mutaba el estado inicial FIPS y el campo de longitud del relleno. **Esas
+invariantes ya no son nuestras**: viven dentro de `sha2`. El primer `--dry-run` dio 5 de 5
+NOT_APPLIED, que no prueba nada, y la herramienta lo dice en voz alta.
+
+No se borran para ponerse verde: se **sustituyen** por las invariantes que siguen en este arbol,
+que son dos y mas finas:
+
+- **El formateador hexadecimal** (M1, M2), que es nuestro porque `sha2` no da hex. Un digest sin
+  relleno de ceros o en mayusculas son **los mismos bytes** y comparan distinto contra todo vector
+  publicado y contra cualquier par que mande hex minuscula. Es un defecto de formato de cable
+  disfrazado de cosmetico.
+- **El envoltorio de un disparo** (M3), nuevo en V404: alimentar la entrada dos veces da el digest
+  de `data || data` -- bien formado, 32 bytes, minuscula, determinista y equivocado.
+
+Y se conserva lo que el espec tenia de valioso: el **emparejamiento**. Los tres tests originales de
+`compute_proof` pasan su valor por el hash en AMBOS lados, asi que cualquier funcion determinista
+los satisface -- precedente real en esta crate: una funcion llamada `sha256_hex` que calculaba
+FNV-1a, con un comentario encima afirmando SHA-256. Las entradas `*b` miden esa ceguera con
+`expect = "survives"` y un `note` que aclara que **no** es equivalencia. 6 de 6 casan.
+
+## Lo que este modulo sigue sin dar, escrito donde se lee
+
+Hash, no autenticacion. `request_signing` construye HMAC-SHA256 encima, y **si su comparacion de
+firmas es en tiempo constante no esta comprobado** -- queda como N151, no como afirmacion.
+
 ## [Unreleased] - v279 (2026-10-13) - V403: el barrido de plazos, y por que NO es una puerta (0.2.362)
 
 El barrido que encontro el runbook de V402 vivia en un fichero temporal. Pasa a
