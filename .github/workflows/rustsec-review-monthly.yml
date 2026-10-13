@@ -77,10 +77,36 @@ jobs:
           set +e
           cargo audit --json > audit.json
           echo "exit=$?" >> "$GITHUB_OUTPUT"
-          jq -r '.vulnerabilities.list[].advisory.id' audit.json \
-            | sort -u > active-advisories.txt
-          echo "Active advisories from cargo-audit:"
-          cat active-advisories.txt
+          # `.vulnerabilities.list[]` is NOT the whole report, and reading only
+          # it was a real defect (V405). `cargo audit` splits its findings:
+          #
+          #   .vulnerabilities.list[]  -> array, the ones with a CVE-shaped fix
+          #   .warnings                -> OBJECT keyed by kind: "unmaintained",
+          #                               "unsound", "yanked", each a list
+          #
+          # Everything in `.warnings` was therefore reported as "NO LONGER
+          # REPORTED — consider removing". On 2026-10-13 that was FIVE of the
+          # eight suppressions: bincode, paste and rustls-pemfile (unmaintained),
+          # ttf-parser (unmaintained) and lru (unsound). All five are still
+          # reported; the bot simply was not looking at that half of the report.
+          #
+          # And the advice was not merely wrong, it was harmful: **cargo-deny
+          # DENIES `unmaintained` where cargo-audit only warns**, so removing
+          # those five suppressions turns the Supply Chain workflow red. For
+          # five months the issue recommended an action that breaks the build,
+          # and the only reason nothing broke is that nobody acted on it.
+          #
+          # So: collect both, and carry the CATEGORY, because "reported" and
+          # "reported as a vulnerability" are different facts and the operator
+          # needs the second one to decide.
+          jq -r '
+            ( .vulnerabilities.list[]? | "\(.advisory.id)\tvulnerability" ),
+            ( .warnings? // {} | to_entries[] | .key as $kind
+              | .value[]? | "\(.advisory.id)\t\($kind)" )
+          ' audit.json | sort -u > active-advisories.tsv
+          cut -f1 active-advisories.tsv | sort -u > active-advisories.txt
+          echo "Active advisories from cargo-audit (id + category):"
+          cat active-advisories.tsv
 
       - name: Build review report
         id: report
@@ -99,14 +125,25 @@ jobs:
             echo
             while IFS= read -r id; do
               [ -z "$id" ] && continue
-              still_active=$(grep -cFx "$id" active-advisories.txt || true)
-              if [ "$still_active" -gt 0 ]; then
-                status="STILL ACTIVE — verify ignore is still justified"
+              # The categories this id is reported under, comma-joined. An
+              # advisory can appear more than once (bincode shows up twice under
+              # `unmaintained`, once per version in the tree), so dedup.
+              cats=$(awk -F'\t' -v id="$id" '$1==id {print $2}' active-advisories.tsv \
+                     | sort -u | paste -sd, -)
+              if [ -n "$cats" ]; then
+                status="STILL ACTIVE ($cats) — verify ignore is still justified"
               else
                 status="NO LONGER REPORTED — consider removing"
               fi
               echo "- \`$id\` — $status"
             done <<< "${IGNORES}"
+            echo
+            echo "> \`vulnerability\` means cargo-audit fails on it."
+            echo "> \`unmaintained\` / \`unsound\` mean cargo-audit only warns —"
+            echo "> but **cargo-deny denies \`unmaintained\`**, so removing one of"
+            echo "> those suppressions can still turn Supply Chain red. Check"
+            echo "> \`deny.toml\` before deleting an entry on the strength of a"
+            echo "> category alone."
             echo
             echo "### New advisories (not yet in deny.toml)"
             echo
@@ -116,7 +153,12 @@ jobs:
             else
               while IFS= read -r id; do
                 [ -z "$id" ] && continue
-                echo "- \`$id\` — investigate; either patch the dep or add to deny.toml with justification + re-check trigger"
+                # Same category, same reason: since V405 this list includes
+                # warnings, and an `unsound` advisory nobody has to act on reads
+                # very differently from a `vulnerability` that fails the build.
+                cats=$(awk -F'\t' -v id="$id" '$1==id {print $2}' active-advisories.tsv \
+                       | sort -u | paste -sd, -)
+                echo "- \`$id\` ($cats) — investigate; either patch the dep or add to deny.toml with justification + re-check date"
               done <<< "$new"
             fi
             echo

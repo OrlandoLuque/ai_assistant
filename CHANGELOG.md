@@ -5,6 +5,88 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v281 (2026-10-14) - V405: el bot del repaso mensual recomendaba romper el build (0.2.364)
+
+Sale de que el autor pidiera contexto sobre las cinco issues abiertas: *«1. dame mas contexto,
+plz»*. El contexto resulto ser un defecto, y de los que hacen dano.
+
+## Lo que hacia
+
+`.github/workflows/rustsec-review-monthly.yml`, linea 80:
+
+```
+jq -r '.vulnerabilities.list[].advisory.id' audit.json
+```
+
+Lee **solo `.vulnerabilities`**. Y el informe de `cargo audit` esta partido en dos, comprobado
+contra el JSON real antes de tocar nada:
+
+```
+.vulnerabilities.list[]  -> array,  3 entradas
+.warnings                -> OBJETO por categoria:
+                              unmaintained  5
+                              unsound       4
+```
+
+Todo lo que cae en `.warnings` salia etiquetado **«NO LONGER REPORTED — consider removing»**. En
+la issue de octubre eso eran **CINCO de las ocho** supresiones: bincode, paste y rustls-pemfile
+(unmaintained), ttf-parser (unmaintained) y lru (unsound). Las cinco siguen reportadas; el bot
+simplemente no miraba esa mitad.
+
+## Y el consejo no era solo falso: rompia el build
+
+**`cargo-deny` DENIEGA `unmaintained` donde `cargo-audit` solo avisa.** Borrar esas cinco
+supresiones siguiendo el consejo de la issue pone **Supply Chain en rojo**. El bot llevaba **cinco
+meses** recomendando una accion que rompe el build, y la unica razon de que no pasara nada es que
+nadie leyo las issues -- que es, a su vez, el defecto que V401 arreglo por el otro lado.
+
+## Arreglado, y probado que discrimina
+
+Ahora recoge las dos mitades y **arrastra la categoria**, porque «reportada» y «reportada como
+vulnerabilidad» son hechos distintos y el operador necesita el segundo para decidir. Las etiquetas
+pasan a ser `STILL ACTIVE (vulnerability)`, `STILL ACTIVE (unmaintained)`, `STILL ACTIVE (unsound)`.
+
+Simuladas las DOS tuberias -- la vieja y la nueva -- contra el `audit.json` real:
+
+```
+advisory               ANTES          DESPUES
+RUSTSEC-2026-0257      STILL ACTIVE   STILL ACTIVE (vulnerability)
+RUSTSEC-2025-0141      NO LONGER      STILL ACTIVE (unmaintained)   <-- cambia
+RUSTSEC-2024-0436      NO LONGER      STILL ACTIVE (unmaintained)   <-- cambia
+RUSTSEC-2025-0134      NO LONGER      STILL ACTIVE (unmaintained)   <-- cambia
+RUSTSEC-2026-0002      NO LONGER      STILL ACTIVE (unsound)        <-- cambia
+RUSTSEC-2026-0194      STILL ACTIVE   STILL ACTIVE (vulnerability)
+RUSTSEC-2026-0195      STILL ACTIVE   STILL ACTIVE (vulnerability)
+RUSTSEC-2026-0192      NO LONGER      STILL ACTIVE (unmaintained)   <-- cambia
+```
+
+**5 de 8 veredictos cambian**, exactamente los cinco previstos. Un arreglo de un defecto de
+informe que no se ENSEÑA cambiando el informe es una afirmacion, no un arreglo.
+
+Y la otra mitad del mismo defecto: tres advisories `unsound` que el bot **callaba** porque no
+estan en deny.toml -- `memmap2` (0186), `event-listener` (0221) y el segundo de `lru` (0253) --
+ahora se nombran con su categoria en la seccion de nuevas. Ninguna necesita entrar en deny.toml
+por si sola, y por eso la issue lleva ahora una nota explicando que `unmaintained` lo deniega
+cargo-deny y `unsound` no, para que nadie borre una entrada apoyandose solo en la categoria.
+
+## Un tropiezo mio, el de siempre
+
+La primera verificacion usaba `jq`, que **no esta instalado en esta maquina**, asi que las dos
+columnas salieron identicas. Eso se lee como «el arreglo no hace nada» y era «el instrumento esta
+muerto»: lo delato que la columna ANTES marcaba como no-reportadas las tres de quick-xml y
+webbrowser, que se sabe que son vulnerabilidades. Reescrita en Python. El workflow sigue usando
+`jq`, que si esta en los runners de ubuntu -- el fallo era de mi verificacion, no del arreglo.
+
+Es la cuarta vez esta semana que la respuesta estaba en desconfiar del medidor antes que del
+medido, y ya esta en la memoria `feedback_diagnose_before_fixing` con los cuatro casos.
+
+## Lo que NO se hizo, a proposito
+
+**No se cierran las issues #1 a #5.** Si se cierran ahora, el 1 de noviembre el bot abre la sexta
+diciendo otra vez lo mismo -- y ya diria la verdad, pero seguiria siendo una issue nueva mas en una
+pila de identicas. Cerrarlas y cambiar el workflow a **una sola issue actualizada** es decision del
+autor sobre un repositorio publico suyo, y queda apuntado en N149.
+
 ## [Unreleased] - v280 (2026-10-14) - V404: SHA-256 pasa a `sha2`, y mi razon para no hacerlo era la regla equivocada (0.2.363)
 
 El autor pregunto lo que habia que preguntar: *«no nos vale mas la pena usar ese crate
