@@ -5,6 +5,85 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v279 (2026-10-13) - V403: el barrido de plazos, y por que NO es una puerta (0.2.362)
+
+El barrido que encontro el runbook de V402 vivia en un fichero temporal. Pasa a
+`scripts/sweep_deadlines.py`, **deliberadamente sin el prefijo `check_`**: no corre en CI, no
+tiene pass/fail, y `check_checkers_documented.py` no lo cuenta entre las puertas (verificado:
+sigue 17/14/17).
+
+## Por que no es una puerta, con el numero
+
+Primera version: **69 coincidencias, 16 «vencidas», y ninguna de las 16 era real** -- la unica de
+verdad era el runbook, ya arreglado en V402. Las demas eran **registros**: entradas del CHANGELOG
+con fecha, filas de la tabla de estado de `AGENT_SYSTEM_DESIGN.md`, auditorias con fecha en el
+nombre. Una puerta que falla por 16 cosas de las que ninguna importa ensena a pasarla con
+`--ignore`, que es exactamente el fallo del que sale todo este trabajo. Separar promesa de
+registro es un problema mas duro de lo que parece, y hasta que alguien lo resuelva esto es un
+barrido para que lo lea una persona.
+
+Separados los registros: **2 plazos con fecha fuera de lo ya cubierto, 0 vencidos**, 22 en
+`deny.toml` (ya con puerta) y 20 registros.
+
+## Y dos fallos mios en el propio instrumento, los dos del mismo tipo
+
+Esto es la razon de que valga la pena escribirlo en vez de dejarlo en el temporal:
+
+1. **El regex de los sellos encontraba 1 de 9.** El formato real es `**Last reviewed**: fecha`,
+   con DOS asteriscos a cada lado, y yo habia escrito `\*?` -- uno opcional. Informaba de un
+   sello y presentaba eso como la foto completa. Un barrido que se deja 8 es peor que no tenerlo,
+   porque su salida **parece una respuesta**. Arreglado a `\**`: ahora **10 sellos, 9 de mas de
+   90 dias**.
+2. **Se contaba a si mismo, dos veces.** La pasada de promesas casaba con el ejemplo del
+   docstring de `check_recheck_dates.py`; al excluirlo, la de sellos casaba con **la propia
+   docstring de este fichero**, que cita `2026-05-06` al explicar el caso. Es el mismo error que
+   cometio V142 en el workflow mensual: **leer un comentario que documenta una cosa como si fuera
+   la cosa.** Hay un conjunto `TOOLING` para eso, con el porque al lado.
+
+## Lo que su salida dice, y que se deja sin tocar
+
+**Diez documentos llevan sello `Last reviewed` y nueve pasan de 90 dias** (160 los siete
+runbooks operativos, `RELEASE_PROCESS` y `FEATURE_LIFECYCLE`; 140 el `INDEX` de runbooks). El
+unico al dia es `rustsec-handling.md`.
+
+**Las nueve fechas se quedan como estan**, y el propio script lo dice al terminar: *un sello viejo
+no se arregla poniendo la fecha de hoy -- significa que alguien leyo el documento ese dia*. Un
+sello fresco es lo que impide que el siguiente lo relea.
+
+## Y una CORRECCION a lo que V401 dejo escrito sobre la puerta de la web
+
+El mensaje del commit de la web (repo `ai_assistant-website`, 5011d1b) dice que
+`check_website_numbers.py` «reportaba 3 de 54» y lo llama su punto ciego. **Es falso**, y se
+escribio antes de ir a leer el contrato de la puerta. Comprobado en su codigo:
+
+| que | cuantas | se equivoco la puerta? |
+|---|---|---|
+| `574` ficheros (comprobacion exacta) | 12 | **No.** Las de *badge* y `<meta>` las cazo; el resto estaban en prosa |
+| `558K` lineas | 10 | **No.** Hay `LOC_TOLERANCE`, y 558K contra 559.390 es 0,25 % |
+| `8.991` tests | 29 | **No.** Comprueba que **todas las paginas concuerden**, no el valor; concordaban |
+| prosa en general | -- | **No.** Esta deliberadamente fuera de alcance, con el motivo medido |
+
+El motivo merece leerse: el sitio mezcla cifras actuales e historicas en la misma prosa sin nada
+que las distinga --*«5350 tests, 285 source files»* es un registro correcto de la v12 y se lee
+igual que una afirmacion sobre hoy--. Se probaron **dos heuristicas y se midieron** (ventana de
+260 caracteres: 2 falsos positivos; la linea entera: 4), y ninguna separa porque **el marcado
+tampoco separa**. La puerta dice que no lo comprueba en vez de aproximarlo.
+
+**Cero defectos en la puerta.** Lo de anoche fue el pase humano al que ella remite, y lo que
+faltaba era que alguien lo programara: la misma forma que el hallazgo de V401, un nivel arriba.
+Sigue pendiente lo que su propio comentario propone -- **marcar los bloques historicos en el
+HTML**, ~100 lineas en dos paginas -- y entonces la prosa pasa a ser comprobable. Es N142.
+
+No se reescribe el mensaje del commit de la web: eso seria una reescritura de historia, y en este
+proyecto eso tiene PARADA OBLIGATORIA. La correccion va aqui, que es el registro duradero.
+
+## Verificado
+
+- `sweep_deadlines.py` corre limpio y no se incluye a si mismo en ninguna de las dos pasadas.
+- `check_checkers_documented.py` OK: 17 scripts, 14 en CI, 17 documentados -- el barrido no
+  entra en la cuenta, que es el proposito de no llamarlo `check_*`.
+- `check_readme_numbers.py` OK (la cuenta de puertas sigue siendo 14, no 15).
+
 ## [Unreleased] - v278 (2026-10-13) - V402: el runbook que documenta la politica que V401 cambio (0.2.361)
 
 Cierre de V401, y lo encontro un barrido que sale de su propia regla: **si un plazo escrito

@@ -139,6 +139,19 @@ runs them:
 
 - `scripts/check_release_ready.py` — a pre-release step that needs a human to read it.
 
+And one tool that is deliberately **not** a `check_*` script, so it is not counted among the
+gates and never runs in CI:
+
+- `scripts/sweep_deadlines.py` — *where else does this tree promise to revisit something by a
+  date?* It found the defect V402 fixed: `docs/runbooks/rustsec-handling.md`, the written policy
+  for the suppression rules V401 had just rewritten, still taught the superseded form with a
+  worked example two months expired. It stays a sweep because of its measured noise: the first
+  run gave 69 hits, 16 "overdue", and **none of the 16 were real** — the rest were *records*
+  (CHANGELOG entries, status-table rows, dated audits), and a gate that fails on 16 things that
+  do not matter teaches people to pass it with `--ignore`. Its second output is the `Last
+  reviewed:` stamps, where nine of ten are over 90 days old; note that a stale stamp is **not**
+  fixed by writing today's date, because the stamp means *somebody read this document that day*.
+
 The other two guard [the website](https://ai-assistant.runawaybrains.com), and are run by
 **that** repository's own CI (`.github/workflows/consistency.yml` there), which checks out both
 repositories — the facts are measured in this tree and asserted over there, so nothing can
