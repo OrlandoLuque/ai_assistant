@@ -252,6 +252,24 @@ SELF_TEST = [
                "    # Re-check by: 2027-04-01", '    "RUSTSEC-2026-0194",'),
         False,
     ),
+    # This tree is CRLF, and `open(..., encoding=...)` normalises line endings
+    # on read -- so the real file arrives here as LF and these cases would
+    # never exercise CRLF unless one is written with it on purpose. Worth the
+    # four lines: `scripts/mutate.py`'s `--dry-run` once reported matches that
+    # the real run could not apply, because its pre-flight and its rewrite read
+    # the same file with different newline handling.
+    (
+        "fecha vencida con finales de linea CRLF",
+        _block("    # Re-check by: 2026-10-01", '    "RUSTSEC-2026-0194",')
+        .replace("\n", "\r\n"),
+        True,
+    ),
+    (
+        "fecha futura con finales de linea CRLF",
+        _block("    # Re-check by: 2027-04-01", '    "RUSTSEC-2026-0194",')
+        .replace("\n", "\r\n"),
+        False,
+    ),
 ]
 
 

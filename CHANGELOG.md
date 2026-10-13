@@ -5,6 +5,78 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v278 (2026-10-13) - V402: el runbook que documenta la politica que V401 cambio (0.2.361)
+
+Cierre de V401, y lo encontro un barrido que sale de su propia regla: **si un plazo escrito
+que nadie hace cumplir es un comentario (D.19), donde mas hay plazos escritos**. 69 fechas
+junto a una palabra de intencion de revisar; la mayoria son registros (entradas del
+CHANGELOG, filas de tablas con fecha) y no promesas. Pero una no:
+
+`docs/runbooks/rustsec-handling.md` **es la politica escrita** de lo que V401 acaba de
+cambiar, y seguia diciendo lo contrario:
+
+| decia | y ahora |
+|---|---|
+| *«a re-check trigger: a date OR an upstream event»* | la **fecha no es opcional**, y el evento es lo que permite BORRAR en vez de renovar |
+| ejemplo con `Re-check by: when tantivy 0.25+ ships OR 2026-08-01` | la fecha del ejemplo llevaba **dos meses vencida** |
+| *«the monthly review will nag if the temporary entry survives past its re-check»* | **nago.** Y nagear no es parar el trabajo: eso lo hace el rojo de CI |
+
+## Lo que se anade, que no estaba en ninguna parte
+
+- **Como medir la razon**, con los cuatro fallos de V401 como casos: preguntar al grafo
+  resuelto (`cargo tree --all-features -e features -i`), contar los dependientes antes de
+  anclar un re-chequeo a uno de ellos, comprobar si el crate es de verdad transitivo, y la
+  frase que resume el modo de fallo -- una supresion con razon falsa **parece revisada**.
+- **Que renovar mueve la fecha**, con el caso de V385 y `lru`: re-chequeo correcto, nota
+  registrada, fecha caducada intacta, entrada permanentemente vencida leyendose como recien
+  revisada. El lector sabe ahora que la puerta lee la **ultima** fecha del bloque.
+- **Que el paso 4 no se hizo durante cinco meses**, con los numeros, y la salida si vuelve a
+  pasar: que el workflow actualice **una** issue en vez de abrir otra cada mes. Cinco issues
+  identicas abiertas ensenan a ignorarlas.
+- **En el postmortem, que «cuando estuvo disponible por primera vez» no es la fecha en que
+  `cargo audit` la mostro**: las cinco de `quinn-proto` son de agosto y septiembre y
+  entraron en la base el 12 de octubre a las 20:05. Con la receta para comprobarlo
+  (`git log --diff-filter=A` dentro de `~/.cargo/advisory-db`).
+
+## Verificado
+
+- Las puertas que **de verdad** tocan un cambio en un `.md`: `check_doc_imports.py` (0 imports
+  fallidos sobre las vallas ```` ```rust ```` de la documentacion) y `check_documented_cli.py`
+  (71 ficheros, toda bandera documentada la acepta su subcomando). **No** se cita
+  `check_doc_links.py`: es un ratchet sobre avisos de *rustdoc*, y este cambio no toca Rust, asi
+  que su verde seria cierto y ajeno -- la version al reves de un OK mas estrecho que la pregunta.
+- El runbook no tiene contraparte en la web (comprobado: no hay pagina de runbooks), asi que no
+  hay HTML que sincronizar.
+- `check_recheck_dates.py` sigue OK sobre las 8 entradas, y **18/18** en self-test.
+- `mutate.py --dry-run --all`: **50 especificaciones siguen cuadrando** con el codigo.
+
+## Y dos casos mas al self-test de la puerta, por una trampa conocida de esta casa
+
+Los 16 casos de V401 usaban todos `\\n`, y **este arbol es CRLF**. `open(..., encoding=...)`
+normaliza finales de linea al leer, asi que el fichero real llega al comprobador como LF y
+ninguno de los 16 ejercitaba CRLF jamas. No es paranoia: el `--dry-run` de `scripts/mutate.py`
+llego a **informar de coincidencias que la ejecucion real no podia aplicar**, porque su
+pre-vuelo y su reescritura leian el mismo fichero con tratamientos distintos de los finales de
+linea. Dos casos nuevos, uno vencido y uno futuro, escritos con CRLF a proposito.
+
+## Y un hallazgo que NO se ha tocado, a proposito
+
+El mismo barrido encuentra que **nueve documentos llevan sello `Last reviewed` y ocho dicen
+2026-05-06 o 2026-05-26** -- cinco meses: los siete runbooks operativos, su `INDEX`,
+`RELEASE_PROCESS.md` y `FEATURE_LIFECYCLE.md`. El unico al dia es `rustsec-handling.md`, porque
+esta noche se ha leido de verdad.
+
+**Las otras ocho fechas se quedan como estan.** Poner la de hoy en un documento que no se ha
+revisado es exactamente la mentira que D.19 acaba de convertir en regla: un sello fresco hace que
+nadie lo vuelva a leer. Viejas y diciendo la verdad es mejor estado que nuevas y falsas.
+
+`docs/IMPROVEMENTS_V130.md` ya decia que el sello es *«a soft signal, not a CI gate»* y que
+mecanizarlo se descarto; la prueba de esta noche es que la senal blanda se quedo blanda cinco
+meses. Pero la puerta **no puede ser la misma**: una advisory caduca en una fecha y un runbook
+no -- un runbook se queda mal cuando cambia lo que documenta. La forma comprobable seria *el
+sello tiene que ser mas nuevo que el ultimo cambio a los ficheros que menciona*. Queda propuesto,
+no construido: es decision del autor.
+
 ## [Unreleased] - v277 (2026-10-13) - V401: seis supresiones vencidas, cinco razones falsas, y la puerta que faltaba (0.2.360)
 
 N149. Sale de tirar del hilo de V400: si la base de advisories se mueve sola, **que pasa con las
