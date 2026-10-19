@@ -5,6 +5,70 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v287 (2026-10-20) - V411: la puerta decia «cero variantes en comun» y eran el mismo tipo con las variantes rebautizadas (0.2.370)
+
+Segundo caso de N134 esta noche. Deuda congelada **18 -> 17**, enums divergentes **33 -> 32**.
+Y este es el mas instructivo de los dos, porque **mi propia medicion me engano**.
+
+### El dato que me engano
+
+El triaje automatico dijo de `IntegrityResult`: *«0 variantes en comun»*. Leido asi, eso
+significa «dos conceptos distintos que comparten nombre por casualidad», que es exactamente el
+criterio con el que V406 mando catorce nombres a `[allowed]`. Un `[allowed]` mas y a otra cosa.
+
+Mirandolas:
+
+| `binary_integrity` | `config_security` |
+|---|---|
+| `Valid` | `Ok` |
+| `HashMismatch { expected, actual }` | `Tampered { expected, actual }` |
+| `NoHashConfigured` | `NoChecksum` |
+| `ReadError(String)` | `FileNotFound` |
+| `SignatureInvalid`, `Skipped` | --- |
+
+No son dos conceptos: es **el mismo tipo con las variantes rebautizadas**, y `Tampered` lleva
+*exactamente* la misma carga `{ expected, actual }` que `HashMismatch`. La interseccion vacia
+era un artefacto de comparar **nombres**.
+
+Esto es, literalmente, el limite que la puerta de duplicados lleva escrito desde V362: compara
+nombres y es ciega por construccion a la misma idea bajo otro nombre. Lo que no habia hecho
+hasta hoy es **aplicarmelo a mi mismo cuando el numero me daba la respuesta comoda**. La
+leccion para el resto de los 17: un «cero en comun» obliga a leer las dos declaraciones, no
+exime de leerlas.
+
+Y la segunda confirmacion estaba donde ya la encontre en V410: **`lib.rs:680` reexportaba esta
+como `ConfigIntegrityResult`**, igual que hacia con `VersionChangeType`. Dos nombres distintos
+inventados en la fachada para que dos tipos pudieran convivir son dos sitios donde el choque ya
+habia dado la cara.
+
+### Unificado, y con una mejora que no era el objetivo
+
+`config_security` hace ahora `pub use crate::binary_integrity::IntegrityResult`. Los dos
+modulos son siempre-compilados, asi que **no se crea ninguna arista de features** -- verificado
+con `cargo check --no-default-features`, que sale limpio, y no solo con el conjunto ancho.
+
+Al unificar se heredan `is_valid()`, `was_verified()`, `Display` y `std::error::Error`, que en
+el tipo de `config_security` no existian.
+
+Y aparecio un defecto pequeno de camino. `verify` hacia esto:
+
+```rust
+let current = match Self::compute_checksum(path) {
+    Ok(c) => c,
+    Err(_) => return IntegrityResult::FileNotFound,   // <-- el error, a la basura
+};
+```
+
+**Tiraba el error y afirmaba una causa concreta.** Un fallo de permisos, un disco lleno o un
+directorio donde se esperaba un fichero se reportaban todos como «no existe». Ahora es
+`Err(e) => IntegrityResult::ReadError(e.to_string())`: la misma rama, con el error dentro. Es
+la clase de cosa que la unificacion destapa y que por separado nadie mira.
+
+Dos pruebas nuevas: `the_two_public_paths_name_one_type` (si vuelve a aparecer un enum local
+con ese nombre, deja de compilar) y
+`a_read_failure_carries_the_real_error_instead_of_guessing_not_found`, que registra un fichero,
+lo borra y comprueba que el error llega con mensaje en vez de con una causa inventada.
+
 ## [Unreleased] - v286 (2026-10-20) - V410: el choque de nombres que la fachada ya reconocia, y lo tapaba con un alias (0.2.369)
 
 N134, prioritaria. De los 34 enums divergentes quedaban **20 congelados**: nombres duplicados

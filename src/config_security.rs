@@ -277,18 +277,22 @@ impl IntegrityChecker {
     pub fn verify(&self, name: &str, path: &Path) -> IntegrityResult {
         let recorded = match self.checksums.get(name) {
             Some(c) => c,
-            None => return IntegrityResult::NoChecksum,
+            None => return IntegrityResult::NoHashConfigured,
         };
 
         let current = match Self::compute_checksum(path) {
             Ok(c) => c,
-            Err(_) => return IntegrityResult::FileNotFound,
+            // Antes esto era `Err(_) => FileNotFound`: se tiraba el error y se
+            // afirmaba una causa concreta que podia ser falsa (permisos, disco,
+            // un directorio donde se esperaba un fichero). `ReadError` lleva el
+            // error de verdad, asi que esto es mas informativo, no menos.
+            Err(e) => return IntegrityResult::ReadError(e.to_string()),
         };
 
         if current == *recorded {
-            IntegrityResult::Ok
+            IntegrityResult::Valid
         } else {
-            IntegrityResult::Tampered {
+            IntegrityResult::HashMismatch {
                 expected: recorded.clone(),
                 actual: current,
             }
@@ -301,7 +305,7 @@ impl IntegrityChecker {
         for (name, _) in &self.checksums {
             let path = data_dir.join(format!("{}.json", name));
             let result = self.verify(name, &path);
-            if !matches!(result, IntegrityResult::Ok) {
+            if !matches!(result, IntegrityResult::Valid) {
                 results.push((name.clone(), result));
             }
         }
@@ -357,18 +361,20 @@ impl IntegrityChecker {
     }
 }
 
-/// Result of an integrity check.
-#[derive(Debug, Clone)]
-pub enum IntegrityResult {
-    /// File matches its recorded checksum.
-    Ok,
-    /// No checksum was recorded for this file.
-    NoChecksum,
-    /// File not found on disk.
-    FileNotFound,
-    /// File has been modified since last recorded checksum.
-    Tampered { expected: String, actual: String },
-}
+// El resultado de comprobar la integridad de un fichero es el mismo tipo que el
+// de comprobar la de un binario (N134, V410). Aqui habia una copia con las
+// variantes rebautizadas -- `Ok`/`NoChecksum`/`FileNotFound`/`Tampered` contra
+// `Valid`/`NoHashConfigured`/`ReadError`/`HashMismatch` -- y `Tampered` llevaba
+// exactamente la misma carga `{ expected, actual }` que `HashMismatch`.
+//
+// Por eso la puerta de duplicados decia «cero variantes en comun»: compara
+// NOMBRES, y es ciega por construccion a la misma idea bajo otro nombre. Y la
+// fachada ya habia tropezado con el choque: `lib.rs` reexportaba esta como
+// `ConfigIntegrityResult`, igual que hacia con `VersionChangeType`.
+//
+// Al unificar se heredan `is_valid()`, `was_verified()`, `Display` y
+// `std::error::Error`, que aqui no existian.
+pub use crate::binary_integrity::IntegrityResult;
 
 // ============================================================================
 // Security Alerts
@@ -574,7 +580,7 @@ mod tests {
         // Verify OK
         assert!(matches!(
             checker.verify("test_config", &test_file),
-            IntegrityResult::Ok
+            IntegrityResult::Valid
         ));
 
         // Tamper the file
@@ -583,7 +589,7 @@ mod tests {
         // Verify TAMPERED
         assert!(matches!(
             checker.verify("test_config", &test_file),
-            IntegrityResult::Tampered { .. }
+            IntegrityResult::HashMismatch { .. }
         ));
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -596,7 +602,7 @@ mod tests {
 
         let checker = IntegrityChecker::new(&dir);
         let result = checker.verify("nonexistent", Path::new("/tmp/nope"));
-        assert!(matches!(result, IntegrityResult::NoChecksum));
+        assert!(matches!(result, IntegrityResult::NoHashConfigured));
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -629,5 +635,53 @@ mod tests {
     fn test_config_section_display() {
         assert_eq!(ConfigSection::Security.to_string(), "security");
         assert_eq!(ConfigSection::Learning.to_string(), "learning");
+    }
+
+    /// N134/V410: los dos caminos publicos tienen que llevar al MISMO tipo.
+    ///
+    /// Igual que en `content_versioning`: si alguien vuelve a declarar aqui un
+    /// `IntegrityResult` local, el resto del modulo seguiria compilando y la
+    /// duplicacion volveria en silencio. Esta funcion deja de compilar.
+    #[test]
+    fn the_two_public_paths_name_one_type() {
+        fn only_accepts_the_binary_one(
+            r: crate::binary_integrity::IntegrityResult,
+        ) -> crate::binary_integrity::IntegrityResult {
+            r
+        }
+        let from_config: IntegrityResult = IntegrityResult::Valid;
+        assert_eq!(
+            only_accepts_the_binary_one(from_config),
+            IntegrityResult::Valid
+        );
+    }
+
+    /// Y lo que se gana al unificar: antes un fallo de lectura se reportaba
+    /// como `FileNotFound` TIRANDO el error (`Err(_)`), o sea afirmando una
+    /// causa concreta que podia ser falsa. Ahora lleva el error de verdad.
+    #[test]
+    fn a_read_failure_carries_the_real_error_instead_of_guessing_not_found() {
+        let dir =
+            std::env::temp_dir().join(format!("ai_test_integrity_v410_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&dir);
+
+        let f = dir.join("se_borra.json");
+        std::fs::write(&f, r#"{"a": 1}"#).unwrap();
+
+        let mut checker = IntegrityChecker::new(&dir);
+        checker.record("se_borra", &f).unwrap();
+
+        // El fichero estaba cuando se registro y ya no esta: `verify` tiene que
+        // pasar por la rama de error de lectura.
+        std::fs::remove_file(&f).unwrap();
+
+        match checker.verify("se_borra", &f) {
+            IntegrityResult::ReadError(msg) => {
+                assert!(!msg.is_empty(), "el mensaje del error no deberia ir vacio");
+            }
+            other => panic!("esperaba ReadError con el error dentro, llego {other:?}"),
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

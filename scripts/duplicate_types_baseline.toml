@@ -90,7 +90,6 @@ names = [
   "EvictionPolicy",
   "ExportFormat",
   "IceState",
-  "IntegrityResult",
   "MemoryType",
   "ParameterType",
   "ProviderStatus",
