@@ -1,3 +1,19 @@
 # Opt-out of AI training on GitHub and compatible platforms
 # See: https://github.com/healsdata/ai-training-opt-out
 * linguist-generated=true
+
+# Normaliza los finales de linea AL COMITEAR, sea lo que sea lo que haya en el
+# disco. No es cosmetico: siete ficheros estaban guardados con CRLF, porque
+# `pathlib.write_text()` en Windows traduce \n a \r\n, y el efecto era que un
+# `cargo update` de 21 crates producia un diff de 12.615 lineas. Un diff que no
+# se puede leer no se revisa.
+#
+# La regla va aqui y no en los scripts por una razon concreta: los que
+# reescribieron esos siete ficheros no estan en el repositorio. Son helpers de
+# usar y tirar -- triajes, bumps, ediciones de TOML -- que se escriben fuera del
+# arbol y se borran. Las seis escrituras de `scripts/` van todas a directorios
+# temporales de autotest, asi que no habia nada que arreglar ahi: el unico sitio
+# que ve TODAS las escrituras es la entrada al indice.
+#
+# git detecta binarios por contenido, asi que los .ico y .png no se tocan.
+* text=auto

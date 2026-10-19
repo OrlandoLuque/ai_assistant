@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v284 (2026-10-20) - V408: un diff de 12.615 lineas escondia 21 crates, y quien lo escribia no estaba en el repositorio (0.2.367)
+
+Subir una dependencia dejaba un `Cargo.lock` con **12.615 lineas cambiadas**. El cambio real
+eran 21 crates fuera y 34 versiones. Git no estaba exagerando: el fichero estaba guardado en
+el indice con CRLF y cargo lo reescribe con LF, asi que cada linea contaba como distinta.
+
+`git ls-files --eol` -- que es el instrumento correcto y no el que yo use primero -- dice que
+de 992 ficheros **978 se guardan con LF, 7 son binarios y 7 con CRLF**. Esos siete no son un
+grupo cualquiera: `CHANGELOG.md`, `Cargo.lock`, `Cargo.toml`, `README.md`,
+`docs/modus-operandi.md`, `scripts/duplicate_types_baseline.toml` y `src/sha256.rs` son
+exactamente los que mis scripts de Python han reescrito en las ultimas semanas, porque
+`pathlib.write_text()` en Windows traduce `\n` a `\r\n` salvo que se le diga lo contrario.
+
+Lo que importa no es la cosmetica. **Un diff que no se puede leer no se revisa**, y el que
+venia detras era el de una correccion de seguridad: 21 crates saliendo del grafo. Esa es la
+clase de cambio que hay que poder mirar linea a linea.
+
+### El arreglo va en `.gitattributes`, y no en los scripts, por una razon medida
+
+El reflejo era poner `newline="\n"` en cada escritura. Fui a hacerlo y las seis escrituras de
+texto de `scripts/` **van todas a directorios temporales de autotest**: ninguna toca el arbol.
+Los que reescribieron los siete ficheros son helpers de usar y tirar -- triajes, bumps,
+ediciones de TOML -- que se escriben fuera del repositorio y se borran al acabar. No hay
+fichero donde poner la correccion.
+
+Por eso la regla es `* text=auto`: normaliza a la entrada del indice, que es el unico punto por
+el que pasan todas las escrituras, incluidas las de scripts que no existiran manana. git
+detecta binarios por contenido, asi que los `.ico` y los `.png` quedan intactos.
+
+Los siete se renormalizan en este commit. Con `--ignore-all-space` el unico cambio es el propio
+`.gitattributes`: los otros siete llevan finales de linea y nada mas, y eso esta comprobado
+byte a byte antes de comitear, no supuesto.
+
+### El instrumento, otra vez
+
+Para listar los ficheros con CRLF escribi `grep -qU $"\r\n"`. En bash `$"..."` son comillas de
+**traduccion de locale**, no de escape: el grep buscaba la cadena literal `rn` y me devolvio
+todo fichero que contuviera «warning» o «return» -- veinte y subiendo, con `build.rs` y
+`LICENSE` entre ellos. Es la septima vez esta semana que el instrumento contesta otra pregunta
+con cara de contestar la mia. La diferencia respecto a las seis anteriores es que esta vez la
+respuesta era *demasiado grande* en lugar de demasiado pequena, que es la direccion que si se
+nota.
+
 ## [Unreleased] - v283 (2026-10-14) - V407: los tres que la puerta contaba y mi grep no, y el grep era el equivocado (0.2.366)
 
 Cola de V406. Tres nombres -- `AudioFormat`, `ImageFormat`, `StepType` -- quedaron congelados
