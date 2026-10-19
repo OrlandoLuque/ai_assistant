@@ -5,6 +5,126 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v285 (2026-10-20) - V409: el rojo que cargo-audit no veia, y una subida que se llevo 21 crates (0.2.368)
+
+La ejecucion programada de **Supply Chain del 2026-10-19 acabo en rojo**. El autor lo noto
+antes que yo y pidio mirarlo; tenia razon.
+
+Lo que habia: **29 vulnerabilidades en 8 crates**, de una tanda de advisories publicadas entre
+el 9 y el 10 de octubre. Casi todas se cerraban por arriba. `cargo update -p rustls -p wasmtime
+-p wasmtime-wasi` (rustls 0.23.45 -> 0.23.46, wasmtime 49.0.2 -> 49.0.4) las bajo **de 29 a 12**.
+
+### `zip`: tres advisories, y la pregunta correcta era si nosotros extraemos
+
+Las doce restantes son nueve de `zip` -- tres advisories sobre tres versiones del lock -- mas
+dos de `quick-xml` y una de `webbrowser` que ya estaban razonadas.
+
+Las tres de `zip` (RUSTSEC-2026-0367, -0368, -0369) nombran **la misma funcion**: bits SUID/SGID
+preservados al extraer, `ZipArchive::extract` creando symlinks que apuntan donde diga el
+archivo, y permisos Unix aplicados desde el archivo. Todas sobre `extract()`.
+
+Asi que la pregunta no era que version subir sino **si alguien del grafo extrae**. Medido:
+nosotros usamos `ZipArchive::new` (6 sitios), `ZipWriter::new`, `FileOptions` y
+`CompressionMethod::Deflated` -- leemos entradas y escribimos archivos, y no hay una sola
+llamada a `.extract()` sobre un zip. Los cinco `.extract(` que aparecen en `src/` son
+`extractor.extract(...)` del extractor de hechos de `advanced_memory`, que no tiene que ver.
+
+Y la copia transitiva igual: `candle-core 0.10.2` arrastra `zip 7.2.0` y usa `ZipArchive::new`
+(7 sitios), `ZipWriter::new` y `FileOptions`. Tampoco extrae. Eso se comprobo **leyendo el
+fuente en la cache del registro**, porque afirmar que un tercero no llama a una funcion sin
+mirarlo es exactamente una razon falsa con aspecto de revisada, que es la clase de cosa que
+V403 encontro cinco veces en este mismo fichero.
+
+Supresion razonada con su `Re-check by: 2026-12-15`, que la puerta de V401 exige. Subir nuestro
+`zip` de 2 a >= 9 son siete versiones mayores de salto y queda como deuda aparte (N153): no se
+hace a la una de la manana para apagar un rojo cuando la funcion vulnerable no se llama.
+
+**Y la puerta me pillo a mi.** El primer intento fue un unico bloque de comentario encabezando
+las tres entradas. `check_rustsec_ignores.py` y `check_recheck_dates.py` fallaron los dos, con
+el mismo diagnostico: 0368 y 0369 **no tienen razon propia ni fecha propia**. Tenian razon --
+un comentario compartido deja dos entradas sin nada escrito al lado, y una entrada sin razon es
+exactamente la que nadie vuelve a leer, que es el defecto que V401 y V403 existen para evitar.
+Partido en tres, cada una con su razon y su fecha. Una puerta que solo dice «ok» no prueba
+nada; esta acaba de demostrar que falla cuando debe.
+
+### Y entonces `cargo audit` salio en 0 y `cargo-deny` siguio rojo
+
+Con eso `cargo audit` termina en **exit 0**. `cargo deny check advisories` **fallaba igual**,
+con tres errores: `zvariant`, `zvariant_derive` y `zbus_names` sin mantenimiento
+(RUSTSEC-2026-0370, -0371, -0372).
+
+Es la leccion de V405 vista desde el otro lado. Alli el bot mensual leia solo
+`.vulnerabilities` y se perdia `.warnings`; aqui `cargo-audit` clasifica `unmaintained` como
+aviso y **`cargo-deny` lo deniega**. Las dos herramientas miran la misma base de datos y no
+contestan la misma pregunta, y la que decide el color de CI es la segunda. Un `exit 0` de
+`cargo audit` no es prueba de que Supply Chain vaya a pasar.
+
+### La salida no era suprimir: era `rfd`
+
+Los tres crates entran por `rfd 0.15.4` -> `ashpd 0.11.1` -> `zbus 5.15.0`, y `zvariant` se
+publica ya como *deprecated: merged into zbus*. `rfd` va por 0.17.2.
+
+Nuestro uso de `rfd` son **tres llamadas** (`FileDialog::new` con `add_filter`, `set_directory`
+y `pick_file`), API que no ha cambiado. La subida 0.15 -> 0.17 **saca 21 crates del lock y no
+mete ninguno**: toda la pila de D-Bus (`ashpd`, `zbus`, `zbus_macros`, `zbus_names`, `zvariant`,
+`zvariant_derive`, `zvariant_utils`) y con ella los `async-*` que arrastraba
+(`async-broadcast`, `async-executor`, `async-fs`, `async-io`, `async-net`, `async-process`,
+`async-signal`, `async-task`, `blocking`, `futures-lite`, `piper`, `ordered-stream`, `endi`,
+`uds_windows`).
+
+Comprobado antes de dar nada por bueno:
+
+* los cuatro chequeos: `advisories ok, bans ok, licenses ok, sources ok`;
+* `cargo audit` en exit 0, con 12 vulnerabilidades en 3 crates, **todas con supresion escrita**;
+* la MSRV mas alta del grafo nuevo es 1.96.0 (cranelift), por debajo del 1.98.0 de CI;
+* `clippy --all-targets -D warnings` con `FEATURES_STD`: limpio;
+* la suite de la libreria: **9.030 pasan, 0 fallan**, 4 ignorados;
+* `cargo check --features gui,gui-pro --bin ai_gui --bin ai_gui-pro`: **exit 0, cero errores**
+  (6 avisos previos), y sin tocar una linea de los propios binarios.
+
+### Lo que encontro el chequeo de la GUI, y es un residuo mio de V404
+
+`cargo clippy --features gui,gui-pro` no compilaba, y no por `rfd`:
+
+```
+error: constant `SHA256_K` is never used    --> src\cloud_connectors.rs:642
+error: constant `SHA256_H0` is never used   --> src\cloud_connectors.rs:654
+```
+
+Son las tablas de la implementacion de SHA-256 a mano que **V404 sustituyo hace dos dias**. Las
+funciones `sha256` y `sha256_hex` de ese modulo ya delegaban en `crate::sha256`; las tablas se
+quedaron huerfanas, con **cero menciones en todo el arbol**. Y la cabecera de la seccion seguia
+diciendo «SHA-256 Implementation (FIPS 180-4)» sobre codigo que ya no implementaba nada: la
+misma clase de comentario que promete lo que el codigo no hace, que es el defecto de firma de
+este proyecto (N22, N56).
+
+Lo que importa no es borrar dos constantes, es **por que nadie se quejo en dos dias**:
+`dead_code` solo las ve con la combinacion `gui,gui-pro`, y **ningun trabajo de CI compila esa
+combinacion**. Es la amenaza que `project_feature_matrix` ya tenia apuntada --- la matriz
+escrita a mano en `ci.yml` contra las features declaradas en `Cargo.toml` --- cobrandose un caso
+concreto.
+
+Y lo que el mismo chequeo deja al descubierto, **apuntado como N155 y no arreglado**: con
+`-D warnings` esos dos binarios dan **8 lints**, todos previos y ninguno de `rfd`. Cuatro son
+`Stroke::new(1.0, ...)` cayendo a `f32` por `f32: From<f64>`, que el compilador anuncia como
+**error duro en una version futura** -- esos tienen caducidad puesta por upstream. Los otros
+cuatro son `Iterator::last` sobre un `DoubleEndedIterator`, un `needless_borrow`, un
+`too_many_arguments` 11/7 y un `collapsible_if`.
+
+Y de paso la novena vez esta semana que el instrumento miente, en su peor direccion: el primer
+chequeo de estos binarios lo lance como `cargo check ... | tail -40` y lei el exit code **de la
+tuberia**, que es el de `tail`. Daba 0. Lo que cargo habia dicho era `target ai_gui-pro requires
+the features: gui-pro`, o sea que no habia compilado nada, y lo conte como verificado. Para eso
+esta `${PIPESTATUS[0]}`, o redirigir a fichero y leer `$?` acto seguido. Las dos veces de esta
+noche salieron del mismo sitio: **leer el exito de una tuberia como el exito del mandato**.
+
+### Lo que queda apuntado y no hecho
+
+`cargo-deny` avisa de que `RUSTSEC-2026-0002` ya no casa con ningun crate de su grafo, mientras
+`cargo audit` si lo reporta como `unsound`. Las dos cosas a la vez significan que los dos
+grafos no son el mismo, y eso merece medirse antes de borrar la supresion -- borrar una que
+cargo-deny necesita es justo el consejo que V405 quito del bot mensual. Queda como N154.
+
 ## [Unreleased] - v284 (2026-10-20) - V408: un diff de 12.615 lineas escondia 21 crates, y quien lo escribia no estaba en el repositorio (0.2.367)
 
 Subir una dependencia dejaba un `Cargo.lock` con **12.615 lineas cambiadas**. El cambio real

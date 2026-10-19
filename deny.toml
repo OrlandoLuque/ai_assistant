@@ -262,6 +262,46 @@ ignore = [
     # Re-check by: 2027-03-15 OR when BOTH lopdf and the egui stack drop it,
     # or ttf-parser gets a maintainer again.
     "RUSTSEC-2026-0192",
+    # --- las tres de `zip` (2026-10-09/10). Medicion comun, hecha el 2026-10-20
+    # leyendo los usos y no suponiendolos:
+    #
+    #   Nosotros usamos `ZipArchive::new` (6 sitios), `ZipWriter::new`,
+    #   `FileOptions` y `CompressionMethod::Deflated`: leemos entradas y
+    #   escribimos archivos. NO hay una sola llamada a `.extract()` sobre un zip
+    #   en `src/` -- los cinco `.extract(` que aparecen son
+    #   `extractor.extract(...)` del extractor de hechos de `advanced_memory`.
+    #
+    #   La copia transitiva igual: `candle-core 0.10.2` arrastra `zip 7.2.0` y
+    #   usa `ZipArchive::new` (7 sitios), `ZipWriter::new` y `FileOptions`.
+    #   Comprobado en el fuente de la cache del registro, porque afirmar que un
+    #   tercero no llama a una funcion sin mirarlo es una razon falsa con
+    #   aspecto de revisada.
+    #
+    #   Tres versiones en el lock: 2.4.2 (la nuestra, declarada), 3.0.0 (sin
+    #   arista normal) y 7.2.0 (por candle). El arreglo esta en >= 9.0.0: siete
+    #   versiones mayores de salto para la nuestra, y fuera de nuestra mano para
+    #   la de candle. Subir la nuestra es deuda legitima aparte (N153).
+    #
+    #   Cada una lleva su propia razon y su propia fecha abajo, porque es lo que
+    #   piden `check_rustsec_ignores.py` y `check_recheck_dates.py` -- y tenian
+    #   razon: un comentario compartido para tres entradas deja dos sin razon
+    #   propia, y una entrada sin razon es la que nadie vuelve a leer.
+
+    # zip: conserva los bits SUID/SGID al EXTRAER. No extraemos (ver medicion
+    # arriba): solo `ZipArchive::new` para leer y `ZipWriter::new` para escribir.
+    # Re-check by: 2026-12-15 OR cuando subamos nuestro `zip` a >= 9 (N153).
+    "RUSTSEC-2026-0367",
+    # zip: `ZipArchive::extract` crea symlinks que apuntan donde diga el archivo.
+    # La funcion vulnerable es `extract`, y no la llamamos -- ni nosotros ni
+    # candle-core, el unico otro dependiente (ver medicion arriba).
+    # Re-check by: 2026-12-15 OR cuando subamos nuestro `zip` a >= 9 (N153).
+    "RUSTSEC-2026-0368",
+    # zip: `ZipStreamReader::extract()` y `ZipArchive::extract()` aplican los
+    # permisos Unix que vengan en el archivo. Las dos son de extraccion y
+    # ninguna aparece en el grafo (ver medicion arriba); `ZipStreamReader` no se
+    # menciona siquiera.
+    # Re-check by: 2026-12-15 OR cuando subamos nuestro `zip` a >= 9 (N153).
+    "RUSTSEC-2026-0369",
 ]
 
 # ----------------------------------------------------------------

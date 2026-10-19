@@ -242,6 +242,17 @@ reads as advice and gets skipped. They are grouped by the question they answer.
     the author is how a rule loses the weight of its case.) Run the gate as its own command and
     read its status, or use `set -o pipefail`. This is rule 15's twin: there the filter hid the
     failure's **name**, here it hid its **exit code**, and both turn a check into decoration.
+    *Two more cases, V409, and they matter because **no `&&` was involved** — the reader was a
+    human: (a) `cargo check --features gui --bin ai_gui --bin ai_gui-pro | tail -40` reported
+    exit 0, so it went into the report as "compiles clean", while cargo had refused to start
+    (`target ai_gui-pro requires the features: gui-pro`) and built nothing; (b) three
+    supply-chain gates chained as `python gate.py | tail -2` printed plausible text while **two
+    of the three were failing** with `EXIT=1`, and the failure was the one saying the new `zip`
+    suppressions had no per-entry reason. Both were caught only by re-running as
+    `cmd > file; echo "EXIT=$?"`.* So the rule is not just "don't put `&&` after a pipe": **never
+    let a pipe stand between a command and its verdict**, whoever is reading. Rules 15 and 18
+    were both already written when this happened, which is the part worth remembering — the cost
+    was not a missing rule, it was taking the convenient shortcut twice in one night.
 19. **A deadline nobody enforces is a comment.** If a policy says "re-check by *date*", something
     has to **fail** on that date. *Case (V401): `deny.toml`'s eight advisory suppressions each
     carried a reason and a re-check trigger, exactly as the policy demands — and six of the dates

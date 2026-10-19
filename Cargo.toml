@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.367"
+version = "0.2.368"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -738,7 +738,7 @@ global-hotkey = { version = "0.6", optional = true }
 # Optional eframe for GUI application (desktop window with egui)
 eframe = { version = "0.27", optional = true, default-features = false, features = ["default_fonts", "glow"] }
 # Optional native file dialog (open/save file pickers)
-rfd = { version = "0.15", optional = true }
+rfd = { version = "0.17", optional = true }
 # Optional webcam capture (cross-platform: MSMF/V4L2/AVFoundation)
 nokhwa = { version = "0.10", optional = true, default-features = false, features = ["input-msmf"] }
 # Optional graph data structure and algorithms (for knowledge graph visualization)

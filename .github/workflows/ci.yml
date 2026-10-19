@@ -381,6 +381,9 @@ jobs:
             --ignore RUSTSEC-2026-0194 \
             --ignore RUSTSEC-2026-0195 \
             --ignore RUSTSEC-2026-0192 \
+            --ignore RUSTSEC-2026-0367 \
+            --ignore RUSTSEC-2026-0368 \
+            --ignore RUSTSEC-2026-0369 \
             --ignore RUSTSEC-2026-0257
 
   # The expensive tabular engine, on its own because it drags 397 crates and
