@@ -15,17 +15,13 @@ use uuid::Uuid;
 // Change Type
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The type of change detected between two content versions.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
-pub enum ChangeType {
-    /// A line was added in the new version.
-    Added,
-    /// A line was removed from the old version.
-    Removed,
-    /// A line was modified between versions.
-    Modified,
-}
+// El tipo de cambio entre dos versiones es el mismo concepto que el tipo de
+// cambio en un diff, asi que vive en un solo sitio (N134, V410). Aqui habia una
+// copia con las mismas variantes menos `Equal`, y `lib.rs` la reexportaba como
+// `VersionChangeType` justamente porque chocaba con la otra: el choque estaba
+// reconocido y tapado, no resuelto. Ahora los dos nombres publicos
+// (`ChangeType` y `VersionChangeType`) denotan el mismo tipo.
+pub use crate::diff::ChangeType;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Content Snapshot
@@ -149,6 +145,20 @@ impl VersionDiff {
                 ChangeType::Modified => {
                     let old_line = change.old_line.unwrap_or(0);
                     output.push_str(&format!("~{:>4} | {}\n", old_line, change.content));
+                }
+                // Variante que llega con la unificacion (V410): una linea sin
+                // cambios es contexto, y se imprime como tal -- igual que la
+                // imprimiria `diff`. El historial no la genera hoy, pero si
+                // alguien la construye a mano ya no se pierde en silencio.
+                //
+                // Sin brazo comodin a proposito: `#[non_exhaustive]` no aplica
+                // dentro de la crate que define el tipo, asi que aqui la
+                // exhaustividad se comprueba entera y el compilador obligara a
+                // tratar cualquier variante nueva. Un `_ =>` solo serviria para
+                // que no lo hiciera.
+                ChangeType::Equal => {
+                    let line = change.new_line.or(change.old_line).unwrap_or(0);
+                    output.push_str(&format!(" {line:>4} | {}\n", change.content));
                 }
             }
         }
@@ -1249,5 +1259,64 @@ mod tests {
 
         let result = store.diff_latest("doc1");
         assert!(result.is_err());
+    }
+
+    /// N134/V410: los dos caminos publicos tienen que llevar al MISMO tipo.
+    ///
+    /// Esto no es ceremonia: antes habia dos enums distintos con este nombre y
+    /// la fachada los separaba llamando `VersionChangeType` a uno. Si alguien
+    /// vuelve a declarar un `ChangeType` local aqui, el codigo seguiria
+    /// compilando y la duplicacion volveria en silencio; esta funcion deja de
+    /// compilar, que es la unica forma de que se note.
+    #[test]
+    fn the_two_public_paths_name_one_type() {
+        fn only_accepts_the_diff_one(c: crate::diff::ChangeType) -> crate::diff::ChangeType {
+            c
+        }
+        let from_versioning: ChangeType = ChangeType::Modified;
+        assert_eq!(
+            only_accepts_the_diff_one(from_versioning),
+            ChangeType::Modified
+        );
+    }
+
+    /// Y la variante que llega con la unificacion se imprime como contexto, no
+    /// se pierde. Antes no existia aqui, asi que una linea sin cambios no tenia
+    /// forma de representarse en un historial de versiones.
+    #[test]
+    fn an_unchanged_line_renders_as_context_in_the_unified_diff() {
+        let diff = VersionDiff {
+            old_version: "v1".to_string(),
+            new_version: "v2".to_string(),
+            changes: vec![
+                ContentChange {
+                    change_type: ChangeType::Equal,
+                    old_line: Some(1),
+                    new_line: Some(1),
+                    content: "sin tocar".to_string(),
+                },
+                ContentChange {
+                    change_type: ChangeType::Added,
+                    old_line: None,
+                    new_line: Some(2),
+                    content: "nueva".to_string(),
+                },
+            ],
+            lines_added: 1,
+            lines_removed: 0,
+            lines_modified: 0,
+            identical: false,
+            similarity: 0.5,
+        };
+
+        let out = diff.to_unified_diff();
+        assert!(
+            out.contains("    1 | sin tocar"),
+            "la linea de contexto deberia salir con prefijo en blanco; salio:\n{out}"
+        );
+        assert!(
+            out.contains("+   2 | nueva"),
+            "y la anadida con '+':\n{out}"
+        );
     }
 }

@@ -5,6 +5,76 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v286 (2026-10-20) - V410: el choque de nombres que la fachada ya reconocia, y lo tapaba con un alias (0.2.369)
+
+N134, prioritaria. De los 34 enums divergentes quedaban **20 congelados**: nombres duplicados
+que V406 no pudo juzgar sin mirarlos uno a uno. Esta noche bajan a **18**, y enums divergentes
+de 34 a **33**.
+
+### Lo primero fue medir, porque la mitad de la decision no estaba en las variantes
+
+Para los 20 se midio, ademas del conjunto de variantes de cada declaracion, **la feature que
+gatea el modulo donde vive**. Eso parte el problema limpiamente:
+
+* **tres comparten puerta** y se pueden unificar sin tocar el grafo de features: `ChangeType`
+  (los dos siempre compilados), `IntegrityResult` (idem) y `ParameterType` (los dos bajo
+  `tools`);
+* **diecisiete estan tras puertas distintas**. Y conviene decirlo con precision, porque mi
+  primera tabla lo decia mal: eso **no significa que no se puedan unificar**, significa que
+  haria falta una tercera casa siempre-compilada donde poner el tipo comun. Es una decision de
+  diseno, no un impedimento.
+
+El extractor va anclado a `^\s*` y no a columna 0, que es la leccion de V407: tres
+declaraciones dentro de `mod inner` fueron invisibles entonces por ese mismo detalle.
+
+### `ChangeType`: unificado, y la senal estaba en `lib.rs`
+
+Dos declaraciones, las dos siempre compiladas:
+
+| | variantes | derives |
+|---|---|---|
+| `diff::ChangeType` | Equal, Added, Removed, Modified | `Copy`, sin serde |
+| `content_versioning::ChangeType` | Added, Removed, Modified | serde, sin `Copy` |
+
+Una es **subconjunto estricto** de la otra. Y la prueba de que el choque ya molestaba estaba en
+la fachada: **`lib.rs:2345` reexportaba la segunda como `VersionChangeType`** para que los dos
+nombres pudieran coexistir. El choque estaba reconocido y tapado, no resuelto.
+
+Ahora hay **una sola definicion**, en `diff.rs`, con serde anadido; `content_versioning` hace
+`pub use`. Los dos nombres publicos (`ChangeType` y `VersionChangeType`) denotan el mismo tipo,
+asi que nada se rompe fuera.
+
+Y la unificacion **anade capacidad**, no solo quita lineas: el historial de versiones no tenia
+forma de decir «esta linea no cambio». `to_unified_diff` gana la rama `Equal` y la imprime como
+contexto, igual que haria `diff`.
+
+Dos pruebas nuevas, y ninguna de las dos es ceremonia:
+
+* `the_two_public_paths_name_one_type` pasa un `content_versioning::ChangeType` a una funcion
+  que solo acepta `diff::ChangeType`. Si alguien vuelve a declarar un enum local con ese
+  nombre, el codigo de alrededor seguiria compilando y la duplicacion volveria en silencio;
+  esta prueba **deja de compilar**, que es la unica forma de que se note.
+* `an_unchanged_line_renders_as_context_in_the_unified_diff` comprueba la rama nueva.
+
+Y un detalle que el compilador tuvo que corregirme: puse un brazo `_ =>` «por si el enum
+crece». Es inalcanzable, porque **`#[non_exhaustive]` no aplica dentro de la crate que define
+el tipo**. Ahi la exhaustividad se comprueba entera y el compilador ya obliga a tratar cualquier
+variante nueva; un comodin solo serviria para que no lo hiciera. Fuera, y el comentario
+reescrito, que decia justo lo contrario.
+
+### `LogLevel`: juzgado y NO unificado, con la razon escrita
+
+Parecia el mismo caso -- uno es subconjunto del otro -- y no lo es:
+
+* `events::LogLevel` (siempre compilado) es un **umbral de verbosidad** para `LoggingHandler`:
+  tres niveles que elige quien llama para decidir cuanto emitir, sin orden ni `Display`;
+* `distributed_log::LogLevel` (tras `distributed-network`) es la **severidad de una entrada**,
+  `Trace=0..Error=4`, ordenada y con `Display`, para guardarse y filtrarse.
+
+Umbral contra etiqueta: la misma palabra para los dos extremos del mismo mecanismo. Y aunque se
+quisieran juntar, no pueden compartir tipo sin una tercera casa, porque uno esta gateado y el
+otro no (N51). A `[allowed]` con esa razon medida.
+
 ## [Unreleased] - v285 (2026-10-20) - V409: el rojo que cargo-audit no veia, y una subida que se llevo 21 crates (0.2.368)
 
 La ejecucion programada de **Supply Chain del 2026-10-19 acabo en rojo**. El autor lo noto

@@ -3,8 +3,18 @@
 //! This module provides tools for comparing text, responses,
 //! and generating visual diffs.
 
-/// Type of change in a diff
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+
+/// Type of change in a diff.
+///
+/// Esta es la UNICA definicion del tipo en la crate. `content_versioning` tenia
+/// su propia copia con las mismas variantes menos `Equal`, y la fachada de
+/// `lib.rs` la reexportaba como `VersionChangeType` para esquivar el choque de
+/// nombres -- o sea que el choque ya estaba reconocido, solo que tapado. V410
+/// las junta aqui, que es la version completa: una linea sin cambios es parte
+/// del vocabulario de un diff, y un historial de versiones que no sabe decir
+/// «esto no cambio» solo puede describir el cambio, nunca el contexto.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum ChangeType {
     /// No change

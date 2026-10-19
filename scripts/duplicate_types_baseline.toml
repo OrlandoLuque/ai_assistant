@@ -31,6 +31,7 @@ Capability = "skill_forge/capability's is a PERMISSION a skill requests (NetFetc
 CompressionLevel = "cache_compression's is a zlib-style effort dial (Fast, Default, Best, Custom); context_budget's is how aggressively to DISCARD context (Light, Medium, Aggressive). One compresses bytes losslessly, the other drops meaning."
 ConfigError = "error.rs's is the crate's config loading failure (MissingValue, LoadFailed); prompt_breeder/config's is validation of an evolutionary-search configuration (PopulationTooSmall, ParetoNeedsMultipleObjectives). Zero overlap and no shared vocabulary."
 GateAction = "agent_methodology's is what the AGENT does next (Retry, AskUser, Abort); quality_gates' is how a gate REPORTS (Fail, Warn, Log). One is control flow, the other a severity."
+LogLevel = "events.rs's is a VERBOSITY THRESHOLD for LoggingHandler -- three levels (Debug/Info/Warn) chosen by the caller to decide how much to emit, with no ordering and no Display; distributed_log.rs's is the SEVERITY OF AN ENTRY (Trace=0..Error=4), ordered and Display-able so it can be stored and filtered. Threshold vs tag: the same word for the two ends of the same mechanism. And they cannot share a type without a third home: events.rs is always compiled, distributed_log.rs is behind `distributed-network`, so unifying as-is would make an always-compiled module depend on a gated one (N51). Measured 2026-10-20 (V410)."
 MergeStrategy = "entity_enrichment's resolves conflicting entity attributes (KeepHighestConfidence, Manual); multi_layer_graph's is CRDT conflict resolution (Ours, Theirs, Union). The second is a standard CRDT vocabulary and cannot borrow the first's."
 OutputFormat = "document_pipeline's is a FILE format to write (Pdf, Docx, Epub); output_validation's is the SHAPE expected of a model's answer (PlainText, Json, Table). Zero overlap."
 OverflowAction = "context_composer's is what to do when the CONTEXT WINDOW overflows (Compact, Checkpoint, NewSession); feedback_loop/queue's is what a bounded QUEUE does when full (DroppedOldest, NoDrop)."
@@ -82,7 +83,6 @@ StepType = "cot_parsing's classifies a REASONING step in text (Understanding, De
 # reading BOTH declarations in full, not just their variant names.
 names = [
   "AuditEventType",
-  "ChangeType",
   "CompressionError",
   "DiversityMetric",
   "EnsembleStrategy",
@@ -91,7 +91,6 @@ names = [
   "ExportFormat",
   "IceState",
   "IntegrityResult",
-  "LogLevel",
   "MemoryType",
   "ParameterType",
   "ProviderStatus",
