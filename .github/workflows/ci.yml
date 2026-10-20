@@ -187,6 +187,40 @@ jobs:
         # alone would not have caught the latter — they are warnings, not errors.
         run: cargo clippy --no-default-features --features "$FEATURES_MIN" -- -D warnings
 
+  clippy-gui:
+    name: Clippy (GUI binaries)
+    runs-on: ubuntu-latest
+    # V415 (N155). NINGUN otro trabajo compila la combinacion `gui,gui-pro`, y
+    # eso no es una laguna teorica: la primera vez que se corrio este comando
+    # (V409) encontro DOS CONSTANTES MUERTAS EN LA LIBRERIA -- `SHA256_K` y
+    # `SHA256_H0`, huerfanas desde que V404 paso SHA-256 a `sha2` dos dias
+    # antes. `dead_code` solo las ve con esta combinacion. O sea que las
+    # combinaciones sin cubrir no esconden solo deuda de los binarios: esconden
+    # deuda de codigo SIEMPRE-COMPILADO que solo una configuracion estrecha
+    # alcanza a ver.
+    #
+    # Y ademas desenterro ~17 lints en los dos binarios, cuatro de ellos
+    # `Stroke::new(1.0, ...)` cayendo a `f32`, que el compilador anuncia como
+    # **error duro en una version futura**: rotura con fecha puesta por upstream.
+    #
+    # Trabajo propio y no un cuarto paso del `clippy` de arriba, a proposito: el
+    # stack de egui/eframe es pesado y encadenarlo llevaria ese trabajo de ~3 a
+    # ~10 minutos, alargando la ejecucion entera. Aqui corre en paralelo. En un
+    # repositorio PUBLICO los runners estandar no cuestan minutos, asi que lo
+    # unico que se gasta es reloj, y este trabajo cabe a la sombra del mas lento.
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Cache propia: este trabajo compila el arbol de egui/eframe, que los
+          # demas no tocan. Compartir clave haria que se desalojaran entre si.
+          key: clippy-gui
+      - name: Lint ai_gui and ai_gui-pro
+        run: cargo clippy --features gui,gui-pro --bin ai_gui --bin ai_gui-pro -- -D warnings
+
   fmt:
     name: Format
     runs-on: ubuntu-latest

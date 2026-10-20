@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v291 (2026-10-20) - V415: la puerta para los dos binarios que nadie lintaba (0.2.374)
+
+Cierra la mitad de N155 que le daba nombre. Estaba bloqueada porque el comando no pasaba; V412 lo
+dejo limpio, asi que ya se puede exigir.
+
+**Por que importa mas de lo que parece.** La primera vez que se corrio
+`cargo clippy --features gui,gui-pro` (V409) no encontro solo deuda de los binarios: encontro
+**dos constantes muertas en la LIBRERIA** --`SHA256_K` y `SHA256_H0`, huerfanas desde que V404
+paso SHA-256 a `sha2` dos dias antes--. `dead_code` solo las ve con esa combinacion.
+
+O sea que las combinaciones sin cubrir no esconden unicamente deuda del codigo gateado: esconden
+deuda de **codigo siempre-compilado que solo una configuracion estrecha alcanza a ver**. Es la
+amenaza de `project_feature_matrix` cobrandose un caso concreto.
+
+**Trabajo propio, no un cuarto paso del `clippy` existente.** El stack de egui/eframe es pesado;
+encadenarlo llevaria ese trabajo de ~3 a ~10 minutos y alargaria la ejecucion entera, porque los
+trabajos corren en paralelo y la ejecucion dura lo que el mas lento (hoy Tabular, 6 min). Aparte,
+corre a la sombra. Con cache propia, que si compartiera clave con los demas se desalojarian entre
+si.
+
+**Y el coste, medido y no supuesto.** El autor pregunto por el coste dando por hecho que lo pagaba
+el. No lo paga nadie: en repositorios **publicos** los runners estandar de GitHub Actions son
+gratis y sin limite de minutos, y estos workflows usan `ubuntu-latest`. Lo unico que se gasta es
+reloj.
+
 ## [Unreleased] - v290 (2026-10-20) - V414: «¿que estado toca si espera feedback del usuario?» y la respuesta era que ninguno (0.2.373)
 
 Pregunta literal del autor despues de V413, y da en un hueco que yo no habia visto.
