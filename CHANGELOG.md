@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v290 (2026-10-20) - V414: «¿que estado toca si espera feedback del usuario?» y la respuesta era que ninguno (0.2.373)
+
+Pregunta literal del autor despues de V413, y da en un hueco que yo no habia visto.
+
+Con los estados de V413 tocaria `Blocked` -- «esperando a algo que no depende de quien la
+ejecuta»-- y esperar al usuario encaja en la letra. **Pero es la respuesta equivocada.**
+`Blocked` mete en el mismo saco dos cosas opuestas para quien mira la lista:
+
+| | |
+|---|---|
+| **bloqueada por algo externo** | no puedes hacer nada |
+| **esperandote a ti** | **es la lista accionable** |
+
+En una lista de tareas personal manejada por un asistente, «te espero a ti» es el estado que mas
+importa: es el asistente diciendo «te necesito». Enterrado dentro de `Blocked`, la unica consulta
+que de verdad sirve --*que necesita de mi*-- se vuelve imposible.
+
+Anadido `WaitingForUser`, y **el nombre no es inventado**: es el que ya usa
+`autonomous_loop::LoopState::WaitingForUser`, hermano de `AgentState::WaitingForInput`. Buscar el
+vocabulario que la casa ya tiene antes de inventar uno es barato y evita el septimo sinonimo.
+
+**Lo que NO cabe, dicho donde se lee.** Alli el estado lleva un `String` con la pregunta. Aqui no:
+`TaskStatus` viaja como cadena por el protocolo y por una columna `TEXT`, el mismo motivo por el
+que `Failed` no es `Failed { reason }`. La pregunta va en la descripcion de la tarea, y esta
+escrito en el `///` de la variante para que nadie espere lo contrario y lo descubra probando.
+
+No es terminal, claro: esperar no acaba nada.
+
 ## [Unreleased] - v289 (2026-10-20) - V413: una tarea que no podia fallar, y la prueba que escribi primero sobrevivio a la mutacion (0.2.372)
 
 Salido de N134: `TaskStatus` esta duplicado entre `mcp_task_tools` y `multi_agent`, y al leer las

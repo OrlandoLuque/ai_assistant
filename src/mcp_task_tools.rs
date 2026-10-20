@@ -113,7 +113,7 @@ impl TaskPriority {
 /// fallar; la duplicacion con `multi_agent::TaskStatus` era solo el sintoma por
 /// el que se vio (N134).
 ///
-/// Los tres estados nuevos son **aditivos a proposito**: `Done` se sigue
+/// Los estados nuevos son **aditivos a proposito**: `Done` se sigue
 /// serializando como `"done"`, asi que ni el protocolo que ve un tercero ni las
 /// filas ya guardadas en SQLite (la columna es `TEXT`) cambian de significado.
 ///
@@ -130,8 +130,27 @@ pub enum TaskStatus {
     Pending,
     /// En curso.
     InProgress,
-    /// Esperando a algo que no depende de quien la ejecuta.
+    /// Esperando a algo externo que no depende ni de quien la ejecuta ni del
+    /// usuario: otro sistema, una fecha, una dependencia.
     Blocked,
+    /// Esperando una respuesta DEL USUARIO.
+    ///
+    /// Separado de `Blocked` a proposito (V414), y la pregunta del autor que lo
+    /// motivo fue literalmente «¿que estado toca si espera feedback del
+    /// usuario?». Con solo `Blocked` las dos cosas caen en el mismo saco, y son
+    /// opuestas para quien mira la lista: `Blocked` es «no puedes hacer nada» y
+    /// esto es **la lista accionable**, el asistente diciendo «te necesito».
+    /// Enterrar la segunda dentro de la primera hace imposible la consulta que
+    /// mas importa: *que necesita de mi*.
+    ///
+    /// El nombre no es inventado: es el que ya usa
+    /// [`crate::autonomous_loop`] (`LoopState::WaitingForUser`) y hermano de
+    /// `AgentState::WaitingForInput`.
+    ///
+    /// **La pregunta concreta NO cabe aqui.** Alli el estado lleva un `String`
+    /// con lo que se pregunta; este viaja como cadena por el protocolo y por una
+    /// columna `TEXT`, asi que la pregunta va en la descripcion de la tarea.
+    WaitingForUser,
     /// Terminada con exito.
     Done,
     /// Intentada y fallida. El motivo no cabe aqui: `TaskStatus` viaja como una
@@ -149,6 +168,7 @@ impl TaskStatus {
             "pending" => Some(Self::Pending),
             "in_progress" => Some(Self::InProgress),
             "blocked" => Some(Self::Blocked),
+            "waiting_for_user" => Some(Self::WaitingForUser),
             "done" => Some(Self::Done),
             "failed" => Some(Self::Failed),
             "cancelled" => Some(Self::Cancelled),
@@ -161,6 +181,7 @@ impl TaskStatus {
             Self::Pending => "pending",
             Self::InProgress => "in_progress",
             Self::Blocked => "blocked",
+            Self::WaitingForUser => "waiting_for_user",
             Self::Done => "done",
             Self::Failed => "failed",
             Self::Cancelled => "cancelled",
@@ -746,7 +767,7 @@ pub fn register_task_tools(server: &mut McpServer, store: Arc<Mutex<UserTaskStor
             .with_property(
                 "status",
                 "string",
-                "Filter by status: pending, in_progress, blocked, done, failed, cancelled",
+                "Filter by status: pending, in_progress, blocked, waiting_for_user, done, failed, cancelled",
                 false,
             )
             .with_property(
@@ -865,7 +886,7 @@ pub fn register_task_tools(server: &mut McpServer, store: Arc<Mutex<UserTaskStor
             .with_property(
                 "status",
                 "string",
-                "New status: pending, in_progress, blocked, done, failed, cancelled",
+                "New status: pending, in_progress, blocked, waiting_for_user, done, failed, cancelled",
                 false,
             )
             .with_property(
@@ -1283,6 +1304,7 @@ mod tests {
 
         for (status, expected) in [
             (TaskStatus::Blocked, "blocked"),
+            (TaskStatus::WaitingForUser, "waiting_for_user"),
             (TaskStatus::Failed, "failed"),
             (TaskStatus::Cancelled, "cancelled"),
         ] {
@@ -1306,7 +1328,7 @@ mod tests {
     /// esta construida y desconectada -- el defecto de firma de este proyecto.
     #[test]
     fn the_new_states_are_reachable_from_the_wire_and_advertised() {
-        for s in ["blocked", "failed", "cancelled"] {
+        for s in ["blocked", "waiting_for_user", "failed", "cancelled"] {
             assert!(
                 TaskStatus::from_str(s).is_some(),
                 "`{s}` no se puede pedir por el protocolo"
@@ -1346,7 +1368,7 @@ mod tests {
             if !desc.contains("pending") {
                 continue; // tiene `status` pero no enumera valores
             }
-            for value in ["blocked", "failed", "cancelled"] {
+            for value in ["blocked", "waiting_for_user", "failed", "cancelled"] {
                 assert!(
                     desc.contains(value),
                     "`{}` acepta `{value}` pero NO lo anuncia: {desc:?}",
@@ -1374,6 +1396,8 @@ mod tests {
         assert!(!TaskStatus::InProgress.is_terminal());
         // `Blocked` NO es terminal a proposito: esta parada, no acabada.
         assert!(!TaskStatus::Blocked.is_terminal());
+        // Y esperar al usuario tampoco acaba nada: es la lista accionable.
+        assert!(!TaskStatus::WaitingForUser.is_terminal());
     }
 }
 
