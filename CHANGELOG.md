@@ -5,6 +5,108 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v293 (2026-10-21) - V417: `num_judges` decia «majority voting» y hacia la media, que es el estadistico que NO sirve para eso (0.2.376)
+
+N127, siguiendo el hilo. V416 arreglo la rubrica del juez desconectado; esta mira el que
+implementa el trait `Evaluator`, o sea el que se puede registrar en `EvalSuite`.
+
+### Primero, una correccion a V416
+
+La tabla de consumidores que publique ahi atribuia cinco usos de
+`evaluation::LlmJudgeEvaluator` a `prompt_breeder/fitness.rs`. **Es falso**: ese fichero
+declara en su linea 230 **su propio** `LlmJudgeEvaluator`, otro tipo que se llama igual y
+envuelve un `LlmClient`. Volvi a creerme un grep por nombre pelado despues de que el mismo
+error me hubiera pasado una hora antes con `agent_methodology`.
+
+Medido otra vez, esta vez por importacion (`use crate::X::`) y no por nombre:
+
+| juez | quien lo construye |
+|---|---|
+| `evaluation::LlmJudgeEvaluator` | sus propios 8 tests |
+| `llm_judge::LlmJudge` (740 lineas) | un `use` dentro de un test de `eval_suite/feature_combos.rs` |
+| `prompt_signature::JudgeMetric` | nadie |
+| `prompt_breeder::fitness::LlmJudgeEvaluator` | `fitness.rs:505`, que es un test |
+
+**Son cuatro, no tres, y cero estan cableados.** `EvalSuite::add_evaluator` --el unico
+registro que existe-- recibe `TextQualityEvaluator` y `RelevanceEvaluator`, nunca un juez. La
+tarea decia «cablear una» dando por hecho que alguna estaba viva; ninguna lo esta.
+
+Cuatro tipos con el mismo nombre en el mismo arbol es lo que convierte `grep LlmJudge` en un
+instrumento que contesta con seguridad y se equivoca. La leccion no es «ten cuidado con grep»
+sino **buscar por la importacion**, que es lo unico que distingue dos tipos homonimos.
+
+### `num_judges`: la media deshace exactamente lo que se compraba con ella
+
+El campo se documentaba *«Number of judge calls for majority voting»*, el codigo tenia un
+comentario *«for majority voting»*, y el test se llamaba `test_llm_judge_majority_voting`. Lo
+que hacia era `values.iter().sum() / values.len()`.
+
+No es un detalle de nombre. **Se pregunta tres veces para sobrevivir a UN juez que se va, y la
+media es el estadistico que no lo consigue**: con notas 1, 9 y 9 da 6,33 --un veredicto
+mediocre que no emitio ninguno de los tres-- donde la mediana da 9. Pagar tres llamadas para
+que una contesta-cualquier-cosa arrastre el resultado es pagar por robustez y comprar lo
+contrario.
+
+«Mayoria» tampoco era la palabra: las notas son continuas y casi nunca hay dos iguales.
+Ahora es la **mediana**, y lo dicen el nombre, la documentacion y el test.
+
+#### Y el test no podia enterarse
+
+`test_llm_judge_majority_voting` usaba 8,0 / 9,0 / 8,5. **Media y mediana valen las dos 8,5**,
+asi que pasaba con cualquiera de las dos implementaciones. Su comentario decia «Average of
+8.0, 9.0, 8.5 = 8.5»: quien lo escribio sabia que era la media y le puso a la prueba el nombre
+de lo que no era.
+
+Es el patron enmascarado otra vez, en su forma mas barata: los datos elegidos justo en el punto
+donde la distincion desaparece.
+
+### Un juez caido devolvia «la peor calidad posible»
+
+Si todos los jueces fallaban, `evaluate()` emitia una nota de `0.0` por metrica en una escala
+de 0 a 10. **«El juez no contesto» y «la respuesta es pesima» eran el mismo numero.** Y el test
+`test_llm_judge_evaluate_all_failures` afirmaba ese `0.0` como comportamiento correcto.
+
+El mismo defecto que el `calibration_error` de V416, en la otra direccion: la ausencia de
+medida codificada como una medida extrema. Y aqui ademas dependia de la metrica, no solo del
+fallo total -- si el juez puntuaba `Relevance` y se olvidaba de `Safety`, `Safety` salia 0,0.
+
+Una regla en lugar de dos casos especiales: **una metrica sin ninguna nota valida no se emite.**
+El `Vec` sale vacio si no hubo nada, y `EvalSuite::evaluate` no suma nada al agregado, que es
+lo correcto, en vez de hundirlo con ceros inventados.
+
+### Una nota fuera de escala no es una nota
+
+`parse_scores` no comprobaba el rango. Un juez que contesta 50 en una escala de 1 a 10 entraba
+tal cual. Y no es cosmetico: `MetricResult::normalized()` divide por el rango declarado, asi
+que **ese 50 pesaba 5x en la nota global de `EvalSuite`** -- un solo juez descontrolado podia
+mas que todos los demas evaluadores juntos.
+
+Se descarta en vez de recortarse. Recortar 50 a 10 seria convertir «no he entendido las
+instrucciones» en «excelente», que es una invencion con la forma de una medida; con varios
+jueces, los demas siguen dando nota. De paso filtra la basura del regex de ultimo recurso, que
+casa cualquier «palabra: numero» del texto.
+
+El rango vive ahora en una constante `SCALE` usada por el filtro y por el `with_range` de cada
+resultado, porque separados derivan y `normalized()` acaba dividiendo por un rango distinto del
+que se acepto al parsear.
+
+### Y cada nota dice cuantos jueces la respaldan
+
+`details` lleva «N de M jueces con nota valida; mediana». Antes una nota salida de 1 de 3 era
+indistinguible de una de 3 de 3.
+
+### Mutacion
+
+Tres mutaciones, las tres muertas, cada una por el test que le toca:
+
+| mutacion | quien la mata |
+|---|---|
+| mediana -> media | `un_juez_disparatado_no_arrastra_a_los_otros_dos` |
+| `accept()` acepta cualquier numero | `una_nota_fuera_de_la_escala_se_descarta_y_no_se_recorta` |
+| metrica sin nota -> emite 0.0 | `test_llm_judge_evaluate_all_failures` + otros dos |
+
+9041 tests en verde, clippy `-D warnings` limpio con `--all-targets`.
+
 ## [Unreleased] - v292 (2026-10-21) - V416: la rubrica ponderada no ponderaba, y era justo la pieza que el plan mandaba conservar (0.2.375)
 
 N127 fase 1. El plan decia: elegir `llm_judge.rs` como la implementacion viva y **absorber las

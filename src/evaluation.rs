@@ -1042,7 +1042,17 @@ pub struct LlmJudgeConfig {
     pub metrics: Vec<MetricType>,
     /// Custom rubric/grading criteria (optional, uses default if None)
     pub rubric: Option<String>,
-    /// Number of judge calls for majority voting (1 = single judge, 3+ = voting)
+    /// Cuantas veces se pregunta al juez. Las notas se combinan con la
+    /// **mediana**, no con la media.
+    ///
+    /// Hasta V417 esto decia «for majority voting» y el codigo hacia la media.
+    /// No es un detalle de nombre: la razon de preguntar tres veces es
+    /// sobrevivir a UN juez disparatado, y la media es justo el estadistico que
+    /// no lo consigue. Con notas 1, 9 y 9 la media da 6,33 --un veredicto
+    /// mediocre que no emitio ninguno de los tres-- y la mediana da 9.
+    ///
+    /// «Mayoria» tampoco seria la palabra: las notas son continuas y casi nunca
+    /// hay dos iguales que formen mayoria de nada.
     pub num_judges: usize,
 }
 
@@ -1133,9 +1143,35 @@ impl LlmJudgeEvaluator {
         prompt
     }
 
+    /// Rango declarado de las notas de este juez, en los dos sitios que tienen
+    /// que coincidir: el filtro de [`Self::parse_scores`] y el `with_range` de
+    /// cada [`MetricResult`].
+    ///
+    /// Es una constante y no dos literales porque si se separan, `normalized()`
+    /// empieza a dividir por un rango distinto del que se acepto al parsear, y
+    /// eso no lo nota nadie.
+    const SCALE: (f64, f64) = (0.0, 10.0);
+
+    /// Acepta una nota solo si cae dentro de [`Self::SCALE`].
+    ///
+    /// **Una nota fuera de rango no es una nota.** Si el juez contesta 50 en una
+    /// escala de 1 a 10 es que no siguio las instrucciones, y su respuesta no es
+    /// de fiar: recortarla a 10 seria convertir «no te he entendido» en
+    /// «excelente», que es una invencion con la forma de una medida. Se descarta,
+    /// y con varios jueces los demas siguen dando nota.
+    ///
+    /// De paso filtra la basura que puede colar el regex de ultimo recurso, que
+    /// casa cualquier «palabra: numero» del texto.
+    fn accept(val: f64) -> Option<f64> {
+        let (lo, hi) = Self::SCALE;
+        (val.is_finite() && val >= lo && val <= hi).then_some(val)
+    }
+
     /// Parse scores from LLM response. Supports:
     /// - JSON: {"Relevance": 8, "Coherence": 7}
     /// - Text: "Score: 8/10" or "Relevance: 8"
+    ///
+    /// Las notas fuera de [`Self::SCALE`] se descartan (ver [`Self::accept`]).
     fn parse_scores(&self, response: &str) -> HashMap<MetricType, f64> {
         let mut scores = HashMap::new();
 
@@ -1144,7 +1180,11 @@ impl LlmJudgeEvaluator {
             if let Some(obj) = json.as_object() {
                 for metric in &self.config.metrics {
                     let key = format!("{:?}", metric);
-                    if let Some(val) = obj.get(&key).and_then(|v| v.as_f64()) {
+                    if let Some(val) = obj
+                        .get(&key)
+                        .and_then(|v| v.as_f64())
+                        .and_then(Self::accept)
+                    {
                         scores.insert(*metric, val);
                     }
                 }
@@ -1162,7 +1202,11 @@ impl LlmJudgeEvaluator {
                     if let Some(obj) = json.as_object() {
                         for metric in &self.config.metrics {
                             let key = format!("{:?}", metric);
-                            if let Some(val) = obj.get(&key).and_then(|v| v.as_f64()) {
+                            if let Some(val) = obj
+                                .get(&key)
+                                .and_then(|v| v.as_f64())
+                                .and_then(Self::accept)
+                            {
                                 scores.insert(*metric, val);
                             }
                         }
@@ -1179,7 +1223,7 @@ impl LlmJudgeEvaluator {
         if let Some(re) = score_re {
             for cap in re.captures_iter(response) {
                 let name = &cap[1];
-                if let Ok(val) = cap[2].parse::<f64>() {
+                if let Some(val) = cap[2].parse::<f64>().ok().and_then(Self::accept) {
                     for metric in &self.config.metrics {
                         if format!("{:?}", metric).to_lowercase() == name.to_lowercase() {
                             scores.insert(*metric, val);
@@ -1216,38 +1260,65 @@ impl Evaluator for LlmJudgeEvaluator {
             }
         }
 
-        if all_scores.is_empty() {
-            // All judges failed — return zero scores
-            return self
-                .config
-                .metrics
-                .iter()
-                .map(|m| MetricResult::new(*m, &format!("{:?}", m), 0.0).with_range(0.0, 10.0))
-                .collect();
-        }
-
-        // Average scores across judges
-        let mut final_scores: HashMap<MetricType, f64> = HashMap::new();
+        // Una metrica sin NINGUNA nota no se emite.
+        //
+        // Antes se emitia con `value: 0.0`, que en una escala de 0 a 10 es «la
+        // peor calidad posible». Asi que «el juez no contesto» y «la respuesta
+        // es pesima» eran el mismo numero, y quien leyera el resultado no tenia
+        // forma de distinguirlos. Es el mismo defecto que el `calibration_error`
+        // que devolvia 0.0 con el conjunto vacio (V416), en la otra direccion:
+        // la ausencia de medida codificada como una medida extrema.
+        //
+        // Ausencia significa ausencia: si todos los jueces fallan, el `Vec` sale
+        // vacio, y `EvalSuite::evaluate` simplemente no suma nada al agregado
+        // --que es lo correcto-- en vez de hundirlo con ceros inventados.
+        let mut results = Vec::with_capacity(self.config.metrics.len());
         for metric in &self.config.metrics {
-            let values: Vec<f64> = all_scores
+            let mut values: Vec<f64> = all_scores
                 .iter()
                 .filter_map(|s| s.get(metric).copied())
                 .collect();
-            if !values.is_empty() {
-                let avg = values.iter().sum::<f64>() / values.len() as f64;
-                final_scores.insert(*metric, avg);
+            if values.is_empty() {
+                continue;
             }
+
+            let answered = values.len();
+            let value = median(&mut values);
+            let (lo, hi) = Self::SCALE;
+            let mut result =
+                MetricResult::new(*metric, &format!("{:?}", metric), value).with_range(lo, hi);
+            // Cuantos jueces contestaron de los que se pidieron: sin esto, una
+            // nota salida de 1 de 3 jueces es indistinguible de una de 3 de 3.
+            result.details = Some(format!(
+                "{} de {} jueces con nota valida; mediana",
+                answered, self.config.num_judges
+            ));
+            results.push(result);
         }
 
-        // Build results
-        self.config
-            .metrics
-            .iter()
-            .map(|m| {
-                let value = final_scores.get(m).copied().unwrap_or(0.0);
-                MetricResult::new(*m, &format!("{:?}", m), value).with_range(0.0, 10.0)
-            })
-            .collect()
+        results
+    }
+}
+
+/// Mediana de un conjunto no vacio. Reordena el argumento.
+///
+/// Se usa para combinar las notas de varios jueces: es el estadistico que
+/// resiste a UN juez disparatado, que es la razon entera de preguntar mas de
+/// una vez. Con un numero par de notas, promedia las dos centrales.
+///
+/// # Panics
+/// No entra en panico: con la rodaja vacia devuelve `0.0`, pero las dos
+/// llamadas comprueban antes que no lo esta.
+fn median(values: &mut [f64]) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let mid = values.len() / 2;
+    if values.len() % 2 == 1 {
+        values[mid]
+    } else {
+        (values[mid - 1] + values[mid]) / 2.0
     }
 }
 
@@ -1603,31 +1674,126 @@ mod tests {
             });
         let sample = EvalSample::new("1", "test", "test response");
         let results = judge.evaluate(&sample);
-        assert_eq!(results.len(), 1);
-        assert!((results[0].value - 0.0).abs() < 0.01);
+        // Hasta V417 esto afirmaba `results[0].value == 0.0`: el juez caido
+        // devolvia la peor nota posible de la escala, y el test lo daba por
+        // bueno. Un juez inalcanzable no ha emitido ninguna nota, y eso no se
+        // puede escribir como un numero.
+        assert!(
+            results.is_empty(),
+            "ningun juez contesto, no puede haber notas: {results:?}"
+        );
+    }
+
+    /// Construye un juez cuyas respuestas son las dadas, en orden, y repite la
+    /// ultima si se le pregunta mas veces.
+    fn judge_answering(answers: Vec<&'static str>, metrics: Vec<MetricType>) -> LlmJudgeEvaluator {
+        let n = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let num_judges = answers.len();
+        LlmJudgeEvaluator::new(move |_: &str| {
+            let i = n.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(answers[i.min(answers.len() - 1)].to_string())
+        })
+        .with_config(LlmJudgeConfig {
+            metrics,
+            rubric: None,
+            num_judges,
+        })
     }
 
     #[test]
-    fn test_llm_judge_majority_voting() {
-        let call_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let call_count_clone = call_count.clone();
-        let judge = LlmJudgeEvaluator::new(move |_: &str| {
-            let n = call_count_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            match n {
-                0 => Ok(r#"{"Relevance": 8.0}"#.to_string()),
-                1 => Ok(r#"{"Relevance": 9.0}"#.to_string()),
-                _ => Ok(r#"{"Relevance": 8.5}"#.to_string()),
-            }
-        })
-        .with_config(LlmJudgeConfig {
-            metrics: vec![MetricType::Relevance],
-            rubric: None,
-            num_judges: 3,
-        });
-        let sample = EvalSample::new("1", "test", "test response");
-        let results = judge.evaluate(&sample);
-        // Average of 8.0, 9.0, 8.5 = 8.5
-        assert!((results[0].value - 8.5).abs() < 0.01);
+    fn un_juez_disparatado_no_arrastra_a_los_otros_dos() {
+        // La razon entera de preguntar tres veces es sobrevivir a UNO que se
+        // va. La media no lo consigue: 1, 9, 9 da 6,33 --un veredicto mediocre
+        // que no emitio ninguno de los tres-- y la mediana da 9.
+        //
+        // El test que habia aqui se llamaba `majority_voting` y usaba 8,0 / 9,0
+        // / 8,5, donde media y mediana valen las dos 8,5: no podia distinguir
+        // una implementacion de la otra, y afirmaba la media mientras su nombre
+        // prometia lo contrario.
+        let judge = judge_answering(
+            vec![
+                r#"{"Relevance": 1.0}"#,
+                r#"{"Relevance": 9.0}"#,
+                r#"{"Relevance": 9.0}"#,
+            ],
+            vec![MetricType::Relevance],
+        );
+        let results = judge.evaluate(&EvalSample::new("1", "test", "test response"));
+        assert_eq!(results.len(), 1);
+        assert!(
+            (results[0].value - 9.0).abs() < 1e-9,
+            "esperaba la mediana 9,0 (la media seria 6,33), salio {}",
+            results[0].value
+        );
+    }
+
+    #[test]
+    fn una_nota_fuera_de_la_escala_se_descarta_y_no_se_recorta() {
+        // Un juez que contesta 50 en una escala de 0 a 10 no ha seguido las
+        // instrucciones. Recortarlo a 10 convertiria «no te he entendido» en
+        // «excelente». Y no es solo cosmetico: `MetricResult::normalized()`
+        // divide por el rango declarado, asi que un 50 con rango 0..10 pesaria
+        // 5x en la nota global de `EvalSuite`.
+        let judge = judge_answering(
+            vec![r#"{"Relevance": 50.0}"#, r#"{"Relevance": 6.0}"#],
+            vec![MetricType::Relevance],
+        );
+        let results = judge.evaluate(&EvalSample::new("1", "test", "test response"));
+        assert_eq!(results.len(), 1);
+        assert!(
+            (results[0].value - 6.0).abs() < 1e-9,
+            "el 50 debia descartarse y quedar solo el 6,0, salio {}",
+            results[0].value
+        );
+        // Y si TODAS las notas estan fuera de escala, no hay metrica.
+        let only_bad = judge_answering(vec![r#"{"Relevance": -3.0}"#], vec![MetricType::Relevance]);
+        assert!(
+            only_bad
+                .evaluate(&EvalSample::new("1", "t", "r"))
+                .is_empty(),
+            "una nota negativa no es una nota"
+        );
+    }
+
+    #[test]
+    fn una_metrica_que_el_juez_no_puntuo_no_se_emite() {
+        // El juez contesta solo una de las dos metricas pedidas. La otra no se
+        // emite con un cero: no se emite.
+        let judge = judge_answering(
+            vec![r#"{"Relevance": 7.0}"#],
+            vec![MetricType::Relevance, MetricType::Safety],
+        );
+        let results = judge.evaluate(&EvalSample::new("1", "test", "test response"));
+        assert_eq!(
+            results.len(),
+            1,
+            "se pidieron 2 metricas y el juez puntuo 1: {results:?}"
+        );
+        assert_eq!(results[0].metric_type, MetricType::Relevance);
+    }
+
+    #[test]
+    fn la_nota_dice_cuantos_jueces_la_respaldan() {
+        // Una nota salida de 1 de 3 jueces y otra de 3 de 3 no valen lo mismo,
+        // y antes eran indistinguibles al leer el resultado.
+        let judge = judge_answering(
+            vec![
+                r#"{"Relevance": 7.0}"#,
+                r#"no me da la gana contestar"#,
+                r#"{"Relevance": 7.0}"#,
+            ],
+            vec![MetricType::Relevance],
+        );
+        let results = judge.evaluate(&EvalSample::new("1", "test", "test response"));
+        assert_eq!(results.len(), 1);
+        let details = results[0]
+            .details
+            .as_deref()
+            .expect("la nota debe decir con cuantos jueces se hizo");
+        assert!(
+            details.contains("2 de 3"),
+            "dos de los tres jueces dieron nota valida, pero dice: {details:?}"
+        );
     }
 
     #[test]
