@@ -8,8 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased] - v295 (2026-10-21) - V419: la puerta comparaba los IDs correctos en un comando que no arrancaba (0.2.378)
 
 V418 arreglo las advisories y dejo Supply Chain **en rojo igual**, por un error mio al
-escribirlo: la sustitucion metio un `
-` **literal** --barra invertida y letra n-- en los dos
+escribirlo: la sustitucion metio un `\n` **literal** --barra invertida y letra n-- en los dos
 workflows, en vez de un salto de linea. El shell le paso entonces a `cargo audit` un argumento
 `n`, y murio antes de empezar:
 
@@ -38,8 +37,7 @@ veces el instrumento contesto con seguridad sobre una pregunta que no era la mia
 que la regex es ciega:
 
 * un solo `--ignore` por linea,
-* ningun `
-` literal en esas lineas,
+* ningun `\n` literal en esas lineas,
 * y continuacion `\` en todas las del tramo menos la ultima, porque si falta, el comando se
   corta ahi y lo que sobra se lee como otro comando -- en silencio.
 
@@ -47,9 +45,7 @@ Mutado, porque un «OK» sin mutacion solo dice que el script corrio:
 
 | mutacion | resultado |
 |---|---|
-| volver a meter el `
-` literal | exit 1, y nombra las dos cosas: dos flags en una linea, y el `
-` literal |
+| volver a meter el `\n` literal | exit 1, y nombra las dos cosas: dos flags en una linea, y el `\n` literal |
 | quitar la `\` de continuacion | exit 1: «la linea no acaba en `\` y le siguen mas flags» |
 
 ### Y la comprobacion que de verdad cierra el asunto
