@@ -74,14 +74,31 @@ impl JudgeRubric {
 /// The result of an LLM-as-judge evaluation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PromptJudgeResult {
-    /// The weighted overall score.
+    /// Media PONDERADA de las notas por criterio, normalizada a `0.0..=1.0`.
+    ///
+    /// Hasta V416 este campo se documentaba como «The weighted overall score» y
+    /// **no estaba ponderado**: era el numero que devolvia el `scorer` para toda
+    /// la rubrica, sin tocar. El campo `weight` de cada criterio solo se usaba
+    /// para sumarlo y comprobar que no era cero.
     pub overall_score: f64,
-    /// Individual scores per criterion.
+    /// Nota de cada criterio, **puntuada por separado**.
+    ///
+    /// Antes se fabricaban: todos los criterios recibian el mismo valor global
+    /// reescalado a su rango. Quien leyera esta lista creia que se habia
+    /// evaluado cada criterio; no se habia evaluado ninguno.
     pub per_criterion: Vec<CriterionScore>,
-    /// Reasoning for the overall judgment.
+    /// Explicacion del veredicto global, si quien puntua la da.
     pub reasoning: String,
-    /// Confidence in the judgment (0.0..1.0).
-    pub confidence: f64,
+    /// Cuanto COINCIDEN los criterios entre si, de `0.0` (maximo desacuerdo) a
+    /// `1.0` (todos la misma nota). `None` con menos de dos criterios, porque
+    /// con uno solo no hay dispersion que medir.
+    ///
+    /// **No es la confianza en que el veredicto sea correcto**, y el nombre lo
+    /// dice a proposito. Hasta V416 aqui habia un `confidence: 0.8` constante
+    /// --un numero inventado con pinta de medido--, y hasta habia un test que
+    /// lo fijaba. Un juez cuyos criterios se contradicen es un dato util; un
+    /// 0,8 fijo no es dato de nada.
+    pub criterion_agreement: Option<f64>,
 }
 
 /// Score for a single criterion.
@@ -89,10 +106,15 @@ pub struct PromptJudgeResult {
 pub struct CriterionScore {
     /// Name of the criterion that was scored.
     pub criterion_name: String,
-    /// The score assigned.
+    /// La nota, en la escala declarada por el propio criterio (`scale`).
     pub score: f64,
-    /// Reasoning for this particular score.
-    pub reasoning: String,
+    /// Explicacion de ESTA nota, si quien puntua la da.
+    ///
+    /// `None` cuando el `scorer` solo devuelve un numero, que es el caso
+    /// habitual. Es `Option` y no una frase generica a proposito: antes aqui se
+    /// escribia «Score for 'X' based on overall evaluation», que **parece** una
+    /// explicacion y no explica nada.
+    pub reasoning: Option<String>,
 }
 
 /// Configuration for an LLM-as-judge evaluator.
@@ -133,41 +155,88 @@ impl Default for JudgeConfig {
 /// An evaluation metric that uses an LLM-as-judge scoring function.
 pub struct JudgeMetric {
     pub(crate) config: JudgeConfig,
-    pub(crate) scorer: Box<dyn Fn(&str, &str, &JudgeRubric) -> f64 + Send + Sync>,
+    pub(crate) scorer: CriterionScorer,
 }
 
+/// Funcion que puntua **un** criterio: `(input, output, criterio) -> nota`.
+///
+/// Recibe el criterio entero, no la rubrica, porque ese es el cambio que hace
+/// que los pesos sirvan para algo: hasta V416 el `scorer` devolvia **un** numero
+/// para toda la rubrica, asi que no habia notas por criterio que ponderar y el
+/// campo `weight` era decorativo.
+///
+/// La nota se espera dentro de `criterio.scale`; si se sale, se recorta.
+pub type CriterionScorer = Box<dyn Fn(&str, &str, &JudgeCriterion) -> f64 + Send + Sync>;
+
 impl JudgeMetric {
-    /// Create a new judge metric with the given configuration and scorer function.
-    pub fn new(
-        config: JudgeConfig,
-        scorer: Box<dyn Fn(&str, &str, &JudgeRubric) -> f64 + Send + Sync>,
-    ) -> Self {
-        Self { config, scorer }
+    /// Construye el juez, **validando la rubrica**.
+    ///
+    /// Devuelve `Err` si [`JudgeRubric::validate`] falla. Ese validador existia
+    /// desde el principio y no lo llamaba nadie (otro caso de «construido y sin
+    /// conectar»), asi que una rubrica sin criterios o con pesos negativos se
+    /// aceptaba y producia numeros sin sentido en silencio.
+    pub fn new(config: JudgeConfig, scorer: CriterionScorer) -> Result<Self, String> {
+        config.rubric.validate()?;
+        Ok(Self { config, scorer })
     }
 
-    /// Evaluate an input/output pair using the judge.
+    /// Evalua un par entrada/salida puntuando **cada criterio por separado** y
+    /// combinandolos con sus pesos.
+    ///
+    /// Las notas se normalizan a `0..=1` con la `scale` de cada criterio antes
+    /// de promediar, porque si no, un criterio puntuado de 0 a 10 aplastaria a
+    /// uno de 0 a 1 por el mero hecho de usar otra regla.
     pub fn evaluate(&self, input: &str, output: &str) -> PromptJudgeResult {
-        let overall_score = (self.scorer)(input, output, &self.config.rubric);
-
-        // Generate per-criterion scores proportionally
-        let mut per_criterion = Vec::new();
+        let criteria = &self.config.rubric.criteria;
         let total_weight = self.config.rubric.total_weight();
 
-        for criterion in &self.config.rubric.criteria {
-            let criterion_score = if total_weight > 0.0 {
-                // Scale score within the criterion's scale range
-                let (min_s, max_s) = criterion.scale;
-                min_s + (max_s - min_s) * overall_score.clamp(0.0, 1.0)
+        let mut per_criterion = Vec::with_capacity(criteria.len());
+        let mut normalised = Vec::with_capacity(criteria.len());
+        let mut weighted_sum = 0.0;
+
+        for criterion in criteria {
+            let (min_s, max_s) = criterion.scale;
+            let (lo, hi) = if min_s <= max_s {
+                (min_s, max_s)
             } else {
-                overall_score
+                (max_s, min_s)
             };
 
+            let score = (self.scorer)(input, output, criterion).clamp(lo, hi);
+            let span = hi - lo;
+            let unit = if span.abs() > f64::EPSILON {
+                (score - lo) / span
+            } else {
+                // Escala degenerada (min == max): no hay rango que normalizar.
+                0.0
+            };
+
+            weighted_sum += unit * criterion.weight;
+            normalised.push(unit);
             per_criterion.push(CriterionScore {
                 criterion_name: criterion.name.clone(),
-                score: criterion_score,
-                reasoning: format!("Score for '{}' based on overall evaluation", criterion.name),
+                score,
+                // Un `scorer` numerico no da explicacion, y decirlo con `None`
+                // es mas honesto que rellenarlo con una frase.
+                reasoning: None,
             });
         }
+
+        // `validate()` garantiza pesos positivos y al menos un criterio, pero
+        // `evaluate` no puede asumir que se llamo: el campo `config` es publico.
+        let overall_score = if total_weight > 0.0 {
+            weighted_sum / total_weight
+        } else {
+            0.0
+        };
+
+        let criterion_agreement = if normalised.len() >= 2 {
+            let max = normalised.iter().copied().fold(f64::MIN, f64::max);
+            let min = normalised.iter().copied().fold(f64::MAX, f64::min);
+            Some((1.0 - (max - min)).clamp(0.0, 1.0))
+        } else {
+            None
+        };
 
         PromptJudgeResult {
             overall_score,
@@ -176,7 +245,7 @@ impl JudgeMetric {
                 "Evaluated output against rubric: {}",
                 self.config.rubric.overall_instruction
             ),
-            confidence: 0.8,
+            criterion_agreement,
         }
     }
 
@@ -192,7 +261,10 @@ impl EvalMetric for JudgeMetric {
     }
 
     fn score(&self, predicted: &str, expected: &str) -> f64 {
-        (self.scorer)(predicted, expected, &self.config.rubric)
+        // Delega en `evaluate` a proposito: antes llamaba al `scorer` por su
+        // cuenta, asi que `score()` y `evaluate().overall_score` podian dar
+        // numeros distintos para la misma entrada. Una sola definicion.
+        self.evaluate(predicted, expected).overall_score
     }
 }
 
@@ -225,19 +297,32 @@ impl CalibrationSet {
         self.examples.push(example);
     }
 
-    /// Compute the mean absolute calibration error between judge scores and human scores.
-    pub fn calibration_error(&self, judge: &JudgeMetric) -> f64 {
+    /// Error medio absoluto entre lo que puntua el juez y lo que puntuo una
+    /// persona. **Es la medida que dice si el juez sirve para algo**: sin ella,
+    /// las notas son numeros de procedencia desconocida.
+    ///
+    /// Devuelve `None` con el conjunto vacio. Antes devolvia `0.0`, que es
+    /// indistinguible de «acuerdo perfecto» -- el peor valor posible para
+    /// confundirse, porque un conjunto vacio se leia como un juez impecable.
+    pub fn calibration_error(&self, judge: &JudgeMetric) -> Option<f64> {
         if self.examples.is_empty() {
-            return 0.0;
+            return None;
         }
 
-        let mut total_error = 0.0;
-        for ex in &self.examples {
-            let judge_score = (judge.scorer)(&ex.input, &ex.output, &judge.config.rubric);
-            total_error += (judge_score - ex.human_score).abs();
-        }
+        let total_error: f64 = self
+            .examples
+            .iter()
+            .map(|ex| {
+                // Por `evaluate` y no llamando al `scorer` a pelo: lo segundo se
+                // saltaba los pesos y la normalizacion por escala, asi que el
+                // error se medía contra un numero que NO es el que el juez
+                // publica. Dos definiciones de «la nota del juez» es una de mas.
+                let judge_score = judge.evaluate(&ex.input, &ex.output).overall_score;
+                (judge_score - ex.human_score).abs()
+            })
+            .sum();
 
-        total_error / self.examples.len() as f64
+        Some(total_error / self.examples.len() as f64)
     }
 
     /// Return a slice of all calibration examples.

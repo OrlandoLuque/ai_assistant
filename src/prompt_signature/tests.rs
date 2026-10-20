@@ -3031,14 +3031,14 @@ fn test_prompt_judge_result_construction() {
         per_criterion: vec![CriterionScore {
             criterion_name: "accuracy".to_string(),
             score: 0.9,
-            reasoning: "Very accurate".to_string(),
+            reasoning: Some("Very accurate".to_string()),
         }],
         reasoning: "Overall good quality".to_string(),
-        confidence: 0.9,
+        criterion_agreement: Some(0.9),
     };
     assert!((result.overall_score - 0.85).abs() < 1e-9);
     assert_eq!(result.per_criterion.len(), 1);
-    assert!((result.confidence - 0.9).abs() < 1e-9);
+    assert_eq!(result.criterion_agreement, Some(0.9));
 }
 
 #[test]
@@ -3046,11 +3046,11 @@ fn test_criterion_score_construction() {
     let score = CriterionScore {
         criterion_name: "fluency".to_string(),
         score: 4.5,
-        reasoning: "Very fluent output".to_string(),
+        reasoning: Some("Very fluent output".to_string()),
     };
     assert_eq!(score.criterion_name, "fluency");
     assert!((score.score - 4.5).abs() < 1e-9);
-    assert_eq!(score.reasoning, "Very fluent output");
+    assert_eq!(score.reasoning.as_deref(), Some("Very fluent output"));
 }
 
 #[test]
@@ -3102,19 +3102,25 @@ fn test_judge_metric_evaluate_returns_result() {
 
     let judge = JudgeMetric::new(
         config,
-        Box::new(|_input: &str, output: &str, _rubric: &JudgeRubric| -> f64 {
-            if output.contains("Paris") {
-                0.9
-            } else {
-                0.2
-            }
-        }),
-    );
+        Box::new(
+            |_input: &str, output: &str, _criterion: &JudgeCriterion| -> f64 {
+                if output.contains("Paris") {
+                    0.9
+                } else {
+                    0.2
+                }
+            },
+        ),
+    )
+    .expect("la rubrica es valida");
 
     let result = judge.evaluate("What is the capital of France?", "Paris");
     assert!((result.overall_score - 0.9).abs() < 1e-9);
     assert_eq!(result.per_criterion.len(), 1);
-    assert!((result.confidence - 0.8).abs() < 1e-9);
+    // Un solo criterio: no hay dispersion que medir, asi que `None`.
+    // Antes aqui se afirmaba `confidence == 0.8`, que era fijar una
+    // constante inventada y llamarlo prueba.
+    assert_eq!(result.criterion_agreement, None);
 
     let result2 = judge.evaluate("What is the capital of France?", "London");
     assert!((result2.overall_score - 0.2).abs() < 1e-9);
@@ -3139,7 +3145,7 @@ fn test_judge_metric_eval_metric_impl_score() {
     let judge = JudgeMetric::new(
         config,
         Box::new(
-            |predicted: &str, expected: &str, _rubric: &JudgeRubric| -> f64 {
+            |predicted: &str, expected: &str, _criterion: &JudgeCriterion| -> f64 {
                 if predicted == expected {
                     1.0
                 } else {
@@ -3147,7 +3153,8 @@ fn test_judge_metric_eval_metric_impl_score() {
                 }
             },
         ),
-    );
+    )
+    .expect("la rubrica es valida");
 
     // Test EvalMetric trait impl
     assert_eq!(judge.name(), "judge_metric");
@@ -3208,8 +3215,9 @@ fn test_calibration_set_calibration_error_computation() {
     // Judge always returns 0.7
     let judge = JudgeMetric::new(
         config,
-        Box::new(|_: &str, _: &str, _: &JudgeRubric| -> f64 { 0.7 }),
-    );
+        Box::new(|_: &str, _: &str, _: &JudgeCriterion| -> f64 { 0.7 }),
+    )
+    .expect("la rubrica es valida");
 
     let mut cal = CalibrationSet::new();
     cal.add(CalibrationExample {
@@ -3223,7 +3231,170 @@ fn test_calibration_set_calibration_error_computation() {
         human_score: 0.5, // error = |0.7 - 0.5| = 0.2
     });
 
-    let error = cal.calibration_error(&judge);
+    let error = cal.calibration_error(&judge).expect("hay ejemplos");
     // Mean absolute error = (0.1 + 0.2) / 2 = 0.15
     assert!((error - 0.15).abs() < 1e-9);
+}
+
+/// V416: un conjunto de calibracion VACIO no es un juez perfecto.
+///
+/// Antes `calibration_error` devolvia `0.0` sin ejemplos, que es exactamente el
+/// valor de «acuerdo perfecto con el humano». O sea que la ausencia de medicion
+/// y el mejor resultado posible eran el mismo numero, y quien lo leyera en un
+/// informe no podia distinguirlos. Ahora es `None`.
+#[test]
+fn an_empty_calibration_set_is_not_a_perfect_judge() {
+    let mut rubric = JudgeRubric::new("test".to_string());
+    rubric.add_criterion(JudgeCriterion {
+        name: "q".to_string(),
+        description: "d".to_string(),
+        weight: 1.0,
+        scale: (0.0, 1.0),
+    });
+    let judge = JudgeMetric::new(
+        JudgeConfig {
+            rubric,
+            few_shot_examples: Vec::new(),
+            temperature: 0.0,
+        },
+        Box::new(|_: &str, _: &str, _: &JudgeCriterion| -> f64 { 0.7 }),
+    )
+    .expect("la rubrica es valida");
+
+    let empty = CalibrationSet::new();
+    assert_eq!(
+        empty.calibration_error(&judge),
+        None,
+        "sin ejemplos no hay error que medir, y 0.0 se leeria como acuerdo perfecto"
+    );
+}
+
+/// Y la prueba que de verdad fija el arreglo de V416: **los pesos pesan**.
+///
+/// Dos criterios con la misma escala y notas opuestas, pero pesos 3:1. Si los
+/// pesos se ignoran (el comportamiento anterior) la nota global no puede
+/// depender de cual de los dos pesa mas.
+#[test]
+fn the_weights_actually_weight() {
+    let mut rubric = JudgeRubric::new("pesos".to_string());
+    rubric.add_criterion(JudgeCriterion {
+        name: "alto".to_string(),
+        description: "siempre 1.0".to_string(),
+        weight: 3.0,
+        scale: (0.0, 1.0),
+    });
+    rubric.add_criterion(JudgeCriterion {
+        name: "bajo".to_string(),
+        description: "siempre 0.0".to_string(),
+        weight: 1.0,
+        scale: (0.0, 1.0),
+    });
+
+    let judge = JudgeMetric::new(
+        JudgeConfig {
+            rubric,
+            few_shot_examples: Vec::new(),
+            temperature: 0.0,
+        },
+        Box::new(|_: &str, _: &str, c: &JudgeCriterion| -> f64 {
+            if c.name == "alto" {
+                1.0
+            } else {
+                0.0
+            }
+        }),
+    )
+    .expect("la rubrica es valida");
+
+    let r = judge.evaluate("entrada", "salida");
+
+    // (1.0*3 + 0.0*1) / 4 = 0.75. Con los pesos ignorados saldria 0.5.
+    assert!(
+        (r.overall_score - 0.75).abs() < 1e-9,
+        "esperaba la media ponderada 0.75, salio {}",
+        r.overall_score
+    );
+
+    // Y cada criterio lleva SU nota, no la global reescalada.
+    assert_eq!(r.per_criterion.len(), 2);
+    assert!((r.per_criterion[0].score - 1.0).abs() < 1e-9);
+    assert!((r.per_criterion[1].score - 0.0).abs() < 1e-9);
+
+    // Maximo desacuerdo entre criterios: 1.0 contra 0.0.
+    assert_eq!(r.criterion_agreement, Some(0.0));
+}
+
+/// Las escalas distintas no deben aplastarse entre si: un criterio de 0..10 y
+/// otro de 0..1, los dos en su maximo, tienen que dar 1.0 y no una media de
+/// numeros crudos.
+#[test]
+fn criteria_on_different_scales_are_normalised_before_averaging() {
+    let mut rubric = JudgeRubric::new("escalas".to_string());
+    rubric.add_criterion(JudgeCriterion {
+        name: "de_diez".to_string(),
+        description: "escala 0..10".to_string(),
+        weight: 1.0,
+        scale: (0.0, 10.0),
+    });
+    rubric.add_criterion(JudgeCriterion {
+        name: "de_uno".to_string(),
+        description: "escala 0..1".to_string(),
+        weight: 1.0,
+        scale: (0.0, 1.0),
+    });
+
+    let judge = JudgeMetric::new(
+        JudgeConfig {
+            rubric,
+            few_shot_examples: Vec::new(),
+            temperature: 0.0,
+        },
+        // Cada criterio en su maximo.
+        Box::new(|_: &str, _: &str, c: &JudgeCriterion| -> f64 { c.scale.1 }),
+    )
+    .expect("la rubrica es valida");
+
+    let r = judge.evaluate("e", "s");
+    assert!(
+        (r.overall_score - 1.0).abs() < 1e-9,
+        "los dos en su maximo son un 1.0, salio {}",
+        r.overall_score
+    );
+    // Y coinciden del todo, aunque sus numeros crudos sean 10 y 1.
+    assert_eq!(r.criterion_agreement, Some(1.0));
+}
+
+/// Una rubrica invalida se rechaza al construir, no produce numeros raros.
+#[test]
+fn an_invalid_rubric_is_refused_at_construction() {
+    let empty = JudgeRubric::new("sin criterios".to_string());
+    let built = JudgeMetric::new(
+        JudgeConfig {
+            rubric: empty,
+            few_shot_examples: Vec::new(),
+            temperature: 0.0,
+        },
+        Box::new(|_: &str, _: &str, _: &JudgeCriterion| -> f64 { 1.0 }),
+    );
+    assert!(built.is_err(), "una rubrica sin criterios no es valida");
+
+    let mut negativo = JudgeRubric::new("peso negativo".to_string());
+    negativo.add_criterion(JudgeCriterion {
+        name: "malo".to_string(),
+        description: "peso -1".to_string(),
+        weight: -1.0,
+        scale: (0.0, 1.0),
+    });
+    assert!(
+        JudgeMetric::new(
+            JudgeConfig {
+                rubric: negativo,
+                few_shot_examples: Vec::new(),
+                temperature: 0.0,
+            },
+            Box::new(|_: &str, _: &str, _: &JudgeCriterion| -> f64 { 1.0 }),
+        )
+        .is_err(),
+        "un peso negativo no es valido"
+    );
 }

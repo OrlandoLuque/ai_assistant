@@ -5,6 +5,108 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v292 (2026-10-21) - V416: la rubrica ponderada no ponderaba, y era justo la pieza que el plan mandaba conservar (0.2.375)
+
+N127 fase 1. El plan decia: elegir `llm_judge.rs` como la implementacion viva y **absorber las
+rubricas ponderadas** de `prompt_signature/judge.rs`. Antes de absorber nada hay que mirar lo que
+se absorbe, y lo que habia era esto.
+
+### El campo `weight` aparecia en cuatro sitios y en ninguno pesaba
+
+Medido: su declaracion, `total_weight()` que los suma, `validate()` que comprueba que son
+positivos, y `evaluate()` que llama a `total_weight()` **solo para compararlo con cero**. La nota
+global era el numero que devolvia el `scorer` inyectado, sin tocar.
+
+Y con el, dos promesas mas que el tipo hacia y no cumplia:
+
+| promesa | realidad |
+|---|---|
+| `overall_score` documentado como *«The weighted overall score»* | el numero crudo del `scorer`, sin ponderar |
+| `per_criterion` con una nota por criterio | **fabricado**: todos el mismo valor global reescalado a su rango, con un `reasoning` que decia literalmente «based on overall evaluation» |
+| `confidence: 0.8` «Confidence in the judgment» | una constante fija. **Y habia un test afirmando que valia 0.8**, o sea fijando el invento y llamandolo prueba |
+
+Tres instancias del defecto de firma de esta casa en cincuenta lineas.
+
+### Por que no se podia arreglar sin cambiar la API
+
+El `scorer` era `Fn(&str, &str, &JudgeRubric) -> f64`: **un** numero para toda la rubrica. Con eso
+no hay notas por criterio que ponderar, asi que la ponderacion no era un bug de calculo sino una
+imposibilidad estructural.
+
+Ahora es `CriterionScorer = Fn(&str, &str, &JudgeCriterion) -> f64`, se llama **una vez por
+criterio**, y `evaluate()` hace la media ponderada de verdad. Las notas se normalizan antes con la
+`scale` de cada criterio, porque si no uno puntuado de 0 a 10 aplastaria a uno de 0 a 1 por el mero
+hecho de usar otra regla.
+
+Cambio de API publica, autorizado por el autor: *«tira con ello, no tenemos oficialmente usuarios
+que usen nuestra libreria»*.
+
+### Lo demas que cayo al tirar del hilo
+
+* **`confidence` fuera, y en su lugar `criterion_agreement: Option<f64>`** -- cuanto coinciden los
+  criterios entre si. Es un numero medido, y **se llama por lo que es**: no es la confianza en que
+  el veredicto sea correcto. `None` con menos de dos criterios, porque con uno no hay dispersion.
+* **`reasoning` por criterio pasa a `Option<String>` y vale `None`.** Un `scorer` numerico no da
+  explicacion; decirlo con el tipo es mas honesto que rellenarlo con una frase que parece una y no
+  lo es.
+* **`validate()` existia desde el principio y no lo llamaba nadie.** Ahora `new()` devuelve
+  `Result` y rechaza rubricas sin criterios o con pesos negativos, que antes se aceptaban y
+  producian numeros sin sentido en silencio.
+* **`EvalMetric::score()` y `CalibrationSet::calibration_error()` llamaban al `scorer` por su
+  cuenta**, saltandose pesos y normalizacion. Habia **dos definiciones** de «la nota del juez» que
+  podian discrepar. Las dos pasan ahora por `evaluate`.
+* **`calibration_error` devolvia `0.0` con el conjunto vacio**, que es exactamente el valor de
+  «acuerdo perfecto con el humano»: la ausencia de medicion y el mejor resultado posible eran el
+  mismo numero. Ahora `Option`, y hay un test que lo fija.
+
+### Y la prueba, con las dos direcciones medidas
+
+`the_weights_actually_weight` usa dos criterios con notas opuestas y pesos 3:1, asi que la nota
+global solo puede salir 0,75 si los pesos cuentan. Con el factor de peso quitado sale 0,25 y la
+prueba falla diciendo el numero.
+
+**Undecima vez esta semana que un instrumento me engana, y otra vez de las mias.** La primera
+mutacion «sobrevivio»: la lance con `cargo test --lib judge`, que filtra por **nombre de test**, y
+mis pruebas nuevas no llevan «judge» en el nombre. Los 42 de antes y los 42 de despues eran los
+mismos tests -- las mias no se ejecutaron ninguna de las dos veces. Lei «42 passed» como «mis tests
+pasaron», cuando significaba «42 tests que no son los tuyos pasaron». Solo se vio porque el numero
+no se movio al anadir cuatro pruebas, y eso deberia haber sido imposible.
+
+### Lo que queda de la fase 1, y por que el plan apuntaba al modulo equivocado
+
+Se hace aparte: arreglar lo que se va a unificar y unificarlo son dos cambios, y mezclarlos
+habria escondido el primero dentro del segundo. Pero de paso hay que corregir el plan, porque
+**estaba escrito desde los nombres de los ficheros y no desde el grafo de llamadas**.
+
+N127 decia: elegir `llm_judge.rs` como la implementacion viva. Medido quien construye cada uno,
+fuera de su propio modulo y de los tests:
+
+| implementacion | consumidores reales |
+|---|---|
+| `evaluation.rs::LlmJudgeEvaluator` | `prompt_breeder/fitness.rs` (5), `eval_suite/runner.rs`, `eval_suite/mod.rs` |
+| `llm_judge.rs::LlmJudge` (740 lineas) | **ninguno**: su unico `use` esta dentro de un test de `eval_suite/feature_combos.rs` |
+| `prompt_signature::JudgeMetric` | **ninguno**, y `JudgeRubric` y `CalibrationSet` tampoco |
+
+La viva es la tercera en el plan y la unica que nadie cita es la que el plan mandaba conservar.
+Y la busqueda que me lo hizo creer tambien mentia: `agent_methodology.rs:269` sale al buscar
+`LlmJudge`, y no usa este modulo -- es **una variante de otro enum** que se llama igual.
+
+Lo que esto convierte en obligatorio: **las tres no son tres copias de lo mismo**, y la palabra
+«unificar» del plan sugeria que si. Son tres etapas de un unico recorrido, y cada una tiene una
+pieza que las otras dos no tienen:
+
+* `prompt_signature/judge.rs` -- la rubrica: pesos, escalas, calibracion contra notas humanas.
+* `evaluation.rs` -- la llamada al modelo y el voto por mayoria. Su rubrica es un
+  `Option<String>`, texto libre: **no tiene estructura ni pesos**.
+* `llm_judge.rs` -- el prompt por criterio y el parseo de la respuesta, mas pairwise y
+  faithfulness de RAG. `grep -ci weight` da **0**.
+
+O sea que de los tres jueces, el unico con rubrica ponderada estructurada era el que no estaba
+conectado a nada, y los pesos no funcionaban. Si hubiera hecho la unificacion mecanica que el
+plan describia --coger el tipo `JudgeRubric` y llevarlo al modulo «vivo»-- habria copiado la
+ponderacion rota dentro de la implementacion superviviente, y el defecto habria salido de ahi
+convertido en «el juez unificado», con su nombre nuevo y sin la etiqueta.
+
 ## [Unreleased] - v291 (2026-10-20) - V415: la puerta para los dos binarios que nadie lintaba (0.2.374)
 
 Cierra la mitad de N155 que le daba nombre. Estaba bloqueada porque el comando no pasaba; V412 lo
