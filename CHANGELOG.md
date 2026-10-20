@@ -5,6 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v288 (2026-10-20) - V412: los binarios que nadie lintaba, y mi cifra de «ocho lints» era el resumen de uno solo (0.2.371)
+
+N155, que salio de V409: `cargo clippy --features gui,gui-pro` no lo corre **ningun trabajo de
+CI**, y por eso ahi aparecieron dos constantes muertas que V404 habia dejado dos dias antes.
+Ahora los dos binarios salen **limpios con `-D warnings`**, por primera vez.
+
+### Primero, la correccion: no eran ocho
+
+Dije «8 lints». Era **el resumen de un binario** (`due to 8 previous errors`) leido como si fuera
+el total. Medidos bien eran **~17**, porque `ai_gui-pro.rs` tiene sus **propias copias** de casi
+todos los de `ai_gui.rs`. Decima vez esta semana que un numero mio sale de leer mal una salida,
+y a diferencia de las nueve anteriores esta no es culpa del instrumento: es aritmetica mia.
+
+### Los que importaban tenian plazo puesto por upstream
+
+Cuatro `Stroke::new(1.0, ...)` caian a `f32` por `f32: From<f64>`, y el compilador los anuncia
+como **error duro en una version futura**. Esos no son cosmetica: tienen fecha de caducidad que
+no pone este proyecto. A `1.0_f32`.
+
+El resto, mecanico y duplicado en los dos ficheros:
+
+| lint | que era |
+|---|---|
+| `filter(..).last()` sobre `Split` | `Split` es `DoubleEndedIterator`: recorria el iterador **entero** para quedarse con el final |
+| `needless_borrow` | un `&` de mas en el `cmp` del orden por tamano |
+| `collapsible_if` | el boton de reconstruir el grafo, con dos `if` anidados |
+| `ref_binding_to_reference` | `if let Some(ref report) = ...map(\|s\| &s.advisor)` ataba una referencia **a** una referencia |
+| `unused_enumerate_index` | `for (_msg_idx, msg) in ...iter().enumerate()` |
+
+Y una trampa dentro del arreglo: para el primero puse `next_back()`, que es lo que sugiere el
+lint `double_ended_iterator_last`... y **clippy marca igualmente `filter(..).next_back()`**. El
+que no se queja es `rfind(..)`, que es la misma operacion en una sola llamada.
+
+### Lo que NO se hizo, con la razon escrita al lado
+
+`render_model_card` tiene **11 argumentos** en los dos binarios. Suprimido con
+`#[allow(clippy::too_many_arguments)]` y el motivo al lado, no a secas.
+
+El arreglo real es una estructura con campos con nombre. Lo delicado no es la firma: son los
+**seis sitios de llamada** -- tres en cada binario -- con diez argumentos posicionales, **cinco
+`bool` seguidos** (`installed`, `is_pulling`, `is_deleting`, `is_ollama`, `is_cloud`,
+`is_busy`). Si al migrar se intercambian dos, **el compilador no dice nada**, y esto es codigo
+de interfaz sin un solo test que lo cace. A diferencia de los cuatro `f32`, este **no tiene
+plazo de upstream**, asi que no es trabajo para las dos de la manana. Queda en N155 con la forma
+ya medida.
+
+### Y con esto la puerta pasa a ser posible
+
+La mitad de N155 que da nombre a la tarea -- que CI linte estos dos binarios -- estaba
+bloqueada porque el comando no pasaba. Ahora pasa. Si entra en `ci.yml` o si debe cubrirlo la
+bateria `--category=feature_matrix` del harness (cuya fuente no menciona `gui`) es decision del
+autor: cuesta minutos de CI.
+
 ## [Unreleased] - v287 (2026-10-20) - V411: la puerta decia «cero variantes en comun» y eran el mismo tipo con las variantes rebautizadas (0.2.370)
 
 Segundo caso de N134 esta noche. Deuda congelada **18 -> 17**, enums divergentes **33 -> 32**.

@@ -2014,8 +2014,10 @@ impl AiGuiApp {
                                     // Extract the last meaningful line
                                     let line = text
                                         .split('\r')
-                                        .filter(|s| !s.trim().is_empty())
-                                        .last()
+                                        // `rfind` y no `filter(..).last()`: `Split` es
+                                        // DoubleEndedIterator, asi que busca desde el final
+                                        // en vez de recorrerlo entero.
+                                        .rfind(|s| !s.trim().is_empty())
                                         .unwrap_or("")
                                         .trim()
                                         .to_string();
@@ -2600,7 +2602,7 @@ impl AiGuiApp {
                                 a.size
                                     .as_deref()
                                     .unwrap_or("")
-                                    .cmp(&b.size.as_deref().unwrap_or(""))
+                                    .cmp(b.size.as_deref().unwrap_or(""))
                             }),
                             _ => installed.sort_by(|a, b| a.name.cmp(&b.name)),
                         }
@@ -2690,6 +2692,13 @@ impl AiGuiApp {
     }
 
     /// Render a single model card. Returns (pull_clicked, delete_clicked).
+    //
+    // Misma excepcion que en ai_gui.rs, y por la misma razon: el arreglo son 11
+    // argumentos -> una estructura con campos con nombre, pero hay seis sitios
+    // de llamada entre los dos binarios con cinco `bool` posicionales seguidos,
+    // y un intercambio al migrar no lo caza el compilador. Sin plazo de
+    // upstream, al contrario que los otros lints de V412. Medido en N155.
+    #[allow(clippy::too_many_arguments)]
     fn render_model_card(
         ui: &mut Ui,
         name: &str,
@@ -3115,18 +3124,16 @@ impl AiGuiApp {
         }
 
         // Reset graph button (only when graph is enabled)
-        if self.settings.graph_enabled {
-            if ui.button("Rebuild Graph").clicked() {
-                if let Some(ref kg) = self.knowledge_graph {
-                    let _ = kg.clear();
-                }
-                self.graph_viz = None;
-                if !self.knowledge_sources.is_empty() {
-                    self.reindex_existing_sources_into_graph();
-                    self.add_toast("Knowledge graph rebuilt", false);
-                } else {
-                    self.add_toast("Graph cleared (no sources to re-index)", false);
-                }
+        if self.settings.graph_enabled && ui.button("Rebuild Graph").clicked() {
+            if let Some(ref kg) = self.knowledge_graph {
+                let _ = kg.clear();
+            }
+            self.graph_viz = None;
+            if !self.knowledge_sources.is_empty() {
+                self.reindex_existing_sources_into_graph();
+                self.add_toast("Knowledge graph rebuilt", false);
+            } else {
+                self.add_toast("Graph cleared (no sources to re-index)", false);
             }
         }
     }
@@ -3174,7 +3181,9 @@ impl AiGuiApp {
         ui.separator();
 
         // Advisor recommendations
-        if let Some(ref report) = self.scan_result_data.as_ref().map(|s| &s.advisor) {
+        // Sin `ref`: `map(|s| &s.advisor)` ya devuelve una referencia, asi que
+        // `ref report` ataba una referencia A una referencia.
+        if let Some(report) = self.scan_result_data.as_ref().map(|s| &s.advisor) {
             ui.heading("Recommendations");
             if report.recommendations.is_empty() {
                 ui.label("All good! No recommendations.");
@@ -4737,7 +4746,7 @@ impl AiGuiApp {
                 } else {
                     // Render messages with details buttons
                     let mut detail_idx = 0usize;
-                    for (_msg_idx, msg) in self.assistant.conversation.iter().enumerate() {
+                    for msg in self.assistant.conversation.iter() {
                         widgets::chat_message(ui, msg, &self.colors, max_width);
 
                         // Add details button for assistant messages
@@ -5048,7 +5057,7 @@ impl AiGuiApp {
                 {
                     painter.line_segment(
                         [from_pos, to_pos],
-                        Stroke::new(1.0, Color32::from_gray(100)),
+                        Stroke::new(1.0_f32, Color32::from_gray(100)),
                     );
                     let mid =
                         Pos2::new((from_pos.x + to_pos.x) / 2.0, (from_pos.y + to_pos.y) / 2.0);
@@ -5072,7 +5081,7 @@ impl AiGuiApp {
                 let radius = 10.0 + (node.mention_count as f32).min(8.0);
 
                 painter.circle_filled(pos, radius, color);
-                painter.circle_stroke(pos, radius, Stroke::new(1.0, Color32::WHITE));
+                painter.circle_stroke(pos, radius, Stroke::new(1.0_f32, Color32::WHITE));
                 painter.text(
                     Pos2::new(pos.x, pos.y + radius + 6.0),
                     Align2::CENTER_TOP,
