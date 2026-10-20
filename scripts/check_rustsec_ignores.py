@@ -110,6 +110,50 @@ def ci_entries(path: Path) -> list[str]:
     return re.findall(r"--ignore\s+(RUSTSEC-\d{4}-\d{4})", text)
 
 
+def shell_problems(path: Path) -> list[str]:
+    """Whether the ``--ignore`` flags form a RUNNABLE command, not just the right IDs.
+
+    `ci_entries` above matches on the flag, which answers "are the same advisories
+    listed?" and nothing else. V419 found out what that leaves out: an edit put
+    two flags on one line separated by a LITERAL backslash-n, so the shell handed
+    `cargo audit` an argument `n` and it died with `unrecognized subcommand 'n'`.
+    The ID check passed, because both IDs were there -- they were simply on a line
+    that no shell would run. A green that answers less than it appears to.
+
+    So this checks the shape of the lines, which is the part the regex is blind to:
+    one flag per line, and a continuation backslash on every line of the run but
+    the last.
+    """
+    problems: list[str] = []
+    lines = path.read_text(encoding="utf-8").splitlines()
+    flag_lines = [(n, ln) for n, ln in enumerate(lines, 1) if "--ignore" in ln]
+
+    for n, line in flag_lines:
+        if line.count("--ignore") > 1:
+            problems.append(
+                f"{path}:{n}: {line.count('--ignore')} flags `--ignore` en una sola "
+                f"linea; va uno por linea: {line.strip()!r}"
+            )
+        if "\\n" in line:
+            problems.append(
+                f"{path}:{n}: hay un `\\n` LITERAL (barra invertida + n) en vez de un "
+                f"salto de linea: {line.strip()!r}"
+            )
+
+    # Dentro de cada tramo contiguo de lineas con `--ignore`, todas menos la
+    # ultima tienen que acabar en `\` o el comando se corta a la mitad --
+    # silenciosamente, porque las que sobran se leen como otro comando.
+    for i, (n, line) in enumerate(flag_lines):
+        is_last_of_run = i + 1 == len(flag_lines) or flag_lines[i + 1][0] != n + 1
+        if not is_last_of_run and not line.rstrip().endswith("\\"):
+            problems.append(
+                f"{path}:{n}: la linea no acaba en `\\` y le siguen mas flags, "
+                f"asi que el comando se corta aqui: {line.strip()!r}"
+            )
+
+    return problems
+
+
 DEFAULT_AUDIT_FILES = (
     ".github/workflows/ci.yml",
     ".github/workflows/supply-chain.yml",
@@ -151,6 +195,12 @@ def main() -> int:
     audit_lists = {path: ci_entries(path) for path in audit_paths}
 
     problems: list[str] = []
+
+    # Antes que comparar IDs: que el comando se pueda ejecutar. Ver
+    # `shell_problems` -- la comprobacion de IDs dio verde sobre un fichero cuyo
+    # `cargo audit` moria al arrancar.
+    for path in audit_paths:
+        problems.extend(shell_problems(path))
 
     duplicates = {a for a in deny_list if deny_list.count(a) > 1}
     if duplicates:

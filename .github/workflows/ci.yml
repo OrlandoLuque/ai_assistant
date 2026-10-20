@@ -430,7 +430,8 @@ jobs:
             --ignore RUSTSEC-2026-0367 \
             --ignore RUSTSEC-2026-0368 \
             --ignore RUSTSEC-2026-0369 \
-            --ignore RUSTSEC-2026-0257 \n            --ignore RUSTSEC-2026-0381
+            --ignore RUSTSEC-2026-0257 \
+            --ignore RUSTSEC-2026-0381
 
   # The expensive tabular engine, on its own because it drags 397 crates and
   # 49.3 MiB (measured). Putting it in FEATURES_STD would slow every other job

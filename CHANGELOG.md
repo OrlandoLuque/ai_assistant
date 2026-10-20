@@ -5,6 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v295 (2026-10-21) - V419: la puerta comparaba los IDs correctos en un comando que no arrancaba (0.2.378)
+
+V418 arreglo las advisories y dejo Supply Chain **en rojo igual**, por un error mio al
+escribirlo: la sustitucion metio un `
+` **literal** --barra invertida y letra n-- en los dos
+workflows, en vez de un salto de linea. El shell le paso entonces a `cargo audit` un argumento
+`n`, y murio antes de empezar:
+
+```
+error: unrecognized subcommand 'n'
+```
+
+Lo interesante no es el error, que es de dedos. Es que **`check_rustsec_ignores.py` dio verde
+sobre ese fichero**, y lo corri a proposito antes de comitear.
+
+### Por que la puerta no podia verlo
+
+El comparador busca `--ignore\s+(RUSTSEC-\d{4}-\d{4})` por todo el texto. Con los dos flags
+pegados en una linea, los dos IDs estaban ahi, asi que las tres listas coincidian y la respuesta
+--«listan las mismas advisories»-- era **cierta**. Solo que la pregunta era otra: «¿se ejecuta
+este comando?». Un verde mas estrecho que la pregunta, en la puerta que existe justo para que
+nadie se fie de mirar el fichero.
+
+Y encadena con el anterior: la regex no distingue un salto de linea de dos caracteres que se
+parecen a uno, igual que `grep LlmJudge` no distingue cuatro tipos homonimos (V417). Las dos
+veces el instrumento contesto con seguridad sobre una pregunta que no era la mia.
+
+### Lo que comprueba ahora
+
+`shell_problems()`, antes de comparar IDs, mira **la forma de las lineas**, que es la parte a la
+que la regex es ciega:
+
+* un solo `--ignore` por linea,
+* ningun `
+` literal en esas lineas,
+* y continuacion `\` en todas las del tramo menos la ultima, porque si falta, el comando se
+  corta ahi y lo que sobra se lee como otro comando -- en silencio.
+
+Mutado, porque un «OK» sin mutacion solo dice que el script corrio:
+
+| mutacion | resultado |
+|---|---|
+| volver a meter el `
+` literal | exit 1, y nombra las dos cosas: dos flags en una linea, y el `
+` literal |
+| quitar la `\` de continuacion | exit 1: «la linea no acaba en `\` y le siguen mas flags» |
+
+### Y la comprobacion que de verdad cierra el asunto
+
+Antes de comitear, el comando se **extrajo del YAML parseado** (no leido a ojo) y se
+**ejecuto**: exit 0. Eso es lo que responde «¿funciona lo que CI va a correr?», y es lo que
+faltaba las dos veces de esta noche.
+
 ## [Unreleased] - v294 (2026-10-21) - V418: cuatro advisories de confianza de certificados, tres arregladas y la cuarta la pina `ureq` 2 (0.2.377)
 
 Rojo de CI, de los que el plan nocturno si permite interrumpir. La ejecucion programada de
