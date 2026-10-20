@@ -5,6 +5,61 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v289 (2026-10-20) - V413: una tarea que no podia fallar, y la prueba que escribi primero sobrevivio a la mutacion (0.2.372)
+
+Salido de N134: `TaskStatus` esta duplicado entre `mcp_task_tools` y `multi_agent`, y al leer las
+dos declaraciones para juzgarlas aparecio que **no era duplicacion, era un defecto**.
+
+### Una tarea creada por MCP no podia fallar
+
+```rust
+pub enum TaskStatus { Pending, InProgress, Done }   // y nada mas
+```
+
+Ni `Failed`, ni `Cancelled`, ni `Blocked`. Si una tarea fallaba, quien la gestionara tenia que
+**mentir** -- ponerla en `Done` -- o dejarla «en curso» para siempre. La duplicacion era solo el
+sintoma por el que se vio: la otra copia, en `multi_agent`, si tiene los seis estados.
+
+Y es **el mismo defecto que V363 arreglo en `StepStatus`**, donde un paso de plan tampoco podia
+fallar y un paso de grafo no podia esperar. Segunda vez que la misma forma aparece en un enum de
+estado duplicado, lo cual sugiere que el patron no es casualidad: cuando alguien copia un enum
+para «su» modulo, copia los estados del camino feliz.
+
+Anadidos `Blocked`, `Failed` y `Cancelled`. **Aditivo a proposito**: `Done` se sigue serializando
+como `"done"`, asi que ni el protocolo que ve un tercero ni las filas ya guardadas en SQLite --la
+columna es `TEXT`-- cambian de significado. Y como `task_update` convierte la cadena del cliente
+con `from_str`, los tres estados quedan **alcanzables por el protocolo** en el mismo cambio, no
+construidos y desconectados.
+
+Mas `is_terminal()`, porque «terminada» y «con exito» dejaron de ser lo mismo en el momento en que
+`Failed` existe. `Blocked` **no** es terminal a proposito: esta parada, no acabada.
+
+### La parte incomoda: mi primera prueba no probaba nada
+
+Escribi una prueba que pedia `tools/list` al servidor MCP y comprobaba que la respuesta mencionara
+los seis estados. Parecia rigurosa: va por el protocolo de verdad, no por las constantes del
+fichero.
+
+**Le aplique la mutacion de rigor --devolver el esquema de `task_list` a tres estados-- y la prueba
+SIGUIO EN VERDE.** Porque buscaba las palabras en el JSON **entero**, y `task_update`, que si
+anunciaba los seis, tapaba a `task_list`, que anunciaba tres.
+
+Es exactamente el patron de `project_masked_defect_pattern`: un defecto escondido detras de un
+vecino sano. Lo habria metido con una prueba de aspecto impecable **si no la hubiera mutado**.
+
+Reescrita para comprobar **por herramienta**, y con un `assert_eq!(checked, 2)` al final para que
+no pueda pasar en vacio: si alguien renombra `inputSchema` o mueve la descripcion, el bucle no
+itera y sin esa linea el test seguiria verde sin mirar nada. Ahora falla bajo la mutacion y dice
+cual es la herramienta culpable.
+
+### Lo que NO se hizo, y por que
+
+**Unificar de verdad con `multi_agent::TaskStatus`.** Aquella usa `Completed` donde esta usa
+`Done`, no deriva `serde`, y vive tras otra feature (`multi-agent` contra `tools`). Compartir tipo
+exige una tercera casa siempre-compilada **y** migrar las cadenas ya persistidas en las bases de
+datos de quien ya use esto. Eso es la decision de «casa comun» de N134 y una migracion de datos,
+no un arreglo de una linea: va cuando el autor decida donde vive el tipo compartido.
+
 ## [Unreleased] - v288 (2026-10-20) - V412: los binarios que nadie lintaba, y mi cifra de «ocho lints» era el resumen de uno solo (0.2.371)
 
 N155, que salio de V409: `cargo clippy --features gui,gui-pro` no lo corre **ningun trabajo de

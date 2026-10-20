@@ -105,13 +105,42 @@ impl TaskPriority {
 }
 
 /// Status of a user task.
+///
+/// Hasta V413 esto era `{Pending, InProgress, Done}` y nada mas: **una tarea
+/// creada por MCP no podia fallar**. Si fallaba, quien la gestionara tenia que
+/// mentir —ponerla en `Done`— o dejarla «en curso» para siempre. Es el mismo
+/// defecto que V363 arreglo en `StepStatus`, donde un paso de plan tampoco podia
+/// fallar; la duplicacion con `multi_agent::TaskStatus` era solo el sintoma por
+/// el que se vio (N134).
+///
+/// Los tres estados nuevos son **aditivos a proposito**: `Done` se sigue
+/// serializando como `"done"`, asi que ni el protocolo que ve un tercero ni las
+/// filas ya guardadas en SQLite (la columna es `TEXT`) cambian de significado.
+///
+/// Queda SIN hacer, y es decision del autor: unificar de verdad con
+/// `multi_agent::TaskStatus`. Aquella usa `Completed` donde esta usa `Done`, no
+/// deriva `serde`, y vive tras otra feature (`multi-agent` contra `tools`), asi
+/// que compartir tipo exige una tercera casa siempre-compilada **y** migrar las
+/// cadenas ya persistidas. Eso es trabajo aparte, no un arreglo de una linea.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum TaskStatus {
+    /// Aun no empezada.
     Pending,
+    /// En curso.
     InProgress,
+    /// Esperando a algo que no depende de quien la ejecuta.
+    Blocked,
+    /// Terminada con exito.
     Done,
+    /// Intentada y fallida. El motivo no cabe aqui: `TaskStatus` viaja como una
+    /// cadena en el protocolo y en la base, asi que convertirlo en
+    /// `Failed { reason }` romperia las dos. Si hace falta el porque, va en la
+    /// descripcion de la tarea.
+    Failed,
+    /// Abandonada deliberadamente, que no es lo mismo que fallar.
+    Cancelled,
 }
 
 impl TaskStatus {
@@ -119,7 +148,10 @@ impl TaskStatus {
         match s.to_lowercase().as_str() {
             "pending" => Some(Self::Pending),
             "in_progress" => Some(Self::InProgress),
+            "blocked" => Some(Self::Blocked),
             "done" => Some(Self::Done),
+            "failed" => Some(Self::Failed),
+            "cancelled" => Some(Self::Cancelled),
             _ => None,
         }
     }
@@ -128,8 +160,20 @@ impl TaskStatus {
         match self {
             Self::Pending => "pending",
             Self::InProgress => "in_progress",
+            Self::Blocked => "blocked",
             Self::Done => "done",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
         }
+    }
+
+    /// Si el estado es terminal, o sea si ya no se espera mas trabajo.
+    ///
+    /// Existe porque «terminada» y «con exito» dejaron de ser lo mismo en el
+    /// momento en que `Failed` y `Cancelled` existen, y quien filtre tareas
+    /// pendientes necesita distinguirlo sin repetir el `matches!` en cada sitio.
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, Self::Done | Self::Failed | Self::Cancelled)
     }
 }
 
@@ -702,7 +746,7 @@ pub fn register_task_tools(server: &mut McpServer, store: Arc<Mutex<UserTaskStor
             .with_property(
                 "status",
                 "string",
-                "Filter by status: pending, in_progress, done",
+                "Filter by status: pending, in_progress, blocked, done, failed, cancelled",
                 false,
             )
             .with_property(
@@ -821,7 +865,7 @@ pub fn register_task_tools(server: &mut McpServer, store: Arc<Mutex<UserTaskStor
             .with_property(
                 "status",
                 "string",
-                "New status: pending, in_progress, done",
+                "New status: pending, in_progress, blocked, done, failed, cancelled",
                 false,
             )
             .with_property(
@@ -1224,6 +1268,112 @@ mod tests {
         assert!(validate_due_date("2026-04-15").is_ok());
         assert!(validate_due_date("not-a-date").is_err());
         assert!(validate_due_date("2026-13-01").is_err());
+    }
+
+    /// V413: **una tarea tiene que poder fallar.**
+    ///
+    /// Antes `TaskStatus` era `{Pending, InProgress, Done}` y nada mas, asi que
+    /// una tarea fallida solo podia representarse mintiendo (`Done`) o dejandola
+    /// «en curso» para siempre. La prueba recorre el camino completo, incluido
+    /// SQLite, porque el estado se guarda como TEXTO y un `as_str`/`from_str`
+    /// descuadrado se pierde ahi en silencio y no en el compilador.
+    #[test]
+    fn a_task_can_fail_and_the_failure_survives_the_database() {
+        let store = test_store();
+
+        for (status, expected) in [
+            (TaskStatus::Blocked, "blocked"),
+            (TaskStatus::Failed, "failed"),
+            (TaskStatus::Cancelled, "cancelled"),
+        ] {
+            let mut task = sample_task("algo que sale mal");
+            task.status = status;
+            store.create(&task).expect("create");
+
+            let fetched = store.get(&task.id).expect("get").expect("found");
+            assert_eq!(
+                fetched.status, status,
+                "{expected}: el estado no sobrevivio a la ida y vuelta por SQLite"
+            );
+            assert_eq!(status.as_str(), expected);
+            assert_eq!(TaskStatus::from_str(expected), Some(status));
+        }
+    }
+
+    /// Y los tres estados nuevos tienen que llegar por el protocolo, no solo
+    /// existir en el enum: `task_update` convierte la cadena que manda el
+    /// cliente con `from_str`, asi que si esa funcion no los acepta la capacidad
+    /// esta construida y desconectada -- el defecto de firma de este proyecto.
+    #[test]
+    fn the_new_states_are_reachable_from_the_wire_and_advertised() {
+        for s in ["blocked", "failed", "cancelled"] {
+            assert!(
+                TaskStatus::from_str(s).is_some(),
+                "`{s}` no se puede pedir por el protocolo"
+            );
+        }
+        // Mayusculas incluidas, que `from_str` normaliza.
+        assert_eq!(TaskStatus::from_str("FAILED"), Some(TaskStatus::Failed));
+        assert_eq!(TaskStatus::from_str("no_existe"), None);
+
+        // Y lo que la herramienta ANUNCIA tiene que coincidir con lo que acepta.
+        // Se pregunta por el PROTOCOLO (`tools/list`), que es lo que ve un
+        // cliente de verdad, y no leyendo las constantes de este fichero: si el
+        // esquema y el parser derivan por separado, el cliente se entera
+        // probando y nosotros no nos enteramos nunca.
+        let mut server = McpServer::new("test", "0");
+        let store = Arc::new(Mutex::new(test_store()));
+        register_task_tools(&mut server, store);
+
+        let listed = server.handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#);
+        let parsed: serde_json::Value =
+            serde_json::from_str(&listed).expect("tools/list devuelve JSON");
+        let tools = parsed["result"]["tools"]
+            .as_array()
+            .expect("tools/list trae un array de herramientas");
+
+        // POR HERRAMIENTA, no sobre el JSON entero. La primera version de esta
+        // prueba buscaba las palabras en la respuesta completa y **sobrevivio a
+        // la mutacion**: `task_update` anunciaba los seis estados y tapaba a
+        // `task_list`, que anunciaba tres. Un defecto enmascarado por el vecino
+        // es justo lo que esta casa persigue.
+        let mut checked = 0;
+        for tool in tools {
+            let Some(desc) = tool["inputSchema"]["properties"]["status"]["description"].as_str()
+            else {
+                continue; // la herramienta no tiene parametro `status`
+            };
+            if !desc.contains("pending") {
+                continue; // tiene `status` pero no enumera valores
+            }
+            for value in ["blocked", "failed", "cancelled"] {
+                assert!(
+                    desc.contains(value),
+                    "`{}` acepta `{value}` pero NO lo anuncia: {desc:?}",
+                    tool["name"]
+                );
+            }
+            checked += 1;
+        }
+
+        // Y el recuento, para que esto no pueda pasar en VACIO. Si alguien
+        // renombra `inputSchema` o mueve la descripcion, el bucle de arriba no
+        // itera y sin esta linea el test seguiria en verde sin comprobar nada.
+        assert_eq!(
+            checked, 2,
+            "se esperaban 2 herramientas enumerando estados (task_list y task_update), vistas {checked}"
+        );
+    }
+
+    #[test]
+    fn terminal_means_no_more_work_is_expected() {
+        assert!(TaskStatus::Done.is_terminal());
+        assert!(TaskStatus::Failed.is_terminal());
+        assert!(TaskStatus::Cancelled.is_terminal());
+        assert!(!TaskStatus::Pending.is_terminal());
+        assert!(!TaskStatus::InProgress.is_terminal());
+        // `Blocked` NO es terminal a proposito: esta parada, no acabada.
+        assert!(!TaskStatus::Blocked.is_terminal());
     }
 }
 
