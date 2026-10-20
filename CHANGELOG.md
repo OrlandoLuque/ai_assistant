@@ -5,6 +5,66 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v294 (2026-10-21) - V418: cuatro advisories de confianza de certificados, tres arregladas y la cuarta la pina `ureq` 2 (0.2.377)
+
+Rojo de CI, de los que el plan nocturno si permite interrumpir. La ejecucion programada de
+Supply Chain y la de CI sobre V416 fallaron las dos, y los tres trabajos en rojo eran los de
+auditoria: nada de mi codigo. La base de RUSTSEC se baja en cada ejecucion, asi que un rojo
+que aparece sin que el arbol cambie significa **advisory nueva**.
+
+Cuatro, publicadas el 2026-10-20, y las cuatro de la misma familia: **el almacen de raices de
+TLS**.
+
+| advisory | crate | arreglo | estado |
+|---|---|---|---|
+| RUSTSEC-2026-0382 | `rustls-webpki 0.103.15` | >= 0.103.16 | **subido** |
+| RUSTSEC-2026-0383 | `webpki-root-certs 1.0.7` | >= 1.0.10 | **subido** |
+| RUSTSEC-2026-0381 | `webpki-roots 1.0.7` | >= 1.0.10 | **subido** |
+| RUSTSEC-2026-0381 | `webpki-roots 0.26.11` | >= 1.0.10 | suppression con fecha corta |
+
+La de `rustls-webpki` es la mas fea de las tres arregladas: *«Certificate verification may
+accept distrusted intermediates»*. Las otras dos son raices emSign desconfiadas que seguian
+empaquetadas. Para una libreria que habla HTTPS con 19 proveedores, esta familia es justo la
+que no se suprime si hay version que lo arregla, y para tres de las cuatro la habia.
+
+### La cuarta, y por que su suppression dice algo distinto de las otras diez
+
+`cargo update` no la alcanza. Medido con `cargo tree -e normal -i webpki-roots@0.26.11`: el
+unico dependiente es **`ureq 2.12.1`**, que es la ultima de la serie 2 y declara
+`webpki-roots = "0.26"`. El arreglo esta en 1.0.10, un salto mayor que solo trae `ureq` 3.
+
+Y la exposicion es **real**, no teorica. `cargo tree -e normal -p ureq@2.12.1` da
+`rustls 0.23.46` + `webpki-roots 0.26.11`: las llamadas HTTPS que hacemos por ureq usan ese
+almacen. Asi que la entrada en `deny.toml` **no dice que no nos afecte -- dice que nos afecta**,
+que es la unica forma honesta de escribirla. Las otras diez suppressions de la lista son
+«medido, no nos toca» o «no hay arreglo aguas arriba»; esta es «hay arreglo y no lo alcanzamos
+hoy», que es una categoria distinta y tenia que leerse distinta.
+
+De ahi la fecha: **2026-11-15**, tres semanas, contra los 2027-03-15 de las de egui. Una
+exposicion viva no se renueva en paz.
+
+El coste del arreglo de verdad, medido antes de decidir: **61 ficheros y 318 llamadas a
+`ureq::`**, con cambios de API de la serie 2 a la 3 por medio. Y la via de escape por
+`native-tls` --que sacaria `webpki-roots` del grafo-- tampoco es un sustituto directo: ureq 2
+con native-tls exige construir el agente a mano, asi que los 318 sitios que llaman a
+`ureq::get()` pelado se quedarian sin TLS. Queda como **N156**.
+
+### Comprobado, no supuesto
+
+* `cargo audit` con la lista completa: exit 0.
+* `cargo deny check` **entero**, no solo advisories: `advisories ok, bans ok, licenses ok,
+  sources ok`. Importa porque lo que fallaba en CI era el trabajo `cargo-deny`, y un cambio de
+  lock puede mover licencias.
+* El unico `advisory-not-detected` que queda es el RUSTSEC-2026-0002 de siempre (N154), no la
+  entrada nueva -- o sea que cargo-deny **si** ve `webpki-roots 0.26`.
+* Y las dos puertas de la politica de suppressions, cada una con su codigo de salida leido
+  aparte: `check_rustsec_ignores.py` y `check_recheck_dates.py`, las dos en 0. Con la mutacion
+  de rigor: quitando la entrada de `deny.toml` y dejandola en los dos workflows, la puerta de
+  sincronia pasa a 1. Un OK sin mutacion solo dice que el script corrio.
+
+La lista vive en tres ficheros (`deny.toml`, `ci.yml`, `supply-chain.yml`) y las tres se
+tocaron.
+
 ## [Unreleased] - v293 (2026-10-21) - V417: `num_judges` decia «majority voting» y hacia la media, que es el estadistico que NO sirve para eso (0.2.376)
 
 N127, siguiendo el hilo. V416 arreglo la rubrica del juez desconectado; esta mira el que
