@@ -5,6 +5,72 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v296 (2026-10-21) - V420: el juez pairwise preguntaba en un solo orden, y asi «A es mejor» y «A iba delante» dan el mismo veredicto (0.2.379)
+
+N127 fase 2, el primero de los sesgos del juez. Y es el mejor documentado de la tecnica: **un
+juez LLM prefiere lo que se le ensena primero.**
+
+`build_pairwise_prompt` pone siempre el primer argumento como «Response A». Una sola llamada,
+un solo orden, ninguna compensacion. Con eso no hay forma de separar las dos explicaciones de
+un veredicto, porque **el juez contesta igual de seguro en los dos casos**: devuelve su
+`preferred` y una `confidence` que se ha inventado el, y quien lee no tiene con que dudar.
+
+### Lo que se anade
+
+* `build_pairwise_prompts_both_orders()` -> `PairwisePromptPair { as_given, swapped }`. Los
+  dos prompts de la misma comparacion. Preguntar dos veces no arregla el sesgo: lo vuelve
+  **observable**, que es lo que faltaba.
+* `combine_pairwise(as_given, swapped)` -> `PairwiseVerdict`. Resuelve los dos veredictos en
+  uno, o en ninguno.
+
+| los dos ordenes | veredicto |
+|---|---|
+| coinciden en la misma respuesta | esa gana, `agreed: true` |
+| coinciden en empate | `agreed: true`, `preferred: None` -- acuerdo sin ganadora |
+| eligen la misma **posicion** | `position_bias_detected: true`, sin ganadora |
+| uno se moja y el otro empata | sin ganadora, y **sin** declarar sesgo |
+
+**Si se contradicen, no hay ganadora.** Dos veredictos opuestos no son medio veredicto, son
+ninguno, y `preferred` es `Option` justo para poder decirlo. Es la misma regla que V417 aplico
+a las metricas sin nota: la ausencia de un resultado no se escribe como un resultado.
+
+Y la cuarta fila importa: una discrepancia entre «prefiero A» y «empate» es real pero **no es
+sesgo de posicion** --- los dos no eligieron el mismo hueco. Marcarla como tal seria inventar
+un diagnostico, que es otra forma de la mentira que esta tarea viene arreglando.
+
+### El sitio donde esto se tuerce
+
+En el prompt invertido, **la que se presenta como «A» es la B original**. Asi que un juez
+*consistente* que prefiere la B contesta `"B"` en el primer orden y `"A"` en el segundo. Si el
+combinador no da la vuelta al segundo veredicto antes de comparar, lee eso como una
+contradiccion y **tira un veredicto bueno** --- y, peor, lo etiqueta como sesgo de posicion,
+que es el diagnostico exactamente opuesto al verdadero.
+
+Ese des-intercambio es un `match` de tres lineas y es la unica parte con una direccion que se
+puede equivocar. Tiene test propio, y la mutacion de quitarlo mata dos pruebas.
+
+### `confidence` se llama ahora `mean_self_reported_confidence`
+
+Porque es eso: un numero que el modelo escribe sobre si mismo. Lo que de verdad dice algo sobre
+la fiabilidad del veredicto son `agreed` y `position_bias_detected`, que son observaciones. Un
+test lo subraya dejando los dos `confidence` a `1.0` en el caso de sesgo de posicion: la
+seguridad declarada no cuenta para nada cuando los dos ordenes se contradicen.
+
+### Mutacion
+
+| mutacion | quien la mata |
+|---|---|
+| no des-intercambiar el segundo veredicto | `el_veredicto_del_orden_invertido_se_des_intercambia_antes_de_comparar` + el de sesgo |
+| `position_bias_detected` siempre `false` | `elegir_la_misma_posicion_en_los_dos_ordenes_es_sesgo_de_posicion` |
+| el prompt «invertido» no esta invertido | `los_dos_prompts_llevan_las_respuestas_cambiadas_de_sitio` |
+
+La tercera prueba comprueba **la posicion** del texto entre los rotulos `Response A:` y
+`Response B:`, no que el texto aparezca: aparece en los dos prompts, asi que un «aparece»
+lo cumpliria tambien un prompt sin invertir.
+
+Los dos tipos nuevos van reexportados en `lib.rs`: un tipo publico que no se puede nombrar
+desde fuera de la crate es el patron de N78, y aqui no cuesta nada evitarlo.
+
 ## [Unreleased] - v295 (2026-10-21) - V419: la puerta comparaba los IDs correctos en un comando que no arrancaba (0.2.378)
 
 V418 arreglo las advisories y dejo Supply Chain **en rojo igual**, por un error mio al

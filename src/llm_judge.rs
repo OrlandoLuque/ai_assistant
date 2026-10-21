@@ -88,6 +88,40 @@ pub struct PairwiseResult {
     pub confidence: f64,
 }
 
+/// Los dos prompts de una comparacion, para preguntar en ambos ordenes.
+///
+/// Ver [`LlmJudge::build_pairwise_prompts_both_orders`].
+#[derive(Debug, Clone)]
+pub struct PairwisePromptPair {
+    /// Las respuestas en el orden en que las dio quien llama.
+    pub as_given: String,
+    /// Las mismas al reves, asi que **«A» en este prompt es la B original**.
+    pub swapped: String,
+}
+
+/// Veredicto de una comparacion preguntada en los dos ordenes.
+///
+/// Ver [`LlmJudge::combine_pairwise`].
+#[derive(Debug, Clone)]
+pub struct PairwiseVerdict {
+    /// `"A"` o `"B"` en las etiquetas ORIGINALES, o `None` si no hay ganadora
+    /// --- porque el juez dijo empate en los dos ordenes, o porque se
+    /// contradijo. Dos veredictos que se contradicen no son medio veredicto.
+    pub preferred: Option<String>,
+    /// Si los dos ordenes dijeron lo mismo sobre la misma respuesta.
+    pub agreed: bool,
+    /// Si los dos ordenes eligieron la misma **posicion**, que tras intercambiar
+    /// las respuestas significa dos respuestas distintas: el juez estaba
+    /// puntuando el hueco y no el texto.
+    pub position_bias_detected: bool,
+    /// Media de la `confidence` que el juez se atribuyo en cada orden.
+    ///
+    /// Se llama `self_reported` porque es eso: un numero que el modelo escribe
+    /// sobre si mismo, no una medida de nada. Lo que de verdad dice algo sobre
+    /// la fiabilidad del veredicto son `agreed` y `position_bias_detected`.
+    pub mean_self_reported_confidence: f64,
+}
+
 /// Result of a RAG faithfulness evaluation.
 #[derive(Debug, Clone)]
 pub struct RagFaithfulnessResult {
@@ -250,6 +284,80 @@ impl LlmJudge {
              {{\"preferred\": \"A\" or \"B\" or \"tie\", \"reasoning\": \"<your reasoning>\", \"confidence\": <0.0 to 1.0>}}",
             query, response_a, response_b
         )
+    }
+
+    /// Los dos prompts de una misma comparacion, con las respuestas en el orden
+    /// dado y en el contrario.
+    ///
+    /// **Un juez LLM prefiere lo que se le ensena primero**, y es el sesgo mejor
+    /// documentado de esta tecnica. Con una sola llamada no hay forma de
+    /// separar «A es mejor» de «A iba delante»: el veredicto sale igual de
+    /// seguro en los dos casos. Preguntando en los dos ordenes, la discrepancia
+    /// se vuelve observable, y es lo que [`LlmJudge::combine_pairwise`] usa.
+    ///
+    /// Hasta V420 solo existia [`LlmJudge::build_pairwise_prompt`], que pone
+    /// siempre el primer argumento como «Response A» y no compensa nada.
+    pub fn build_pairwise_prompts_both_orders(
+        &self,
+        query: &str,
+        response_a: &str,
+        response_b: &str,
+    ) -> PairwisePromptPair {
+        PairwisePromptPair {
+            as_given: self.build_pairwise_prompt(query, response_a, response_b),
+            swapped: self.build_pairwise_prompt(query, response_b, response_a),
+        }
+    }
+
+    /// Combina los veredictos de los dos ordenes en uno solo, o en ninguno.
+    ///
+    /// `as_given` es la respuesta del juez al prompt sin tocar; `swapped`, al
+    /// prompt con las respuestas al reves. **En el segundo, la que se presenta
+    /// como «A» es la B original**, asi que su veredicto se da la vuelta antes
+    /// de comparar -- ese paso es el unico sitio donde esto se puede torcer, y
+    /// hay un test que lo fija.
+    ///
+    /// Si los dos ordenes coinciden en la misma respuesta, esa gana. Si no, no
+    /// gana ninguna (`preferred` es `None`): dos veredictos que se contradicen
+    /// no son medio veredicto, son ninguno. Y cuando los dos eligen la **misma
+    /// posicion**, la discrepancia tiene nombre y se marca en
+    /// `position_bias_detected`: el juez estaba puntuando el hueco, no el texto.
+    pub fn combine_pairwise(
+        &self,
+        as_given: &PairwiseResult,
+        swapped: &PairwiseResult,
+    ) -> PairwiseVerdict {
+        fn flip(label: &str) -> &str {
+            match label {
+                "A" => "B",
+                "B" => "A",
+                other => other,
+            }
+        }
+
+        let first = as_given.preferred.as_str();
+        let second_unswapped = flip(swapped.preferred.as_str());
+
+        if first == second_unswapped {
+            let preferred = (first != "tie").then(|| first.to_string());
+            return PairwiseVerdict {
+                preferred,
+                agreed: true,
+                position_bias_detected: false,
+                mean_self_reported_confidence: (as_given.confidence + swapped.confidence) / 2.0,
+            };
+        }
+
+        // Los dos eligieron la misma ETIQUETA, que tras intercambiar las
+        // respuestas significa el mismo HUECO: el juez puntuo la posicion.
+        let same_slot = as_given.preferred == swapped.preferred && first != "tie";
+
+        PairwiseVerdict {
+            preferred: None,
+            agreed: false,
+            position_bias_detected: same_slot,
+            mean_self_reported_confidence: (as_given.confidence + swapped.confidence) / 2.0,
+        }
     }
 
     /// Parse an LLM response to a pairwise comparison prompt.
@@ -620,6 +728,114 @@ Hope this helps!"#;
             assert!(prompt.contains("What is 2+2?"));
             assert!(prompt.contains("2+2 equals 4."));
         }
+    }
+
+    fn verdict(preferred: &str, confidence: f64) -> PairwiseResult {
+        PairwiseResult {
+            preferred: preferred.to_string(),
+            reasoning: String::new(),
+            confidence,
+        }
+    }
+
+    #[test]
+    fn el_veredicto_del_orden_invertido_se_des_intercambia_antes_de_comparar() {
+        // En el prompt invertido, la que se presenta como «A» es la B original.
+        // Asi que un juez CONSISTENTE que prefiere la B original contesta "B"
+        // en el primer orden y "A" en el segundo. Si el combinador no da la
+        // vuelta al segundo, lee eso como una contradiccion y tira un veredicto
+        // bueno. Es el unico sitio donde esto se puede torcer.
+        let judge = LlmJudge::new(vec![EvalCriterion::Relevance]);
+        let combined = judge.combine_pairwise(&verdict("B", 0.9), &verdict("A", 0.7));
+        assert!(combined.agreed, "los dos ordenes prefieren la B original");
+        assert_eq!(combined.preferred.as_deref(), Some("B"));
+        assert!(!combined.position_bias_detected);
+        assert!((combined.mean_self_reported_confidence - 0.8).abs() < 1e-9);
+    }
+
+    #[test]
+    fn elegir_la_misma_posicion_en_los_dos_ordenes_es_sesgo_de_posicion() {
+        // "A" las dos veces: tras intercambiar, son dos respuestas DISTINTAS.
+        // El juez estaba puntuando el hueco.
+        let judge = LlmJudge::new(vec![EvalCriterion::Relevance]);
+        let first_slot = judge.combine_pairwise(&verdict("A", 1.0), &verdict("A", 1.0));
+        assert!(!first_slot.agreed);
+        assert!(
+            first_slot.position_bias_detected,
+            "las dos veces la primera: es sesgo de posicion"
+        );
+        assert_eq!(
+            first_slot.preferred, None,
+            "no hay ganadora cuando los veredictos se contradicen"
+        );
+
+        // Y lo mismo hacia el otro lado: "B" las dos veces es sesgo hacia la
+        // ULTIMA posicion, igual de real. Que el 1.0 de confianza no cuente
+        // para nada aqui es a proposito.
+        let last_slot = judge.combine_pairwise(&verdict("B", 1.0), &verdict("B", 1.0));
+        assert!(
+            last_slot.position_bias_detected,
+            "las dos veces la segunda: tambien es sesgo de posicion"
+        );
+        assert_eq!(last_slot.preferred, None);
+    }
+
+    #[test]
+    fn un_empate_en_los_dos_ordenes_es_acuerdo_sin_ganadora() {
+        let judge = LlmJudge::new(vec![EvalCriterion::Relevance]);
+        let c = judge.combine_pairwise(&verdict("tie", 0.5), &verdict("tie", 0.5));
+        assert!(c.agreed, "empate dos veces es un acuerdo");
+        assert_eq!(c.preferred, None, "pero no hay ganadora");
+        assert!(
+            !c.position_bias_detected,
+            "un empate no elige posicion, asi que no hay sesgo que declarar"
+        );
+    }
+
+    #[test]
+    fn un_empate_contra_una_preferencia_no_decide_y_no_es_sesgo_de_posicion() {
+        // Discrepancia de verdad, pero de otra clase: uno se moja y el otro no.
+        // No hay ganadora, y llamarlo sesgo de posicion seria inventarse un
+        // diagnostico -- los dos no eligieron la misma posicion.
+        let judge = LlmJudge::new(vec![EvalCriterion::Relevance]);
+        let c = judge.combine_pairwise(&verdict("A", 0.8), &verdict("tie", 0.4));
+        assert!(!c.agreed);
+        assert_eq!(c.preferred, None);
+        assert!(!c.position_bias_detected);
+    }
+
+    #[test]
+    fn los_dos_prompts_llevan_las_respuestas_cambiadas_de_sitio() {
+        let judge = LlmJudge::new(vec![EvalCriterion::Relevance]);
+        let pair = judge.build_pairwise_prompts_both_orders("q", "PRIMERA", "SEGUNDA");
+        // En el prompt sin tocar, PRIMERA va bajo «Response A»; en el invertido,
+        // bajo «Response B». Se comprueba la POSICION, no que el texto aparezca:
+        // aparece en los dos, y eso lo cumpliria tambien un prompt sin invertir.
+        let a_pos = pair
+            .as_given
+            .find("Response A:")
+            .expect("el prompt debe rotular Response A");
+        let b_pos = pair
+            .as_given
+            .find("Response B:")
+            .expect("el prompt debe rotular Response B");
+        let first_in_as_given = pair.as_given.find("PRIMERA").expect("PRIMERA en el prompt");
+        assert!(
+            first_in_as_given > a_pos && first_in_as_given < b_pos,
+            "PRIMERA tiene que ir en el hueco de A en el prompt sin tocar"
+        );
+
+        let a_pos_s = pair.swapped.find("Response A:").expect("Response A");
+        let b_pos_s = pair.swapped.find("Response B:").expect("Response B");
+        let first_in_swapped = pair.swapped.find("PRIMERA").expect("PRIMERA");
+        assert!(
+            first_in_swapped > b_pos_s && first_in_swapped > a_pos_s,
+            "PRIMERA tiene que ir en el hueco de B en el prompt invertido"
+        );
+        assert_ne!(
+            pair.as_given, pair.swapped,
+            "si los dos prompts son iguales no se esta preguntando en dos ordenes"
+        );
     }
 
     #[test]
