@@ -1074,6 +1074,42 @@ impl Default for LlmJudgeConfig {
 /// LLM-as-Judge evaluator that uses a language model to evaluate responses.
 ///
 /// Takes a generator callback that produces LLM responses given a prompt.
+///
+/// # Examples
+///
+/// Este ejemplo es un doctest a proposito: **compila FUERA de la crate**, que es
+/// justo donde esto estaba roto. Hasta V421 el juez no se podia usar desde
+/// fuera por tres razones acumuladas --- no estaba reexportado en la raiz, su
+/// `LlmJudgeConfig` es `#[non_exhaustive]` y no tiene builder (hay que partir de
+/// `Default`), y nadie lo registraba --- y un test interno no habria visto
+/// ninguna de las dos primeras, porque compila DENTRO.
+///
+/// ```
+/// use ai_assistant::{
+///     EvalSample, EvalSuite, Evaluator, LlmJudgeConfig, LlmJudgeEvaluator, MetricType,
+/// };
+///
+/// // Un "modelo" de pega que contesta siempre lo mismo.
+/// let judge = LlmJudgeEvaluator::new(|_prompt: &str| {
+///     Ok(r#"{"Relevance": 8.0}"#.to_string())
+/// });
+///
+/// // `LlmJudgeConfig` es `#[non_exhaustive]`: desde fuera NO se puede usar un
+/// // literal de struct, hay que partir de `Default`.
+/// let mut config = LlmJudgeConfig::default();
+/// config.metrics = vec![MetricType::Relevance];
+/// let judge = judge.with_config(config);
+///
+/// let sample = EvalSample::new("doc", "What is 2+2?", "It is 4.");
+/// let scored = judge.evaluate(&sample);
+/// assert_eq!(scored.len(), 1);
+/// assert!((scored[0].value - 8.0).abs() < 1e-9);
+///
+/// // Y se puede registrar en la suite, que es el unico registro que existe.
+/// let mut suite = EvalSuite::new();
+/// suite.add_evaluator(judge);
+/// let _ = suite.evaluate(&sample);
+/// ```
 /// The generator is the same pattern used in `agentic_loop.rs`.
 pub struct LlmJudgeEvaluator {
     /// Callback that generates an LLM response given a prompt string

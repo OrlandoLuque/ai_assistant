@@ -1742,11 +1742,17 @@ pub use benchmark::{
     BenchmarkRunner, BenchmarkStats, BenchmarkSuite,
 };
 
+// `LlmJudgeConfig` y `LlmJudgeEvaluator` faltaban aqui hasta V421, y eran los
+// unicos de su modulo que faltaban: `RelevanceEvaluator`, `SafetyEvaluator` y
+// `TextQualityEvaluator` --- las otras tres implementaciones de `Evaluator` ---
+// si salian. Por eso el juez no lo construia nadie: no es que estuviera sin
+// cablear, es que **no se podia nombrar** desde fuera del modulo sin escribir la
+// ruta larga `ai_assistant::evaluation::`.
 #[cfg(feature = "eval")]
 pub use evaluation::{
     AbTestConfig, AbTestManager, AbTestResult, BenchmarkResult as EvalBenchmarkResult, Benchmarker,
-    EvalResult, EvalSample, EvalSuite, EvalSummary, Evaluator, MetricResult, MetricType,
-    RelevanceEvaluator, SafetyEvaluator, TextQualityEvaluator,
+    EvalResult, EvalSample, EvalSuite, EvalSummary, Evaluator, LlmJudgeConfig, LlmJudgeEvaluator,
+    MetricResult, MetricType, RelevanceEvaluator, SafetyEvaluator, TextQualityEvaluator,
 };
 
 #[cfg(feature = "eval")]

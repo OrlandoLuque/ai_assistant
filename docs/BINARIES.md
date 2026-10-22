@@ -147,6 +147,11 @@ Subcommands: `scan`, `providers`, `models`, `config`, `butler`, `query`,
   Flags: `--providers <arxiv,scholar,pubmed>`, `--max-results <N>`,
   `--year-range <2020-2026>`, `--bibtex`, `--review`, `--format <narrative|systematic|annotated|comparative>`.
 - `quality gates list|check <text>` — Inspect or run quality gates.
+- `quality judge --prompt <P> --response <R> [--judges N]` — Score a response with an
+  LLM judge (Relevance, Coherence, Helpfulness, Safety on 0–10) against the configured
+  provider. `--judges N` asks N times and takes the **median**, which is what survives
+  one judge going off (the mean does not). A metric the judge did not score is **not
+  shown and not counted as zero**, and the command exits 1 if it scored nothing.
 
 #### `ai_assistant_cli`
 Interactive terminal REPL. Good for exploring models without leaving the
