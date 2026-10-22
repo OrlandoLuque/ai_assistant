@@ -277,7 +277,7 @@ fn generate_with_anthropic(
 
     let start = std::time::Instant::now();
 
-    let response = client
+    let mut response = client
         .post(&format!("{}/messages", url.trim_end_matches('/')))
         .header("x-api-key", api_key)
         .header("anthropic-version", "2023-06-01")
@@ -288,7 +288,8 @@ fn generate_with_anthropic(
     let duration_ms = start.elapsed().as_millis() as u64;
 
     let json: serde_json::Value = response
-        .into_json()
+        .body_mut()
+        .read_json()
         .map_err(|e| format!("Failed to parse response: {}", e))?;
 
     let response_text = json["content"][0]["text"]

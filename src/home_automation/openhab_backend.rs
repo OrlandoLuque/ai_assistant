@@ -46,16 +46,21 @@ impl OpenHabBackend {
         let url = format!("{}{}", self.config.base_url.trim_end_matches('/'), path);
         validate_backend_url(&url)?;
         let mut req = ureq::get(&url)
-            .timeout(std::time::Duration::from_secs(self.config.timeout_secs))
-            .set("Accept", "application/json");
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(
+                self.config.timeout_secs,
+            )))
+            .build()
+            .header("Accept", "application/json");
         if let Some(ref token) = self.config.api_token {
-            req = req.set("Authorization", &format!("Bearer {}", token));
+            req = req.header("Authorization", &format!("Bearer {}", token));
         }
-        let response = req
+        let mut response = req
             .call()
             .map_err(|e| format!("OpenHAB GET error: {}", e))?;
         response
-            .into_json::<serde_json::Value>()
+            .body_mut()
+            .read_json::<serde_json::Value>()
             .map_err(|e| format!("JSON parse error: {}", e))
     }
 
@@ -67,13 +72,17 @@ impl OpenHabBackend {
         );
         validate_backend_url(&url)?;
         let mut req = ureq::post(&url)
-            .timeout(std::time::Duration::from_secs(self.config.timeout_secs))
-            .set("Content-Type", "text/plain")
-            .set("Accept", "application/json");
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(
+                self.config.timeout_secs,
+            )))
+            .build()
+            .header("Content-Type", "text/plain")
+            .header("Accept", "application/json");
         if let Some(ref token) = self.config.api_token {
-            req = req.set("Authorization", &format!("Bearer {}", token));
+            req = req.header("Authorization", &format!("Bearer {}", token));
         }
-        req.send_string(command)
+        req.send(command)
             .map_err(|e| format!("OpenHAB POST error: {}", e))?;
         Ok(serde_json::json!({"command_sent": command, "item": item_name}))
     }

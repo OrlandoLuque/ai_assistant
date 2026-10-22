@@ -5,6 +5,98 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v298 (2026-10-23) - V422: `ureq` 2 -> 3, y con el RUSTSEC-2026-0381 se ARREGLA en vez de suprimirse (0.2.381)
+
+N156, y con ella se cierra la unica advisory de la lista que **nos afectaba de verdad**. La
+suppression de V418 decia eso con esas palabras y llevaba fecha corta; ahora se **borra** de los
+tres ficheros, que es lo que su propia nota mandaba hacer.
+
+La prueba: `cargo audit` con la lista de ignores **sin** 0381 sale **exit 0**, y `cargo deny
+check` entero da `advisories ok, bans ok, licenses ok, sources ok`. El comando de audit se
+extrajo del YAML parseado y se ejecuto, no se leyo a ojo.
+
+### El tamano, medido por el compilador
+
+| hito | errores |
+|---|---|
+| al subir a ureq 3 | **277** |
+| tras 466 sustituciones mecanicas guiadas por las POSICIONES de rustc | 183 |
+| tras `cargo fix` (los `mut` que exige `body_mut()`) | 79 |
+| tras los tipos, `AgentBuilder`, cabeceras y los `Status(x, _)` sin cuerpo | 16 |
+| tras los sitios semanticos (uno a uno) | **0** con el conjunto STD |
+| **con el conjunto ANCHO** (+cloud-connectors, async-runtime, home-automation, tools, wasm) | otros 31 -> **0** |
+
+Esa ultima fila es la leccion del dia: con `FEATURES_STD` el arbol ya compilaba, y aun quedaba
+una tanda entera detras de otras features. Lo que la encontro no fue el compilador sino un
+barrido de la API de ureq 2 sobre **todo** `src/`, sin depender de lo que un conjunto activa.
+Y antes habia dicho "8 llamadas en 3 binarios", que era falso: conte `ureq::` con prefijo y no
+los metodos sobre los builders.
+
+### La decision de fondo: el cuerpo del no-2xx
+
+En ureq 3, `Error::StatusCode(u16)` **no lleva la respuesta**. Traducir
+`Err(Error::Status(code, resp))` a eso habria perdido en silencio:
+
+* el `Retry-After` de `academic_search::get_with_retry` --- o sea el backoff honesto de **N46**;
+* el cuerpo del error de `openai_adapter`, `anthropic_adapter`, `huggingface_connector`,
+  `media_generation`, `vector_db`, `data_source_client` y `mcp_client`, que es donde el
+  proveedor pone el mensaje util.
+
+La via elegida --- y queda **mejor** que lo que habia --- es `http_status_as_error(false)` por
+peticion: el no-2xx vuelve como `Ok` con cabeceras y cuerpo intactos y se decide con
+`resp.status()`. Catorce sitios que descartaban la respuesta con `_` fueron renombre limpio a
+`StatusCode(x)`; los diez que SI la usaban se reescribieron uno a uno.
+
+**Donde NO se puso, y por que importa:** `media_generation` tiene cuatro peticiones y la config
+va en tres. La cuarta es la de sondeo de prediccion, y ahi un 4xx se habria parseado como una
+prediccion valida.
+
+### El fallo de test que valio la pena perseguir
+
+De los 9.052 tests, uno fallo: `test_error_mapping_connection_refused` esperaba
+`ConnectionFailed` y le llegaba `Timeout`. En vez de cambiar la asercion, se midio haciendo que
+el propio fallo del test imprimiera la variante:
+
+```
+MEDICION TEMPORAL: Timeout kind = Global
+```
+
+O sea: **con solo `timeout_global` puesto, ureq 3 ante un puerto cerrado se gasta todo el
+presupuesto reintentando y devuelve `Timeout(Global)`, no el ECONNREFUSED.** Con eso "no hay
+nadie escuchando" y "el servidor tarda" se vuelven el mismo error, y el llamante pierde justo lo
+que necesita para decidir entre reintentar en otro destino o esperar mas.
+
+Arreglado anadiendo un **plazo de conexion propio y mas corto**
+(`timeout_connect(Some(timeout.min(500ms)))`): un rechazo agota ESE plazo y llega como
+`Timeout(Connect)`, que se mapea a `ConnectionFailed`. La distincion se **recupera**, no se tapa.
+
+Y de paso desaparece una heuristica fea: ureq 2 no tenia variante de timeout, asi que
+`map_ureq_error` decidia "esto es un timeout" buscando `"timed out"` en el texto del mensaje.
+
+### Lo demas que cambio de forma, no solo de nombre
+
+* **`mcp_client`**: nace `status_error()`, que lee el cuerpo del no-2xx; `map_ureq_error` queda
+  solo para transporte. Las variantes `ErrorKind::{Io, ConnectionFailed, Dns}` de ureq 2 son
+  ahora `Error::{Io, ConnectionFailed, HostNotFound}`.
+* **`vector_db`, `data_source_client`, `wasm`**: el `match method { "GET" => agent.get(..),
+  "POST" => agent.post(..) }` no unifica, porque en ureq 3 son `RequestBuilder<WithoutBody>` y
+  `<WithBody>`, tipos distintos. Se construye una `http::Request` y se manda con `Agent::run`,
+  que acepta cualquier metodo --- y el PATCH deja de ser un caso aparte, que es como se colaba
+  por `ureq::Agent::request(..)`, funcion que ya no existe. Cuidado anadido: poner a mano el
+  `Content-Type: application/json` que `send_json`/`send_string` ponian solos.
+* **`data_source_client`**: las dos ramas que llamaban a `build_response` colapsan en una,
+  porque las dos querian el cuerpo.
+* **`cloud_connectors`**: cinco `ureq::request("DELETE"/"HEAD", ..)` -> `ureq::delete`/`head`.
+
+### Verificacion
+
+Clippy `--all-targets -D warnings` con el conjunto ANCHO en 0, los tests de la libreria, los
+doctests, y las dos puertas de la politica de suppressions (`check_rustsec_ignores`,
+`check_recheck_dates`) en 0 --- cada codigo de salida leido aparte, nunca el de una tuberia.
+
+La tabla de equivalencias completa de ureq 2 -> 3, toda comprobada en el fuente de 3.5.0, esta
+en `ai_assistant_plans/2026-10-22_LEEME_PRIMERO.md`.
+
 ## [Unreleased] - v297 (2026-10-22) - V421: el juez no estaba sin cablear, estaba sin poder nombrarse (0.2.380)
 
 N127, la parte de «cablear una». Y resulta que «cablear» era la mitad del problema: habia

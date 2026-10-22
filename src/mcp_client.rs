@@ -283,6 +283,18 @@ impl RemoteMcpClient {
         let mut req = ureq::post(&self.config.url)
             .config()
             .timeout_global(Some(timeout))
+            // MEDIDO: con solo `timeout_global`, ureq 3 ante un puerto cerrado
+            // se gasta TODO el presupuesto reintentando y devuelve
+            // `Timeout(Global)` --- no el ECONNREFUSED. Con eso, "no hay nadie
+            // escuchando" y "el servidor tarda" se vuelven el mismo error, y el
+            // llamante pierde la unica informacion que le sirve para decidir
+            // entre reintentar en otro destino o esperar mas.
+            //
+            // Un plazo de conexion propio, mas corto, restaura la distincion:
+            // un rechazo agota ESTE plazo y llega como `Timeout(Connect)`, que
+            // se mapea a `ConnectionFailed`. ureq 2 lo daba como
+            // `ErrorKind::ConnectionFailed` y hay un test que lo fija.
+            .timeout_connect(Some(timeout.min(Duration::from_millis(500))))
             // El cuerpo del no-2xx es el mensaje util del servidor MCP, y en
             // ureq 3 `Error::StatusCode(u16)` NO lo lleva. Asi vuelve como
             // `Ok` y lo lee `status_error`.
@@ -802,6 +814,18 @@ impl RemoteMcpClient {
         let mut req = ureq::post(&self.config.url)
             .config()
             .timeout_global(Some(timeout))
+            // MEDIDO: con solo `timeout_global`, ureq 3 ante un puerto cerrado
+            // se gasta TODO el presupuesto reintentando y devuelve
+            // `Timeout(Global)` --- no el ECONNREFUSED. Con eso, "no hay nadie
+            // escuchando" y "el servidor tarda" se vuelven el mismo error, y el
+            // llamante pierde la unica informacion que le sirve para decidir
+            // entre reintentar en otro destino o esperar mas.
+            //
+            // Un plazo de conexion propio, mas corto, restaura la distincion:
+            // un rechazo agota ESTE plazo y llega como `Timeout(Connect)`, que
+            // se mapea a `ConnectionFailed`. ureq 2 lo daba como
+            // `ErrorKind::ConnectionFailed` y hay un test que lo fija.
+            .timeout_connect(Some(timeout.min(Duration::from_millis(500))))
             // El cuerpo del no-2xx es el mensaje util del servidor MCP, y en
             // ureq 3 `Error::StatusCode(u16)` NO lo lleva. Asi vuelve como
             // `Ok` y lo lee `status_error`.
@@ -947,8 +971,23 @@ impl RemoteMcpClient {
                 reason: "DNS resolution failed".to_string(),
             },
             // ureq 2 no tenia variante de timeout y habia que olfatear el texto
-            // del mensaje ("timed out"). Ahora es explicita, asi que se acabo
-            // decidir un Timeout leyendo una cadena.
+            // del mensaje ("timed out"). Ahora es explicita, y ADEMAS dice QUE
+            // plazo salto, que es una distincion que importa:
+            //
+            // `Timeout::Connect` significa "no llegue a establecer la conexion".
+            // Para quien llama eso es un fallo de conexion, no "el servidor
+            // tarda en responder": no hay servidor con el que hablar. ureq 2 lo
+            // reportaba como `ErrorKind::ConnectionFailed`, y hay un test que lo
+            // fija (`test_error_mapping_connection_refused`). Colapsar todos los
+            // timeouts en uno cambiaria lo que el llamante decide hacer:
+            // reintentar con otro destino, no esperar mas.
+            ureq::Error::Timeout(ureq::Timeout::Connect) => McpClientError::ConnectionFailed {
+                url: self.config.url.clone(),
+                reason: "connect timed out: nothing accepted the connection".to_string(),
+            },
+            // Cualquier otro plazo (`Global`, `PerRead`, `RecvBody`...) si es un
+            // timeout de verdad: la conexion se establecio y lo que falla es la
+            // conversacion.
             ureq::Error::Timeout(_) => McpClientError::Timeout {
                 url: self.config.url.clone(),
                 timeout_ms: self.config.timeout_ms,

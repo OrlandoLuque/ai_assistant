@@ -197,27 +197,33 @@ pub mod http {
     /// Simple HTTP request (native implementation)
     #[cfg(not(target_arch = "wasm32"))]
     pub fn request(method: Method, url: &str, body: Option<&str>) -> Result<Response, String> {
+        // En ureq 3 `post`/`put` devuelven `RequestBuilder<WithBody>` y
+        // `get`/`delete` `RequestBuilder<WithoutBody>`: son tipos distintos y las
+        // ramas de un `match` no unifican. Se construye una `http::Request` y se
+        // manda con `Agent::run`, que acepta cualquier metodo.
         let agent = ureq::agent();
-
-        let request = match method {
-            Method::Get => agent.get(url),
-            Method::Post => agent.post(url),
-            Method::Put => agent.put(url),
-            Method::Delete => agent.delete(url),
+        let verb = match method {
+            Method::Get => "GET",
+            Method::Post => "POST",
+            Method::Put => "PUT",
+            Method::Delete => "DELETE",
         };
 
-        let response = if let Some(body) = body {
-            request
-                .set("Content-Type", "application/json")
-                .send_string(body)
-        } else {
-            request.call()
-        };
+        let mut builder = ureq::http::Request::builder().method(verb).uri(url);
+        // `send_string` ponia el `Content-Type` por su cuenta; con el cuerpo a
+        // mano hay que declararlo.
+        if body.is_some() {
+            builder = builder.header("Content-Type", "application/json");
+        }
+        let http_request = builder
+            .body(body.unwrap_or(""))
+            .map_err(|e| format!("bad {} request for {}: {}", verb, url, e))?;
 
-        match response {
-            Ok(resp) => {
-                let status = resp.status();
-                let body = resp.into_string().unwrap_or_default();
+        match agent.run(http_request) {
+            Ok(mut resp) => {
+                // `status()` devuelve `StatusCode` en ureq 3, no `u16`.
+                let status = resp.status().as_u16();
+                let body = resp.body_mut().read_to_string().unwrap_or_default();
                 Ok(Response { status, body })
             }
             Err(e) => Err(e.to_string()),

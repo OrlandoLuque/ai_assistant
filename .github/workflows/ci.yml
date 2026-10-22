@@ -400,18 +400,6 @@ jobs:
       #                       0.27.2, which pins ^0.8. Needs the egui stack
       #                       upgraded past 0.27 — same blocker as 0192 below.
       #                       DELETE this ignore when that lands (N37).
-      #   RUSTSEC-2026-0381 — webpki-roots 0.26: el almacen empaquetado confia
-      #                       en intermedios emSign desconfiados, y SI nos
-      #                       afecta (ureq 2.12.1 -> rustls + webpki-roots
-      #                       0.26.11). Las otras tres de la misma familia
-      #                       (0382 rustls-webpki, 0383 webpki-root-certs,
-      #                       0381 en webpki-roots 1.x) se ARREGLARON subiendo
-      #                       y no estan aqui. Esta necesita ureq 3: la serie 2
-      #                       pina `webpki-roots = "0.26"` y el arreglo esta en
-      #                       1.0.10. 61 ficheros, 318 llamadas (N156).
-      #                       Fecha corta a proposito: exposicion viva, no
-      #                       deuda en paz. BORRA la entrada cuando ureq 3
-      #                       aterrice.
       #   RUSTSEC-2026-0192 — ttf-parser unmaintained (no safe upgrade;
       #                       transitive via egui/epaint/ab_glyph). DoS-
       #                       class only; cargo-deny denies unmaintained,
@@ -430,8 +418,7 @@ jobs:
             --ignore RUSTSEC-2026-0367 \
             --ignore RUSTSEC-2026-0368 \
             --ignore RUSTSEC-2026-0369 \
-            --ignore RUSTSEC-2026-0257 \
-            --ignore RUSTSEC-2026-0381
+            --ignore RUSTSEC-2026-0257
 
   # The expensive tabular engine, on its own because it drags 397 crates and
   # 49.3 MiB (measured). Putting it in FEATURES_STD would slow every other job

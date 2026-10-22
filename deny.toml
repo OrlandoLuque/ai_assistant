@@ -93,30 +93,6 @@ ignore = [
     # fix is 1.2.2. Renewed. It also gained the date it did not have: the
     # condition was correct and still unfalsifiable on its own schedule.
     "RUSTSEC-2026-0257",
-    # webpki-roots 0.26.11: el almacen de raices empaquetado confia en
-    # intermedios emSign que fueron DESCONFIADOS. **Esta suppression no dice
-    # que no nos afecte: nos afecta.** Medido: `cargo tree -e normal -p
-    # ureq@2.12.1` da `rustls 0.23.46` + `webpki-roots 0.26.11`, o sea que las
-    # llamadas HTTPS que hacemos por ureq usan ESE almacen.
-    #
-    # Es la unica de las cuatro advisories de esta familia (0381/0382/0383, del
-    # 2026-10-20) que no se pudo arreglar subiendo. Las otras tres se
-    # arreglaron y NO estan en esta lista: rustls-webpki 0.103.15 -> 0.103.16,
-    # webpki-root-certs 1.0.7 -> 1.0.10, webpki-roots 1.0.7 -> 1.0.10.
-    #
-    # Lo que bloquea esta: `ureq 2.12.1` --la ultima de la serie 2-- declara
-    # `webpki-roots = "0.26"`, y el arreglo esta en 1.0.10, un salto mayor que
-    # solo llega con `ureq` 3. Son 61 ficheros y 318 llamadas a `ureq::` con
-    # cambios de API de por medio (N156), no un bump del lock. Y la salida por
-    # `native-tls` tampoco es un sustituto directo: ureq 2 con native-tls exige
-    # construir el agente a mano, asi que los 318 sitios que llaman a
-    # `ureq::get()` pelado se quedarian sin TLS.
-    #
-    # Por eso la fecha es CORTA: no es una deuda que se pueda renovar en
-    # paz como las de egui, es una exposicion viva esperando un refactor.
-    # Re-check by: 2026-11-15 O cuando aterrice `ureq` 3 (N156) -- entonces
-    # BORRA esta entrada, no la renueves.
-    "RUSTSEC-2026-0381",
     # RUSTSEC-2026-0222 (wasmtime) was here. It said to DELETE the entry rather
     # than renew it once the toolchain moved, and V276 moved it: Rust 1.98 and
     # wasmtime 46, so the advisory is fixed rather than ignored. Left as a note

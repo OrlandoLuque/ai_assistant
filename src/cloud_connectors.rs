@@ -228,7 +228,7 @@ impl S3Client {
     }
 
     /// Execute a signed GET request.
-    fn signed_get(&self, url: &str) -> Result<ureq::Response> {
+    fn signed_get(&self, url: &str) -> Result<ureq::http::Response<ureq::Body>> {
         // SSRF protection: reject private/internal URLs
         anyhow::ensure!(
             is_safe_url(url),
@@ -238,23 +238,32 @@ impl S3Client {
             let signer = self.signer();
             let auth_headers = signer.sign_request("GET", url, &[], &[]);
             let mut req = ureq::get(url)
-                .set("Host", &self.config.host())
-                .timeout(std::time::Duration::from_secs(30));
+                .header("Host", &self.config.host())
+                .config()
+                .timeout_global(Some(std::time::Duration::from_secs(30)))
+                .build();
             for (k, v) in &auth_headers {
-                req = req.set(k, v);
+                req = req.header(k, v);
             }
             req.call().context("S3 signed GET failed")
         } else {
             ureq::get(url)
-                .set("Host", &self.config.host())
-                .timeout(std::time::Duration::from_secs(30))
+                .header("Host", &self.config.host())
+                .config()
+                .timeout_global(Some(std::time::Duration::from_secs(30)))
+                .build()
                 .call()
                 .context("S3 GET failed")
         }
     }
 
     /// Execute a signed PUT request.
-    fn signed_put(&self, url: &str, data: &[u8], content_type: &str) -> Result<ureq::Response> {
+    fn signed_put(
+        &self,
+        url: &str,
+        data: &[u8],
+        content_type: &str,
+    ) -> Result<ureq::http::Response<ureq::Body>> {
         // SSRF protection: reject private/internal URLs
         anyhow::ensure!(
             is_safe_url(url),
@@ -265,25 +274,29 @@ impl S3Client {
             let extra = [("Content-Type", content_type)];
             let auth_headers = signer.sign_request("PUT", url, &extra, data);
             let mut req = ureq::put(url)
-                .set("Host", &self.config.host())
-                .set("Content-Type", content_type)
-                .timeout(std::time::Duration::from_secs(60));
+                .header("Host", &self.config.host())
+                .header("Content-Type", content_type)
+                .config()
+                .timeout_global(Some(std::time::Duration::from_secs(60)))
+                .build();
             for (k, v) in &auth_headers {
-                req = req.set(k, v);
+                req = req.header(k, v);
             }
-            req.send_bytes(data).context("S3 signed PUT failed")
+            req.send(data).context("S3 signed PUT failed")
         } else {
             ureq::put(url)
-                .set("Host", &self.config.host())
-                .set("Content-Type", content_type)
-                .timeout(std::time::Duration::from_secs(60))
-                .send_bytes(data)
+                .header("Host", &self.config.host())
+                .header("Content-Type", content_type)
+                .config()
+                .timeout_global(Some(std::time::Duration::from_secs(60)))
+                .build()
+                .send(data)
                 .context("S3 PUT failed")
         }
     }
 
     /// Execute a signed DELETE request.
-    fn signed_delete(&self, url: &str) -> Result<ureq::Response> {
+    fn signed_delete(&self, url: &str) -> Result<ureq::http::Response<ureq::Body>> {
         // SSRF protection: reject private/internal URLs
         anyhow::ensure!(
             is_safe_url(url),
@@ -292,17 +305,21 @@ impl S3Client {
         if self.has_credentials() {
             let signer = self.signer();
             let auth_headers = signer.sign_request("DELETE", url, &[], &[]);
-            let mut req = ureq::request("DELETE", url)
-                .set("Host", &self.config.host())
-                .timeout(std::time::Duration::from_secs(30));
+            let mut req = ureq::delete(url)
+                .header("Host", &self.config.host())
+                .config()
+                .timeout_global(Some(std::time::Duration::from_secs(30)))
+                .build();
             for (k, v) in &auth_headers {
-                req = req.set(k, v);
+                req = req.header(k, v);
             }
             req.call().context("S3 signed DELETE failed")
         } else {
-            ureq::request("DELETE", url)
-                .set("Host", &self.config.host())
-                .timeout(std::time::Duration::from_secs(30))
+            ureq::delete(url)
+                .header("Host", &self.config.host())
+                .config()
+                .timeout_global(Some(std::time::Duration::from_secs(30)))
+                .build()
                 .call()
                 .context("S3 DELETE failed")
         }
@@ -310,21 +327,28 @@ impl S3Client {
 
     /// Execute a signed HEAD request.
     #[allow(clippy::result_large_err)]
-    fn signed_head(&self, url: &str) -> std::result::Result<ureq::Response, ureq::Error> {
+    fn signed_head(
+        &self,
+        url: &str,
+    ) -> std::result::Result<ureq::http::Response<ureq::Body>, ureq::Error> {
         if self.has_credentials() {
             let signer = self.signer();
             let auth_headers = signer.sign_request("HEAD", url, &[], &[]);
-            let mut req = ureq::request("HEAD", url)
-                .set("Host", &self.config.host())
-                .timeout(std::time::Duration::from_secs(10));
+            let mut req = ureq::head(url)
+                .header("Host", &self.config.host())
+                .config()
+                .timeout_global(Some(std::time::Duration::from_secs(10)))
+                .build();
             for (k, v) in &auth_headers {
-                req = req.set(k, v);
+                req = req.header(k, v);
             }
             req.call()
         } else {
-            ureq::request("HEAD", url)
-                .set("Host", &self.config.host())
-                .timeout(std::time::Duration::from_secs(10))
+            ureq::head(url)
+                .header("Host", &self.config.host())
+                .config()
+                .timeout_global(Some(std::time::Duration::from_secs(10)))
+                .build()
                 .call()
         }
     }
@@ -348,10 +372,11 @@ impl CloudStorage for S3Client {
             url.push_str(&format!("&continuation-token={}", token));
         }
 
-        let resp = self.signed_get(&url)?;
+        let mut resp = self.signed_get(&url)?;
 
         let body = resp
-            .into_string()
+            .body_mut()
+            .read_to_string()
             .context("Failed to read S3 list response")?;
 
         // Parse XML response (simplified)
@@ -370,7 +395,8 @@ impl CloudStorage for S3Client {
         let resp = self.signed_get(&url)?;
 
         let mut bytes = Vec::new();
-        resp.into_reader()
+        resp.into_body()
+            .into_reader()
             .read_to_end(&mut bytes)
             .context("Failed to read S3 object")?;
         Ok(bytes)
@@ -496,16 +522,21 @@ impl CloudStorage for GoogleDriveClient {
             url.push_str(&format!("&pageToken={}", token));
         }
 
-        let resp = ureq::get(&url)
-            .set(
+        let mut resp = ureq::get(&url)
+            .header(
                 "Authorization",
                 &format!("Bearer {}", self.config.access_token),
             )
-            .timeout(std::time::Duration::from_secs(30))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(30)))
+            .build()
             .call()
             .context("Google Drive list failed")?;
 
-        let json: serde_json::Value = resp.into_json().context("Failed to parse Drive response")?;
+        let json: serde_json::Value = resp
+            .body_mut()
+            .read_json()
+            .context("Failed to parse Drive response")?;
 
         let mut objects = Vec::new();
         if let Some(files) = json.get("files").and_then(|f| f.as_array()) {
@@ -552,16 +583,19 @@ impl CloudStorage for GoogleDriveClient {
         // For Google Drive, 'key' is the file ID
         let url = format!("{}?alt=media", self.api_url(&format!("/files/{}", key)));
         let resp = ureq::get(&url)
-            .set(
+            .header(
                 "Authorization",
                 &format!("Bearer {}", self.config.access_token),
             )
-            .timeout(std::time::Duration::from_secs(60))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(60)))
+            .build()
             .call()
             .context("Google Drive GET failed")?;
 
         let mut bytes = Vec::new();
-        resp.into_reader()
+        resp.into_body()
+            .into_reader()
             .read_to_end(&mut bytes)
             .context("Failed to read Drive file")?;
         Ok(bytes)
@@ -586,28 +620,32 @@ impl CloudStorage for GoogleDriveClient {
         body.extend_from_slice(format!("\r\n--{}--", boundary).as_bytes());
 
         ureq::post(&self.upload_url())
-            .set(
+            .header(
                 "Authorization",
                 &format!("Bearer {}", self.config.access_token),
             )
-            .set(
+            .header(
                 "Content-Type",
                 &format!("multipart/related; boundary={}", boundary),
             )
-            .timeout(std::time::Duration::from_secs(60))
-            .send_bytes(&body)
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(60)))
+            .build()
+            .send(&body)
             .context("Google Drive upload failed")?;
         Ok(())
     }
 
     fn delete(&self, key: &str) -> Result<()> {
         let url = self.api_url(&format!("/files/{}", key));
-        ureq::request("DELETE", &url)
-            .set(
+        ureq::delete(&url)
+            .header(
                 "Authorization",
                 &format!("Bearer {}", self.config.access_token),
             )
-            .timeout(std::time::Duration::from_secs(30))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(30)))
+            .build()
             .call()
             .context("Google Drive delete failed")?;
         Ok(())
@@ -616,11 +654,13 @@ impl CloudStorage for GoogleDriveClient {
     fn exists(&self, key: &str) -> Result<bool> {
         let url = format!("{}?fields=id", self.api_url(&format!("/files/{}", key)));
         match ureq::get(&url)
-            .set(
+            .header(
                 "Authorization",
                 &format!("Bearer {}", self.config.access_token),
             )
-            .timeout(std::time::Duration::from_secs(10))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(10)))
+            .build()
             .call()
         {
             Ok(_) => Ok(true),

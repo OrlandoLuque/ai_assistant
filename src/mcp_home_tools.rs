@@ -119,14 +119,17 @@ impl HomeAssistantBackend {
         if url.contains("169.254.") || url.contains("metadata.google") {
             return Err("Blocked: potential SSRF target".into());
         }
-        let response = ureq::get(&url)
-            .timeout(std::time::Duration::from_secs(self.timeout_secs))
-            .set("Authorization", &format!("Bearer {}", self.token))
-            .set("Content-Type", "application/json")
+        let mut response = ureq::get(&url)
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(self.timeout_secs)))
+            .build()
+            .header("Authorization", &format!("Bearer {}", self.token))
+            .header("Content-Type", "application/json")
             .call()
             .map_err(|e| format!("HTTP GET error: {}", e))?;
         response
-            .into_json::<serde_json::Value>()
+            .body_mut()
+            .read_json::<serde_json::Value>()
             .map_err(|e| format!("JSON parse error: {}", e))
     }
 
@@ -135,14 +138,17 @@ impl HomeAssistantBackend {
         if url.contains("169.254.") || url.contains("metadata.google") {
             return Err("Blocked: potential SSRF target".into());
         }
-        let response = ureq::post(&url)
-            .timeout(std::time::Duration::from_secs(self.timeout_secs))
-            .set("Authorization", &format!("Bearer {}", self.token))
-            .set("Content-Type", "application/json")
+        let mut response = ureq::post(&url)
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(self.timeout_secs)))
+            .build()
+            .header("Authorization", &format!("Bearer {}", self.token))
+            .header("Content-Type", "application/json")
             .send_json(body.clone())
             .map_err(|e| format!("HTTP POST error: {}", e))?;
         response
-            .into_json::<serde_json::Value>()
+            .body_mut()
+            .read_json::<serde_json::Value>()
             .map_err(|e| format!("JSON parse error: {}", e))
     }
 
