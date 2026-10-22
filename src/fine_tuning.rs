@@ -763,12 +763,13 @@ impl OpenAIFineTuneClient {
 
         // POST sin cuerpo: en ureq 3 `.call()` es solo de los builders
         // `WithoutBody`, y lo explicito para un POST vacio es `send_empty()`.
-        let response = req
+        let mut response = req
             .send_empty()
             .map_err(|e| FineTuneApiError::NetworkError(e.to_string()))?;
 
         let result: FineTuneJob = response
-            .into_json()
+            .body_mut()
+            .read_json()
             .map_err(|e| FineTuneApiError::ParseError(e.to_string()))?;
 
         Ok(result)

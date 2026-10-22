@@ -83,7 +83,7 @@ pub fn probe_vllm(base_url: &str) -> Result<VLlmCapability, String> {
     // either down or not OpenAI-compatible.
     let models_url = format!("{}/v1/models", base);
     let models_body: serde_json::Value = retry_with_config(RetryConfig::fast(), || {
-        let resp = ureq::get(&models_url)
+        let mut resp = ureq::get(&models_url)
             .config()
             .timeout_global(Some(std::time::Duration::from_secs(5)))
             .build()
@@ -104,7 +104,7 @@ pub fn probe_vllm(base_url: &str) -> Result<VLlmCapability, String> {
             .build()
             .call()
             .ok()
-            .and_then(|resp| resp.body_mut().read_json::<serde_json::Value>().ok())
+            .and_then(|mut resp| resp.body_mut().read_json::<serde_json::Value>().ok())
             .and_then(|v| parse_version_response(&v))
     };
 

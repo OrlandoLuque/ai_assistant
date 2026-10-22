@@ -300,12 +300,12 @@ impl<'a> PooledConnectionGuard<'a> {
     }
 
     /// Make a POST request
-    pub fn post(&self, url: &str) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
+    pub fn post(&self, url: &str) -> ureq::RequestBuilder<ureq::typestate::WithBody> {
         self.agent().post(url)
     }
 
     /// Make a PUT request
-    pub fn put(&self, url: &str) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
+    pub fn put(&self, url: &str) -> ureq::RequestBuilder<ureq::typestate::WithBody> {
         self.agent().put(url)
     }
 

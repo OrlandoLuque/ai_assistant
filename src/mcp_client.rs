@@ -283,6 +283,10 @@ impl RemoteMcpClient {
         let mut req = ureq::post(&self.config.url)
             .config()
             .timeout_global(Some(timeout))
+            // El cuerpo del no-2xx es el mensaje util del servidor MCP, y en
+            // ureq 3 `Error::StatusCode(u16)` NO lo lleva. Asi vuelve como
+            // `Ok` y lo lee `status_error`.
+            .http_status_as_error(false)
             .build()
             .header("Content-Type", "application/json");
 
@@ -295,7 +299,10 @@ impl RemoteMcpClient {
                 reason: format!("failed to serialize request: {}", e),
             })?;
 
-        let response = req.send(&body_str).map_err(|e| self.map_ureq_error(e))?;
+        let mut response = req.send(&body_str).map_err(|e| self.map_ureq_error(e))?;
+        if !response.status().is_success() {
+            return Err(self.status_error(&mut response));
+        }
 
         // Extract session ID from Mcp-Session-Id header.
         let session_id = response
@@ -795,6 +802,10 @@ impl RemoteMcpClient {
         let mut req = ureq::post(&self.config.url)
             .config()
             .timeout_global(Some(timeout))
+            // El cuerpo del no-2xx es el mensaje util del servidor MCP, y en
+            // ureq 3 `Error::StatusCode(u16)` NO lo lleva. Asi vuelve como
+            // `Ok` y lo lee `status_error`.
+            .http_status_as_error(false)
             .build()
             .header("Content-Type", "application/json");
 
@@ -812,7 +823,10 @@ impl RemoteMcpClient {
                 reason: format!("failed to serialize request: {}", e),
             })?;
 
-        let response = req.send(&body_str).map_err(|e| self.map_ureq_error(e))?;
+        let mut response = req.send(&body_str).map_err(|e| self.map_ureq_error(e))?;
+        if !response.status().is_success() {
+            return Err(self.status_error(&mut response));
+        }
 
         let resp_text =
             response
@@ -854,8 +868,8 @@ impl RemoteMcpClient {
     /// Apply the configured authentication header to a ureq request.
     fn apply_auth_header(
         &self,
-        req: ureq::RequestBuilder<ureq::typestate::WithoutBody>,
-    ) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
+        req: ureq::RequestBuilder<ureq::typestate::WithBody>,
+    ) -> ureq::RequestBuilder<ureq::typestate::WithBody> {
         match &self.config.auth {
             McpClientAuth::BearerToken(token) => {
                 req.header("Authorization", &format!("Bearer {}", token))
@@ -867,72 +881,82 @@ impl RemoteMcpClient {
         }
     }
 
-    /// Map a `ureq::Error` to the appropriate `McpClientError` variant.
+    /// Convierte un no-2xx en el error correspondiente, **leyendo el cuerpo**.
+    ///
+    /// Vive aparte de [`Self::map_ureq_error`] porque en ureq 3 un codigo de
+    /// estado ya no es un `Error`: las peticiones llevan
+    /// `http_status_as_error(false)` y el no-2xx vuelve como `Ok`. Esa es la
+    /// unica forma de conservar el cuerpo, que es donde el servidor MCP explica
+    /// el rechazo --- `Error::StatusCode(u16)` no lo lleva.
+    fn status_error(&self, resp: &mut ureq::http::Response<ureq::Body>) -> McpClientError {
+        let code = resp.status().as_u16();
+        let message = resp
+            .body_mut()
+            .read_to_string()
+            .unwrap_or_else(|_| "unknown".to_string());
+
+        if code == 401 || code == 403 {
+            McpClientError::AuthFailed {
+                url: self.config.url.clone(),
+                reason: format!("HTTP {}: {}", code, message),
+            }
+        } else if code >= 500 {
+            McpClientError::ServerError {
+                url: self.config.url.clone(),
+                code: code as i64,
+                message,
+            }
+        } else {
+            McpClientError::ConnectionFailed {
+                url: self.config.url.clone(),
+                reason: format!("HTTP {}: {}", code, message),
+            }
+        }
+    }
+
+    /// Mapea un `ureq::Error` --- es decir, un fallo de TRANSPORTE --- al
+    /// `McpClientError` que le corresponde.
+    ///
+    /// En ureq 2 esto tambien recibia los codigos de estado, via
+    /// `Error::Status(code, resp)`, y de ahi leia el cuerpo. En ureq 3 los
+    /// estados no son errores (ver [`Self::status_error`]), asi que aqui solo
+    /// llegan fallos de red. El `StatusCode` se conserva por si alguna peticion
+    /// futura no desactiva `http_status_as_error`: entonces no hay cuerpo que
+    /// leer, y el mensaje lo dice en vez de inventarse uno.
     fn map_ureq_error(&self, error: ureq::Error) -> McpClientError {
         match error {
-            ureq::Error::StatusCode(401) | ureq::Error::StatusCode(403) => {
-                McpClientError::AuthFailed {
-                    url: self.config.url.clone(),
-                    reason: format!(
-                        "HTTP {}",
-                        match error {
-                            ureq::Error::StatusCode(code) => code.to_string(),
-                            _ => "auth error".to_string(),
-                        }
-                    ),
-                }
-            }
-            ureq::Error::Status(code, resp) => {
-                let message = resp.into_string().unwrap_or_else(|_| "unknown".to_string());
-                if code >= 500 {
-                    McpClientError::ServerError {
-                        url: self.config.url.clone(),
-                        code: code as i64,
-                        message,
-                    }
-                } else {
-                    McpClientError::ConnectionFailed {
-                        url: self.config.url.clone(),
-                        reason: format!("HTTP {}: {}", code, message),
-                    }
-                }
-            }
-            ureq::Error::Transport(ref transport) => {
-                let kind = transport.kind();
-                match kind {
-                    ureq::ErrorKind::Io => {
-                        // Connection refused, DNS failure, etc.
-                        McpClientError::ConnectionFailed {
-                            url: self.config.url.clone(),
-                            reason: format!("transport error: {}", error),
-                        }
-                    }
-                    ureq::ErrorKind::ConnectionFailed => McpClientError::ConnectionFailed {
-                        url: self.config.url.clone(),
-                        reason: format!("connection refused: {}", error),
-                    },
-                    ureq::ErrorKind::Dns => McpClientError::ConnectionFailed {
-                        url: self.config.url.clone(),
-                        reason: format!("DNS resolution failed: {}", error),
-                    },
-                    _ => {
-                        // Check if the error message contains "timed out" or
-                        // similar indicators.
-                        let msg = error.to_string();
-                        if msg.contains("timed out") || msg.contains("timeout") {
-                            McpClientError::Timeout {
-                                url: self.config.url.clone(),
-                                timeout_ms: self.config.timeout_ms,
-                            }
-                        } else {
-                            McpClientError::ConnectionFailed {
-                                url: self.config.url.clone(),
-                                reason: format!("transport error: {}", error),
-                            }
-                        }
-                    }
-                }
-            }
+            ureq::Error::StatusCode(code) => McpClientError::ConnectionFailed {
+                url: self.config.url.clone(),
+                reason: format!(
+                    "HTTP {} (sin cuerpo: la peticion no desactivo http_status_as_error)",
+                    code
+                ),
+            },
+            // `ErrorKind::Io` / `ConnectionFailed` / `Dns` de ureq 2 son ahora
+            // variantes del propio `Error`.
+            ureq::Error::Io(ref io) => McpClientError::ConnectionFailed {
+                url: self.config.url.clone(),
+                reason: format!("transport error: {}", io),
+            },
+            ureq::Error::ConnectionFailed => McpClientError::ConnectionFailed {
+                url: self.config.url.clone(),
+                reason: "connection refused".to_string(),
+            },
+            ureq::Error::HostNotFound => McpClientError::ConnectionFailed {
+                url: self.config.url.clone(),
+                reason: "DNS resolution failed".to_string(),
+            },
+            // ureq 2 no tenia variante de timeout y habia que olfatear el texto
+            // del mensaje ("timed out"). Ahora es explicita, asi que se acabo
+            // decidir un Timeout leyendo una cadena.
+            ureq::Error::Timeout(_) => McpClientError::Timeout {
+                url: self.config.url.clone(),
+                timeout_ms: self.config.timeout_ms,
+            },
+            other => McpClientError::ConnectionFailed {
+                url: self.config.url.clone(),
+                reason: format!("transport error: {}", other),
+            },
         }
     }
 

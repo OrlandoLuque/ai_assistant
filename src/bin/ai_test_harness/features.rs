@@ -953,11 +953,14 @@ pub(crate) fn fetch_real_pdf() -> Option<Vec<u8>> {
         }
     }
     let resp = ureq::get(URL)
-        .timeout(std::time::Duration::from_secs(30))
+        .config()
+        .timeout_global(Some(std::time::Duration::from_secs(30)))
+        .build()
         .call()
         .ok()?;
     let mut buf = Vec::new();
-    resp.into_reader()
+    resp.into_body()
+        .into_reader()
         .take(15 * 1024 * 1024)
         .read_to_end(&mut buf)
         .ok()?;

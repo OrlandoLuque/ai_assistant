@@ -1079,7 +1079,9 @@ pub(crate) fn tests_llm() -> CategoryResult {
 
     results.push(run_test("Ollama health check", || {
         let resp = ureq::get("http://127.0.0.1:11434/api/version")
-            .timeout(std::time::Duration::from_secs(5))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(5)))
+            .build()
             .call();
         assert_test!(resp.is_ok(), "Ollama should respond");
         Ok(())
@@ -1087,10 +1089,12 @@ pub(crate) fn tests_llm() -> CategoryResult {
 
     results.push(run_test("Fetch models", || {
         let resp = ureq::get("http://127.0.0.1:11434/api/tags")
-            .timeout(std::time::Duration::from_secs(5))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(5)))
+            .build()
             .call();
         assert_test!(resp.is_ok(), "should fetch models");
-        let body: serde_json::Value = resp.unwrap().into_json().unwrap();
+        let body: serde_json::Value = resp.unwrap().body_mut().read_json().unwrap();
         let models = body["models"].as_array();
         assert_test!(models.is_some(), "should have models array");
         println!("    Found {} models", models.unwrap().len());

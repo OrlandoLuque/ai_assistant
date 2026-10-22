@@ -639,10 +639,7 @@ impl DataSourceClient {
     // Private: Authentication
     // ========================================================================
 
-    fn apply_auth(
-        &self,
-        request: ureq::RequestBuilder<ureq::typestate::WithoutBody>,
-    ) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
+    fn apply_auth(&self, request: ureq::http::request::Builder) -> ureq::http::request::Builder {
         match &self.config.auth {
             AuthMethod::None => request,
             AuthMethod::Bearer(token) => {
@@ -798,13 +795,18 @@ impl DataSourceClient {
         let agent = ureq::Agent::new_with_config(
             ureq::Agent::config_builder()
                 .timeout_global(Some(Duration::from_secs(timeout_secs.max(1))))
+                // `build_response` se llamaba desde la rama Ok Y desde
+                // `Err(Status(..))`, porque las dos querian el cuerpo. En ureq 3
+                // `Error::StatusCode` no lo lleva, asi que se desactiva el
+                // estado-como-error y las dos ramas colapsan en una.
                 .max_redirects(if self.config.ssrf_protection { 0 } else { 5 })
+                .http_status_as_error(false)
                 .build(),
         );
 
         // Turn a finished ureq response into our DataSourceResponse.
         let build_response = |status: u16,
-                              resp: ureq::http::Response<ureq::Body>,
+                              mut resp: ureq::http::Response<ureq::Body>,
                               duration_ms: u64|
          -> DataSourceResponse {
             let mut headers = HashMap::new();
@@ -834,26 +836,39 @@ impl DataSourceClient {
         let mut current_body: Option<serde_json::Value> = body.cloned();
 
         loop {
-            let mut request = match current_method.as_str() {
-                "GET" => agent.get(&current_url),
-                "POST" => agent.post(&current_url),
-                "PUT" => agent.put(&current_url),
-                "DELETE" => agent.delete(&current_url),
-                "PATCH" => agent.request("PATCH", &current_url),
-                _ => return Err(anyhow!("Unsupported HTTP method: {}", method)),
-            };
-
-            request = request.set("User-Agent", &self.config.user_agent);
+            // Se construye una `http::Request` y se manda con `Agent::run` en
+            // vez del `match current_method` que habia: en ureq 3 `get`/`delete`
+            // devuelven `RequestBuilder<WithoutBody>` y `post`/`put`
+            // `RequestBuilder<WithBody>`, tipos distintos que no unifican en las
+            // ramas de un `match`. Y `ureq::Agent::request(metodo, url)` ya no
+            // existe, que es como se colaba el PATCH. `run` acepta cualquier
+            // metodo, asi que el PATCH deja de ser un caso aparte.
+            let mut builder = ureq::http::Request::builder()
+                .method(current_method.as_str())
+                .uri(&current_url)
+                .header("User-Agent", &self.config.user_agent);
             for (key, value) in &self.config.headers {
-                request = request.set(key, value);
+                builder = builder.header(key, value);
             }
-            request = self.apply_auth(request);
+            builder = self.apply_auth(builder);
 
-            let result = if let Some(json_body) = &current_body {
-                request.send_json(json_body.clone())
-            } else {
-                request.call()
+            // `send_json` ponia el `Content-Type: application/json` por su
+            // cuenta; con el cuerpo a mano hay que ponerlo, o el servidor
+            // recibiria JSON sin declararlo y algunos lo rechazan.
+            let body_bytes = match &current_body {
+                Some(json_body) => {
+                    builder = builder.header("Content-Type", "application/json");
+                    serde_json::to_vec(json_body)
+                        .map_err(|e| anyhow!("failed to serialize request body: {}", e))?
+                }
+                None => Vec::new(),
             };
+
+            let http_request = builder.body(body_bytes).map_err(|e| {
+                anyhow!("bad {} request for {}: {}", current_method, current_url, e)
+            })?;
+
+            let result = agent.run(http_request);
 
             let duration_ms = start.elapsed().as_millis() as u64;
 
@@ -861,7 +876,7 @@ impl DataSourceClient {
             // hop's host before following it.
             if self.config.ssrf_protection {
                 if let Ok(resp) = &result {
-                    let status = resp.status();
+                    let status = resp.status().as_u16();
                     // 3xx except 304 Not Modified is a redirect.
                     if (300..400).contains(&status) && status != 304 {
                         let location = resp
@@ -910,17 +925,15 @@ impl DataSourceClient {
                 }
             }
 
+            // Una sola rama: con `http_status_as_error(false)` el 2xx y el no-2xx
+            // llegan los dos como `Ok`, y `build_response` los trataba ya igual.
+            // Lo que queda en `Err` son fallos de transporte de verdad.
             return match result {
                 Ok(resp) => {
-                    let status = resp.status();
+                    let status = resp.status().as_u16();
                     Ok(build_response(status, resp, duration_ms))
                 }
-                Err(ureq::Error::Status(status, resp)) => {
-                    Ok(build_response(status, resp, duration_ms))
-                }
-                Err(ureq::Error::Transport(transport)) => {
-                    Err(anyhow!("Transport error: {}", transport))
-                }
+                Err(e) => Err(anyhow!("Transport error: {}", e)),
             };
         }
     }

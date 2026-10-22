@@ -4261,21 +4261,25 @@ mod tests {
         // Make a health check request
         let url = format!("{}/health", handle.url());
         match ureq::get(&url)
-            .timeout(std::time::Duration::from_secs(2))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(2)))
+            .build()
             .call()
         {
-            Ok(resp) => {
-                let body: serde_json::Value = resp.into_json().unwrap();
+            Ok(mut resp) => {
+                let body: serde_json::Value = resp.body_mut().read_json().unwrap();
                 assert_eq!(body["status"], "ok");
             }
             Err(_) => {
                 // Server might not be ready yet in very fast test execution
                 std::thread::sleep(std::time::Duration::from_millis(100));
-                let resp = ureq::get(&url)
-                    .timeout(std::time::Duration::from_secs(2))
+                let mut resp = ureq::get(&url)
+                    .config()
+                    .timeout_global(Some(std::time::Duration::from_secs(2)))
+                    .build()
                     .call()
                     .unwrap();
-                let body: serde_json::Value = resp.into_json().unwrap();
+                let body: serde_json::Value = resp.body_mut().read_json().unwrap();
                 assert_eq!(body["status"], "ok");
             }
         }
@@ -4731,13 +4735,17 @@ mod tests {
 
         // Health should be exempt from auth
         let health_resp = ureq::get(&format!("{}/health", base))
-            .timeout(std::time::Duration::from_secs(2))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(2)))
+            .build()
             .call();
         assert!(health_resp.is_ok());
 
         // /chat without auth should get 401
         let chat_resp = ureq::post(&format!("{}/chat", base))
-            .timeout(std::time::Duration::from_secs(2))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(2)))
+            .build()
             .send_json(serde_json::json!({"message": "hi"}));
         match chat_resp {
             Err(ureq::Error::StatusCode(401)) => {} // expected
@@ -4746,8 +4754,10 @@ mod tests {
 
         // /chat WITH auth should succeed (or get provider error, which is still 500 not 401)
         let auth_resp = ureq::post(&format!("{}/chat", base))
-            .timeout(std::time::Duration::from_secs(2))
-            .set("Authorization", "Bearer test-token-42")
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(2)))
+            .build()
+            .header("Authorization", "Bearer test-token-42")
             .send_json(serde_json::json!({"message": "hi"}));
         match auth_resp {
             Ok(_) => {} // provider might work
@@ -4756,15 +4766,17 @@ mod tests {
             }
             // Transport errors (e.g. timeout) are acceptable — the server accepted
             // the auth but the handler may block waiting for a provider that isn't running
-            Err(ureq::Error::Transport(_)) => {}
+            Err(_) => {}
         }
 
         // /metrics should be exempt from auth and return Prometheus data
-        let metrics_resp = ureq::get(&format!("{}/metrics", base))
-            .timeout(std::time::Duration::from_secs(2))
+        let mut metrics_resp = ureq::get(&format!("{}/metrics", base))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(2)))
+            .build()
             .call()
             .unwrap();
-        let metrics_body = metrics_resp.into_string().unwrap();
+        let metrics_body = metrics_resp.body_mut().read_to_string().unwrap();
         assert!(metrics_body.contains("ai_server_requests_total"));
 
         // Graceful shutdown
@@ -4783,10 +4795,16 @@ mod tests {
         let url = format!("{}/health", handle.url());
 
         let resp = ureq::get(&url)
-            .timeout(std::time::Duration::from_secs(2))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(2)))
+            .build()
             .call()
             .unwrap();
-        let req_id = resp.header("X-Request-Id").unwrap_or("");
+        let req_id = resp
+            .headers()
+            .get("X-Request-Id")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
         assert_eq!(
             req_id.len(),
             32,
@@ -4809,11 +4827,17 @@ mod tests {
         let url = format!("{}/health", handle.url());
 
         let resp = ureq::get(&url)
-            .timeout(std::time::Duration::from_secs(2))
-            .set("X-Request-Id", "my-custom-id-123")
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(2)))
+            .build()
+            .header("X-Request-Id", "my-custom-id-123")
             .call()
             .unwrap();
-        let returned_id = resp.header("X-Request-Id").unwrap_or("");
+        let returned_id = resp
+            .headers()
+            .get("X-Request-Id")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
         assert_eq!(returned_id, "my-custom-id-123");
 
         handle.shutdown();

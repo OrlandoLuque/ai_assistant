@@ -877,14 +877,19 @@ Summary:"#,
         }
     });
 
-    let response = ureq::post(&url)
+    let mut response = ureq::post(&url)
         .config()
         .timeout_global(Some(std::time::Duration::from_secs(90)))
         .build()
         .send_json(&request_body)
-        .map_err(anyhow::Error::from)?;
+        .map_err(|e| anyhow::anyhow!("HTTP request failed: {}", e))?;
 
-    let body: serde_json::Value = response.body_mut().read_json()?;
+    // `ureq::Error` no convierte solo a `AiError`, asi que el `?` pelado no
+    // vale: se formatea igual que el error de la peticion de arriba.
+    let body: serde_json::Value = response
+        .body_mut()
+        .read_json()
+        .map_err(|e| anyhow::anyhow!("failed to parse response JSON: {}", e))?;
 
     let summary = body
         .get("message")

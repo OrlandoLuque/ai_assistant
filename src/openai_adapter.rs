@@ -261,9 +261,14 @@ impl OpenAIClient {
     pub fn chat(&self, request: OpenAIRequest) -> Result<OpenAIResponse, OpenAIAdapterError> {
         let url = format!("{}/chat/completions", self.config.base_url);
 
+        // `http_status_as_error(false)`: sin esto, en ureq 3 un 4xx/5xx llega
+        // como `Error::StatusCode(u16)` SIN la respuesta, y se perderia el
+        // cuerpo del error --- que es donde OpenAI pone el mensaje util. Asi
+        // vuelve como `Ok` y se decide con `resp.status()`.
         let mut req = ureq::post(&url)
             .config()
             .timeout_global(Some(self.config.timeout))
+            .http_status_as_error(false)
             .build()
             .header("Content-Type", "application/json");
 
@@ -281,7 +286,7 @@ impl OpenAIClient {
         let response = req.send(&body);
 
         match response {
-            Ok(resp) => {
+            Ok(mut resp) if resp.status().is_success() => {
                 let text = resp
                     .body_mut()
                     .read_to_string()
@@ -290,8 +295,9 @@ impl OpenAIClient {
                 serde_json::from_str(&text)
                     .map_err(|e| OpenAIAdapterError::Deserialization(format!("{}: {}", e, text)))
             }
-            Err(ureq::Error::Status(code, resp)) => {
-                let text = resp.into_string().unwrap_or_default();
+            Ok(mut resp) => {
+                let code = resp.status().as_u16();
+                let text = resp.body_mut().read_to_string().unwrap_or_default();
                 if let Ok(error) = serde_json::from_str::<OpenAIError>(&text) {
                     Err(OpenAIAdapterError::Api {
                         code,

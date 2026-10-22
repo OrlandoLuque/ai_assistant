@@ -196,7 +196,7 @@ fn launch_chrome(port: u16) -> Result<(std::process::Child, String), BrowserErro
         std::thread::sleep(std::time::Duration::from_millis(200));
 
         // Try to connect to the debug endpoint
-        if let Ok(resp) = client
+        if let Ok(mut resp) = client
             .get(&format!("http://127.0.0.1:{}/json/version", port))
             .call()
         {

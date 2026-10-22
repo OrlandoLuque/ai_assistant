@@ -246,9 +246,12 @@ impl AnthropicClient {
     ) -> Result<AnthropicResponse, AnthropicAdapterError> {
         let url = format!("{}/v1/messages", self.config.base_url);
 
+        // Ver la nota de `openai_adapter`: sin `http_status_as_error(false)`
+        // un 4xx/5xx llegaria sin cuerpo, y ahi va el mensaje de Anthropic.
         let req = ureq::post(&url)
             .config()
             .timeout_global(Some(self.config.timeout))
+            .http_status_as_error(false)
             .build()
             .header("Content-Type", "application/json")
             .header("x-api-key", &self.config.api_key)
@@ -260,7 +263,7 @@ impl AnthropicClient {
         let response = req.send(&body);
 
         match response {
-            Ok(resp) => {
+            Ok(mut resp) if resp.status().is_success() => {
                 let text = resp
                     .body_mut()
                     .read_to_string()
@@ -269,8 +272,9 @@ impl AnthropicClient {
                 serde_json::from_str(&text)
                     .map_err(|e| AnthropicAdapterError::Deserialization(format!("{}: {}", e, text)))
             }
-            Err(ureq::Error::Status(code, resp)) => {
-                let text = resp.into_string().unwrap_or_default();
+            Ok(mut resp) => {
+                let code = resp.status().as_u16();
+                let text = resp.body_mut().read_to_string().unwrap_or_default();
                 if let Ok(error) = serde_json::from_str::<AnthropicError>(&text) {
                     Err(AnthropicAdapterError::Api {
                         code,

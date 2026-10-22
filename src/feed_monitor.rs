@@ -661,13 +661,14 @@ impl FeedMonitor {
                 .build(),
         );
 
-        let response = agent
+        let mut response = agent
             .get(url)
             .call()
             .map_err(|e| anyhow!("HTTP request failed: {}", e))?;
 
         let body = response
-            .into_string()
+            .body_mut()
+            .read_to_string()
             .map_err(|e| anyhow!("Failed to read response body: {}", e))?;
 
         Ok(body)

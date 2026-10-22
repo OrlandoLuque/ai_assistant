@@ -376,7 +376,7 @@ pub fn register_with_ollama(
         "modelfile": modelfile,
         "stream": false,
     });
-    let resp = ureq::post(&url)
+    let mut resp = ureq::post(&url)
         .config()
         .timeout_global(Some(Duration::from_secs(600)))
         .build()

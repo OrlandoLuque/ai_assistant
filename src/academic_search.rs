@@ -296,10 +296,20 @@ pub(crate) fn get_with_retry(
 ) -> Result<ureq::http::Response<ureq::Body>, AcademicSearchError> {
     let mut attempt = 0u32;
     loop {
-        match build().call() {
-            Ok(resp) => return Ok(resp),
-            Err(ureq::Error::Status(code, resp)) => {
-                let retry_after = resp.header("Retry-After").map(|s| s.to_string());
+        // `http_status_as_error(false)` es lo que mantiene vivo el backoff de
+        // N46: en ureq 3 un 429 llegaria como `Error::StatusCode(u16)` SIN la
+        // respuesta, y con ella se iria la cabecera `Retry-After`, que es
+        // justamente el dato que distingue "espera 30 s" de "espera lo que te
+        // parezca". Asi el no-2xx vuelve como `Ok` con cabeceras intactas.
+        match build().config().http_status_as_error(false).build().call() {
+            Ok(resp) if resp.status().is_success() => return Ok(resp),
+            Ok(resp) => {
+                let code = resp.status().as_u16();
+                let retry_after = resp
+                    .headers()
+                    .get("Retry-After")
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| s.to_string());
                 match retry_delay(code, retry_after.as_deref(), attempt) {
                     Some(delay) if attempt + 1 < MAX_ATTEMPTS => {
                         std::thread::sleep(delay);

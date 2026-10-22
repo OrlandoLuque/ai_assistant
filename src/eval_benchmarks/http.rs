@@ -101,10 +101,14 @@ fn download_one(url: &str, dest: &Path, opts: &DownloadOptions) -> Result<PathBu
             status,
             url: url.to_string(),
         },
-        ureq::Error::Transport(t) => BenchmarkError::Network(format!("{url}: {t}")),
+        // ureq 2 metia todos los fallos de red en `Error::Transport`; en ureq 3
+        // son variantes del propio `Error` (`Io`, `ConnectionFailed`,
+        // `HostNotFound`, `Timeout`...), asi que las cubre el catch-all.
+        other => BenchmarkError::Network(format!("{url}: {other}")),
     })?;
 
-    let status = resp.status();
+    // `status()` devuelve `StatusCode` en ureq 3, no `u16`.
+    let status = resp.status().as_u16();
     if !(200..300).contains(&status) {
         return Err(BenchmarkError::Http {
             status,
@@ -122,7 +126,7 @@ fn download_one(url: &str, dest: &Path, opts: &DownloadOptions) -> Result<PathBu
     let mut file = std::fs::File::create(&part)
         .map_err(|e| BenchmarkError::Io(format!("create {}: {e}", part.display())))?;
 
-    let mut reader = resp.into_reader();
+    let mut reader = resp.into_body().into_reader();
     let mut written: u64 = 0;
     let mut buf = [0u8; 64 * 1024];
     loop {

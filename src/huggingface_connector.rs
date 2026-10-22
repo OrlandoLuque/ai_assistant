@@ -310,7 +310,7 @@ impl HfClient {
         let response = req.send(&body);
 
         match response {
-            Ok(resp) => {
+            Ok(mut resp) if resp.status().is_success() => {
                 let text = resp
                     .body_mut()
                     .read_to_string()
@@ -318,8 +318,11 @@ impl HfClient {
 
                 self.parse_response(&text)
             }
-            Err(ureq::Error::Status(code, resp)) => {
-                let text = resp.into_string().unwrap_or_default();
+            // Ver la nota de `openai_adapter`: el cuerpo del no-2xx se conserva
+            // porque la peticion lleva `http_status_as_error(false)`.
+            Ok(mut resp) => {
+                let code = resp.status().as_u16();
+                let text = resp.body_mut().read_to_string().unwrap_or_default();
                 Err(HfError::Api {
                     code,
                     message: text,

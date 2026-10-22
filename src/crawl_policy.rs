@@ -616,10 +616,10 @@ impl CrawlPolicy {
                 .build(),
         )
         .get(&url)
-        .set("User-Agent", &self.config.user_agent)
+        .header("User-Agent", &self.config.user_agent)
         .call()
         {
-            Ok(response) => response.into_string().unwrap_or_default(),
+            Ok(mut response) => response.body_mut().read_to_string().unwrap_or_default(),
             Err(_) => {
                 // If we can't fetch robots.txt, use an empty one (allow all)
                 String::new()
@@ -673,18 +673,19 @@ impl CrawlPolicy {
         let timeout = self.config.timeout_ms / 1000;
         let timeout = if timeout == 0 { 1 } else { timeout };
 
-        let response = ureq::Agent::new_with_config(
+        let mut response = ureq::Agent::new_with_config(
             ureq::Agent::config_builder()
                 .timeout_global(Some(Duration::from_secs(timeout)))
                 .build(),
         )
         .get(url)
-        .set("User-Agent", &self.config.user_agent)
+        .header("User-Agent", &self.config.user_agent)
         .call()
         .map_err(|e| anyhow!("Failed to fetch sitemap {}: {}", url, e))?;
 
         let content = response
-            .into_string()
+            .body_mut()
+            .read_to_string()
             .map_err(|e| anyhow!("Failed to read sitemap response: {}", e))?;
 
         Self::parse_sitemap(&content)

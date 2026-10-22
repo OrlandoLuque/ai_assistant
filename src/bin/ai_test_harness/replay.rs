@@ -75,17 +75,20 @@ pub fn load_session_file(path: &str) -> Result<Vec<ai_assistant::RagDebugSession
 
 /// Check if Ollama is available and list models
 fn check_ollama(url: &str) -> Result<Vec<String>, String> {
-    let client = ureq::AgentBuilder::new()
-        .timeout(std::time::Duration::from_secs(5))
-        .build();
+    let client = ureq::Agent::new_with_config(
+        ureq::Agent::config_builder()
+            .timeout_global(Some(std::time::Duration::from_secs(5)))
+            .build(),
+    );
 
-    let response = client
+    let mut response = client
         .get(&format!("{}/api/tags", url))
         .call()
         .map_err(|e| format!("Failed to connect to Ollama: {}", e))?;
 
     let json: serde_json::Value = response
-        .into_json()
+        .body_mut()
+        .read_json()
         .map_err(|e| format!("Failed to parse response: {}", e))?;
 
     let models: Vec<String> = json["models"]
@@ -102,21 +105,24 @@ fn check_ollama(url: &str) -> Result<Vec<String>, String> {
 
 /// Check if OpenAI-compatible endpoint is available and list models
 fn check_openai_compatible(url: &str, api_key: Option<&str>) -> Result<Vec<String>, String> {
-    let client = ureq::AgentBuilder::new()
-        .timeout(std::time::Duration::from_secs(10))
-        .build();
+    let client = ureq::Agent::new_with_config(
+        ureq::Agent::config_builder()
+            .timeout_global(Some(std::time::Duration::from_secs(10)))
+            .build(),
+    );
 
     let mut request = client.get(&format!("{}/models", url.trim_end_matches('/')));
     if let Some(key) = api_key {
-        request = request.set("Authorization", &format!("Bearer {}", key));
+        request = request.header("Authorization", &format!("Bearer {}", key));
     }
 
-    let response = request
+    let mut response = request
         .call()
         .map_err(|e| format!("Failed to connect: {}", e))?;
 
     let json: serde_json::Value = response
-        .into_json()
+        .body_mut()
+        .read_json()
         .map_err(|e| format!("Failed to parse response: {}", e))?;
 
     let models: Vec<String> = json["data"]
@@ -139,9 +145,11 @@ fn generate_with_ollama(
     context: &str,
     query: &str,
 ) -> Result<(String, u64), String> {
-    let client = ureq::AgentBuilder::new()
-        .timeout(std::time::Duration::from_secs(120))
-        .build();
+    let client = ureq::Agent::new_with_config(
+        ureq::Agent::config_builder()
+            .timeout_global(Some(std::time::Duration::from_secs(120)))
+            .build(),
+    );
 
     let full_prompt = if context.is_empty() {
         query.to_string()
@@ -162,7 +170,7 @@ fn generate_with_ollama(
 
     let start = std::time::Instant::now();
 
-    let response = client
+    let mut response = client
         .post(&format!("{}/api/generate", url))
         .send_json(&request_body)
         .map_err(|e| format!("Failed to generate: {}", e))?;
@@ -170,7 +178,8 @@ fn generate_with_ollama(
     let duration_ms = start.elapsed().as_millis() as u64;
 
     let json: serde_json::Value = response
-        .into_json()
+        .body_mut()
+        .read_json()
         .map_err(|e| format!("Failed to parse response: {}", e))?;
 
     let response_text = json["response"].as_str().unwrap_or("").to_string();
@@ -187,9 +196,11 @@ fn generate_with_openai_compatible(
     context: &str,
     query: &str,
 ) -> Result<(String, u64), String> {
-    let client = ureq::AgentBuilder::new()
-        .timeout(std::time::Duration::from_secs(120))
-        .build();
+    let client = ureq::Agent::new_with_config(
+        ureq::Agent::config_builder()
+            .timeout_global(Some(std::time::Duration::from_secs(120)))
+            .build(),
+    );
 
     let user_content = if context.is_empty() {
         query.to_string()
@@ -211,18 +222,19 @@ fn generate_with_openai_compatible(
 
     let mut request = client.post(&format!("{}/chat/completions", url.trim_end_matches('/')));
     if let Some(key) = api_key {
-        request = request.set("Authorization", &format!("Bearer {}", key));
+        request = request.header("Authorization", &format!("Bearer {}", key));
     }
-    request = request.set("Content-Type", "application/json");
+    request = request.header("Content-Type", "application/json");
 
-    let response = request
+    let mut response = request
         .send_json(&request_body)
         .map_err(|e| format!("Failed to generate: {}", e))?;
 
     let duration_ms = start.elapsed().as_millis() as u64;
 
     let json: serde_json::Value = response
-        .into_json()
+        .body_mut()
+        .read_json()
         .map_err(|e| format!("Failed to parse response: {}", e))?;
 
     let response_text = json["choices"][0]["message"]["content"]
@@ -242,9 +254,11 @@ fn generate_with_anthropic(
     context: &str,
     query: &str,
 ) -> Result<(String, u64), String> {
-    let client = ureq::AgentBuilder::new()
-        .timeout(std::time::Duration::from_secs(120))
-        .build();
+    let client = ureq::Agent::new_with_config(
+        ureq::Agent::config_builder()
+            .timeout_global(Some(std::time::Duration::from_secs(120)))
+            .build(),
+    );
 
     let user_content = if context.is_empty() {
         query.to_string()
@@ -265,9 +279,9 @@ fn generate_with_anthropic(
 
     let response = client
         .post(&format!("{}/messages", url.trim_end_matches('/')))
-        .set("x-api-key", api_key)
-        .set("anthropic-version", "2023-06-01")
-        .set("Content-Type", "application/json")
+        .header("x-api-key", api_key)
+        .header("anthropic-version", "2023-06-01")
+        .header("Content-Type", "application/json")
         .send_json(&request_body)
         .map_err(|e| format!("Failed to generate: {}", e))?;
 

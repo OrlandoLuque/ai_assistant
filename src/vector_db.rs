@@ -528,35 +528,46 @@ impl QdrantClient {
     /// Make an HTTP request to Qdrant
     fn request(&self, method: &str, endpoint: &str, body: Option<&str>) -> AiResult<String> {
         let url = format!("{}{}", self.base_url, endpoint);
-        let agent = ureq::agent();
 
-        let mut request = match method {
-            "GET" => agent.get(&url),
-            "POST" => agent.post(&url),
-            "PUT" => agent.put(&url),
-            "DELETE" => agent.delete(&url),
-            _ => return Err(AiError::Other(format!("Unknown HTTP method: {}", method))),
-        };
+        // Se construye una `http::Request` y se manda con `Agent::run` en vez
+        // del `match method { "GET" => agent.get(..), "POST" => agent.post(..) }`
+        // que habia: en ureq 3 `get`/`delete` devuelven
+        // `RequestBuilder<WithoutBody>` y `post`/`put` `RequestBuilder<WithBody>`,
+        // que son tipos distintos, asi que las ramas del `match` no unifican.
+        // `run` acepta cualquier metodo y de paso quita el `if/else` del cuerpo.
+        //
+        // `http_status_as_error(false)` porque Qdrant pone en el cuerpo del
+        // no-2xx el motivo del rechazo, y en ureq 3 un `Error::StatusCode` no
+        // lleva respuesta.
+        let agent = ureq::Agent::new_with_config(
+            ureq::Agent::config_builder()
+                .http_status_as_error(false)
+                .build(),
+        );
 
-        request = request.set("Content-Type", "application/json");
+        let mut builder = ureq::http::Request::builder()
+            .method(method)
+            .uri(&url)
+            .header("Content-Type", "application/json");
 
         if let Some(key) = &self.api_key {
-            request = request.set("api-key", key);
+            builder = builder.header("api-key", key);
         }
 
-        let response = if let Some(body) = body {
-            request.send_string(body)
-        } else {
-            request.call()
-        };
+        let http_request = builder
+            .body(body.unwrap_or(""))
+            .map_err(|e| AiError::Other(format!("bad {} request for {}: {}", method, url, e)))?;
+
+        let response = agent.run(http_request);
 
         match response {
-            Ok(resp) => {
-                let body = resp.into_string().unwrap_or_default();
+            Ok(mut resp) if resp.status().is_success() => {
+                let body = resp.body_mut().read_to_string().unwrap_or_default();
                 Ok(body)
             }
-            Err(ureq::Error::Status(code, resp)) => {
-                let body = resp.into_string().unwrap_or_default();
+            Ok(mut resp) => {
+                let code = resp.status().as_u16();
+                let body = resp.body_mut().read_to_string().unwrap_or_default();
                 Err(AiError::Provider(crate::error::ProviderError::ApiError {
                     provider: "Qdrant".to_string(),
                     status_code: code,

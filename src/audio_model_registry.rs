@@ -241,6 +241,9 @@ impl AudioModelRegistry {
         let mut file = std::fs::File::create(&temp_path)
             .map_err(|e| format!("Failed to create temp file: {}", e))?;
 
+        // `BodyReader` implementa `std::io::Read`, pero el trait tiene que
+        // estar en ambito. El `use` de mas abajo esta dentro de otra funcion.
+        use std::io::Read as _;
         let mut reader = response.into_body().into_reader();
         let mut buf = vec![0u8; 65536]; // 64KB chunks
 

@@ -733,13 +733,14 @@ pub fn poll_web_scraper(
             .timeout_global(Some(std::time::Duration::from_secs(30)))
             .build(),
     );
-    let response = agent
+    let mut response = agent
         .get(url)
         .call()
         .map_err(|e| format!("Scrape error: {}", e))?;
 
     let body = response
-        .into_string()
+        .body_mut()
+        .read_to_string()
         .map_err(|e| format!("Scrape read error: {}", e))?;
 
     // Enforce max body size (#18)
@@ -802,22 +803,43 @@ pub fn poll_rest_api(
 ) -> Result<Vec<IncomingEvent>, String> {
     validate_url(url, "REST poll URL")?;
 
-    let mut req = match method.unwrap_or("GET") {
-        "POST" => ureq::post(url),
-        _ => ureq::get(url),
-    };
+    // En ureq 3 `post` devuelve `RequestBuilder<WithBody>` y `get`
+    // `RequestBuilder<WithoutBody>`: son tipos distintos y las ramas de un
+    // `match` no unifican. Se decide al ENVIAR, no al construir.
+    //
+    // El POST va con `send_empty()` porque en ureq 2 este sitio llamaba a
+    // `.call()` sobre el builder del POST, que mandaba la peticion SIN cuerpo.
+    // `send_empty` es lo que conserva ese comportamiento; `.call()` en ureq 3
+    // solo existe para `WithoutBody`.
+    let timeout = std::time::Duration::from_secs(30);
+    let extra: Vec<(String, String)> = headers
+        .map(|h| h.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+        .unwrap_or_default();
 
-    req = req.timeout(std::time::Duration::from_secs(30));
-
-    if let Some(hdrs) = headers {
-        for (k, v) in hdrs {
-            req = req.set(k, v);
+    let mut response = if method.unwrap_or("GET") == "POST" {
+        let mut req = ureq::post(url)
+            .config()
+            .timeout_global(Some(timeout))
+            .build();
+        for (k, v) in &extra {
+            req = req.header(k, v);
         }
+        req.send_empty()
+    } else {
+        let mut req = ureq::get(url)
+            .config()
+            .timeout_global(Some(timeout))
+            .build();
+        for (k, v) in &extra {
+            req = req.header(k, v);
+        }
+        req.call()
     }
+    .map_err(|e| format!("REST poll error: {}", e))?;
 
-    let response = req.call().map_err(|e| format!("REST poll error: {}", e))?;
     let json: serde_json::Value = response
-        .into_json()
+        .body_mut()
+        .read_json()
         .map_err(|e| format!("REST JSON error: {}", e))?;
 
     let current_value = if let Some(path) = watch_path {

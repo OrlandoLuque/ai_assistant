@@ -419,7 +419,7 @@ mod inner {
                 .send_json(&body);
 
             match response {
-                Ok(resp) => {
+                Ok(mut resp) if resp.status().is_success() => {
                     let json: serde_json::Value = resp.body_mut().read_json().map_err(|e| {
                         MediaGenerationError::GenerationFailed {
                             provider: self.provider_name().to_string(),
@@ -457,6 +457,7 @@ mod inner {
                         let img_resp = ureq::get(url)
                             .config()
                             .timeout_global(Some(std::time::Duration::from_secs(60)))
+                            .http_status_as_error(false)
                             .build()
                             .call()
                             .map_err(|e| MediaGenerationError::GenerationFailed {
@@ -494,8 +495,13 @@ mod inner {
                         generation_time_ms: elapsed_ms,
                     })
                 }
-                Err(ureq::Error::Status(code, resp)) => {
-                    let body_text = resp.into_string().unwrap_or_default();
+                // La peticion va con `http_status_as_error(false)`, asi que en
+                // ureq 3 el no-2xx llega aqui como `Ok` con el cuerpo intacto ---
+                // que es donde el proveedor explica por que rechazo la generacion.
+                // `Error::StatusCode` no lo lleva.
+                Ok(mut resp) => {
+                    let code = resp.status().as_u16();
+                    let body_text = resp.body_mut().read_to_string().unwrap_or_default();
                     let reason =
                         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body_text) {
                             json["error"]["message"]
@@ -656,11 +662,12 @@ mod inner {
                 .header("Accept", "application/json")
                 .config()
                 .timeout_global(Some(std::time::Duration::from_secs(120)))
+                .http_status_as_error(false)
                 .build()
                 .send_json(&body);
 
             match response {
-                Ok(resp) => {
+                Ok(mut resp) if resp.status().is_success() => {
                     let json: serde_json::Value = resp.body_mut().read_json().map_err(|e| {
                         MediaGenerationError::GenerationFailed {
                             provider: self.provider_name().to_string(),
@@ -711,8 +718,13 @@ mod inner {
                         generation_time_ms: elapsed_ms,
                     })
                 }
-                Err(ureq::Error::Status(code, resp)) => {
-                    let body_text = resp.into_string().unwrap_or_default();
+                // La peticion va con `http_status_as_error(false)`, asi que en
+                // ureq 3 el no-2xx llega aqui como `Ok` con el cuerpo intacto ---
+                // que es donde el proveedor explica por que rechazo la generacion.
+                // `Error::StatusCode` no lo lleva.
+                Ok(mut resp) => {
+                    let code = resp.status().as_u16();
+                    let body_text = resp.body_mut().read_to_string().unwrap_or_default();
                     let reason =
                         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body_text) {
                             json["message"].as_str().unwrap_or(&body_text).to_string()
@@ -951,19 +963,27 @@ mod inner {
                 .header("Content-Type", "application/json")
                 .config()
                 .timeout_global(Some(std::time::Duration::from_secs(30)))
+                .http_status_as_error(false)
                 .build()
                 .send_json(&body);
 
             match response {
-                Ok(resp) => resp.body_mut().read_json().map_err(|e| {
-                    MediaGenerationError::GenerationFailed {
-                        provider: self.provider_name().to_string(),
-                        reason: format!("failed to parse prediction response: {}", e),
-                    }
-                    .into()
-                }),
-                Err(ureq::Error::Status(code, resp)) => {
-                    let body_text = resp.into_string().unwrap_or_default();
+                Ok(mut resp) if resp.status().is_success() => {
+                    resp.body_mut().read_json().map_err(|e| {
+                        MediaGenerationError::GenerationFailed {
+                            provider: self.provider_name().to_string(),
+                            reason: format!("failed to parse prediction response: {}", e),
+                        }
+                        .into()
+                    })
+                }
+                // La peticion va con `http_status_as_error(false)`, asi que en
+                // ureq 3 el no-2xx llega aqui como `Ok` con el cuerpo intacto ---
+                // que es donde el proveedor explica por que rechazo la generacion.
+                // `Error::StatusCode` no lo lleva.
+                Ok(mut resp) => {
+                    let code = resp.status().as_u16();
+                    let body_text = resp.body_mut().read_to_string().unwrap_or_default();
                     if code == 401 || code == 403 {
                         Err(MediaGenerationError::ProviderUnavailable {
                             provider: self.provider_name().to_string(),
