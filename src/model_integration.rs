@@ -177,12 +177,13 @@ impl ModelProvider for OllamaProvider {
             "stream": false
         });
 
-        let response = ureq::post(&format!("{}/api/chat", self.base_url))
+        let mut response = ureq::post(&format!("{}/api/chat", self.base_url))
             .send_json(&request_body)
             .map_err(|e| ModelError::ConnectionError(e.to_string()))?;
 
         let response_json: serde_json::Value = response
-            .into_json()
+            .body_mut()
+            .read_json()
             .map_err(|e| ModelError::ProviderError(e.to_string()))?;
 
         let content = response_json["message"]["content"]
@@ -268,12 +269,13 @@ impl ModelProvider for LMStudioProvider {
             request_body["tools"] = serde_json::Value::Array(tools.to_vec());
         }
 
-        let response = ureq::post(&format!("{}/chat/completions", self.base_url))
+        let mut response = ureq::post(&format!("{}/chat/completions", self.base_url))
             .send_json(&request_body)
             .map_err(|e| ModelError::ConnectionError(e.to_string()))?;
 
         let response_json: serde_json::Value = response
-            .into_json()
+            .body_mut()
+            .read_json()
             .map_err(|e| ModelError::ProviderError(e.to_string()))?;
 
         let choice = &response_json["choices"][0];

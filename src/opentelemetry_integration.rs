@@ -2122,14 +2122,16 @@ impl OtlpHttpExporter {
         let url = format!("{}/v1/traces", self.endpoint);
 
         let mut req = ureq::post(&url)
-            .set("Content-Type", "application/json")
-            .timeout(std::time::Duration::from_secs(10));
+            .header("Content-Type", "application/json")
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(10)))
+            .build();
 
         for (k, v) in &self.headers {
-            req = req.set(k, v);
+            req = req.header(k, v);
         }
 
-        match req.send_string(&body) {
+        match req.send(&body) {
             Ok(_) => {
                 self.batch.clear();
                 Ok(count)

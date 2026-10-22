@@ -48,12 +48,14 @@ pub fn fetch_openai_compatible_models(
 /// probe (with a best-effort version-check fallback).
 pub fn fetch_kobold_models(base_url: &str) -> Result<Vec<ModelInfo>> {
     let url = format!("{}/api/v1/model", base_url);
-    let response = ureq::get(&url)
-        .timeout(MODEL_PROBE_TIMEOUT)
+    let mut response = ureq::get(&url)
+        .config()
+        .timeout_global(Some(MODEL_PROBE_TIMEOUT))
+        .build()
         .call()
         .context("Failed to connect to Kobold.cpp")?;
 
-    let body: serde_json::Value = response.into_json()?;
+    let body: serde_json::Value = response.body_mut().read_json()?;
 
     let mut models = Vec::new();
 
@@ -74,7 +76,9 @@ pub fn fetch_kobold_models(base_url: &str) -> Result<Vec<ModelInfo>> {
     if models.is_empty() {
         let version_url = format!("{}/api/v1/info/version", base_url);
         if ureq::get(&version_url)
-            .timeout(std::time::Duration::from_secs(2))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(2)))
+            .build()
             .call()
             .is_ok()
         {
@@ -349,13 +353,15 @@ pub fn generate_ollama_streaming(
     // Retry only the connection; stream reading is not retried
     let response = retry_with_config(config.retry_config.clone(), || {
         let resp = ureq::post(&url)
-            .timeout(std::time::Duration::from_secs(300))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(300)))
+            .build()
             .send_json(&request_body)?;
         Ok(resp)
     })
     .context("Failed to send request to Ollama")?;
 
-    let reader = std::io::BufReader::new(response.into_reader());
+    let reader = std::io::BufReader::new(response.into_body().into_reader());
     let mut full_response = String::new();
 
     for line in reader.lines() {
@@ -437,13 +443,15 @@ pub fn generate_openai_streaming(
     // Retry only the connection; stream reading is not retried
     let response = retry_with_config(config.retry_config.clone(), || {
         let resp = ureq::post(&url)
-            .timeout(std::time::Duration::from_secs(300))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(300)))
+            .build()
             .send_json(&request_body)?;
         Ok(resp)
     })
     .context("Failed to send request to LLM API")?;
 
-    let reader = std::io::BufReader::new(response.into_reader());
+    let reader = std::io::BufReader::new(response.into_body().into_reader());
     let mut full_response = String::new();
 
     for line in reader.lines() {
@@ -504,15 +512,17 @@ pub fn generate_ollama_response(
         "options": ollama_chat_options(config, system_prompt, conversation),
     });
 
-    let response = retry_with_config(config.retry_config.clone(), || {
+    let mut response = retry_with_config(config.retry_config.clone(), || {
         let resp = ureq::post(&url)
-            .timeout(std::time::Duration::from_secs(120))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(120)))
+            .build()
             .send_json(&request_body)?;
         Ok(resp)
     })
     .context("Failed to send request to Ollama")?;
 
-    let body: serde_json::Value = response.into_json()?;
+    let body: serde_json::Value = response.body_mut().read_json()?;
 
     let content = body
         .get("message")
@@ -572,15 +582,17 @@ pub fn generate_openai_response(
         "stream": false
     });
 
-    let response = retry_with_config(config.retry_config.clone(), || {
+    let mut response = retry_with_config(config.retry_config.clone(), || {
         let resp = ureq::post(&url)
-            .timeout(std::time::Duration::from_secs(120))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(120)))
+            .build()
             .send_json(&request_body)?;
         Ok(resp)
     })
     .context("Failed to send request to API")?;
 
-    let body: serde_json::Value = response.into_json()?;
+    let body: serde_json::Value = response.body_mut().read_json()?;
 
     let content = body
         .get("choices")
@@ -649,15 +661,17 @@ pub fn generate_ollama_response_with_images(
         "options": ollama_options_with_ctx(config, num_ctx),
     });
 
-    let response = retry_with_config(config.retry_config.clone(), || {
+    let mut response = retry_with_config(config.retry_config.clone(), || {
         let resp = ureq::post(&url)
-            .timeout(std::time::Duration::from_secs(180))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(180)))
+            .build()
             .send_json(&request_body)?;
         Ok(resp)
     })
     .context("Failed to send vision request to Ollama")?;
 
-    let body: serde_json::Value = response.into_json()?;
+    let body: serde_json::Value = response.body_mut().read_json()?;
     let content = body
         .get("message")
         .and_then(|m| m.get("content"))
@@ -713,9 +727,11 @@ pub fn generate_openai_compat_response_with_images(
         "stream": false,
     });
 
-    let response = retry_with_config(config.retry_config.clone(), || {
+    let mut response = retry_with_config(config.retry_config.clone(), || {
         let resp = ureq::post(&url)
-            .timeout(std::time::Duration::from_secs(180))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(180)))
+            .build()
             .send_json(&request_body)?;
         Ok(resp)
     })
@@ -735,7 +751,7 @@ pub fn generate_openai_compat_response_with_images(
         }
     })?;
 
-    let body: serde_json::Value = response.into_json()?;
+    let body: serde_json::Value = response.body_mut().read_json()?;
     let content = body
         .get("choices")
         .and_then(|c| c.get(0))
@@ -840,15 +856,17 @@ pub fn generate_kobold_response(
         "rep_pen": 1.1
     });
 
-    let response = retry_with_config(config.retry_config.clone(), || {
+    let mut response = retry_with_config(config.retry_config.clone(), || {
         let resp = ureq::post(&url)
-            .timeout(std::time::Duration::from_secs(120))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(120)))
+            .build()
             .send_json(&request_body)?;
         Ok(resp)
     })
     .context("Failed to send request to Kobold.cpp")?;
 
-    let body: serde_json::Value = response.into_json()?;
+    let body: serde_json::Value = response.body_mut().read_json()?;
 
     // Kobold returns results in an array
     let content = body
@@ -1110,13 +1128,15 @@ pub fn generate_ollama_streaming_cancellable(
     // Retry only the connection; stream reading is not retried
     let response = retry_with_config(config.retry_config.clone(), || {
         let resp = ureq::post(&url)
-            .timeout(std::time::Duration::from_secs(300))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(300)))
+            .build()
             .send_json(&request_body)?;
         Ok(resp)
     })
     .context("Failed to send request to Ollama")?;
 
-    let reader = std::io::BufReader::new(response.into_reader());
+    let reader = std::io::BufReader::new(response.into_body().into_reader());
     let mut full_response = String::new();
 
     for line in reader.lines() {
@@ -1199,13 +1219,15 @@ pub fn generate_openai_streaming_cancellable(
     // Retry only the connection; stream reading is not retried
     let response = retry_with_config(config.retry_config.clone(), || {
         let resp = ureq::post(&url)
-            .timeout(std::time::Duration::from_secs(300))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(300)))
+            .build()
             .send_json(&request_body)?;
         Ok(resp)
     })
     .context("Failed to send request to OpenAI-compatible API")?;
 
-    let reader = std::io::BufReader::new(response.into_reader());
+    let reader = std::io::BufReader::new(response.into_body().into_reader());
     let mut full_response = String::new();
 
     for line in reader.lines() {
@@ -1442,12 +1464,14 @@ fn fetch_ollama_model_context(base_url: &str, model_name: &str) -> Option<usize>
         "name": model_name
     });
 
-    let response = ureq::post(&url)
-        .timeout(std::time::Duration::from_secs(5))
+    let mut response = ureq::post(&url)
+        .config()
+        .timeout_global(Some(std::time::Duration::from_secs(5)))
+        .build()
         .send_json(&body)
         .ok()?;
 
-    let json: serde_json::Value = response.into_json().ok()?;
+    let json: serde_json::Value = response.body_mut().read_json().ok()?;
 
     // Try to get num_ctx from model_info first (more reliable)
     if let Some(ctx) = json
@@ -2015,11 +2039,13 @@ impl ConnectionPoolHandle {
     /// creating one lazily if it does not yet exist.
     pub fn get_agent(&mut self, host: &str) -> &ureq::Agent {
         if !self.agents.contains_key(host) {
-            let agent = ureq::AgentBuilder::new()
-                .timeout_connect(Duration::from_secs(self.config.timeout_secs))
-                .timeout_read(Duration::from_secs(self.config.timeout_secs))
-                .max_idle_connections_per_host(self.config.max_idle_per_host)
-                .build();
+            let agent = ureq::Agent::new_with_config(
+                ureq::Agent::config_builder()
+                    .timeout_connect(Some(Duration::from_secs(self.config.timeout_secs)))
+                    .timeout_per_read(Some(Duration::from_secs(self.config.timeout_secs)))
+                    .max_idle_connections_per_host(self.config.max_idle_per_host)
+                    .build(),
+            );
             self.agents.insert(host.to_string(), agent);
         }
         self.agents
@@ -2402,9 +2428,14 @@ impl ResilientProviderRegistry {
     pub fn check_health(&mut self, provider: &ProviderConfig) -> ProviderHealthStatus {
         let url = format!("{}/", provider.base_url);
         log::debug!("[llm] health_check provider={} url={}", provider.name, url);
-        let status = match ureq::get(&url).timeout(Duration::from_secs(5)).call() {
+        let status = match ureq::get(&url)
+            .config()
+            .timeout_global(Some(Duration::from_secs(5)))
+            .build()
+            .call()
+        {
             Ok(_) => ProviderHealthStatus::Healthy,
-            Err(ureq::Error::Status(code, _)) if code < 500 => ProviderHealthStatus::Degraded,
+            Err(ureq::Error::StatusCode(code)) if code < 500 => ProviderHealthStatus::Degraded,
             Err(_) => ProviderHealthStatus::Unhealthy,
         };
         log::info!(

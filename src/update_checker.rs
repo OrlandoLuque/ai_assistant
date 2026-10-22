@@ -30,13 +30,15 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(4);
 /// Returns `Some(UpdateInfo)` if a newer version exists, `None` otherwise.
 /// Silently returns `None` on any network or parsing error.
 pub fn check_for_update(current_version: &str) -> Option<UpdateInfo> {
-    let resp = ureq::get(GITHUB_API_URL)
-        .set("User-Agent", "ai_assistant-update-checker")
-        .timeout(REQUEST_TIMEOUT)
+    let mut resp = ureq::get(GITHUB_API_URL)
+        .header("User-Agent", "ai_assistant-update-checker")
+        .config()
+        .timeout_global(Some(REQUEST_TIMEOUT))
+        .build()
         .call()
         .ok()?;
 
-    let body: serde_json::Value = resp.into_json().ok()?;
+    let body: serde_json::Value = resp.body_mut().read_json().ok()?;
     let tag = body["tag_name"].as_str()?;
     let url = body["html_url"].as_str()?;
 

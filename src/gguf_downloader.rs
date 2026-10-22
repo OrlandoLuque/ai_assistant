@@ -133,12 +133,15 @@ pub fn download(
     };
 
     // Build request.
-    let mut agent = ureq::get(&req.url).timeout(req.timeout);
+    let mut agent = ureq::get(&req.url)
+        .config()
+        .timeout_global(Some(req.timeout))
+        .build();
     if let Some(tok) = &req.bearer_token {
-        agent = agent.set("Authorization", &format!("Bearer {}", tok));
+        agent = agent.header("Authorization", &format!("Bearer {}", tok));
     }
     if existing_bytes > 0 {
-        agent = agent.set("Range", &format!("bytes={}-", existing_bytes));
+        agent = agent.header("Range", &format!("bytes={}-", existing_bytes));
     }
 
     let resp = agent
@@ -150,7 +153,11 @@ pub fn download(
     }
 
     // Total = existing + Content-Length (206 reports remaining length).
-    let content_length: Option<u64> = resp.header("Content-Length").and_then(|v| v.parse().ok());
+    let content_length: Option<u64> = resp
+        .headers()
+        .get("Content-Length")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse().ok());
     let total_expected: Option<u64> = content_length.map(|cl| cl + existing_bytes);
 
     // Open .part in append-or-create mode (do not truncate — we may be resuming).
@@ -164,7 +171,7 @@ pub fn download(
     out.seek(SeekFrom::Start(existing_bytes))
         .map_err(|e| format!("seek {}: {}", part.display(), e))?;
 
-    let mut reader = resp.into_reader();
+    let mut reader = resp.into_body().into_reader();
     let mut buf = [0u8; 64 * 1024];
     let mut written: u64 = existing_bytes;
     loop {
@@ -370,12 +377,14 @@ pub fn register_with_ollama(
         "stream": false,
     });
     let resp = ureq::post(&url)
-        .timeout(Duration::from_secs(600))
+        .config()
+        .timeout_global(Some(Duration::from_secs(600)))
+        .build()
         .send_json(body)
         .map_err(|e| format!("POST {}: {}", url, e))?;
-    let status = resp.status();
+    let status = resp.status().as_u16();
     if !(200..300).contains(&status) {
-        let msg = resp.into_string().unwrap_or_default();
+        let msg = resp.body_mut().read_to_string().unwrap_or_default();
         return Err(format!("ollama /api/create returned {}: {}", status, msg));
     }
     Ok(())

@@ -68,8 +68,10 @@ impl GeminiProvider {
     pub fn check_health(&self) -> bool {
         let url = format!("{}/v1beta/models?pageSize=1", self.base_url);
         match ureq::get(&url)
-            .set("x-goog-api-key", &self.api_key)
-            .timeout(Duration::from_secs(5))
+            .header("x-goog-api-key", &self.api_key)
+            .config()
+            .timeout_global(Some(Duration::from_secs(5)))
+            .build()
             .call()
         {
             Ok(resp) => {
@@ -307,13 +309,16 @@ impl ProviderPlugin for GeminiProvider {
     fn list_models(&self) -> Result<Vec<ModelInfo>> {
         let url = format!("{}/v1beta/models", self.base_url);
         match ureq::get(&url)
-            .set("x-goog-api-key", &self.api_key)
-            .timeout(self.timeout)
+            .header("x-goog-api-key", &self.api_key)
+            .config()
+            .timeout_global(Some(self.timeout))
+            .build()
             .call()
         {
-            Ok(resp) => {
+            Ok(mut resp) => {
                 let body: Value = resp
-                    .into_json()
+                    .body_mut()
+                    .read_json()
                     .context("Failed to parse Gemini models response")?;
                 let models = Self::parse_model_list(&body);
                 if models.is_empty() {
@@ -336,14 +341,17 @@ impl ProviderPlugin for GeminiProvider {
         let url = format!("{}/v1beta/{}:generateContent", self.base_url, model);
         let body = Self::build_request_body(config, messages, system_prompt, None);
 
-        let resp = ureq::post(&url)
-            .set("x-goog-api-key", &self.api_key)
-            .timeout(self.timeout)
+        let mut resp = ureq::post(&url)
+            .header("x-goog-api-key", &self.api_key)
+            .config()
+            .timeout_global(Some(self.timeout))
+            .build()
             .send_json(&body)
             .context("Failed to send request to Gemini API")?;
 
         let resp_body: Value = resp
-            .into_json()
+            .body_mut()
+            .read_json()
             .context("Failed to parse Gemini response")?;
 
         let (text, _) = Self::parse_generate_response(&resp_body);
@@ -365,11 +373,13 @@ impl ProviderPlugin for GeminiProvider {
         let body = Self::build_request_body(config, messages, system_prompt, None);
 
         let resp = ureq::post(&url)
-            .timeout(self.timeout)
+            .config()
+            .timeout_global(Some(self.timeout))
+            .build()
             .send_json(&body)
             .context("Failed to send streaming request to Gemini API")?;
 
-        let reader = std::io::BufReader::new(resp.into_reader());
+        let reader = std::io::BufReader::new(resp.into_body().into_reader());
         let mut full_response = String::new();
 
         for line in reader.lines() {
@@ -406,14 +416,17 @@ impl ProviderPlugin for GeminiProvider {
         let url = format!("{}/v1beta/{}:generateContent", self.base_url, model);
         let body = Self::build_request_body(config, messages, system_prompt, Some(tools));
 
-        let resp = ureq::post(&url)
-            .set("x-goog-api-key", &self.api_key)
-            .timeout(self.timeout)
+        let mut resp = ureq::post(&url)
+            .header("x-goog-api-key", &self.api_key)
+            .config()
+            .timeout_global(Some(self.timeout))
+            .build()
             .send_json(&body)
             .context("Failed to send tool request to Gemini API")?;
 
         let resp_body: Value = resp
-            .into_json()
+            .body_mut()
+            .read_json()
             .context("Failed to parse Gemini tool response")?;
 
         Ok(Self::parse_generate_response(&resp_body))
@@ -433,14 +446,17 @@ impl ProviderPlugin for GeminiProvider {
                 }
             });
 
-            let resp = ureq::post(&url)
-                .set("x-goog-api-key", &self.api_key)
-                .timeout(self.timeout)
+            let mut resp = ureq::post(&url)
+                .header("x-goog-api-key", &self.api_key)
+                .config()
+                .timeout_global(Some(self.timeout))
+                .build()
                 .send_json(&payload)
                 .context("Failed to send embedding request to Gemini API")?;
 
             let body: Value = resp
-                .into_json()
+                .body_mut()
+                .read_json()
                 .context("Failed to parse Gemini embedding response")?;
 
             match Self::parse_embedding_response(&body) {

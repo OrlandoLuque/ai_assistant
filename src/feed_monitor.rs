@@ -653,11 +653,13 @@ impl FeedMonitor {
     fn fetch_feed(&self, url: &str) -> Result<String> {
         let timeout = std::time::Duration::from_millis(self.config.timeout_ms);
 
-        let agent = ureq::AgentBuilder::new()
-            .timeout_connect(timeout)
-            .timeout_read(timeout)
-            .user_agent(&self.config.user_agent)
-            .build();
+        let agent = ureq::Agent::new_with_config(
+            ureq::Agent::config_builder()
+                .timeout_connect(Some(timeout))
+                .timeout_per_read(Some(timeout))
+                .user_agent(self.config.user_agent.clone())
+                .build(),
+        );
 
         let response = agent
             .get(url)

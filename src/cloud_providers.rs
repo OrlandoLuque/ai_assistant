@@ -82,14 +82,17 @@ pub fn generate_openai_cloud(
         "temperature": config.temperature,
     });
 
-    let response = ureq::post(&url)
-        .set("Authorization", &format!("Bearer {}", api_key))
-        .timeout(std::time::Duration::from_secs(120))
+    let mut response = ureq::post(&url)
+        .header("Authorization", &format!("Bearer {}", api_key))
+        .config()
+        .timeout_global(Some(std::time::Duration::from_secs(120)))
+        .build()
         .send_json(&body)
         .context("OpenAI API request failed")?;
 
     let json: serde_json::Value = response
-        .into_json()
+        .body_mut()
+        .read_json()
         .context("Failed to parse OpenAI response")?;
 
     json.get("choices")
@@ -108,14 +111,17 @@ pub fn fetch_openai_cloud_models(config: &AiConfig) -> Result<Vec<String>> {
     let base_url = config.get_base_url();
     let url = format!("{}/v1/models", base_url);
 
-    let response = ureq::get(&url)
-        .set("Authorization", &format!("Bearer {}", api_key))
-        .timeout(std::time::Duration::from_secs(10))
+    let mut response = ureq::get(&url)
+        .header("Authorization", &format!("Bearer {}", api_key))
+        .config()
+        .timeout_global(Some(std::time::Duration::from_secs(10)))
+        .build()
         .call()
         .context("Failed to fetch OpenAI models")?;
 
     let json: serde_json::Value = response
-        .into_json()
+        .body_mut()
+        .read_json()
         .context("Failed to parse models response")?;
 
     let models = json
@@ -179,16 +185,19 @@ pub fn generate_anthropic_cloud(
         body["system"] = serde_json::json!(system_prompt);
     }
 
-    let response = ureq::post(&url)
-        .set("x-api-key", &api_key)
-        .set("anthropic-version", "2023-06-01")
-        .set("content-type", "application/json")
-        .timeout(std::time::Duration::from_secs(120))
+    let mut response = ureq::post(&url)
+        .header("x-api-key", &api_key)
+        .header("anthropic-version", "2023-06-01")
+        .header("content-type", "application/json")
+        .config()
+        .timeout_global(Some(std::time::Duration::from_secs(120)))
+        .build()
         .send_json(&body)
         .context("Anthropic API request failed")?;
 
     let json: serde_json::Value = response
-        .into_json()
+        .body_mut()
+        .read_json()
         .context("Failed to parse Anthropic response")?;
 
     // Anthropic response format: {"content": [{"type": "text", "text": "..."}]}
@@ -286,15 +295,18 @@ pub fn generate_gemini_cloud(
         });
     }
 
-    let response = ureq::post(&url)
-        .set("content-type", "application/json")
-        .set("x-goog-api-key", &api_key)
-        .timeout(std::time::Duration::from_secs(120))
+    let mut response = ureq::post(&url)
+        .header("content-type", "application/json")
+        .header("x-goog-api-key", &api_key)
+        .config()
+        .timeout_global(Some(std::time::Duration::from_secs(120)))
+        .build()
         .send_json(&body)
         .context("Gemini API request failed")?;
 
     let json: serde_json::Value = response
-        .into_json()
+        .body_mut()
+        .read_json()
         .context("Failed to parse Gemini response")?;
 
     // Gemini response: {"candidates": [{"content": {"parts": [{"text": "..."}]}}]}
@@ -376,15 +388,18 @@ pub fn generate_azure_openai_cloud(
         "temperature": config.temperature,
     });
 
-    let response = ureq::post(&url)
-        .set("api-key", &api_key)
-        .set("Content-Type", "application/json")
-        .timeout(std::time::Duration::from_secs(120))
+    let mut response = ureq::post(&url)
+        .header("api-key", &api_key)
+        .header("Content-Type", "application/json")
+        .config()
+        .timeout_global(Some(std::time::Duration::from_secs(120)))
+        .build()
         .send_json(&body)
         .context("Azure OpenAI API request failed")?;
 
     let json: serde_json::Value = response
-        .into_json()
+        .body_mut()
+        .read_json()
         .context("Failed to parse Azure OpenAI response")?;
 
     json.get("choices")
@@ -439,13 +454,15 @@ pub fn generate_azure_openai_streaming(
     });
 
     let response = ureq::post(&url)
-        .set("api-key", &api_key)
-        .set("Content-Type", "application/json")
-        .timeout(std::time::Duration::from_secs(300))
+        .header("api-key", &api_key)
+        .header("Content-Type", "application/json")
+        .config()
+        .timeout_global(Some(std::time::Duration::from_secs(300)))
+        .build()
         .send_json(&body)
         .context("Azure OpenAI streaming request failed")?;
 
-    let reader = std::io::BufReader::new(response.into_reader());
+    let reader = std::io::BufReader::new(response.into_body().into_reader());
     let mut full_response = String::new();
 
     use std::io::BufRead;
@@ -650,14 +667,17 @@ pub fn generate_openai_cloud_with_images(
         "temperature": config.temperature,
     });
 
-    let response = ureq::post(&url)
-        .set("Authorization", &format!("Bearer {}", api_key))
-        .timeout(std::time::Duration::from_secs(120))
+    let mut response = ureq::post(&url)
+        .header("Authorization", &format!("Bearer {}", api_key))
+        .config()
+        .timeout_global(Some(std::time::Duration::from_secs(120)))
+        .build()
         .send_json(&body)
         .context("OpenAI vision API request failed")?;
 
     let json: serde_json::Value = response
-        .into_json()
+        .body_mut()
+        .read_json()
         .context("Failed to parse OpenAI response")?;
 
     json.get("choices")
@@ -713,16 +733,19 @@ pub fn generate_anthropic_cloud_with_images(
         body["system"] = serde_json::json!(system_parts.join("\n\n"));
     }
 
-    let response = ureq::post(&url)
-        .set("x-api-key", &api_key)
-        .set("anthropic-version", "2023-06-01")
-        .set("content-type", "application/json")
-        .timeout(std::time::Duration::from_secs(120))
+    let mut response = ureq::post(&url)
+        .header("x-api-key", &api_key)
+        .header("anthropic-version", "2023-06-01")
+        .header("content-type", "application/json")
+        .config()
+        .timeout_global(Some(std::time::Duration::from_secs(120)))
+        .build()
         .send_json(&body)
         .context("Anthropic vision API request failed")?;
 
     let json: serde_json::Value = response
-        .into_json()
+        .body_mut()
+        .read_json()
         .context("Failed to parse Anthropic response")?;
 
     json.get("content")
@@ -796,15 +819,18 @@ pub fn generate_gemini_cloud_with_images(
         });
     }
 
-    let response = ureq::post(&url)
-        .set("content-type", "application/json")
-        .set("x-goog-api-key", &api_key)
-        .timeout(std::time::Duration::from_secs(120))
+    let mut response = ureq::post(&url)
+        .header("content-type", "application/json")
+        .header("x-goog-api-key", &api_key)
+        .config()
+        .timeout_global(Some(std::time::Duration::from_secs(120)))
+        .build()
         .send_json(&body)
         .context("Gemini vision API request failed")?;
 
     let json: serde_json::Value = response
-        .into_json()
+        .body_mut()
+        .read_json()
         .context("Failed to parse Gemini response")?;
 
     json.get("candidates")

@@ -257,10 +257,12 @@ impl HealthChecker {
     fn default_check(url: &str, timeout: Duration) -> Result<Duration, String> {
         let start = Instant::now();
 
-        let agent = ureq::AgentBuilder::new()
-            .timeout_connect(timeout)
-            .timeout_read(timeout)
-            .build();
+        let agent = ureq::Agent::new_with_config(
+            ureq::Agent::config_builder()
+                .timeout_connect(Some(timeout))
+                .timeout_per_read(Some(timeout))
+                .build(),
+        );
 
         // Try to reach the base URL
         let check_url = if url.ends_with('/') {
@@ -271,7 +273,7 @@ impl HealthChecker {
 
         match agent.get(&check_url).call() {
             Ok(_) => Ok(start.elapsed()),
-            Err(ureq::Error::Status(code, _)) if code < 500 => {
+            Err(ureq::Error::StatusCode(code)) if code < 500 => {
                 // 4xx errors mean server is responding
                 Ok(start.elapsed())
             }

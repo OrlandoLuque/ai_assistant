@@ -481,7 +481,9 @@ impl KeepaliveManager {
         };
 
         match ureq::get(&url)
-            .timeout(self.config.heartbeat_timeout)
+            .config()
+            .timeout_global(Some(self.config.heartbeat_timeout))
+            .build()
             .call()
         {
             Ok(_) => Ok(()),
@@ -593,7 +595,9 @@ impl ConnectionMonitor {
         };
 
         let result = ureq::get(&url)
-            .timeout(self.config.heartbeat_timeout)
+            .config()
+            .timeout_global(Some(self.config.heartbeat_timeout))
+            .build()
             .call();
 
         let success = result.is_ok();

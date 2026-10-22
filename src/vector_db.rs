@@ -1422,8 +1422,8 @@ impl VectorDb for PineconeClient {
             }]
         });
         let resp = ureq::post(&url)
-            .set("Api-Key", &self.api_key)
-            .set("Content-Type", "application/json")
+            .header("Api-Key", &self.api_key)
+            .header("Content-Type", "application/json")
             .send_json(&body);
         match resp {
             Ok(_) => {
@@ -1456,8 +1456,8 @@ impl VectorDb for PineconeClient {
         let url = self.pinecone_url("/vectors/upsert");
         let body = serde_json::json!({ "vectors": pinecone_vectors });
         let resp = ureq::post(&url)
-            .set("Api-Key", &self.api_key)
-            .set("Content-Type", "application/json")
+            .header("Api-Key", &self.api_key)
+            .header("Content-Type", "application/json")
             .send_json(&body);
         match resp {
             Ok(_) => {
@@ -1500,13 +1500,14 @@ impl VectorDb for PineconeClient {
         if !self.config.collection_name.is_empty() {
             body["namespace"] = serde_json::json!(self.config.collection_name);
         }
-        let resp = ureq::post(&url)
-            .set("Api-Key", &self.api_key)
-            .set("Content-Type", "application/json")
+        let mut resp = ureq::post(&url)
+            .header("Api-Key", &self.api_key)
+            .header("Content-Type", "application/json")
             .send_json(&body)
             .map_err(|e| AiError::Other(format!("Pinecone query failed: {}", e)))?;
         let json: serde_json::Value = resp
-            .into_json()
+            .body_mut()
+            .read_json()
             .map_err(|e| AiError::Other(format!("Pinecone response parse failed: {}", e)))?;
 
         let mut results = Vec::new();
@@ -1538,8 +1539,8 @@ impl VectorDb for PineconeClient {
         let url = self.pinecone_url("/vectors/delete");
         let body = serde_json::json!({ "ids": [id] });
         let _ = ureq::post(&url)
-            .set("Api-Key", &self.api_key)
-            .set("Content-Type", "application/json")
+            .header("Api-Key", &self.api_key)
+            .header("Content-Type", "application/json")
             .send_json(&body);
         Ok(self.cache.remove(id).is_some())
     }
@@ -1552,8 +1553,8 @@ impl VectorDb for PineconeClient {
         let url = self.pinecone_url("/vectors/delete");
         let body = serde_json::json!({ "deleteAll": true });
         let _ = ureq::post(&url)
-            .set("Api-Key", &self.api_key)
-            .set("Content-Type", "application/json")
+            .header("Api-Key", &self.api_key)
+            .header("Content-Type", "application/json")
             .send_json(&body);
         self.cache.clear();
         Ok(())
@@ -1562,8 +1563,8 @@ impl VectorDb for PineconeClient {
     fn health_check(&self) -> AiResult<bool> {
         let url = self.pinecone_url("/describe_index_stats");
         match ureq::post(&url)
-            .set("Api-Key", &self.api_key)
-            .set("Content-Type", "application/json")
+            .header("Api-Key", &self.api_key)
+            .header("Content-Type", "application/json")
             .send_json(&serde_json::json!({}))
         {
             Ok(_) => Ok(true),
@@ -1615,12 +1616,13 @@ impl ChromaClient {
         let name = &self.config.collection_name;
         let url = format!("{}/api/v1/collections", self.base_url);
         let body = serde_json::json!({ "name": name, "get_or_create": true });
-        let resp = ureq::post(&url)
-            .set("Content-Type", "application/json")
+        let mut resp = ureq::post(&url)
+            .header("Content-Type", "application/json")
             .send_json(&body)
             .map_err(|e| AiError::Other(format!("Chroma create collection failed: {}", e)))?;
         let json: serde_json::Value = resp
-            .into_json()
+            .body_mut()
+            .read_json()
             .map_err(|e| AiError::Other(format!("Chroma response parse failed: {}", e)))?;
         let id = json
             .get("id")
@@ -1642,7 +1644,7 @@ impl VectorDb for ChromaClient {
             "metadatas": [metadata]
         });
         ureq::post(&url)
-            .set("Content-Type", "application/json")
+            .header("Content-Type", "application/json")
             .send_json(&body)
             .map_err(|e| AiError::Other(format!("Chroma add failed: {}", e)))?;
         self.cache.insert(
@@ -1675,7 +1677,7 @@ impl VectorDb for ChromaClient {
             "metadatas": metadatas
         });
         ureq::post(&url)
-            .set("Content-Type", "application/json")
+            .header("Content-Type", "application/json")
             .send_json(&body)
             .map_err(|e| AiError::Other(format!("Chroma batch add failed: {}", e)))?;
         let count = vectors.len();
@@ -1712,12 +1714,13 @@ impl VectorDb for ChromaClient {
             "n_results": limit,
             "include": ["metadatas", "distances"]
         });
-        let resp = ureq::post(&url)
-            .set("Content-Type", "application/json")
+        let mut resp = ureq::post(&url)
+            .header("Content-Type", "application/json")
             .send_json(&body)
             .map_err(|e| AiError::Other(format!("Chroma query failed: {}", e)))?;
         let json: serde_json::Value = resp
-            .into_json()
+            .body_mut()
+            .read_json()
             .map_err(|e| AiError::Other(format!("Chroma response parse failed: {}", e)))?;
 
         let mut results = Vec::new();
@@ -1765,7 +1768,7 @@ impl VectorDb for ChromaClient {
             let url = format!("{}/api/v1/collections/{}/delete", self.base_url, coll_id);
             let body = serde_json::json!({ "ids": [id] });
             let _ = ureq::post(&url)
-                .set("Content-Type", "application/json")
+                .header("Content-Type", "application/json")
                 .send_json(&body);
         }
         Ok(self.cache.remove(id).is_some())
@@ -1841,7 +1844,7 @@ impl VectorDb for MilvusClient {
             "data": [data]
         });
         ureq::post(&url)
-            .set("Content-Type", "application/json")
+            .header("Content-Type", "application/json")
             .send_json(&body)
             .map_err(|e| AiError::Other(format!("Milvus insert failed: {}", e)))?;
         self.cache.insert(
@@ -1880,7 +1883,7 @@ impl VectorDb for MilvusClient {
             "data": data
         });
         ureq::post(&url)
-            .set("Content-Type", "application/json")
+            .header("Content-Type", "application/json")
             .send_json(&body)
             .map_err(|e| AiError::Other(format!("Milvus batch insert failed: {}", e)))?;
         let count = vectors.len();
@@ -1914,12 +1917,13 @@ impl VectorDb for MilvusClient {
             "limit": limit,
             "outputFields": ["*"]
         });
-        let resp = ureq::post(&url)
-            .set("Content-Type", "application/json")
+        let mut resp = ureq::post(&url)
+            .header("Content-Type", "application/json")
             .send_json(&body)
             .map_err(|e| AiError::Other(format!("Milvus search failed: {}", e)))?;
         let json: serde_json::Value = resp
-            .into_json()
+            .body_mut()
+            .read_json()
             .map_err(|e| AiError::Other(format!("Milvus response parse failed: {}", e)))?;
 
         let mut results = Vec::new();
@@ -1954,7 +1958,7 @@ impl VectorDb for MilvusClient {
             "filter": format!("id == \"{}\"", id)
         });
         let _ = ureq::post(&url)
-            .set("Content-Type", "application/json")
+            .header("Content-Type", "application/json")
             .send_json(&body);
         Ok(self.cache.remove(id).is_some())
     }
@@ -1971,7 +1975,7 @@ impl VectorDb for MilvusClient {
     fn health_check(&self) -> AiResult<bool> {
         let url = format!("{}/v2/vectordb/collections/list", self.base_url);
         match ureq::post(&url)
-            .set("Content-Type", "application/json")
+            .header("Content-Type", "application/json")
             .send_json(&serde_json::json!({}))
         {
             Ok(_) => Ok(true),
@@ -2039,7 +2043,7 @@ impl VectorDb for WeaviateClient {
             "vector": vector
         });
         ureq::post(&url)
-            .set("Content-Type", "application/json")
+            .header("Content-Type", "application/json")
             .send_json(&body)
             .map_err(|e| AiError::Other(format!("Weaviate insert failed: {}", e)))?;
         self.cache.insert(
@@ -2075,7 +2079,7 @@ impl VectorDb for WeaviateClient {
             .collect();
         let body = serde_json::json!({ "objects": objects });
         ureq::post(&url)
-            .set("Content-Type", "application/json")
+            .header("Content-Type", "application/json")
             .send_json(&body)
             .map_err(|e| AiError::Other(format!("Weaviate batch insert failed: {}", e)))?;
         let count = vectors.len();
@@ -2110,12 +2114,13 @@ impl VectorDb for WeaviateClient {
             class, vector_str, limit
         );
         let body = serde_json::json!({ "query": graphql_query });
-        let resp = ureq::post(&url)
-            .set("Content-Type", "application/json")
+        let mut resp = ureq::post(&url)
+            .header("Content-Type", "application/json")
             .send_json(&body)
             .map_err(|e| AiError::Other(format!("Weaviate search failed: {}", e)))?;
         let json: serde_json::Value = resp
-            .into_json()
+            .body_mut()
+            .read_json()
             .map_err(|e| AiError::Other(format!("Weaviate response parse failed: {}", e)))?;
 
         let mut results = Vec::new();
@@ -2154,9 +2159,10 @@ impl VectorDb for WeaviateClient {
         }
         let url = format!("{}/v1/objects/{}/{}", self.base_url, self.class_name(), id);
         match ureq::get(&url).call() {
-            Ok(resp) => {
+            Ok(mut resp) => {
                 let json: serde_json::Value = resp
-                    .into_json()
+                    .body_mut()
+                    .read_json()
                     .map_err(|e| AiError::Other(format!("Weaviate get parse failed: {}", e)))?;
                 let vector: Vec<f32> = json
                     .get("vector")
@@ -2263,7 +2269,7 @@ impl VectorDb for RedisVectorClient {
             "metadata": metadata
         });
         ureq::post(&url)
-            .set("Content-Type", "application/json")
+            .header("Content-Type", "application/json")
             .send_json(&body)
             .map_err(|e| AiError::Other(format!("Redis vector insert failed: {}", e)))?;
         self.cache.insert(
@@ -2294,7 +2300,7 @@ impl VectorDb for RedisVectorClient {
                 "metadata": metadata
             });
             ureq::post(&url)
-                .set("Content-Type", "application/json")
+                .header("Content-Type", "application/json")
                 .send_json(&body)
                 .map_err(|e| AiError::Other(format!("Redis vector batch insert failed: {}", e)))?;
             self.cache.insert(
@@ -2325,12 +2331,13 @@ impl VectorDb for RedisVectorClient {
             "query_vector": query,
             "k": limit
         });
-        let resp = ureq::post(&url)
-            .set("Content-Type", "application/json")
+        let mut resp = ureq::post(&url)
+            .header("Content-Type", "application/json")
             .send_json(&body)
             .map_err(|e| AiError::Other(format!("Redis vector search failed: {}", e)))?;
         let json: serde_json::Value = resp
-            .into_json()
+            .body_mut()
+            .read_json()
             .map_err(|e| AiError::Other(format!("Redis vector response parse failed: {}", e)))?;
 
         let mut results = Vec::new();
@@ -2363,9 +2370,10 @@ impl VectorDb for RedisVectorClient {
         }
         let url = format!("{}/get/{}", self.base_url, id);
         match ureq::get(&url).call() {
-            Ok(resp) => {
+            Ok(mut resp) => {
                 let json: serde_json::Value = resp
-                    .into_json()
+                    .body_mut()
+                    .read_json()
                     .map_err(|e| AiError::Other(format!("Redis vector get parse failed: {}", e)))?;
                 let vector: Vec<f32> = json
                     .get("vector")
@@ -2394,7 +2402,7 @@ impl VectorDb for RedisVectorClient {
     fn delete(&mut self, id: &str) -> AiResult<bool> {
         let url = format!("{}/del/{}", self.base_url, id);
         let _ = ureq::post(&url)
-            .set("Content-Type", "application/json")
+            .header("Content-Type", "application/json")
             .send_json(&serde_json::json!({}));
         Ok(self.cache.remove(id).is_some())
     }
@@ -2473,7 +2481,7 @@ impl VectorDb for ElasticsearchClient {
             "metadata": metadata
         });
         ureq::put(&url)
-            .set("Content-Type", "application/json")
+            .header("Content-Type", "application/json")
             .send_json(&body)
             .map_err(|e| AiError::Other(format!("Elasticsearch insert failed: {}", e)))?;
         self.cache.insert(
@@ -2507,8 +2515,8 @@ impl VectorDb for ElasticsearchClient {
         }
         let url = format!("{}/_bulk", self.base_url);
         ureq::post(&url)
-            .set("Content-Type", "application/x-ndjson")
-            .send_string(&bulk_body)
+            .header("Content-Type", "application/x-ndjson")
+            .send(&bulk_body)
             .map_err(|e| AiError::Other(format!("Elasticsearch bulk insert failed: {}", e)))?;
         let count = vectors.len();
         for (id, vector, metadata) in vectors {
@@ -2544,12 +2552,13 @@ impl VectorDb for ElasticsearchClient {
             },
             "size": limit
         });
-        let resp = ureq::post(&url)
-            .set("Content-Type", "application/json")
+        let mut resp = ureq::post(&url)
+            .header("Content-Type", "application/json")
             .send_json(&body)
             .map_err(|e| AiError::Other(format!("Elasticsearch search failed: {}", e)))?;
         let json: serde_json::Value = resp
-            .into_json()
+            .body_mut()
+            .read_json()
             .map_err(|e| AiError::Other(format!("Elasticsearch response parse failed: {}", e)))?;
 
         let mut results = Vec::new();
@@ -2587,8 +2596,8 @@ impl VectorDb for ElasticsearchClient {
         }
         let url = format!("{}/{}/_doc/{}", self.base_url, self.index_name(), id);
         match ureq::get(&url).call() {
-            Ok(resp) => {
-                let json: serde_json::Value = resp.into_json().map_err(|e| {
+            Ok(mut resp) => {
+                let json: serde_json::Value = resp.body_mut().read_json().map_err(|e| {
                     AiError::Other(format!("Elasticsearch get parse failed: {}", e))
                 })?;
                 if let Some(source) = json.get("_source") {

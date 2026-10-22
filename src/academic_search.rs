@@ -292,8 +292,8 @@ const MAX_ATTEMPTS: u32 = 3;
 /// `Network` — the whole point is that the caller can tell "slow down" from "no route to
 /// host", and act differently.
 pub(crate) fn get_with_retry(
-    build: impl Fn() -> ureq::Request,
-) -> Result<ureq::Response, AcademicSearchError> {
+    build: impl Fn() -> ureq::RequestBuilder<ureq::typestate::WithoutBody>,
+) -> Result<ureq::http::Response<ureq::Body>, AcademicSearchError> {
     let mut attempt = 0u32;
     loop {
         match build().call() {
@@ -490,14 +490,17 @@ impl AcademicSearchProvider for ArxivProvider {
         let url = self.build_url(query, config);
 
         let timeout = config.timeout;
-        let response = get_with_retry(|| {
+        let mut response = get_with_retry(|| {
             ureq::get(&url)
-                .timeout(timeout)
-                .set("User-Agent", USER_AGENT)
+                .config()
+                .timeout_global(Some(timeout))
+                .build()
+                .header("User-Agent", USER_AGENT)
         })?;
 
         let xml = response
-            .into_string()
+            .body_mut()
+            .read_to_string()
             .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
 
         let mut papers = self.parse_atom_response(&xml)?;
@@ -517,14 +520,17 @@ impl AcademicSearchProvider for ArxivProvider {
     fn get_paper(&self, id: &str) -> Result<AcademicPaper, AcademicSearchError> {
         let url = format!("{}?id_list={}", self.base_url, urlencoding::encode(id));
 
-        let response = get_with_retry(|| {
+        let mut response = get_with_retry(|| {
             ureq::get(&url)
-                .timeout(Duration::from_secs(10))
-                .set("User-Agent", USER_AGENT)
+                .config()
+                .timeout_global(Some(Duration::from_secs(10)))
+                .build()
+                .header("User-Agent", USER_AGENT)
         })?;
 
         let xml = response
-            .into_string()
+            .body_mut()
+            .read_to_string()
             .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
 
         let papers = self.parse_atom_response(&xml)?;
@@ -583,10 +589,17 @@ impl SemanticScholarProvider {
     }
 
     /// Build request with optional API key header.
-    fn build_request(&self, url: &str, timeout: Duration) -> ureq::Request {
-        let mut req = ureq::get(url).timeout(timeout);
+    fn build_request(
+        &self,
+        url: &str,
+        timeout: Duration,
+    ) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
+        let mut req = ureq::get(url)
+            .config()
+            .timeout_global(Some(timeout))
+            .build();
         if let Some(key) = &self.api_key {
-            req = req.set("x-api-key", key);
+            req = req.header("x-api-key", key);
         }
         req
     }
@@ -696,10 +709,11 @@ impl AcademicSearchProvider for SemanticScholarProvider {
             fields,
         );
 
-        let response = get_with_retry(|| self.build_request(&url, config.timeout))?;
+        let mut response = get_with_retry(|| self.build_request(&url, config.timeout))?;
 
         let text = response
-            .into_string()
+            .body_mut()
+            .read_to_string()
             .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
 
         let json: serde_json::Value =
@@ -736,10 +750,11 @@ impl AcademicSearchProvider for SemanticScholarProvider {
             fields,
         );
 
-        let response = get_with_retry(|| self.build_request(&url, Duration::from_secs(10)))?;
+        let mut response = get_with_retry(|| self.build_request(&url, Duration::from_secs(10)))?;
 
         let text = response
-            .into_string()
+            .body_mut()
+            .read_to_string()
             .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
 
         let json: serde_json::Value =
@@ -757,10 +772,11 @@ impl AcademicSearchProvider for SemanticScholarProvider {
             fields,
         );
 
-        let response = get_with_retry(|| self.build_request(&url, Duration::from_secs(15)))?;
+        let mut response = get_with_retry(|| self.build_request(&url, Duration::from_secs(15)))?;
 
         let text = response
-            .into_string()
+            .body_mut()
+            .read_to_string()
             .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
 
         let json: serde_json::Value =
@@ -789,10 +805,11 @@ impl AcademicSearchProvider for SemanticScholarProvider {
             fields,
         );
 
-        let response = get_with_retry(|| self.build_request(&url, Duration::from_secs(15)))?;
+        let mut response = get_with_retry(|| self.build_request(&url, Duration::from_secs(15)))?;
 
         let text = response
-            .into_string()
+            .body_mut()
+            .read_to_string()
             .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
 
         let json: serde_json::Value =
@@ -870,14 +887,17 @@ impl PubMedProvider {
             max_results,
         ));
 
-        let response = get_with_retry(|| {
+        let mut response = get_with_retry(|| {
             ureq::get(&url)
-                .timeout(timeout)
-                .set("User-Agent", USER_AGENT)
+                .config()
+                .timeout_global(Some(timeout))
+                .build()
+                .header("User-Agent", USER_AGENT)
         })?;
 
         let text = response
-            .into_string()
+            .body_mut()
+            .read_to_string()
             .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
 
         let json: serde_json::Value =
@@ -913,14 +933,17 @@ impl PubMedProvider {
             self.base_url, ids_param,
         ));
 
-        let response = get_with_retry(|| {
+        let mut response = get_with_retry(|| {
             ureq::get(&url)
-                .timeout(timeout)
-                .set("User-Agent", USER_AGENT)
+                .config()
+                .timeout_global(Some(timeout))
+                .build()
+                .header("User-Agent", USER_AGENT)
         })?;
 
         let xml = response
-            .into_string()
+            .body_mut()
+            .read_to_string()
             .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
 
         self.parse_pubmed_xml(&xml)
@@ -1119,10 +1142,16 @@ impl OpenAlexProvider {
         }
     }
 
-    fn build_request(&self, url: &str, timeout: Duration) -> ureq::Request {
+    fn build_request(
+        &self,
+        url: &str,
+        timeout: Duration,
+    ) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
         ureq::get(url)
-            .timeout(timeout)
-            .set("User-Agent", USER_AGENT)
+            .config()
+            .timeout_global(Some(timeout))
+            .build()
+            .header("User-Agent", USER_AGENT)
     }
 
     /// `https://openalex.org/W2741809807` → `W2741809807`.
@@ -1252,9 +1281,10 @@ impl OpenAlexProvider {
             limit.min(200),
             self.mailto_param(),
         );
-        let response = get_with_retry(|| self.build_request(&url, Duration::from_secs(15)))?;
+        let mut response = get_with_retry(|| self.build_request(&url, Duration::from_secs(15)))?;
         let text = response
-            .into_string()
+            .body_mut()
+            .read_to_string()
             .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
         let json: serde_json::Value =
             serde_json::from_str(&text).map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
@@ -1339,9 +1369,10 @@ impl AcademicSearchProvider for OpenAlexProvider {
             self.mailto_param(),
         );
 
-        let response = get_with_retry(|| self.build_request(&url, config.timeout))?;
+        let mut response = get_with_retry(|| self.build_request(&url, config.timeout))?;
         let text = response
-            .into_string()
+            .body_mut()
+            .read_to_string()
             .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
         let json: serde_json::Value =
             serde_json::from_str(&text).map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
@@ -1367,9 +1398,10 @@ impl AcademicSearchProvider for OpenAlexProvider {
             key,
             self.mailto_param().trim_start_matches('&'),
         );
-        let response = get_with_retry(|| self.build_request(&url, Duration::from_secs(10)))?;
+        let mut response = get_with_retry(|| self.build_request(&url, Duration::from_secs(10)))?;
         let text = response
-            .into_string()
+            .body_mut()
+            .read_to_string()
             .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
         let json: serde_json::Value =
             serde_json::from_str(&text).map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
@@ -1391,9 +1423,10 @@ impl AcademicSearchProvider for OpenAlexProvider {
             Self::short_id(paper_id),
             self.mailto_param(),
         );
-        let response = get_with_retry(|| self.build_request(&url, Duration::from_secs(15)))?;
+        let mut response = get_with_retry(|| self.build_request(&url, Duration::from_secs(15)))?;
         let text = response
-            .into_string()
+            .body_mut()
+            .read_to_string()
             .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
         let json: serde_json::Value =
             serde_json::from_str(&text).map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
@@ -1465,10 +1498,16 @@ impl CrossrefProvider {
         }
     }
 
-    fn build_request(&self, url: &str, timeout: Duration) -> ureq::Request {
+    fn build_request(
+        &self,
+        url: &str,
+        timeout: Duration,
+    ) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
         ureq::get(url)
-            .timeout(timeout)
-            .set("User-Agent", USER_AGENT)
+            .config()
+            .timeout_global(Some(timeout))
+            .build()
+            .header("User-Agent", USER_AGENT)
     }
 
     fn parse_paper(json: &serde_json::Value) -> Option<AcademicPaper> {
@@ -1632,9 +1671,10 @@ impl AcademicSearchProvider for CrossrefProvider {
             self.mailto_param(),
         );
 
-        let response = get_with_retry(|| self.build_request(&url, config.timeout))?;
+        let mut response = get_with_retry(|| self.build_request(&url, config.timeout))?;
         let text = response
-            .into_string()
+            .body_mut()
+            .read_to_string()
             .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
         let json: serde_json::Value =
             serde_json::from_str(&text).map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
@@ -1649,9 +1689,10 @@ impl AcademicSearchProvider for CrossrefProvider {
 
     fn get_paper(&self, id: &str) -> Result<AcademicPaper, AcademicSearchError> {
         let url = format!("{}/works/{}", self.base_url, id);
-        let response = get_with_retry(|| self.build_request(&url, Duration::from_secs(10)))?;
+        let mut response = get_with_retry(|| self.build_request(&url, Duration::from_secs(10)))?;
         let text = response
-            .into_string()
+            .body_mut()
+            .read_to_string()
             .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
         let json: serde_json::Value =
             serde_json::from_str(&text).map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
@@ -1677,9 +1718,10 @@ impl AcademicSearchProvider for CrossrefProvider {
     /// by later.
     fn get_references(&self, paper_id: &str) -> Result<Vec<AcademicPaper>, AcademicSearchError> {
         let url = format!("{}/works/{}", self.base_url, paper_id);
-        let response = get_with_retry(|| self.build_request(&url, Duration::from_secs(15)))?;
+        let mut response = get_with_retry(|| self.build_request(&url, Duration::from_secs(15)))?;
         let text = response
-            .into_string()
+            .body_mut()
+            .read_to_string()
             .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
         let json: serde_json::Value =
             serde_json::from_str(&text).map_err(|e| AcademicSearchError::Parse(e.to_string()))?;

@@ -240,7 +240,11 @@ impl HttpReranker {
     /// Point a client at an endpoint.
     pub fn new(endpoint: RerankEndpoint) -> Self {
         let name = format!("http:{}", endpoint.model);
-        let agent = ureq::AgentBuilder::new().timeout(endpoint.timeout).build();
+        let agent = ureq::Agent::new_with_config(
+            ureq::Agent::config_builder()
+                .timeout_global(Some(endpoint.timeout))
+                .build(),
+        );
         Self {
             endpoint,
             name,
@@ -343,17 +347,18 @@ impl RerankService for HttpReranker {
         let mut request = self
             .agent
             .post(&self.endpoint.url)
-            .set("Content-Type", "application/json");
+            .header("Content-Type", "application/json");
         if let Some(ref key) = self.endpoint.api_key {
-            request = request.set("Authorization", &format!("Bearer {}", key));
+            request = request.header("Authorization", &format!("Bearer {}", key));
         }
 
-        let response = request
+        let mut response = request
             .send_json(body)
             .map_err(|e| RerankError::Transport(e.to_string()))?;
 
         let parsed: serde_json::Value = response
-            .into_json()
+            .body_mut()
+            .read_json()
             .map_err(|e| RerankError::Unusable(e.to_string()))?;
 
         self.parse_reply(&parsed, documents.len())

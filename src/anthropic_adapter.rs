@@ -247,20 +247,23 @@ impl AnthropicClient {
         let url = format!("{}/v1/messages", self.config.base_url);
 
         let req = ureq::post(&url)
-            .timeout(self.config.timeout)
-            .set("Content-Type", "application/json")
-            .set("x-api-key", &self.config.api_key)
-            .set("anthropic-version", &self.config.api_version);
+            .config()
+            .timeout_global(Some(self.config.timeout))
+            .build()
+            .header("Content-Type", "application/json")
+            .header("x-api-key", &self.config.api_key)
+            .header("anthropic-version", &self.config.api_version);
 
         let body = serde_json::to_string(&request)
             .map_err(|e| AnthropicAdapterError::Serialization(e.to_string()))?;
 
-        let response = req.send_string(&body);
+        let response = req.send(&body);
 
         match response {
             Ok(resp) => {
                 let text = resp
-                    .into_string()
+                    .body_mut()
+                    .read_to_string()
                     .map_err(|e| AnthropicAdapterError::Network(e.to_string()))?;
 
                 serde_json::from_str(&text)
@@ -301,19 +304,21 @@ impl AnthropicClient {
         let url = format!("{}/v1/messages", self.config.base_url);
 
         let req = ureq::post(&url)
-            .timeout(self.config.timeout)
-            .set("Content-Type", "application/json")
-            .set("x-api-key", &self.config.api_key)
-            .set("anthropic-version", &self.config.api_version);
+            .config()
+            .timeout_global(Some(self.config.timeout))
+            .build()
+            .header("Content-Type", "application/json")
+            .header("x-api-key", &self.config.api_key)
+            .header("anthropic-version", &self.config.api_version);
 
         let body = serde_json::to_string(&streaming_request)
             .map_err(|e| AnthropicAdapterError::Serialization(e.to_string()))?;
 
         let response = req
-            .send_string(&body)
+            .send(&body)
             .map_err(|e| AnthropicAdapterError::Network(e.to_string()))?;
 
-        let reader = response.into_reader();
+        let reader = response.into_body().into_reader();
         let buf_reader = std::io::BufReader::new(reader);
 
         let mut full_response = String::new();

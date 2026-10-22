@@ -133,14 +133,17 @@ impl SearchProvider for DuckDuckGoProvider {
         let encoded_query = urlencoding::encode(query);
         let url = format!("{}/?q={}", self.base_url, encoded_query);
 
-        let response = ureq::get(&url)
-            .timeout(config.timeout)
-            .set("User-Agent", "Mozilla/5.0 (compatible; AIAssistant/1.0)")
+        let mut response = ureq::get(&url)
+            .config()
+            .timeout_global(Some(config.timeout))
+            .build()
+            .header("User-Agent", "Mozilla/5.0 (compatible; AIAssistant/1.0)")
             .call()
             .map_err(|e| SearchError::Network(e.to_string()))?;
 
         let html = response
-            .into_string()
+            .body_mut()
+            .read_to_string()
             .map_err(|e| SearchError::Network(e.to_string()))?;
 
         // Parse results from HTML
@@ -227,15 +230,18 @@ impl SearchProvider for BraveSearchProvider {
             config.max_results
         );
 
-        let response = ureq::get(&url)
-            .timeout(config.timeout)
-            .set("X-Subscription-Token", &self.api_key)
-            .set("Accept", "application/json")
+        let mut response = ureq::get(&url)
+            .config()
+            .timeout_global(Some(config.timeout))
+            .build()
+            .header("X-Subscription-Token", &self.api_key)
+            .header("Accept", "application/json")
             .call()
             .map_err(|e| SearchError::Network(e.to_string()))?;
 
         let text = response
-            .into_string()
+            .body_mut()
+            .read_to_string()
             .map_err(|e| SearchError::Network(e.to_string()))?;
 
         let json: serde_json::Value =
@@ -289,13 +295,16 @@ impl SearchProvider for SearXNGProvider {
             urlencoding::encode(query)
         );
 
-        let response = ureq::get(&url)
-            .timeout(config.timeout)
+        let mut response = ureq::get(&url)
+            .config()
+            .timeout_global(Some(config.timeout))
+            .build()
             .call()
             .map_err(|e| SearchError::Network(e.to_string()))?;
 
         let text = response
-            .into_string()
+            .body_mut()
+            .read_to_string()
             .map_err(|e| SearchError::Network(e.to_string()))?;
 
         let json: serde_json::Value =
@@ -353,13 +362,16 @@ impl SearchProvider for GoogleSearchProvider {
             config.max_results.min(10), // Google max is 10 per page
         );
 
-        let response = ureq::get(&url)
-            .timeout(config.timeout)
+        let mut response = ureq::get(&url)
+            .config()
+            .timeout_global(Some(config.timeout))
+            .build()
             .call()
             .map_err(|e| SearchError::Network(e.to_string()))?;
 
         let text = response
-            .into_string()
+            .body_mut()
+            .read_to_string()
             .map_err(|e| SearchError::Network(e.to_string()))?;
 
         let json: serde_json::Value =
@@ -407,14 +419,17 @@ impl SearchProvider for BingSearchProvider {
             config.max_results,
         );
 
-        let response = ureq::get(&url)
-            .timeout(config.timeout)
-            .set("Ocp-Apim-Subscription-Key", &self.api_key)
+        let mut response = ureq::get(&url)
+            .config()
+            .timeout_global(Some(config.timeout))
+            .build()
+            .header("Ocp-Apim-Subscription-Key", &self.api_key)
             .call()
             .map_err(|e| SearchError::Network(e.to_string()))?;
 
         let text = response
-            .into_string()
+            .body_mut()
+            .read_to_string()
             .map_err(|e| SearchError::Network(e.to_string()))?;
 
         let json: serde_json::Value =
@@ -478,13 +493,16 @@ impl SearchProvider for SerpApiProvider {
             config.max_results,
         );
 
-        let response = ureq::get(&url)
-            .timeout(config.timeout)
+        let mut response = ureq::get(&url)
+            .config()
+            .timeout_global(Some(config.timeout))
+            .build()
             .call()
             .map_err(|e| SearchError::Network(e.to_string()))?;
 
         let text = response
-            .into_string()
+            .body_mut()
+            .read_to_string()
             .map_err(|e| SearchError::Network(e.to_string()))?;
 
         let json: serde_json::Value =
@@ -532,14 +550,17 @@ impl SearchProvider for TavilyProvider {
             "search_depth": "basic",
         });
 
-        let response = ureq::post("https://api.tavily.com/search")
-            .timeout(config.timeout)
-            .set("Content-Type", "application/json")
-            .send_string(&body.to_string())
+        let mut response = ureq::post("https://api.tavily.com/search")
+            .config()
+            .timeout_global(Some(config.timeout))
+            .build()
+            .header("Content-Type", "application/json")
+            .send(&body.to_string())
             .map_err(|e| SearchError::Network(e.to_string()))?;
 
         let text = response
-            .into_string()
+            .body_mut()
+            .read_to_string()
             .map_err(|e| SearchError::Network(e.to_string()))?;
 
         let json: serde_json::Value =
@@ -736,13 +757,16 @@ impl EnhancedDuckDuckGoProvider {
             "https://html.duckduckgo.com/html/?q={}",
             search_urlencode(query)
         );
-        let resp = ureq::get(&url)
-            .set("User-Agent", "Mozilla/5.0 (compatible; AIAssistant/1.0)")
-            .timeout(std::time::Duration::from_secs(10))
+        let mut resp = ureq::get(&url)
+            .header("User-Agent", "Mozilla/5.0 (compatible; AIAssistant/1.0)")
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(10)))
+            .build()
             .call()
             .map_err(|e| SearchError::Network(e.to_string()))?;
         let html = resp
-            .into_string()
+            .body_mut()
+            .read_to_string()
             .map_err(|e| SearchError::Network(e.to_string()))?;
 
         let results = self.parse_ddg_html(&html, max_results);
@@ -1054,12 +1078,14 @@ impl WebCrawler {
         // Try to fetch robots.txt
         let robots_url = format!("https://{}/robots.txt", domain);
         let rules = match ureq::get(&robots_url)
-            .set("User-Agent", &self.user_agent)
-            .timeout(std::time::Duration::from_secs(5))
+            .header("User-Agent", &self.user_agent)
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(5)))
+            .build()
             .call()
         {
-            Ok(resp) => {
-                let content = resp.into_string().unwrap_or_default();
+            Ok(mut resp) => {
+                let content = resp.body_mut().read_to_string().unwrap_or_default();
                 Self::parse_robots_txt(&content, &self.user_agent)
             }
             Err(_) => {
@@ -1087,12 +1113,14 @@ impl WebCrawler {
             // For now, inline the fetch to avoid borrow issues
             let robots_url = format!("https://{}/robots.txt", domain);
             let rules = match ureq::get(&robots_url)
-                .set("User-Agent", &self.user_agent)
-                .timeout(std::time::Duration::from_secs(5))
+                .header("User-Agent", &self.user_agent)
+                .config()
+                .timeout_global(Some(std::time::Duration::from_secs(5)))
+                .build()
                 .call()
             {
-                Ok(resp) => {
-                    let content = resp.into_string().unwrap_or_default();
+                Ok(mut resp) => {
+                    let content = resp.body_mut().read_to_string().unwrap_or_default();
                     Self::parse_robots_txt(&content, &self.user_agent)
                 }
                 Err(_) => RobotsRules::allow_all(),
@@ -1200,14 +1228,17 @@ impl WebCrawler {
 
     /// Fetch a page and extract text + links.
     fn fetch_page(&self, url: &str, depth: usize) -> Result<CrawledPage, String> {
-        let resp = ureq::get(url)
-            .set("User-Agent", &self.user_agent)
-            .timeout(std::time::Duration::from_secs(15))
+        let mut resp = ureq::get(url)
+            .header("User-Agent", &self.user_agent)
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(15)))
+            .build()
             .call()
             .map_err(|e| format!("Failed to fetch {}: {}", url, e))?;
 
         let html = resp
-            .into_string()
+            .body_mut()
+            .read_to_string()
             .map_err(|e| format!("Failed to read {}: {}", url, e))?;
 
         let title = Self::extract_title(&html);

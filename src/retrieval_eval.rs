@@ -1051,14 +1051,17 @@ pub mod fetch {
 
     fn download(url: &str) -> Result<Vec<u8>, FetchError> {
         let resp = ureq::get(url)
-            .timeout(std::time::Duration::from_secs(600))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(600)))
+            .build()
             .call()
             .map_err(|e| FetchError::Download {
                 url: url.to_string(),
                 reason: e.to_string(),
             })?;
         let mut buf = Vec::new();
-        resp.into_reader()
+        resp.into_body()
+            .into_reader()
             .read_to_end(&mut buf)
             .map_err(|e| FetchError::Download {
                 url: url.to_string(),

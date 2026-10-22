@@ -230,7 +230,9 @@ impl AudioModelRegistry {
 
         // Download to temporary file (TOCTOU safe)
         let response = ureq::get(&model.url)
-            .timeout(std::time::Duration::from_secs(600))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(600)))
+            .build()
             .call()
             .map_err(|e| format!("Download failed: {}", e))?;
 
@@ -239,7 +241,7 @@ impl AudioModelRegistry {
         let mut file = std::fs::File::create(&temp_path)
             .map_err(|e| format!("Failed to create temp file: {}", e))?;
 
-        let mut reader = response.into_reader();
+        let mut reader = response.into_body().into_reader();
         let mut buf = vec![0u8; 65536]; // 64KB chunks
 
         loop {

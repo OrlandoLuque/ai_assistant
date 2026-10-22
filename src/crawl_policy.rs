@@ -610,12 +610,14 @@ impl CrawlPolicy {
         let timeout = self.config.timeout_ms / 1000;
         let timeout = if timeout == 0 { 1 } else { timeout };
 
-        let content = match ureq::AgentBuilder::new()
-            .timeout(Duration::from_secs(timeout))
-            .build()
-            .get(&url)
-            .set("User-Agent", &self.config.user_agent)
-            .call()
+        let content = match ureq::Agent::new_with_config(
+            ureq::Agent::config_builder()
+                .timeout_global(Some(Duration::from_secs(timeout)))
+                .build(),
+        )
+        .get(&url)
+        .set("User-Agent", &self.config.user_agent)
+        .call()
         {
             Ok(response) => response.into_string().unwrap_or_default(),
             Err(_) => {
@@ -671,13 +673,15 @@ impl CrawlPolicy {
         let timeout = self.config.timeout_ms / 1000;
         let timeout = if timeout == 0 { 1 } else { timeout };
 
-        let response = ureq::AgentBuilder::new()
-            .timeout(Duration::from_secs(timeout))
-            .build()
-            .get(url)
-            .set("User-Agent", &self.config.user_agent)
-            .call()
-            .map_err(|e| anyhow!("Failed to fetch sitemap {}: {}", url, e))?;
+        let response = ureq::Agent::new_with_config(
+            ureq::Agent::config_builder()
+                .timeout_global(Some(Duration::from_secs(timeout)))
+                .build(),
+        )
+        .get(url)
+        .set("User-Agent", &self.config.user_agent)
+        .call()
+        .map_err(|e| anyhow!("Failed to fetch sitemap {}: {}", url, e))?;
 
         let content = response
             .into_string()

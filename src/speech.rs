@@ -343,18 +343,21 @@ impl SpeechProvider for OpenAISpeechProvider {
         // End boundary
         body.extend_from_slice(format!("--{}--\r\n", boundary).as_bytes());
 
-        let response = ureq::post(&url)
-            .set("Authorization", &format!("Bearer {}", api_key))
-            .set(
+        let mut response = ureq::post(&url)
+            .header("Authorization", &format!("Bearer {}", api_key))
+            .header(
                 "Content-Type",
                 &format!("multipart/form-data; boundary={}", boundary),
             )
-            .timeout(self.config.timeout)
-            .send_bytes(&body)
+            .config()
+            .timeout_global(Some(self.config.timeout))
+            .build()
+            .send(&body)
             .context("OpenAI transcription request failed")?;
 
         let json: serde_json::Value = response
-            .into_json()
+            .body_mut()
+            .read_json()
             .context("Failed to parse OpenAI transcription response")?;
 
         let text = json["text"].as_str().unwrap_or("").to_string();
@@ -410,14 +413,17 @@ impl SpeechProvider for OpenAISpeechProvider {
         });
 
         let response = ureq::post(&url)
-            .set("Authorization", &format!("Bearer {}", api_key))
-            .set("Content-Type", "application/json")
-            .timeout(self.config.timeout)
+            .header("Authorization", &format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .config()
+            .timeout_global(Some(self.config.timeout))
+            .build()
             .send_json(body)
             .context("OpenAI TTS request failed")?;
 
         let mut audio = Vec::new();
         response
+            .into_body()
             .into_reader()
             .read_to_end(&mut audio)
             .context("Failed to read TTS audio response")?;
@@ -542,15 +548,18 @@ impl SpeechProvider for GoogleSpeechProvider {
             }
         });
 
-        let response = ureq::post(url)
-            .set("Content-Type", "application/json")
-            .set("x-goog-api-key", api_key)
-            .timeout(self.config.timeout)
+        let mut response = ureq::post(url)
+            .header("Content-Type", "application/json")
+            .header("x-goog-api-key", api_key)
+            .config()
+            .timeout_global(Some(self.config.timeout))
+            .build()
             .send_json(body)
             .context("Google STT request failed")?;
 
         let json: serde_json::Value = response
-            .into_json()
+            .body_mut()
+            .read_json()
             .context("Failed to parse Google STT response")?;
 
         // Parse Google's results array
@@ -637,15 +646,18 @@ impl SpeechProvider for GoogleSpeechProvider {
             }
         });
 
-        let response = ureq::post(url)
-            .set("Content-Type", "application/json")
-            .set("x-goog-api-key", api_key)
-            .timeout(self.config.timeout)
+        let mut response = ureq::post(url)
+            .header("Content-Type", "application/json")
+            .header("x-goog-api-key", api_key)
+            .config()
+            .timeout_global(Some(self.config.timeout))
+            .build()
             .send_json(body)
             .context("Google TTS request failed")?;
 
         let json: serde_json::Value = response
-            .into_json()
+            .body_mut()
+            .read_json()
             .context("Failed to parse Google TTS response")?;
 
         let audio_b64 = json["audioContent"]
@@ -701,11 +713,13 @@ impl PiperTtsProvider {
     /// Check if the Piper server is reachable.
     pub fn is_available(&self) -> bool {
         match ureq::get(&self.base_url)
-            .timeout(Duration::from_secs(2))
+            .config()
+            .timeout_global(Some(Duration::from_secs(2)))
+            .build()
             .call()
         {
             Ok(_) => true,
-            Err(ureq::Error::Status(400, _)) => true, // Server is up, just rejects empty GET
+            Err(ureq::Error::StatusCode(400)) => true, // Server is up, just rejects empty GET
             Err(_) => false,
         }
     }
@@ -743,13 +757,16 @@ impl SpeechProvider for PiperTtsProvider {
         }
 
         let response = ureq::post(&self.base_url)
-            .set("Content-Type", "text/plain")
-            .timeout(self.timeout)
-            .send_string(text)
+            .header("Content-Type", "text/plain")
+            .config()
+            .timeout_global(Some(self.timeout))
+            .build()
+            .send(text)
             .context("Piper TTS request failed")?;
 
         let mut audio = Vec::new();
         response
+            .into_body()
             .into_reader()
             .read_to_end(&mut audio)
             .context("Failed to read Piper TTS audio response")?;
@@ -825,7 +842,9 @@ impl CoquiTtsProvider {
     /// Check if the Coqui TTS server is reachable.
     pub fn is_available(&self) -> bool {
         ureq::get(&self.base_url)
-            .timeout(Duration::from_secs(2))
+            .config()
+            .timeout_global(Some(Duration::from_secs(2)))
+            .build()
             .call()
             .is_ok()
     }
@@ -873,12 +892,15 @@ impl SpeechProvider for CoquiTtsProvider {
         }
 
         let response = ureq::get(&url)
-            .timeout(self.timeout)
+            .config()
+            .timeout_global(Some(self.timeout))
+            .build()
             .call()
             .context("Coqui TTS request failed")?;
 
         let mut audio = Vec::new();
         response
+            .into_body()
             .into_reader()
             .read_to_end(&mut audio)
             .context("Failed to read Coqui TTS audio response")?;
@@ -1341,13 +1363,14 @@ impl ExpressiveOpenAiTtsProvider {
         });
 
         let response = ureq::post("https://api.openai.com/v1/audio/speech")
-            .set("Authorization", &format!("Bearer {}", self.api_key))
-            .set("Content-Type", "application/json")
-            .send_string(&body.to_string())
+            .header("Authorization", &format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .send(&body.to_string())
             .context("Failed to call OpenAI Expressive TTS API")?;
 
         let mut audio = Vec::new();
         response
+            .into_body()
             .into_reader()
             .read_to_end(&mut audio)
             .context("Failed to read audio response")?;
@@ -1467,14 +1490,15 @@ impl SpeechProvider for ElevenLabsProvider {
         });
 
         let response = ureq::post(&url)
-            .set("xi-api-key", &self.api_key)
-            .set("Content-Type", "application/json")
-            .set("Accept", "audio/mpeg")
-            .send_string(&body.to_string())
+            .header("xi-api-key", &self.api_key)
+            .header("Content-Type", "application/json")
+            .header("Accept", "audio/mpeg")
+            .send(&body.to_string())
             .context("Failed to call ElevenLabs TTS API")?;
 
         let mut audio = Vec::new();
         response
+            .into_body()
             .into_reader()
             .read_to_end(&mut audio)
             .context("Failed to read ElevenLabs audio response")?;
@@ -1778,16 +1802,16 @@ impl VoiceCloneProvider for ElevenLabsCloneProvider {
         // Closing boundary
         body.extend_from_slice(format!("--{}--\r\n", boundary).as_bytes());
 
-        let response = ureq::post(&url)
-            .set("xi-api-key", &self.api_key)
-            .set(
+        let mut response = ureq::post(&url)
+            .header("xi-api-key", &self.api_key)
+            .header(
                 "Content-Type",
                 &format!("multipart/form-data; boundary={}", boundary),
             )
-            .send_bytes(&body)
+            .send(&body)
             .context("Failed to call ElevenLabs Add Voice API")?;
 
-        let json: serde_json::Value = response.into_json()?;
+        let json: serde_json::Value = response.body_mut().read_json()?;
         let voice_id = json["voice_id"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("No voice_id in ElevenLabs response"))?
@@ -1817,14 +1841,15 @@ impl VoiceCloneProvider for ElevenLabsCloneProvider {
         });
 
         let response = ureq::post(&url)
-            .set("xi-api-key", &self.api_key)
-            .set("Content-Type", "application/json")
-            .set("Accept", "audio/mpeg")
-            .send_string(&body.to_string())
+            .header("xi-api-key", &self.api_key)
+            .header("Content-Type", "application/json")
+            .header("Accept", "audio/mpeg")
+            .send(&body.to_string())
             .context("Failed to call ElevenLabs TTS with cloned voice")?;
 
         let mut audio = Vec::new();
         response
+            .into_body()
             .into_reader()
             .read_to_end(&mut audio)
             .context("Failed to read ElevenLabs cloned voice audio")?;
@@ -1840,12 +1865,12 @@ impl VoiceCloneProvider for ElevenLabsCloneProvider {
     fn list_cloned_voices(&self) -> Result<Vec<ClonedVoiceProfile>> {
         let url = format!("{}/voices", self.base_url);
 
-        let response = ureq::get(&url)
-            .set("xi-api-key", &self.api_key)
+        let mut response = ureq::get(&url)
+            .header("xi-api-key", &self.api_key)
             .call()
             .context("Failed to list ElevenLabs voices")?;
 
-        let json: serde_json::Value = response.into_json()?;
+        let json: serde_json::Value = response.body_mut().read_json()?;
         let voices = json["voices"]
             .as_array()
             .map(|arr| {
@@ -1871,7 +1896,7 @@ impl VoiceCloneProvider for ElevenLabsCloneProvider {
         let url = format!("{}/voices/{}", self.base_url, voice_id);
 
         ureq::delete(&url)
-            .set("xi-api-key", &self.api_key)
+            .header("xi-api-key", &self.api_key)
             .call()
             .context("Failed to delete ElevenLabs voice")?;
 
@@ -1979,13 +2004,16 @@ impl VoiceCloneProvider for XttsCloneProvider {
         });
 
         let response = ureq::post(&url)
-            .set("Content-Type", "application/json")
-            .timeout(Duration::from_secs(60))
-            .send_string(&body.to_string())
+            .header("Content-Type", "application/json")
+            .config()
+            .timeout_global(Some(Duration::from_secs(60)))
+            .build()
+            .send(&body.to_string())
             .context("Failed to call XTTS v2 TTS API")?;
 
         let mut audio = Vec::new();
         response
+            .into_body()
             .into_reader()
             .read_to_end(&mut audio)
             .context("Failed to read XTTS audio response")?;
@@ -2022,11 +2050,15 @@ impl VoiceCloneProvider for XttsCloneProvider {
     fn is_available(&self) -> bool {
         // Check if the XTTS server is reachable
         ureq::get(&format!("{}/api/tts", self.base_url))
-            .timeout(Duration::from_secs(2))
+            .config()
+            .timeout_global(Some(Duration::from_secs(2)))
+            .build()
             .call()
             .is_ok()
             || ureq::get(&self.base_url)
-                .timeout(Duration::from_secs(2))
+                .config()
+                .timeout_global(Some(Duration::from_secs(2)))
+                .build()
                 .call()
                 .is_ok()
     }

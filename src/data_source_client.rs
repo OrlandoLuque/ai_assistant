@@ -639,18 +639,23 @@ impl DataSourceClient {
     // Private: Authentication
     // ========================================================================
 
-    fn apply_auth(&self, request: ureq::Request) -> ureq::Request {
+    fn apply_auth(
+        &self,
+        request: ureq::RequestBuilder<ureq::typestate::WithoutBody>,
+    ) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
         match &self.config.auth {
             AuthMethod::None => request,
-            AuthMethod::Bearer(token) => request.set("Authorization", &format!("Bearer {}", token)),
-            AuthMethod::ApiKey { header, key } => request.set(header, key),
+            AuthMethod::Bearer(token) => {
+                request.header("Authorization", &format!("Bearer {}", token))
+            }
+            AuthMethod::ApiKey { header, key } => request.header(header, key),
             AuthMethod::ApiKeyQuery { .. } => {
                 // Already handled in build_url
                 request
             }
             AuthMethod::Basic { username, password } => {
                 let credentials = base64_encode(&format!("{}:{}", username, password));
-                request.set("Authorization", &format!("Basic {}", credentials))
+                request.header("Authorization", &format!("Basic {}", credentials))
             }
         }
     }
@@ -790,31 +795,37 @@ impl DataSourceClient {
         // (cloud metadata) or any internal host would be followed without
         // re-checking, defeating the initial `is_private_url` guard. Without
         // protection, keep ureq's default redirect handling.
-        let agent = ureq::AgentBuilder::new()
-            .timeout(Duration::from_secs(timeout_secs.max(1)))
-            .redirects(if self.config.ssrf_protection { 0 } else { 5 })
-            .build();
+        let agent = ureq::Agent::new_with_config(
+            ureq::Agent::config_builder()
+                .timeout_global(Some(Duration::from_secs(timeout_secs.max(1))))
+                .max_redirects(if self.config.ssrf_protection { 0 } else { 5 })
+                .build(),
+        );
 
         // Turn a finished ureq response into our DataSourceResponse.
-        let build_response =
-            |status: u16, resp: ureq::Response, duration_ms: u64| -> DataSourceResponse {
-                let mut headers = HashMap::new();
-                for name in resp.headers_names() {
-                    if let Some(value) = resp.header(&name) {
-                        headers.insert(name, value.to_string());
-                    }
+        let build_response = |status: u16,
+                              resp: ureq::http::Response<ureq::Body>,
+                              duration_ms: u64|
+         -> DataSourceResponse {
+            let mut headers = HashMap::new();
+            // ureq 2 tenia `headers_names()`; en ureq 3 el `HeaderMap`
+            // se itera directamente, lo que ademas evita la segunda busqueda.
+            for (name, value) in resp.headers() {
+                if let Ok(value) = value.to_str() {
+                    headers.insert(name.as_str().to_string(), value.to_string());
                 }
-                let body_str = resp.into_string().unwrap_or_default();
-                let json = serde_json::from_str::<serde_json::Value>(&body_str).ok();
-                DataSourceResponse {
-                    status,
-                    body: body_str,
-                    json,
-                    headers,
-                    from_cache: false,
-                    duration_ms,
-                }
-            };
+            }
+            let body_str = resp.body_mut().read_to_string().unwrap_or_default();
+            let json = serde_json::from_str::<serde_json::Value>(&body_str).ok();
+            DataSourceResponse {
+                status,
+                body: body_str,
+                json,
+                headers,
+                from_cache: false,
+                duration_ms,
+            }
+        };
 
         const MAX_REDIRECTS: u32 = 5;
         let mut redirects_followed = 0u32;
@@ -853,7 +864,11 @@ impl DataSourceClient {
                     let status = resp.status();
                     // 3xx except 304 Not Modified is a redirect.
                     if (300..400).contains(&status) && status != 304 {
-                        let location = resp.header("location").map(|s| s.to_string());
+                        let location = resp
+                            .headers()
+                            .get("location")
+                            .and_then(|v| v.to_str().ok())
+                            .map(|s| s.to_string());
                         match location {
                             Some(location) => {
                                 if redirects_followed >= MAX_REDIRECTS {

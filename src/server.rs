@@ -4740,7 +4740,7 @@ mod tests {
             .timeout(std::time::Duration::from_secs(2))
             .send_json(serde_json::json!({"message": "hi"}));
         match chat_resp {
-            Err(ureq::Error::Status(401, _)) => {} // expected
+            Err(ureq::Error::StatusCode(401)) => {} // expected
             other => panic!("Expected 401, got {:?}", other),
         }
 
@@ -4751,7 +4751,7 @@ mod tests {
             .send_json(serde_json::json!({"message": "hi"}));
         match auth_resp {
             Ok(_) => {} // provider might work
-            Err(ureq::Error::Status(code, _)) => {
+            Err(ureq::Error::StatusCode(code)) => {
                 assert_ne!(code, 401, "Should not get 401 with valid token");
             }
             // Transport errors (e.g. timeout) are acceptable — the server accepted

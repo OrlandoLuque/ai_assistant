@@ -443,8 +443,8 @@ impl EntityEnricher {
         let response = ureq::get(&url).call();
 
         match response {
-            Ok(resp) => {
-                let json: serde_json::Value = resp.into_json()?;
+            Ok(mut resp) => {
+                let json: serde_json::Value = resp.body_mut().read_json()?;
 
                 // Try to extract attributes from the response object
                 let mut attributes = HashMap::new();

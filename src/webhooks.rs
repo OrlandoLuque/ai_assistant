@@ -155,24 +155,27 @@ impl WebhookManager {
 
         for attempt in 1..=webhook.retry_count {
             let mut request = ureq::post(&webhook.url)
-                .timeout(webhook.timeout)
-                .set("Content-Type", "application/json");
+                .config()
+                .timeout_global(Some(webhook.timeout))
+                .build()
+                .header("Content-Type", "application/json");
 
             for (key, value) in &webhook.headers {
-                request = request.set(key, value);
+                request = request.header(key, value);
             }
 
             if let Some(secret) = &webhook.secret {
                 let sig =
                     sha256::hex_encode(&sha256::hmac_sha256(secret.as_bytes(), json.as_bytes()));
-                request = request.set("X-Webhook-Signature", &sig);
+                request = request.header("X-Webhook-Signature", &sig);
             }
 
-            match request.send_string(&json) {
+            match request.send(&json) {
                 Ok(response) => {
                     return DeliveryResult {
-                        success: response.status() < 400,
-                        status_code: Some(response.status()),
+                        // ureq 3 devuelve `StatusCode`, no `u16`.
+                        success: response.status().as_u16() < 400,
+                        status_code: Some(response.status().as_u16()),
                         attempts: attempt,
                         duration: start.elapsed(),
                         error: None,

@@ -181,9 +181,11 @@ fn launch_chrome(port: u16) -> Result<(std::process::Child, String), BrowserErro
     // Wait for Chrome to start and get the WS URL from the /json/version endpoint
     let start = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs(10);
-    let client = ureq::AgentBuilder::new()
-        .timeout(std::time::Duration::from_secs(2))
-        .build();
+    let client = ureq::Agent::new_with_config(
+        ureq::Agent::config_builder()
+            .timeout_global(Some(std::time::Duration::from_secs(2)))
+            .build(),
+    );
 
     loop {
         if start.elapsed() > timeout {
@@ -198,7 +200,7 @@ fn launch_chrome(port: u16) -> Result<(std::process::Child, String), BrowserErro
             .get(&format!("http://127.0.0.1:{}/json/version", port))
             .call()
         {
-            if let Ok(body) = resp.into_string() {
+            if let Ok(body) = resp.body_mut().read_to_string() {
                 if let Ok(val) = serde_json::from_str::<serde_json::Value>(&body) {
                     if let Some(ws_url) = val.get("webSocketDebuggerUrl").and_then(|v| v.as_str()) {
                         return Ok((child, ws_url.to_string()));

@@ -1168,8 +1168,8 @@ mod inner {
             });
 
             ureq::post(&self.url)
-                .set("Content-Type", "application/json")
-                .send_string(&payload.to_string())
+                .header("Content-Type", "application/json")
+                .send(&payload.to_string())
                 .map_err(|e| {
                     AiError::Distillation(DistillationError::FlywheelFailed {
                         cycle_id: stats.cycle_id.clone(),

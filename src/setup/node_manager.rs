@@ -115,13 +115,15 @@ pub fn node_status() -> Result<NodeInfo, String> {
     let start = Instant::now();
 
     match ureq::get(&health_url)
-        .timeout(Duration::from_secs(2))
+        .config()
+        .timeout_global(Some(Duration::from_secs(2)))
+        .build()
         .call()
     {
-        Ok(resp) => {
+        Ok(mut resp) => {
             let status_code = resp.status();
             // Drain the response body so the connection can be released.
-            let _ = resp.into_string();
+            let _ = resp.body_mut().read_to_string();
             let response_ms = start.elapsed().as_millis() as u64;
             let health = if status_code == 200 {
                 format!("ok ({}ms)", response_ms)

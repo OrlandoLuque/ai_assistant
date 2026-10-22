@@ -878,11 +878,13 @@ Summary:"#,
     });
 
     let response = ureq::post(&url)
-        .timeout(std::time::Duration::from_secs(90))
+        .config()
+        .timeout_global(Some(std::time::Duration::from_secs(90)))
+        .build()
         .send_json(&request_body)
         .map_err(anyhow::Error::from)?;
 
-    let body: serde_json::Value = response.into_json()?;
+    let body: serde_json::Value = response.body_mut().read_json()?;
 
     let summary = body
         .get("message")

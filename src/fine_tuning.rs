@@ -634,23 +634,24 @@ impl OpenAIFineTuneClient {
         let jsonl = dataset.to_jsonl();
 
         let mut request = ureq::post(&format!("{}/files", self.base_url))
-            .set("Authorization", &format!("Bearer {}", self.api_key));
+            .header("Authorization", &format!("Bearer {}", self.api_key));
 
         if let Some(ref org) = self.organization {
-            request = request.set("OpenAI-Organization", org);
+            request = request.header("OpenAI-Organization", org);
         }
 
         let (boundary, body) = multipart_body("fine-tune", "training.jsonl", &jsonl);
-        let response = request
-            .set(
+        let mut response = request
+            .header(
                 "Content-Type",
                 &format!("multipart/form-data; boundary={boundary}"),
             )
-            .send_bytes(&body)
+            .send(&body)
             .map_err(|e| FineTuneApiError::NetworkError(e.to_string()))?;
 
         let result: serde_json::Value = response
-            .into_json()
+            .body_mut()
+            .read_json()
             .map_err(|e| FineTuneApiError::ParseError(e.to_string()))?;
 
         Ok(FileUploadResponse {
@@ -668,11 +669,11 @@ impl OpenAIFineTuneClient {
         request: CreateFineTuneRequest,
     ) -> Result<FineTuneJob, FineTuneApiError> {
         let mut req = ureq::post(&format!("{}/fine_tuning/jobs", self.base_url))
-            .set("Authorization", &format!("Bearer {}", self.api_key))
-            .set("Content-Type", "application/json");
+            .header("Authorization", &format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json");
 
         if let Some(ref org) = self.organization {
-            req = req.set("OpenAI-Organization", org);
+            req = req.header("OpenAI-Organization", org);
         }
 
         let body = serde_json::json!({
@@ -687,12 +688,13 @@ impl OpenAIFineTuneClient {
             "suffix": request.suffix,
         });
 
-        let response = req
+        let mut response = req
             .send_json(body)
             .map_err(|e| FineTuneApiError::NetworkError(e.to_string()))?;
 
         let result: FineTuneJob = response
-            .into_json()
+            .body_mut()
+            .read_json()
             .map_err(|e| FineTuneApiError::ParseError(e.to_string()))?;
 
         Ok(result)
@@ -701,18 +703,19 @@ impl OpenAIFineTuneClient {
     /// Get fine-tuning job status
     pub fn get_job(&self, job_id: &str) -> Result<FineTuneJob, FineTuneApiError> {
         let mut req = ureq::get(&format!("{}/fine_tuning/jobs/{}", self.base_url, job_id))
-            .set("Authorization", &format!("Bearer {}", self.api_key));
+            .header("Authorization", &format!("Bearer {}", self.api_key));
 
         if let Some(ref org) = self.organization {
-            req = req.set("OpenAI-Organization", org);
+            req = req.header("OpenAI-Organization", org);
         }
 
-        let response = req
+        let mut response = req
             .call()
             .map_err(|e| FineTuneApiError::NetworkError(e.to_string()))?;
 
         let result: FineTuneJob = response
-            .into_json()
+            .body_mut()
+            .read_json()
             .map_err(|e| FineTuneApiError::ParseError(e.to_string()))?;
 
         Ok(result)
@@ -725,18 +728,19 @@ impl OpenAIFineTuneClient {
             None => format!("{}/fine_tuning/jobs", self.base_url),
         };
 
-        let mut req = ureq::get(&url).set("Authorization", &format!("Bearer {}", self.api_key));
+        let mut req = ureq::get(&url).header("Authorization", &format!("Bearer {}", self.api_key));
 
         if let Some(ref org) = self.organization {
-            req = req.set("OpenAI-Organization", org);
+            req = req.header("OpenAI-Organization", org);
         }
 
-        let response = req
+        let mut response = req
             .call()
             .map_err(|e| FineTuneApiError::NetworkError(e.to_string()))?;
 
         let result: serde_json::Value = response
-            .into_json()
+            .body_mut()
+            .read_json()
             .map_err(|e| FineTuneApiError::ParseError(e.to_string()))?;
 
         let jobs: Vec<FineTuneJob> = serde_json::from_value(result["data"].clone())
@@ -751,14 +755,16 @@ impl OpenAIFineTuneClient {
             "{}/fine_tuning/jobs/{}/cancel",
             self.base_url, job_id
         ))
-        .set("Authorization", &format!("Bearer {}", self.api_key));
+        .header("Authorization", &format!("Bearer {}", self.api_key));
 
         if let Some(ref org) = self.organization {
-            req = req.set("OpenAI-Organization", org);
+            req = req.header("OpenAI-Organization", org);
         }
 
+        // POST sin cuerpo: en ureq 3 `.call()` es solo de los builders
+        // `WithoutBody`, y lo explicito para un POST vacio es `send_empty()`.
         let response = req
-            .call()
+            .send_empty()
             .map_err(|e| FineTuneApiError::NetworkError(e.to_string()))?;
 
         let result: FineTuneJob = response
@@ -774,18 +780,19 @@ impl OpenAIFineTuneClient {
             "{}/fine_tuning/jobs/{}/events",
             self.base_url, job_id
         ))
-        .set("Authorization", &format!("Bearer {}", self.api_key));
+        .header("Authorization", &format!("Bearer {}", self.api_key));
 
         if let Some(ref org) = self.organization {
-            req = req.set("OpenAI-Organization", org);
+            req = req.header("OpenAI-Organization", org);
         }
 
-        let response = req
+        let mut response = req
             .call()
             .map_err(|e| FineTuneApiError::NetworkError(e.to_string()))?;
 
         let result: serde_json::Value = response
-            .into_json()
+            .body_mut()
+            .read_json()
             .map_err(|e| FineTuneApiError::ParseError(e.to_string()))?;
 
         let events: Vec<FineTuneEvent> = serde_json::from_value(result["data"].clone())

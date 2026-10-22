@@ -470,7 +470,8 @@ fn register_http_get(registry: &mut ToolRegistry, sandbox: Arc<RwLock<SandboxVal
 
         let status = resp.status();
         let mut body = String::new();
-        resp.into_reader()
+        resp.into_body()
+            .into_reader()
             .take(1_000_000) // 1MB limit
             .read_to_string(&mut body)
             .map_err(|e| ToolError::ExecutionFailed(format!("Failed to read body: {}", e)))?;

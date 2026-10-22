@@ -295,22 +295,25 @@ impl HfClient {
         let url = format!("{}/{}", self.config.base_url, model);
 
         let mut req = ureq::post(&url)
-            .timeout(self.config.timeout)
-            .set("Content-Type", "application/json");
+            .config()
+            .timeout_global(Some(self.config.timeout))
+            .build()
+            .header("Content-Type", "application/json");
 
         if let Some(token) = &self.config.api_token {
-            req = req.set("Authorization", &format!("Bearer {}", token));
+            req = req.header("Authorization", &format!("Bearer {}", token));
         }
 
         let body =
             serde_json::to_string(&request).map_err(|e| HfError::Serialization(e.to_string()))?;
 
-        let response = req.send_string(&body);
+        let response = req.send(&body);
 
         match response {
             Ok(resp) => {
                 let text = resp
-                    .into_string()
+                    .body_mut()
+                    .read_to_string()
                     .map_err(|e| HfError::Network(e.to_string()))?;
 
                 self.parse_response(&text)

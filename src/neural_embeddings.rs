@@ -241,15 +241,16 @@ impl DenseEmbedder {
         let mut results = Vec::with_capacity(texts.len());
 
         for text in texts {
-            let response = ureq::post("http://localhost:11434/api/embeddings")
-                .send_json(ureq::json!({
+            let mut response = ureq::post("http://localhost:11434/api/embeddings")
+                .send_json(serde_json::json!({
                     "model": self.config.model_id,
                     "prompt": text
                 }))
                 .map_err(|e| EmbeddingError::ApiError(e.to_string()))?;
 
             let result: serde_json::Value = response
-                .into_json()
+                .body_mut()
+                .read_json()
                 .map_err(|e| EmbeddingError::ParseError(e.to_string()))?;
 
             let embedding: Vec<f32> = result["embedding"]
@@ -276,17 +277,18 @@ impl DenseEmbedder {
             "OpenAI API key required".to_string(),
         ))?;
 
-        let response = ureq::post("https://api.openai.com/v1/embeddings")
-            .set("Authorization", &format!("Bearer {}", api_key))
-            .set("Content-Type", "application/json")
-            .send_json(ureq::json!({
+        let mut response = ureq::post("https://api.openai.com/v1/embeddings")
+            .header("Authorization", &format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .send_json(serde_json::json!({
                 "model": self.config.model_id,
                 "input": texts
             }))
             .map_err(|e| EmbeddingError::ApiError(e.to_string()))?;
 
         let result: serde_json::Value = response
-            .into_json()
+            .body_mut()
+            .read_json()
             .map_err(|e| EmbeddingError::ParseError(e.to_string()))?;
 
         let data = result["data"]
@@ -322,19 +324,20 @@ impl DenseEmbedder {
         let mut request = ureq::post(url);
 
         if let Some(ref key) = self.api_key {
-            request = request.set("Authorization", &format!("Bearer {}", key));
+            request = request.header("Authorization", &format!("Bearer {}", key));
         }
 
-        let response = request
-            .set("Content-Type", "application/json")
-            .send_json(ureq::json!({
+        let mut response = request
+            .header("Content-Type", "application/json")
+            .send_json(serde_json::json!({
                 "model": self.config.model_id,
                 "input": texts
             }))
             .map_err(|e| EmbeddingError::ApiError(e.to_string()))?;
 
         let result: serde_json::Value = response
-            .into_json()
+            .body_mut()
+            .read_json()
             .map_err(|e| EmbeddingError::ParseError(e.to_string()))?;
 
         // Try to parse various response formats
@@ -982,11 +985,11 @@ impl CrossEncoder {
 
             let mut request = ureq::post(&self.api_url);
             if let Some(ref key) = self.api_key {
-                request = request.set("Authorization", &format!("Bearer {}", key));
+                request = request.header("Authorization", &format!("Bearer {}", key));
             }
 
-            let response = request
-                .send_json(ureq::json!({
+            let mut response = request
+                .send_json(serde_json::json!({
                     "model": self.model_id,
                     "prompt": prompt,
                     "stream": false
@@ -994,7 +997,8 @@ impl CrossEncoder {
                 .map_err(|e| EmbeddingError::ApiError(e.to_string()))?;
 
             let result: serde_json::Value = response
-                .into_json()
+                .body_mut()
+                .read_json()
                 .map_err(|e| EmbeddingError::ParseError(e.to_string()))?;
 
             let response_text = result["response"]

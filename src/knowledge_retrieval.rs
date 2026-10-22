@@ -155,11 +155,13 @@ fn cosine(a: &[f32], b: &[f32]) -> f32 {
 fn ollama_embed(ollama_url: &str, model: &str, texts: &[&str]) -> Option<Vec<Vec<f32>>> {
     let url = format!("{}/api/embed", ollama_url.trim_end_matches('/'));
     let body = serde_json::json!({ "model": model, "input": texts });
-    let resp = ureq::post(&url)
-        .timeout(std::time::Duration::from_secs(30))
+    let mut resp = ureq::post(&url)
+        .config()
+        .timeout_global(Some(std::time::Duration::from_secs(30)))
+        .build()
         .send_json(&body)
         .ok()?;
-    let json: serde_json::Value = resp.into_json().ok()?;
+    let json: serde_json::Value = resp.body_mut().read_json().ok()?;
     let arr = json.get("embeddings")?.as_array()?;
     let mut out = Vec::with_capacity(arr.len());
     for e in arr {

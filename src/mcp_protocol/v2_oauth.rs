@@ -225,13 +225,16 @@ impl OAuthTokenManager {
         });
 
         match ureq::post(&self.config.token_endpoint)
-            .set("Content-Type", "application/json")
-            .timeout(std::time::Duration::from_secs(30))
+            .header("Content-Type", "application/json")
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(30)))
+            .build()
             .send_json(&body)
         {
-            Ok(resp) => {
+            Ok(mut resp) => {
                 let json_str = resp
-                    .into_string()
+                    .body_mut()
+                    .read_to_string()
                     .map_err(|e| format!("Failed to read token response: {}", e))?;
                 let json: serde_json::Value = serde_json::from_str(&json_str)
                     .map_err(|e| format!("Failed to parse token response: {}", e))?;
@@ -273,13 +276,16 @@ impl OAuthTokenManager {
         });
 
         match ureq::post(&self.config.token_endpoint)
-            .set("Content-Type", "application/json")
-            .timeout(std::time::Duration::from_secs(30))
+            .header("Content-Type", "application/json")
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(30)))
+            .build()
             .send_json(&body)
         {
-            Ok(resp) => {
+            Ok(mut resp) => {
                 let json_str = resp
-                    .into_string()
+                    .body_mut()
+                    .read_to_string()
                     .map_err(|e| format!("Failed to read refresh response: {}", e))?;
                 let json: serde_json::Value = serde_json::from_str(&json_str)
                     .map_err(|e| format!("Failed to parse refresh response: {}", e))?;
@@ -395,12 +401,15 @@ impl AuthorizationServerMetadata {
         let url = format!("{}/.well-known/oauth-authorization-server", base_url);
 
         match ureq::get(&url)
-            .timeout(std::time::Duration::from_secs(15))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(15)))
+            .build()
             .call()
         {
-            Ok(resp) => {
+            Ok(mut resp) => {
                 let json_str = resp
-                    .into_string()
+                    .body_mut()
+                    .read_to_string()
                     .map_err(|e| format!("Failed to read discovery response: {}", e))?;
                 let json: serde_json::Value = serde_json::from_str(&json_str)
                     .map_err(|e| format!("Failed to parse discovery JSON: {}", e))?;

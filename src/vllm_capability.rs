@@ -84,9 +84,11 @@ pub fn probe_vllm(base_url: &str) -> Result<VLlmCapability, String> {
     let models_url = format!("{}/v1/models", base);
     let models_body: serde_json::Value = retry_with_config(RetryConfig::fast(), || {
         let resp = ureq::get(&models_url)
-            .timeout(std::time::Duration::from_secs(5))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(5)))
+            .build()
             .call()?;
-        let v: serde_json::Value = resp.into_json()?;
+        let v: serde_json::Value = resp.body_mut().read_json()?;
         Ok(v)
     })
     .map_err(|e| format!("GET {}: {}", models_url, e))?;
@@ -97,10 +99,12 @@ pub fn probe_vllm(base_url: &str) -> Result<VLlmCapability, String> {
     let engine_version = {
         let url = format!("{}/version", base);
         ureq::get(&url)
-            .timeout(std::time::Duration::from_secs(3))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(3)))
+            .build()
             .call()
             .ok()
-            .and_then(|resp| resp.into_json::<serde_json::Value>().ok())
+            .and_then(|resp| resp.body_mut().read_json::<serde_json::Value>().ok())
             .and_then(|v| parse_version_response(&v))
     };
 
@@ -108,7 +112,9 @@ pub fn probe_vllm(base_url: &str) -> Result<VLlmCapability, String> {
     let healthy = {
         let url = format!("{}/health", base);
         ureq::get(&url)
-            .timeout(std::time::Duration::from_secs(3))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(3)))
+            .build()
             .call()
             .is_ok()
     };
@@ -119,14 +125,16 @@ pub fn probe_vllm(base_url: &str) -> Result<VLlmCapability, String> {
     // endpoints.
     let supports_lora = {
         let url = format!("{}/v1/load_lora_adapter", base);
-        match ureq::request("OPTIONS", &url)
-            .timeout(std::time::Duration::from_secs(3))
+        match ureq::options(&url)
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(3)))
+            .build()
             .call()
         {
             Ok(_) => true,
-            Err(ureq::Error::Status(404, _)) => false,
-            Err(ureq::Error::Status(_, _)) => true, // route exists, method not allowed etc.
-            Err(_) => false,                        // network error — assume absent
+            Err(ureq::Error::StatusCode(404)) => false,
+            Err(ureq::Error::StatusCode(_)) => true, // route exists, method not allowed etc.
+            Err(_) => false,                         // network error — assume absent
         }
     };
 
@@ -184,7 +192,9 @@ pub fn vllm_wait_until_ready(
 
     loop {
         let healthy = ureq::get(&health_url)
-            .timeout(std::time::Duration::from_secs(2))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(2)))
+            .build()
             .call()
             .is_ok();
         if healthy {

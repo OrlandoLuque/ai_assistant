@@ -62,10 +62,12 @@ impl LlamaCppCapability {
 pub fn probe_llamacpp(base_url: &str) -> Result<LlamaCppCapability, String> {
     let url = format!("{}/props", base_url.trim_end_matches('/'));
     let body: serde_json::Value = retry_with_config(RetryConfig::fast(), || {
-        let resp = ureq::get(&url)
-            .timeout(std::time::Duration::from_secs(5))
+        let mut resp = ureq::get(&url)
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(5)))
+            .build()
             .call()?;
-        let v: serde_json::Value = resp.into_json()?;
+        let v: serde_json::Value = resp.body_mut().read_json()?;
         Ok(v)
     })
     .map_err(|e| format!("GET {}: {}", url, e))?;

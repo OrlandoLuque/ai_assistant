@@ -88,19 +88,21 @@ pub fn download_file(
 }
 
 fn download_one(url: &str, dest: &Path, opts: &DownloadOptions) -> Result<PathBuf, BenchmarkError> {
-    let resp = ureq::builder()
-        .timeout(opts.timeout)
-        .user_agent(&opts.user_agent)
-        .build()
-        .get(url)
-        .call()
-        .map_err(|e| match e {
-            ureq::Error::Status(status, _) => BenchmarkError::Http {
-                status,
-                url: url.to_string(),
-            },
-            ureq::Error::Transport(t) => BenchmarkError::Network(format!("{url}: {t}")),
-        })?;
+    let resp = ureq::Agent::new_with_config(
+        ureq::Agent::config_builder()
+            .timeout_global(Some(opts.timeout))
+            .user_agent(opts.user_agent.clone())
+            .build(),
+    )
+    .get(url)
+    .call()
+    .map_err(|e| match e {
+        ureq::Error::StatusCode(status) => BenchmarkError::Http {
+            status,
+            url: url.to_string(),
+        },
+        ureq::Error::Transport(t) => BenchmarkError::Network(format!("{url}: {t}")),
+    })?;
 
     let status = resp.status();
     if !(200..300).contains(&status) {

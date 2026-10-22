@@ -92,16 +92,20 @@ pub fn fetch_pdf(url: &str, timeout: std::time::Duration) -> Result<Vec<u8>, Aca
 
     let response = crate::academic_search::get_with_retry(|| {
         ureq::get(url)
-            .timeout(timeout)
-            .set("User-Agent", crate::academic_search::USER_AGENT)
-            .set("Accept", "application/pdf")
+            .config()
+            .timeout_global(Some(timeout))
+            .build()
+            .header("User-Agent", crate::academic_search::USER_AGENT)
+            .header("Accept", "application/pdf")
     })?;
 
     // `Content-Length` is a hint, not a guarantee — it is absent on chunked responses and
     // some servers lie. It is used to bail out early when present, and the real enforcement
     // is on the bytes actually read.
     if let Some(len) = response
-        .header("Content-Length")
+        .headers()
+        .get("Content-Length")
+        .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse::<usize>().ok())
     {
         if len > MAX_PDF_BYTES {
@@ -114,6 +118,7 @@ pub fn fetch_pdf(url: &str, timeout: std::time::Duration) -> Result<Vec<u8>, Aca
     use std::io::Read as _;
     let mut buf = Vec::new();
     response
+        .into_body()
         .into_reader()
         .take((MAX_PDF_BYTES + 1) as u64)
         .read_to_end(&mut buf)

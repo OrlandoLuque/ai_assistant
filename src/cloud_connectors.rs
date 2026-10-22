@@ -410,7 +410,7 @@ impl CloudStorage for S3Client {
         );
         match self.signed_head(&url) {
             Ok(_) => Ok(true),
-            Err(ureq::Error::Status(404, _)) => Ok(false),
+            Err(ureq::Error::StatusCode(404)) => Ok(false),
             Err(e) => Err(anyhow::anyhow!("S3 HEAD failed: {}", e)),
         }
     }
@@ -624,7 +624,7 @@ impl CloudStorage for GoogleDriveClient {
             .call()
         {
             Ok(_) => Ok(true),
-            Err(ureq::Error::Status(404, _)) => Ok(false),
+            Err(ureq::Error::StatusCode(404)) => Ok(false),
             Err(e) => Err(anyhow::anyhow!("Google Drive check failed: {}", e)),
         }
     }

@@ -161,13 +161,16 @@ impl EmbeddingProvider for OllamaEmbeddings {
             "input": input,
         });
 
-        let response = ureq::post(&url)
-            .timeout(Duration::from_secs(30))
+        let mut response = ureq::post(&url)
+            .config()
+            .timeout_global(Some(Duration::from_secs(30)))
+            .build()
             .send_json(&body)
             .context("Ollama embed API request failed")?;
 
         let json: serde_json::Value = response
-            .into_json()
+            .body_mut()
+            .read_json()
             .context("Failed to parse Ollama embed response")?;
 
         let embeddings = json
@@ -272,14 +275,17 @@ impl EmbeddingProvider for OpenAIEmbeddings {
             "input": input,
         });
 
-        let response = ureq::post(&url)
-            .set("Authorization", &format!("Bearer {}", self.api_key))
-            .timeout(Duration::from_secs(30))
+        let mut response = ureq::post(&url)
+            .header("Authorization", &format!("Bearer {}", self.api_key))
+            .config()
+            .timeout_global(Some(Duration::from_secs(30)))
+            .build()
             .send_json(&body)
             .context("OpenAI embeddings API request failed")?;
 
         let json: serde_json::Value = response
-            .into_json()
+            .body_mut()
+            .read_json()
             .context("Failed to parse OpenAI embeddings response")?;
 
         let data = json
@@ -374,14 +380,17 @@ impl EmbeddingProvider for HuggingFaceEmbeddings {
             "inputs": inputs,
         });
 
-        let response = ureq::post(&url)
-            .set("Authorization", &format!("Bearer {}", self.api_key))
-            .timeout(Duration::from_secs(30))
+        let mut response = ureq::post(&url)
+            .header("Authorization", &format!("Bearer {}", self.api_key))
+            .config()
+            .timeout_global(Some(Duration::from_secs(30)))
+            .build()
             .send_json(&body)
             .context("HuggingFace Inference API request failed")?;
 
         let json: serde_json::Value = response
-            .into_json()
+            .body_mut()
+            .read_json()
             .context("Failed to parse HuggingFace response")?;
 
         // HF returns [[f32...], ...] for batch input

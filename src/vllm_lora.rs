@@ -46,7 +46,9 @@ pub fn load_lora_adapter(base_url: &str, lora_name: &str, lora_path: &str) -> Re
         lora_path: lora_path.to_string(),
     };
     ureq::post(&url)
-        .timeout(std::time::Duration::from_secs(60))
+        .config()
+        .timeout_global(Some(std::time::Duration::from_secs(60)))
+        .build()
         .send_json(&body)
         .map_err(|e| format!("POST {}: {}", url, e))?;
     Ok(())
@@ -59,7 +61,9 @@ pub fn unload_lora_adapter(base_url: &str, lora_name: &str) -> Result<(), String
         lora_name: lora_name.to_string(),
     };
     ureq::post(&url)
-        .timeout(std::time::Duration::from_secs(30))
+        .config()
+        .timeout_global(Some(std::time::Duration::from_secs(30)))
+        .build()
         .send_json(&body)
         .map_err(|e| format!("POST {}: {}", url, e))?;
     Ok(())

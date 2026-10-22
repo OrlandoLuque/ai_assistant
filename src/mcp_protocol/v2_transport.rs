@@ -72,41 +72,58 @@ impl StreamableHttpTransport {
         let timeout = std::time::Duration::from_secs(self.timeout_secs.unwrap_or(30));
 
         let mut req = ureq::post(&self.base_url)
-            .set("Content-Type", "application/json")
-            .set("Accept", "application/json, text/event-stream")
-            .timeout(timeout);
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .config()
+            .timeout_global(Some(timeout))
+            .build();
 
         // Attach session ID header if present.
         if let Some(ref sid) = self.session_id {
-            req = req.set("Mcp-Session-Id", sid);
+            req = req.header("Mcp-Session-Id", sid);
         }
 
         // Attach Bearer token if configured.
         if let Some(ref token) = self.auth_token {
-            req = req.set("Authorization", &format!("Bearer {}", token));
+            req = req.header("Authorization", &format!("Bearer {}", token));
         }
 
         match req.send_json(&body) {
-            Ok(resp) => {
+            Ok(mut resp) => {
                 // Capture session ID from response header if the server provides one.
-                if let Some(sid) = resp.header("Mcp-Session-Id") {
+                if let Some(sid) = resp
+                    .headers()
+                    .get("Mcp-Session-Id")
+                    .and_then(|v| v.to_str().ok())
+                {
                     self.session_id = Some(sid.to_string());
                 }
 
-                let content_type = resp.content_type().to_string();
+                // ureq 2 daba `resp.content_type() -> &str`; en ureq 3 la
+                // respuesta es un `http::Response` y hay que leer la cabecera.
+                // Ausente se trata como cadena vacia, igual que antes: el que
+                // decide es `detect_transport`, que ya contempla no reconocerla.
+                let content_type = resp
+                    .headers()
+                    .get("content-type")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or_default()
+                    .to_string();
                 self.mode = Self::detect_transport(&content_type);
 
                 if content_type.contains("text/event-stream") {
                     // Parse SSE: read the body as text and extract the first
                     // JSON object from `data:` lines.
                     let body_text = resp
-                        .into_string()
+                        .body_mut()
+                        .read_to_string()
                         .map_err(|e| format!("Failed to read SSE body: {}", e))?;
                     Self::parse_sse_to_response(&body_text)
                 } else {
                     // Direct JSON response.
                     let json_str = resp
-                        .into_string()
+                        .body_mut()
+                        .read_to_string()
                         .map_err(|e| format!("Failed to read response body: {}", e))?;
                     serde_json::from_str::<McpResponse>(&json_str)
                         .map_err(|e| format!("Failed to parse JSON response: {}", e))

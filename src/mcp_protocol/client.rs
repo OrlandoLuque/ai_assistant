@@ -202,8 +202,8 @@ impl McpClient {
             .map_err(|e| McpError::internal_error(&e.to_string()))?;
 
         ureq::post(&self.server_url)
-            .set("Content-Type", "application/json")
-            .send_string(&body)
+            .header("Content-Type", "application/json")
+            .send(&body)
             .map_err(|e| McpError::internal_error(&e.to_string()))?;
 
         Ok(())
@@ -214,13 +214,14 @@ impl McpClient {
         let body = serde_json::to_string(&request)
             .map_err(|e| McpError::internal_error(&e.to_string()))?;
 
-        let response = ureq::post(&self.server_url)
-            .set("Content-Type", "application/json")
-            .send_string(&body)
+        let mut response = ureq::post(&self.server_url)
+            .header("Content-Type", "application/json")
+            .send(&body)
             .map_err(|e| McpError::internal_error(&e.to_string()))?;
 
         let response_body = response
-            .into_string()
+            .body_mut()
+            .read_to_string()
             .map_err(|e| McpError::internal_error(&e.to_string()))?;
 
         serde_json::from_str(&response_body).map_err(|e| McpError::parse_error(&e.to_string()))

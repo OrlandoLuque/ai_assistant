@@ -281,8 +281,10 @@ impl RemoteMcpClient {
 
         let timeout = Duration::from_millis(self.config.timeout_ms);
         let mut req = ureq::post(&self.config.url)
-            .timeout(timeout)
-            .set("Content-Type", "application/json");
+            .config()
+            .timeout_global(Some(timeout))
+            .build()
+            .header("Content-Type", "application/json");
 
         // Add authentication header if configured.
         req = self.apply_auth_header(req);
@@ -293,23 +295,30 @@ impl RemoteMcpClient {
                 reason: format!("failed to serialize request: {}", e),
             })?;
 
-        let response = req
-            .send_string(&body_str)
-            .map_err(|e| self.map_ureq_error(e))?;
+        let response = req.send(&body_str).map_err(|e| self.map_ureq_error(e))?;
 
         // Extract session ID from Mcp-Session-Id header.
         let session_id = response
-            .header("Mcp-Session-Id")
-            .or_else(|| response.header("mcp-session-id"))
+            .headers()
+            .get("Mcp-Session-Id")
+            .and_then(|v| v.to_str().ok())
+            .or_else(|| {
+                response
+                    .headers()
+                    .get("mcp-session-id")
+                    .and_then(|v| v.to_str().ok())
+            })
             .map(|s| s.to_string());
 
         // Parse response body.
-        let resp_text = response
-            .into_string()
-            .map_err(|e| McpClientError::ConnectionFailed {
-                url: self.config.url.clone(),
-                reason: format!("failed to read response body: {}", e),
-            })?;
+        let resp_text =
+            response
+                .body_mut()
+                .read_to_string()
+                .map_err(|e| McpClientError::ConnectionFailed {
+                    url: self.config.url.clone(),
+                    reason: format!("failed to read response body: {}", e),
+                })?;
 
         let resp_json: serde_json::Value =
             serde_json::from_str(&resp_text).map_err(|e| McpClientError::ProtocolMismatch {
@@ -784,15 +793,17 @@ impl RemoteMcpClient {
 
         let timeout = Duration::from_millis(self.config.timeout_ms);
         let mut req = ureq::post(&self.config.url)
-            .timeout(timeout)
-            .set("Content-Type", "application/json");
+            .config()
+            .timeout_global(Some(timeout))
+            .build()
+            .header("Content-Type", "application/json");
 
         // Add authentication header.
         req = self.apply_auth_header(req);
 
         // Add session ID header if we have one.
         if let Some(ref session_id) = self.session_id {
-            req = req.set("Mcp-Session-Id", session_id);
+            req = req.header("Mcp-Session-Id", session_id);
         }
 
         let body_str =
@@ -801,16 +812,16 @@ impl RemoteMcpClient {
                 reason: format!("failed to serialize request: {}", e),
             })?;
 
-        let response = req
-            .send_string(&body_str)
-            .map_err(|e| self.map_ureq_error(e))?;
+        let response = req.send(&body_str).map_err(|e| self.map_ureq_error(e))?;
 
-        let resp_text = response
-            .into_string()
-            .map_err(|e| McpClientError::ConnectionFailed {
-                url: self.config.url.clone(),
-                reason: format!("failed to read response body: {}", e),
-            })?;
+        let resp_text =
+            response
+                .body_mut()
+                .read_to_string()
+                .map_err(|e| McpClientError::ConnectionFailed {
+                    url: self.config.url.clone(),
+                    reason: format!("failed to read response body: {}", e),
+                })?;
 
         let resp_json: serde_json::Value =
             serde_json::from_str(&resp_text).map_err(|e| McpClientError::ProtocolMismatch {
@@ -841,14 +852,17 @@ impl RemoteMcpClient {
     }
 
     /// Apply the configured authentication header to a ureq request.
-    fn apply_auth_header(&self, req: ureq::Request) -> ureq::Request {
+    fn apply_auth_header(
+        &self,
+        req: ureq::RequestBuilder<ureq::typestate::WithoutBody>,
+    ) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
         match &self.config.auth {
             McpClientAuth::BearerToken(token) => {
-                req.set("Authorization", &format!("Bearer {}", token))
+                req.header("Authorization", &format!("Bearer {}", token))
             }
             McpClientAuth::OAuth {
                 token: Some(tok), ..
-            } => req.set("Authorization", &format!("Bearer {}", tok)),
+            } => req.header("Authorization", &format!("Bearer {}", tok)),
             _ => req,
         }
     }
@@ -856,13 +870,13 @@ impl RemoteMcpClient {
     /// Map a `ureq::Error` to the appropriate `McpClientError` variant.
     fn map_ureq_error(&self, error: ureq::Error) -> McpClientError {
         match error {
-            ureq::Error::Status(401, _) | ureq::Error::Status(403, _) => {
+            ureq::Error::StatusCode(401) | ureq::Error::StatusCode(403) => {
                 McpClientError::AuthFailed {
                     url: self.config.url.clone(),
                     reason: format!(
                         "HTTP {}",
                         match error {
-                            ureq::Error::Status(code, _) => code.to_string(),
+                            ureq::Error::StatusCode(code) => code.to_string(),
                             _ => "auth error".to_string(),
                         }
                     ),

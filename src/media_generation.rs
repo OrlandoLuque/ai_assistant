@@ -411,19 +411,21 @@ mod inner {
             });
 
             let response = ureq::post(&self.endpoint)
-                .set("Authorization", &format!("Bearer {}", self.api_key))
-                .set("Content-Type", "application/json")
-                .timeout(std::time::Duration::from_secs(120))
+                .header("Authorization", &format!("Bearer {}", self.api_key))
+                .header("Content-Type", "application/json")
+                .config()
+                .timeout_global(Some(std::time::Duration::from_secs(120)))
+                .build()
                 .send_json(&body);
 
             match response {
                 Ok(resp) => {
-                    let json: serde_json::Value =
-                        resp.into_json()
-                            .map_err(|e| MediaGenerationError::GenerationFailed {
-                                provider: self.provider_name().to_string(),
-                                reason: format!("failed to parse response: {}", e),
-                            })?;
+                    let json: serde_json::Value = resp.body_mut().read_json().map_err(|e| {
+                        MediaGenerationError::GenerationFailed {
+                            provider: self.provider_name().to_string(),
+                            reason: format!("failed to parse response: {}", e),
+                        }
+                    })?;
 
                     let data = json["data"]
                         .as_array()
@@ -453,7 +455,9 @@ mod inner {
                         }
                         // Fetch image from URL
                         let img_resp = ureq::get(url)
-                            .timeout(std::time::Duration::from_secs(60))
+                            .config()
+                            .timeout_global(Some(std::time::Duration::from_secs(60)))
+                            .build()
                             .call()
                             .map_err(|e| MediaGenerationError::GenerationFailed {
                                 provider: self.provider_name().to_string(),
@@ -461,6 +465,7 @@ mod inner {
                             })?;
                         let mut bytes = Vec::new();
                         img_resp
+                            .into_body()
                             .into_reader()
                             .take(50_000_000) // 50MB limit
                             .read_to_end(&mut bytes)
@@ -646,20 +651,22 @@ mod inner {
             let _aspect = aspect_ratio;
 
             let response = ureq::post(&url)
-                .set("Authorization", &format!("Bearer {}", self.api_key))
-                .set("Content-Type", "application/json")
-                .set("Accept", "application/json")
-                .timeout(std::time::Duration::from_secs(120))
+                .header("Authorization", &format!("Bearer {}", self.api_key))
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json")
+                .config()
+                .timeout_global(Some(std::time::Duration::from_secs(120)))
+                .build()
                 .send_json(&body);
 
             match response {
                 Ok(resp) => {
-                    let json: serde_json::Value =
-                        resp.into_json()
-                            .map_err(|e| MediaGenerationError::GenerationFailed {
-                                provider: self.provider_name().to_string(),
-                                reason: format!("failed to parse response: {}", e),
-                            })?;
+                    let json: serde_json::Value = resp.body_mut().read_json().map_err(|e| {
+                        MediaGenerationError::GenerationFailed {
+                            provider: self.provider_name().to_string(),
+                            reason: format!("failed to parse response: {}", e),
+                        }
+                    })?;
 
                     let artifacts = json["artifacts"]
                         .as_array()
@@ -940,13 +947,15 @@ mod inner {
             });
 
             let response = ureq::post(&self.endpoint)
-                .set("Authorization", &format!("Bearer {}", self.api_token))
-                .set("Content-Type", "application/json")
-                .timeout(std::time::Duration::from_secs(30))
+                .header("Authorization", &format!("Bearer {}", self.api_token))
+                .header("Content-Type", "application/json")
+                .config()
+                .timeout_global(Some(std::time::Duration::from_secs(30)))
+                .build()
                 .send_json(&body);
 
             match response {
-                Ok(resp) => resp.into_json().map_err(|e| {
+                Ok(resp) => resp.body_mut().read_json().map_err(|e| {
                     MediaGenerationError::GenerationFailed {
                         provider: self.provider_name().to_string(),
                         reason: format!("failed to parse prediction response: {}", e),
@@ -985,13 +994,15 @@ mod inner {
                 }
 
                 let response = ureq::get(prediction_url)
-                    .set("Authorization", &format!("Bearer {}", self.api_token))
-                    .timeout(std::time::Duration::from_secs(30))
+                    .header("Authorization", &format!("Bearer {}", self.api_token))
+                    .config()
+                    .timeout_global(Some(std::time::Duration::from_secs(30)))
+                    .build()
                     .call();
 
                 match response {
-                    Ok(resp) => {
-                        let json: serde_json::Value = resp.into_json().map_err(|e| {
+                    Ok(mut resp) => {
+                        let json: serde_json::Value = resp.body_mut().read_json().map_err(|e| {
                             MediaGenerationError::GenerationFailed {
                                 provider: self.provider_name().to_string(),
                                 reason: format!("failed to parse poll response: {}", e),
@@ -1104,7 +1115,9 @@ mod inner {
             }
 
             let img_resp = ureq::get(output_url)
-                .timeout(std::time::Duration::from_secs(60))
+                .config()
+                .timeout_global(Some(std::time::Duration::from_secs(60)))
+                .build()
                 .call()
                 .map_err(|e| MediaGenerationError::GenerationFailed {
                     provider: self.provider_name().to_string(),
@@ -1113,6 +1126,7 @@ mod inner {
 
             let mut image_bytes = Vec::new();
             img_resp
+                .into_body()
                 .into_reader()
                 .take(50_000_000) // 50MB limit
                 .read_to_end(&mut image_bytes)

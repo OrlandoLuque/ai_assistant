@@ -42,10 +42,13 @@ impl VLlmMetrics {
 pub fn scrape_vllm_metrics(base_url: &str) -> Result<VLlmMetrics, String> {
     let url = format!("{}/metrics", base_url.trim_end_matches('/'));
     let body = ureq::get(&url)
-        .timeout(std::time::Duration::from_secs(3))
+        .config()
+        .timeout_global(Some(std::time::Duration::from_secs(3)))
+        .build()
         .call()
         .map_err(|e| format!("GET {}: {}", url, e))?
-        .into_string()
+        .body_mut()
+        .read_to_string()
         .map_err(|e| format!("read body from {}: {}", url, e))?;
     Ok(parse_vllm_metrics(&body))
 }

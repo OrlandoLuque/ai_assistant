@@ -262,26 +262,29 @@ impl OpenAIClient {
         let url = format!("{}/chat/completions", self.config.base_url);
 
         let mut req = ureq::post(&url)
-            .timeout(self.config.timeout)
-            .set("Content-Type", "application/json");
+            .config()
+            .timeout_global(Some(self.config.timeout))
+            .build()
+            .header("Content-Type", "application/json");
 
         if !self.config.api_key.is_empty() {
-            req = req.set("Authorization", &format!("Bearer {}", self.config.api_key));
+            req = req.header("Authorization", &format!("Bearer {}", self.config.api_key));
         }
 
         if let Some(org) = &self.config.organization {
-            req = req.set("OpenAI-Organization", org);
+            req = req.header("OpenAI-Organization", org);
         }
 
         let body = serde_json::to_string(&request)
             .map_err(|e| OpenAIAdapterError::Serialization(e.to_string()))?;
 
-        let response = req.send_string(&body);
+        let response = req.send(&body);
 
         match response {
             Ok(resp) => {
                 let text = resp
-                    .into_string()
+                    .body_mut()
+                    .read_to_string()
                     .map_err(|e| OpenAIAdapterError::Network(e.to_string()))?;
 
                 serde_json::from_str(&text)
@@ -322,21 +325,23 @@ impl OpenAIClient {
         let url = format!("{}/chat/completions", self.config.base_url);
 
         let mut req = ureq::post(&url)
-            .timeout(self.config.timeout)
-            .set("Content-Type", "application/json");
+            .config()
+            .timeout_global(Some(self.config.timeout))
+            .build()
+            .header("Content-Type", "application/json");
 
         if !self.config.api_key.is_empty() {
-            req = req.set("Authorization", &format!("Bearer {}", self.config.api_key));
+            req = req.header("Authorization", &format!("Bearer {}", self.config.api_key));
         }
 
         let body = serde_json::to_string(&streaming_request)
             .map_err(|e| OpenAIAdapterError::Serialization(e.to_string()))?;
 
         let response = req
-            .send_string(&body)
+            .send(&body)
             .map_err(|e| OpenAIAdapterError::Network(e.to_string()))?;
 
-        let reader = response.into_reader();
+        let reader = response.into_body().into_reader();
         let buf_reader = std::io::BufReader::new(reader);
 
         let mut full_response = String::new();
@@ -369,18 +374,22 @@ impl OpenAIClient {
     pub fn list_models(&self) -> Result<Vec<String>, OpenAIAdapterError> {
         let url = format!("{}/models", self.config.base_url);
 
-        let mut req = ureq::get(&url).timeout(self.config.timeout);
+        let mut req = ureq::get(&url)
+            .config()
+            .timeout_global(Some(self.config.timeout))
+            .build();
 
         if !self.config.api_key.is_empty() {
-            req = req.set("Authorization", &format!("Bearer {}", self.config.api_key));
+            req = req.header("Authorization", &format!("Bearer {}", self.config.api_key));
         }
 
-        let response = req
+        let mut response = req
             .call()
             .map_err(|e| OpenAIAdapterError::Network(e.to_string()))?;
 
         let text = response
-            .into_string()
+            .body_mut()
+            .read_to_string()
             .map_err(|e| OpenAIAdapterError::Network(e.to_string()))?;
 
         let models: ModelsResponse = serde_json::from_str(&text)

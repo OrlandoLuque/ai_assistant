@@ -47,7 +47,12 @@ impl OllamaProvider {
     /// Check if Ollama is running
     pub fn check_health(&self) -> bool {
         let url = format!("{}/api/tags", self.base_url);
-        match ureq::get(&url).timeout(Duration::from_secs(5)).call() {
+        match ureq::get(&url)
+            .config()
+            .timeout_global(Some(Duration::from_secs(5)))
+            .build()
+            .call()
+        {
             Ok(resp) => {
                 let is_ok = resp.status() == 200;
                 self.available
@@ -107,12 +112,14 @@ impl ProviderPlugin for OllamaProvider {
 
     fn list_models(&self) -> Result<Vec<ModelInfo>> {
         let url = format!("{}/api/tags", self.base_url);
-        let resp = ureq::get(&url)
-            .timeout(self.timeout)
+        let mut resp = ureq::get(&url)
+            .config()
+            .timeout_global(Some(self.timeout))
+            .build()
             .call()
             .context("Failed to connect to Ollama")?;
 
-        let body: Value = resp.into_json()?;
+        let body: Value = resp.body_mut().read_json()?;
         let models = body
             .get("models")
             .and_then(|m| m.as_array())
@@ -157,12 +164,14 @@ impl ProviderPlugin for OllamaProvider {
         });
         crate::providers::apply_ollama_seed(&mut payload["options"], config);
 
-        let resp = ureq::post(&url)
-            .timeout(self.timeout)
+        let mut resp = ureq::post(&url)
+            .config()
+            .timeout_global(Some(self.timeout))
+            .build()
             .send_json(&payload)
             .context("Failed to send request to Ollama")?;
 
-        let body: Value = resp.into_json()?;
+        let body: Value = resp.body_mut().read_json()?;
         let content = body
             .get("message")
             .and_then(|m| m.get("content"))
@@ -193,11 +202,13 @@ impl ProviderPlugin for OllamaProvider {
         crate::providers::apply_ollama_seed(&mut payload["options"], config);
 
         let resp = ureq::post(&url)
-            .timeout(self.timeout)
+            .config()
+            .timeout_global(Some(self.timeout))
+            .build()
             .send_json(&payload)
             .context("Failed to send streaming request to Ollama")?;
 
-        let reader = std::io::BufReader::new(resp.into_reader());
+        let reader = std::io::BufReader::new(resp.into_body().into_reader());
         let mut full_response = String::new();
 
         use std::io::BufRead;
@@ -264,12 +275,14 @@ impl ProviderPlugin for OllamaProvider {
             payload["tools"] = Value::Array(tool_schemas);
         }
 
-        let resp = ureq::post(&url)
-            .timeout(self.timeout)
+        let mut resp = ureq::post(&url)
+            .config()
+            .timeout_global(Some(self.timeout))
+            .build()
             .send_json(&payload)
             .context("Failed to send tool request to Ollama")?;
 
-        let body: Value = resp.into_json()?;
+        let body: Value = resp.body_mut().read_json()?;
 
         // Extract content from message (Ollama puts it directly on message, not choices[0])
         let content = body
@@ -327,9 +340,13 @@ impl ProviderPlugin for OllamaProvider {
                 "input": text
             });
 
-            let resp = ureq::post(&url).timeout(self.timeout).send_json(&payload)?;
+            let mut resp = ureq::post(&url)
+                .config()
+                .timeout_global(Some(self.timeout))
+                .build()
+                .send_json(&payload)?;
 
-            let body: Value = resp.into_json()?;
+            let body: Value = resp.body_mut().read_json()?;
             if let Some(embedding) = body
                 .get("embeddings")
                 .and_then(|e| e.as_array())
@@ -380,7 +397,12 @@ impl LmStudioProvider {
     /// Check if LM Studio is running
     pub fn check_health(&self) -> bool {
         let url = format!("{}/v1/models", self.base_url);
-        match ureq::get(&url).timeout(Duration::from_secs(5)).call() {
+        match ureq::get(&url)
+            .config()
+            .timeout_global(Some(Duration::from_secs(5)))
+            .build()
+            .call()
+        {
             Ok(resp) => {
                 let is_ok = resp.status() == 200;
                 self.available
@@ -438,12 +460,14 @@ impl ProviderPlugin for LmStudioProvider {
 
     fn list_models(&self) -> Result<Vec<ModelInfo>> {
         let url = format!("{}/v1/models", self.base_url);
-        let resp = ureq::get(&url)
-            .timeout(self.timeout)
+        let mut resp = ureq::get(&url)
+            .config()
+            .timeout_global(Some(self.timeout))
+            .build()
             .call()
             .context("Failed to connect to LM Studio")?;
 
-        let body: Value = resp.into_json()?;
+        let body: Value = resp.body_mut().read_json()?;
         let models = body
             .get("data")
             .and_then(|d| d.as_array())
@@ -476,12 +500,14 @@ impl ProviderPlugin for LmStudioProvider {
             "stream": false
         });
 
-        let resp = ureq::post(&url)
-            .timeout(self.timeout)
+        let mut resp = ureq::post(&url)
+            .config()
+            .timeout_global(Some(self.timeout))
+            .build()
             .send_json(&payload)
             .context("Failed to send request to LM Studio")?;
 
-        let body: Value = resp.into_json()?;
+        let body: Value = resp.body_mut().read_json()?;
         let content = body
             .get("choices")
             .and_then(|c| c.as_array())
@@ -512,11 +538,13 @@ impl ProviderPlugin for LmStudioProvider {
         });
 
         let resp = ureq::post(&url)
-            .timeout(self.timeout)
+            .config()
+            .timeout_global(Some(self.timeout))
+            .build()
             .send_json(&payload)
             .context("Failed to send streaming request to LM Studio")?;
 
-        let reader = std::io::BufReader::new(resp.into_reader());
+        let reader = std::io::BufReader::new(resp.into_body().into_reader());
         let mut full_response = String::new();
 
         use std::io::BufRead;
@@ -585,7 +613,12 @@ impl TextGenWebUIProvider {
     /// Check if text-generation-webui is running
     pub fn check_health(&self) -> bool {
         let url = format!("{}/v1/models", self.base_url);
-        match ureq::get(&url).timeout(Duration::from_secs(5)).call() {
+        match ureq::get(&url)
+            .config()
+            .timeout_global(Some(Duration::from_secs(5)))
+            .build()
+            .call()
+        {
             Ok(resp) => {
                 let is_ok = resp.status() == 200;
                 self.available
@@ -643,12 +676,14 @@ impl ProviderPlugin for TextGenWebUIProvider {
 
     fn list_models(&self) -> Result<Vec<ModelInfo>> {
         let url = format!("{}/v1/models", self.base_url);
-        let resp = ureq::get(&url)
-            .timeout(self.timeout)
+        let mut resp = ureq::get(&url)
+            .config()
+            .timeout_global(Some(self.timeout))
+            .build()
             .call()
             .context("Failed to connect to text-generation-webui")?;
 
-        let body: Value = resp.into_json()?;
+        let body: Value = resp.body_mut().read_json()?;
         let models = body
             .get("data")
             .and_then(|d| d.as_array())
@@ -681,12 +716,14 @@ impl ProviderPlugin for TextGenWebUIProvider {
             "stream": false
         });
 
-        let resp = ureq::post(&url)
-            .timeout(self.timeout)
+        let mut resp = ureq::post(&url)
+            .config()
+            .timeout_global(Some(self.timeout))
+            .build()
             .send_json(&payload)
             .context("Failed to send request to text-generation-webui")?;
 
-        let body: Value = resp.into_json()?;
+        let body: Value = resp.body_mut().read_json()?;
         let content = body
             .get("choices")
             .and_then(|c| c.as_array())
@@ -717,11 +754,13 @@ impl ProviderPlugin for TextGenWebUIProvider {
         });
 
         let resp = ureq::post(&url)
-            .timeout(self.timeout)
+            .config()
+            .timeout_global(Some(self.timeout))
+            .build()
             .send_json(&payload)
             .context("Failed to send streaming request to text-generation-webui")?;
 
-        let reader = std::io::BufReader::new(resp.into_reader());
+        let reader = std::io::BufReader::new(resp.into_body().into_reader());
         let mut full_response = String::new();
 
         use std::io::BufRead;
@@ -920,7 +959,12 @@ impl KoboldCppProvider {
     /// Check if Kobold.cpp is running
     pub fn check_health(&self) -> bool {
         let url = format!("{}/api/v1/model", self.base_url);
-        match ureq::get(&url).timeout(Duration::from_secs(5)).call() {
+        match ureq::get(&url)
+            .config()
+            .timeout_global(Some(Duration::from_secs(5)))
+            .build()
+            .call()
+        {
             Ok(resp) => {
                 let is_ok = resp.status() == 200;
                 self.available
@@ -974,12 +1018,14 @@ impl ProviderPlugin for KoboldCppProvider {
 
     fn list_models(&self) -> Result<Vec<ModelInfo>> {
         let url = format!("{}/api/v1/model", self.base_url);
-        let resp = ureq::get(&url)
-            .timeout(self.timeout)
+        let mut resp = ureq::get(&url)
+            .config()
+            .timeout_global(Some(self.timeout))
+            .build()
             .call()
             .context("Failed to connect to Kobold.cpp")?;
 
-        let body: Value = resp.into_json()?;
+        let body: Value = resp.body_mut().read_json()?;
         let model_name = body
             .get("result")
             .and_then(|r| r.as_str())
@@ -1003,12 +1049,14 @@ impl ProviderPlugin for KoboldCppProvider {
             "temperature": config.temperature,
         });
 
-        let resp = ureq::post(&url)
-            .timeout(self.timeout)
+        let mut resp = ureq::post(&url)
+            .config()
+            .timeout_global(Some(self.timeout))
+            .build()
             .send_json(&payload)
             .context("Failed to send request to Kobold.cpp")?;
 
-        let body: Value = resp.into_json()?;
+        let body: Value = resp.body_mut().read_json()?;
         let content = body
             .get("results")
             .and_then(|r| r.as_array())
@@ -1037,11 +1085,13 @@ impl ProviderPlugin for KoboldCppProvider {
         });
 
         let resp = ureq::post(&url)
-            .timeout(self.timeout)
+            .config()
+            .timeout_global(Some(self.timeout))
+            .build()
             .send_json(&payload)
             .context("Failed to send streaming request to Kobold.cpp")?;
 
-        let reader = std::io::BufReader::new(resp.into_reader());
+        let reader = std::io::BufReader::new(resp.into_body().into_reader());
         let mut full_response = String::new();
 
         use std::io::BufRead;
@@ -1122,10 +1172,13 @@ impl OpenAICompatibleProvider {
     /// Check if the provider is running
     pub fn check_health(&self) -> bool {
         let url = format!("{}/v1/models", self.base_url);
-        let mut req = ureq::get(&url).timeout(Duration::from_secs(5));
+        let mut req = ureq::get(&url)
+            .config()
+            .timeout_global(Some(Duration::from_secs(5)))
+            .build();
 
         if let Some(ref key) = self.api_key {
-            req = req.set("Authorization", &format!("Bearer {}", key));
+            req = req.header("Authorization", &format!("Bearer {}", key));
         }
 
         match req.call() {
@@ -1186,17 +1239,20 @@ impl ProviderPlugin for OpenAICompatibleProvider {
 
     fn list_models(&self) -> Result<Vec<ModelInfo>> {
         let url = format!("{}/v1/models", self.base_url);
-        let mut req = ureq::get(&url).timeout(self.timeout);
+        let mut req = ureq::get(&url)
+            .config()
+            .timeout_global(Some(self.timeout))
+            .build();
 
         if let Some(ref key) = self.api_key {
-            req = req.set("Authorization", &format!("Bearer {}", key));
+            req = req.header("Authorization", &format!("Bearer {}", key));
         }
 
-        let resp = req
+        let mut resp = req
             .call()
             .context("Failed to connect to OpenAI-compatible API")?;
 
-        let body: Value = resp.into_json()?;
+        let body: Value = resp.body_mut().read_json()?;
         let base_url = self.base_url.clone();
         let models = body
             .get("data")
@@ -1235,15 +1291,18 @@ impl ProviderPlugin for OpenAICompatibleProvider {
             "stream": false
         });
 
-        let mut req = ureq::post(&url).timeout(self.timeout);
+        let mut req = ureq::post(&url)
+            .config()
+            .timeout_global(Some(self.timeout))
+            .build();
 
         if let Some(ref key) = self.api_key {
-            req = req.set("Authorization", &format!("Bearer {}", key));
+            req = req.header("Authorization", &format!("Bearer {}", key));
         }
 
-        let resp = req.send_json(&payload).context("Failed to send request")?;
+        let mut resp = req.send_json(&payload).context("Failed to send request")?;
 
-        let body: Value = resp.into_json()?;
+        let body: Value = resp.body_mut().read_json()?;
         let content = body
             .get("choices")
             .and_then(|c| c.as_array())
@@ -1273,17 +1332,20 @@ impl ProviderPlugin for OpenAICompatibleProvider {
             "stream": true
         });
 
-        let mut req = ureq::post(&url).timeout(self.timeout);
+        let mut req = ureq::post(&url)
+            .config()
+            .timeout_global(Some(self.timeout))
+            .build();
 
         if let Some(ref key) = self.api_key {
-            req = req.set("Authorization", &format!("Bearer {}", key));
+            req = req.header("Authorization", &format!("Bearer {}", key));
         }
 
         let resp = req
             .send_json(&payload)
             .context("Failed to send streaming request")?;
 
-        let reader = std::io::BufReader::new(resp.into_reader());
+        let reader = std::io::BufReader::new(resp.into_body().into_reader());
         let mut full_response = String::new();
 
         use std::io::BufRead;
@@ -1349,17 +1411,20 @@ impl ProviderPlugin for OpenAICompatibleProvider {
             payload["tools"] = Value::Array(tool_schemas);
         }
 
-        let mut req = ureq::post(&url).timeout(self.timeout);
+        let mut req = ureq::post(&url)
+            .config()
+            .timeout_global(Some(self.timeout))
+            .build();
 
         if let Some(ref key) = self.api_key {
-            req = req.set("Authorization", &format!("Bearer {}", key));
+            req = req.header("Authorization", &format!("Bearer {}", key));
         }
 
-        let resp = req
+        let mut resp = req
             .send_json(&payload)
             .context("Failed to send request with tools")?;
 
-        let body: Value = resp.into_json()?;
+        let body: Value = resp.body_mut().read_json()?;
 
         // Extract content
         let content = body
@@ -1387,10 +1452,13 @@ impl ProviderPlugin for OpenAICompatibleProvider {
     fn generate_embeddings(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
         let url = format!("{}/v1/embeddings", self.base_url);
 
-        let mut req = ureq::post(&url).timeout(self.timeout);
+        let mut req = ureq::post(&url)
+            .config()
+            .timeout_global(Some(self.timeout))
+            .build();
 
         if let Some(ref key) = self.api_key {
-            req = req.set("Authorization", &format!("Bearer {}", key));
+            req = req.header("Authorization", &format!("Bearer {}", key));
         }
 
         let payload = serde_json::json!({
@@ -1398,8 +1466,8 @@ impl ProviderPlugin for OpenAICompatibleProvider {
             "input": texts
         });
 
-        let resp = req.send_json(&payload)?;
-        let body: Value = resp.into_json()?;
+        let mut resp = req.send_json(&payload)?;
+        let body: Value = resp.body_mut().read_json()?;
 
         let embeddings = body
             .get("data")
@@ -1674,13 +1742,16 @@ impl ProviderPlugin for HuggingFaceInferenceProvider {
 
     fn list_models(&self) -> Result<Vec<ModelInfo>> {
         let url = "https://huggingface.co/api/models?pipeline_tag=text-generation&sort=downloads&limit=20";
-        let mut req = ureq::get(url).timeout(Duration::from_secs(10));
+        let mut req = ureq::get(url)
+            .config()
+            .timeout_global(Some(Duration::from_secs(10)))
+            .build();
         if let Some(ref key) = self.api_key {
-            req = req.set("Authorization", &format!("Bearer {}", key));
+            req = req.header("Authorization", &format!("Bearer {}", key));
         }
 
-        let resp = req.call()?;
-        let body: Value = resp.into_json()?;
+        let mut resp = req.call()?;
+        let body: Value = resp.body_mut().read_json()?;
 
         let models = body
             .as_array()
@@ -1735,13 +1806,16 @@ impl ProviderPlugin for HuggingFaceInferenceProvider {
             }
         });
 
-        let mut req = ureq::post(&url).timeout(self.timeout);
+        let mut req = ureq::post(&url)
+            .config()
+            .timeout_global(Some(self.timeout))
+            .build();
         if let Some(ref key) = self.api_key {
-            req = req.set("Authorization", &format!("Bearer {}", key));
+            req = req.header("Authorization", &format!("Bearer {}", key));
         }
 
-        let resp = req.send_json(&payload)?;
-        let body: Value = resp.into_json()?;
+        let mut resp = req.send_json(&payload)?;
+        let body: Value = resp.body_mut().read_json()?;
 
         // HF returns array of generated texts
         let text = body
@@ -1790,13 +1864,16 @@ impl ProviderPlugin for HuggingFaceInferenceProvider {
             "inputs": texts
         });
 
-        let mut req = ureq::post(&url).timeout(self.timeout);
+        let mut req = ureq::post(&url)
+            .config()
+            .timeout_global(Some(self.timeout))
+            .build();
         if let Some(ref key) = self.api_key {
-            req = req.set("Authorization", &format!("Bearer {}", key));
+            req = req.header("Authorization", &format!("Bearer {}", key));
         }
 
-        let resp = req.send_json(&payload)?;
-        let body: Value = resp.into_json()?;
+        let mut resp = req.send_json(&payload)?;
+        let body: Value = resp.body_mut().read_json()?;
 
         let embeddings = body
             .as_array()

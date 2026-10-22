@@ -335,15 +335,15 @@ impl SseClient {
     /// Connect and return an event iterator
     pub fn connect(&self) -> Result<SseConnection, SseError> {
         let mut request = ureq::get(&self.url)
-            .set("Accept", "text/event-stream")
-            .set("Cache-Control", "no-cache");
+            .header("Accept", "text/event-stream")
+            .header("Cache-Control", "no-cache");
 
         for (key, value) in &self.headers {
-            request = request.set(key, value);
+            request = request.header(key, value);
         }
 
         if let Some(ref id) = self.last_event_id {
-            request = request.set("Last-Event-ID", id);
+            request = request.header("Last-Event-ID", id);
         }
 
         let response = request
@@ -351,7 +351,7 @@ impl SseClient {
             .map_err(|e| SseError::IoError(e.to_string()))?;
 
         Ok(SseConnection {
-            reader: response.into_reader(),
+            reader: Box::new(response.into_body().into_reader()),
             buffer: String::new(),
             last_event_id: self.last_event_id.clone(),
         })

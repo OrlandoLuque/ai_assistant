@@ -655,13 +655,16 @@ pub fn poll_rss_feed(
 ) -> Result<Vec<IncomingEvent>, String> {
     validate_url(feed_url, "RSS feed")?;
 
-    let response = ureq::get(feed_url)
-        .timeout(std::time::Duration::from_secs(30))
+    let mut response = ureq::get(feed_url)
+        .config()
+        .timeout_global(Some(std::time::Duration::from_secs(30)))
+        .build()
         .call()
         .map_err(|e| format!("RSS fetch error: {}", e))?;
 
     let body = response
-        .into_string()
+        .body_mut()
+        .read_to_string()
         .map_err(|e| format!("RSS read error: {}", e))?;
 
     // Simple RSS/Atom parsing (regex-based, no XXE #13)
@@ -724,10 +727,12 @@ pub fn poll_web_scraper(
 ) -> Result<Vec<IncomingEvent>, String> {
     validate_url(url, "Scraper URL")?;
 
-    let agent = ureq::AgentBuilder::new()
-        .redirects(MAX_REDIRECTS as u32)
-        .timeout(std::time::Duration::from_secs(30))
-        .build();
+    let agent = ureq::Agent::new_with_config(
+        ureq::Agent::config_builder()
+            .max_redirects(MAX_REDIRECTS as u32)
+            .timeout_global(Some(std::time::Duration::from_secs(30)))
+            .build(),
+    );
     let response = agent
         .get(url)
         .call()

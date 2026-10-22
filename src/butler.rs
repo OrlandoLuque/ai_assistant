@@ -168,12 +168,14 @@ impl ResourceDetector for OllamaDetector {
     fn detect(&self) -> DetectionResult {
         let url = format!("{}/api/tags", self.base_url);
         match ureq::get(&url)
-            .timeout(std::time::Duration::from_secs(2))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(2)))
+            .build()
             .call()
         {
-            Ok(resp) => {
+            Ok(mut resp) => {
                 let mut models = Vec::new();
-                if let Ok(body) = resp.into_string() {
+                if let Ok(body) = resp.body_mut().read_to_string() {
                     if let Ok(val) = serde_json::from_str::<serde_json::Value>(&body) {
                         if let Some(model_list) = val.get("models").and_then(|v| v.as_array()) {
                             for m in model_list {
@@ -235,12 +237,14 @@ impl ResourceDetector for LmStudioDetector {
     fn detect(&self) -> DetectionResult {
         let url = format!("{}/v1/models", self.base_url);
         match ureq::get(&url)
-            .timeout(std::time::Duration::from_secs(2))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(2)))
+            .build()
             .call()
         {
-            Ok(resp) => {
+            Ok(mut resp) => {
                 let mut models = Vec::new();
-                if let Ok(body) = resp.into_string() {
+                if let Ok(body) = resp.body_mut().read_to_string() {
                     if let Ok(val) = serde_json::from_str::<serde_json::Value>(&body) {
                         if let Some(data) = val.get("data").and_then(|v| v.as_array()) {
                             for m in data {
@@ -312,12 +316,14 @@ impl ResourceDetector for VLlmDetector {
     fn detect(&self) -> DetectionResult {
         let url = format!("{}/v1/models", self.base_url);
         match ureq::get(&url)
-            .timeout(std::time::Duration::from_secs(2))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(2)))
+            .build()
             .call()
         {
-            Ok(resp) => {
+            Ok(mut resp) => {
                 let mut models = Vec::new();
-                if let Ok(body) = resp.into_string() {
+                if let Ok(body) = resp.body_mut().read_to_string() {
                     if let Ok(val) = serde_json::from_str::<serde_json::Value>(&body) {
                         if let Some(data) = val.get("data").and_then(|v| v.as_array()) {
                             for m in data {
@@ -387,12 +393,14 @@ impl ResourceDetector for LlamaCppDetector {
     fn detect(&self) -> DetectionResult {
         let url = format!("{}/v1/models", self.base_url);
         match ureq::get(&url)
-            .timeout(std::time::Duration::from_secs(2))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(2)))
+            .build()
             .call()
         {
-            Ok(resp) => {
+            Ok(mut resp) => {
                 let mut models = Vec::new();
-                if let Ok(body) = resp.into_string() {
+                if let Ok(body) = resp.body_mut().read_to_string() {
                     if let Ok(val) = serde_json::from_str::<serde_json::Value>(&body) {
                         if let Some(data) = val.get("data").and_then(|v| v.as_array()) {
                             for m in data {
@@ -831,8 +839,10 @@ impl ResourceDetector for NetworkDetector {
 
         let mut connected = false;
         for url in &test_urls {
-            match ureq::get(url)
-                .timeout(std::time::Duration::from_secs(3))
+            match ureq::get(*url)
+                .config()
+                .timeout_global(Some(std::time::Duration::from_secs(3)))
+                .build()
                 .call()
             {
                 Ok(resp) => {
@@ -875,7 +885,9 @@ impl ResourceDetector for WhisperDetector {
         let server_url = std::env::var("WHISPER_SERVER_URL")
             .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
         match ureq::get(&format!("{}/v1/models", server_url))
-            .timeout(std::time::Duration::from_secs(2))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(2)))
+            .build()
             .call()
         {
             Ok(_) => {
@@ -984,7 +996,9 @@ impl ResourceDetector for PiperDetector {
         details.insert("url".to_string(), self.base_url.clone());
 
         match ureq::get(&self.base_url)
-            .timeout(std::time::Duration::from_secs(2))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(2)))
+            .build()
             .call()
         {
             Ok(_) => {
@@ -997,7 +1011,7 @@ impl ResourceDetector for PiperDetector {
                     ),
                 }
             }
-            Err(ureq::Error::Status(_, _)) => {
+            Err(ureq::Error::StatusCode(_)) => {
                 // Any HTTP status means server is up (e.g. 400 = missing text)
                 details.insert("available".to_string(), "true".to_string());
                 DetectionResult {
@@ -1048,7 +1062,9 @@ impl ResourceDetector for CoquiDetector {
         details.insert("url".to_string(), self.base_url.clone());
 
         match ureq::get(&self.base_url)
-            .timeout(std::time::Duration::from_secs(2))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(2)))
+            .build()
             .call()
         {
             Ok(resp) => {

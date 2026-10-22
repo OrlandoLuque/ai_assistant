@@ -74,10 +74,12 @@ pub struct PooledConnection {
 
 impl PooledConnection {
     fn new(host: String, config: &PoolConfig) -> Self {
-        let agent = ureq::AgentBuilder::new()
-            .timeout_connect(config.connect_timeout)
-            .timeout_read(config.read_timeout)
-            .build();
+        let agent = ureq::Agent::new_with_config(
+            ureq::Agent::config_builder()
+                .timeout_connect(Some(config.connect_timeout))
+                .timeout_per_read(Some(config.read_timeout))
+                .build(),
+        );
 
         Self {
             host,
@@ -293,22 +295,22 @@ impl<'a> PooledConnectionGuard<'a> {
     }
 
     /// Make a GET request
-    pub fn get(&self, url: &str) -> ureq::Request {
+    pub fn get(&self, url: &str) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
         self.agent().get(url)
     }
 
     /// Make a POST request
-    pub fn post(&self, url: &str) -> ureq::Request {
+    pub fn post(&self, url: &str) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
         self.agent().post(url)
     }
 
     /// Make a PUT request
-    pub fn put(&self, url: &str) -> ureq::Request {
+    pub fn put(&self, url: &str) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
         self.agent().put(url)
     }
 
     /// Make a DELETE request
-    pub fn delete(&self, url: &str) -> ureq::Request {
+    pub fn delete(&self, url: &str) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
         self.agent().delete(url)
     }
 }

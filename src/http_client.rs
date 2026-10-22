@@ -51,12 +51,15 @@ pub struct UreqClient;
 
 impl HttpClient for UreqClient {
     fn get_json(&self, url: &str, timeout_secs: u64) -> Result<serde_json::Value> {
-        let response = ureq::get(url)
-            .timeout(std::time::Duration::from_secs(timeout_secs))
+        let mut response = ureq::get(url)
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(timeout_secs)))
+            .build()
             .call()
             .with_context(|| format!("GET request failed: {}", url))?;
         response
-            .into_json()
+            .body_mut()
+            .read_json()
             .context("Failed to parse JSON response")
     }
 
@@ -66,12 +69,15 @@ impl HttpClient for UreqClient {
         body: &serde_json::Value,
         timeout_secs: u64,
     ) -> Result<serde_json::Value> {
-        let response = ureq::post(url)
-            .timeout(std::time::Duration::from_secs(timeout_secs))
+        let mut response = ureq::post(url)
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(timeout_secs)))
+            .build()
             .send_json(body)
             .with_context(|| format!("POST request failed: {}", url))?;
         response
-            .into_json()
+            .body_mut()
+            .read_json()
             .context("Failed to parse JSON response")
     }
 
@@ -82,10 +88,12 @@ impl HttpClient for UreqClient {
         timeout_secs: u64,
     ) -> Result<Box<dyn std::io::Read + Send>> {
         let response = ureq::post(url)
-            .timeout(std::time::Duration::from_secs(timeout_secs))
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(timeout_secs)))
+            .build()
             .send_json(body)
             .with_context(|| format!("POST streaming request failed: {}", url))?;
-        Ok(Box::new(response.into_reader()))
+        Ok(Box::new(response.into_body().into_reader()))
     }
 }
 

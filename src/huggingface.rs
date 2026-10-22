@@ -82,10 +82,12 @@ impl HfModelInfo {
 pub fn huggingface_model_info(repo_id: &str) -> Result<HfModelInfo, String> {
     let url = format!("https://huggingface.co/api/models/{}", repo_id);
     let body: serde_json::Value = retry_with_config(RetryConfig::fast(), || {
-        let resp = ureq::get(&url)
-            .timeout(std::time::Duration::from_secs(10))
+        let mut resp = ureq::get(&url)
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(10)))
+            .build()
             .call()?;
-        let v: serde_json::Value = resp.into_json()?;
+        let v: serde_json::Value = resp.body_mut().read_json()?;
         Ok(v)
     })
     .map_err(|e| format!("GET {}: {}", url, e))?;
