@@ -3775,10 +3775,12 @@ fn cmd_quality(args: &[String]) -> ExitCode {
         eprintln!("Usage: ai_cli quality <subcommand>");
         eprintln!("  gates list    — List configured quality gates");
         eprintln!("  gates check   — Run quality gates on text");
+        eprintln!("  judge         - Score a response with an LLM judge");
         return ExitCode::from(1);
     }
 
     match args[0].as_str() {
+        "judge" => return cmd_quality_judge(&args[1..]),
         "gates" => {
             if args.len() < 2 {
                 eprintln!("Usage: ai_cli quality gates <list|check>");
@@ -3888,6 +3890,256 @@ fn cmd_quality(args: &[String]) -> ExitCode {
 
 // =============================================================================
 // benchmark — dataset hallucination / faithfulness benchmarks (V90)
+// =============================================================================
+// quality judge - puntua una respuesta con un juez LLM (V421, N127)
+// =============================================================================
+
+/// Puntua un par (prompt, respuesta) con `LlmJudgeEvaluator` contra el proveedor
+/// configurado, registrandolo en un `EvalSuite` junto a los evaluadores
+/// heuristicos.
+///
+/// Esta es la puerta de entrada que le faltaba al juez. Hasta V421 la libreria
+/// sabia juzgar y **nadie podia pedirselo**: `EvalSuite::add_evaluator` solo
+/// recibia `TextQualityEvaluator` y `RelevanceEvaluator`, y encima
+/// `LlmJudgeEvaluator` no estaba reexportado en la raiz del crate.
+#[cfg(feature = "eval")]
+fn cmd_quality_judge(args: &[String]) -> ExitCode {
+    use ai_assistant::{
+        EvalSample, Evaluator, LlmJudgeConfig, LlmJudgeEvaluator, MetricType, TextQualityEvaluator,
+    };
+
+    let mut prompt = String::new();
+    let mut response = String::new();
+    let mut config_file: Option<String> = None;
+    let mut num_judges: usize = 1;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--prompt" if i + 1 < args.len() => {
+                prompt = args[i + 1].clone();
+                i += 2;
+            }
+            "--response" if i + 1 < args.len() => {
+                response = args[i + 1].clone();
+                i += 2;
+            }
+            "--config" if i + 1 < args.len() => {
+                config_file = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--judges" if i + 1 < args.len() => {
+                match args[i + 1].parse::<usize>() {
+                    Ok(n) if n >= 1 => num_judges = n,
+                    _ => {
+                        eprintln!("Error: --judges must be an integer >= 1");
+                        return ExitCode::from(1);
+                    }
+                }
+                i += 2;
+            }
+            "help" | "-h" | "--help" => {
+                print_quality_judge_usage();
+                return ExitCode::SUCCESS;
+            }
+            other => {
+                eprintln!("Error: unknown option '{}'", other);
+                print_quality_judge_usage();
+                return ExitCode::from(1);
+            }
+        }
+    }
+
+    if prompt.is_empty() || response.is_empty() {
+        eprintln!("Error: both --prompt and --response are required.");
+        print_quality_judge_usage();
+        return ExitCode::from(1);
+    }
+
+    let mut assistant = AiAssistant::new();
+    if let Some(ref path) = config_file {
+        match load_config(path) {
+            Ok(config) => assistant.load_config(config),
+            Err(e) => {
+                eprintln!("Error loading config '{}': {}", path, e);
+                return ExitCode::from(1);
+            }
+        }
+    }
+
+    // Mismo patron que el verificador de Chain-of-Verification: se clona la
+    // configuracion del proveedor y se habla con el por el bucle
+    // `send_message` / `poll_response`. Reutilizado a proposito en vez de
+    // inventar otra via al modelo.
+    let j_provider = assistant.config.provider.clone();
+    let j_model = assistant.config.selected_model.clone();
+    let j_ollama_url = assistant.config.ollama_url.clone();
+    let j_lm_url = assistant.config.lm_studio_url.clone();
+    let j_custom_url = assistant.config.custom_url.clone();
+
+    let generator = move |p: &str| -> Result<String, String> {
+        let mut judge = AiAssistant::new();
+        judge.config.provider = j_provider.clone();
+        judge.config.selected_model = j_model.clone();
+        judge.config.ollama_url = j_ollama_url.clone();
+        judge.config.lm_studio_url = j_lm_url.clone();
+        judge.config.custom_url = j_custom_url.clone();
+        // Temperatura baja: un juez que cambia de opinion entre llamadas hace
+        // inutil la mediana de `num_judges`, que es justo lo que la sostiene.
+        judge.config.temperature = 0.1;
+
+        judge.send_message(p.to_string(), "");
+
+        let mut full = String::new();
+        let deadline = Instant::now() + Duration::from_secs(60);
+        loop {
+            if Instant::now() > deadline {
+                return Err("judge timed out after 60s".to_string());
+            }
+            if let Some(resp) = judge.poll_response() {
+                match resp {
+                    AiResponse::Chunk(t) => full.push_str(&t),
+                    AiResponse::Complete(t) => {
+                        if full.is_empty() {
+                            full = t;
+                        }
+                        return Ok(full);
+                    }
+                    AiResponse::Error(e) => return Err(e),
+                    AiResponse::Cancelled(t) => return Ok(t),
+                    _ => {}
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    };
+
+    let metrics = vec![
+        MetricType::Relevance,
+        MetricType::Coherence,
+        MetricType::Helpfulness,
+        MetricType::Safety,
+    ];
+    // `LlmJudgeConfig` es `#[non_exhaustive]` y NO tiene builder, asi que desde
+    // aqui --- `ai_cli` es otra crate --- no se puede construir con un literal
+    // de struct: hay que partir de `Default` y asignar campos. Es la tercera
+    // razon por la que nadie usaba el juez, y las tres se acumulaban: no estaba
+    // reexportado en la raiz, su config no era construible desde fuera, y nadie
+    // lo registraba. N6 (#91) iba de darle builder a los config
+    // `#[non_exhaustive]`; a este se le paso.
+    let mut judge_config = LlmJudgeConfig::default();
+    judge_config.metrics = metrics.clone();
+    judge_config.num_judges = num_judges;
+    let judge = LlmJudgeEvaluator::new(generator).with_config(judge_config);
+
+    // Se llama a cada evaluador POR SEPARADO y no a traves de un `EvalSuite`
+    // con los dos dentro, aunque eso era lo primero que escribi. El motivo lo
+    // encontre ejecutandolo con el proveedor apagado: salia `coherence 0.80`
+    // atribuida al juez.
+    //
+    // `EvalSuite` concatena los `MetricResult` de todos sus evaluadores y **no
+    // guarda cual los produjo**, y `TextQualityEvaluator` emite tambien
+    // `MetricType::Coherence`. Asi que filtrar por tipo de metrica no distingue
+    // la fuente: le estaba poniendo al juez una nota heuristica. Es el mismo
+    // defecto que esta tarea viene arreglando --- un numero atribuido a quien no
+    // lo produjo --- y aqui era mio.
+    //
+    // La falta de procedencia en `EvalSuite` queda apuntada como N157.
+    let sample = EvalSample::new("cli", &prompt, &response);
+
+    eprintln!(
+        "Asking the judge ({} call{})...",
+        num_judges,
+        if num_judges == 1 { "" } else { "s" }
+    );
+    let judged = judge.evaluate(&sample);
+    let heuristic = TextQualityEvaluator::new().evaluate(&sample);
+
+    println!("Judge report for {} chars of response:", response.len());
+    println!();
+
+    // Una metrica que el juez no pudo puntuar NO aparece (V417), asi que hay que
+    // distinguir "no la midio" de "la midio mal", y decirlo.
+    if judged.is_empty() {
+        println!("  The judge produced NO scores.");
+        println!();
+        println!("  That is not a score of zero: it means no valid answer came back");
+        println!("  (provider unreachable, or every reply outside the 0-10 range).");
+        println!("  Check the provider with: ai_cli providers");
+        println!();
+        println!("  Heuristic metrics (no LLM involved, so still available):");
+        for m in &heuristic {
+            println!("  {:<14} {:>5.2} / {:.0}", m.name, m.value, m.max_value);
+        }
+        return ExitCode::from(1);
+    }
+
+    println!("  From the LLM judge:");
+    for m in &judged {
+        print!("  {:<14} {:>5.2} / {:.0}", m.name, m.value, m.max_value);
+        if let Some(ref d) = m.details {
+            print!("   ({})", d);
+        }
+        println!();
+    }
+    if judged.len() < metrics.len() {
+        let missing: Vec<String> = metrics
+            .iter()
+            .filter(|t| !judged.iter().any(|m| m.metric_type == **t))
+            .map(|t| format!("{:?}", t))
+            .collect();
+        println!();
+        println!(
+            "  {} of {} metrics went unscored and are NOT shown: {}",
+            metrics.len() - judged.len(),
+            metrics.len(),
+            missing.join(", ")
+        );
+    }
+
+    println!();
+    println!("  Heuristic metrics (no LLM involved):");
+    for m in &heuristic {
+        println!("  {:<14} {:>5.2} / {:.0}", m.name, m.value, m.max_value);
+    }
+
+    // Media de las notas del juez, normalizadas por su propio rango. No se
+    // mezcla con las heuristicas: son escalas distintas y juntarlas daria un
+    // numero que no significa nada.
+    let mean: f64 = judged.iter().map(|m| m.normalized()).sum::<f64>() / judged.len() as f64;
+    println!();
+    println!(
+        "  Judge mean over the {} metric{} it scored: {:.2}",
+        judged.len(),
+        if judged.len() == 1 { "" } else { "s" },
+        mean
+    );
+    ExitCode::SUCCESS
+}
+
+#[cfg(not(feature = "eval"))]
+fn cmd_quality_judge(args: &[String]) -> ExitCode {
+    let _ = args;
+    eprintln!("Error: 'quality judge' requires the 'eval' feature.");
+    eprintln!("  cargo run --bin ai_cli --features FEATURES -- quality judge --help");
+    ExitCode::from(1)
+}
+
+#[cfg(feature = "eval")]
+fn print_quality_judge_usage() {
+    println!("ai_cli quality judge - score a response with an LLM judge");
+    println!();
+    println!("Usage: ai_cli quality judge --prompt <P> --response <R> [options]");
+    println!();
+    println!("Options:");
+    println!("  --prompt <text>     The prompt that was asked (required)");
+    println!("  --response <text>   The response to score (required)");
+    println!("  --config <file>     Provider config JSON (default: built-in defaults)");
+    println!("  --judges <n>        Ask the judge n times and take the MEDIAN (default: 1)");
+    println!();
+    println!("Scores Relevance, Coherence, Helpfulness and Safety on 0-10.");
+    println!("A metric the judge did not score is NOT shown and NOT counted as zero.");
+}
+
 // =============================================================================
 
 fn cmd_benchmark(args: &[String]) -> ExitCode {

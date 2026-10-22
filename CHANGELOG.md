@@ -5,6 +5,90 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v297 (2026-10-22) - V421: el juez no estaba sin cablear, estaba sin poder nombrarse (0.2.380)
+
+N127, la parte de «cablear una». Y resulta que «cablear» era la mitad del problema: habia
+**tres razones acumuladas** por las que nadie usaba el juez, y las tres habia que quitarlas.
+
+### 1. No estaba reexportado, y era el unico que faltaba
+
+`lib.rs` reexporta en la raiz `RelevanceEvaluator`, `SafetyEvaluator` y
+`TextQualityEvaluator` --- las otras tres implementaciones de `Evaluator` del modulo. De las
+cuatro, **la unica que no salia era `LlmJudgeEvaluator`**, junto con su `LlmJudgeConfig`. Asi
+que no es que estuviera «sin conectar»: no se podia **nombrar** desde fuera sin escribir
+`ai_assistant::evaluation::`, que es una ruta que nadie adivina.
+
+### 2. Su config no se puede construir desde fuera
+
+`LlmJudgeConfig` es `#[non_exhaustive]` y **no tiene builder**, asi que un literal de struct
+no compila fuera de la crate. Lo descubri cuando el binario --- que es otra crate --- fallo con
+`E0639: cannot create non-exhaustive struct using struct expression`. Hay que partir de
+`Default` y asignar campos.
+
+Es exactamente la clase de N6 (#91, «builders para los config `#[non_exhaustive]`», marcada
+como hecha): a este config se le paso. Y es el patron de
+`project_external_consumption_blind_spot`: **un test interno no lo habria visto nunca**, porque
+compila DENTRO de la crate, donde `#[non_exhaustive]` no aplica.
+
+### 3. Nadie lo registraba
+
+`EvalSuite::add_evaluator` solo recibia `TextQualityEvaluator` y `RelevanceEvaluator`.
+
+### Lo que se anade: `ai_cli quality judge`
+
+```
+ai_cli quality judge --prompt <P> --response <R> [--judges N] [--config FILE]
+```
+
+Puntua Relevance, Coherence, Helpfulness y Safety de 0 a 10 contra el proveedor configurado.
+Con `--judges N` pregunta N veces y se queda con la **mediana** (V417), que es lo que sobrevive
+a un juez que se va; la media no.
+
+El cierre que habla con el modelo **reutiliza el patron del verificador de Chain-of-Verification**
+que ya existia en el CLI --- clonar la config del proveedor y hablar por `send_message` /
+`poll_response` --- en vez de inventar otra via al modelo.
+
+### El defecto que encontre ejecutandolo, y era mio
+
+La primera version registraba el juez y `TextQualityEvaluator` en un `EvalSuite` y separaba las
+metricas de cada uno filtrando por `MetricType`. Con Ollama apagado imprimio esto:
+
+```
+  coherence       0.80 / 1
+  3 of 4 metrics went unscored and are NOT shown.
+```
+
+**Esa `coherence` no era del juez.** `EvalSuite::evaluate` concatena los `MetricResult` de todos
+sus evaluadores y **no guarda cual los produjo**, y `TextQualityEvaluator` emite tambien
+`MetricType::Coherence`. Estaba poniendole al juez una nota heuristica, con el juez sin contestar.
+
+Es el defecto de esta casa otra vez --- un numero atribuido a quien no lo produjo --- y esta vez
+era mio. No lo vi leyendo el codigo: lo vi **ejecutandolo**.
+
+Arreglado llamando a cada evaluador por separado, con epigrafes que dicen de donde sale cada
+numero. La falta de procedencia en `EvalSuite` queda como **N157**, porque le pasa a cualquier
+consumidor con dos evaluadores que compartan una metrica --- y de paso hay que mirar si el
+agregado ponderado la cuenta dos veces.
+
+Con el proveedor caido ahora dice la verdad, y sale por **1**:
+
+```
+  The judge produced NO scores.
+
+  That is not a score of zero: it means no valid answer came back
+  (provider unreachable, or every reply outside the 0-10 range).
+```
+
+### La prueba es un doctest, a proposito
+
+Compila **fuera** de la crate, que es justo donde estaba roto. Un test interno no habria visto
+ni el reexport que faltaba ni el `#[non_exhaustive]`. Mutado: quitando `LlmJudgeConfig` y
+`LlmJudgeEvaluator` del reexport, el doctest falla con
+`E0432: unresolved imports ai_assistant::LlmJudgeConfig, ai_assistant::LlmJudgeEvaluator`.
+
+9049 tests, clippy `--all-targets` limpio, `check_doc_imports` y `check_documented_cli` en 0, y
+la web sincronizada (`binaries.html`) con sus dos puertas en 0.
+
 ## [Unreleased] - v296 (2026-10-21) - V420: el juez pairwise preguntaba en un solo orden, y asi «A es mejor» y «A iba delante» dan el mismo veredicto (0.2.379)
 
 N127 fase 2, el primero de los sesgos del juez. Y es el mejor documentado de la tecnica: **un
