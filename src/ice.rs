@@ -35,8 +35,25 @@
 //!   `distributed_rag::IceCandidate` carries `address: String` plus a separate
 //!   `port` and a `protocol`. Different fields, different representation.
 //! * `p2p::IceState` has five variants; `distributed_rag::IceState` has seven
-//!   (it adds `New` and `Completed`). Merging them would add states to a
-//!   running state machine, which is a behaviour change and not a rename.
+//!   (it adds `New` and `Completed`). **Re-measured 2026-10-23 (V426)**, because
+//!   the reason first written here named the wrong mechanism. It said merging
+//!   "would add states to a running state machine, which is a behaviour
+//!   change"; it would not. Neither enum is ever matched exhaustively --- `p2p`
+//!   only assigns four variants and compares for equality --- so widening the
+//!   type changes no transition and breaks no `match`.
+//!
+//!   The conclusion survives for a better reason: `p2p::IceAgent::start_checks`
+//!   **returns on the first responsive pair**, so for that implementation
+//!   `Connected` and RFC 8445's `Completed` ("all checks done") are the same
+//!   instant. Merging would hand `p2p` a variant that is unreachable by
+//!   construction --- a type claiming more than its code can do, which is the
+//!   defect `StepStatus` had in V406 with the signs reversed. Two honest small
+//!   state machines beat one wide type with dead arms.
+//!
+//!   (The `Serialize` asymmetry is NOT an argument either way, and was briefly
+//!   taken for one: `distributed_rag`'s enum derives it, but `IceGatherResult`,
+//!   the only struct that carries it, is `Debug, Clone` only. Neither state
+//!   crosses a wire today.)
 //!
 //! Both are design questions with consequences, not accidental duplication, so
 //! they are left alone and said out loud rather than folded in quietly.

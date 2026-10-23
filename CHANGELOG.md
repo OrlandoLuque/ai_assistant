@@ -5,6 +5,71 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v302 (2026-10-23) - V426: `IceState` NO era un olvido, y la razon escrita de que no lo fuera tampoco era la correcta (0.2.385)
+
+Seguir con N134 por el nombre que V425 habia marcado como «el mas accionable». Resulta que no
+habia nada que hacer, y averiguar por que corrige **dos** cosas.
+
+### Lo que V425 dijo, y era falso
+
+La nota de V425 decia que `IceState` «se habia quedado atras» cuando `IceCandidateType` se movio a
+`crate::ice` en V347. **No se quedo atras: se excluyo a proposito**, y la razon lleva escrita desde
+entonces en el doc de `src/ice.rs`, bajo un epigrafe que se titula literalmente *«What is
+deliberately NOT unified here»*.
+
+Yo no habia leido ese doc antes de escribir la nota. Y la forma del error es util: **antes de
+llamar «olvido» a una asimetria, busca si alguien ya la decidio --- y el sitio donde se decide es
+el modulo que recogio lo demas.** Si existe un `crate::ice`, lo que no esta dentro puede estar
+fuera por una razon, no por descuido.
+
+### Lo que V347 dijo, y era impreciso
+
+Su razon era: *«merging them would add states to a running state machine, which is a behaviour
+change and not a rename»*. **No lo es.** Medido leyendo los CONSUMIDORES, que es lo que lo
+resuelve: **ninguno de los dos enums se matchea exhaustivamente nunca**. `p2p` solo asigna cuatro
+variantes (`Gathering`, `Checking`, `Connected`, `Failed`) y compara por igualdad. Ensanchar el
+tipo no cambia una transicion ni rompe un `match`.
+
+### Pero la conclusion aguanta, por una razon mejor
+
+`p2p::IceAgent::start_checks` **retorna en el primer par que responde**:
+
+```rust
+self.selected_pair = Some((local.clone(), remote.clone()));
+self.state = IceState::Connected;
+return;
+```
+
+Para esa implementacion, `Connected` y el `Completed` del RFC 8445 (*«todas las comprobaciones
+hechas»*) son **el mismo instante**. Unificar le daria a `p2p` una variante **inalcanzable por
+construccion** --- un tipo que afirma mas de lo que su codigo puede hacer, que es el defecto de
+`StepStatus` de V406 con los signos al reves. Y el root ya los separa limpiamente
+(`IceState as DistributedIceState`), asi que no hay colision que pagar por tenerlos aparte.
+
+Dos maquinas de estados pequenas y honestas le ganan a un tipo ancho con arcos muertos.
+
+### Y el argumento del `Serialize` tampoco valia
+
+V425 decia que la de `p2p` no deriva `Serialize` y por tanto «su estado no cruza el cable en el
+modulo peer-to-peer». El enum de `distributed_rag` si lo deriva, **pero `IceGatherResult`, el unico
+struct que lo lleva, es `Debug, Clone`**. Ninguno de los dos estados cruza un cable hoy. Un derive
+que nadie usa no es una capacidad, es una posibilidad.
+
+`IceState` pasa a `[allowed]` con la razon medida. Deuda congelada: **16 -> 15**.
+
+### Hallazgo separado, y es DECISION DEL AUTOR
+
+`IceAgent::new()` pone `IceState::Gathering` en la construccion, y el gathering es
+`add_local_candidate`. Entre construir el agente y anadir el primer candidato, **el agente afirma
+estar reuniendo candidatos sin haber reunido ninguno**. `New` seria mas honesto, pero es un cambio
+de comportamiento y hay un test que fija `Gathering` tras `new()` (`p2p.rs:2508`). No se ha tocado.
+
+### Verificacion
+
+`check --no-default-features --features FEATURES_STD --all-targets` en 0, los 36 tests de `ice::` y
+`p2p::tests::test_ice` con `full,p2p,distributed-network`, enlaces de documentacion en 0 y la
+puerta de duplicados con su `--self-test`. Ninguna spec de mutacion ancla `src/ice.rs`.
+
 ## [Unreleased] - v301 (2026-10-23) - V425: tres de los 17 nombres duplicados, leidos de verdad --- y uno sale al revés de lo que la nota decia (0.2.384)
 
 N134, la parte que es juicio y no refactor. La regla del fichero es que mover un nombre a
