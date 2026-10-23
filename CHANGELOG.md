@@ -5,6 +5,63 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v301 (2026-10-23) - V425: tres de los 17 nombres duplicados, leidos de verdad --- y uno sale al revés de lo que la nota decia (0.2.384)
+
+N134, la parte que es juicio y no refactor. La regla del fichero es que mover un nombre a
+`[allowed]` **exige una razon que sobreviva a leer LAS DOS declaraciones completas**, no sus listas
+de variantes. Tres leidos, tres veredictos, y el reparto no es el que yo esperaba.
+
+### `WarningSeverity` --- NO es la misma idea. A `[allowed]`.
+
+La nota que tenia en `[untriaged]` decia, literalmente: *«Info/Warning/{Error,Critical}. One word
+apart.»* Eso es **un juicio por nombre de variante**, que es exactamente lo que la cabecera de ese
+fichero advierte, y sale **al reves**:
+
+| | `agent_definition` | `scalability_monitor` |
+|---|---|---|
+| que es | un VEREDICTO SOBRE UN DOCUMENTO | una BANDA SOBRE UNA MEDIDA CONTINUA |
+| variantes | Info / Warning / **Error** (= la definicion no se puede usar) | Info / Warning / **Critical** (60-79 % / 80-94 % / 95 %+, escrito en los doc comments) |
+| derives | sin orden, sin `Display` | `PartialOrd` + `Ord` + `Display`, porque se compara y se imprime |
+
+El tell **no** es `Error` contra `Critical`. Es que **un veredicto de validacion no tiene un orden
+natural que derivar, y una banda de umbral no sirve de nada sin el.** Unificarlos tendria que
+imponer un orden a los veredictos o quitarselo a las bandas. Son dos tipos.
+
+### `IceState` --- trabajo real, y **el destino ya existe**
+
+`crate::ice` se creo en V347 justo para esto; su propio doc dice *«ICE types shared by every
+transport that has to get through a NAT»* y nombra los tres modulos. `IceCandidateType` se movio
+alli --- hay un comentario en `distributed_rag.rs:145` que lo cuenta --- y **`IceState` se quedo
+atras**.
+
+* `distributed_rag`: New, Gathering, Checking, Connected, Completed, Failed, Closed. `Default = New`, `Serialize`.
+* `p2p`: las cinco de en medio. Sin `Default`, **sin `Serialize`**.
+
+Las dos que faltan son las dos que el RFC 8445 necesita, y que p2p **por tanto no puede
+representar**: `New` (creado, aun sin reunir candidatos --- `IceAgent::new()` arranca en
+`Gathering`, afirmando que ya empezo) y `Completed` (todas las comprobaciones hechas, distinto de
+`Connected`). Y sin `Serialize`, su estado **no puede cruzar el cable en el modulo
+peer-to-peer**.
+
+Mismo molde que el `StepStatus` de V406, donde un paso de plan no podia fallar. Y hay precedente
+de que esta familia muerde: **N90** fueron dos conjuntos de features verdes en CI que no se podian
+combinar, por el `IceCandidateType` duplicado.
+
+### `EvictionPolicy` --- duplicacion real: dos nombres para una politica
+
+Las dos son «a quien echo de una cache acotada», las dos tienen `Default = Lru`, las dos son
+`#[non_exhaustive]`. Y `Lrw` de `distributed` (*«evict the oldest entry by creation time»*) **es**
+`Fifo` de `memory_management` (*«evict oldest items»*). Es el patron que el baseline ya marca en
+`EnsembleStrategy` e `IntegrityResult`: una idea, dos vocabularios.
+
+### Y la cuenta del comentario se habia quedado atras de los datos
+
+El bloque `[untriaged]` decia «22 names left» con **17** en la lista. En un fichero cuya razon de
+existir es que las cifras no deriven, eso es el defecto de la casa. Ahora dice 16, que es lo que
+hay. **Cuentalos, no los recuerdes.**
+
+Deuda congelada: **17 -> 16**. Puerta verde, con su `--self-test`.
+
 ## [Unreleased] - v300 (2026-10-23) - V424: el conjunto de calibracion era inconstruible desde fuera, y el CI rojo que lo acompano (0.2.383)
 
 Lo que quedaba de **N127**, y con esto la tarea queda cerrada salvo el runner.

@@ -41,10 +41,15 @@ Subsystem = "scalability_monitor's names things whose SIZE is watched (VectorDbH
 
 AudioFormat = "speech's is a FILE/codec list (Wav, Mp3, Ogg, Flac, Pcm, Opus, Aac); voice_agent's is the WIRE format of a streamed voice chunk (Pcm16, Wav, Ogg, Mp3). The tell is Pcm16 against Pcm: a wire format must pin bit depth and endianness, a file-format list must not. Three names overlap because those containers exist in both worlds."
 ImageFormat = "image_extraction's is what was FOUND inside a document (Jpeg, Png, Gif, Bmp, Tiff, Unknown); media_generation's is what a model can PRODUCE (Png, Jpeg, WebP, Svg). The tell is 'Unknown': an extractor needs it and a generator cannot have it. The tails are disjoint for the same reason - nobody generates Tiff, nobody finds Svg in a scan."
+WarningSeverity = "agent_definition's is a VERDICT ON A DOCUMENT (Info/Warning/Error, where Error means the definition cannot be used as-is), with no ordering derive and no Display; scalability_monitor's is a BAND ON A CONTINUOUS MEASUREMENT (Info/Warning/Critical, with 60-79%/80-94%/95%+ written into the doc comments), deriving PartialOrd+Ord+Display because it is compared and printed. The tell is NOT Error against Critical: it is that a validation verdict has no natural order to derive, and a threshold band is useless without one. Merging them would have to either impose an order on the verdicts or take it away from the bands. Triaged 2026-10-23 (V425) -- and the [untriaged] note that preceded it said 'Info/Warning/{Error,Critical}. One word apart', which was a judgement by VARIANT NAME and came out backwards."
+
 StepType = "cot_parsing's classifies a REASONING step in text (Understanding, Decomposition, Verification, Conclusion); distillation's records an EXECUTED action with its payload (LlmCall, ToolUse, Decision). Zero shared variants and different kinds of thing: one reads prose, the other logs behaviour."
 
 [untriaged]
-# 22 names left, down from 34. NOT blessed -- the opposite: these are
+# 16 names left, down from 34. (Decia 22 con 17 en la lista: la cuenta a mano
+# del comentario se quedo atras de los datos, que es el defecto que este
+# fichero entero existe para evitar. Cuentalos, no los recuerdes.) NOT
+# blessed -- the opposite: these are
 # the ones where the two declarations look like the SAME IDEA that drifted, so
 # each is real work rather than a coincidence of naming. One line per name with
 # what the overlap says, so the next person starts from the evidence:
@@ -56,9 +61,31 @@ StepType = "cot_parsing's classifies a REASONING step in text (Understanding, De
 #   DiversityMetric    zero literal overlap and the same job: measure how different two texts are. Jaccard and cosine appear in both, at different granularity.
 #   EnsembleStrategy   zero literal overlap but the SAME job: combine several model outputs. MajorityVote/Voting and WeightedAverage/WeightedVoting are the same idea spelled twice.
 #   EntityType         both classify entities (NER against knowledge graph) and share Person/Organization/Location.
-#   EvictionPolicy     both are cache eviction and both start with Lru.
+#   EvictionPolicy     REAL duplication, leida 2026-10-23 (V425): las dos son 'a quien
+#                      echo de una cache acotada', las dos tienen Default = Lru y las dos
+#                      son #[non_exhaustive]. Y `Lrw` (least recently written, 'evict the
+#                      oldest entry by creation time') ES `Fifo` ('evict oldest items'):
+#                      DOS NOMBRES PARA UNA POLITICA, que es el patron de EnsembleStrategy
+#                      e IntegrityResult. distributed: Lru/Lrw/LargestFirst;
+#                      memory_management: Lru/Lfu/Fifo/Ttl/Random (este si es Serialize).
 #   ExportFormat       THREE declarations, all with `Json`. distributed_log, export and opentelemetry_integration each invented their own.
-#   IceState           5 of 7 shared, and it is a PROTOCOL enum (WebRTC ICE). Two spellings of a standard state machine is the hazard, not the design.
+#   IceState           REAL work, y EL DESTINO YA EXISTE. Leida 2026-10-23 (V425):
+#                      `crate::ice` se creo en V347 justo para esto -- su propio doc dice
+#                      'ICE types shared by every transport that has to get through a NAT'
+#                      y nombra los tres modulos (p2p, distributed_rag, voice_agent).
+#                      `IceCandidateType` se movio alli; `IceState` se quedo atras, y hay
+#                      un comentario en distributed_rag.rs:145 que lo cuenta.
+#                      distributed_rag: New/Gathering/Checking/Connected/Completed/Failed/
+#                      Closed, con Default = New y Serialize. p2p: las cinco de en medio.
+#                      Las dos que faltan son las dos que el RFC 8445 necesita y que p2p
+#                      POR TANTO NO PUEDE REPRESENTAR: `New` (creado, aun sin reunir
+#                      candidatos -- `IceAgent::new()` arranca en Gathering, afirmando que
+#                      ya empezo) y `Completed` (todas las comprobaciones hechas, distinto
+#                      de Connected). Y la de p2p NO es Serialize, asi que su estado no
+#                      puede cruzar el cable... en el modulo peer-to-peer. Mismo molde que
+#                      el StepStatus de V406, donde un paso de plan no podia fallar.
+#                      Precedente de que esto muerde: N90, dos conjuntos de features verdes
+#                      que no se podian combinar por el `IceCandidateType` duplicado.
 #   IntegrityResult    zero literal overlap and the same job: report whether an integrity check passed. Valid/Ok and HashMismatch/Tampered are the same outcomes renamed.
 #   LogLevel           events.rs's three are a strict subset of distributed_log's five.
 #   MemoryType         both classify a memory; share Fact/Preference.
@@ -98,5 +125,4 @@ names = [
   "RiskLevel",
   "TaskStatus",
   "TaskType",
-  "WarningSeverity",
 ]
