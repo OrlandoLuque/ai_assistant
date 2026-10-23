@@ -4128,7 +4128,6 @@ fn cmd_quality_judge(args: &[String]) -> ExitCode {
     ExitCode::from(1)
 }
 
-#[cfg(feature = "eval")]
 /// `ai_cli quality bias` --- el diagnostico de sesgos del juez sobre un lote.
 ///
 /// No necesita la feature `eval` ni hablar con ningun proveedor: lee notas ya
@@ -4308,6 +4307,7 @@ fn print_quality_bias_usage() {
     println!("as a zero --- on a correlation, zero is the BEST possible news.");
 }
 
+#[cfg(feature = "eval")]
 fn print_quality_judge_usage() {
     println!("ai_cli quality judge - score a response with an LLM judge");
     println!();

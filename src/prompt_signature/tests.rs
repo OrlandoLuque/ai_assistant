@@ -3196,6 +3196,72 @@ fn test_calibration_example_construction() {
     assert!((ex.human_score - 0.75).abs() < 1e-9);
 }
 
+/// El hueco que cerro V424: `new` + `add` obliga a escribir codigo Rust, y una
+/// calibracion es un fichero que una persona rellena a mano. Sin lector, el
+/// conjunto de calibracion era inconstruible desde fuera de un test --- que es
+/// la misma forma del defecto que `#[non_exhaustive]` sin constructor (N6).
+#[test]
+fn test_calibration_set_reads_jsonl() {
+    let jsonl = concat!(
+        r#"{"input":"q1","output":"a1","human_score":0.9}"#,
+        "\n",
+        "\n",
+        r#"{"input":"q2","output":"a2","human_score":0.2}"#,
+        "\n"
+    );
+    let set = CalibrationSet::from_jsonl(jsonl).expect("dos lineas validas y una vacia");
+    assert_eq!(set.len(), 2);
+    assert!(!set.is_empty());
+    assert_eq!(set.examples()[0].input, "q1");
+    assert_eq!(set.examples()[1].human_score, 0.2);
+}
+
+/// Una linea mala PARA la lectura y dice cual. No se salta en silencio: a un
+/// conjunto de calibracion al que le faltan ejemplos le sale un error medio con
+/// la misma pinta que a uno completo, y es el numero con el que se decide si el
+/// juez sirve para algo.
+#[test]
+fn test_calibration_set_bad_line_fails_loudly_with_its_number() {
+    let jsonl = concat!(
+        r#"{"input":"q1","output":"a1","human_score":0.9}"#,
+        "\n",
+        "esto no es json",
+        "\n",
+        r#"{"input":"q3","output":"a3","human_score":0.5}"#
+    );
+    // `expect_err` exigiria `Debug` en el Ok, que `CalibrationSet` no tiene.
+    let err = match CalibrationSet::from_jsonl(jsonl) {
+        Ok(_) => panic!("la linea 2 no es JSON y la lectura debia fallar"),
+        Err(e) => e,
+    };
+    assert!(err.starts_with("line 2:"), "err = {}", err);
+
+    // Y un NaN tampoco pasa: entraria en la media y la volveria NaN entera.
+    let nan = r#"{"input":"q","output":"a","human_score":null}"#;
+    assert!(CalibrationSet::from_jsonl(nan).is_err());
+}
+
+/// Un conjunto en que la persona puso la MISMA nota a todo no calibra nada:
+/// cualquier juez que devuelva constantemente esa nota sale perfecto. El error
+/// medio absoluto no lo delata --- sale bajo --- asi que se pregunta aparte.
+#[test]
+fn test_calibration_set_without_variation_cannot_calibrate() {
+    let flat = concat!(
+        r#"{"input":"q1","output":"a1","human_score":0.8}"#,
+        "\n",
+        r#"{"input":"q2","output":"a2","human_score":0.8}"#
+    );
+    let set = CalibrationSet::from_jsonl(flat).expect("dos lineas validas");
+    assert_eq!(set.len(), 2);
+    assert!(
+        !set.human_scores_vary(),
+        "dos notas humanas iguales no son una escala"
+    );
+
+    // Y el conjunto vacio tampoco varia --- ni afirma lo contrario.
+    assert!(!CalibrationSet::new().human_scores_vary());
+}
+
 #[test]
 fn test_calibration_set_calibration_error_computation() {
     let mut rubric = JudgeRubric::new("test".to_string());

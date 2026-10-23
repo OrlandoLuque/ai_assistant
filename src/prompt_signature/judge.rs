@@ -297,6 +297,64 @@ impl CalibrationSet {
         self.examples.push(example);
     }
 
+    /// Si las notas humanas VARIAN.
+    ///
+    /// Un conjunto en que la persona puso la misma nota a todo no puede
+    /// calibrar nada: cualquier juez que devuelva constantemente esa nota sale
+    /// perfecto, y uno que discrimine bien sale peor. El error medio absoluto no
+    /// lo delata --- sale bajo --- asi que hay que preguntarlo aparte.
+    pub fn human_scores_vary(&self) -> bool {
+        let mut it = self.examples.iter().map(|e| e.human_score);
+        let Some(first) = it.next() else {
+            return false;
+        };
+        it.any(|s| (s - first).abs() > f64::EPSILON)
+    }
+
+    /// Lee un conjunto de calibracion de un texto en JSONL --- un
+    /// [`CalibrationExample`] por linea, las lineas vacias se ignoran.
+    ///
+    /// Esto es lo que faltaba para que el conjunto se pudiera construir desde
+    /// FUERA de un test de Rust: `new` + `add` obliga a escribir codigo, y una
+    /// calibracion es un fichero que una persona rellena a mano.
+    ///
+    /// Falla con la primera linea mala y dice cual. No se salta lineas en
+    /// silencio: un conjunto de calibracion al que le faltan ejemplos da un
+    /// error medio con la misma pinta que uno completo, y es justamente el
+    /// numero con el que se decide si el juez sirve.
+    ///
+    /// ```
+    /// // Por `prompt_signature::` y no `prompt_signature::judge::`: el modulo
+    /// // `judge` es privado y lo que es publico es el `pub use judge::*`.
+    /// use ai_assistant::prompt_signature::CalibrationSet;
+    ///
+    /// let jsonl = r#"{"input":"2+2?","output":"4","human_score":1.0}
+    /// {"input":"2+2?","output":"5","human_score":0.0}"#;
+    /// let set = CalibrationSet::from_jsonl(jsonl).expect("dos lineas validas");
+    /// assert_eq!(set.len(), 2);
+    /// // Y las notas humanas varian, asi que el conjunto puede calibrar algo.
+    /// assert!(set.human_scores_vary());
+    /// ```
+    pub fn from_jsonl(text: &str) -> Result<Self, String> {
+        let mut set = Self::new();
+        for (n, line) in text.lines().enumerate() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let example: CalibrationExample =
+                serde_json::from_str(line).map_err(|e| format!("line {}: {}", n + 1, e))?;
+            if !example.human_score.is_finite() {
+                return Err(format!(
+                    "line {}: human_score is not a finite number",
+                    n + 1
+                ));
+            }
+            set.add(example);
+        }
+        Ok(set)
+    }
+
     /// Error medio absoluto entre lo que puntua el juez y lo que puntuo una
     /// persona. **Es la medida que dice si el juez sirve para algo**: sin ella,
     /// las notas son numeros de procedencia desconocida.

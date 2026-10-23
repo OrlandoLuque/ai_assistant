@@ -5,6 +5,71 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v300 (2026-10-23) - V424: el conjunto de calibracion era inconstruible desde fuera, y el CI rojo que lo acompano (0.2.383)
+
+Lo que quedaba de **N127**, y con esto la tarea queda cerrada salvo el runner.
+
+### El hueco
+
+`CalibrationSet::calibration_error` existia y estaba probado, pero el conjunto solo se podia
+construir con `new()` + `add()` **desde codigo Rust**. Y una calibracion es un fichero que una
+persona rellena a mano: sin lector, la capacidad existia y nadie podia usarla. Es la misma forma
+que el `#[non_exhaustive]` sin constructor de N6 --- algo publico que no se puede construir desde
+fuera --- y por eso los tests de dentro no la ven.
+
+`CalibrationSet::from_jsonl` **falla con la primera linea mala y dice cual**. No se salta lineas
+en silencio, por la razon de siempre: a un conjunto al que le faltan ejemplos le sale un error
+medio con la misma pinta que a uno completo, y es el numero con el que se decide si el juez sirve.
+
+Y `human_scores_vary()`, que es el hallazgo del rato: **un conjunto en que la persona puso la
+misma nota a todo no calibra nada.** Cualquier juez que devuelva constantemente esa nota sale
+perfecto, y uno que discrimine bien sale peor. El error medio absoluto **no lo delata** --- sale
+bajo --- asi que hay que preguntarlo aparte.
+
+### El CI rojo de V423, y por que mi verificacion local no pudo verlo
+
+Todos los trabajos de CI en rojo con un solo error:
+
+```
+error[E0425]: cannot find function `cmd_quality_bias` in this scope
+```
+
+Mi insercion habia caido **entre el `#[cfg(feature = "eval")]` y el `fn print_quality_judge_usage`
+al que pertenecia**, asi que el atributo se aplico a mi funcion: `cmd_quality_bias` quedo gateada
+tras `eval` y la llamada del despachador no. Arreglado devolviendo el atributo a su dueno.
+
+Lo que importa es **por que no lo cace antes**, porque no es el fallo que me esperaba:
+
+| | |
+|---|---|
+| lo que corri yo | `cargo build --features "$STD" --bin ai_cli` |
+| lo que corre CI | `cargo check --no-default-features --features "$FEATURES_STD" --all-targets` |
+
+**Sin `--no-default-features`, las features por defecto activan `eval`**, asi que la funcion
+gateada existia y la llamada resolvia. CI la apaga y no. Conviene fijarse en la forma: la leccion
+que tenia escrita era "verifica con el conjunto que COMPILA lo que tocaste", y este caso es el
+**inverso** --- el conjunto era demasiado ANCHO. Una funcion gateada llamada sin gatear solo se
+rompe cuando la feature esta APAGADA, asi que anadir features no lo encuentra nunca.
+
+Trampa adicional que vale la pena no reaprender: `FEATURES_STD` lleva `eval-suite`, que **no es**
+`eval`. Dos features con nombres parecidos y un `grep eval` que dice si.
+
+El doctest nuevo tambien fallo, y por un hueco de verdad: apuntaba a
+`ai_assistant::prompt_signature::judge::CalibrationSet` y `mod judge` es **privado** --- lo publico
+es el `pub use judge::*`. Eso un doctest lo ve y un test de dentro de la crate no, que es
+exactamente para lo que estan.
+
+### Verificacion, esta vez con las formas que CI usa
+
+| comprobacion | resultado |
+|---|---|
+| `clippy --no-default-features --features FEATURES_STD --all-targets -D warnings` | 0 |
+| `clippy --no-default-features --features FEATURES_MIN -D warnings` | 0 |
+| `check --no-default-features --features prompt-signatures --lib` (una entrada de la matriz) | 0 |
+| `test --no-default-features --features FEATURES_STD --doc` | **96** pasan |
+| tests de la libreria | **9064** pasan |
+| puerta de mutacion entera | 56 specs casan |
+
 ## [Unreleased] - v299 (2026-10-23) - V423: los dos sesgos del juez que no se ven en una nota suelta (0.2.382)
 
 N127 fase 2. El de posicion ya se trataba en V420 preguntando en los dos ordenes; estos dos
