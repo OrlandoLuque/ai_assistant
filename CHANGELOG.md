@@ -5,6 +5,114 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v299 (2026-10-23) - V423: los dos sesgos del juez que no se ven en una nota suelta (0.2.382)
+
+N127 fase 2. El de posicion ya se trataba en V420 preguntando en los dos ordenes; estos dos
+**no se pueden ver en una nota suelta**, porque lo que se busca no es un valor raro sino si una
+variable que el juez no deberia estar mirando predice la nota que puso. Eso solo aparece en un
+LOTE.
+
+### Lo que se mide, y lo que explicitamente NO se afirma
+
+`LlmJudge::bias_report(judge_model, &[ScoredResponse]) -> BiasReport`:
+
+| sesgo | la medida | `None` cuando |
+|---|---|---|
+| **verbosidad** | correlacion de rangos (Spearman) entre longitud y nota | menos de 3 observaciones, o ninguna variacion en longitud o en nota |
+| **auto-preferencia** | nota media de la familia del juez menos la del resto | un lado del lote esta vacio |
+
+De rangos y no de Pearson porque no hay ninguna razon para esperar que la relacion sea LINEAL;
+lo que se pregunta es si al crecer una crece la otra. Hay un test con una curva exponencial que
+da exactamente 1.0, que con Pearson no lo daria.
+
+Y la parte incomoda, escrita en el rustdoc del propio tipo porque es donde alguien la va a leer
+antes de citar el numero: **ninguno de los dos demuestra un sesgo por si solo**. Una correlacion
+positiva es igual de compatible con que el juez premie la paja que con que las respuestas largas
+de ese lote fueran de verdad mejores. Lo que dan es la senal de que merece la pena montar la
+comparacion controlada --- el mismo contenido en dos longitudes, o el mismo texto atribuido a
+dos generadores --- y un numero con el que comparar despues de cambiar el prompt.
+
+**`Option` y no `0.0`.** En una correlacion, `0.0` es la MEJOR noticia posible sobre el sesgo,
+asi que usarlo tambien para "no he podido medir" convertiria la ignorancia en un certificado de
+buena salud. Es el mismo error que tenia `calibration_error` devolviendo `0.0` con el conjunto
+vacio (V416), y la familia entera del defecto es la misma: **codificar la ausencia como una
+medicion extrema**.
+
+### Dos mitigaciones en el prompt, y son unas afirmaciones sin medir
+
+`build_judge_prompt` anade dos reglas: la longitud no es calidad (una respuesta corta que
+contesta del todo puntua igual que una larga) y el estilo no es sustancia (el tono seguro y las
+vinetas no son prueba de nada, y el hedging tampoco en contra). Son estandar y son baratas.
+**Que funcionen no esta medido**, y eso se dice aqui en vez de dejarlo implicito: `bias_report`
+es precisamente lo que puede medirlo.
+
+### `same_model_family`, con la regla escrita y su punto flaco
+
+Minusculas, cortar en el primer `:` (la etiqueta de Ollama dice tamano y cuantizacion, no
+familia) y uno de los dos restos prefijo del otro. Asi `llama3.1:8b` y `llama3.1:70b` son la
+misma familia y `gpt-4o` y `gpt-4o-mini` tambien. Donde falla, dicho en su rustdoc: dos modelos
+sin relacion en que un nombre sea prefijo del otro. Y la cadena vacia **no es de la familia de
+nadie, ni de otra vacia** --- de un generador desconocido no se puede AFIRMAR que sea el juez, y
+si casara consigo misma, todo lote sin procedencia saldria "auto-preferencia 0.0" sin que nadie
+lo haya medido.
+
+### La mutacion encontro un test debil antes de ejecutarse
+
+`scripts/mutations/llm_judge_bias.toml`, cinco mutaciones, **5 de 5 mueren**. Pero el orden en
+que paso importa:
+
+Al escribir la spec calcule a mano que haria el test de empates frente a M1 (dar a los empatados
+el primer rango del grupo en vez del medio): salia **0.834** contra los **0.894** correctos, y el
+test pedia `r > 0.8 && r < 1.0`. Dentro del intervalo. O sea: **verde y sin discriminar**.
+
+Escribi el test endurecido en un script... que no se aplico, porque `cargo fmt` habia reflowado
+el bloque y el `assert` del ancla lo paro. Asi que la primera ejecucion corrio con el test DEBIL
+todavia puesto y dijo `SURVIVED`, que es exactamente la prediccion. Dos cosas de ahi: el calculo
+a mano valia, y --- mas util --- **el script que comprueba su ancla antes de escribir es lo que
+impidio creerme que el test estaba endurecido cuando no lo estaba**. Un reemplazo silencioso de
+cero ocurrencias habria dejado la spec diciendo `DIED` sobre un test que nunca cambio.
+
+El test ahora comprueba `ranks()` directamente y fija el valor exacto (`2/sqrt(5)`).
+
+### CI en rojo, y la puerta que lo caza es la correcta
+
+El push de V422 dejo **CI en rojo en un solo trabajo**: `Mutation specs still match the code`,
+con el mensaje que existe para este caso exacto:
+
+```
+!! rerank_service.toml M1: `before` no longer appears in src/rerank_service.rs
+   -- this mutation tests NOTHING
+```
+
+La subida a ureq 3 se habia llevado `ureq::AgentBuilder::new().timeout(..)`, que es la linea que
+esa mutacion anclaba. El invariante --- que el plazo configurado se construye DENTRO del agente,
+que es la unica forma de que se aplique a algo --- no ha cambiado una coma, asi que se **re-ancla
+y no se borra**, que es literalmente lo que la puerta pide por pantalla. Verificado de las dos
+formas, porque `--dry-run` ya mintio una vez con anclas multilinea en arboles CRLF (V366): la
+puerta entera en verde (**56 specs**) y la mutacion re-anclada muriendo en vivo.
+
+Vale la pena quedarse con la forma: una puerta de mutacion no solo comprueba que los tests
+discriminan, tambien **avisa cuando un refactor deja un invariante sin vigilar**. 51 de 51
+seguian casando y la 52 era la que mi propio cambio habia dejado huerfana.
+
+### Cableado, porque si no es el quinto `MmrScorer`
+
+`ai_cli quality bias <file.jsonl> [--judge <model>]`. No necesita la feature `eval` ni hablar con
+ningun proveedor. Las lineas descartadas se dicen SIEMPRE y antes del informe, con el numero de
+linea y el motivo, porque un lote que perdio la mitad de las lineas da numeros con la misma
+pinta que uno completo. Y si no se pudo medir nada, no imprime el sermon sobre no sobreinterpretar
+los numeros --- no hay numeros --- sino que lo dice: eso es una afirmacion sobre el lote, no
+sobre el juez.
+
+Ejecutado sobre tres lotes construidos a mano (sesgo en los dos ejes, todas las respuestas igual
+de largas, y lineas invalidas mezcladas); el `+0.500` del tercero cuadra con el calculo a mano.
+
+### Verificacion
+
+Clippy `--all-targets -D warnings` con el conjunto ANCHO en 0, los tests de la libreria, los
+doctests, las seis puertas de documentacion y CLI, y la puerta de mutacion entera --- cada codigo
+de salida leido aparte.
+
 ## [Unreleased] - v298 (2026-10-23) - V422: `ureq` 2 -> 3, y con el RUSTSEC-2026-0381 se ARREGLA en vez de suprimirse (0.2.381)
 
 N156, y con ella se cierra la unica advisory de la lista que **nos afectaba de verdad**. La

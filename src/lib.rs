@@ -711,8 +711,8 @@ pub use internal_storage::{
 };
 
 pub use llm_judge::{
-    BatchEvalResult, EvalCriterion, JudgeResult, LlmJudge, PairwisePromptPair, PairwiseResult,
-    PairwiseVerdict, RagFaithfulnessResult,
+    same_model_family, BatchEvalResult, BiasReport, EvalCriterion, JudgeResult, LlmJudge,
+    PairwisePromptPair, PairwiseResult, PairwiseVerdict, RagFaithfulnessResult, ScoredResponse,
 };
 
 pub use log_redaction::{contains_sensitive, redact, redact_with_config, RedactionConfig};

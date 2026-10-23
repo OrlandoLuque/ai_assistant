@@ -22,6 +22,15 @@ id = "M1"
 file = "src/rerank_service.rs"
 filter = "rerank_service::tests::the_configured_timeout_actually_bounds_the_request"
 invariant = "the configured timeout is built into the agent, which is the only way it applies to anything -- storing it and not using it makes `RerankEndpoint::timeout` document a behaviour the code does not have, and the request hangs for as long as the peer stays silent"
-before = "        let agent = ureq::AgentBuilder::new().timeout(endpoint.timeout).build();"
-after = "        let agent = ureq::AgentBuilder::new().build();"
+# Re-anclada en V423: la subida a ureq 3 (N156) se llevo `AgentBuilder::new()`,
+# que ya no existe --- la configuracion va por `Agent::config_builder()` y el
+# plazo se llama `timeout_global`. La puerta de CI lo cazo con el mensaje exacto
+# para este caso: "`before` no longer appears [...] this mutation tests NOTHING".
+# El invariante no ha cambiado una coma, asi que se re-ancla y NO se borra: un
+# `timeout` guardado y no aplicado sigue siendo una propiedad que la
+# documentacion de `RerankEndpoint::timeout` promete.
+before = """            ureq::Agent::config_builder()
+                .timeout_global(Some(endpoint.timeout))
+                .build(),"""
+after = "            ureq::Agent::config_builder().build(),"
 occurrences = 1

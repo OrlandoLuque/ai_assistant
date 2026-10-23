@@ -152,6 +152,23 @@ Subcommands: `scan`, `providers`, `models`, `config`, `butler`, `query`,
   provider. `--judges N` asks N times and takes the **median**, which is what survives
   one judge going off (the mean does not). A metric the judge did not score is **not
   shown and not counted as zero**, and the command exits 1 if it scored nothing.
+- `quality bias <file.jsonl> [--judge <model>]` — Diagnose two biases of the judge over
+  a **batch** of scores already put. No provider and no `eval` feature: reads notes and
+  does arithmetic. Each line carries `score` plus either `response` or `length_chars`,
+  and optionally `generator`.
+  - **Verbosity**: the Spearman rank correlation between length and score. Rank and not
+    Pearson because nothing says the relation should be linear; the question is whether
+    one grows with the other.
+  - **Self-preference**: the mean score of the judge's own family minus the rest, with
+    the size of each side printed next to it, because a delta over two texts is noise.
+  - A quantity that **cannot be measured** (fewer than three observations, no variation
+    in length or score, one side of the batch empty) is reported as such and never as a
+    zero — on a correlation, zero is the *best* possible news about the bias, so using it
+    for "I could not measure" would turn ignorance into a clean bill of health.
+  - Neither number proves a bias alone, and the command says so: a positive correlation
+    is equally consistent with the long answers in that batch being genuinely better.
+    What it gives is the signal that a controlled comparison is worth setting up, and a
+    number to compare against after changing the prompt.
 
 #### `ai_assistant_cli`
 Interactive terminal REPL. Good for exploring models without leaving the

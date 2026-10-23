@@ -148,6 +148,73 @@ pub struct BatchEvalResult {
     pub total_evaluations: usize,
 }
 
+/// Una observacion para el diagnostico de sesgos del juez.
+///
+/// Lleva la nota junto a los dos datos del texto juzgado que el juez **no
+/// deberia estar mirando**: cuanto mide y quien lo escribio. Si resulta que
+/// cualquiera de los dos predice la nota, el juez estaba puntuando algo que no
+/// era la calidad.
+///
+/// Deliberadamente NO es `#[non_exhaustive]`: el diagnostico solo sirve si quien
+/// consume la libreria desde fuera puede construir las observaciones.
+#[derive(Debug, Clone)]
+pub struct ScoredResponse {
+    /// Nombre del modelo que genero el texto. Cadena vacia si no se sabe.
+    pub generator: String,
+    /// Longitud del texto juzgado, en caracteres.
+    ///
+    /// Caracteres y no tokens a proposito: tokenizar exigiria saber con que
+    /// modelo, y para una correlacion de RANGOS basta con que la medida sea
+    /// monotona con la longitud real --- que lo es.
+    pub length_chars: usize,
+    /// La nota del juez, en la misma escala 0.0-1.0 que [`JudgeResult::score`].
+    pub score: f64,
+}
+
+/// Lo que el diagnostico de sesgos encontro en un lote de notas.
+///
+/// # Lo que estos numeros NO dicen
+///
+/// **Ninguno demuestra un sesgo por si solo.** Una correlacion positiva entre
+/// longitud y nota es compatible con que el juez premie la paja, y tambien con
+/// que las respuestas largas de ese lote fueran de verdad mejores; un
+/// `self_preference_delta` positivo es compatible con que el juez se prefiera a
+/// si mismo, y tambien con que ese modelo escriba mejor que los otros del lote.
+/// Para separar las dos cosas hace falta una comparacion controlada --- el mismo
+/// contenido en dos longitudes, o el mismo texto atribuido a dos generadores.
+///
+/// Lo que estos numeros SI dan es la senal de que merece la pena montar esa
+/// comparacion, y un numero con el que comparar despues de cambiar el prompt.
+///
+/// Los campos son `Option` y valen `None` cuando la cantidad **no se puede
+/// medir** --- menos de tres observaciones, o todas con la misma longitud o la
+/// misma nota. Esto importa: en una correlacion, `0.0` es la MEJOR noticia
+/// posible (no hay relacion monotona), asi que usarlo tambien para "no he podido
+/// medir" convertiria la ignorancia en un certificado de buena salud.
+#[derive(Debug, Clone)]
+pub struct BiasReport {
+    /// Observaciones utilizables (las de nota no finita se descartan).
+    pub n: usize,
+    /// Correlacion de rangos (Spearman) entre longitud y nota, en [-1, 1].
+    ///
+    /// De rangos y no de Pearson porque no hay ninguna razon para esperar que la
+    /// relacion sea LINEAL; lo que se pregunta es si al crecer una crece la otra.
+    pub verbosity_rank_correlation: Option<f64>,
+    /// Nota media de los textos del propio juez menos la de los demas.
+    pub self_preference_delta: Option<f64>,
+    /// Nota media cuando el generador es de la familia del juez.
+    pub mean_score_own: Option<f64>,
+    /// Nota media cuando el generador es de otra familia.
+    pub mean_score_other: Option<f64>,
+    /// Cuantas observaciones cayeron del lado del propio juez.
+    ///
+    /// Se expone junto al delta porque un delta calculado sobre dos o tres
+    /// textos es ruido, y este numero es lo unico que lo dice.
+    pub n_own: usize,
+    /// Cuantas observaciones cayeron del lado de otros generadores.
+    pub n_other: usize,
+}
+
 /// LLM-as-Judge evaluator.
 ///
 /// Builds structured evaluation prompts and parses LLM responses to produce
@@ -210,7 +277,13 @@ impl LlmJudge {
              - 0.7-0.9: Good\n\
              - 0.4-0.6: Acceptable\n\
              - 0.1-0.3: Poor\n\
-             - 0.0: Completely fails",
+             - 0.0: Completely fails\n\n\
+             Two things that are NOT quality, and must not move the score:\n\
+             - Length. A short response that fully answers the query scores as \
+             high as a long one. Do not reward padding, repetition, or \
+             restating the question.\n\
+             - Style. A confident tone, headings, and bullet points are not \
+             evidence of correctness, and hedging is not evidence against it.",
             response
         ));
 
@@ -357,6 +430,67 @@ impl LlmJudge {
             agreed: false,
             position_bias_detected: same_slot,
             mean_self_reported_confidence: (as_given.confidence + swapped.confidence) / 2.0,
+        }
+    }
+
+    /// Diagnostica los dos sesgos que no se ven en una nota suelta.
+    ///
+    /// El sesgo de posicion se trata en la comparacion por pares
+    /// ([`LlmJudge::combine_pairwise`]), porque alli se puede preguntar dos veces
+    /// y comparar. Estos dos no: solo aparecen al mirar un LOTE de notas, porque
+    /// lo que se busca es si una variable que el juez no deberia estar mirando
+    /// predice la nota que puso.
+    ///
+    /// `judge_model` es el modelo que hizo de juez; se compara con cada
+    /// `generator` mediante [`same_model_family`].
+    ///
+    /// Lee la seccion "Lo que estos numeros NO dicen" de [`BiasReport`] antes de
+    /// citar ninguno.
+    pub fn bias_report(&self, judge_model: &str, observations: &[ScoredResponse]) -> BiasReport {
+        // Una nota no finita no es una nota. Se descarta aqui en vez de dejarla
+        // envenenar la media y el orden de los rangos.
+        let usable: Vec<&ScoredResponse> = observations
+            .iter()
+            .filter(|o| o.score.is_finite())
+            .collect();
+
+        let lengths: Vec<f64> = usable.iter().map(|o| o.length_chars as f64).collect();
+        let scores: Vec<f64> = usable.iter().map(|o| o.score).collect();
+
+        let (own, other): (Vec<f64>, Vec<f64>) = usable
+            .iter()
+            .map(|o| (o.score, same_model_family(judge_model, &o.generator)))
+            .fold(
+                (Vec::new(), Vec::new()),
+                |(mut own, mut other), (sc, mine)| {
+                    if mine {
+                        own.push(sc);
+                    } else {
+                        other.push(sc);
+                    }
+                    (own, other)
+                },
+            );
+
+        let mean = |v: &[f64]| -> Option<f64> {
+            (!v.is_empty()).then(|| v.iter().sum::<f64>() / v.len() as f64)
+        };
+        let (mean_own, mean_other) = (mean(&own), mean(&other));
+
+        BiasReport {
+            n: usable.len(),
+            verbosity_rank_correlation: spearman(&lengths, &scores),
+            // Hace falta al menos uno de cada lado: con un lado vacio no hay
+            // nada que comparar, y un 0.0 diria "no se prefiere", que es una
+            // afirmacion distinta de "no lo se".
+            self_preference_delta: match (mean_own, mean_other) {
+                (Some(a), Some(b)) => Some(a - b),
+                _ => None,
+            },
+            mean_score_own: mean_own,
+            mean_score_other: mean_other,
+            n_own: own.len(),
+            n_other: other.len(),
         }
     }
 
@@ -578,6 +712,100 @@ fn extract_json(text: &str) -> Option<&str> {
     None
 }
 
+/// Decide si dos nombres de modelo son de la misma familia.
+///
+/// La regla, explicita para que se pueda discutir: se pasa a minusculas, se
+/// corta en el primer `:` (el separador de etiqueta de Ollama, que distingue
+/// tamano y cuantizacion, no familia) y uno de los dos restos tiene que ser
+/// prefijo del otro.
+///
+/// ```
+/// use ai_assistant::same_model_family;
+///
+/// assert!(same_model_family("llama3.1:8b", "llama3.1:70b"));
+/// assert!(same_model_family("gpt-4o", "gpt-4o-mini"));
+/// assert!(!same_model_family("llama3.1:8b", "qwen2.5:7b"));
+/// ```
+///
+/// Donde falla: dos modelos sin relacion en que un nombre sea prefijo del otro
+/// se darian por misma familia. No se conoce un caso asi entre los proveedores
+/// que la libreria soporta, pero la regla es esta y no una mas lista.
+///
+/// Una cadena vacia no es de la familia de nadie --- incluida otra vacia: de un
+/// generador desconocido no se puede afirmar que sea el juez.
+pub fn same_model_family(a: &str, b: &str) -> bool {
+    fn family(name: &str) -> String {
+        name.trim()
+            .to_lowercase()
+            .split(':')
+            .next()
+            .unwrap_or("")
+            .to_string()
+    }
+    let (fa, fb) = (family(a), family(b));
+    if fa.is_empty() || fb.is_empty() {
+        return false;
+    }
+    fa.starts_with(&fb) || fb.starts_with(&fa)
+}
+
+/// Rangos de `values`, con rango MEDIO para los empates.
+///
+/// El rango medio no es un detalle: darle a dos valores iguales rangos
+/// consecutivos inventa un orden que los datos no tienen, y lo inventa siempre
+/// en el mismo sentido, asi que sesga la correlacion.
+fn ranks(values: &[f64]) -> Vec<f64> {
+    let n = values.len();
+    let mut idx: Vec<usize> = (0..n).collect();
+    idx.sort_by(|&x, &y| {
+        values[x]
+            .partial_cmp(&values[y])
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let mut out = vec![0.0; n];
+    let mut i = 0;
+    while i < n {
+        let mut j = i;
+        while j + 1 < n && values[idx[j + 1]] == values[idx[i]] {
+            j += 1;
+        }
+        let avg = (i + j) as f64 / 2.0 + 1.0;
+        for k in i..=j {
+            out[idx[k]] = avg;
+        }
+        i = j + 1;
+    }
+    out
+}
+
+/// Correlacion de rangos de Spearman, o `None` si no se puede medir.
+///
+/// `None` con menos de tres pares, con longitudes distintas, o cuando una de las
+/// dos variables no varia --- todas las respuestas igual de largas, o todas con
+/// la misma nota. Ver [`BiasReport`] para por que no es `0.0`.
+fn spearman(xs: &[f64], ys: &[f64]) -> Option<f64> {
+    if xs.len() != ys.len() || xs.len() < 3 {
+        return None;
+    }
+    let (rx, ry) = (ranks(xs), ranks(ys));
+    let n = rx.len() as f64;
+    let (mx, my) = (rx.iter().sum::<f64>() / n, ry.iter().sum::<f64>() / n);
+    let mut sxy = 0.0;
+    let mut sxx = 0.0;
+    let mut syy = 0.0;
+    for (x, y) in rx.iter().zip(ry.iter()) {
+        let (dx, dy) = (x - mx, y - my);
+        sxy += dx * dy;
+        sxx += dx * dx;
+        syy += dy * dy;
+    }
+    if sxx <= f64::EPSILON || syy <= f64::EPSILON {
+        return None;
+    }
+    let r = sxy / (sxx.sqrt() * syy.sqrt());
+    r.is_finite().then(|| r.clamp(-1.0, 1.0))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -610,6 +838,217 @@ mod tests {
     fn test_llm_judge_with_threshold() {
         let judge = LlmJudge::new(vec![EvalCriterion::Relevance]).with_threshold(0.8);
         assert_eq!(judge.pass_threshold, 0.8);
+    }
+
+    // ------------------------------------------------------------------
+    // Sesgos de verbosidad y auto-preferencia (N127 fase 2)
+    // ------------------------------------------------------------------
+
+    fn obs(generator: &str, length_chars: usize, score: f64) -> ScoredResponse {
+        ScoredResponse {
+            generator: generator.to_string(),
+            length_chars,
+            score,
+        }
+    }
+
+    #[test]
+    fn test_same_model_family_tag_is_not_family() {
+        // La etiqueta de Ollama dice tamano y cuantizacion, no familia.
+        assert!(same_model_family("llama3.1:8b", "llama3.1:70b"));
+        assert!(same_model_family(
+            "qwen2.5-coder:7b-instruct-q4_K_M",
+            "qwen2.5-coder:32b"
+        ));
+        // Mayusculas y espacios no cambian la familia.
+        assert!(same_model_family("  Llama3.1:8b ", "llama3.1:8b"));
+    }
+
+    #[test]
+    fn test_same_model_family_prefix_counts_distinct_does_not() {
+        assert!(same_model_family("gpt-4o", "gpt-4o-mini"));
+        assert!(!same_model_family("llama3.1:8b", "qwen2.5:7b"));
+        assert!(!same_model_family("gpt-4o", "claude-3-5-sonnet"));
+    }
+
+    #[test]
+    fn test_same_model_family_unknown_generator_is_nobody() {
+        // De un generador desconocido no se puede AFIRMAR que sea el juez; si
+        // la vacia casara con la vacia, todo lote sin procedencia saldria
+        // "auto-preferencia 0.0", que es una afirmacion que nadie midio.
+        assert!(!same_model_family("", ""));
+        assert!(!same_model_family("llama3.1:8b", ""));
+        assert!(!same_model_family("   ", "llama3.1:8b"));
+    }
+
+    #[test]
+    fn test_spearman_monotone_but_not_linear_is_still_one() {
+        // Spearman mide monotonia, no linealidad: esta curva es exponencial y
+        // la correlacion sigue siendo 1. Con Pearson no lo seria.
+        let xs = [1.0, 2.0, 3.0, 4.0, 5.0];
+        let ys = [1.0, 2.0, 4.0, 8.0, 16.0];
+        let r = spearman(&xs, &ys).expect("5 pares con varianza");
+        assert!((r - 1.0).abs() < 1e-9, "r = {}", r);
+
+        let descending = [16.0, 8.0, 4.0, 2.0, 1.0];
+        let r = spearman(&xs, &descending).expect("5 pares con varianza");
+        assert!((r + 1.0).abs() < 1e-9, "r = {}", r);
+    }
+
+    #[test]
+    fn test_spearman_ties_get_the_average_rank() {
+        // Los tres valores iguales no tienen orden entre si, asi que los tres
+        // reciben el rango MEDIO del grupo: posiciones 2, 3 y 4 -> 3, 3, 3.
+        assert_eq!(
+            ranks(&[1.0, 7.0, 7.0, 7.0, 9.0]),
+            vec![1.0, 3.0, 3.0, 3.0, 5.0]
+        );
+        // Y no depende del orden en que lleguen los empates.
+        assert_eq!(ranks(&[5.0, 5.0, 1.0]), vec![2.5, 2.5, 1.0]);
+
+        // El valor EXACTO de la correlacion, no un intervalo. La primera version
+        // de este test pedia `r > 0.8 && r < 1.0`, y la mutacion M1 de
+        // scripts/mutations/llm_judge_bias.toml --- "a los empates, el primer
+        // rango del grupo" --- SOBREVIVIO: los rangos medios dan 0.894 y la
+        // mutacion 0.834, los dos dentro del intervalo. Un verde que no
+        // distingue el codigo bueno del malo no prueba nada.
+        //
+        // Con rangos medios: rx = [1,2,3,4,5], ry = [1,3,3,3,5], y la
+        // correlacion es 8/sqrt(10*8) = 2/sqrt(5) exacto.
+        let r = spearman(&[1.0, 2.0, 3.0, 4.0, 5.0], &[1.0, 7.0, 7.0, 7.0, 9.0])
+            .expect("hay varianza en las dos");
+        let expected = 2.0 / 5.0_f64.sqrt();
+        assert!(
+            (r - expected).abs() < 1e-12,
+            "r = {}, esperado {}",
+            r,
+            expected
+        );
+    }
+
+    #[test]
+    fn test_spearman_is_none_when_it_cannot_be_measured() {
+        // Menos de tres pares: no hay correlacion que calcular.
+        assert!(spearman(&[1.0, 2.0], &[1.0, 2.0]).is_none());
+        // Una variable constante: la correlacion esta indefinida (division por
+        // una desviacion cero), y `0.0` seria la mejor noticia posible.
+        assert!(spearman(&[5.0, 5.0, 5.0], &[1.0, 2.0, 3.0]).is_none());
+        assert!(spearman(&[1.0, 2.0, 3.0], &[5.0, 5.0, 5.0]).is_none());
+        // Longitudes distintas: no son pares.
+        assert!(spearman(&[1.0, 2.0, 3.0], &[1.0, 2.0]).is_none());
+    }
+
+    #[test]
+    fn test_bias_report_detects_length_predicting_the_score() {
+        let judge = LlmJudge::new(vec![EvalCriterion::Relevance]);
+        let observations = vec![
+            obs("modelo-a", 40, 0.2),
+            obs("modelo-a", 120, 0.4),
+            obs("modelo-a", 300, 0.6),
+            obs("modelo-a", 900, 0.9),
+        ];
+        let report = judge.bias_report("juez-x", &observations);
+        assert_eq!(report.n, 4);
+        let r = report
+            .verbosity_rank_correlation
+            .expect("4 observaciones con varianza en las dos variables");
+        assert!((r - 1.0).abs() < 1e-9, "longitud y nota van juntas: {}", r);
+    }
+
+    #[test]
+    fn test_bias_report_verbosity_none_when_all_same_length() {
+        let judge = LlmJudge::new(vec![EvalCriterion::Relevance]);
+        let observations = vec![
+            obs("modelo-a", 100, 0.2),
+            obs("modelo-a", 100, 0.5),
+            obs("modelo-a", 100, 0.9),
+        ];
+        let report = judge.bias_report("juez-x", &observations);
+        // Todas igual de largas: de la verbosidad no se puede decir NADA, y eso
+        // no es lo mismo que decir que no hay sesgo.
+        assert!(
+            report.verbosity_rank_correlation.is_none(),
+            "sin variacion de longitud no hay medida, no un 0.0"
+        );
+    }
+
+    #[test]
+    fn test_bias_report_self_preference_splits_by_family_not_by_tag() {
+        let judge = LlmJudge::new(vec![EvalCriterion::Relevance]);
+        // El juez es llama3.1:70b y dos de los textos los escribio un llama3.1
+        // de otro tamano: misma familia, asi que cuentan como propios.
+        let observations = vec![
+            obs("llama3.1:8b", 100, 0.9),
+            obs("llama3.1:8b", 110, 0.8),
+            obs("qwen2.5:7b", 105, 0.4),
+            obs("qwen2.5:7b", 115, 0.4),
+        ];
+        let report = judge.bias_report("llama3.1:70b", &observations);
+        assert_eq!((report.n_own, report.n_other), (2, 2));
+        let own = report
+            .mean_score_own
+            .expect("dos textos de la familia del juez");
+        let other = report.mean_score_other.expect("dos textos de otra familia");
+        assert!((own - 0.85).abs() < 1e-9, "media propia = {}", own);
+        assert!((other - 0.4).abs() < 1e-9, "media ajena = {}", other);
+        let delta = report.self_preference_delta.expect("hay de los dos lados");
+        assert!((delta - 0.45).abs() < 1e-9, "delta = {}", delta);
+    }
+
+    #[test]
+    fn test_bias_report_self_preference_none_with_one_side_empty() {
+        let judge = LlmJudge::new(vec![EvalCriterion::Relevance]);
+        let observations = vec![
+            obs("qwen2.5:7b", 100, 0.9),
+            obs("qwen2.5:7b", 110, 0.8),
+            obs("qwen2.5:7b", 120, 0.7),
+        ];
+        let report = judge.bias_report("llama3.1:70b", &observations);
+        assert_eq!((report.n_own, report.n_other), (0, 3));
+        // Ningun texto del propio juez: no hay con que comparar. Un 0.0 aqui
+        // diria "no se prefiere a si mismo", que nadie ha medido.
+        assert!(report.self_preference_delta.is_none());
+        assert!(report.mean_score_own.is_none());
+        let other = report
+            .mean_score_other
+            .expect("tres textos de otra familia");
+        assert!((other - 0.8).abs() < 1e-9, "media ajena = {}", other);
+    }
+
+    #[test]
+    fn test_bias_report_discards_non_finite_scores() {
+        let judge = LlmJudge::new(vec![EvalCriterion::Relevance]);
+        let observations = vec![
+            obs("modelo-a", 40, 0.2),
+            obs("modelo-a", 120, f64::NAN),
+            obs("modelo-a", 300, 0.6),
+            obs("modelo-a", 900, f64::INFINITY),
+            obs("modelo-a", 1000, 0.9),
+        ];
+        let report = judge.bias_report("juez-x", &observations);
+        // Tres utilizables de cinco: una nota no finita no es una nota, y
+        // dejarla pasar envenenaria la media Y el orden de los rangos.
+        assert_eq!(report.n, 3);
+        assert_eq!(report.n_other, 3);
+        let mean = report.mean_score_other.expect("tres notas validas");
+        assert!(mean.is_finite(), "la media no puede heredar el NaN");
+        assert!((mean - (0.2 + 0.6 + 0.9) / 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_judge_prompt_tells_the_judge_not_to_reward_length_or_style() {
+        let judge = LlmJudge::new(vec![EvalCriterion::Relevance]);
+        let prompt = judge.build_judge_prompt(
+            &EvalCriterion::Relevance,
+            "Que es Rust?",
+            "Un lenguaje de programacion.",
+            None,
+        );
+        // Las dos mitigaciones van en el prompt; `bias_report` es lo que puede
+        // medir si sirven de algo.
+        assert!(prompt.contains("A short response that fully answers"));
+        assert!(prompt.contains("Do not reward padding"));
+        assert!(prompt.contains("confident tone"));
     }
 
     #[test]

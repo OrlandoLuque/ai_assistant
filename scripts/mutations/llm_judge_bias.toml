@@ -1,0 +1,131 @@
+# Las mutaciones del diagnostico de sesgos del juez (N127 fase 2).
+#
+# Lo que este modulo mide es incomodo de probar, porque TODAS sus respuestas son
+# numeros plausibles. Una correlacion mal calculada sigue estando en [-1, 1], una
+# media envenenada por un NaN sigue siendo un f64, y un `Some(0.0)` donde deberia
+# ir `None` se lee como "medido, y no hay sesgo". Ninguna de las tres cosas
+# grita. Por eso el modulo entra aqui el mismo dia que se escribe, y no cuando
+# alguien sospeche de el.
+#
+# M1 se predijo a mano y la herramienta lo confirmo, en ese orden: al escribir la
+# spec calcule que daria el test de empates frente a la mutacion y salia 0.834
+# contra los 0.894 correctos, los dos dentro del `r > 0.8 && r < 1.0` que el test
+# pedia. Escribi el test endurecido en un script... que no se aplico, porque
+# `cargo fmt` habia reflowado el bloque y el `assert` del ancla lo paro. Asi que
+# la primera ejecucion corrio con el test DEBIL todavia puesto y dijo SURVIVED,
+# que es exactamente la prediccion.
+#
+# Dos cosas que llevarse de ahi. Una: el calculo a mano valia. Y otra, mas util:
+# el script que comprueba su ancla antes de escribir es lo que impidio creerme
+# que el test estaba endurecido cuando no lo estaba --- un reemplazo silencioso
+# de cero ocurrencias habria dejado la spec diciendo "DIED" sobre un test que
+# nunca cambio.
+#
+# Run: python scripts/mutate.py --spec scripts/mutations/llm_judge_bias.toml
+
+features = "full"
+filter = "llm_judge::tests"
+
+# ---------------------------------------------------------------------------
+# M1: los empates pierden el rango medio
+# ---------------------------------------------------------------------------
+# Dos respuestas de la misma longitud no tienen orden entre si. Darles rangos
+# consecutivos inventa un orden que los datos no tienen, y lo inventa SIEMPRE en
+# el mismo sentido (el que traiga el `sort_by`), asi que no es ruido: sesga la
+# correlacion en una direccion fija. Aqui se mutan al primer rango del grupo, que
+# es el error mas facil de cometer escribiendo este bucle.
+[[mutation]]
+id = "M1"
+file = "src/llm_judge.rs"
+filter = "llm_judge::tests::test_spearman_ties_get_the_average_rank"
+invariant = "los valores empatados reciben el rango MEDIO del grupo; cualquier otra reparticion inventa un orden que los datos no contienen y sesga la correlacion en un sentido fijo"
+# Primera ejecucion: SURVIVED. El test pedia `r > 0.8 && r < 1.0` y la
+# mutacion cae en 0.834 contra los 0.894 correctos: dentro del intervalo. Se
+# endurecio el test (ranks() directo y el valor exacto 2/sqrt(5)) y entonces
+# murio. El orden importa --- la mutacion encontro el test debil, no al reves.
+before = "        let avg = (i + j) as f64 / 2.0 + 1.0;"
+after = "        let avg = i as f64 + 1.0;"
+occurrences = 1
+
+# ---------------------------------------------------------------------------
+# M2: "no he podido medir" se convierte en "no hay relacion"
+# ---------------------------------------------------------------------------
+# La mutacion mas peligrosa del fichero, y la razon de que el tipo devuelva
+# `Option`. Con varianza cero la correlacion esta indefinida (se divide por una
+# desviacion tipica de cero). Devolver `0.0` en vez de `None` no da un numero
+# raro: da el MEJOR numero posible --- "longitud y nota no tienen ninguna
+# relacion monotona" --- precisamente cuando no se ha medido nada. Es el mismo
+# error que tenia `calibration_error` devolviendo 0.0 con el conjunto vacio, y
+# es el que esta familia de codigo comete una y otra vez: codificar la ausencia
+# como una medicion extrema.
+[[mutation]]
+id = "M2"
+file = "src/llm_judge.rs"
+filter = "llm_judge::tests::test_spearman_is_none_when_it_cannot_be_measured"
+invariant = "con una variable constante la correlacion no se puede medir, y eso NO es un 0.0 --- 0.0 es la mejor noticia posible sobre el sesgo de verbosidad"
+before = """    if sxx <= f64::EPSILON || syy <= f64::EPSILON {
+        return None;
+    }"""
+after = """    if sxx <= f64::EPSILON || syy <= f64::EPSILON {
+        return Some(0.0);
+    }"""
+occurrences = 1
+
+# ---------------------------------------------------------------------------
+# M3: el mismo 0.0, en el otro sitio donde cabe
+# ---------------------------------------------------------------------------
+# Sin textos del propio juez en el lote no hay con que comparar. Un `Some(0.0)`
+# ahi afirma "el juez no se prefiere a si mismo", que es un resultado que nadie
+# ha medido --- y es el resultado que uno espera leer, asi que no levanta
+# sospecha.
+[[mutation]]
+id = "M3"
+file = "src/llm_judge.rs"
+filter = "llm_judge::tests::test_bias_report_self_preference_none_with_one_side_empty"
+invariant = "con un lado del lote vacio, el delta de auto-preferencia es `None`; un 0.0 afirmaria que no hay preferencia, que es otra cosa que no se midio"
+before = """            self_preference_delta: match (mean_own, mean_other) {
+                (Some(a), Some(b)) => Some(a - b),
+                _ => None,
+            },"""
+after = """            self_preference_delta: match (mean_own, mean_other) {
+                (Some(a), Some(b)) => Some(a - b),
+                _ => Some(0.0),
+            },"""
+occurrences = 1
+
+# ---------------------------------------------------------------------------
+# M4: un generador desconocido pasa por ser el juez
+# ---------------------------------------------------------------------------
+# La cadena vacia es "no se quien escribio esto". Si casa con cualquiera, todo
+# lote sin procedencia --- que es el caso por defecto de cualquiera que empiece a
+# usar esto --- sale con n_own = n y un delta construido sobre una atribucion
+# inventada.
+[[mutation]]
+id = "M4"
+file = "src/llm_judge.rs"
+filter = "llm_judge::tests::test_same_model_family_unknown_generator_is_nobody"
+invariant = "de un generador desconocido no se puede AFIRMAR que sea el juez; la cadena vacia no es de la familia de nadie"
+before = """    if fa.is_empty() || fb.is_empty() {
+        return false;
+    }"""
+after = """    if fa.is_empty() || fb.is_empty() {
+        return true;
+    }"""
+occurrences = 1
+
+# ---------------------------------------------------------------------------
+# M5: una nota no finita entra en la media y en el orden
+# ---------------------------------------------------------------------------
+# Un NaN en la media la vuelve NaN entera, y en `partial_cmp` devuelve `None`,
+# que el `unwrap_or(Equal)` convierte en "empatado con todo": el orden de los
+# rangos queda arbitrario y la correlacion sale de ahi. Dos averias de una sola
+# linea borrada.
+[[mutation]]
+id = "M5"
+file = "src/llm_judge.rs"
+filter = "llm_judge::tests::test_bias_report_discards_non_finite_scores"
+invariant = "una nota no finita no es una nota: se descarta antes de la media y antes de ordenar, porque envenena las dos"
+before = """            .filter(|o| o.score.is_finite())
+            .collect();"""
+after = "            .collect();"
+occurrences = 1

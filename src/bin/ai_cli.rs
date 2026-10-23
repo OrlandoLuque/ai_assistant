@@ -3776,11 +3776,15 @@ fn cmd_quality(args: &[String]) -> ExitCode {
         eprintln!("  gates list    — List configured quality gates");
         eprintln!("  gates check   — Run quality gates on text");
         eprintln!("  judge         - Score a response with an LLM judge");
+        eprintln!(
+            "  bias          - Diagnose verbosity and self-preference bias in a batch of scores"
+        );
         return ExitCode::from(1);
     }
 
     match args[0].as_str() {
         "judge" => return cmd_quality_judge(&args[1..]),
+        "bias" => return cmd_quality_bias(&args[1..]),
         "gates" => {
             if args.len() < 2 {
                 eprintln!("Usage: ai_cli quality gates <list|check>");
@@ -4125,6 +4129,185 @@ fn cmd_quality_judge(args: &[String]) -> ExitCode {
 }
 
 #[cfg(feature = "eval")]
+/// `ai_cli quality bias` --- el diagnostico de sesgos del juez sobre un lote.
+///
+/// No necesita la feature `eval` ni hablar con ningun proveedor: lee notas ya
+/// puestas y hace cuentas. Es el auditor de `LlmJudge::bias_report`, y existe
+/// porque un diagnostico que nadie puede ejecutar es un diagnostico que nadie
+/// ejecuta.
+fn cmd_quality_bias(args: &[String]) -> ExitCode {
+    use ai_assistant::{LlmJudge, ScoredResponse};
+
+    if args.is_empty() || args[0] == "--help" || args[0] == "-h" {
+        print_quality_bias_usage();
+        return ExitCode::from(if args.is_empty() { 1 } else { 0 });
+    }
+
+    let path = &args[0];
+    let mut judge_model = String::new();
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--judge" if i + 1 < args.len() => {
+                judge_model = args[i + 1].clone();
+                i += 2;
+            }
+            other => {
+                eprintln!("Error: unknown argument '{}'", other);
+                print_quality_bias_usage();
+                return ExitCode::from(1);
+            }
+        }
+    }
+
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("Error: cannot read '{}': {}", path, e);
+            return ExitCode::from(1);
+        }
+    };
+
+    let mut observations = Vec::new();
+    let mut skipped = Vec::new();
+    for (lineno, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let v: serde_json::Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(e) => {
+                skipped.push(format!("line {}: not JSON ({})", lineno + 1, e));
+                continue;
+            }
+        };
+        // La nota es obligatoria; sin ella la linea no es una observacion.
+        let Some(score) = v.get("score").and_then(|s| s.as_f64()) else {
+            skipped.push(format!("line {}: no numeric `score`", lineno + 1));
+            continue;
+        };
+        // La longitud se puede dar hecha o se deduce del texto. Si no hay
+        // ninguna de las dos, la linea NO sirve para la verbosidad, y meterla
+        // con longitud 0 inventaria un dato.
+        let length_chars = match (
+            v.get("length_chars").and_then(|l| l.as_u64()),
+            v.get("response").and_then(|r| r.as_str()),
+        ) {
+            (Some(n), _) => n as usize,
+            (None, Some(r)) => r.chars().count(),
+            (None, None) => {
+                skipped.push(format!(
+                    "line {}: neither `response` nor `length_chars`",
+                    lineno + 1
+                ));
+                continue;
+            }
+        };
+        observations.push(ScoredResponse {
+            generator: v
+                .get("generator")
+                .and_then(|g| g.as_str())
+                .unwrap_or("")
+                .to_string(),
+            length_chars,
+            score,
+        });
+    }
+
+    // Las lineas descartadas se dicen SIEMPRE y antes del informe. Un lote que
+    // perdio la mitad de las lineas da numeros con la misma pinta que uno
+    // completo.
+    if !skipped.is_empty() {
+        eprintln!("Skipped {} line(s):", skipped.len());
+        for why in &skipped {
+            eprintln!("  {}", why);
+        }
+        eprintln!();
+    }
+
+    if observations.is_empty() {
+        eprintln!("Error: no usable observations in '{}'", path);
+        return ExitCode::from(1);
+    }
+
+    let judge = LlmJudge::new(vec![]);
+    let report = judge.bias_report(&judge_model, &observations);
+
+    println!("Judge bias report for {}", path);
+    println!(
+        "  judge model: {}",
+        if judge_model.is_empty() {
+            "(not given --- every generator counts as another model)"
+        } else {
+            judge_model.as_str()
+        }
+    );
+    println!(
+        "  usable observations: {} of {}",
+        report.n,
+        observations.len()
+    );
+    println!();
+
+    print!("  verbosity (length vs score, Spearman): ");
+    match report.verbosity_rank_correlation {
+        Some(r) => println!("{:+.3}", r),
+        None => println!(
+            "not measurable (fewer than 3 observations, or no variation in length or in score)"
+        ),
+    }
+    println!(
+        "  self-preference: {} own / {} other",
+        report.n_own, report.n_other
+    );
+    match (report.mean_score_own, report.mean_score_other) {
+        (Some(a), Some(b)) => {
+            println!("    mean own:   {:.3}", a);
+            println!("    mean other: {:.3}", b);
+            println!("    delta:      {:+.3}", a - b);
+        }
+        _ => println!(
+            "    not measurable: one side of the batch is empty, so there is nothing to compare"
+        ),
+    }
+    // La advertencia solo tiene sentido si hay algun numero que advertir. Con
+    // las dos cantidades sin medir, imprimirla sugiere que se midio algo.
+    if report.verbosity_rank_correlation.is_none() && report.self_preference_delta.is_none() {
+        println!();
+        println!("Nothing was measurable in this batch. That is a statement about the");
+        println!("batch, not about the judge.");
+        return ExitCode::SUCCESS;
+    }
+
+    println!();
+    println!("Neither number proves a bias on its own. A positive verbosity");
+    println!("correlation is equally consistent with the long answers in this batch");
+    println!("being genuinely better; a positive delta, with that model genuinely");
+    println!("writing better than the others here. To separate the two you need a");
+    println!("controlled comparison --- the same content at two lengths, or the same");
+    println!("text attributed to two generators.");
+
+    ExitCode::SUCCESS
+}
+
+fn print_quality_bias_usage() {
+    println!("ai_cli quality bias - diagnose judge bias over a batch of scores");
+    println!();
+    println!("Usage: ai_cli quality bias <file.jsonl> [--judge <model>]");
+    println!();
+    println!("One JSON object per line, with:");
+    println!("  score         required, the judge's score (0.0-1.0)");
+    println!("  response      the judged text (its length is what gets correlated)");
+    println!("  length_chars  alternative to `response` if you only kept the length");
+    println!("  generator     which model wrote it; without it, self-preference");
+    println!("                cannot be measured and says so");
+    println!();
+    println!("Reports the length/score rank correlation and the own-vs-other score");
+    println!("gap. A quantity that cannot be measured is reported as such, never");
+    println!("as a zero --- on a correlation, zero is the BEST possible news.");
+}
+
 fn print_quality_judge_usage() {
     println!("ai_cli quality judge - score a response with an LLM judge");
     println!();
