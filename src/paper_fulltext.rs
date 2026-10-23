@@ -24,6 +24,7 @@
 //! handled the same way here as everywhere else rather than by a second, divergent copy.
 
 use crate::academic_search::{AcademicPaper, AcademicSearchError};
+use crate::http_client::{HttpRequest, UreqClient};
 
 /// Largest PDF we will pull into memory.
 ///
@@ -90,11 +91,16 @@ pub fn fetch_pdf(url: &str, timeout: std::time::Duration) -> Result<Vec<u8>, Aca
         ));
     }
 
-    let response = crate::academic_search::get_with_retry(|| {
-        ureq::get(url)
-            .config()
-            .timeout_global(Some(timeout))
-            .build()
+    // El tope va en la peticion y no en un `.take()` sobre el lector: este
+    // codigo ya se traia el PDF entero a un `Vec<u8>`, asi que el flujo no
+    // aportaba nada --- era un flujo hacia un buffer. Con `max_body_bytes` el
+    // tope lo aplica el puerto, que FALLA al pasarse en vez de devolver un PDF
+    // cortado, y la comprobacion de `buf.len()` de abajo sigue dando el mensaje
+    // bueno para el caso justo en el limite.
+    let response = crate::academic_search::get_with_retry(&UreqClient, || {
+        HttpRequest::get(url)
+            .timeout(timeout)
+            .max_body_bytes(MAX_PDF_BYTES as u64 + 1)
             .header("User-Agent", crate::academic_search::USER_AGENT)
             .header("Accept", "application/pdf")
     })?;
@@ -103,9 +109,7 @@ pub fn fetch_pdf(url: &str, timeout: std::time::Duration) -> Result<Vec<u8>, Aca
     // some servers lie. It is used to bail out early when present, and the real enforcement
     // is on the bytes actually read.
     if let Some(len) = response
-        .headers()
-        .get("Content-Length")
-        .and_then(|v| v.to_str().ok())
+        .header("Content-Length")
         .and_then(|v| v.parse::<usize>().ok())
     {
         if len > MAX_PDF_BYTES {
@@ -115,14 +119,7 @@ pub fn fetch_pdf(url: &str, timeout: std::time::Duration) -> Result<Vec<u8>, Aca
         }
     }
 
-    use std::io::Read as _;
-    let mut buf = Vec::new();
-    response
-        .into_body()
-        .into_reader()
-        .take((MAX_PDF_BYTES + 1) as u64)
-        .read_to_end(&mut buf)
-        .map_err(|e| AcademicSearchError::Network(e.to_string()))?;
+    let buf = response.body;
 
     if buf.len() > MAX_PDF_BYTES {
         return Err(AcademicSearchError::Parse(format!(

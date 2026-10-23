@@ -5,6 +5,82 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v304 (2026-10-24) - V428: RUSTSEC-2026-0386 en `tokio`, y el primer consumidor detras del puerto (0.2.387)
+
+Dos cosas, y la primera va delante porque es un rojo de seguridad.
+
+### RUSTSEC-2026-0386: `tokio` 1.52.1 -> 1.54.1
+
+Advisory **nueva**, aparecida entre dos ejecuciones de Supply Chain: el push de V427 dejo
+`cargo-deny` en rojo sin que yo hubiera tocado una dependencia. El primer `grep` del log senalaba
+a `polars-error`, que eran solo las ramas del arbol de debajo; el paquete es **`tokio`**.
+
+`AsyncFd::{new, with_interest, try_new, try_with_interest}` aceptan cualquier `T: AsRawFd`, y como
+`RawFd` implementa `AsRawFd`, **codigo seguro puede construir un `AsyncFd` sobre un descriptor
+ajeno o ya cerrado**. Dos formas de romper la seguridad de E/S: `AsFd` deja obtener un
+`BorrowedFd` sin poseer el descriptor, y si el descriptor se duplica y se cierra mientras el
+`AsyncFd` vive y el sistema reutiliza el numero, al soltar el primero se desregistra el del
+segundo --- **uso despues de liberar** cuando salta un evento de disponibilidad.
+
+`Cargo.toml` ya pedia `"1"`, asi que el arreglo es el lock: **11 lineas, un solo paquete**. Por
+version y nunca por `--ignore`, que es la regla de la casa.
+
+Verificado con lo que decide, no con lo que tranquiliza: `cargo deny check advisories licenses
+bans sources` -> **advisories ok, bans ok, licenses ok, sources ok**, y `RUSTSEC-2026-0386`
+desaparece del informe de `cargo audit`.
+
+**Dos sustos que no lo eran, y los dos por instrumentos imprecisos mios:**
+
+* `cargo audit` sin los `--ignore` de CI saca dos vulnerabilidades de `quick-xml` 0.39.4
+  (RUSTSEC-2026-0194 y 0195). Estan **suprimidas en los tres ficheros**, y el trabajo
+  `cargo-audit (mirror of CI audit)` de ese mismo run **paso**: el unico fallo era `cargo-deny`.
+* Contando apariciones por fichero, `RUSTSEC-2026-0253` salia en **1 de 3**, lo que habria sido
+  una deriva de la lista de ignores. Esta en **un comentario** de `deny.toml`, no como entrada.
+  La puerta de sincronia compara las listas parseadas y por eso acierta; el que contaba prosa era
+  mi `grep`.
+
+### El primer consumidor detras del puerto (N77)
+
+V427 dejo escrito y probado el puerto, y dicho que no habia migrado ni un modulo. Ahora van dos:
+**`academic_search` y `paper_fulltext` quedan con CERO `ureq::`.**
+
+El elegido no es el facil: `academic_search` es el que necesita el `Retry-After` y el cuerpo del
+no-2xx, o sea el caso que podia desmontar el diseno. 15 llamadas, 3 helpers y 4 cierres en linea.
+Y `get_with_retry` **pierde de su firma** el `ureq::RequestBuilder<WithoutBody>`: ahora recibe un
+`&dyn HttpClient` y devuelve un `HttpResponse`.
+
+Con eso desaparece su `http_status_as_error(false)`: ya no hace falta pedirlo, **lo garantiza el
+contrato del puerto**. Era una decision repetida en diez sitios y ahora es una sola.
+
+### Y el pago, que es un test que antes no podia existir
+
+Hasta hoy, `get_with_retry` construia su propia peticion y hablaba con el mundo. Para comprobar
+que un 429 con `Retry-After` se reintentaba hacia falta **un servidor que te limitara de verdad**.
+O sea: no se comprobaba. Ahora recibe el cliente, se le pasa uno falso, y hay dos tests sin red:
+
+1. 429 con `retry-after: 0` (en minusculas a proposito) y luego 200 -> exactamente dos intentos.
+2. 429 siempre -> `RateLimit` y **no** `Network`, agotando `MAX_ATTEMPTS`. La distincion importa:
+   el llamante los trata distinto, y "te estan limitando" se arregla con una clave de API mientras
+   "la red no va" no.
+
+**Y el primero no discriminaba.** Escrito tal cual, con el `Retry-After` perdido `retry_delay` cae
+al exponencial, reintenta igual y el test pasa --- solo mas lento. La asercion que lo arregla es de
+tiempo: con la cabecera a `0` no se espera, y el margen es de 2x contra el segundo del exponencial.
+La mutacion **M6** lo confirma, y sin esa asercion habria sobrevivido.
+
+En `paper_fulltext`, el `.take(MAX_PDF_BYTES + 1)` sobre el lector pasa a ser
+`max_body_bytes(MAX_PDF_BYTES + 1)` en la peticion. No se pierde nada: ese codigo **ya** se traia
+el PDF entero a un `Vec<u8>`, asi que era un flujo hacia un buffer. Ahora el tope lo aplica el
+puerto, que falla al pasarse en vez de devolver un PDF cortado.
+
+### Verificacion
+
+**7 de 7 mutaciones** mueren (las 5 del puerto mas M6 y M7 del consumidor). Clippy `-D warnings`
+en 0 con `FEATURES_STD --all-targets`, `FEATURES_MIN` y el conjunto ANCHO; tests de libreria,
+doctests, y las puertas de mutacion, enlaces y sincronia de supresiones.
+
+Queda: **58 modulos** por migrar.
+
 ## [Unreleased] - v303 (2026-10-24) - V427: el puerto HTTP existia y le faltaba un parametro (0.2.386)
 
 N77, primer tramo. Y el resultado de medir antes de disenar es que la tarea estaba mal encuadrada

@@ -17,6 +17,7 @@
 //! - API keys are sourced from environment variables, never logged
 //! - Response Content-Type is validated before parsing
 
+use crate::http_client::{HttpClient, HttpRequest, HttpResponse, UreqClient};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -287,29 +288,27 @@ const MAX_ATTEMPTS: u32 = 3;
 
 /// Perform a GET, retrying while the server says we are going too fast.
 ///
-/// `build` is called afresh for each attempt because a `ureq::Request` is consumed by
+/// `build` is called afresh for each attempt because an [`HttpRequest`] is consumed by
 /// `call()`. On giving up, the error is [`AcademicSearchError::RateLimit`] and **not**
 /// `Network` — the whole point is that the caller can tell "slow down" from "no route to
 /// host", and act differently.
 pub(crate) fn get_with_retry(
-    build: impl Fn() -> ureq::RequestBuilder<ureq::typestate::WithoutBody>,
-) -> Result<ureq::http::Response<ureq::Body>, AcademicSearchError> {
+    client: &dyn HttpClient,
+    build: impl Fn() -> HttpRequest,
+) -> Result<HttpResponse, AcademicSearchError> {
     let mut attempt = 0u32;
     loop {
-        // `http_status_as_error(false)` es lo que mantiene vivo el backoff de
-        // N46: en ureq 3 un 429 llegaria como `Error::StatusCode(u16)` SIN la
-        // respuesta, y con ella se iria la cabecera `Retry-After`, que es
-        // justamente el dato que distingue "espera 30 s" de "espera lo que te
-        // parezca". Asi el no-2xx vuelve como `Ok` con cabeceras intactas.
-        match build().config().http_status_as_error(false).build().call() {
-            Ok(resp) if resp.status().is_success() => return Ok(resp),
+        // El `http_status_as_error(false)` que mantenia vivo el backoff de N46
+        // ya no esta aqui: lo garantiza el puerto. `HttpClient::send` devuelve
+        // el no-2xx ENTERO por contrato, asi que la cabecera `Retry-After` ---
+        // el dato que distingue "espera 30 s" de "espera lo que te parezca" ---
+        // no puede perderse por olvidar un interruptor. Era una decision
+        // repetida en diez sitios y ahora es una sola (N77, V428).
+        match client.send(&build()) {
+            Ok(resp) if resp.is_success() => return Ok(resp),
             Ok(resp) => {
-                let code = resp.status().as_u16();
-                let retry_after = resp
-                    .headers()
-                    .get("Retry-After")
-                    .and_then(|v| v.to_str().ok())
-                    .map(|s| s.to_string());
+                let code = resp.status;
+                let retry_after = resp.header("Retry-After").map(|s| s.to_string());
                 match retry_delay(code, retry_after.as_deref(), attempt) {
                     Some(delay) if attempt + 1 < MAX_ATTEMPTS => {
                         std::thread::sleep(delay);
@@ -326,7 +325,7 @@ pub(crate) fn get_with_retry(
                     }
                 }
             }
-            Err(e) => return Err(AcademicSearchError::Network(e.to_string())),
+            Err(e) => return Err(AcademicSearchError::Network(format!("{:#}", e))),
         }
     }
 }
@@ -500,17 +499,14 @@ impl AcademicSearchProvider for ArxivProvider {
         let url = self.build_url(query, config);
 
         let timeout = config.timeout;
-        let mut response = get_with_retry(|| {
-            ureq::get(&url)
-                .config()
-                .timeout_global(Some(timeout))
-                .build()
+        let response = get_with_retry(&UreqClient, || {
+            HttpRequest::get(url.as_str())
+                .timeout(timeout)
                 .header("User-Agent", USER_AGENT)
         })?;
 
         let xml = response
-            .body_mut()
-            .read_to_string()
+            .text()
             .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
 
         let mut papers = self.parse_atom_response(&xml)?;
@@ -530,17 +526,14 @@ impl AcademicSearchProvider for ArxivProvider {
     fn get_paper(&self, id: &str) -> Result<AcademicPaper, AcademicSearchError> {
         let url = format!("{}?id_list={}", self.base_url, urlencoding::encode(id));
 
-        let mut response = get_with_retry(|| {
-            ureq::get(&url)
-                .config()
-                .timeout_global(Some(Duration::from_secs(10)))
-                .build()
+        let response = get_with_retry(&UreqClient, || {
+            HttpRequest::get(url.as_str())
+                .timeout(Duration::from_secs(10))
                 .header("User-Agent", USER_AGENT)
         })?;
 
         let xml = response
-            .body_mut()
-            .read_to_string()
+            .text()
             .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
 
         let papers = self.parse_atom_response(&xml)?;
@@ -599,15 +592,8 @@ impl SemanticScholarProvider {
     }
 
     /// Build request with optional API key header.
-    fn build_request(
-        &self,
-        url: &str,
-        timeout: Duration,
-    ) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
-        let mut req = ureq::get(url)
-            .config()
-            .timeout_global(Some(timeout))
-            .build();
+    fn build_request(&self, url: &str, timeout: Duration) -> HttpRequest {
+        let mut req = HttpRequest::get(url).timeout(timeout);
         if let Some(key) = &self.api_key {
             req = req.header("x-api-key", key);
         }
@@ -719,11 +705,10 @@ impl AcademicSearchProvider for SemanticScholarProvider {
             fields,
         );
 
-        let mut response = get_with_retry(|| self.build_request(&url, config.timeout))?;
+        let response = get_with_retry(&UreqClient, || self.build_request(&url, config.timeout))?;
 
         let text = response
-            .body_mut()
-            .read_to_string()
+            .text()
             .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
 
         let json: serde_json::Value =
@@ -760,11 +745,12 @@ impl AcademicSearchProvider for SemanticScholarProvider {
             fields,
         );
 
-        let mut response = get_with_retry(|| self.build_request(&url, Duration::from_secs(10)))?;
+        let response = get_with_retry(&UreqClient, || {
+            self.build_request(&url, Duration::from_secs(10))
+        })?;
 
         let text = response
-            .body_mut()
-            .read_to_string()
+            .text()
             .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
 
         let json: serde_json::Value =
@@ -782,11 +768,12 @@ impl AcademicSearchProvider for SemanticScholarProvider {
             fields,
         );
 
-        let mut response = get_with_retry(|| self.build_request(&url, Duration::from_secs(15)))?;
+        let response = get_with_retry(&UreqClient, || {
+            self.build_request(&url, Duration::from_secs(15))
+        })?;
 
         let text = response
-            .body_mut()
-            .read_to_string()
+            .text()
             .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
 
         let json: serde_json::Value =
@@ -815,11 +802,12 @@ impl AcademicSearchProvider for SemanticScholarProvider {
             fields,
         );
 
-        let mut response = get_with_retry(|| self.build_request(&url, Duration::from_secs(15)))?;
+        let response = get_with_retry(&UreqClient, || {
+            self.build_request(&url, Duration::from_secs(15))
+        })?;
 
         let text = response
-            .body_mut()
-            .read_to_string()
+            .text()
             .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
 
         let json: serde_json::Value =
@@ -897,17 +885,14 @@ impl PubMedProvider {
             max_results,
         ));
 
-        let mut response = get_with_retry(|| {
-            ureq::get(&url)
-                .config()
-                .timeout_global(Some(timeout))
-                .build()
+        let response = get_with_retry(&UreqClient, || {
+            HttpRequest::get(url.as_str())
+                .timeout(timeout)
                 .header("User-Agent", USER_AGENT)
         })?;
 
         let text = response
-            .body_mut()
-            .read_to_string()
+            .text()
             .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
 
         let json: serde_json::Value =
@@ -943,17 +928,14 @@ impl PubMedProvider {
             self.base_url, ids_param,
         ));
 
-        let mut response = get_with_retry(|| {
-            ureq::get(&url)
-                .config()
-                .timeout_global(Some(timeout))
-                .build()
+        let response = get_with_retry(&UreqClient, || {
+            HttpRequest::get(url.as_str())
+                .timeout(timeout)
                 .header("User-Agent", USER_AGENT)
         })?;
 
         let xml = response
-            .body_mut()
-            .read_to_string()
+            .text()
             .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
 
         self.parse_pubmed_xml(&xml)
@@ -1152,15 +1134,9 @@ impl OpenAlexProvider {
         }
     }
 
-    fn build_request(
-        &self,
-        url: &str,
-        timeout: Duration,
-    ) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
-        ureq::get(url)
-            .config()
-            .timeout_global(Some(timeout))
-            .build()
+    fn build_request(&self, url: &str, timeout: Duration) -> HttpRequest {
+        HttpRequest::get(url)
+            .timeout(timeout)
             .header("User-Agent", USER_AGENT)
     }
 
@@ -1291,10 +1267,11 @@ impl OpenAlexProvider {
             limit.min(200),
             self.mailto_param(),
         );
-        let mut response = get_with_retry(|| self.build_request(&url, Duration::from_secs(15)))?;
+        let response = get_with_retry(&UreqClient, || {
+            self.build_request(&url, Duration::from_secs(15))
+        })?;
         let text = response
-            .body_mut()
-            .read_to_string()
+            .text()
             .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
         let json: serde_json::Value =
             serde_json::from_str(&text).map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
@@ -1379,10 +1356,9 @@ impl AcademicSearchProvider for OpenAlexProvider {
             self.mailto_param(),
         );
 
-        let mut response = get_with_retry(|| self.build_request(&url, config.timeout))?;
+        let response = get_with_retry(&UreqClient, || self.build_request(&url, config.timeout))?;
         let text = response
-            .body_mut()
-            .read_to_string()
+            .text()
             .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
         let json: serde_json::Value =
             serde_json::from_str(&text).map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
@@ -1408,10 +1384,11 @@ impl AcademicSearchProvider for OpenAlexProvider {
             key,
             self.mailto_param().trim_start_matches('&'),
         );
-        let mut response = get_with_retry(|| self.build_request(&url, Duration::from_secs(10)))?;
+        let response = get_with_retry(&UreqClient, || {
+            self.build_request(&url, Duration::from_secs(10))
+        })?;
         let text = response
-            .body_mut()
-            .read_to_string()
+            .text()
             .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
         let json: serde_json::Value =
             serde_json::from_str(&text).map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
@@ -1433,10 +1410,11 @@ impl AcademicSearchProvider for OpenAlexProvider {
             Self::short_id(paper_id),
             self.mailto_param(),
         );
-        let mut response = get_with_retry(|| self.build_request(&url, Duration::from_secs(15)))?;
+        let response = get_with_retry(&UreqClient, || {
+            self.build_request(&url, Duration::from_secs(15))
+        })?;
         let text = response
-            .body_mut()
-            .read_to_string()
+            .text()
             .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
         let json: serde_json::Value =
             serde_json::from_str(&text).map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
@@ -1508,15 +1486,9 @@ impl CrossrefProvider {
         }
     }
 
-    fn build_request(
-        &self,
-        url: &str,
-        timeout: Duration,
-    ) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
-        ureq::get(url)
-            .config()
-            .timeout_global(Some(timeout))
-            .build()
+    fn build_request(&self, url: &str, timeout: Duration) -> HttpRequest {
+        HttpRequest::get(url)
+            .timeout(timeout)
             .header("User-Agent", USER_AGENT)
     }
 
@@ -1681,10 +1653,9 @@ impl AcademicSearchProvider for CrossrefProvider {
             self.mailto_param(),
         );
 
-        let mut response = get_with_retry(|| self.build_request(&url, config.timeout))?;
+        let response = get_with_retry(&UreqClient, || self.build_request(&url, config.timeout))?;
         let text = response
-            .body_mut()
-            .read_to_string()
+            .text()
             .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
         let json: serde_json::Value =
             serde_json::from_str(&text).map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
@@ -1699,10 +1670,11 @@ impl AcademicSearchProvider for CrossrefProvider {
 
     fn get_paper(&self, id: &str) -> Result<AcademicPaper, AcademicSearchError> {
         let url = format!("{}/works/{}", self.base_url, id);
-        let mut response = get_with_retry(|| self.build_request(&url, Duration::from_secs(10)))?;
+        let response = get_with_retry(&UreqClient, || {
+            self.build_request(&url, Duration::from_secs(10))
+        })?;
         let text = response
-            .body_mut()
-            .read_to_string()
+            .text()
             .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
         let json: serde_json::Value =
             serde_json::from_str(&text).map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
@@ -1728,10 +1700,11 @@ impl AcademicSearchProvider for CrossrefProvider {
     /// by later.
     fn get_references(&self, paper_id: &str) -> Result<Vec<AcademicPaper>, AcademicSearchError> {
         let url = format!("{}/works/{}", self.base_url, paper_id);
-        let mut response = get_with_retry(|| self.build_request(&url, Duration::from_secs(15)))?;
+        let response = get_with_retry(&UreqClient, || {
+            self.build_request(&url, Duration::from_secs(15))
+        })?;
         let text = response
-            .body_mut()
-            .read_to_string()
+            .text()
             .map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
         let json: serde_json::Value =
             serde_json::from_str(&text).map_err(|e| AcademicSearchError::Parse(e.to_string()))?;
@@ -1910,6 +1883,132 @@ fn extract_xml_text(xml: &str, tag: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ======================================================================
+    // El backoff de N46, probado SIN RED (N77, V428)
+    //
+    // Esto es el pago del puerto, y no un extra. Antes `get_with_retry`
+    // construia su propia peticion de `ureq` y hablaba con el mundo, asi que la
+    // unica forma de comprobar que un 429 con `Retry-After` se reintentaba era
+    // tener delante un servidor que te limitara. O sea: no se comprobaba.
+    // ======================================================================
+
+    /// Un cliente falso: el primer intento devuelve 429 con `Retry-After`, el
+    /// segundo un 200.
+    struct ThrottleThenOk {
+        calls: std::sync::Mutex<u32>,
+    }
+
+    impl HttpClient for ThrottleThenOk {
+        fn send(&self, _request: &HttpRequest) -> anyhow::Result<HttpResponse> {
+            let mut calls = self.calls.lock().unwrap();
+            *calls += 1;
+            if *calls == 1 {
+                Ok(HttpResponse {
+                    status: 429,
+                    // En MINUSCULAS a proposito: un servidor real puede mandarla
+                    // asi, y si la busqueda fuera sensible a mayusculas el
+                    // `Retry-After` se perderia y el backoff caeria al valor
+                    // exponencial sin decir nada.
+                    headers: vec![("retry-after".to_string(), "0".to_string())],
+                    body: b"too many requests".to_vec(),
+                })
+            } else {
+                Ok(HttpResponse {
+                    status: 200,
+                    headers: Vec::new(),
+                    body: br#"{"ok":true}"#.to_vec(),
+                })
+            }
+        }
+
+        fn send_streaming(
+            &self,
+            _request: &HttpRequest,
+        ) -> anyhow::Result<Box<dyn std::io::Read + Send>> {
+            anyhow::bail!("este test no usa el flujo")
+        }
+    }
+
+    /// Siempre 429: agota los intentos.
+    struct AlwaysThrottled {
+        calls: std::sync::Mutex<u32>,
+    }
+
+    impl HttpClient for AlwaysThrottled {
+        fn send(&self, _request: &HttpRequest) -> anyhow::Result<HttpResponse> {
+            *self.calls.lock().unwrap() += 1;
+            Ok(HttpResponse {
+                status: 429,
+                headers: vec![("Retry-After".to_string(), "0".to_string())],
+                body: Vec::new(),
+            })
+        }
+
+        fn send_streaming(
+            &self,
+            _request: &HttpRequest,
+        ) -> anyhow::Result<Box<dyn std::io::Read + Send>> {
+            anyhow::bail!("este test no usa el flujo")
+        }
+    }
+
+    #[test]
+    fn test_get_with_retry_honours_a_429_and_then_succeeds() {
+        let client = ThrottleThenOk {
+            calls: std::sync::Mutex::new(0),
+        };
+        let started = std::time::Instant::now();
+        let response = get_with_retry(&client, || {
+            HttpRequest::get("http://nothing.invalid/search")
+        })
+        .expect("reintenta tras el 429 y el segundo intento va bien");
+        let elapsed = started.elapsed();
+
+        assert_eq!(response.status, 200);
+        assert_eq!(
+            *client.calls.lock().unwrap(),
+            2,
+            "exactamente dos intentos: el 429 y el que funciona"
+        );
+
+        // Y esta asercion es la que prueba que el `Retry-After` se LEE, que es
+        // lo unico que el resto del test no distingue: sin leerlo,
+        // `retry_delay` cae al exponencial y el primer reintento espera 1 s
+        // --- el test seguiria pasando, solo mas lento. Con la cabecera a "0"
+        // no espera nada. El margen es de 2x contra ese segundo, que para dos
+        // llamadas en memoria sobra incluso con la maquina cargada.
+        assert!(
+            elapsed < std::time::Duration::from_millis(500),
+            "con Retry-After: 0 no se espera; {:?} dice que no se leyo la cabecera",
+            elapsed
+        );
+    }
+
+    #[test]
+    fn test_get_with_retry_gives_up_as_rate_limit_not_as_network_failure() {
+        let client = AlwaysThrottled {
+            calls: std::sync::Mutex::new(0),
+        };
+        let err = get_with_retry(&client, || {
+            HttpRequest::get("http://nothing.invalid/search")
+        })
+        .expect_err("tres 429 seguidos no son un exito");
+
+        // Que el error sea RateLimit y NO Network importa: el llamante los trata
+        // distinto, y "te estan limitando" se arregla con una clave de API
+        // mientras "la red no va" no.
+        assert!(
+            matches!(err, AcademicSearchError::RateLimit(_)),
+            "esperaba RateLimit, llego {:?}",
+            err
+        );
+        assert_eq!(
+            *client.calls.lock().unwrap(),
+            MAX_ATTEMPTS,
+            "se agotan los MAX_ATTEMPTS intentos, ni uno mas ni uno menos"
+        );
+    }
 
     #[test]
     fn test_academic_source_display() {

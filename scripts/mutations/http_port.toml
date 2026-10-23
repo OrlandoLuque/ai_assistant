@@ -97,3 +97,33 @@ invariant = "una cabecera se encuentra sin importar las mayusculas; si no, un `N
 before = "            .find(|(k, _)| k.eq_ignore_ascii_case(name))"
 after = "            .find(|(k, _)| k == name)"
 occurrences = 1
+
+# ===========================================================================
+# El primer consumidor migrado (V428): academic_search y su backoff de N46.
+#
+# Estas dos existen porque la migracion solo vale si el comportamiento que
+# tenia el modulo sigue ahi, y hasta V428 NO HABIA FORMA DE COMPROBARLO: el
+# `get_with_retry` construia su propia peticion de ureq y hablaba con el mundo,
+# asi que para ver si un 429 se reintentaba hacia falta un servidor que te
+# limitara de verdad. Ahora recibe el cliente y se le puede dar uno falso.
+# ===========================================================================
+
+[[mutation]]
+id = "M6"
+file = "src/academic_search.rs"
+filter = "academic_search::tests::test_get_with_retry_honours_a_429_and_then_succeeds"
+invariant = "el `Retry-After` del 429 se LEE y manda sobre el exponencial; perderlo no rompe nada visible --- simplemente se espera lo que uno adivina en vez de lo que el servidor pidio, que es el defecto que N46 arreglo"
+before = "                let retry_after = resp.header(\"Retry-After\").map(|s| s.to_string());"
+after = "                let retry_after: Option<String> = None;"
+occurrences = 1
+
+[[mutation]]
+id = "M7"
+file = "src/academic_search.rs"
+filter = "academic_search::tests::test_get_with_retry_gives_up_as_rate_limit_not_as_network_failure"
+invariant = "agotar los intentos contra un 429 es `RateLimit`, no `Network`: el llamante los trata distinto y 'te estan limitando' se arregla con una clave de API mientras 'la red no va' no"
+before = """                    Some(_) => {
+                        return Err(AcademicSearchError::RateLimit(format!("""
+after = """                    Some(_) => {
+                        return Err(AcademicSearchError::Network(format!("""
+occurrences = 1
