@@ -5,6 +5,109 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v303 (2026-10-24) - V427: el puerto HTTP existia y le faltaba un parametro (0.2.386)
+
+N77, primer tramo. Y el resultado de medir antes de disenar es que la tarea estaba mal encuadrada
+--- por mi, en su propio titulo: *«confinar el I/O tras el puerto HttpClient (60 modulos tocan
+reqwest/ureq directamente)»*.
+
+### Lo que habia
+
+**El puerto ya estaba escrito.** `src/http_client.rs`, 838 lineas, `trait HttpClient` con
+`UreqClient` y un `MockHttpServer` de pruebas. Su alcance: **tres operaciones JSON**
+(`get_json`, `post_json`, `post_streaming`), pensadas para listar modelos. Sus consumidores:
+**dos modulos**. Los otros **61 hablan `ureq` a pelo** (medido por uso, no por nombre; 4 usan
+`reqwest` y ninguno usa los dos).
+
+### Por que lo esquivaban, que no es lo que yo suponia
+
+`get_json(url, timeout_secs)` **no tiene donde poner un `Authorization`**. Los 35 ficheros que
+mandan cabeceras --- o sea todos los proveedores cloud --- no tenian forma de usarlo. **No era
+indisciplina: era un parametro que faltaba.** Eso cambia el trabajo de «imponer una regla» a
+«arreglar una API», que es mucho mas accionable.
+
+La lista no se adivino. Barrido de los 60 ficheros, con cadenas literales y acotado --- el primer
+intento uso `grep -E` con parentesis sin escapar y dio `ureq::get(` = **0** usos de algo que yo
+mismo habia editado la noche anterior, mas un `.status()` = 705 que contaba el repo entero porque
+`.` es comodin:
+
+| capacidad | usos | ficheros |
+|---|---|---|
+| `timeout_global` | 181 | **45** |
+| `.header(` | 224 | **35** |
+| `get`/`post`/`.call()` | 333 | 40 |
+| `read_json` / `read_to_string` | 152 | 24 / 23 |
+| `into_reader()` (cuerpo en flujo) | 33 | **18** |
+| `http_status_as_error(false)` | 22 | 8 |
+| `.headers()` (leer cabeceras) | 11 | 7 |
+| `delete`/`put`/`head` | 11 | 6 |
+| `max_redirects` | 2 | 2 |
+
+### El puerto, y las decisiones que la medicion dicta
+
+`HttpRequest` / `HttpResponse` / `HttpMethod`, y en el trait **una sola operacion obligatoria**
+(`send`) mas una segunda para flujo. Los tres metodos de antes pasan a **delegar**, asi que
+`providers` y `async_providers` no cambian una linea.
+
+1. **El no-2xx vuelve ENTERO, y no hay interruptor.** En `ureq` 3 `Error::StatusCode(u16)` no
+   lleva la respuesta, asi que los diez sitios que necesitaban el cuerpo tuvieron que pedir
+   `http_status_as_error(false)` uno a uno (V422). Aqui se decide **una vez**: el no-2xx llega con
+   cuerpo y cabeceras y decidir es del llamante. Eso es, literalmente, para lo que vale un puerto.
+2. **Cuerpo en bytes, no `serde_json::Value`.** 24 ficheros leen JSON y **23 leen texto plano**.
+   Forzar JSON habria dejado fuera a casi la mitad.
+3. **El flujo va en un metodo APARTE, y no por simetria.** 18 de los 60 usan `into_reader()`, y lo
+   que leen son descargas de modelos y flujos SSE. Meter eso en un `Vec<u8>` no seria un refactor,
+   seria un GGUF de 5 GB en RAM.
+4. **Tope de cuerpo explicito** (10 MiB por defecto, el de `ureq`) que **falla** en vez de
+   truncar. Un cuerpo cortado es JSON invalido o --- peor --- JSON valido con menos datos.
+5. **Las cabeceras se buscan ignorando mayusculas**, que es lo que dice el RFC 9110. Un servidor
+   manda `retry-after` y otro `Retry-After`; comparar literalmente devuelve `None`, que se lee
+   como «el servidor no la mando» y degrada el backoff de N46 en silencio.
+
+### Un test que no puede observar algo no puede probarlo
+
+El `MockHttpServer` parseaba la peticion y **tiraba las cabeceras**, asi que ningun test podia
+comprobar la capacidad que le faltaba al trait. Se le anade la cabecera cruda (en un `Vec` aparte,
+no como cuarto elemento de la tupla, porque `last_request()` lo llama `opentelemetry_integration`)
+y respuestas con cabeceras propias, para poder devolver un `Retry-After` de verdad.
+
+### Y dos diferencias con `ureq::get(..).call()` que salieron de un test en rojo
+
+Mis dos tests de cabeceras fallaron. En vez de razonar, volque la peticion cruda:
+
+```
+"GET /probe HTTP/1.1
+accept-encoding: gzip
+content-length: 0
+...
+authorization: Bearer tok"
+```
+
+**El puerto funcionaba; mis tests estaban mal.** Dos cosas, las dos ahora fijadas en un test para
+no redescubrirlas:
+
+* **Los nombres de cabecera viajan en minusculas** --- `ureq` 3 los normaliza. Legal (son
+  insensibles a mayusculas), y rompe cualquier comparacion literal.
+* **Un `GET` sin cuerpo manda `content-length: 0`**, que `ureq::get(..).call()` no mandaba.
+  Tambien legal (RFC 9110 8.6), y apuntado porque un servidor quisquilloso es justo lo que no se
+  ve hasta produccion.
+
+### Verificacion
+
+Cinco mutaciones declaradas en `scripts/mutations/http_port.toml`, **5 de 5 mueren** --- una por
+cada decision de arriba, porque todos los fallos candidatos de este modulo devuelven cosas
+plausibles: un error sin cuerpo sigue siendo un error y una cabecera no encontrada sigue siendo un
+`None`. Clippy `-D warnings` en 0 con `FEATURES_STD --all-targets`, con `FEATURES_MIN` y con el
+conjunto ANCHO; **9073** tests; **97** doctests (uno nuevo que consume el puerto desde FUERA de la
+crate); las puertas de mutacion, enlaces y duplicados en verde.
+
+### Lo que NO esta hecho
+
+**Ni un modulo migrado todavia.** Esto es el puerto y su prueba, no la migracion. Los 60 siguen
+hablando `ureq` directamente, y el siguiente paso es llevar `academic_search` --- que necesita el
+`Retry-After` y el cuerpo del no-2xx, o sea el caso duro --- para comprobar que el diseno aguanta
+contra un consumidor real y no solo contra sus tests.
+
 ## [Unreleased] - v302 (2026-10-23) - V426: `IceState` NO era un olvido, y la razon escrita de que no lo fuera tampoco era la correcta (0.2.385)
 
 Seguir con N134 por el nombre que V425 habia marcado como «el mas accionable». Resulta que no

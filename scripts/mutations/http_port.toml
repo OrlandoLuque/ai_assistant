@@ -1,0 +1,99 @@
+# Las mutaciones del puerto HTTP (N77, V427).
+#
+# Este modulo es el sitio donde una decision se toma UNA vez para los 60 que hoy
+# la toman cada uno por su cuenta. Eso es su valor y tambien su riesgo: un fallo
+# aqui no se queda aqui. Y todos los fallos candidatos devuelven cosas
+# plausibles --- un error sin cuerpo sigue siendo un error, una cabecera que no
+# se encuentra sigue siendo un `None`, un cuerpo cortado sigue siendo bytes.
+#
+# Run: python scripts/mutate.py --spec scripts/mutations/http_port.toml
+
+features = "full"
+filter = "http_client::tests"
+
+# ---------------------------------------------------------------------------
+# M1: el no-2xx vuelve a perder su cuerpo
+# ---------------------------------------------------------------------------
+# La razon de ser del puerto. Sin `http_status_as_error(false)`, en ureq 3 un 404
+# llega como `Error::StatusCode(404)` SIN la respuesta, y con el se va el mensaje
+# del proveedor y el `Retry-After` del 429. Eran diez decisiones sueltas antes de
+# V427 (y dos de los doce sitios lo tenian mal); aqui es una, y por eso hay que
+# vigilarla.
+[[mutation]]
+id = "M1"
+file = "src/http_client.rs"
+filter = "http_client::tests::test_port_returns_non_2xx_with_its_body"
+invariant = "el no-2xx vuelve como respuesta completa, con estado y cuerpo, y no como un error sin cuerpo --- el cuerpo es donde el proveedor explica por que dijo no"
+before = """        let mut config = ureq::Agent::config_builder()
+            .timeout_global(Some(request.timeout))
+            .http_status_as_error(false);"""
+after = """        let mut config = ureq::Agent::config_builder().timeout_global(Some(request.timeout));"""
+occurrences = 1
+
+# ---------------------------------------------------------------------------
+# M2: las cabeceras del llamante no se aplican
+# ---------------------------------------------------------------------------
+# El hueco que hacia inservible el trait de tres metodos: `get_json(url,
+# timeout)` no tenia donde poner un `Authorization`, y por eso 35 ficheros lo
+# esquivaban. Si el bucle deja de aplicarlas, el puerto vuelve a ser inservible
+# para los mismos 35 --- y lo hace en silencio, porque la peticion sale y el
+# servidor contesta 401, que se lee como "la clave esta mal".
+[[mutation]]
+id = "M2"
+file = "src/http_client.rs"
+filter = "http_client::tests::test_port_sends_custom_headers"
+invariant = "las cabeceras que pone el llamante llegan al cable; sin ellas el puerto no sirve para ningun proveedor que pida autenticacion, y el sintoma es un 401 que parece una clave mala"
+before = """        for (name, value) in &request.headers {
+            builder = builder.header(name, value);
+        }"""
+after = """        for (name, value) in &request.headers {
+            let _ = (name, value);
+        }"""
+occurrences = 1
+
+# ---------------------------------------------------------------------------
+# M3: `error_for_status` deja de contar lo que paso
+# ---------------------------------------------------------------------------
+# Un "HTTP 400" a secas manda al lector a buscar en el sitio equivocado. El
+# cuerpo es el diagnostico, y es lo unico que distingue "falta un campo" de
+# "modelo inexistente" de "sin credito".
+[[mutation]]
+id = "M3"
+file = "src/http_client.rs"
+filter = "http_client::tests::test_port_returns_non_2xx_with_its_body"
+invariant = "el error de un no-2xx lleva el cuerpo dentro del mensaje; sin el, 'HTTP 400' no dice que arreglar"
+before = """        let body = String::from_utf8_lossy(&self.body);
+        let shown: String = body.chars().take(500).collect();"""
+after = """        let shown = String::new();"""
+occurrences = 1
+
+# ---------------------------------------------------------------------------
+# M4: el tope del cuerpo deja de ser el que pidio el llamante
+# ---------------------------------------------------------------------------
+# El defecto no es que falle: es que NO falle cuando deberia. Un llamante que
+# pide 64 KiB porque sabe lo que espera, y recibe 10 MiB, se ha quedado sin la
+# proteccion que pidio.
+[[mutation]]
+id = "M4"
+file = "src/http_client.rs"
+filter = "http_client::tests::test_port_body_limit_fails_instead_of_truncating"
+invariant = "el tope del cuerpo es el que pidio la peticion, no el de la casa"
+before = "            .limit(request.max_body_bytes)"
+after = "            .limit(DEFAULT_MAX_BODY_BYTES)"
+occurrences = 1
+
+# ---------------------------------------------------------------------------
+# M5: la busqueda de cabeceras pasa a ser sensible a mayusculas
+# ---------------------------------------------------------------------------
+# Los nombres de cabecera son insensibles a mayusculas por RFC 9110, y un
+# servidor puede mandar `retry-after` donde otro manda `Retry-After`. Comparar
+# literalmente da `None` --- que se lee como "el servidor no mando la cabecera"
+# --- y el backoff de N46 se cae al valor por defecto sin decir nada.
+[[mutation]]
+id = "M5"
+file = "src/http_client.rs"
+filter = "http_client::tests::test_port_reads_response_headers_ignoring_case"
+invariant = "una cabecera se encuentra sin importar las mayusculas; si no, un `None` falso se lee como 'el servidor no la mando' y el backoff se degrada en silencio"
+before = "            .find(|(k, _)| k.eq_ignore_ascii_case(name))"
+after = "            .find(|(k, _)| k == name)"
+occurrences = 1

@@ -14,33 +14,324 @@
 //! ```
 
 use anyhow::{Context, Result};
+use std::time::Duration;
+
+/// Tope por defecto del cuerpo que `send` se trae a memoria: 10 MiB, el mismo
+/// que `ureq` aplica en `read_to_vec`.
+///
+/// Se **falla** al pasarse, no se trunca. Un cuerpo truncado es JSON invalido o,
+/// peor, JSON valido con menos datos.
+pub const DEFAULT_MAX_BODY_BYTES: u64 = 10 * 1024 * 1024;
+
+/// Metodo HTTP.
+///
+/// Los seis que el barrido de 2026-10-23 encontro en uso: `GET` y `POST` en 35 y
+/// 32 ficheros, y `PUT`/`DELETE`/`HEAD`/`PATCH` en seis entre todos.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HttpMethod {
+    /// `GET`.
+    Get,
+    /// `POST`.
+    Post,
+    /// `PUT`.
+    Put,
+    /// `DELETE`.
+    Delete,
+    /// `HEAD`.
+    Head,
+    /// `PATCH`.
+    Patch,
+}
+
+impl HttpMethod {
+    /// El nombre del metodo tal como va en la peticion.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Get => "GET",
+            Self::Post => "POST",
+            Self::Put => "PUT",
+            Self::Delete => "DELETE",
+            Self::Head => "HEAD",
+            Self::Patch => "PATCH",
+        }
+    }
+
+    /// Si el metodo lleva cuerpo.
+    pub fn takes_body(self) -> bool {
+        matches!(self, Self::Post | Self::Put | Self::Patch)
+    }
+}
+
+/// Una peticion HTTP, con lo que los 60 modulos que hablan `ureq` a pelo
+/// resultaron necesitar de verdad.
+///
+/// ```rust,no_run
+/// use ai_assistant::{HttpClient, HttpRequest, UreqClient};
+/// use std::time::Duration;
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let request = HttpRequest::post_json(
+///     "http://localhost:11434/api/chat",
+///     &serde_json::json!({"model": "llama3.1:8b"}),
+/// )?
+/// .header("Authorization", "Bearer un-token")
+/// .timeout(Duration::from_secs(60));
+///
+/// // Un no-2xx NO es un error de transporte: vuelve con su cuerpo.
+/// let response = UreqClient.send(&request)?;
+/// if response.is_success() {
+///     let body = response.json()?;
+///     println!("{}", body);
+/// } else {
+///     // Y aqui sigue estando el mensaje del proveedor, y el Retry-After.
+///     eprintln!("HTTP {}: {}", response.status, response.text()?);
+///     if let Some(wait) = response.header("retry-after") {
+///         eprintln!("reintentar en {}s", wait);
+///     }
+/// }
+/// # Ok(())
+/// # }
+/// ```
+///
+/// La lista no es de diseno, es **medida** (2026-10-23, N77): un plazo global en
+/// 45 ficheros, cabeceras propias en 35, cuerpo JSON en 21, y la cola de
+/// `PUT`/`DELETE`/`HEAD`, redirecciones y plazo de conexion en menos de diez
+/// cada una.
+///
+/// Campos publicos y constructores a proposito: un tipo que no se puede
+/// construir desde fuera de la crate no es un puerto, es un detalle interno con
+/// `pub` delante.
+#[derive(Debug, Clone)]
+pub struct HttpRequest {
+    /// El metodo.
+    pub method: HttpMethod,
+    /// La URL completa.
+    pub url: String,
+    /// Cabeceras a enviar, en orden.
+    pub headers: Vec<(String, String)>,
+    /// El cuerpo, en bytes.
+    ///
+    /// Bytes y no `serde_json::Value` porque de los 24 ficheros que leen JSON
+    /// hay 23 que leen texto plano, y forzar JSON los habria dejado fuera.
+    pub body: Option<Vec<u8>>,
+    /// Plazo total de la peticion.
+    pub timeout: Duration,
+    /// Plazo SOLO para establecer la conexion, mas corto que el total.
+    ///
+    /// Sin esto, `ureq` 3 ante un puerto cerrado gasta todo el presupuesto
+    /// reintentando y devuelve un timeout global, con lo que "no hay nadie
+    /// escuchando" y "el servidor tarda" se vuelven el mismo error. Medido en
+    /// V422.
+    pub connect_timeout: Option<Duration>,
+    /// Cuantas redirecciones seguir. `Some(0)` las prohibe (proteccion SSRF).
+    pub max_redirects: Option<u32>,
+    /// Tope del cuerpo a traer a memoria. Ver [`DEFAULT_MAX_BODY_BYTES`].
+    pub max_body_bytes: u64,
+}
+
+impl HttpRequest {
+    /// Una peticion con el metodo y la URL dados y todo lo demas por defecto.
+    pub fn new(method: HttpMethod, url: impl Into<String>) -> Self {
+        Self {
+            method,
+            url: url.into(),
+            headers: Vec::new(),
+            body: None,
+            timeout: Duration::from_secs(30),
+            connect_timeout: None,
+            max_redirects: None,
+            max_body_bytes: DEFAULT_MAX_BODY_BYTES,
+        }
+    }
+
+    /// Un `GET`.
+    pub fn get(url: impl Into<String>) -> Self {
+        Self::new(HttpMethod::Get, url)
+    }
+
+    /// Un `POST` con cuerpo JSON y su `Content-Type` ya puesto.
+    ///
+    /// La cabecera va aqui porque `ureq::send_json` la ponia sola y quitarla sin
+    /// darse cuenta fue una de las trampas de la subida a `ureq` 3: algunos
+    /// servidores rechazan JSON sin declarar.
+    pub fn post_json(url: impl Into<String>, body: &serde_json::Value) -> Result<Self> {
+        let bytes = serde_json::to_vec(body).context("failed to serialize request body")?;
+        Ok(Self::new(HttpMethod::Post, url)
+            .header("Content-Type", "application/json")
+            .body(bytes))
+    }
+
+    /// Anade una cabecera.
+    pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.headers.push((name.into(), value.into()));
+        self
+    }
+
+    /// Pone el cuerpo.
+    pub fn body(mut self, bytes: Vec<u8>) -> Self {
+        self.body = Some(bytes);
+        self
+    }
+
+    /// Pone el plazo total.
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    /// Pone el plazo de conexion.
+    pub fn connect_timeout(mut self, timeout: Duration) -> Self {
+        self.connect_timeout = Some(timeout);
+        self
+    }
+
+    /// Limita las redirecciones. `0` las prohibe.
+    pub fn max_redirects(mut self, max: u32) -> Self {
+        self.max_redirects = Some(max);
+        self
+    }
+
+    /// Cambia el tope del cuerpo.
+    pub fn max_body_bytes(mut self, max: u64) -> Self {
+        self.max_body_bytes = max;
+        self
+    }
+}
+
+/// Una respuesta HTTP, **venga o no con un 2xx**.
+///
+/// Esa es la decision de fondo del puerto. En `ureq` 3,
+/// `Error::StatusCode(u16)` no lleva la respuesta, asi que los diez sitios que
+/// necesitaban el cuerpo del error tuvieron que pedir
+/// `http_status_as_error(false)` uno por uno (V422), y los que se olvidaran
+/// perderian en silencio el mensaje del proveedor y el `Retry-After` del 429.
+/// Aqui no hay interruptor: el no-2xx **siempre** llega entero, y decidir que
+/// hacer con el es del llamante.
+#[derive(Debug, Clone)]
+pub struct HttpResponse {
+    /// Codigo de estado.
+    pub status: u16,
+    /// Cabeceras de la respuesta, en orden.
+    pub headers: Vec<(String, String)>,
+    /// Cuerpo en bytes.
+    pub body: Vec<u8>,
+}
+
+impl HttpResponse {
+    /// Si el estado esta en 200-299.
+    pub fn is_success(&self) -> bool {
+        (200..300).contains(&self.status)
+    }
+
+    /// Busca una cabecera **ignorando mayusculas**.
+    ///
+    /// Los nombres de cabecera son insensibles a mayusculas por RFC 9110, y un
+    /// servidor puede responder `retry-after` donde otro manda `Retry-After`.
+    /// Comparar literalmente es un fallo que solo aparece contra el servidor que
+    /// no te esperabas.
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
+
+    /// El cuerpo como texto.
+    pub fn text(&self) -> Result<String> {
+        String::from_utf8(self.body.clone()).context("response body is not valid UTF-8")
+    }
+
+    /// El cuerpo parseado como JSON.
+    pub fn json(&self) -> Result<serde_json::Value> {
+        serde_json::from_slice(&self.body).context("failed to parse JSON response")
+    }
+
+    /// Error si el estado no es 2xx, **con el cuerpo dentro del mensaje**.
+    ///
+    /// Lo que convierte "el servidor dijo que no" en un diagnostico: el cuerpo
+    /// es donde el proveedor explica por que.
+    pub fn error_for_status(&self) -> Result<()> {
+        if self.is_success() {
+            return Ok(());
+        }
+        let body = String::from_utf8_lossy(&self.body);
+        let shown: String = body.chars().take(500).collect();
+        anyhow::bail!(
+            "HTTP {}{}",
+            self.status,
+            if shown.trim().is_empty() {
+                String::new()
+            } else {
+                format!(": {}", shown)
+            }
+        )
+    }
+}
 
 /// Abstraction over HTTP operations for provider communication.
 ///
 /// Implementing this trait allows swapping the real HTTP client with a mock
 /// for testing provider parsing logic without network access.
 pub trait HttpClient: Send + Sync {
-    /// Perform a GET request and return the parsed JSON response.
-    fn get_json(&self, url: &str, timeout_secs: u64) -> Result<serde_json::Value>;
+    /// Envia la peticion y devuelve la respuesta, **sea o no un 2xx**.
+    ///
+    /// Es el unico metodo que un implementador tiene que escribir; todo lo demas
+    /// del trait se deriva de aqui.
+    fn send(&self, request: &HttpRequest) -> Result<HttpResponse>;
 
-    /// Perform a POST request with a JSON body and return the parsed JSON response.
+    /// Envia la peticion y devuelve el cuerpo como flujo, sin traerlo a memoria.
+    ///
+    /// Separado de [`HttpClient::send`] **a proposito**, no por simetria: 18 de
+    /// los 60 modulos medidos usan `into_reader()`, y lo que leen son descargas
+    /// de modelos y flujos SSE. Meter eso en un `Vec<u8>` no seria un refactor,
+    /// seria cargarse el caso de uso --- un GGUF de 5 GB en RAM.
+    fn send_streaming(&self, request: &HttpRequest) -> Result<Box<dyn std::io::Read + Send>>;
+
+    /// `GET` que devuelve JSON, o error si el estado no es 2xx.
+    ///
+    /// Se conserva porque `providers` y `async_providers` la llaman. Antes
+    /// perdia el cuerpo del no-2xx (en `ureq` 3 `Error::StatusCode` no lo
+    /// lleva); ahora lo mete en el mensaje, que es estrictamente mejor para
+    /// diagnosticar.
+    fn get_json(&self, url: &str, timeout_secs: u64) -> Result<serde_json::Value> {
+        let request = HttpRequest::get(url).timeout(Duration::from_secs(timeout_secs));
+        let response = self
+            .send(&request)
+            .with_context(|| format!("GET request failed: {}", url))?;
+        response
+            .error_for_status()
+            .with_context(|| format!("GET {}", url))?;
+        response.json()
+    }
+
+    /// `POST` con cuerpo JSON que devuelve JSON, o error si el estado no es 2xx.
     fn post_json(
         &self,
         url: &str,
         body: &serde_json::Value,
         timeout_secs: u64,
-    ) -> Result<serde_json::Value>;
+    ) -> Result<serde_json::Value> {
+        let request = HttpRequest::post_json(url, body)?.timeout(Duration::from_secs(timeout_secs));
+        let response = self
+            .send(&request)
+            .with_context(|| format!("POST request failed: {}", url))?;
+        response
+            .error_for_status()
+            .with_context(|| format!("POST {}", url))?;
+        response.json()
+    }
 
-    /// Perform a POST request and return a streaming reader for the response body.
-    ///
-    /// Used for streaming generation responses where the server sends chunks
-    /// incrementally (e.g., Ollama streaming, OpenAI SSE).
+    /// `POST` con cuerpo JSON cuya respuesta se lee como flujo.
     fn post_streaming(
         &self,
         url: &str,
         body: &serde_json::Value,
         timeout_secs: u64,
-    ) -> Result<Box<dyn std::io::Read + Send>>;
+    ) -> Result<Box<dyn std::io::Read + Send>> {
+        let request = HttpRequest::post_json(url, body)?.timeout(Duration::from_secs(timeout_secs));
+        self.send_streaming(&request)
+            .with_context(|| format!("POST streaming request failed: {}", url))
+    }
 }
 
 /// Default HTTP client using the `ureq` library.
@@ -49,50 +340,89 @@ pub trait HttpClient: Send + Sync {
 /// Wraps `ureq::get()` and `ureq::post()` with configurable timeouts.
 pub struct UreqClient;
 
+impl UreqClient {
+    /// Construye la peticion de `ureq` comun a `send` y `send_streaming`.
+    ///
+    /// `http_status_as_error(false)` va aqui y **no es opcional**: es lo que
+    /// hace que el no-2xx vuelva con cuerpo y cabeceras, que es el contrato de
+    /// [`HttpResponse`]. Ponerlo en un solo sitio es justamente el punto del
+    /// puerto --- antes eran diez decisiones sueltas y ocho las tomaban bien.
+    fn build(request: &HttpRequest) -> Result<ureq::http::Request<Vec<u8>>> {
+        let mut builder = ureq::http::Request::builder()
+            .method(request.method.as_str())
+            .uri(&request.url);
+        for (name, value) in &request.headers {
+            builder = builder.header(name, value);
+        }
+        builder
+            .body(request.body.clone().unwrap_or_default())
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "bad {} request for {}: {}",
+                    request.method.as_str(),
+                    request.url,
+                    e
+                )
+            })
+    }
+
+    /// El agente con la configuracion de ESTA peticion.
+    fn agent(request: &HttpRequest) -> ureq::Agent {
+        let mut config = ureq::Agent::config_builder()
+            .timeout_global(Some(request.timeout))
+            .http_status_as_error(false);
+        if let Some(connect) = request.connect_timeout {
+            config = config.timeout_connect(Some(connect));
+        }
+        if let Some(max) = request.max_redirects {
+            config = config.max_redirects(max);
+        }
+        ureq::Agent::new_with_config(config.build())
+    }
+}
+
 impl HttpClient for UreqClient {
-    fn get_json(&self, url: &str, timeout_secs: u64) -> Result<serde_json::Value> {
-        let mut response = ureq::get(url)
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(timeout_secs)))
-            .build()
-            .call()
-            .with_context(|| format!("GET request failed: {}", url))?;
-        response
+    fn send(&self, request: &HttpRequest) -> Result<HttpResponse> {
+        let http_request = Self::build(request)?;
+        let mut response = Self::agent(request)
+            .run(http_request)
+            .with_context(|| format!("{} {}", request.method.as_str(), request.url))?;
+
+        let status = response.status().as_u16();
+        let headers = response
+            .headers()
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.as_str().to_string(),
+                    v.to_str().unwrap_or_default().to_string(),
+                )
+            })
+            .collect();
+        let body = response
             .body_mut()
-            .read_json()
-            .context("Failed to parse JSON response")
+            .with_config()
+            .limit(request.max_body_bytes)
+            .read_to_vec()
+            .with_context(|| {
+                format!(
+                    "failed to read response body from {} (limit {} bytes)",
+                    request.url, request.max_body_bytes
+                )
+            })?;
+
+        Ok(HttpResponse {
+            status,
+            headers,
+            body,
+        })
     }
 
-    fn post_json(
-        &self,
-        url: &str,
-        body: &serde_json::Value,
-        timeout_secs: u64,
-    ) -> Result<serde_json::Value> {
-        let mut response = ureq::post(url)
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(timeout_secs)))
-            .build()
-            .send_json(body)
-            .with_context(|| format!("POST request failed: {}", url))?;
-        response
-            .body_mut()
-            .read_json()
-            .context("Failed to parse JSON response")
-    }
-
-    fn post_streaming(
-        &self,
-        url: &str,
-        body: &serde_json::Value,
-        timeout_secs: u64,
-    ) -> Result<Box<dyn std::io::Read + Send>> {
-        let response = ureq::post(url)
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(timeout_secs)))
-            .build()
-            .send_json(body)
-            .with_context(|| format!("POST streaming request failed: {}", url))?;
+    fn send_streaming(&self, request: &HttpRequest) -> Result<Box<dyn std::io::Read + Send>> {
+        let http_request = Self::build(request)?;
+        let response = Self::agent(request)
+            .run(http_request)
+            .with_context(|| format!("{} {} (streaming)", request.method.as_str(), request.url))?;
         Ok(Box::new(response.into_body().into_reader()))
     }
 }
@@ -270,9 +600,12 @@ macro_rules! validate_features {
 pub struct MockHttpServer {
     addr: std::net::SocketAddr,
     /// Queued responses: (status_code, content_type, body)
-    responses: std::sync::Arc<std::sync::Mutex<Vec<(u16, String, String)>>>,
+    /// Cola de respuestas: (estado, content-type, cabeceras extra, cuerpo).
+    #[allow(clippy::type_complexity)]
+    responses: std::sync::Arc<std::sync::Mutex<Vec<(u16, String, Vec<(String, String)>, String)>>>,
     /// Received requests: (method, path, body)
     requests: std::sync::Arc<std::sync::Mutex<Vec<(String, String, String)>>>,
+    heads: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
     /// Background thread handle
     _handle: Option<std::thread::JoinHandle<()>>,
 }
@@ -286,10 +619,17 @@ impl MockHttpServer {
 
         let responses = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        // La cabecera cruda, para poder comprobar que una cabecera que el
+        // llamante puso llego de verdad al cable. Hasta V427 el mock la parseaba
+        // y la tiraba, asi que ningun test podia probarlo --- y "el puerto
+        // manda cabeceras" era justo la capacidad que le faltaba al trait.
+        let heads: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let ready = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
         let resp_clone = responses.clone();
         let req_clone = requests.clone();
+        let head_clone = heads.clone();
         let ready_clone = ready.clone();
 
         let handle = std::thread::spawn(move || {
@@ -360,15 +700,23 @@ impl MockHttpServer {
                             String::new()
                         };
 
+                        // La cabecera cruda es todo lo anterior a la linea vacia.
+                        let head = request_str
+                            .find("\r\n\r\n")
+                            .map(|pos| request_str[..pos].to_string())
+                            .unwrap_or_else(|| request_str.clone());
+                        head_clone.lock().unwrap().push(head);
+
                         req_clone.lock().unwrap().push((method, path, body));
 
                         // Get next response from queue
-                        let (status, content_type, resp_body) = {
+                        let (status, content_type, extra_headers, resp_body) = {
                             let mut q = resp_clone.lock().unwrap();
                             if q.is_empty() {
                                 (
                                     404,
                                     "text/plain".to_string(),
+                                    Vec::new(),
                                     "No responses queued".to_string(),
                                 )
                             } else {
@@ -388,9 +736,13 @@ impl MockHttpServer {
                         };
 
                         // Write HTTP response
+                        let extra: String = extra_headers
+                            .iter()
+                            .map(|(k, v): &(String, String)| format!("{}: {}\r\n", k, v))
+                            .collect();
                         let response = format!(
-                            "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                            status, reason, content_type, resp_body.len(), resp_body
+                            "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\n{}Connection: close\r\n\r\n{}",
+                            status, reason, content_type, resp_body.len(), extra, resp_body
                         );
                         std::io::Write::write_all(&mut stream, response.as_bytes()).ok();
                     }
@@ -408,6 +760,7 @@ impl MockHttpServer {
             addr,
             responses,
             requests,
+            heads,
             _handle: Some(handle),
         }
     }
@@ -422,16 +775,46 @@ impl MockHttpServer {
         self.responses.lock().unwrap().push((
             status,
             "application/json".to_string(),
+            Vec::new(),
             body.to_string(),
         ));
     }
 
+    /// Encola una respuesta con cabeceras propias.
+    ///
+    /// Existe para poder devolver un `Retry-After` --- el 429 de N46 --- y
+    /// comprobar que el puerto lo entrega al llamante.
+    pub fn enqueue_with_headers(&self, status: u16, headers: Vec<(String, String)>, body: &str) {
+        self.responses.lock().unwrap().push((
+            status,
+            "text/plain".to_string(),
+            headers,
+            body.to_string(),
+        ));
+    }
+
+    /// La cabecera CRUDA de la ultima peticion recibida, tal como llego.
+    ///
+    /// Sondea un momento, igual que `last_request`, porque el hilo del servidor
+    /// puede ir por detras del cliente.
+    pub fn last_request_head(&self) -> Option<String> {
+        for _ in 0..50 {
+            if let Some(head) = self.heads.lock().unwrap().last().cloned() {
+                return Some(head);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        None
+    }
+
     /// Enqueue a plain text response
     pub fn enqueue_text(&self, status: u16, body: &str) {
-        self.responses
-            .lock()
-            .unwrap()
-            .push((status, "text/plain".to_string(), body.to_string()));
+        self.responses.lock().unwrap().push((
+            status,
+            "text/plain".to_string(),
+            Vec::new(),
+            body.to_string(),
+        ));
     }
 
     /// Get the last received request (method, path, body).
@@ -487,33 +870,20 @@ mod tests {
     }
 
     impl HttpClient for MockHttpClient {
-        fn get_json(&self, _url: &str, _timeout_secs: u64) -> Result<serde_json::Value> {
+        fn send(&self, _request: &HttpRequest) -> Result<HttpResponse> {
             let mut responses = self.responses.lock().unwrap();
             if responses.is_empty() {
                 anyhow::bail!("No mock responses configured");
             }
-            responses.remove(0)
+            let value = responses.remove(0)?;
+            Ok(HttpResponse {
+                status: 200,
+                headers: Vec::new(),
+                body: serde_json::to_vec(&value)?,
+            })
         }
 
-        fn post_json(
-            &self,
-            _url: &str,
-            _body: &serde_json::Value,
-            _timeout_secs: u64,
-        ) -> Result<serde_json::Value> {
-            let mut responses = self.responses.lock().unwrap();
-            if responses.is_empty() {
-                anyhow::bail!("No mock responses configured");
-            }
-            responses.remove(0)
-        }
-
-        fn post_streaming(
-            &self,
-            _url: &str,
-            _body: &serde_json::Value,
-            _timeout_secs: u64,
-        ) -> Result<Box<dyn std::io::Read + Send>> {
+        fn send_streaming(&self, _request: &HttpRequest) -> Result<Box<dyn std::io::Read + Send>> {
             let mut responses = self.responses.lock().unwrap();
             if responses.is_empty() {
                 anyhow::bail!("No mock responses configured");
@@ -521,6 +891,253 @@ mod tests {
             let value = responses.remove(0)?;
             let bytes = serde_json::to_vec(&value)?;
             Ok(Box::new(std::io::Cursor::new(bytes)))
+        }
+    }
+
+    // ======================================================================
+    // El puerto (N77). Cada test fija una capacidad que el trait de tres
+    // metodos NO podia expresar, y por la que 60 modulos lo esquivaban.
+    // ======================================================================
+
+    /// LA razon por la que el puerto no se usaba. `get_json(url, timeout_secs)`
+    /// no tiene donde poner un `Authorization`, asi que los 35 ficheros medidos
+    /// que mandan cabeceras --- o sea todos los proveedores cloud --- no tenian
+    /// forma de usarlo. No era indisciplina: era un parametro que faltaba.
+    #[test]
+    fn test_port_sends_custom_headers() {
+        let server = MockHttpServer::start();
+        server.enqueue_json(200, serde_json::json!({"ok": true}));
+
+        let request = HttpRequest::get(format!("{}/v1/models", server.url()))
+            .header("Authorization", "Bearer sk-not-a-real-key")
+            .header("X-Custom-Thing", "42")
+            .timeout(Duration::from_secs(5));
+        let response = UreqClient.send(&request).expect("the mock server answered");
+        assert!(response.is_success());
+
+        let head = server
+            .last_request_head()
+            .expect("the server recorded the request head");
+        // En MINUSCULAS a proposito: `ureq` 3 normaliza los nombres de cabecera
+        // al mandarlos (son insensibles a mayusculas por RFC 9110), asi que
+        // buscar "Authorization:" literal falla aunque la cabecera SI viaje. Lo
+        // descubri haciendo fallar este test y volcando la peticion cruda.
+        let lower = head.to_ascii_lowercase();
+        assert!(
+            lower.contains("authorization: bearer sk-not-a-real-key"),
+            "head = {}",
+            head
+        );
+        assert!(lower.contains("x-custom-thing: 42"), "head = {}", head);
+    }
+
+    /// El contrato de fondo: el no-2xx vuelve ENTERO, con cuerpo y estado, y no
+    /// como un error sin cuerpo. En `ureq` 3, `Error::StatusCode(u16)` no lleva
+    /// la respuesta, asi que diez sitios tuvieron que pedir
+    /// `http_status_as_error(false)` uno a uno (V422) --- y el que se olvidara
+    /// perdia en silencio el mensaje del proveedor.
+    #[test]
+    fn test_port_returns_non_2xx_with_its_body() {
+        let server = MockHttpServer::start();
+        server.enqueue_json(
+            404,
+            serde_json::json!({"error": {"message": "model not found"}}),
+        );
+
+        let request = HttpRequest::get(format!("{}/v1/models/nope", server.url()))
+            .timeout(Duration::from_secs(5));
+        let response = UreqClient
+            .send(&request)
+            .expect("a 404 is an answer, not a transport failure");
+
+        assert_eq!(response.status, 404);
+        assert!(!response.is_success());
+        let json = response.json().expect("the error body is still JSON");
+        assert_eq!(json["error"]["message"], "model not found");
+
+        // Y el mensaje de `error_for_status` LLEVA el cuerpo, que es lo que
+        // convierte "el servidor dijo que no" en un diagnostico.
+        let err = response
+            .error_for_status()
+            .expect_err("404 is not a success");
+        let text = format!("{}", err);
+        assert!(text.contains("404"), "err = {}", text);
+        assert!(text.contains("model not found"), "err = {}", text);
+    }
+
+    /// El caso de N46: el backoff honesto necesita el `Retry-After` de un 429.
+    /// Y los nombres de cabecera son insensibles a mayusculas por RFC 9110, asi
+    /// que compararlos literalmente es un fallo que solo aparece contra el
+    /// servidor que no te esperabas.
+    #[test]
+    fn test_port_reads_response_headers_ignoring_case() {
+        let server = MockHttpServer::start();
+        server.enqueue_with_headers(
+            500,
+            vec![("Retry-After".to_string(), "42".to_string())],
+            "slow down",
+        );
+
+        let request =
+            HttpRequest::get(format!("{}/search", server.url())).timeout(Duration::from_secs(5));
+        let response = UreqClient.send(&request).expect("the mock server answered");
+
+        assert_eq!(response.header("Retry-After"), Some("42"));
+        assert_eq!(response.header("retry-after"), Some("42"));
+        assert_eq!(response.header("RETRY-AFTER"), Some("42"));
+        // Y una que no esta es None, no una cadena vacia.
+        assert_eq!(response.header("X-Not-Sent"), None);
+        assert_eq!(response.text().expect("utf-8"), "slow down");
+    }
+
+    /// Los seis metodos medidos, no solo los dos del trait viejo. `PUT`,
+    /// `DELETE` y `HEAD` aparecian en seis ficheros entre todos, y ninguno tenia
+    /// por donde entrar.
+    #[test]
+    fn test_port_covers_methods_beyond_get_and_post() {
+        let server = MockHttpServer::start();
+        server.enqueue_text(200, "deleted");
+        let request = HttpRequest::new(HttpMethod::Delete, format!("{}/thing/1", server.url()))
+            .timeout(Duration::from_secs(5));
+        UreqClient.send(&request).expect("DELETE went through");
+        let (method, path, _) = server.last_request().expect("recorded");
+        assert_eq!(method, "DELETE");
+        assert_eq!(path, "/thing/1");
+
+        let server2 = MockHttpServer::start();
+        server2.enqueue_text(200, "put");
+        let request = HttpRequest::new(HttpMethod::Put, format!("{}/thing/2", server2.url()))
+            .body(b"payload".to_vec())
+            .timeout(Duration::from_secs(5));
+        UreqClient.send(&request).expect("PUT went through");
+        let (method, _, body) = server2.last_request().expect("recorded");
+        assert_eq!(method, "PUT");
+        assert_eq!(body, "payload");
+    }
+
+    /// Un cuerpo por encima del tope FALLA, no se trunca a medias. Un cuerpo
+    /// truncado es JSON invalido o --- mucho peor --- JSON valido con menos
+    /// datos, que es un resultado silenciosamente equivocado.
+    #[test]
+    fn test_port_body_limit_fails_instead_of_truncating() {
+        let server = MockHttpServer::start();
+        let big = "x".repeat(4096);
+        server.enqueue_text(200, &big);
+
+        let request = HttpRequest::get(format!("{}/big", server.url()))
+            .timeout(Duration::from_secs(5))
+            .max_body_bytes(64);
+        let result = UreqClient.send(&request);
+        assert!(
+            result.is_err(),
+            "4 KiB with a 64-byte limit must fail, not come back short"
+        );
+    }
+
+    /// `send_json` de `ureq` ponia el `Content-Type` por su cuenta, y perderlo
+    /// sin darse cuenta fue una de las trampas de la subida a `ureq` 3: algunos
+    /// servidores rechazan JSON sin declarar. Aqui se comprueba EN EL CABLE.
+    #[test]
+    fn test_port_post_json_declares_its_content_type() {
+        let server = MockHttpServer::start();
+        server.enqueue_json(200, serde_json::json!({"ok": true}));
+
+        let request = HttpRequest::post_json(
+            format!("{}/v1/chat", server.url()),
+            &serde_json::json!({"model": "m"}),
+        )
+        .expect("serialises")
+        .timeout(Duration::from_secs(5));
+        UreqClient.send(&request).expect("the mock server answered");
+
+        let head = server.last_request_head().expect("recorded");
+        assert!(
+            head.to_ascii_lowercase()
+                .contains("content-type: application/json"),
+            "head = {}",
+            head
+        );
+        let (_, _, body) = server.last_request().expect("recorded");
+        assert_eq!(body, r#"{"model":"m"}"#);
+    }
+
+    /// Los tres metodos de conveniencia siguen funcionando sobre `send`, que es
+    /// lo que permite que `providers` y `async_providers` no cambien una linea.
+    /// Y `get_json` ahora SI da error con un no-2xx, como antes --- comprobado,
+    /// porque un metodo derivado es donde se pierde un comportamiento sin que
+    /// nadie lo note.
+    #[test]
+    fn test_convenience_methods_still_delegate_and_still_reject_non_2xx() {
+        let server = MockHttpServer::start();
+        server.enqueue_json(200, serde_json::json!({"models": []}));
+        let json = UreqClient
+            .get_json(&format!("{}/api/tags", server.url()), 5)
+            .expect("200 parses");
+        assert!(json["models"].is_array());
+
+        let server2 = MockHttpServer::start();
+        server2.enqueue_json(500, serde_json::json!({"error": "boom"}));
+        let err = UreqClient
+            .get_json(&format!("{}/api/tags", server2.url()), 5)
+            .expect_err("a 500 must still be an error for get_json");
+        let text = format!("{:#}", err);
+        assert!(text.contains("500"), "err = {}", text);
+        assert!(
+            text.contains("boom"),
+            "el cuerpo del error va dentro: {}",
+            text
+        );
+    }
+
+    /// Fija las dos diferencias observables entre el puerto y el
+    /// `ureq::get(..).call()` que sustituye, para que no se redescubran:
+    ///
+    /// 1. **Los nombres de cabecera viajan en minusculas.** `ureq` 3 los
+    ///    normaliza. Es legal --- RFC 9110 los declara insensibles a
+    ///    mayusculas --- pero rompe cualquier comparacion literal, y me costo
+    ///    un test en rojo averiguarlo.
+    /// 2. **Un `GET` sin cuerpo manda `content-length: 0`**, que
+    ///    `ureq::get(..).call()` no mandaba. Tambien legal (RFC 9110 8.6), y
+    ///    apuntado aqui porque un servidor quisquilloso es justo el tipo de
+    ///    cosa que no se ve hasta produccion.
+    #[test]
+    fn test_port_wire_format_differences_are_pinned() {
+        let server = MockHttpServer::start();
+        server.enqueue_json(200, serde_json::json!({}));
+        let request = HttpRequest::get(format!("{}/x", server.url()))
+            .header("X-Mixed-Case", "v")
+            .timeout(Duration::from_secs(5));
+        UreqClient.send(&request).expect("answered");
+
+        let head = server.last_request_head().expect("recorded");
+        assert!(
+            head.contains("x-mixed-case: v"),
+            "los nombres van en minusculas: {}",
+            head
+        );
+        assert!(
+            !head.contains("X-Mixed-Case"),
+            "y NO en el caso original: {}",
+            head
+        );
+        assert!(
+            head.to_ascii_lowercase().contains("content-length: 0"),
+            "un GET sin cuerpo manda content-length: 0: {}",
+            head
+        );
+    }
+
+    /// `takes_body` existe para que un llamante pueda preguntarlo; probado para
+    /// que no sea una funcion publica que nadie ha ejecutado nunca.
+    #[test]
+    fn test_http_method_names_and_body_expectations() {
+        assert_eq!(HttpMethod::Get.as_str(), "GET");
+        assert_eq!(HttpMethod::Patch.as_str(), "PATCH");
+        for m in [HttpMethod::Post, HttpMethod::Put, HttpMethod::Patch] {
+            assert!(m.takes_body(), "{:?} lleva cuerpo", m);
+        }
+        for m in [HttpMethod::Get, HttpMethod::Delete, HttpMethod::Head] {
+            assert!(!m.takes_body(), "{:?} no lleva cuerpo", m);
         }
     }
 
