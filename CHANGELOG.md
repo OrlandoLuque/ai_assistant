@@ -5,6 +5,95 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v305 (2026-10-24) - V429: tres modulos mas detras del puerto, y los dos huecos que destaparon (0.2.388)
+
+N77. Los tres elegidos son los que en el barrido de errores solo distinguian `StatusCode`
+(`eval_benchmarks::http`, `health_check`, `vllm_capability`), porque esa variante **desaparece**
+detras del puerto --- el no-2xx vuelve como `Ok` --- asi que migrarlos QUITA codigo. Los tres a
+**cero `ureq::`**.
+
+Y los tres destaparon dos huecos en lo que yo mismo habia empujado hace dos horas. Los dos de la
+misma forma: **el barrido midio lo que yo le pregunte.**
+
+### Hueco 1: a `HttpMethod` le faltaba `OPTIONS`
+
+`vllm_capability` sondea con `ureq::options(..)` si existe la ruta de LoRA. Mi medicion de
+metodos de V427 probo `get`, `post`, `put`, `delete`, `head` y `patch` --- los que yo habia puesto
+en la lista de patrones. `OPTIONS` no estaba, y el enum salio sin el. Lo destapo **el primer
+consumidor que lo necesitaba**, no la medicion.
+
+### Hueco 2: `send_streaming` tiraba el estado
+
+Y este es peor, porque era un fallo silencioso con consecuencias en disco. La firma era
+`-> Result<Box<dyn Read + Send>>`: **solo el lector**. `eval_benchmarks::http` descarga corpus a
+un `<dest>.part` y lo renombra al acabar, asi que con el estado perdido **un 404 con una pagina de
+error HTML se habria escrito y renombrado como si fuera el corpus**.
+
+Nace `HttpStream { status, headers, body }`. Un flujo lleva su estado, igual que una respuesta
+--- es el mismo "OK mas estrecho que la pregunta" de siempre, esta vez con un fichero de por
+medio. Las cabeceras van tambien porque son donde esta el `Content-Length`, y decidir si seguir
+leyendo sin ellas es decidir a ciegas. Hay un test que lo fija: un 404 por flujo llega con
+estado, cabecera propia y el cuerpo de la pagina de error.
+
+De paso, `post_streaming` **gana** una comprobacion que antes dependia de un interruptor: erraba
+ante un no-2xx porque `.call()` lo hacia, y ahora lo hace mirando el estado.
+
+### Lo que cambio en cada modulo, mas alla de lo mecanico
+
+* **`eval_benchmarks::http`**: pasa a `send_streaming` --- y el primer intento lo puse con `send`,
+  que habria traido un corpus entero a un `Vec<u8>`: exactamente el error del "GGUF en RAM" que el
+  propio puerto documenta en su rustdoc. El compilador lo paro porque `HttpResponse` no tiene
+  `into_body`. Ademas desaparece uno de los **dos** sitios donde se decidia el estado: habia un
+  brazo `Error::StatusCode` que devolvia `BenchmarkError::Http` sin mirar el cuerpo, y una
+  comprobacion de rango mas abajo. Ahora hay uno.
+* **`health_check`**: el codigo ponia `timeout_connect` Y `timeout_per_read`, y el puerto ofrece
+  conexion y TOTAL. Para un sondeo --- una peticion, respuesta pequena --- el numero es el mismo y
+  el plazo total acota lo que de verdad importa: cuanto puede tardar la comprobacion entera. Con
+  `timeout_per_read`, una respuesta en goteo podia pasarse del plazo sin violarlo nunca. **Es un
+  cambio de comportamiento y se dice, no se cuela.**
+* **`vllm_capability`**: el sondeo de LoRA mezclaba un 404 y un fallo de red en un `Err` del que
+  habia que sacar la variante. Ahora el estado es un estado y el error es un error.
+
+### Hueco 3, que me lo encontro la puerta de mutacion: duplique la regla que acababa de juzgar
+
+Al anadir `HttpStream` copie el cuerpo de la busqueda de cabeceras, y la puerta lo dijo con esas
+palabras: **«la spec dice 1 ocurrencia, el fichero tiene 2»**. O sea que pase la noche juzgando
+nombres duplicados en N134 y acto seguido cree una duplicacion de la misma familia. Arreglado
+extrayendo `find_header`, usada por los dos tipos: una sola regla, un solo sitio donde arreglarla.
+
+Eso es exactamente para lo que esa cuenta esta en la spec, y es la leccion de
+`project_mutation_per_occurrence`: **un patron que aparece N veces son N mutaciones.**
+
+### Y un susto de verdad, con el centinela haciendo su trabajo
+
+La ejecucion de mutaciones murio a mitad y la siguiente se nego a arrancar:
+
+```
+REFUSING TO RUN: a previous mutation run did not finish.
+Its sentinel is still here, which means the process was killed between applying
+a mutation and restoring the file.
+```
+
+**Y tenia razon: `src/http_client.rs` estaba en disco CON la mutacion M1 aplicada**, o sea sin su
+`http_status_as_error(false)` --- el defecto exacto que el puerto existe para quitar. Comprobado
+buscando los cinco textos mutados literales, deshecho a mano el unico que estaba (y **no** con
+`git checkout`, que se habria llevado el puerto entero sin comitear), centinela borrado, y 7 de 7
+mutaciones vuelven a morir con las 63 specs del repositorio casando.
+
+La causa raiz no era la herramienta: **el tope real del `timeout` de mi shell son 10 minutos**, asi
+que los `timeout` mas largos que llevo pidiendo toda la sesion se recortaban en silencio y mataron
+el proceso a mitad. Lo largo va en segundo plano, que es lo que no se corta.
+
+### Verificacion
+
+7 de 7 mutaciones del puerto mueren y las 63 specs del repositorio casan; clippy `-D warnings` en
+0 con `FEATURES_STD --all-targets`, `FEATURES_MIN` y el conjunto ANCHO; tests de libreria y
+doctests; puerta de enlaces.
+
+Van **5 modulos migrados de 60**. Quedan los 5 de `StatusCode` que faltan (`butler`,
+`cloud_connectors`, `providers`, `server`, `speech`) y luego `mcp_client`, que es el unico que
+discrimina el transporte y necesita el error tipado.
+
 ## [Unreleased] - v304 (2026-10-24) - V428: RUSTSEC-2026-0386 en `tokio`, y el primer consumidor detras del puerto (0.2.387)
 
 Dos cosas, y la primera va delante porque es un rojo de seguridad.

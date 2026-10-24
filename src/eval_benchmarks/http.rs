@@ -7,6 +7,7 @@
 //!  * Write atomically: download to `<path>.part`, rename on success.
 //!  * Skip download if the cached file is already the expected size.
 
+use crate::http_client::{HttpClient, HttpRequest, UreqClient};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -88,27 +89,24 @@ pub fn download_file(
 }
 
 fn download_one(url: &str, dest: &Path, opts: &DownloadOptions) -> Result<PathBuf, BenchmarkError> {
-    let resp = ureq::Agent::new_with_config(
-        ureq::Agent::config_builder()
-            .timeout_global(Some(opts.timeout))
-            .user_agent(opts.user_agent.clone())
-            .build(),
-    )
-    .get(url)
-    .call()
-    .map_err(|e| match e {
-        ureq::Error::StatusCode(status) => BenchmarkError::Http {
-            status,
-            url: url.to_string(),
-        },
-        // ureq 2 metia todos los fallos de red en `Error::Transport`; en ureq 3
-        // son variantes del propio `Error` (`Io`, `ConnectionFailed`,
-        // `HostNotFound`, `Timeout`...), asi que las cubre el catch-all.
-        other => BenchmarkError::Network(format!("{url}: {other}")),
-    })?;
+    // Detras del puerto (N77): el `user_agent` que era configuracion del
+    // agente pasa a ser la cabecera que siempre fue, y el brazo de
+    // `Error::StatusCode` DESAPARECE --- el no-2xx ya no es un error, asi que la
+    // comprobacion de abajo es el unico sitio donde se decide. Antes habia dos,
+    // y el de arriba se comia el codigo sin mirar el cuerpo.
+    // `send_streaming` y NO `send`: esto descarga un corpus, y traerlo entero a
+    // un `Vec<u8>` antes de escribirlo seria el error del "GGUF en RAM" que el
+    // propio puerto documenta. El estado se comprueba ANTES de abrir el `.part`,
+    // que es para lo que `HttpStream` lo lleva: sin el, un 404 con pagina de
+    // error se escribiria y se renombraria como si fuera el corpus.
+    let request = HttpRequest::get(url)
+        .timeout(opts.timeout)
+        .header("User-Agent", opts.user_agent.clone());
+    let resp = UreqClient
+        .send_streaming(&request)
+        .map_err(|e| BenchmarkError::Network(format!("{url}: {e:#}")))?;
 
-    // `status()` devuelve `StatusCode` en ureq 3, no `u16`.
-    let status = resp.status().as_u16();
+    let status = resp.status;
     if !(200..300).contains(&status) {
         return Err(BenchmarkError::Http {
             status,
@@ -126,7 +124,7 @@ fn download_one(url: &str, dest: &Path, opts: &DownloadOptions) -> Result<PathBu
     let mut file = std::fs::File::create(&part)
         .map_err(|e| BenchmarkError::Io(format!("create {}: {e}", part.display())))?;
 
-    let mut reader = resp.into_body().into_reader();
+    let mut reader = resp.body;
     let mut written: u64 = 0;
     let mut buf = [0u8; 64 * 1024];
     loop {

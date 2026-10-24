@@ -10,6 +10,7 @@
 //! - **Status tracking**: Track provider health over time
 //! - **Alerts**: Configurable alerting on status changes
 
+use crate::http_client::{HttpClient, HttpRequest, UreqClient};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -257,13 +258,6 @@ impl HealthChecker {
     fn default_check(url: &str, timeout: Duration) -> Result<Duration, String> {
         let start = Instant::now();
 
-        let agent = ureq::Agent::new_with_config(
-            ureq::Agent::config_builder()
-                .timeout_connect(Some(timeout))
-                .timeout_per_read(Some(timeout))
-                .build(),
-        );
-
         // Try to reach the base URL
         let check_url = if url.ends_with('/') {
             url.to_string()
@@ -271,13 +265,25 @@ impl HealthChecker {
             format!("{}/", url)
         };
 
-        match agent.get(&check_url).call() {
-            Ok(_) => Ok(start.elapsed()),
-            Err(ureq::Error::StatusCode(code)) if code < 500 => {
-                // 4xx errors mean server is responding
-                Ok(start.elapsed())
-            }
-            Err(e) => Err(e.to_string()),
+        // Detras del puerto (N77). Un cambio que conviene decir en voz alta: el
+        // codigo anterior ponia `timeout_connect` Y `timeout_per_read`, y el
+        // puerto ofrece plazo de CONEXION y plazo TOTAL, no por lectura. Para un
+        // sondeo de salud --- una peticion, respuesta pequena, sin cuerpo que
+        // consumir --- el plazo total es el mismo numero y ademas acota lo que
+        // de verdad importa: cuanto puede tardar la comprobacion entera. Con
+        // `timeout_per_read` una respuesta que llegara en goteo podia pasarse
+        // del plazo sin violarlo nunca.
+        let request = HttpRequest::get(&check_url)
+            .timeout(timeout)
+            .connect_timeout(timeout);
+
+        match UreqClient.send(&request) {
+            // Un 4xx significa que el servidor CONTESTA, que es lo que mide un
+            // sondeo de salud; con el puerto eso ya no es un `Err` que haya que
+            // atrapar, es una respuesta que se lee.
+            Ok(resp) if resp.status < 500 => Ok(start.elapsed()),
+            Ok(resp) => Err(format!("HTTP {}", resp.status)),
+            Err(e) => Err(format!("{e:#}")),
         }
     }
 

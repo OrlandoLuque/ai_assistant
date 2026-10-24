@@ -720,7 +720,7 @@ pub use log_redaction::{contains_sensitive, redact, redact_with_config, Redactio
 pub use http_client::{
     fetch_kobold_models_with, fetch_ollama_models_with, fetch_openai_models_with,
     parse_kobold_models, parse_ollama_models, parse_openai_models, HttpClient, HttpMethod,
-    HttpRequest, HttpResponse, UreqClient, DEFAULT_MAX_BODY_BYTES,
+    HttpRequest, HttpResponse, HttpStream, UreqClient, DEFAULT_MAX_BODY_BYTES,
 };
 
 #[cfg(feature = "server-tls")]

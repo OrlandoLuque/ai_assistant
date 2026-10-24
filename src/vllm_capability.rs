@@ -15,6 +15,7 @@
 //! The probe is intentionally *passive*: it never loads adapters, never
 //! triggers inference, never changes server state.
 
+use crate::http_client::{HttpClient, HttpMethod, HttpRequest, UreqClient};
 use crate::retry::{retry_with_config, RetryConfig};
 use serde::{Deserialize, Serialize};
 
@@ -83,12 +84,13 @@ pub fn probe_vllm(base_url: &str) -> Result<VLlmCapability, String> {
     // either down or not OpenAI-compatible.
     let models_url = format!("{}/v1/models", base);
     let models_body: serde_json::Value = retry_with_config(RetryConfig::fast(), || {
-        let mut resp = ureq::get(&models_url)
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(5)))
-            .build()
-            .call()?;
-        let v: serde_json::Value = resp.body_mut().read_json()?;
+        let resp = UreqClient
+            .send(&HttpRequest::get(&models_url).timeout(std::time::Duration::from_secs(5)))?;
+        // `error_for_status` conserva el comportamiento de `.call()`, que ante
+        // un no-2xx daba `Err` y hacia reintentar --- pero ahora el mensaje
+        // lleva el cuerpo, que es donde el servidor dice por que.
+        resp.error_for_status()?;
+        let v: serde_json::Value = resp.json()?;
         Ok(v)
     })
     .map_err(|e| format!("GET {}: {}", models_url, e))?;
@@ -98,25 +100,20 @@ pub fn probe_vllm(base_url: &str) -> Result<VLlmCapability, String> {
     // version. Don't retry hard — a single try is enough.
     let engine_version = {
         let url = format!("{}/version", base);
-        ureq::get(&url)
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(3)))
-            .build()
-            .call()
+        UreqClient
+            .send(&HttpRequest::get(&url).timeout(std::time::Duration::from_secs(3)))
             .ok()
-            .and_then(|mut resp| resp.body_mut().read_json::<serde_json::Value>().ok())
+            .filter(|resp| resp.is_success())
+            .and_then(|resp| resp.json().ok())
             .and_then(|v| parse_version_response(&v))
     };
 
     // `/health` is OpenAI-compatible-ish — 200 means ready.
     let healthy = {
         let url = format!("{}/health", base);
-        ureq::get(&url)
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(3)))
-            .build()
-            .call()
-            .is_ok()
+        UreqClient
+            .send(&HttpRequest::get(&url).timeout(std::time::Duration::from_secs(3)))
+            .is_ok_and(|resp| resp.is_success())
     };
 
     // LoRA detection: HEAD `/v1/load_lora_adapter`. A 404 means LoRA wasn't
@@ -125,16 +122,18 @@ pub fn probe_vllm(base_url: &str) -> Result<VLlmCapability, String> {
     // endpoints.
     let supports_lora = {
         let url = format!("{}/v1/load_lora_adapter", base);
-        match ureq::options(&url)
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(3)))
-            .build()
-            .call()
-        {
-            Ok(_) => true,
-            Err(ureq::Error::StatusCode(404)) => false,
-            Err(ureq::Error::StatusCode(_)) => true, // route exists, method not allowed etc.
-            Err(_) => false,                         // network error — assume absent
+        // El puerto separa las dos cosas que `.call()` mezclaba: un 404 y un
+        // fallo de red llegaban los dos como `Err`, y aqui habia que
+        // distinguirlos por la variante. Ahora el estado es un estado y el
+        // error es un error.
+        let probe =
+            HttpRequest::new(HttpMethod::Options, &url).timeout(std::time::Duration::from_secs(3));
+        match UreqClient.send(&probe) {
+            // 404 = LoRA no se habilito al arrancar. Cualquier otro estado
+            // (405, 400, 200) significa que la ruta existe.
+            Ok(resp) => resp.status != 404,
+            // Fallo de red: no se sabe, se asume que no esta.
+            Err(_) => false,
         }
     };
 
@@ -191,12 +190,9 @@ pub fn vllm_wait_until_ready(
     let deadline = std::time::Instant::now() + timeout;
 
     loop {
-        let healthy = ureq::get(&health_url)
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(2)))
-            .build()
-            .call()
-            .is_ok();
+        let healthy = UreqClient
+            .send(&HttpRequest::get(&health_url).timeout(std::time::Duration::from_secs(2)))
+            .is_ok_and(|resp| resp.is_success());
         if healthy {
             return probe_vllm(base);
         }

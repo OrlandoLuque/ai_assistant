@@ -41,6 +41,14 @@ pub enum HttpMethod {
     Head,
     /// `PATCH`.
     Patch,
+    /// `OPTIONS`.
+    ///
+    /// Se anadio en V429, y el hueco es instructivo: el barrido de V427 midio
+    /// los metodos que YO habia puesto en la lista de patrones, y `OPTIONS` no
+    /// estaba. Lo destapo el primer consumidor que lo necesitaba
+    /// (`vllm_capability`, que sondea si existe la ruta de LoRA), no la
+    /// medicion. Un barrido mide lo que le preguntas.
+    Options,
 }
 
 impl HttpMethod {
@@ -53,6 +61,7 @@ impl HttpMethod {
             Self::Delete => "DELETE",
             Self::Head => "HEAD",
             Self::Patch => "PATCH",
+            Self::Options => "OPTIONS",
         }
     }
 
@@ -230,10 +239,7 @@ impl HttpResponse {
     /// Comparar literalmente es un fallo que solo aparece contra el servidor que
     /// no te esperabas.
     pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case(name))
-            .map(|(_, v)| v.as_str())
+        find_header(&self.headers, name)
     }
 
     /// El cuerpo como texto.
@@ -268,6 +274,54 @@ impl HttpResponse {
     }
 }
 
+/// Busca una cabecera por nombre **ignorando mayusculas**, que es lo que dice
+/// el RFC 9110: los nombres de cabecera son insensibles a mayusculas, y un
+/// servidor manda `retry-after` donde otro manda `Retry-After`.
+///
+/// Una sola implementacion para [`HttpResponse`] y [`HttpStream`]. Nacio
+/// duplicada --- copie el cuerpo al anadir `HttpStream` en V429 --- y lo cazo la
+/// puerta de mutacion, que dijo "la spec dice 1 ocurrencia, el fichero tiene 2".
+/// Que es justo la razon de ser de esa cuenta: dos copias de una regla son dos
+/// sitios donde arreglarla, y uno donde olvidarse.
+fn find_header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(name))
+        .map(|(_, v)| v.as_str())
+}
+
+/// Una respuesta cuyo cuerpo se lee como FLUJO, con su estado delante.
+///
+/// El estado va aqui y no se descarta por una razon concreta, encontrada
+/// migrando el descargador de corpus en V429: `send_streaming` devolvia solo el
+/// lector, asi que un 404 con una pagina de error HTML se escribia en el
+/// `.part` y se renombraba como si fuera el corpus. **Un flujo sin su estado es
+/// un OK mas estrecho que la pregunta.**
+///
+/// Las cabeceras vienen tambien porque son lo que dice el tamano esperado
+/// (`Content-Length`) y el tipo, y decidir si seguir leyendo sin ellas es
+/// decidir a ciegas.
+pub struct HttpStream {
+    /// Codigo de estado.
+    pub status: u16,
+    /// Cabeceras de la respuesta.
+    pub headers: Vec<(String, String)>,
+    /// El cuerpo, sin traer a memoria.
+    pub body: Box<dyn std::io::Read + Send>,
+}
+
+impl HttpStream {
+    /// Si el estado esta en 200-299.
+    pub fn is_success(&self) -> bool {
+        (200..300).contains(&self.status)
+    }
+
+    /// Busca una cabecera ignorando mayusculas, igual que [`HttpResponse::header`].
+    pub fn header(&self, name: &str) -> Option<&str> {
+        find_header(&self.headers, name)
+    }
+}
+
 /// Abstraction over HTTP operations for provider communication.
 ///
 /// Implementing this trait allows swapping the real HTTP client with a mock
@@ -285,7 +339,7 @@ pub trait HttpClient: Send + Sync {
     /// los 60 modulos medidos usan `into_reader()`, y lo que leen son descargas
     /// de modelos y flujos SSE. Meter eso en un `Vec<u8>` no seria un refactor,
     /// seria cargarse el caso de uso --- un GGUF de 5 GB en RAM.
-    fn send_streaming(&self, request: &HttpRequest) -> Result<Box<dyn std::io::Read + Send>>;
+    fn send_streaming(&self, request: &HttpRequest) -> Result<HttpStream>;
 
     /// `GET` que devuelve JSON, o error si el estado no es 2xx.
     ///
@@ -329,8 +383,16 @@ pub trait HttpClient: Send + Sync {
         timeout_secs: u64,
     ) -> Result<Box<dyn std::io::Read + Send>> {
         let request = HttpRequest::post_json(url, body)?.timeout(Duration::from_secs(timeout_secs));
-        self.send_streaming(&request)
-            .with_context(|| format!("POST streaming request failed: {}", url))
+        let stream = self
+            .send_streaming(&request)
+            .with_context(|| format!("POST streaming request failed: {}", url))?;
+        // Conserva el comportamiento de antes --- `.call()` sin
+        // `http_status_as_error(false)` erraba ante un no-2xx --- y ahora puede
+        // hacerlo mirando el estado en vez de dependiendo de un interruptor.
+        if !stream.is_success() {
+            anyhow::bail!("POST {} returned HTTP {}", url, stream.status);
+        }
+        Ok(stream.body)
     }
 }
 
@@ -418,12 +480,27 @@ impl HttpClient for UreqClient {
         })
     }
 
-    fn send_streaming(&self, request: &HttpRequest) -> Result<Box<dyn std::io::Read + Send>> {
+    fn send_streaming(&self, request: &HttpRequest) -> Result<HttpStream> {
         let http_request = Self::build(request)?;
         let response = Self::agent(request)
             .run(http_request)
             .with_context(|| format!("{} {} (streaming)", request.method.as_str(), request.url))?;
-        Ok(Box::new(response.into_body().into_reader()))
+        let status = response.status().as_u16();
+        let headers = response
+            .headers()
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.as_str().to_string(),
+                    v.to_str().unwrap_or_default().to_string(),
+                )
+            })
+            .collect();
+        Ok(HttpStream {
+            status,
+            headers,
+            body: Box::new(response.into_body().into_reader()),
+        })
     }
 }
 
@@ -883,14 +960,18 @@ mod tests {
             })
         }
 
-        fn send_streaming(&self, _request: &HttpRequest) -> Result<Box<dyn std::io::Read + Send>> {
+        fn send_streaming(&self, _request: &HttpRequest) -> Result<HttpStream> {
             let mut responses = self.responses.lock().unwrap();
             if responses.is_empty() {
                 anyhow::bail!("No mock responses configured");
             }
             let value = responses.remove(0)?;
             let bytes = serde_json::to_vec(&value)?;
-            Ok(Box::new(std::io::Cursor::new(bytes)))
+            Ok(HttpStream {
+                status: 200,
+                headers: Vec::new(),
+                body: Box::new(std::io::Cursor::new(bytes)),
+            })
         }
     }
 
@@ -1136,9 +1217,44 @@ mod tests {
         for m in [HttpMethod::Post, HttpMethod::Put, HttpMethod::Patch] {
             assert!(m.takes_body(), "{:?} lleva cuerpo", m);
         }
-        for m in [HttpMethod::Get, HttpMethod::Delete, HttpMethod::Head] {
+        for m in [
+            HttpMethod::Get,
+            HttpMethod::Delete,
+            HttpMethod::Head,
+            HttpMethod::Options,
+        ] {
             assert!(!m.takes_body(), "{:?} no lleva cuerpo", m);
         }
+        assert_eq!(HttpMethod::Options.as_str(), "OPTIONS");
+    }
+
+    /// El hueco que destapo el descargador de corpus en V429: si
+    /// `send_streaming` no trae el estado, un 404 con una pagina de error HTML
+    /// se escribe en el fichero de destino y se renombra como si fuera el
+    /// corpus. El flujo lleva su estado, y eso se comprueba.
+    #[test]
+    fn test_streaming_carries_its_status_and_headers() {
+        let server = MockHttpServer::start();
+        server.enqueue_with_headers(
+            404,
+            vec![("X-Why".to_string(), "no-such-corpus".to_string())],
+            "<html>not found</html>",
+        );
+
+        let request = HttpRequest::get(format!("{}/corpus.tar.gz", server.url()))
+            .timeout(Duration::from_secs(5));
+        let mut stream = UreqClient
+            .send_streaming(&request)
+            .expect("un 404 es una respuesta, no un fallo de transporte");
+
+        assert_eq!(stream.status, 404);
+        assert!(!stream.is_success(), "y el llamante puede PREGUNTARLO");
+        assert_eq!(stream.header("x-why"), Some("no-such-corpus"));
+
+        // El cuerpo tambien esta --- es la pagina de error, no el corpus.
+        let mut body = String::new();
+        std::io::Read::read_to_string(&mut stream.body, &mut body).expect("se lee");
+        assert!(body.contains("not found"), "body = {}", body);
     }
 
     #[test]

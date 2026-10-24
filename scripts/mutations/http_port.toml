@@ -94,7 +94,12 @@ id = "M5"
 file = "src/http_client.rs"
 filter = "http_client::tests::test_port_reads_response_headers_ignoring_case"
 invariant = "una cabecera se encuentra sin importar las mayusculas; si no, un `None` falso se lee como 'el servidor no la mando' y el backoff se degrada en silencio"
-before = "            .find(|(k, _)| k.eq_ignore_ascii_case(name))"
+# Re-anclada en V429: al anadir `HttpStream` copie el cuerpo de la busqueda,
+# y esta puerta lo cazo diciendo "la spec dice 1 ocurrencia, el fichero tiene
+# 2". La duplicacion se quito extrayendo `find_header`, asi que el ancla apunta
+# otra vez a UNA implementacion --- y ahora la mutacion afecta a los dos tipos,
+# que es lo correcto: es una sola regla.
+before = "        .find(|(k, _)| k.eq_ignore_ascii_case(name))"
 after = "            .find(|(k, _)| k == name)"
 occurrences = 1
 

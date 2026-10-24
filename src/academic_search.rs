@@ -1925,7 +1925,7 @@ mod tests {
         fn send_streaming(
             &self,
             _request: &HttpRequest,
-        ) -> anyhow::Result<Box<dyn std::io::Read + Send>> {
+        ) -> anyhow::Result<crate::http_client::HttpStream> {
             anyhow::bail!("este test no usa el flujo")
         }
     }
@@ -1948,7 +1948,7 @@ mod tests {
         fn send_streaming(
             &self,
             _request: &HttpRequest,
-        ) -> anyhow::Result<Box<dyn std::io::Read + Send>> {
+        ) -> anyhow::Result<crate::http_client::HttpStream> {
             anyhow::bail!("este test no usa el flujo")
         }
     }
