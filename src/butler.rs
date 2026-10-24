@@ -7,6 +7,7 @@
 use crate::agent_policy::{AgentPolicyBuilder, InternetMode};
 use crate::agent_profiles::AgentProfile;
 use crate::config::{AiConfig, AiProvider};
+use crate::http_client::{HttpClient, HttpRequest, UreqClient};
 use crate::mode_manager::OperationMode;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -167,15 +168,13 @@ impl ResourceDetector for OllamaDetector {
 
     fn detect(&self) -> DetectionResult {
         let url = format!("{}/api/tags", self.base_url);
-        match ureq::get(&url)
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(2)))
-            .build()
-            .call()
-        {
-            Ok(mut resp) => {
+        match UreqClient.send(&HttpRequest::get(&url).timeout(std::time::Duration::from_secs(2))) {
+            // `is_success()` explicito: antes lo garantizaba `.call()`, que metia
+            // el no-2xx en el `Err`. Ahora el no-2xx llega como `Ok` y sin este
+            // guardia un 404 pasaria por "detectado, 0 modelos".
+            Ok(resp) if resp.is_success() => {
                 let mut models = Vec::new();
-                if let Ok(body) = resp.body_mut().read_to_string() {
+                if let Ok(body) = resp.text() {
                     if let Ok(val) = serde_json::from_str::<serde_json::Value>(&body) {
                         if let Some(model_list) = val.get("models").and_then(|v| v.as_array()) {
                             for m in model_list {
@@ -198,7 +197,8 @@ impl ResourceDetector for OllamaDetector {
                     suggested_config: None,
                 }
             }
-            Err(_) => DetectionResult {
+            // Un no-2xx tampoco es este servicio, aunque algo haya contestado.
+            Ok(_) | Err(_) => DetectionResult {
                 detected: false,
                 details: {
                     let mut d = HashMap::new();
@@ -236,15 +236,13 @@ impl ResourceDetector for LmStudioDetector {
 
     fn detect(&self) -> DetectionResult {
         let url = format!("{}/v1/models", self.base_url);
-        match ureq::get(&url)
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(2)))
-            .build()
-            .call()
-        {
-            Ok(mut resp) => {
+        match UreqClient.send(&HttpRequest::get(&url).timeout(std::time::Duration::from_secs(2))) {
+            // `is_success()` explicito: antes lo garantizaba `.call()`, que metia
+            // el no-2xx en el `Err`. Ahora el no-2xx llega como `Ok` y sin este
+            // guardia un 404 pasaria por "detectado, 0 modelos".
+            Ok(resp) if resp.is_success() => {
                 let mut models = Vec::new();
-                if let Ok(body) = resp.body_mut().read_to_string() {
+                if let Ok(body) = resp.text() {
                     if let Ok(val) = serde_json::from_str::<serde_json::Value>(&body) {
                         if let Some(data) = val.get("data").and_then(|v| v.as_array()) {
                             for m in data {
@@ -267,7 +265,8 @@ impl ResourceDetector for LmStudioDetector {
                     suggested_config: None,
                 }
             }
-            Err(_) => DetectionResult {
+            // Un no-2xx tampoco es este servicio, aunque algo haya contestado.
+            Ok(_) | Err(_) => DetectionResult {
                 detected: false,
                 details: {
                     let mut d = HashMap::new();
@@ -315,15 +314,13 @@ impl ResourceDetector for VLlmDetector {
 
     fn detect(&self) -> DetectionResult {
         let url = format!("{}/v1/models", self.base_url);
-        match ureq::get(&url)
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(2)))
-            .build()
-            .call()
-        {
-            Ok(mut resp) => {
+        match UreqClient.send(&HttpRequest::get(&url).timeout(std::time::Duration::from_secs(2))) {
+            // `is_success()` explicito: antes lo garantizaba `.call()`, que metia
+            // el no-2xx en el `Err`. Ahora el no-2xx llega como `Ok` y sin este
+            // guardia un 404 pasaria por "detectado, 0 modelos".
+            Ok(resp) if resp.is_success() => {
                 let mut models = Vec::new();
-                if let Ok(body) = resp.body_mut().read_to_string() {
+                if let Ok(body) = resp.text() {
                     if let Ok(val) = serde_json::from_str::<serde_json::Value>(&body) {
                         if let Some(data) = val.get("data").and_then(|v| v.as_array()) {
                             for m in data {
@@ -346,7 +343,8 @@ impl ResourceDetector for VLlmDetector {
                     suggested_config: None,
                 }
             }
-            Err(_) => DetectionResult {
+            // Un no-2xx tampoco es este servicio, aunque algo haya contestado.
+            Ok(_) | Err(_) => DetectionResult {
                 detected: false,
                 details: {
                     let mut d = HashMap::new();
@@ -392,15 +390,13 @@ impl ResourceDetector for LlamaCppDetector {
 
     fn detect(&self) -> DetectionResult {
         let url = format!("{}/v1/models", self.base_url);
-        match ureq::get(&url)
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(2)))
-            .build()
-            .call()
-        {
-            Ok(mut resp) => {
+        match UreqClient.send(&HttpRequest::get(&url).timeout(std::time::Duration::from_secs(2))) {
+            // `is_success()` explicito: antes lo garantizaba `.call()`, que metia
+            // el no-2xx en el `Err`. Ahora el no-2xx llega como `Ok` y sin este
+            // guardia un 404 pasaria por "detectado, 0 modelos".
+            Ok(resp) if resp.is_success() => {
                 let mut models = Vec::new();
-                if let Ok(body) = resp.body_mut().read_to_string() {
+                if let Ok(body) = resp.text() {
                     if let Ok(val) = serde_json::from_str::<serde_json::Value>(&body) {
                         if let Some(data) = val.get("data").and_then(|v| v.as_array()) {
                             for m in data {
@@ -423,7 +419,8 @@ impl ResourceDetector for LlamaCppDetector {
                     suggested_config: None,
                 }
             }
-            Err(_) => DetectionResult {
+            // Un no-2xx tampoco es este servicio, aunque algo haya contestado.
+            Ok(_) | Err(_) => DetectionResult {
                 detected: false,
                 details: {
                     let mut d = HashMap::new();
@@ -839,16 +836,13 @@ impl ResourceDetector for NetworkDetector {
 
         let mut connected = false;
         for url in &test_urls {
-            match ureq::get(*url)
-                .config()
-                .timeout_global(Some(std::time::Duration::from_secs(3)))
-                .build()
-                .call()
+            match UreqClient
+                .send(&HttpRequest::get(*url).timeout(std::time::Duration::from_secs(3)))
             {
                 Ok(resp) => {
                     details.insert("internet".to_string(), "available".to_string());
                     details.insert("test_url".to_string(), url.to_string());
-                    details.insert("status".to_string(), resp.status().to_string());
+                    details.insert("status".to_string(), resp.status.to_string());
                     connected = true;
                     break;
                 }
@@ -884,12 +878,10 @@ impl ResourceDetector for WhisperDetector {
         // 1. Check for whisper.cpp server (default port 8080, OpenAI-compatible)
         let server_url = std::env::var("WHISPER_SERVER_URL")
             .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
-        match ureq::get(&format!("{}/v1/models", server_url))
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(2)))
-            .build()
-            .call()
-        {
+        match UreqClient.send(
+            &HttpRequest::get(format!("{}/v1/models", server_url))
+                .timeout(std::time::Duration::from_secs(2)),
+        ) {
             Ok(_) => {
                 details.insert("whisper_server".to_string(), server_url);
                 details.insert("server_available".to_string(), "true".to_string());
@@ -995,24 +987,15 @@ impl ResourceDetector for PiperDetector {
         let mut details = HashMap::new();
         details.insert("url".to_string(), self.base_url.clone());
 
-        match ureq::get(&self.base_url)
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(2)))
-            .build()
-            .call()
+        match UreqClient
+            .send(&HttpRequest::get(&self.base_url).timeout(std::time::Duration::from_secs(2)))
         {
+            // CUALQUIER estado significa que el servidor esta arriba (un 400 es
+            // "falta el texto", que ya prueba que hay alguien). Antes esto eran
+            // DOS brazos identicos --- `Ok(_)` y `Err(StatusCode(_))` --- porque
+            // `.call()` partia en dos lo que aqui es una sola cosa. Detras del
+            // puerto los dos son `Ok` y el duplicado desaparece.
             Ok(_) => {
-                details.insert("available".to_string(), "true".to_string());
-                DetectionResult {
-                    detected: true,
-                    details,
-                    suggested_config: Some(
-                        "Piper TTS available for local speech synthesis".to_string(),
-                    ),
-                }
-            }
-            Err(ureq::Error::StatusCode(_)) => {
-                // Any HTTP status means server is up (e.g. 400 = missing text)
                 details.insert("available".to_string(), "true".to_string());
                 DetectionResult {
                     detected: true,
@@ -1061,14 +1044,11 @@ impl ResourceDetector for CoquiDetector {
         let mut details = HashMap::new();
         details.insert("url".to_string(), self.base_url.clone());
 
-        match ureq::get(&self.base_url)
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(2)))
-            .build()
-            .call()
+        match UreqClient
+            .send(&HttpRequest::get(&self.base_url).timeout(std::time::Duration::from_secs(2)))
         {
             Ok(resp) => {
-                if resp.status() == 200 {
+                if resp.status == 200 {
                     details.insert("available".to_string(), "true".to_string());
                     DetectionResult {
                         detected: true,
@@ -1079,7 +1059,7 @@ impl ResourceDetector for CoquiDetector {
                     }
                 } else {
                     details.insert("available".to_string(), "false".to_string());
-                    details.insert("status".to_string(), resp.status().to_string());
+                    details.insert("status".to_string(), resp.status.to_string());
                     DetectionResult {
                         detected: false,
                         details,

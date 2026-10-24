@@ -1034,7 +1034,7 @@ impl ServerConfig {
 
 /// Parsed HTTP request.
 #[derive(Debug)]
-struct HttpRequest {
+struct IncomingRequest {
     method: String,
     path: String,
     headers: Vec<(String, String)>,
@@ -1444,7 +1444,7 @@ fn maybe_compress_response(body: &str, accept_encoding: Option<&str>) -> (Vec<u8
 /// The response simulates streaming by splitting the LLM response into
 /// individual word tokens and sending each as an SSE `data:` event.
 fn handle_chat_stream(
-    request: &HttpRequest,
+    request: &IncomingRequest,
     assistant: &Arc<Mutex<AiAssistant>>,
     config: &ServerConfig,
 ) -> Result<String, (String, String)> {
@@ -2582,7 +2582,7 @@ fn handle_connection(
     Ok(())
 }
 
-fn parse_request(stream: &mut dyn Read, config: &ServerConfig) -> std::io::Result<HttpRequest> {
+fn parse_request(stream: &mut dyn Read, config: &ServerConfig) -> std::io::Result<IncomingRequest> {
     let mut reader = BufReader::new(stream);
 
     // Read request line
@@ -2654,7 +2654,7 @@ fn parse_request(stream: &mut dyn Read, config: &ServerConfig) -> std::io::Resul
         body = String::from_utf8_lossy(&buf).to_string();
     }
 
-    Ok(HttpRequest {
+    Ok(IncomingRequest {
         method,
         path,
         headers,
@@ -2667,7 +2667,7 @@ fn parse_request(stream: &mut dyn Read, config: &ServerConfig) -> std::io::Resul
 /// `route_request_with_config` via `handle_connection`.
 #[cfg(test)]
 fn route_request(
-    request: &HttpRequest,
+    request: &IncomingRequest,
     assistant: &Arc<Mutex<AiAssistant>>,
     metrics: &Arc<ServerMetrics>,
 ) -> (String, String) {
@@ -2676,7 +2676,7 @@ fn route_request(
 }
 
 fn route_request_with_config(
-    request: &HttpRequest,
+    request: &IncomingRequest,
     assistant: &Arc<Mutex<AiAssistant>>,
     metrics: &Arc<ServerMetrics>,
     config: &ServerConfig,
@@ -2784,7 +2784,7 @@ fn handle_hardware() -> (String, String) {
 }
 
 #[cfg(feature = "model-recommender")]
-fn handle_recommend_model(request: &HttpRequest) -> (String, String) {
+fn handle_recommend_model(request: &IncomingRequest) -> (String, String) {
     use crate::model_recommender::{recommend, RecommendationRequest};
     use crate::models_dev::ModelRegistry;
 
@@ -2940,7 +2940,7 @@ fn handle_get_benchmark(name: &str) -> (String, String) {
 }
 
 fn handle_chat(
-    request: &HttpRequest,
+    request: &IncomingRequest,
     assistant: &Arc<Mutex<AiAssistant>>,
     config: &ServerConfig,
 ) -> (String, String) {
@@ -3054,7 +3054,7 @@ fn handle_get_config(assistant: &Arc<Mutex<AiAssistant>>) -> (String, String) {
 }
 
 fn handle_set_config(
-    request: &HttpRequest,
+    request: &IncomingRequest,
     assistant: &Arc<Mutex<AiAssistant>>,
 ) -> (String, String) {
     let updates: serde_json::Value = match serde_json::from_str(&request.body) {
@@ -3188,7 +3188,7 @@ fn openai_error_json(message: &str, error_type: &str, code: &str) -> String {
 /// Handle `POST /v1/chat/completions` — non-streaming.
 #[cfg(feature = "adapters")]
 fn handle_openai_chat_completions(
-    request: &HttpRequest,
+    request: &IncomingRequest,
     assistant: &Arc<Mutex<AiAssistant>>,
     config: &ServerConfig,
 ) -> (String, String) {
@@ -3440,7 +3440,7 @@ fn handle_openai_chat_completions(
 /// Handle `POST /v1/chat/completions` with `stream: true` — returns SSE body.
 #[cfg(feature = "adapters")]
 fn handle_openai_chat_completions_stream(
-    request: &HttpRequest,
+    request: &IncomingRequest,
     assistant: &Arc<Mutex<AiAssistant>>,
     config: &ServerConfig,
 ) -> Result<String, (String, String)> {
@@ -3847,7 +3847,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 /// than implied, because a client that shows tokens as they arrive will simply show them
 /// all at the end, and that is better discovered here than in production.
 fn handle_ollama_chat(
-    request: &HttpRequest,
+    request: &IncomingRequest,
     assistant: &Arc<Mutex<AiAssistant>>,
     config: &ServerConfig,
 ) -> (String, String) {
@@ -3931,7 +3931,7 @@ fn handle_ollama_chat(
 /// Same single-line NDJSON answer as [`handle_ollama_chat`], and the same caveat about it
 /// not being incremental.
 fn handle_ollama_generate(
-    request: &HttpRequest,
+    request: &IncomingRequest,
     assistant: &Arc<Mutex<AiAssistant>>,
     config: &ServerConfig,
 ) -> (String, String) {
@@ -4091,6 +4091,7 @@ fn handle_openai_models(assistant: &Arc<Mutex<AiAssistant>>) -> (String, String)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::http_client::{HttpClient, HttpRequest, UreqClient};
 
     #[test]
     fn test_server_config_defaults() {
@@ -4138,7 +4139,7 @@ mod tests {
     fn test_set_config_endpoint() {
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
 
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "POST".to_string(),
             path: "/config".to_string(),
             headers: vec![],
@@ -4159,7 +4160,7 @@ mod tests {
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
         let config = ServerConfig::default();
 
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "POST".to_string(),
             path: "/chat".to_string(),
             headers: vec![],
@@ -4176,7 +4177,7 @@ mod tests {
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
         let metrics = Arc::new(ServerMetrics::new());
 
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "GET".to_string(),
             path: "/unknown".to_string(),
             headers: vec![],
@@ -4194,7 +4195,7 @@ mod tests {
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
         let metrics = Arc::new(ServerMetrics::new());
 
-        let list_req = HttpRequest {
+        let list_req = IncomingRequest {
             method: "GET".to_string(),
             path: "/benchmarks".to_string(),
             headers: vec![],
@@ -4205,7 +4206,7 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&body).expect("json body");
         assert!(v["total"].as_u64().unwrap_or(0) >= 5);
 
-        let get_req = HttpRequest {
+        let get_req = IncomingRequest {
             method: "GET".to_string(),
             path: "/benchmarks/truthfulqa".to_string(),
             headers: vec![],
@@ -4217,7 +4218,7 @@ mod tests {
         assert_eq!(v["name"], "truthfulqa");
         assert!(v["license"].is_string());
 
-        let miss_req = HttpRequest {
+        let miss_req = IncomingRequest {
             method: "GET".to_string(),
             path: "/benchmarks/nope".to_string(),
             headers: vec![],
@@ -4260,26 +4261,21 @@ mod tests {
 
         // Make a health check request
         let url = format!("{}/health", handle.url());
-        match ureq::get(&url)
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(2)))
-            .build()
-            .call()
-        {
-            Ok(mut resp) => {
-                let body: serde_json::Value = resp.body_mut().read_json().unwrap();
+        let probe = HttpRequest::get(&url).timeout(std::time::Duration::from_secs(2));
+        match UreqClient.send(&probe) {
+            Ok(resp) if resp.is_success() => {
+                let body: serde_json::Value = resp.json().unwrap();
                 assert_eq!(body["status"], "ok");
             }
-            Err(_) => {
-                // Server might not be ready yet in very fast test execution
+            // El servidor puede no estar listo todavia en una ejecucion muy
+            // rapida. El `Ok(_)` entra aqui ahora a proposito: detras del puerto
+            // un no-2xx llega como `Ok`, y un health check que contesta 503
+            // merece el mismo reintento que uno que no contesta.
+            Ok(_) | Err(_) => {
                 std::thread::sleep(std::time::Duration::from_millis(100));
-                let mut resp = ureq::get(&url)
-                    .config()
-                    .timeout_global(Some(std::time::Duration::from_secs(2)))
-                    .build()
-                    .call()
-                    .unwrap();
-                let body: serde_json::Value = resp.body_mut().read_json().unwrap();
+                let resp = UreqClient.send(&probe).unwrap();
+                resp.error_for_status().unwrap();
+                let body: serde_json::Value = resp.json().unwrap();
                 assert_eq!(body["status"], "ok");
             }
         }
@@ -4645,7 +4641,7 @@ mod tests {
         let metrics = Arc::new(ServerMetrics::new());
         metrics.record_request("200", std::time::Duration::from_millis(10));
 
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "GET".to_string(),
             path: "/metrics".to_string(),
             headers: vec![],
@@ -4734,49 +4730,58 @@ mod tests {
         let base = handle.url();
 
         // Health should be exempt from auth
-        let health_resp = ureq::get(&format!("{}/health", base))
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(2)))
-            .build()
-            .call();
-        assert!(health_resp.is_ok());
+        let timeout = std::time::Duration::from_secs(2);
+        let health_resp =
+            UreqClient.send(&HttpRequest::get(format!("{}/health", base)).timeout(timeout));
+        assert!(health_resp.is_ok_and(|r| r.is_success()));
 
         // /chat without auth should get 401
-        let chat_resp = ureq::post(&format!("{}/chat", base))
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(2)))
-            .build()
-            .send_json(serde_json::json!({"message": "hi"}));
-        match chat_resp {
-            Err(ureq::Error::StatusCode(401)) => {} // expected
-            other => panic!("Expected 401, got {:?}", other),
-        }
+        let chat_resp = UreqClient
+            .send(
+                &HttpRequest::post_json(
+                    format!("{}/chat", base),
+                    &serde_json::json!({"message": "hi"}),
+                )
+                .unwrap()
+                .timeout(timeout),
+            )
+            .expect("el servidor contesto; un 401 no es un fallo de transporte");
+        assert_eq!(
+            chat_resp.status,
+            401,
+            "sin auth se espera 401; cuerpo: {}",
+            String::from_utf8_lossy(&chat_resp.body)
+        );
 
         // /chat WITH auth should succeed (or get provider error, which is still 500 not 401)
-        let auth_resp = ureq::post(&format!("{}/chat", base))
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(2)))
-            .build()
+        let auth_resp = UreqClient.send(
+            &HttpRequest::post_json(
+                format!("{}/chat", base),
+                &serde_json::json!({"message": "hi"}),
+            )
+            .unwrap()
             .header("Authorization", "Bearer test-token-42")
-            .send_json(serde_json::json!({"message": "hi"}));
+            .timeout(timeout),
+        );
         match auth_resp {
-            Ok(_) => {} // provider might work
-            Err(ureq::Error::StatusCode(code)) => {
-                assert_ne!(code, 401, "Should not get 401 with valid token");
-            }
-            // Transport errors (e.g. timeout) are acceptable — the server accepted
-            // the auth but the handler may block waiting for a provider that isn't running
+            Ok(resp) => assert_ne!(
+                resp.status,
+                401,
+                "con un token valido no debe salir 401; cuerpo: {}",
+                String::from_utf8_lossy(&resp.body)
+            ),
+            // Un fallo de TRANSPORTE si es aceptable: el servidor acepto la
+            // auth pero el manejador puede quedarse esperando a un proveedor que
+            // no esta levantado.
             Err(_) => {}
         }
 
         // /metrics should be exempt from auth and return Prometheus data
-        let mut metrics_resp = ureq::get(&format!("{}/metrics", base))
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(2)))
-            .build()
-            .call()
+        let metrics_resp = UreqClient
+            .send(&HttpRequest::get(format!("{}/metrics", base)).timeout(timeout))
             .unwrap();
-        let metrics_body = metrics_resp.body_mut().read_to_string().unwrap();
+        metrics_resp.error_for_status().unwrap();
+        let metrics_body = metrics_resp.text().unwrap();
         assert!(metrics_body.contains("ai_server_requests_total"));
 
         // Graceful shutdown
@@ -4794,17 +4799,11 @@ mod tests {
         let handle = server.start_background().unwrap();
         let url = format!("{}/health", handle.url());
 
-        let resp = ureq::get(&url)
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(2)))
-            .build()
-            .call()
+        let resp = UreqClient
+            .send(&HttpRequest::get(&url).timeout(std::time::Duration::from_secs(2)))
             .unwrap();
-        let req_id = resp
-            .headers()
-            .get("X-Request-Id")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
+        resp.error_for_status().unwrap();
+        let req_id = resp.header("X-Request-Id").unwrap_or("");
         assert_eq!(
             req_id.len(),
             32,
@@ -4826,18 +4825,15 @@ mod tests {
         let handle = server.start_background().unwrap();
         let url = format!("{}/health", handle.url());
 
-        let resp = ureq::get(&url)
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(2)))
-            .build()
-            .header("X-Request-Id", "my-custom-id-123")
-            .call()
+        let resp = UreqClient
+            .send(
+                &HttpRequest::get(&url)
+                    .timeout(std::time::Duration::from_secs(2))
+                    .header("X-Request-Id", "my-custom-id-123"),
+            )
             .unwrap();
-        let returned_id = resp
-            .headers()
-            .get("X-Request-Id")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
+        resp.error_for_status().unwrap();
+        let returned_id = resp.header("X-Request-Id").unwrap_or("");
         assert_eq!(returned_id, "my-custom-id-123");
 
         handle.shutdown();
@@ -5587,7 +5583,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
             ..Default::default()
         };
 
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "POST".to_string(),
             path: "/chat".to_string(),
             headers: vec![],
@@ -5618,7 +5614,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
             ..Default::default()
         };
 
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "POST".to_string(),
             path: "/chat".to_string(),
             headers: vec![],
@@ -5641,7 +5637,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
             ..Default::default()
         };
 
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "POST".to_string(),
             path: "/chat".to_string(),
             headers: vec![],
@@ -5683,7 +5679,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         let metrics = Arc::new(ServerMetrics::new());
 
         // 1. List sessions
-        let req = HttpRequest {
+        let req = IncomingRequest {
             method: "GET".to_string(),
             path: "/sessions".to_string(),
             headers: vec![],
@@ -5695,7 +5691,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         assert_eq!(list.as_array().unwrap().len(), 2);
 
         // 2. Get specific session
-        let req = HttpRequest {
+        let req = IncomingRequest {
             method: "GET".to_string(),
             path: "/sessions/int-002".to_string(),
             headers: vec![],
@@ -5707,7 +5703,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         assert_eq!(msgs.as_array().unwrap().len(), 2);
 
         // 3. Delete a session
-        let req = HttpRequest {
+        let req = IncomingRequest {
             method: "DELETE".to_string(),
             path: "/sessions/int-001".to_string(),
             headers: vec![],
@@ -5719,7 +5715,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         assert_eq!(parsed["deleted"], true);
 
         // 4. List sessions — should now have only 1
-        let req = HttpRequest {
+        let req = IncomingRequest {
             method: "GET".to_string(),
             path: "/sessions".to_string(),
             headers: vec![],
@@ -5732,7 +5728,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         assert_eq!(list[0]["id"], "int-002");
 
         // 5. Get deleted session — 404
-        let req = HttpRequest {
+        let req = IncomingRequest {
             method: "GET".to_string(),
             path: "/sessions/int-001".to_string(),
             headers: vec![],
@@ -5748,7 +5744,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         let metrics = Arc::new(ServerMetrics::new());
 
         // GET /sessions on empty store
-        let req = HttpRequest {
+        let req = IncomingRequest {
             method: "GET".to_string(),
             path: "/sessions".to_string(),
             headers: vec![],
@@ -5764,7 +5760,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
         let metrics = Arc::new(ServerMetrics::new());
 
-        let req = HttpRequest {
+        let req = IncomingRequest {
             method: "GET".to_string(),
             path: "/health".to_string(),
             headers: vec![],
@@ -5857,7 +5853,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
         let metrics = Arc::new(ServerMetrics::new());
         let config = ServerConfig::default();
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "GET".to_string(),
             path: "/api/v1/health".to_string(),
             headers: vec![],
@@ -5874,7 +5870,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
         let metrics = Arc::new(ServerMetrics::new());
         let config = ServerConfig::default();
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "GET".to_string(),
             path: "/api/v1/sessions".to_string(),
             headers: vec![],
@@ -5891,7 +5887,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
         let metrics = Arc::new(ServerMetrics::new());
         let config = ServerConfig::default();
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "GET".to_string(),
             path: "/api/v1/models".to_string(),
             headers: vec![],
@@ -5952,7 +5948,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
     fn test_chat_stream_invalid_json() {
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
         let config = ServerConfig::default();
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "POST".to_string(),
             path: "/chat/stream".to_string(),
             headers: vec![],
@@ -5972,7 +5968,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
             max_message_length: 5,
             ..Default::default()
         };
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "POST".to_string(),
             path: "/chat/stream".to_string(),
             headers: vec![],
@@ -5991,7 +5987,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
         let metrics = Arc::new(ServerMetrics::new());
         let config = ServerConfig::default();
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "POST".to_string(),
             path: "/chat/stream".to_string(),
             headers: vec![],
@@ -6007,7 +6003,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
         let metrics = Arc::new(ServerMetrics::new());
         let config = ServerConfig::default();
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "POST".to_string(),
             path: "/api/v1/chat/stream".to_string(),
             headers: vec![],
@@ -6047,7 +6043,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
             max_message_length: 3,
             ..Default::default()
         };
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "POST".to_string(),
             path: "/chat/stream".to_string(),
             headers: vec![],
@@ -6064,7 +6060,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
         let metrics = Arc::new(ServerMetrics::new());
         let config = ServerConfig::default();
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "GET".to_string(),
             path: "/chat/stream".to_string(),
             headers: vec![],
@@ -6079,7 +6075,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         // Empty message is valid (length 0 <= any max_message_length)
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
         let config = ServerConfig::default();
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "POST".to_string(),
             path: "/chat/stream".to_string(),
             headers: vec![],
@@ -6101,7 +6097,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
     fn test_chat_stream_missing_message_field() {
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
         let config = ServerConfig::default();
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "POST".to_string(),
             path: "/chat/stream".to_string(),
             headers: vec![],
@@ -6277,7 +6273,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
         let metrics = Arc::new(ServerMetrics::new());
 
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "GET".to_string(),
             path: "/api/v1/openapi.json".to_string(),
             headers: vec![],
@@ -6295,7 +6291,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
         let metrics = Arc::new(ServerMetrics::new());
 
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "GET".to_string(),
             path: "/openapi.json".to_string(),
             headers: vec![],
@@ -6313,7 +6309,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
         let metrics = Arc::new(ServerMetrics::new());
 
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "GET".to_string(),
             path: "/api/v1/openapi.json".to_string(),
             headers: vec![],
@@ -6336,7 +6332,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
         let metrics = Arc::new(ServerMetrics::new());
 
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "GET".to_string(),
             path: "/api/v1/openapi.json".to_string(),
             headers: vec![],
@@ -6470,8 +6466,8 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
     }
 
     /// Build a request for the Ollama generation endpoints.
-    fn ollama_req(path: &str, body: &str) -> HttpRequest {
-        HttpRequest {
+    fn ollama_req(path: &str, body: &str) -> IncomingRequest {
+        IncomingRequest {
             method: "POST".to_string(),
             path: path.to_string(),
             headers: Vec::new(),
@@ -6566,7 +6562,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
         let metrics = Arc::new(ServerMetrics::new());
         let config = ServerConfig::default();
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "POST".to_string(),
             path: "/v1/chat/completions".to_string(),
             headers: vec![],
@@ -6586,7 +6582,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
         let metrics = Arc::new(ServerMetrics::new());
         let config = ServerConfig::default();
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "POST".to_string(),
             path: "/v1/chat/completions".to_string(),
             headers: vec![],
@@ -6604,7 +6600,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
         let metrics = Arc::new(ServerMetrics::new());
         let config = ServerConfig::default();
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "POST".to_string(),
             path: "/v1/chat/completions".to_string(),
             headers: vec![],
@@ -6624,7 +6620,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
         let metrics = Arc::new(ServerMetrics::new());
         let config = ServerConfig::default();
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "POST".to_string(),
             path: "/v1/chat/completions".to_string(),
             headers: vec![],
@@ -6644,7 +6640,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         // Use handle_openai_chat_completions directly with a mock-like assistant
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
         let config = ServerConfig::default();
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "POST".to_string(),
             path: "/v1/chat/completions".to_string(),
             headers: vec![],
@@ -6671,7 +6667,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
     fn test_openai_completions_with_system() {
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
         let config = ServerConfig::default();
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "POST".to_string(),
             path: "/v1/chat/completions".to_string(),
             headers: vec![],
@@ -6691,7 +6687,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
         let mut config = ServerConfig::default();
         config.max_message_length = 10; // very short
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "POST".to_string(),
             path: "/v1/chat/completions".to_string(),
             headers: vec![],
@@ -6712,7 +6708,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
     fn test_openai_stream_format() {
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
         let config = ServerConfig::default();
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "POST".to_string(),
             path: "/v1/chat/completions".to_string(),
             headers: vec![],
@@ -6741,7 +6737,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
     fn test_openai_stream_ends_with_done() {
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
         let config = ServerConfig::default();
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "POST".to_string(),
             path: "/v1/chat/completions".to_string(),
             headers: vec![],
@@ -6761,7 +6757,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
     fn test_openai_stream_first_chunk_role() {
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
         let config = ServerConfig::default();
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "POST".to_string(),
             path: "/v1/chat/completions".to_string(),
             headers: vec![],
@@ -6784,7 +6780,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
     fn test_openai_stream_last_chunk_stop() {
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
         let config = ServerConfig::default();
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "POST".to_string(),
             path: "/v1/chat/completions".to_string(),
             headers: vec![],
@@ -6812,7 +6808,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
         let metrics = Arc::new(ServerMetrics::new());
         let config = ServerConfig::default();
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "GET".to_string(),
             path: "/v1/models".to_string(),
             headers: vec![],
@@ -6846,7 +6842,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         let config = ServerConfig::default();
 
         // /v1/models
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "GET".to_string(),
             path: "/v1/models".to_string(),
             headers: vec![],
@@ -6865,7 +6861,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         let config = ServerConfig::default();
 
         // /api/v1/chat/completions
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "POST".to_string(),
             path: "/api/v1/chat/completions".to_string(),
             headers: vec![],
@@ -6885,7 +6881,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         let config = ServerConfig::default();
 
         // Bad JSON → OpenAI error format
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "POST".to_string(),
             path: "/v1/chat/completions".to_string(),
             headers: vec![],
@@ -6977,7 +6973,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         let config = make_enriched_config(true, false);
 
         // Prompt injection attempt
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "POST".to_string(),
             path: "/v1/chat/completions".to_string(),
             headers: vec![],
@@ -7010,7 +7006,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         config.enrichment.guardrail_threshold = 0.6; // below jailbreak's 0.7
         config = AiServer::init_guardrail_pipeline(config);
 
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "POST".to_string(),
             path: "/v1/chat/completions".to_string(),
             headers: vec![],
@@ -7035,7 +7031,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         let config = make_enriched_config(true, false);
 
         // Normal benign message should pass input guardrails
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "POST".to_string(),
             path: "/v1/chat/completions".to_string(),
             headers: vec![],
@@ -7054,7 +7050,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         let config = make_enriched_config(false, false); // guardrails OFF
 
         // Injection text should pass when guardrails disabled
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "POST".to_string(),
             path: "/v1/chat/completions".to_string(),
             headers: vec![],
@@ -7071,7 +7067,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         let metrics = Arc::new(ServerMetrics::new());
         let config = make_enriched_config(true, false);
 
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "POST".to_string(),
             path: "/v1/chat/completions".to_string(),
             headers: vec![],
@@ -7097,7 +7093,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         let config = make_enriched_config(true, false);
 
         // Streaming request with injection
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "POST".to_string(),
             path: "/v1/chat/completions".to_string(),
             headers: vec![],
@@ -7121,7 +7117,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         let metrics = Arc::new(ServerMetrics::new());
         let config = make_enriched_config(false, false); // RAG OFF
 
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "POST".to_string(),
             path: "/v1/chat/completions".to_string(),
             headers: vec![],
@@ -7140,7 +7136,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         let metrics = Arc::new(ServerMetrics::new());
         let config = make_enriched_config(false, true); // RAG ON but no vector DB
 
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "POST".to_string(),
             path: "/v1/chat/completions".to_string(),
             headers: vec![],
@@ -7513,7 +7509,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         config.enrichment.guardrails.blocked_patterns = vec!["FORBIDDEN_WORD".to_string()];
         config = AiServer::init_guardrail_pipeline(config);
 
-        let request = HttpRequest {
+        let request = IncomingRequest {
             method: "POST".to_string(),
             path: "/v1/chat/completions".to_string(),
             headers: vec![],
@@ -7548,7 +7544,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
     fn test_hardware_route_returns_json() {
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
         let metrics = Arc::new(ServerMetrics::new());
-        let req = HttpRequest {
+        let req = IncomingRequest {
             method: "GET".to_string(),
             path: "/hardware".to_string(),
             headers: vec![],
@@ -7561,7 +7557,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         assert!(v.is_object(), "expected JSON object, got {body}");
 
         // Versioned alias must work too.
-        let req_v1 = HttpRequest {
+        let req_v1 = IncomingRequest {
             method: "GET".to_string(),
             path: "/api/v1/hardware".to_string(),
             headers: vec![],
@@ -7577,7 +7573,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
         let metrics = Arc::new(ServerMetrics::new());
         // Default registry has no families → EmptyCatalog → 422.
-        let req = HttpRequest {
+        let req = IncomingRequest {
             method: "POST".to_string(),
             path: "/recommend-model".to_string(),
             headers: vec![],
@@ -7596,7 +7592,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
     fn test_recommend_model_route_malformed_json_rejects() {
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
         let metrics = Arc::new(ServerMetrics::new());
-        let req = HttpRequest {
+        let req = IncomingRequest {
             method: "POST".to_string(),
             path: "/recommend-model".to_string(),
             headers: vec![],

@@ -5,6 +5,82 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v306 (2026-10-24) - V430: dos modulos mas, un nombre duplicado que cree yo, y el mapa de verdad de lo que queda (0.2.389)
+
+N77. `butler` y `server` quedan con cero `ureq::`. Pero lo que mas vale de esta tanda son tres
+mediciones que corrigen la tarea.
+
+### 1. La cifra que la tarea arrastraba no distinguia produccion de test
+
+«60 modulos tocan ureq directamente» cuenta ficheros, y migrar un test al puerto **no confina
+ningun I/O de produccion**. Medido (regla: un sitio es de test si viene tras el primer
+`#[cfg(test)]` seguido de `mod `):
+
+| | |
+|---|---|
+| ficheros con `ureq` | **55**, no 60 |
+| sitios de **produccion** | **277** |
+| sitios de test | 17 |
+| ficheros SOLO con `ureq` de test | **1** --- `server.rs` |
+
+Asi que la preocupacion no escalaba: el 94 % es produccion. Y los pesos pesados **no son** los que
+yo habia listado por el barrido de errores: `vector_db` (38), `provider_plugins` (27),
+`providers` (20), `cloud_connectors` (19), `speech` (18).
+
+### 2. `Ok` ya no significa 2xx, y eso hay que decidirlo sitio por sitio
+
+Con `.call()`, un no-2xx era un `Err`. Detras del puerto es un `Ok`. En `butler` eso parte los
+nueve sitios en tres grupos y **ninguno es mecanico**:
+
+* **Cuatro listadores de modelos** necesitan un `is_success()` explicito. Sin el, un servidor que
+  contesta 404 en `/api/tags` entraria en el brazo bueno, daria lista vacia y **seguiria diciendo
+  `detected: true`** --- o sea, pasaria por ser Ollama. El guardia conserva lo que `.call()`
+  garantizaba.
+* **Tres sitios se ARREGLAN al migrar.** El detector de internet y el de whisper trataban
+  cualquier respuesta como «esta arriba», pero `.call()` metia el no-2xx en el `Err`, asi que **un
+  404 de la URL de prueba decia "no hay internet"**. Ahora no.
+* **El detector de Piper tenia DOS brazos identicos** --- `Ok(_)` y `Err(StatusCode(_))` con
+  cuerpos iguales --- porque `.call()` partia en dos lo que ahi es una sola cosa. El duplicado
+  desaparece solo.
+
+### 3. Y el nombre duplicado lo cree yo, en el fichero mas grande
+
+`server.rs` tenia su propio `struct HttpRequest` --- una peticion ENTRANTE parseada (`method`,
+`path`, `body`) --- y mi `use crate::http_client::HttpRequest` lo ensombrecio. O sea que acabo de
+crear un duplicado de la familia que llevo dias juzgando en N134.
+
+Medido antes de elegir: es **privado**, con 76 usos internos. Asi que se **renombra a
+`IncomingRequest`** --- que ademas describe mejor lo que es --- en vez de taparlo con un alias. La
+puerta de duplicados sigue en 209/15: no se introdujo ninguno.
+
+De `server.rs` conviene decir que **todo su `ureq` era de test**, asi que la ganancia no es
+confinar I/O: es que el test de autenticacion comprobaba el 401 **casando una variante de error**
+(`Err(ureq::Error::StatusCode(401))`) e imprimia el `Debug` del error al fallar. Ahora es un
+`assert_eq!` sobre el estado que, cuando falla, dice el estado real **y el cuerpo**.
+
+### Lo que NO se hizo, y por que
+
+`providers.rs` se paro al llegar: expone `pub fn get_agent(&mut self) -> &ureq::Agent`, un pool de
+conexiones, y el puerto construye un `Agent` **por peticion**. Antes de afirmar que eso era una
+regresion lo comprobe en el fuente de `ureq` 3.5.0, y la conclusion es mejor de lo que pensaba:
+
+* `ureq::get(url).call()` llama a `Agent::new_with_defaults()` **por llamada** (`lib.rs:662`), asi
+  que **los ~50 sitios de ese estilo nunca han tenido pool**. El puerto no los empeora.
+* El pool vive en `Agent`, y el unico sitio que lo aprovecha de verdad es el
+  `ProviderConnectionPool` de `providers`. **Ese si se degradaria.**
+* Y existe `Agent::configure_request` (`agent.rs:307`), asi que un `UreqClient` con un agente
+  compartido podria dar pool **a los 277 sitios**, que hoy no tiene ninguno.
+
+O sea que el puerto puede ser una mejora de rendimiento y no solo de orden --- pero es un cambio
+de diseno con su propia medicion, no un tramo de migracion. Apuntado en la tarea #77.
+
+### Verificacion
+
+Clippy `-D warnings` en 0 con `FEATURES_STD --all-targets`, `FEATURES_MIN` y el conjunto ANCHO;
+tests de libreria y doctests; puertas de mutacion, duplicados y enlaces.
+
+Van **7 modulos de 55**.
+
 ## [Unreleased] - v305 (2026-10-24) - V429: tres modulos mas detras del puerto, y los dos huecos que destaparon (0.2.388)
 
 N77. Los tres elegidos son los que en el barrido de errores solo distinguian `StatusCode`
