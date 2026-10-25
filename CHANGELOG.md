@@ -5,6 +5,93 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v312 (2026-10-25) - V436: `cloud_connectors` saca `ureq` de sus firmas, y mi verde no compilaba el fichero (0.2.395)
+
+N77. Los **19 sitios** de `cloud_connectors.rs` quedan detras del puerto. Van **11 modulos de 55**.
+
+Este es el primero donde `ureq` **asomaba en las firmas**: cuatro ayudantes privados devolvian
+`ureq::http::Response<ureq::Body>`, y `signed_head` ademas
+`std::result::Result<_, ureq::Error>`. Eso es exactamente lo que un puerto existe para que no
+pase --- el tipo del adaptador no debe salir de el ---, y arrastraba un
+`#[allow(clippy::result_large_err)]` que hacia falta **solo** porque `ureq::Error` es grande. Se
+va con el tipo.
+
+### El error propio, que es la parte que hay que contar
+
+Migre el modulo, corri `cargo build --features "$FEATURES_STD"`, salio **RC=0**, y me lo crei.
+
+No habia compilado una sola linea del fichero. `cloud_connectors` esta detras de la feature
+`cloud-connectors`, que **no esta en `FEATURES_STD`** --- ni en `FEATURES_MIN`, ni en
+`FEATURES_NETWORK`, ni en las 38 entradas de la matriz de features de CI. La unica que la activa
+es `gui-pro`.
+
+Al compilar con la feature de verdad salieron **dos errores**: los dos consumidores que leen el
+cuerpo (`list` y `get`) seguian llamando a `body_mut()` y `into_body()`, que `HttpResponse` no
+tiene. O sea que el «verde» anterior no decia nada sobre lo que acababa de tocar.
+
+Es la regla de [[feedback_verify_with_the_right_feature_set]] otra vez, y conviene subrayar la
+forma: **un `cargo build` que no compila el fichero sale en verde**. No hay nada en la salida que
+avise. Lo unico que lo delata es preguntarse, antes de creerse el verde, si el conjunto de
+features incluye lo que se ha tocado.
+
+Y de ahi sale un hallazgo mayor que el error: los **57 tests** de este modulo --- 10 de ellos de
+SSRF, los que comprueban que apuntar S3 a `169.254.169.254` se bloquea --- **no se ejecutan en
+ningun trabajo de CI**. El modulo esta protegido contra errores de compilacion (el trabajo de
+clippy de la GUI enciende `gui-pro`) y **no** contra regresiones de comportamiento. Tarea N162.
+
+### Lo que el puerto hace mejor aqui, y no es orden
+
+Cada uno de los cuatro ayudantes tenia **la misma peticion escrita dos veces**: una con las
+cabeceras de firma y otra sin. No por descuido --- el builder de `ureq` se consume al anadir
+cabeceras en un bucle, asi que el `if` no cabia dentro. Detras del puerto la peticion es un
+**valor**, asi que la firma se anade sobre la misma peticion: ocho bloques pasan a ser cuatro
+llamadas a un `signed_request`.
+
+Lo mismo en el conector de Drive, donde la cabecera `Authorization` estaba escrita igual en los
+cinco sitios, en cuatro lineas cada vez.
+
+### Las dos decisiones que cambian de forma, no de sentido
+
+* **El 404 de `exists`**: antes se casaba `Err(ureq::Error::StatusCode(404))`, o sea una
+  **variante de error**; ahora se mira el estado. Y aparece una rama que antes no se podia
+  escribir: un no-2xx que **no** sea 404 --- contra S3 lo normal es un **403 por permisos** --- es
+  un error con su estado en el mensaje, en vez de caer en el mismo saco que un fallo de red.
+* **El 2xx se exige DENTRO de los ayudantes**, no en cada consumidor. Antes `.call()?` ya metia el
+  no-2xx en el `Err`, asi que `list`, `get`, `put` y `delete` estan escritos dando por hecho que
+  lo que vuelve es un 2xx. Puesto en el ayudante, **ninguno de los cuatro cambia de semantica**
+  --- y el mensaje ahora lleva el cuerpo, que en S3 es un XML con el codigo real
+  (`NoSuchBucket`, `AccessDenied`, `SignatureDoesNotMatch`).
+
+### La tercera vez que el tope de cuerpo habria sido una regresion
+
+`send` corta el cuerpo en `max_body_bytes` (10 MiB por defecto). Dos de los 19 sitios **descargan
+ficheros**: un objeto de S3 y un fichero de Drive. Con `send` se habrian cortado en silencio a 10
+MiB. Los dos van por `send_streaming` con lectura sin tope, como hoy.
+
+Van tres: el descargador de modelos (V429), el `get` de Drive y el `get` de S3. **El tope por
+defecto del puerto es correcto y es una trampa en toda ruta de descarga**, y no avisa --- entrega
+10 MiB de un fichero de 2 GB y devuelve `Ok`.
+
+### Lo que NO se puede probar aqui, dicho en voz alta
+
+Las rutas de red de este modulo **no se pueden probar contra un servidor local**, y no por
+descuido: la guarda SSRF rechaza direcciones privadas, y el `MockHttpServer` escucha en
+`127.0.0.1`. Hay diez tests que comprueban justo eso. La URL de la API de Drive, ademas, esta
+fija en el codigo.
+
+Asi que de esta tanda: los **guardas SSRF** los cubren los 55 tests que ya habia (pasan por las
+funciones migradas), el **constructor de peticiones firmadas** lo cubren dos tests nuevos y tres
+mutaciones, y las **ramas de 404 contra 403** quedan **verificadas solo por el compilador**. Lo
+que lo arreglaria es que estos clientes reciban un `&dyn HttpClient` --- que es lo que se hizo en
+`academic_search` en V428 y lo que hace falta para que el puerto sirva de verdad para probar.
+
+### Verificacion
+
+**3 de 3 mutaciones** nuevas mueren (M19-M21, declaradas con `features = "full,cloud-connectors"`
+porque si no no compilan el fichero). 57 tests del modulo en verde **con la feature puesta**.
+Clippy `-D warnings` en 0 con `FEATURES_STD,cloud-connectors`, `FEATURES_STD` y `FEATURES_MIN`.
+Puerta de mutacion: 77 especificaciones casan.
+
 ## [Unreleased] - v311 (2026-10-25) - V435: `provider_plugins` detras del puerto, y la leccion de V432 aplicada al reves (0.2.394)
 
 N77. Los **27 sitios** de `provider_plugins.rs` quedan detras del puerto. Cero `ureq::`. Van

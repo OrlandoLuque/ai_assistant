@@ -371,3 +371,67 @@ before = """    let response = UreqClient.send(request)?;
 after = """    let response = UreqClient.send(request)?;
     Ok(response)"""
 occurrences = 1
+
+# ===========================================================================
+# M19 / M20 / M21: el constructor de peticiones firmadas de S3
+# ===========================================================================
+# `signed_request` es lo que V436 introdujo, y lo que colapso: cada uno de los
+# cuatro ayudantes (`signed_get`, `signed_put`, `signed_delete`, `signed_head`)
+# tenia la MISMA peticion escrita dos veces, una con las cabeceras de firma y
+# otra sin, porque el builder de `ureq` se consume al anadir cabeceras en un
+# bucle. Ocho bloques pasaron a ser cuatro llamadas, y estas tres mutaciones son
+# lo que fija que la paridad se conserve.
+#
+# OJO al correrlas: este modulo esta detras de la feature `cloud-connectors`,
+# que NO esta en `FEATURES_STD`. Hace falta
+# `--features "$FEATURES_STD,cloud-connectors"`, y lo mismo para los tests ---
+# con el conjunto de siempre `cargo build` da RC=0 sin compilar el fichero.
+# Apuntado en la tarea N162.
+
+[[mutation]]
+id = "M19"
+file = "src/cloud_connectors.rs"
+features = "full,cloud-connectors"
+filter = "cloud_connectors::tests::test_signed_request_signs_only_when_there_are_credentials"
+invariant = "con credenciales, la peticion va FIRMADA"
+before = """        if self.has_credentials() {
+            let auth_headers =
+                self.signer()
+                    .sign_request(method.as_str(), url, extra_headers, body);
+            for (name, value) in &auth_headers {
+                request = request.header(name, value);
+            }
+        }"""
+after = """        if false {
+            let auth_headers =
+                self.signer()
+                    .sign_request(method.as_str(), url, extra_headers, body);
+            for (name, value) in &auth_headers {
+                request = request.header(name, value);
+            }
+        }"""
+occurrences = 1
+
+[[mutation]]
+id = "M20"
+file = "src/cloud_connectors.rs"
+features = "full,cloud-connectors"
+filter = "cloud_connectors::tests::test_signed_request_signs_only_when_there_are_credentials"
+invariant = "SIN credenciales no se firma: una `Authorization` calculada con clave vacia vuelve como 403 y se lee como un problema de permisos"
+before = """        if self.has_credentials() {
+            let auth_headers ="""
+after = """        if true {
+            let auth_headers ="""
+occurrences = 1
+
+[[mutation]]
+id = "M21"
+file = "src/cloud_connectors.rs"
+features = "full,cloud-connectors"
+filter = "cloud_connectors::tests::test_only_the_methods_with_a_body_carry_one"
+invariant = "el cuerpo solo viaja si existe; el firmante de AWS mete su hash en el canonical request, asi que un cuerpo donde no toca es un 403 por firma incorrecta"
+before = """        if !body.is_empty() {
+            request = request.body(body.to_vec());
+        }"""
+after = """        request = request.body(body.to_vec());"""
+occurrences = 1

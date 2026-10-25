@@ -17,6 +17,7 @@
 //!
 //! Requires the `cloud-connectors` feature flag (not in `full` by default).
 
+use crate::http_client::{HttpClient, HttpMethod, HttpRequest, HttpResponse, UreqClient};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 
@@ -227,130 +228,163 @@ impl S3Client {
         )
     }
 
+    /// Construye una peticion para S3, **firmada si hay credenciales**.
+    ///
+    /// Antes esto no existia y cada uno de los cuatro metodos de abajo tenia la
+    /// MISMA peticion escrita dos veces --- una con las cabeceras de firma y
+    /// otra sin ---, porque el builder de `ureq` se consume al anadir cabeceras
+    /// en un bucle y no deja meter el `if` dentro. Detras del puerto la
+    /// peticion es un **valor**, asi que la firma se anade sobre la misma.
+    ///
+    /// El orden importa y se conserva: `Host` y las cabeceras propias primero
+    /// (porque el firmante las recibe para incluirlas en el canonical request),
+    /// y las de autorizacion despues.
+    fn signed_request(
+        &self,
+        method: HttpMethod,
+        url: &str,
+        extra_headers: &[(&str, &str)],
+        body: &[u8],
+        timeout: std::time::Duration,
+    ) -> HttpRequest {
+        let mut request = HttpRequest::new(method, url)
+            .header("Host", self.config.host())
+            .timeout(timeout);
+        for (name, value) in extra_headers {
+            request = request.header(*name, *value);
+        }
+        if self.has_credentials() {
+            let auth_headers =
+                self.signer()
+                    .sign_request(method.as_str(), url, extra_headers, body);
+            for (name, value) in &auth_headers {
+                request = request.header(name, value);
+            }
+        }
+        if !body.is_empty() {
+            request = request.body(body.to_vec());
+        }
+        request
+    }
+
     /// Execute a signed GET request.
-    fn signed_get(&self, url: &str) -> Result<ureq::http::Response<ureq::Body>> {
+    fn signed_get(&self, url: &str) -> Result<HttpResponse> {
         // SSRF protection: reject private/internal URLs
         anyhow::ensure!(
             is_safe_url(url),
             "SSRF blocked: S3 request URL points to a private/internal address"
         );
-        if self.has_credentials() {
-            let signer = self.signer();
-            let auth_headers = signer.sign_request("GET", url, &[], &[]);
-            let mut req = ureq::get(url)
-                .header("Host", &self.config.host())
-                .config()
-                .timeout_global(Some(std::time::Duration::from_secs(30)))
-                .build();
-            for (k, v) in &auth_headers {
-                req = req.header(k, v);
-            }
-            req.call().context("S3 signed GET failed")
-        } else {
-            ureq::get(url)
-                .header("Host", &self.config.host())
-                .config()
-                .timeout_global(Some(std::time::Duration::from_secs(30)))
-                .build()
-                .call()
-                .context("S3 GET failed")
-        }
+        let request = self.signed_request(
+            HttpMethod::Get,
+            url,
+            &[],
+            &[],
+            std::time::Duration::from_secs(30),
+        );
+        let response = UreqClient.send(&request).context("S3 GET failed")?;
+        // El 2xx se exige AQUI y no en cada consumidor: antes del puerto
+        // `.call()?` ya metia el no-2xx en el `Err`, asi que `list` y `get`
+        // estan escritos dando por hecho que lo que vuelve es un 2xx. Puesto en
+        // el ayudante, ninguno de los dos cambia de semantica --- y el mensaje
+        // ahora lleva el cuerpo, que en S3 es un XML con el codigo de error
+        // (`NoSuchBucket`, `AccessDenied`, `SignatureDoesNotMatch`).
+        response.error_for_status().context("S3 GET failed")?;
+        Ok(response)
     }
 
     /// Execute a signed PUT request.
-    fn signed_put(
-        &self,
-        url: &str,
-        data: &[u8],
-        content_type: &str,
-    ) -> Result<ureq::http::Response<ureq::Body>> {
+    fn signed_put(&self, url: &str, data: &[u8], content_type: &str) -> Result<HttpResponse> {
         // SSRF protection: reject private/internal URLs
         anyhow::ensure!(
             is_safe_url(url),
             "SSRF blocked: S3 request URL points to a private/internal address"
         );
-        if self.has_credentials() {
-            let signer = self.signer();
-            let extra = [("Content-Type", content_type)];
-            let auth_headers = signer.sign_request("PUT", url, &extra, data);
-            let mut req = ureq::put(url)
-                .header("Host", &self.config.host())
-                .header("Content-Type", content_type)
-                .config()
-                .timeout_global(Some(std::time::Duration::from_secs(60)))
-                .build();
-            for (k, v) in &auth_headers {
-                req = req.header(k, v);
-            }
-            req.send(data).context("S3 signed PUT failed")
-        } else {
-            ureq::put(url)
-                .header("Host", &self.config.host())
-                .header("Content-Type", content_type)
-                .config()
-                .timeout_global(Some(std::time::Duration::from_secs(60)))
-                .build()
-                .send(data)
-                .context("S3 PUT failed")
-        }
+        let request = self.signed_request(
+            HttpMethod::Put,
+            url,
+            &[("Content-Type", content_type)],
+            data,
+            std::time::Duration::from_secs(60),
+        );
+        let response = UreqClient.send(&request).context("S3 PUT failed")?;
+        // Una subida rechazada tiene que ser un error: sin esto `put` diria que
+        // guardo lo que no guardo.
+        response.error_for_status().context("S3 PUT failed")?;
+        Ok(response)
     }
 
     /// Execute a signed DELETE request.
-    fn signed_delete(&self, url: &str) -> Result<ureq::http::Response<ureq::Body>> {
+    fn signed_delete(&self, url: &str) -> Result<HttpResponse> {
         // SSRF protection: reject private/internal URLs
         anyhow::ensure!(
             is_safe_url(url),
             "SSRF blocked: S3 request URL points to a private/internal address"
         );
-        if self.has_credentials() {
-            let signer = self.signer();
-            let auth_headers = signer.sign_request("DELETE", url, &[], &[]);
-            let mut req = ureq::delete(url)
-                .header("Host", &self.config.host())
-                .config()
-                .timeout_global(Some(std::time::Duration::from_secs(30)))
-                .build();
-            for (k, v) in &auth_headers {
-                req = req.header(k, v);
-            }
-            req.call().context("S3 signed DELETE failed")
-        } else {
-            ureq::delete(url)
-                .header("Host", &self.config.host())
-                .config()
-                .timeout_global(Some(std::time::Duration::from_secs(30)))
-                .build()
-                .call()
-                .context("S3 DELETE failed")
-        }
+        let request = self.signed_request(
+            HttpMethod::Delete,
+            url,
+            &[],
+            &[],
+            std::time::Duration::from_secs(30),
+        );
+        let response = UreqClient.send(&request).context("S3 DELETE failed")?;
+        response.error_for_status().context("S3 DELETE failed")?;
+        Ok(response)
+    }
+
+    /// Execute a signed GET request **en flujo**, para descargar un objeto.
+    ///
+    /// `signed_get` bufferiza, y el puerto corta el cuerpo en `max_body_bytes`
+    /// (10 MiB por defecto). Para el XML de `list` eso sobra, pero un objeto de
+    /// S3 puede ser de gigabytes y hoy la lectura no tiene tope: con
+    /// `signed_get` la descarga se cortaria en silencio a 10 MiB. Esta es la
+    /// tercera vez en la migracion que el tope por defecto habria sido una
+    /// regresion --- el descargador de modelos (V429) y el `get` de Drive son
+    /// las otras dos.
+    fn signed_get_streaming(&self, url: &str) -> Result<crate::http_client::HttpStream> {
+        // SSRF protection: reject private/internal URLs
+        anyhow::ensure!(
+            is_safe_url(url),
+            "SSRF blocked: S3 request URL points to a private/internal address"
+        );
+        let request = self.signed_request(
+            HttpMethod::Get,
+            url,
+            &[],
+            &[],
+            std::time::Duration::from_secs(300),
+        );
+        let mut stream = UreqClient
+            .send_streaming(&request)
+            .context("S3 GET failed")?;
+        // Antes de leer un byte: el XML de error de S3 no es el contenido del
+        // objeto, y sin esto se escribiria en el fichero como si lo fuera.
+        stream.error_for_status().context("S3 GET failed")?;
+        Ok(stream)
     }
 
     /// Execute a signed HEAD request.
-    #[allow(clippy::result_large_err)]
-    fn signed_head(
-        &self,
-        url: &str,
-    ) -> std::result::Result<ureq::http::Response<ureq::Body>, ureq::Error> {
-        if self.has_credentials() {
-            let signer = self.signer();
-            let auth_headers = signer.sign_request("HEAD", url, &[], &[]);
-            let mut req = ureq::head(url)
-                .header("Host", &self.config.host())
-                .config()
-                .timeout_global(Some(std::time::Duration::from_secs(10)))
-                .build();
-            for (k, v) in &auth_headers {
-                req = req.header(k, v);
-            }
-            req.call()
-        } else {
-            ureq::head(url)
-                .header("Host", &self.config.host())
-                .config()
-                .timeout_global(Some(std::time::Duration::from_secs(10)))
-                .build()
-                .call()
-        }
+    ///
+    /// La validacion de la URL la hace el llamante (`exists`), que comprueba
+    /// `is_safe_url` justo antes. Los otros tres ayudantes la hacen por si
+    /// mismos; esta asimetria esta apuntada en la tarea N161, y hoy no abre
+    /// ningun hueco porque este metodo tiene un solo llamante.
+    ///
+    /// Devolvia `Result<_, ureq::Error>` a proposito: era la unica forma de que
+    /// el llamante pudiera casar `StatusCode(404)` y distinguir «no existe» de
+    /// «fallo». Detras del puerto el estado viene en la respuesta, asi que el
+    /// tipo del adaptador deja de asomar --- y con el se va el
+    /// `#[allow(clippy::result_large_err)]` que hacia falta solo porque
+    /// `ureq::Error` es grande.
+    fn signed_head(&self, url: &str) -> Result<HttpResponse> {
+        let request = self.signed_request(
+            HttpMethod::Head,
+            url,
+            &[],
+            &[],
+            std::time::Duration::from_secs(10),
+        );
+        UreqClient.send(&request).context("S3 HEAD failed")
     }
 }
 
@@ -372,12 +406,8 @@ impl CloudStorage for S3Client {
             url.push_str(&format!("&continuation-token={}", token));
         }
 
-        let mut resp = self.signed_get(&url)?;
-
-        let body = resp
-            .body_mut()
-            .read_to_string()
-            .context("Failed to read S3 list response")?;
+        let resp = self.signed_get(&url)?;
+        let body = resp.text().context("Failed to read S3 list response")?;
 
         // Parse XML response (simplified)
         let objects = parse_s3_list_xml(&body);
@@ -392,11 +422,10 @@ impl CloudStorage for S3Client {
     fn get(&self, key: &str) -> Result<Vec<u8>> {
         log::info!("S3 download: bucket={}, key={}", self.config.bucket, key);
         let url = self.object_url(key);
-        let resp = self.signed_get(&url)?;
+        let mut resp = self.signed_get_streaming(&url)?;
 
         let mut bytes = Vec::new();
-        resp.into_body()
-            .into_reader()
+        resp.body
             .read_to_end(&mut bytes)
             .context("Failed to read S3 object")?;
         Ok(bytes)
@@ -435,8 +464,13 @@ impl CloudStorage for S3Client {
             "SSRF blocked: S3 request URL points to a private/internal address"
         );
         match self.signed_head(&url) {
-            Ok(_) => Ok(true),
-            Err(ureq::Error::StatusCode(404)) => Ok(false),
+            Ok(resp) if resp.is_success() => Ok(true),
+            // Un 404 es «no existe», y es la respuesta correcta a `exists`.
+            Ok(resp) if resp.status == 404 => Ok(false),
+            // Cualquier otro no-2xx es un fallo, y el estado va en el mensaje:
+            // contra S3 lo normal es un 403 por permisos, que antes se leia
+            // como un error de red porque llegaba dentro de `ureq::Error`.
+            Ok(resp) => Err(anyhow::anyhow!("S3 HEAD failed: HTTP {}", resp.status)),
             Err(e) => Err(anyhow::anyhow!("S3 HEAD failed: {}", e)),
         }
     }
@@ -494,6 +528,25 @@ impl GoogleDriveClient {
         "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart".to_string()
     }
 
+    /// Una peticion a la API de Drive con el `Bearer` ya puesto.
+    ///
+    /// La cabecera estaba escrita igual en los cinco sitios, en cuatro lineas
+    /// cada vez. No es solo ruido: cinco copias son cinco sitios donde olvidar
+    /// la autorizacion al anadir el sexto.
+    fn authorized(
+        &self,
+        method: HttpMethod,
+        url: &str,
+        timeout: std::time::Duration,
+    ) -> HttpRequest {
+        HttpRequest::new(method, url)
+            .header(
+                "Authorization",
+                format!("Bearer {}", self.config.access_token),
+            )
+            .timeout(timeout)
+    }
+
     /// Get the root folder ID.
     pub fn root_folder(&self) -> &str {
         &self.config.root_folder_id
@@ -522,21 +575,16 @@ impl CloudStorage for GoogleDriveClient {
             url.push_str(&format!("&pageToken={}", token));
         }
 
-        let mut resp = ureq::get(&url)
-            .header(
-                "Authorization",
-                &format!("Bearer {}", self.config.access_token),
-            )
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(30)))
-            .build()
-            .call()
+        let resp = UreqClient
+            .send(&self.authorized(HttpMethod::Get, &url, std::time::Duration::from_secs(30)))
+            .context("Google Drive list failed")?;
+        // Sin esto, un 401 por token caducado --- el fallo mas comun de esta
+        // API --- se intentaria parsear como la lista de ficheros, y el usuario
+        // leeria «Failed to parse Drive response» en vez de «no autorizado».
+        resp.error_for_status()
             .context("Google Drive list failed")?;
 
-        let json: serde_json::Value = resp
-            .body_mut()
-            .read_json()
-            .context("Failed to parse Drive response")?;
+        let json: serde_json::Value = resp.json().context("Failed to parse Drive response")?;
 
         let mut objects = Vec::new();
         if let Some(files) = json.get("files").and_then(|f| f.as_array()) {
@@ -582,20 +630,24 @@ impl CloudStorage for GoogleDriveClient {
     fn get(&self, key: &str) -> Result<Vec<u8>> {
         // For Google Drive, 'key' is the file ID
         let url = format!("{}?alt=media", self.api_url(&format!("/files/{}", key)));
-        let resp = ureq::get(&url)
-            .header(
-                "Authorization",
-                &format!("Bearer {}", self.config.access_token),
-            )
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(60)))
-            .build()
-            .call()
+        // `send_streaming` y no `send`, y el motivo es una REGRESION evitada:
+        // `send` corta el cuerpo en `max_body_bytes` (10 MiB por defecto), y
+        // esto descarga un fichero de Drive, que puede ser mucho mayor. Hoy la
+        // lectura no tiene tope y asi se queda. El mismo cuidado hizo falta en
+        // el descargador de modelos (V429).
+        let mut resp = UreqClient
+            .send_streaming(&self.authorized(
+                HttpMethod::Get,
+                &url,
+                std::time::Duration::from_secs(60),
+            ))
             .context("Google Drive GET failed")?;
+        // Antes de leer un byte: un 404 o un 401 no son el contenido del
+        // fichero, y sin esto se escribirian en el `Vec` como si lo fueran.
+        resp.error_for_status().context("Google Drive GET failed")?;
 
         let mut bytes = Vec::new();
-        resp.into_body()
-            .into_reader()
+        resp.body
             .read_to_end(&mut bytes)
             .context("Failed to read Drive file")?;
         Ok(bytes)
@@ -619,52 +671,58 @@ impl CloudStorage for GoogleDriveClient {
         body.extend_from_slice(data);
         body.extend_from_slice(format!("\r\n--{}--", boundary).as_bytes());
 
-        ureq::post(&self.upload_url())
-            .header(
-                "Authorization",
-                &format!("Bearer {}", self.config.access_token),
+        let request = self
+            .authorized(
+                HttpMethod::Post,
+                &self.upload_url(),
+                std::time::Duration::from_secs(60),
             )
             .header(
                 "Content-Type",
-                &format!("multipart/related; boundary={}", boundary),
+                format!("multipart/related; boundary={}", boundary),
             )
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(60)))
-            .build()
-            .send(&body)
+            .body(body);
+        let resp = UreqClient
+            .send(&request)
+            .context("Google Drive upload failed")?;
+        // Conserva lo que `.send(..)?` garantizaba: si la subida se rechaza,
+        // `put` devuelve error. Sin esto diria que guardo lo que no guardo.
+        resp.error_for_status()
             .context("Google Drive upload failed")?;
         Ok(())
     }
 
     fn delete(&self, key: &str) -> Result<()> {
         let url = self.api_url(&format!("/files/{}", key));
-        ureq::delete(&url)
-            .header(
-                "Authorization",
-                &format!("Bearer {}", self.config.access_token),
-            )
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(30)))
-            .build()
-            .call()
+        let resp = UreqClient
+            .send(&self.authorized(HttpMethod::Delete, &url, std::time::Duration::from_secs(30)))
+            .context("Google Drive delete failed")?;
+        // Igual que arriba: un borrado rechazado es un error, no un exito
+        // silencioso. (Compara con los `delete` de `vector_db`, que SI tiran el
+        // resultado --- tarea N158.)
+        resp.error_for_status()
             .context("Google Drive delete failed")?;
         Ok(())
     }
 
     fn exists(&self, key: &str) -> Result<bool> {
         let url = format!("{}?fields=id", self.api_url(&format!("/files/{}", key)));
-        match ureq::get(&url)
-            .header(
-                "Authorization",
-                &format!("Bearer {}", self.config.access_token),
-            )
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(10)))
-            .build()
-            .call()
-        {
-            Ok(_) => Ok(true),
-            Err(ureq::Error::StatusCode(404)) => Ok(false),
+        match UreqClient.send(&self.authorized(
+            HttpMethod::Get,
+            &url,
+            std::time::Duration::from_secs(10),
+        )) {
+            Ok(resp) if resp.is_success() => Ok(true),
+            // Un 404 es «no existe», y es la respuesta correcta a `exists`.
+            Ok(resp) if resp.status == 404 => Ok(false),
+            // Cualquier otro no-2xx es un fallo con su estado en el mensaje. El
+            // que importa aqui es el 401: un token caducado contestaba
+            // `Err(StatusCode(401))` y se leia como un error de red, cuando lo
+            // que hay que hacer es renovar el token.
+            Ok(resp) => Err(anyhow::anyhow!(
+                "Google Drive check failed: HTTP {}",
+                resp.status
+            )),
             Err(e) => Err(anyhow::anyhow!("Google Drive check failed: {}", e)),
         }
     }
@@ -1390,6 +1448,113 @@ impl StorageConnector {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `signed_request` firma cuando hay credenciales, y no firma cuando no.
+    ///
+    /// Es la funcion que V436 introdujo, y lo que colapso: cada uno de los
+    /// cuatro ayudantes (`signed_get`, `signed_put`, `signed_delete`,
+    /// `signed_head`) tenia la MISMA peticion escrita dos veces, una con las
+    /// cabeceras de firma y otra sin, porque el builder de `ureq` se consume al
+    /// anadir cabeceras en un bucle. Ocho bloques pasaron a ser cuatro llamadas.
+    ///
+    /// Lo que este test fija no es que el constructor haga lo que dice su
+    /// codigo, es la **paridad con los ocho bloques que habia**: `Host` siempre,
+    /// `Authorization` solo con credenciales, y el cuerpo solo si no esta vacio.
+    /// Sin credenciales, firmar seria mandar una `Authorization` calculada con
+    /// una clave vacia --- que el servidor rechaza con un 403 y se lee como un
+    /// problema de permisos.
+    ///
+    /// No pasa por HTTP a proposito: ver la nota de abajo sobre por que las
+    /// rutas de red de este modulo no se pueden probar contra un mock.
+    #[test]
+    fn test_signed_request_signs_only_when_there_are_credentials() {
+        let with_keys = S3Client::new(S3Config::new("cubo", "eu-west-1", "AKID", "secreto"));
+        let request = with_keys.signed_request(
+            HttpMethod::Get,
+            "https://cubo.s3.eu-west-1.amazonaws.com/clave",
+            &[],
+            &[],
+            std::time::Duration::from_secs(30),
+        );
+        let names: Vec<&str> = request
+            .headers
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect();
+        assert!(names.contains(&"Host"), "el Host va siempre: {:?}", names);
+        assert!(
+            names
+                .iter()
+                .any(|n| n.eq_ignore_ascii_case("authorization")),
+            "con credenciales tiene que ir firmada: {:?}",
+            names
+        );
+
+        // Y sin credenciales NO se firma. El `S3Config::new` exige las claves,
+        // asi que se vacian a mano --- que es exactamente el caso de un bucket
+        // publico, el motivo de que la rama existiera.
+        let mut config = S3Config::new("cubo", "eu-west-1", "", "");
+        config.access_key_id.clear();
+        config.secret_access_key.clear();
+        let anonymous = S3Client::new(config);
+        let request = anonymous.signed_request(
+            HttpMethod::Get,
+            "https://cubo.s3.eu-west-1.amazonaws.com/clave",
+            &[],
+            &[],
+            std::time::Duration::from_secs(30),
+        );
+        let names: Vec<&str> = request
+            .headers
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect();
+        assert!(names.contains(&"Host"), "el Host sigue yendo: {:?}", names);
+        assert!(
+            !names
+                .iter()
+                .any(|n| n.eq_ignore_ascii_case("authorization")),
+            "sin claves NO se firma: una Authorization calculada con clave vacia \
+             vuelve como 403 y se lee como un problema de permisos: {:?}",
+            names
+        );
+    }
+
+    /// El cuerpo viaja en el `PUT` y **no** en el `GET`.
+    ///
+    /// Importa mas de lo que parece: el firmante de AWS incluye el hash del
+    /// payload en el canonical request, asi que un cuerpo que se cuela donde no
+    /// toca no da un error de forma --- da un 403 por firma incorrecta, que es
+    /// de los fallos mas caros de diagnosticar contra S3.
+    #[test]
+    fn test_only_the_methods_with_a_body_carry_one() {
+        let client = S3Client::new(S3Config::new("cubo", "eu-west-1", "AKID", "secreto"));
+
+        let put = client.signed_request(
+            HttpMethod::Put,
+            "https://cubo.s3.eu-west-1.amazonaws.com/clave",
+            &[("Content-Type", "text/plain")],
+            b"contenido",
+            std::time::Duration::from_secs(60),
+        );
+        assert_eq!(put.body.as_deref(), Some(&b"contenido"[..]));
+        assert!(
+            put.headers
+                .iter()
+                .any(|(n, v)| n == "Content-Type" && v == "text/plain"),
+            "el Content-Type del PUT: {:?}",
+            put.headers
+        );
+
+        let get = client.signed_request(
+            HttpMethod::Get,
+            "https://cubo.s3.eu-west-1.amazonaws.com/clave",
+            &[],
+            &[],
+            std::time::Duration::from_secs(30),
+        );
+        assert!(get.body.is_none(), "un GET no lleva cuerpo");
+    }
 
     #[test]
     fn test_s3_config_new() {
