@@ -24,10 +24,16 @@ id = "M1"
 file = "src/http_client.rs"
 filter = "http_client::tests::test_port_returns_non_2xx_with_its_body"
 invariant = "el no-2xx vuelve como respuesta completa, con estado y cuerpo, y no como un error sin cuerpo --- el cuerpo es donde el proveedor explica por que dijo no"
-before = """        let mut config = ureq::Agent::config_builder()
+# Re-anclada en V431: la configuracion dejo de crear un agente por peticion y
+# pasa por `Agent::configure_request` sobre el compartido. El invariante no ha
+# cambiado --- lo que se vigila es que el `false` siga ahi.
+before = """        let mut config = SHARED_AGENT
+            .configure_request(http_request)
             .timeout_global(Some(request.timeout))
             .http_status_as_error(false);"""
-after = """        let mut config = ureq::Agent::config_builder().timeout_global(Some(request.timeout));"""
+after = """        let mut config = SHARED_AGENT
+            .configure_request(http_request)
+            .timeout_global(Some(request.timeout));"""
 occurrences = 1
 
 # ---------------------------------------------------------------------------
@@ -131,4 +137,37 @@ before = """                    Some(_) => {
                         return Err(AcademicSearchError::RateLimit(format!("""
 after = """                    Some(_) => {
                         return Err(AcademicSearchError::Network(format!("""
+occurrences = 1
+
+# ===========================================================================
+# M8: el agente deja de ser compartido, y con el se va el pool
+# ===========================================================================
+# El defecto que esta mutacion reintroduce es el que tenia la PRIMERA version del
+# puerto (V427): un `Agent` por `send`, y como el pool de conexiones vive en el
+# `Agent`, cada peticion abria TCP y TLS de cero. No falla nada, no avisa nadie y
+# los tests pasan: solo va mas lento, que es la clase de defecto que no se ve
+# hasta que alguien mide.
+#
+# Se vigila contando CONEXIONES y no milisegundos. Contra un servidor en
+# localhost no hay RTT ni handshake TLS que ahorrar, asi que una medida de
+# latencia diria "no se nota" sobre algo que si esta pasando.
+[[mutation]]
+id = "M8"
+file = "src/http_client.rs"
+filter = "http_client::tests::test_shared_agent_reuses_one_connection"
+invariant = "el agente es compartido, que es donde vive el pool: tres peticiones seguidas usan UNA conexion y no tres"
+# PRIMERA VERSION: anclada en el `SHARED_AGENT` de `prepare`, y SOBREVIVIO.
+# El diagnostico vale mas que la mutacion: `prepare` solo CONFIGURA la peticion,
+# y quien abre la conexion es el `run` de `send`. Mutar el receptor del
+# `configure_request` no cambia que agente ejecuta, asi que seguia habiendo una
+# sola conexion y el test no notaba nada.
+#
+# De paso dejo a la vista algo que `ureq` documenta y no comprueba: configurar
+# una `http::Request` con un agente y ejecutarla con OTRO es un error segun su
+# propia documentacion (`agent.rs:300`), y no salto nada. Anclada ahora donde de
+# verdad decide: el `run`.
+before = """        let mut response = SHARED_AGENT
+            .run(Self::prepare(request)?)"""
+after = """        let mut response = ureq::Agent::new_with_defaults()
+            .run(Self::prepare(request)?)"""
 occurrences = 1

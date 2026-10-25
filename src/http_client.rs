@@ -396,6 +396,28 @@ pub trait HttpClient: Send + Sync {
     }
 }
 
+/// El agente compartido de todo el proceso, y **el pool de conexiones vive
+/// aqui**.
+///
+/// Esto no es una optimizacion especulativa: esta medido. En `ureq` 3,
+/// `ureq::get(url)` construye `Agent::new_with_defaults()` **en cada llamada**
+/// (`lib.rs:662` de ureq 3.5.0), asi que los ~50 sitios de la crate escritos de
+/// esa forma **nunca han reutilizado una conexion**: TCP y TLS completos cada
+/// vez. Y la primera version de este puerto hacia lo mismo, un `Agent` por
+/// `send`.
+///
+/// Con un agente compartido, los 277 sitios de produccion que vayan quedando
+/// detras del puerto comparten pool. Lo que lo hace posible es que `ureq` deja
+/// configurar **por peticion** --- con [`ureq::Agent::configure_request`] --- lo
+/// que antes obligaba a un agente por peticion: plazos, redirecciones y el
+/// `http_status_as_error`. Comprobado en `config.rs`: los cuatro ajustes estan
+/// en el `impl` generico de `ConfigBuilder`, no en el de ambito de agente.
+///
+/// `Agent` es `Clone` y su pool lleva un `Mutex` dentro, asi que compartirlo
+/// entre hilos es su uso previsto.
+static SHARED_AGENT: std::sync::LazyLock<ureq::Agent> =
+    std::sync::LazyLock::new(ureq::Agent::new_with_defaults);
+
 /// Default HTTP client using the `ureq` library.
 ///
 /// This is the production client used by all provider functions.
@@ -403,20 +425,24 @@ pub trait HttpClient: Send + Sync {
 pub struct UreqClient;
 
 impl UreqClient {
-    /// Construye la peticion de `ureq` comun a `send` y `send_streaming`.
+    /// Construye la peticion de `ureq` **ya configurada**, comun a `send` y a
+    /// `send_streaming`.
     ///
     /// `http_status_as_error(false)` va aqui y **no es opcional**: es lo que
     /// hace que el no-2xx vuelva con cuerpo y cabeceras, que es el contrato de
-    /// [`HttpResponse`]. Ponerlo en un solo sitio es justamente el punto del
-    /// puerto --- antes eran diez decisiones sueltas y ocho las tomaban bien.
-    fn build(request: &HttpRequest) -> Result<ureq::http::Request<Vec<u8>>> {
+    /// [`HttpResponse`]. Ponerlo en un solo sitio es el punto del puerto ---
+    /// antes eran diez decisiones sueltas y dos de ellas estaban mal.
+    ///
+    /// La configuracion se aplica **sobre el agente compartido**, no creando uno
+    /// nuevo: ver [`SHARED_AGENT`].
+    fn prepare(request: &HttpRequest) -> Result<ureq::http::Request<Vec<u8>>> {
         let mut builder = ureq::http::Request::builder()
             .method(request.method.as_str())
             .uri(&request.url);
         for (name, value) in &request.headers {
             builder = builder.header(name, value);
         }
-        builder
+        let http_request = builder
             .body(request.body.clone().unwrap_or_default())
             .map_err(|e| {
                 anyhow::anyhow!(
@@ -425,12 +451,10 @@ impl UreqClient {
                     request.url,
                     e
                 )
-            })
-    }
+            })?;
 
-    /// El agente con la configuracion de ESTA peticion.
-    fn agent(request: &HttpRequest) -> ureq::Agent {
-        let mut config = ureq::Agent::config_builder()
+        let mut config = SHARED_AGENT
+            .configure_request(http_request)
             .timeout_global(Some(request.timeout))
             .http_status_as_error(false);
         if let Some(connect) = request.connect_timeout {
@@ -439,15 +463,14 @@ impl UreqClient {
         if let Some(max) = request.max_redirects {
             config = config.max_redirects(max);
         }
-        ureq::Agent::new_with_config(config.build())
+        Ok(config.build())
     }
 }
 
 impl HttpClient for UreqClient {
     fn send(&self, request: &HttpRequest) -> Result<HttpResponse> {
-        let http_request = Self::build(request)?;
-        let mut response = Self::agent(request)
-            .run(http_request)
+        let mut response = SHARED_AGENT
+            .run(Self::prepare(request)?)
             .with_context(|| format!("{} {}", request.method.as_str(), request.url))?;
 
         let status = response.status().as_u16();
@@ -481,9 +504,8 @@ impl HttpClient for UreqClient {
     }
 
     fn send_streaming(&self, request: &HttpRequest) -> Result<HttpStream> {
-        let http_request = Self::build(request)?;
-        let response = Self::agent(request)
-            .run(http_request)
+        let response = SHARED_AGENT
+            .run(Self::prepare(request)?)
             .with_context(|| format!("{} {} (streaming)", request.method.as_str(), request.url))?;
         let status = response.status().as_u16();
         let headers = response
@@ -683,6 +705,7 @@ pub struct MockHttpServer {
     /// Received requests: (method, path, body)
     requests: std::sync::Arc<std::sync::Mutex<Vec<(String, String, String)>>>,
     heads: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    connections: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     /// Background thread handle
     _handle: Option<std::thread::JoinHandle<()>>,
 }
@@ -702,11 +725,16 @@ impl MockHttpServer {
         // manda cabeceras" era justo la capacidad que le faltaba al trait.
         let heads: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
             std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        // Cuantas CONEXIONES se aceptaron, no cuantas peticiones llegaron. Es
+        // la unica forma de ver el pool desde fuera: N peticiones seguidas sobre
+        // un agente con pool usan 1 conexion, y sin pool usan N.
+        let connections = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let ready = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
         let resp_clone = responses.clone();
         let req_clone = requests.clone();
         let head_clone = heads.clone();
+        let conn_clone = connections.clone();
         let ready_clone = ready.clone();
 
         let handle = std::thread::spawn(move || {
@@ -720,108 +748,136 @@ impl MockHttpServer {
             for stream in listener.incoming() {
                 match stream {
                     Ok(mut stream) => {
+                        conn_clone.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         stream
                             .set_read_timeout(Some(std::time::Duration::from_secs(5)))
                             .ok();
 
-                        // Read the WHOLE request: headers, then exactly
-                        // Content-Length bytes of body.
-                        //
-                        // This used to be a single `read()`. TCP is a stream, so
-                        // under load a request arrives split across segments —
-                        // the server would read the first chunk, reply, and close
-                        // while the client was still writing, which the client
-                        // sees as a connection reset. That made
-                        // `test_otlp_exporter_flush_with_mock` and
-                        // `test_mock_server_post_streaming` fail intermittently
-                        // (measured: 2 of 3 full runs) while passing 5/5 in
-                        // isolation — a broken helper, not fragile tests.
-                        let mut raw: Vec<u8> = Vec::with_capacity(8192);
-                        let mut chunk = [0u8; 4096];
-                        let request_str = loop {
-                            let n = match std::io::Read::read(&mut stream, &mut chunk) {
-                                Ok(0) => break String::from_utf8_lossy(&raw).to_string(),
-                                Ok(n) => n,
-                                Err(_) => break String::from_utf8_lossy(&raw).to_string(),
-                            };
-                            raw.extend_from_slice(&chunk[..n]);
+                        // Una conexion puede llevar VARIAS peticiones. Hasta
+                        // V431 el mock contestaba una y cerraba
+                        // (`Connection: close`), asi que ningun test podia
+                        // distinguir un cliente con pool de uno sin el --- el
+                        // servidor forzaba una conexion por peticion. Se sale
+                        // del bucle cuando el cliente cierra (lectura vacia).
+                        loop {
+                            // Read the WHOLE request: headers, then exactly
+                            // Content-Length bytes of body.
+                            //
+                            // This used to be a single `read()`. TCP is a stream, so
+                            // under load a request arrives split across segments —
+                            // the server would read the first chunk, reply, and close
+                            // while the client was still writing, which the client
+                            // sees as a connection reset. That made
+                            // `test_otlp_exporter_flush_with_mock` and
+                            // `test_mock_server_post_streaming` fail intermittently
+                            // (measured: 2 of 3 full runs) while passing 5/5 in
+                            // isolation — a broken helper, not fragile tests.
+                            let mut raw: Vec<u8> = Vec::with_capacity(8192);
+                            let mut chunk = [0u8; 4096];
+                            let request_str = loop {
+                                let n = match std::io::Read::read(&mut stream, &mut chunk) {
+                                    Ok(0) => break String::from_utf8_lossy(&raw).to_string(),
+                                    Ok(n) => n,
+                                    Err(_) => break String::from_utf8_lossy(&raw).to_string(),
+                                };
+                                raw.extend_from_slice(&chunk[..n]);
 
-                            let text = String::from_utf8_lossy(&raw);
-                            let Some(head_end) = text.find("\r\n\r\n") else {
-                                continue; // headers still incomplete
+                                let text = String::from_utf8_lossy(&raw);
+                                let Some(head_end) = text.find("\r\n\r\n") else {
+                                    continue; // headers still incomplete
+                                };
+                                // Content-Length decides how much body to expect; a
+                                // request without one carries no body.
+                                let want: usize = text[..head_end]
+                                    .lines()
+                                    .find(|l| l.to_ascii_lowercase().starts_with("content-length:"))
+                                    .and_then(|l| l.split(':').nth(1))
+                                    .and_then(|v| v.trim().parse().ok())
+                                    .unwrap_or(0);
+                                if raw.len() >= head_end + 4 + want {
+                                    break text.to_string();
+                                }
                             };
-                            // Content-Length decides how much body to expect; a
-                            // request without one carries no body.
-                            let want: usize = text[..head_end]
-                                .lines()
-                                .find(|l| l.to_ascii_lowercase().starts_with("content-length:"))
-                                .and_then(|l| l.split(':').nth(1))
-                                .and_then(|v| v.trim().parse().ok())
-                                .unwrap_or(0);
-                            if raw.len() >= head_end + 4 + want {
-                                break text.to_string();
+
+                            // Una lectura vacia significa que el cliente cerro la
+                            // conexion: no hay mas peticiones por aqui.
+                            if request_str.trim().is_empty() {
+                                break;
                             }
-                        };
 
-                        // Parse method, path, body
-                        let lines: Vec<&str> = request_str.split("\r\n").collect();
-                        let first_line = lines.first().unwrap_or(&"");
-                        let parts: Vec<&str> = first_line.split(' ').collect();
-                        let method = parts.first().unwrap_or(&"GET").to_string();
-                        let path = parts.get(1).unwrap_or(&"/").to_string();
+                            // Parse method, path, body
+                            let lines: Vec<&str> = request_str.split("\r\n").collect();
+                            let first_line = lines.first().unwrap_or(&"");
+                            let parts: Vec<&str> = first_line.split(' ').collect();
+                            let method = parts.first().unwrap_or(&"GET").to_string();
+                            let path = parts.get(1).unwrap_or(&"/").to_string();
 
-                        // Body is after the empty line
-                        let body = if let Some(pos) = request_str.find("\r\n\r\n") {
-                            request_str[pos + 4..].to_string()
-                        } else {
-                            String::new()
-                        };
-
-                        // La cabecera cruda es todo lo anterior a la linea vacia.
-                        let head = request_str
-                            .find("\r\n\r\n")
-                            .map(|pos| request_str[..pos].to_string())
-                            .unwrap_or_else(|| request_str.clone());
-                        head_clone.lock().unwrap().push(head);
-
-                        req_clone.lock().unwrap().push((method, path, body));
-
-                        // Get next response from queue
-                        let (status, content_type, extra_headers, resp_body) = {
-                            let mut q = resp_clone.lock().unwrap();
-                            if q.is_empty() {
-                                (
-                                    404,
-                                    "text/plain".to_string(),
-                                    Vec::new(),
-                                    "No responses queued".to_string(),
-                                )
+                            // Body is after the empty line
+                            let body = if let Some(pos) = request_str.find("\r\n\r\n") {
+                                request_str[pos + 4..].to_string()
                             } else {
-                                q.remove(0)
-                            }
-                        };
+                                String::new()
+                            };
 
-                        // Map status code to reason phrase
-                        let reason = match status {
-                            200 => "OK",
-                            201 => "Created",
-                            204 => "No Content",
-                            400 => "Bad Request",
-                            404 => "Not Found",
-                            500 => "Internal Server Error",
-                            _ => "Unknown",
-                        };
+                            // La cabecera cruda es todo lo anterior a la linea vacia.
+                            let head = request_str
+                                .find("\r\n\r\n")
+                                .map(|pos| request_str[..pos].to_string())
+                                .unwrap_or_else(|| request_str.clone());
+                            // HTTP/1.1: si el cliente pide `Connection: close`, el servidor
+                            // DEBE cerrar tras responder. Ignorarlo es un fallo de
+                            // protocolo, y se noto enseguida al poner keep-alive: un test
+                            // que lee hasta EOF se quedaba colgado hasta el plazo de
+                            // lectura. Se mira solo la CABECERA --- en el cuerpo,
+                            // "connection: close" es texto cualquiera.
+                            let client_wants_close =
+                                head.to_ascii_lowercase().contains("connection: close");
 
-                        // Write HTTP response
-                        let extra: String = extra_headers
-                            .iter()
-                            .map(|(k, v): &(String, String)| format!("{}: {}\r\n", k, v))
-                            .collect();
-                        let response = format!(
-                            "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\n{}Connection: close\r\n\r\n{}",
-                            status, reason, content_type, resp_body.len(), extra, resp_body
+                            head_clone.lock().unwrap().push(head);
+
+                            req_clone.lock().unwrap().push((method, path, body));
+
+                            // Get next response from queue
+                            let (status, content_type, extra_headers, resp_body) = {
+                                let mut q = resp_clone.lock().unwrap();
+                                if q.is_empty() {
+                                    (
+                                        404,
+                                        "text/plain".to_string(),
+                                        Vec::new(),
+                                        "No responses queued".to_string(),
+                                    )
+                                } else {
+                                    q.remove(0)
+                                }
+                            };
+
+                            // Map status code to reason phrase
+                            let reason = match status {
+                                200 => "OK",
+                                201 => "Created",
+                                204 => "No Content",
+                                400 => "Bad Request",
+                                404 => "Not Found",
+                                500 => "Internal Server Error",
+                                _ => "Unknown",
+                            };
+
+                            // Write HTTP response
+                            let extra: String = extra_headers
+                                .iter()
+                                .map(|(k, v): &(String, String)| format!("{}: {}\r\n", k, v))
+                                .collect();
+                            let response = format!(
+                            "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\n{}Connection: {}\r\n\r\n{}",
+                            status, reason, content_type, resp_body.len(), extra, if client_wants_close { "close" } else { "keep-alive" }, resp_body
                         );
-                        std::io::Write::write_all(&mut stream, response.as_bytes()).ok();
+                            std::io::Write::write_all(&mut stream, response.as_bytes()).ok();
+
+                            if client_wants_close {
+                                break;
+                            }
+                        } // fin del bucle de peticiones de ESTA conexion
                     }
                     Err(_) => break,
                 }
@@ -838,6 +894,7 @@ impl MockHttpServer {
             responses,
             requests,
             heads,
+            connections,
             _handle: Some(handle),
         }
     }
@@ -868,6 +925,15 @@ impl MockHttpServer {
             headers,
             body.to_string(),
         ));
+    }
+
+    /// Cuantas CONEXIONES TCP se aceptaron.
+    ///
+    /// Distinto de `request_count()` a proposito: es la diferencia entre un
+    /// cliente que reutiliza la conexion y uno que abre una por peticion, y es
+    /// lo que hace observable el pool sin medir tiempos.
+    pub fn connection_count(&self) -> usize {
+        self.connections.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// La cabecera CRUDA de la ultima peticion recibida, tal como llego.
@@ -1255,6 +1321,43 @@ mod tests {
         let mut body = String::new();
         std::io::Read::read_to_string(&mut stream.body, &mut body).expect("se lee");
         assert!(body.contains("not found"), "body = {}", body);
+    }
+
+    /// La prueba de que el pool existe, y es **determinista**: tres peticiones
+    /// seguidas al mismo servidor usan UNA conexion.
+    ///
+    /// Se cuentan conexiones y no milisegundos a proposito. Una medida de
+    /// latencia contra un servidor en localhost es ruido --- no hay ni RTT ni
+    /// handshake TLS que ahorrar --- asi que diria "no se nota" sobre algo que
+    /// si esta pasando. El numero de conexiones TCP lo dice sin ambiguedad.
+    ///
+    /// Sin agente compartido serian tres, porque `ureq::get(url)` construye un
+    /// `Agent` por llamada y con el un pool nuevo. Y hasta V431 este test **no
+    /// se podia escribir**: el mock contestaba y cerraba la conexion, asi que
+    /// forzaba una por peticion y tapaba la diferencia que se quiere medir.
+    #[test]
+    fn test_shared_agent_reuses_one_connection() {
+        let server = MockHttpServer::start();
+        for _ in 0..3 {
+            server.enqueue_json(200, serde_json::json!({"ok": true}));
+        }
+
+        for i in 0..3 {
+            let request =
+                HttpRequest::get(format!("{}/ping", server.url())).timeout(Duration::from_secs(5));
+            let response = UreqClient
+                .send(&request)
+                .unwrap_or_else(|e| panic!("peticion {} fallo: {:#}", i, e));
+            assert!(response.is_success());
+        }
+
+        assert_eq!(server.request_count(), 3, "llegaron las tres peticiones");
+        assert_eq!(
+            server.connection_count(),
+            1,
+            "tres peticiones con pool son UNA conexion; {} significa que el              agente compartido no esta reutilizando",
+            server.connection_count()
+        );
     }
 
     #[test]

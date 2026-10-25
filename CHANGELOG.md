@@ -5,6 +5,81 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v307 (2026-10-25) - V431: el puerto se queda el pool, y eso lo convierte en una mejora y no solo en orden (0.2.390)
+
+N77. Lo que paro la migracion de `providers` en V430 era que el puerto construia un
+`ureq::Agent` **por peticion**, y el pool de conexiones vive en el `Agent`. Arreglado, y medido.
+
+### Lo que estaba pasando, y es peor de lo que la tarea suponia
+
+No es solo que el puerto no reutilizara conexiones: **la crate entera no lo hace**. En `ureq` 3,
+`ureq::get(url)` construye `Agent::new_with_defaults()` **en cada llamada** (`lib.rs:662` de
+3.5.0), asi que los ~50 sitios escritos de esa forma abren TCP --- y TLS, contra un proveedor
+cloud --- **de cero cada vez**. El unico sitio de las 55 que de verdad aprovecha el pool es el
+`ProviderConnectionPool` de `providers.rs`, que mantiene un `HashMap<String, ureq::Agent>`.
+
+O sea que el puerto no estaba empeorando nada, pero tampoco arreglaba lo que podia arreglar.
+
+### El arreglo, y por que no rompe ni un llamante
+
+`UreqClient` **sigue siendo un struct unitario**, asi que los ~25 sitios que escriben
+`UreqClient.send(..)` no cambian una coma. El agente vive en un `static SHARED_AGENT:
+LazyLock<ureq::Agent>` del modulo.
+
+Lo que lo hace posible --- y era la pregunta que habia que contestar antes de disenar --- es que
+`ureq` deja configurar **por peticion** lo que la primera version obligaba a resolver con un
+agente nuevo. `Agent::configure_request` (`agent.rs:307`) devuelve un `ConfigBuilder` sobre la
+propia `http::Request`, y los cuatro ajustes que el puerto necesita estan en el `impl` **generico**
+de `ConfigBuilder`, no en el de ambito de agente: `timeout_global`, `timeout_connect`,
+`max_redirects` y `http_status_as_error`. Comprobado en `config.rs:511` contra `config.rs:971`.
+
+### La medicion: CONEXIONES, no milisegundos
+
+Contra un servidor en localhost una medida de latencia es ruido --- no hay RTT ni handshake TLS
+que ahorrar --- asi que diria «no se nota» sobre algo que si esta pasando. Lo que no tiene
+ambiguedad es **cuantas conexiones TCP se abren**: con pool, tres peticiones seguidas son **una**;
+sin pool, tres.
+
+Y ese test **no se podia escribir** hasta hoy, porque el `MockHttpServer` contestaba y cerraba
+(`Connection: close`): el propio servidor forzaba una conexion por peticion y tapaba justo la
+diferencia que se quiere medir. Ahora el mock mantiene la conexion, atiende varias peticiones
+seguidas y expone `connection_count()`.
+
+La mutacion **M8** vigila el invariante, y reintroduce exactamente el defecto de V427: un agente
+por `send`. No falla nada con ella puesta --- solo se abren tres conexiones en vez de una, que es
+la clase de defecto que no se ve hasta que alguien mide.
+
+**Y M8 SOBREVIVIO a la primera**, lo que vale mas que la mutacion: la habia anclado en el
+`SHARED_AGENT` de `prepare()`, que solo CONFIGURA la peticion. Quien abre la conexion es el `run`
+de `send`, asi que mutar el receptor del `configure_request` no cambiaba que agente ejecuta ---
+seguia habiendo una sola conexion y el test no notaba nada. **Una mutacion mal anclada no vigila
+el invariante que dice vigilar**, y solo lo descubres ejecutandola.
+
+De paso dejo a la vista algo que `ureq` documenta y no comprueba: configurar una `http::Request`
+con un agente y ejecutarla con OTRO es un error declarado en `agent.rs:300` --- *«It's an error to
+configure a `http::Request` using one instance of `Agent` and run using another»* --- y la
+mutacion hacia exactamente eso sin que salte nada. Util saberlo si algun dia se mete un segundo
+cliente.
+
+### Y un fallo de protocolo MIO, que el primer test en rojo canto
+
+Al poner keep-alive, `test_mock_server_text_response` se rompio. La causa no era el test: manda
+`Connection: close` y lee hasta EOF, y **mi mock se estaba saltando esa cabecera**. HTTP/1.1 dice
+que el servidor DEBE cerrar si el cliente lo pide. Arreglado en el mock --- que ahora lee la
+intencion del cliente **solo de la cabecera**, porque en el cuerpo `connection: close` es texto
+cualquiera --- y no en el test.
+
+Efecto colateral que se agradece: ese modulo de tests pasa de **5,03 s a 0,03 s**, porque el test
+roto se estaba comiendo el plazo de lectura entero.
+
+### Verificacion
+
+**8 de 8 mutaciones** mueren. Clippy `-D warnings` en 0 con `FEATURES_STD --all-targets`,
+`FEATURES_MIN` y el conjunto ANCHO; tests de libreria y doctests; puertas de mutacion y enlaces.
+
+Lo que esto desbloquea: migrar `providers.rs` (20 sitios, el camino caliente) sin degradar su
+pool, porque ahora el puerto tiene uno.
+
 ## [Unreleased] - v306 (2026-10-24) - V430: dos modulos mas, un nombre duplicado que cree yo, y el mapa de verdad de lo que queda (0.2.389)
 
 N77. `butler` y `server` quedan con cero `ureq::`. Pero lo que mas vale de esta tanda son tres
