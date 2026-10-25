@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v314 (2026-10-25) - V438: borrado `ConnectionPoolHandle`, que prometia agrupar conexiones y no agrupaba ninguna (0.2.397)
+
+Decision del autor. Con esto **se cierra lo que bloqueaba la tarea #77**.
+
+### Que era, y por que no se rescata «la parte buena»
+
+`ConnectionPoolHandle` guardaba un `HashMap<String, ureq::Agent>` --- un agente por host ---
+para reutilizar conexiones TCP. La idea es buena. Lo construido, medido antes de borrarlo:
+
+* `get_agent` tenia **cinco llamantes y los cinco dentro de `#[cfg(test)]`**;
+* el campo `pool` del registro se escribia y **nunca se leia** --- `self.pool` aparecia una sola
+  vez en todo el fichero, dentro de su propio setter. Un consumidor que hiciera lo unico que la
+  API le invitaba a hacer (`registry.set_pool(..)`) no obtenia nada;
+* `PoolHandleConfig` es `#[non_exhaustive]` y solo tenia `Default`, asi que desde fuera de la
+  crate **no se podia ni configurar**.
+
+O sea: una capacidad publica, re-exportada, que no se puede alcanzar aunque quieras.
+
+### La pregunta que de verdad decidia esto
+
+No era «¿se usa?» sino «¿hace falta?». Y la configuracion por host **si se usa**: cada plugin
+tiene su `timeout` propio (`OllamaConfig`, `LmStudioConfig`, `TextGenWebUIConfig`…, con
+`with_timeout()`).
+
+Pero esos plazos viajan **por peticion**, no por host --- y por peticion es estrictamente mas
+expresivo: el mismo Ollama necesita 120 s para un chat y 5 s para el sondeo de salud, y un
+agente por host no puede dar las dos cosas. Es exactamente lo que `provider_plugins` hace hoy.
+
+Lo unico que vive en el agente y no en la peticion es **proxy, TLS y tamano de pool por host**.
+Buscado en toda la crate: nada configura proxy ni TLS de cliente (el `proxy` de
+`agent_definition` es politica de red del sandbox, no cliente HTTP), y el tamano de pool no lo
+ha tocado nadie. Y `ConnectionPoolHandle` **tampoco implementaba proxy ni TLS** --- solo plazos
+---, asi que al borrarlo no se pierde ese trabajo: habria que escribirlo igual. Encolado como
+tarea N165, al final de la lista, y cuando llegue va **en el puerto**, que es donde esa decision
+se toma una vez para los 55 modulos.
+
+### Lo que se va
+
+Los dos tipos, el campo `pool`, `set_pool`, los dos re-exports de `lib.rs` y cinco tests. ~70
+lineas que describian una capacidad inexistente --- deuda declarada, la clase de defecto que
+este proyecto lleva meses cazando.
+
+**Verificado**: clippy `-D warnings` en 0 y **9.091 tests** (los 9.096 menos los cinco que se van
+con el tipo). Las cifras del README re-medidas en consecuencia: 9.091 con `FEATURES_STD`, 7.307
+con `--features full`, 5.274 con el minimo de ocho.
+
 ## [Unreleased] - v313 (2026-10-25) - V437: la puerta de cifras del README hizo su trabajo, y encontro cuatro mas (0.2.396)
 
 CI en rojo tras V436, y **no por la migracion**: la puerta `check_readme_numbers.py` (V373) tumbo

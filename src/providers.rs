@@ -2029,71 +2029,6 @@ impl crate::error_taxonomy::ErrorCode for ResilientError {
 }
 
 // ---------------------------------------------------------------------------
-// ConnectionPoolHandle
-// ---------------------------------------------------------------------------
-
-/// Configuration for the lightweight connection-pool handle.
-#[non_exhaustive]
-pub struct PoolHandleConfig {
-    /// Per-request timeout in seconds
-    pub timeout_secs: u64,
-    /// Maximum idle connections to keep per host (ureq manages this internally)
-    pub max_idle_per_host: usize,
-}
-
-impl Default for PoolHandleConfig {
-    fn default() -> Self {
-        Self {
-            timeout_secs: 30,
-            max_idle_per_host: 4,
-        }
-    }
-}
-
-/// Lightweight connection-pool wrapper that creates one [`ureq::Agent`] per
-/// host and reuses it for subsequent requests, keeping TCP connections alive.
-pub struct ConnectionPoolHandle {
-    agents: HashMap<String, ureq::Agent>,
-    config: PoolHandleConfig,
-}
-
-impl ConnectionPoolHandle {
-    /// Create a new pool handle with the given configuration.
-    pub fn new(config: PoolHandleConfig) -> Self {
-        Self {
-            agents: HashMap::new(),
-            config,
-        }
-    }
-
-    /// Return a reference to the [`ureq::Agent`] for the given host,
-    /// creating one lazily if it does not yet exist.
-    pub fn get_agent(&mut self, host: &str) -> &ureq::Agent {
-        if !self.agents.contains_key(host) {
-            let agent = ureq::Agent::new_with_config(
-                ureq::Agent::config_builder()
-                    .timeout_connect(Some(Duration::from_secs(self.config.timeout_secs)))
-                    .timeout_per_read(Some(Duration::from_secs(self.config.timeout_secs)))
-                    .max_idle_connections_per_host(self.config.max_idle_per_host)
-                    .build(),
-            );
-            self.agents.insert(host.to_string(), agent);
-        }
-        self.agents
-            .get(host)
-            .expect("agent must exist after insert in get_agent")
-    }
-}
-
-impl std::fmt::Debug for ConnectionPoolHandle {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ConnectionPoolHandle")
-            .field("hosts", &self.agents.keys().collect::<Vec<_>>())
-            .finish()
-    }
-}
-
-// ---------------------------------------------------------------------------
 // ResilientProviderRegistry
 // ---------------------------------------------------------------------------
 
@@ -2138,8 +2073,6 @@ pub struct ResilientProviderRegistry {
     max_failures: u32,
     /// Seconds to wait after a circuit opens before allowing a half-open probe
     recovery_secs: u64,
-    /// Optional connection-pool handle for HTTP connection reuse
-    pool: Option<ConnectionPoolHandle>,
     /// Health status per provider (keyed by `ProviderConfig::name`)
     health_status: HashMap<String, ProviderHealthStatus>,
     /// Per-provider rate-limit state (keyed by `ProviderConfig::name`)
@@ -2173,7 +2106,6 @@ impl ResilientProviderRegistry {
             circuit_states,
             max_failures: 3,
             recovery_secs: 30,
-            pool: None,
             health_status,
             rate_limits,
             bulkhead_registry: None,
@@ -2207,11 +2139,6 @@ impl ResilientProviderRegistry {
     /// Set the recovery time in seconds after a circuit opens.
     pub fn set_recovery_secs(&mut self, secs: u64) {
         self.recovery_secs = secs;
-    }
-
-    /// Attach a connection pool handle for HTTP reuse.
-    pub fn set_pool(&mut self, pool: ConnectionPoolHandle) {
-        self.pool = Some(pool);
     }
 
     /// Attach a bulkhead registry for per-provider concurrency isolation.
@@ -3412,50 +3339,6 @@ mod resilient_registry_tests {
 
     // -- Item 3.2: Connection pool handle tests ----------------------------
 
-    #[test]
-    fn test_connection_pool_handle_reuses_agent() {
-        let mut pool = ConnectionPoolHandle::new(PoolHandleConfig::default());
-
-        let _agent1 = pool.get_agent("http://localhost:11434");
-        let _agent2 = pool.get_agent("http://localhost:11434");
-
-        // The agents HashMap should have exactly one entry
-        assert_eq!(pool.agents.len(), 1, "same host should reuse agent");
-    }
-
-    #[test]
-    fn test_connection_pool_handle_different_hosts() {
-        let mut pool = ConnectionPoolHandle::new(PoolHandleConfig::default());
-
-        let _agent1 = pool.get_agent("http://localhost:11434");
-        let _agent2 = pool.get_agent("http://localhost:1234");
-
-        assert_eq!(
-            pool.agents.len(),
-            2,
-            "different hosts should get different agents"
-        );
-    }
-
-    #[test]
-    fn test_connection_pool_handle_custom_config() {
-        let config = PoolHandleConfig {
-            timeout_secs: 60,
-            max_idle_per_host: 8,
-        };
-        let mut pool = ConnectionPoolHandle::new(config);
-        // Just ensure we can get an agent without panicking
-        let _agent = pool.get_agent("http://example.com");
-        assert_eq!(pool.agents.len(), 1);
-    }
-
-    #[test]
-    fn test_connection_pool_handle_debug() {
-        let pool = ConnectionPoolHandle::new(PoolHandleConfig::default());
-        let debug = format!("{:?}", pool);
-        assert!(debug.contains("ConnectionPoolHandle"));
-    }
-
     // -- Item 3.4: Rate limit tests ----------------------------------------
 
     #[test]
@@ -3704,15 +3587,6 @@ mod resilient_registry_tests {
         let debug = format!("{:?}", reg);
         assert!(debug.contains("ResilientProviderRegistry"));
         assert!(debug.contains("primary"));
-    }
-
-    #[test]
-    fn test_resilient_registry_set_pool() {
-        let mut reg = ResilientProviderRegistry::new(primary());
-        assert!(reg.pool.is_none());
-
-        reg.set_pool(ConnectionPoolHandle::new(PoolHandleConfig::default()));
-        assert!(reg.pool.is_some());
     }
 
     #[test]

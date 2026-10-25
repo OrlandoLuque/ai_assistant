@@ -396,8 +396,8 @@ pub use models::{ModelCapabilityInfo, ModelInfo, ModelRegistry};
 pub use providers::{
     build_system_prompt, build_system_prompt_with_notes, fetch_model_context_size,
     generate_response, generate_response_streaming, generate_response_streaming_cancellable,
-    AuditEntry as ProviderAuditEntry, AuditSummary, AuditedProvider, ConnectionPoolHandle,
-    PoolHandleConfig, ProviderConfig as LlmProviderConfig, ProviderHealthStatus, ProviderRateState,
+    AuditEntry as ProviderAuditEntry, AuditSummary, AuditedProvider,
+    ProviderConfig as LlmProviderConfig, ProviderHealthStatus, ProviderRateState,
     ProviderRegistry as LlmProviderRegistry, RateLimitHeaders, ResilientError,
     ResilientProviderRegistry,
 };

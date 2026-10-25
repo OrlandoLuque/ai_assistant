@@ -103,7 +103,7 @@ dependencies = [
 
 [[package]]
 name = "ai_assistant"
-version = "0.2.396"
+version = "0.2.397"
 dependencies = [
  "aes-gcm",
  "anyhow",
