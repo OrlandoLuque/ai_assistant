@@ -200,3 +200,97 @@ before = """        // Conserva lo que `send_json(..)?` garantizaba: un no-2xx e
         Ok(resp)"""
 after = """        Ok(resp)"""
 occurrences = 4
+
+# ===========================================================================
+# M10: un 500 pasa por backend sano
+# ===========================================================================
+# Los seis sondeos de salud de `vector_db` que hablan HTTP decian
+# `{ Ok(_) => Ok(true), Err(_) => Ok(false) }`, y el `Ok(_)` valia porque `ureq`
+# metia el no-2xx en el `Err`. Detras del puerto casa tambien con un 500, asi
+# que un backend que contesta «error interno» pasa por sano --- y el que elige
+# backend se queda con el roto.
+#
+# UNA ocurrencia, y eso es el punto: la guarda esta EXTRAIDA a
+# `probe_is_healthy`, asi que un test la cubre entera. Los `get` de abajo (M12)
+# la tienen escrita en linea tres veces, y necesitan tres.
+[[mutation]]
+id = "M10"
+file = "src/vector_db.rs"
+filter = "vector_db::tests::test_health_check_does_not_call_a_500_healthy"
+invariant = "un sondeo de salud exige un 2xx: contestar 500 no es estar sano"
+before = """    UreqClient.send(request).is_ok_and(|resp| resp.is_success())"""
+after = """    UreqClient.send(request).is_ok()"""
+occurrences = 1
+
+# ===========================================================================
+# M11: el motivo del rechazo vuelve a perderse
+# ===========================================================================
+# `send_ok` es por donde pasan los 24 POST de `vector_db`. Sin el
+# `error_for_status()`, un no-2xx vuelve como `Ok` y el sitio sigue adelante: el
+# `insert` diria que guardo, y el cuerpo con el que el backend explica el
+# rechazo («dimension mismatch: expected 1536, got 3») no llega a ninguna parte.
+[[mutation]]
+id = "M11"
+file = "src/vector_db.rs"
+filter = "vector_db::tests::test_a_rejection_carries_the_body_that_explains_it"
+invariant = "un no-2xx de un backend vectorial es un error, y su mensaje LLEVA el cuerpo"
+before = """    response
+        .error_for_status()
+        .map_err(|e| failed(what, e))
+        .map(|()| response)"""
+after = """    Ok(response)"""
+occurrences = 1
+
+# ===========================================================================
+# M12: `get` se inventa un vector que no existe
+# ===========================================================================
+# El sitio mas peligroso del fichero. El parseo de `get` esta hecho de
+# `unwrap_or_default()`, asi que sin la guarda leeria el cuerpo del 404 y
+# devolveria `Some(StoredVector { vector: [], metadata: {} })`: un vector que no
+# existe, con embedding vacio, por el que una busqueda semantica puntuaria.
+#
+# TRES ocurrencias --- Weaviate, Redis y Elasticsearch --- y tres tests, uno por
+# backend. La guarda esta escrita en linea porque cada `match` parsea una forma
+# distinta de JSON; mientras siga asi, son tres mutaciones.
+[[mutation]]
+id = "M12"
+file = "src/vector_db.rs"
+filter = "does_not_invent_a_vector_out_of_an_error_body"
+invariant = "un no-2xx en `get` significa «no esta», no un vector vacio con ese id"
+before = """        match UreqClient.send(&HttpRequest::get(&url)) {
+            Ok(resp) if resp.is_success() => {"""
+after = """        match UreqClient.send(&HttpRequest::get(&url)) {
+            Ok(resp) => {"""
+occurrences = 3
+
+# ===========================================================================
+# M13: un metodo HTTP desconocido se manda como GET
+# ===========================================================================
+# `from_name` devuelve `Option` justo para esto. Con un defecto silencioso, un
+# `request("PATCH", ..)` mal escrito mandaria un `GET`: la peticion sale, el
+# servidor contesta algo, y nadie ve que se pidio otra cosa.
+[[mutation]]
+id = "M13"
+file = "src/http_client.rs"
+filter = "http_client::tests::test_method_from_name_is_the_exact_inverse_of_as_str"
+invariant = "un nombre de metodo desconocido es `None`, no `Get`"
+before = """        .find(|method| method.as_str() == upper)"""
+after = """        .find(|method| method.as_str() == upper)
+        .or(Some(Self::Get))"""
+occurrences = 1
+
+# ===========================================================================
+# M14: el JSON viaja sin declararse
+# ===========================================================================
+# La cabecera la ponia `ureq::send_json` sola, y quitarla sin darse cuenta fue
+# una de las trampas de la subida a ureq 3: algunos servidores rechazan JSON sin
+# `Content-Type`. El test lo comprueba EN EL CABLE, que es el unico sitio donde
+# esto se puede comprobar de verdad.
+[[mutation]]
+id = "M14"
+file = "src/http_client.rs"
+filter = "http_client::tests::test_json_body_travels_with_any_method"
+invariant = "un cuerpo JSON va con su `Content-Type`, con el metodo que sea"
+before = """        Ok(self.header("Content-Type", "application/json").body(bytes))"""
+after = """        Ok(self.body(bytes))"""
+occurrences = 1

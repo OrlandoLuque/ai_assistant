@@ -5,6 +5,111 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v309 (2026-10-25) - V433: `vector_db` entero detras del puerto, y `delete()` contesta por la cache (0.2.392)
+
+N77. Los **38 sitios** de `vector_db.rs` --- el fichero con mas `ureq` de la crate --- quedan
+detras del puerto. Cero `ureq::` en el modulo. Van **9 modulos de 55**.
+
+No fue mecanico: de las 15 formas distintas que midio el clasificador, **tres cambiaban de
+sentido** al cruzar el puerto, y una de ellas destapo un defecto que no es del puerto.
+
+### Lo que `get` habria empezado a hacer
+
+Tres backends (Weaviate, Redis, Elasticsearch) traen un vector por id asi:
+
+```rust
+match ureq::get(&url).call() {
+    Ok(mut resp) => { /* parsea el JSON con unwrap_or_default() */ }
+    Err(_) => Ok(None),
+}
+```
+
+Hoy un 404 llega como `Err` y cae en `Ok(None)` --- «no esta», que es la respuesta correcta.
+Detras del puerto el 404 es un `Ok`, y **el parseo esta hecho de `unwrap_or_default()`**: leeria
+el cuerpo del error, no encontraria ni `vector` ni `metadata`, y devolveria
+`Some(StoredVector { vector: [], metadata: {} })`.
+
+Un vector que **no existe**, con embedding vacio, por el que una busqueda semantica puntuaria ---
+y `get` diciendo `Some`, que es con lo que el llamante decide si hace falta volver a indexar. Es
+la misma regla que el sondeo de version de Kobold en V432: en descubrimiento, inventar uno que no
+existe es peor que no encontrar el que si.
+
+La guarda es `Ok(resp) if resp.is_success()`, y **hay tres tests, uno por backend**. Tres y no uno
+porque la guarda esta escrita en linea tres veces (cada `match` parsea una forma distinta de
+JSON), y la leccion de V432 --- dos horas antes --- es que un invariante repetido N veces necesita
+N tests. La mutacion **M12** lleva `occurrences = 3`.
+
+Con los tres tests escritos, **uno de los tres seguia sobreviviendo**: el de Elasticsearch. No por
+falta de test, sino porque su parseo pregunta `json.get("_source")`, y el cuerpo de error que yo
+le daba no lo tenia --- o sea que el test pasaba **por el camino sano** y no podia fallar. Es la
+regla de siempre en esta casa (un test enrutado por el camino sano no discrimina) con una forma
+nueva: la estructura del cuerpo decidia antes de que la guarda llegara a importar.
+
+El arreglo no es bendecir la supervivencia, es **el caso separador**: el cuerpo de prueba pasa a
+parecer una respuesta buena --- con `vector`, `metadata` y `_source` --- y el estado dice 404. Lo
+que se afirma asi es el invariante entero: un no-2xx no devuelve vector **ni aunque el cuerpo
+parezca uno**, que es exactamente lo que puede contestar una pasarela o una cache delante del
+backend. Las tres mueren.
+
+### Y lo que ya hacia, que es peor
+
+Siete sitios --- los `delete()` de seis backends y el `clear()` de Pinecone --- tiran el resultado:
+
+```rust
+fn delete(&mut self, id: &str) -> AiResult<bool> {
+    let _ = ureq::post(&url)...send_json(&body);   // el borrado REMOTO, descartado
+    Ok(self.cache.remove(id).is_some())            // la respuesta sale de la cache
+}
+```
+
+O sea que **`delete()` contesta por la cache en memoria, no por el servidor**: con el backend
+caido, o contestando 401, devuelve `Ok(true)` y el vector sigue ahi --- reaparece al siguiente
+arranque, cuando la cache esta vacia. Y las funciones **devuelven `AiResult<bool>`**, o sea que
+pueden informar del fallo; sus hermanas `insert` y `search` propagan con `?`.
+
+Aqui la migracion **no cambia nada a proposito**: siguen descartando, con un comentario en cada
+sitio que apunta a la tarea N158. Arreglarlo cambia lo que ve el llamante --- un `delete()` que
+hoy contesta `Ok(true)` empezaria a contestar `Err` --- y eso es una decision del autor, no parte
+de mover el modulo detras del puerto.
+
+### Dos cosas que le faltaban al puerto, y las encontro un consumidor
+
+* **`HttpMethod::from_name`**, porque el `request(method, ..)` generico de Qdrant trae el metodo en
+  un `&str`. Devuelve `Option` **sin defecto silencioso**: lo natural seria caer en `Get`, y
+  entonces un `"PATCH"` mal escrito mandaria un `GET`, el servidor contestaria algo y nadie veria
+  que se pidio otra cosa. El test recorre las siete variantes en vez de listarlas a mano ---
+  `OPTIONS` ya se quedo fuera una vez de un barrido escrito a mano (V429).
+* **`HttpRequest::json`**, porque no todo JSON va por `POST`: Elasticsearch indexa con `PUT`.
+  Antes el unico camino era `.body(serde_json::to_vec(..)?)` mas la cabecera a mano, o sea que el
+  sitio volvia a decidir lo que el puerto existe para decidir una vez. `post_json` ahora delega.
+
+Es el tercer hueco del puerto que encuentra un consumidor y no mi medicion. Van **`OPTIONS`, el
+estado del flujo, y estos dos**.
+
+### El `request` de Qdrant era un puerto escrito a mano
+
+Y de los buenos: ya construia una `http::Request` para que el metodo no fuera un `match` de tipos
+que no unifican, y ya pedia `http_status_as_error(false)` para quedarse el cuerpo del rechazo.
+Detras del puerto es lo mismo sin la maquinaria --- y **entra en el pool**, porque construia un
+`Agent` nuevo en cada peticion.
+
+### Lo que se gana, medido en el mensaje
+
+Los 24 `POST` pasan por un `send_ok` que exige el 2xx, asi que un rechazo deja de ser
+`"Chroma add failed: http status: 400"` y pasa a llevar el cuerpo: `"dimension mismatch: expected
+1536, got 3"`. En `ureq` 3 un `Error::StatusCode` no lleva respuesta, asi que ese texto **no
+existia** para el llamante. Hay un test que lo comprueba.
+
+Y los seis sondeos de salud que hablan HTTP exigen ahora un 2xx de verdad. El `Ok(_) => Ok(true)`
+de antes valia porque `ureq` metia el no-2xx en el `Err`; detras del puerto habria dado por sano
+un backend contestando 500. La guarda esta **extraida** a `probe_is_healthy`, asi que un test la
+cubre entera --- una ocurrencia, un test, al contrario que los tres `get`.
+
+### Verificacion
+
+**19 de 19 mutaciones** mueren (12 de V432 mas las 7 nuevas contando ocurrencias). Clippy
+`-D warnings` en 0, tests de libreria y doctests, puertas de mutacion y de enlaces.
+
 ## [Unreleased] - v308 (2026-10-25) - V432: el camino caliente detras del puerto, y un diagnostico que no podia dispararse (0.2.391)
 
 N77. `providers.rs` --- 14 sitios, de los que diez son las llamadas de chat --- queda detras del

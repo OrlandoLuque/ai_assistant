@@ -33,6 +33,64 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
 use crate::error::{AiError, AiResult};
+use crate::http_client::{HttpClient, HttpMethod, HttpRequest, HttpResponse, UreqClient};
+
+/// El error que los 38 sitios de este modulo escribian a mano.
+///
+/// `what` es el mensaje que ya tenian ("Chroma add failed"), y ahora cubre las
+/// TRES cosas que pueden ir mal en vez de una: serializar el cuerpo, el
+/// transporte y el no-2xx. Antes solo habia una forma de fallar **porque
+/// `send_json(..)` metia el no-2xx dentro del error de transporte** --- y sin
+/// cuerpo, asi que el motivo que el backend daba no llegaba a ninguna parte.
+fn failed(what: &str, e: impl std::fmt::Display) -> AiError {
+    AiError::Other(format!("{}: {}", what, e))
+}
+
+/// Manda una peticion por el puerto y **exige un 2xx**, con el cuerpo del
+/// rechazo en el mensaje.
+///
+/// Detras del puerto un no-2xx vuelve como `Ok`, asi que cada sitio que antes
+/// se apoyaba en el `?` de `send_json` necesita decir esto en voz alta. Lo que
+/// se gana al decirlo: el mensaje pasa de «http status: 400» a llevar el texto
+/// con el que Qdrant o Weaviate explican QUE rechazaron.
+fn send_ok(request: &HttpRequest, what: &str) -> AiResult<HttpResponse> {
+    let response = UreqClient.send(request).map_err(|e| failed(what, e))?;
+    response
+        .error_for_status()
+        .map_err(|e| failed(what, e))
+        .map(|()| response)
+}
+
+/// Un `POST` de JSON --- la forma de 24 de los 38 sitios --- exigiendo un 2xx.
+///
+/// `headers` son las cabeceras propias del backend (la `Api-Key` de Pinecone);
+/// el `Content-Type` lo pone el puerto.
+fn post_json_ok(
+    url: &str,
+    body: &serde_json::Value,
+    headers: &[(&str, &str)],
+    what: &str,
+) -> AiResult<HttpResponse> {
+    let mut request = HttpRequest::post_json(url, body).map_err(|e| failed(what, e))?;
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    send_ok(&request, what)
+}
+
+/// Si un backend contesta 2xx a un sondeo, sin leerle el cuerpo.
+///
+/// Hay nueve implementaciones de `health_check` en este modulo, y **seis
+/// hablan HTTP**: cuatro sondean con un `GET` y dos con un `POST` vacio (las
+/// otras tres son la de Qdrant, que va por su `request`, y las dos locales, que
+/// no tienen a quien preguntar). Las seis decian
+/// `{ Ok(_) => Ok(true), Err(_) => Ok(false) }`, y ahi el `Ok(_)` SI valia:
+/// `ureq` metia el no-2xx en el `Err`. Detras del puerto el `Ok(_)` casaria
+/// tambien con un 500, y un backend que contesta «error interno» pasaria por
+/// sano. La comprobacion es la misma de siempre, dicha donde se ve.
+fn probe_is_healthy(request: &HttpRequest) -> bool {
+    UreqClient.send(request).is_ok_and(|resp| resp.is_success())
+}
 
 /// Information about a vector database backend
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -529,51 +587,33 @@ impl QdrantClient {
     fn request(&self, method: &str, endpoint: &str, body: Option<&str>) -> AiResult<String> {
         let url = format!("{}{}", self.base_url, endpoint);
 
-        // Se construye una `http::Request` y se manda con `Agent::run` en vez
-        // del `match method { "GET" => agent.get(..), "POST" => agent.post(..) }`
-        // que habia: en ureq 3 `get`/`delete` devuelven
-        // `RequestBuilder<WithoutBody>` y `post`/`put` `RequestBuilder<WithBody>`,
-        // que son tipos distintos, asi que las ramas del `match` no unifican.
-        // `run` acepta cualquier metodo y de paso quita el `if/else` del cuerpo.
-        //
-        // `http_status_as_error(false)` porque Qdrant pone en el cuerpo del
-        // no-2xx el motivo del rechazo, y en ureq 3 un `Error::StatusCode` no
-        // lleva respuesta.
-        let agent = ureq::Agent::new_with_config(
-            ureq::Agent::config_builder()
-                .http_status_as_error(false)
-                .build(),
-        );
+        // Esta funcion era un puerto HTTP escrito a mano, y de los buenos: ya
+        // construia una `http::Request` para que el metodo no fuera un `match`
+        // de tipos que no unifican (en ureq 3 `get` devuelve
+        // `RequestBuilder<WithoutBody>` y `post` `RequestBuilder<WithBody>`), y
+        // ya pedia `http_status_as_error(false)` para quedarse el cuerpo del
+        // rechazo. Detras del puerto es lo mismo sin la maquinaria --- y de
+        // paso entra en el pool de conexiones, porque construia un `Agent`
+        // nuevo en cada peticion.
+        let method = HttpMethod::from_name(method).ok_or_else(|| {
+            AiError::Other(format!("metodo HTTP desconocido para {}: {}", url, method))
+        })?;
 
-        let mut builder = ureq::http::Request::builder()
-            .method(method)
-            .uri(&url)
-            .header("Content-Type", "application/json");
-
+        let mut request = HttpRequest::new(method, &url).header("Content-Type", "application/json");
         if let Some(key) = &self.api_key {
-            builder = builder.header("api-key", key);
+            request = request.header("api-key", key);
+        }
+        if let Some(body) = body {
+            request = request.body(body.as_bytes().to_vec());
         }
 
-        let http_request = builder
-            .body(body.unwrap_or(""))
-            .map_err(|e| AiError::Other(format!("bad {} request for {}: {}", method, url, e)))?;
-
-        let response = agent.run(http_request);
-
-        match response {
-            Ok(mut resp) if resp.status().is_success() => {
-                let body = resp.body_mut().read_to_string().unwrap_or_default();
-                Ok(body)
-            }
-            Ok(mut resp) => {
-                let code = resp.status().as_u16();
-                let body = resp.body_mut().read_to_string().unwrap_or_default();
-                Err(AiError::Provider(crate::error::ProviderError::ApiError {
-                    provider: "Qdrant".to_string(),
-                    status_code: code,
-                    message: body,
-                }))
-            }
+        match UreqClient.send(&request) {
+            Ok(resp) if resp.is_success() => Ok(resp.text().unwrap_or_default()),
+            Ok(resp) => Err(AiError::Provider(crate::error::ProviderError::ApiError {
+                provider: "Qdrant".to_string(),
+                status_code: resp.status,
+                message: resp.text().unwrap_or_default(),
+            })),
             Err(e) => Err(AiError::Network(
                 crate::error::NetworkError::ConnectionFailed {
                     url,
@@ -1432,10 +1472,15 @@ impl VectorDb for PineconeClient {
                 "metadata": metadata
             }]
         });
-        let resp = ureq::post(&url)
-            .header("Api-Key", &self.api_key)
-            .header("Content-Type", "application/json")
-            .send_json(&body);
+        // El `Ok(_)` de antes valia porque `send_json` metia el no-2xx en el
+        // `Err`. Detras del puerto hay que pedir el 2xx: si no, un 401 de
+        // Pinecone caeria por aqui y el vector se cacharia como guardado.
+        let resp = post_json_ok(
+            &url,
+            &body,
+            &[("Api-Key", &self.api_key)],
+            "Pinecone upsert failed",
+        );
         match resp {
             Ok(_) => {
                 self.cache.insert(
@@ -1466,10 +1511,15 @@ impl VectorDb for PineconeClient {
             .collect();
         let url = self.pinecone_url("/vectors/upsert");
         let body = serde_json::json!({ "vectors": pinecone_vectors });
-        let resp = ureq::post(&url)
-            .header("Api-Key", &self.api_key)
-            .header("Content-Type", "application/json")
-            .send_json(&body);
+        // El `Ok(_)` de antes valia porque `send_json` metia el no-2xx en el
+        // `Err`. Detras del puerto hay que pedir el 2xx: si no, un 401 de
+        // Pinecone caeria por aqui y el vector se cacharia como guardado.
+        let resp = post_json_ok(
+            &url,
+            &body,
+            &[("Api-Key", &self.api_key)],
+            "Pinecone upsert failed",
+        );
         match resp {
             Ok(_) => {
                 let count = vectors.len();
@@ -1511,14 +1561,14 @@ impl VectorDb for PineconeClient {
         if !self.config.collection_name.is_empty() {
             body["namespace"] = serde_json::json!(self.config.collection_name);
         }
-        let mut resp = ureq::post(&url)
-            .header("Api-Key", &self.api_key)
-            .header("Content-Type", "application/json")
-            .send_json(&body)
-            .map_err(|e| AiError::Other(format!("Pinecone query failed: {}", e)))?;
+        let resp = post_json_ok(
+            &url,
+            &body,
+            &[("Api-Key", &self.api_key)],
+            "Pinecone query failed",
+        )?;
         let json: serde_json::Value = resp
-            .body_mut()
-            .read_json()
+            .json()
             .map_err(|e| AiError::Other(format!("Pinecone response parse failed: {}", e)))?;
 
         let mut results = Vec::new();
@@ -1549,10 +1599,17 @@ impl VectorDb for PineconeClient {
     fn delete(&mut self, id: &str) -> AiResult<bool> {
         let url = self.pinecone_url("/vectors/delete");
         let body = serde_json::json!({ "ids": [id] });
-        let _ = ureq::post(&url)
-            .header("Api-Key", &self.api_key)
-            .header("Content-Type", "application/json")
-            .send_json(&body);
+        // El resultado se DESCARTA, igual que antes del puerto, y por eso este
+        // `delete` contesta por la cache local y no por el servidor: con el
+        // backend caido o contestando 401 devuelve `Ok(true)`. Apuntado en la
+        // tarea N158 --- arreglarlo cambia lo que ve el llamante, y eso no es
+        // parte de mover el modulo detras del puerto.
+        let _ = post_json_ok(
+            &url,
+            &body,
+            &[("Api-Key", &self.api_key)],
+            "Pinecone delete failed",
+        );
         Ok(self.cache.remove(id).is_some())
     }
 
@@ -1563,24 +1620,27 @@ impl VectorDb for PineconeClient {
     fn clear(&mut self) -> AiResult<()> {
         let url = self.pinecone_url("/vectors/delete");
         let body = serde_json::json!({ "deleteAll": true });
-        let _ = ureq::post(&url)
-            .header("Api-Key", &self.api_key)
-            .header("Content-Type", "application/json")
-            .send_json(&body);
+        // El resultado se DESCARTA, igual que antes del puerto, y por eso este
+        // `delete` contesta por la cache local y no por el servidor: con el
+        // backend caido o contestando 401 devuelve `Ok(true)`. Apuntado en la
+        // tarea N158 --- arreglarlo cambia lo que ve el llamante, y eso no es
+        // parte de mover el modulo detras del puerto.
+        let _ = post_json_ok(
+            &url,
+            &body,
+            &[("Api-Key", &self.api_key)],
+            "Pinecone delete failed",
+        );
         self.cache.clear();
         Ok(())
     }
 
     fn health_check(&self) -> AiResult<bool> {
         let url = self.pinecone_url("/describe_index_stats");
-        match ureq::post(&url)
-            .header("Api-Key", &self.api_key)
-            .header("Content-Type", "application/json")
-            .send_json(&serde_json::json!({}))
-        {
-            Ok(_) => Ok(true),
-            Err(_) => Ok(false),
-        }
+        let request = HttpRequest::post_json(&url, &serde_json::json!({}))
+            .map_err(|e| failed("Pinecone health check failed", e))?
+            .header("Api-Key", &self.api_key);
+        Ok(probe_is_healthy(&request))
     }
 
     fn backend_info(&self) -> BackendInfo {
@@ -1627,13 +1687,9 @@ impl ChromaClient {
         let name = &self.config.collection_name;
         let url = format!("{}/api/v1/collections", self.base_url);
         let body = serde_json::json!({ "name": name, "get_or_create": true });
-        let mut resp = ureq::post(&url)
-            .header("Content-Type", "application/json")
-            .send_json(&body)
-            .map_err(|e| AiError::Other(format!("Chroma create collection failed: {}", e)))?;
+        let resp = post_json_ok(&url, &body, &[], "Chroma create collection failed")?;
         let json: serde_json::Value = resp
-            .body_mut()
-            .read_json()
+            .json()
             .map_err(|e| AiError::Other(format!("Chroma response parse failed: {}", e)))?;
         let id = json
             .get("id")
@@ -1654,10 +1710,7 @@ impl VectorDb for ChromaClient {
             "embeddings": [vector],
             "metadatas": [metadata]
         });
-        ureq::post(&url)
-            .header("Content-Type", "application/json")
-            .send_json(&body)
-            .map_err(|e| AiError::Other(format!("Chroma add failed: {}", e)))?;
+        post_json_ok(&url, &body, &[], "Chroma add failed")?;
         self.cache.insert(
             id.to_string(),
             StoredVector {
@@ -1687,10 +1740,7 @@ impl VectorDb for ChromaClient {
             "embeddings": embeddings,
             "metadatas": metadatas
         });
-        ureq::post(&url)
-            .header("Content-Type", "application/json")
-            .send_json(&body)
-            .map_err(|e| AiError::Other(format!("Chroma batch add failed: {}", e)))?;
+        post_json_ok(&url, &body, &[], "Chroma batch add failed")?;
         let count = vectors.len();
         for (id, vec, meta) in vectors {
             self.cache.insert(
@@ -1725,13 +1775,9 @@ impl VectorDb for ChromaClient {
             "n_results": limit,
             "include": ["metadatas", "distances"]
         });
-        let mut resp = ureq::post(&url)
-            .header("Content-Type", "application/json")
-            .send_json(&body)
-            .map_err(|e| AiError::Other(format!("Chroma query failed: {}", e)))?;
+        let resp = post_json_ok(&url, &body, &[], "Chroma query failed")?;
         let json: serde_json::Value = resp
-            .body_mut()
-            .read_json()
+            .json()
             .map_err(|e| AiError::Other(format!("Chroma response parse failed: {}", e)))?;
 
         let mut results = Vec::new();
@@ -1778,9 +1824,12 @@ impl VectorDb for ChromaClient {
         if let Some(ref coll_id) = self.collection_id {
             let url = format!("{}/api/v1/collections/{}/delete", self.base_url, coll_id);
             let body = serde_json::json!({ "ids": [id] });
-            let _ = ureq::post(&url)
-                .header("Content-Type", "application/json")
-                .send_json(&body);
+            // El resultado se DESCARTA, igual que antes del puerto, y por eso este
+            // `delete` contesta por la cache local y no por el servidor: con el
+            // backend caido o contestando 401 devuelve `Ok(true)`. Apuntado en la
+            // tarea N158 --- arreglarlo cambia lo que ve el llamante, y eso no es
+            // parte de mover el modulo detras del puerto.
+            let _ = post_json_ok(&url, &body, &[], "delete failed");
         }
         Ok(self.cache.remove(id).is_some())
     }
@@ -1796,10 +1845,7 @@ impl VectorDb for ChromaClient {
 
     fn health_check(&self) -> AiResult<bool> {
         let url = format!("{}/api/v1/heartbeat", self.base_url);
-        match ureq::get(&url).call() {
-            Ok(_) => Ok(true),
-            Err(_) => Ok(false),
-        }
+        Ok(probe_is_healthy(&HttpRequest::get(&url)))
     }
 
     fn backend_info(&self) -> BackendInfo {
@@ -1854,10 +1900,7 @@ impl VectorDb for MilvusClient {
             "collectionName": self.collection_name(),
             "data": [data]
         });
-        ureq::post(&url)
-            .header("Content-Type", "application/json")
-            .send_json(&body)
-            .map_err(|e| AiError::Other(format!("Milvus insert failed: {}", e)))?;
+        post_json_ok(&url, &body, &[], "Milvus insert failed")?;
         self.cache.insert(
             id.to_string(),
             StoredVector {
@@ -1893,10 +1936,7 @@ impl VectorDb for MilvusClient {
             "collectionName": self.collection_name(),
             "data": data
         });
-        ureq::post(&url)
-            .header("Content-Type", "application/json")
-            .send_json(&body)
-            .map_err(|e| AiError::Other(format!("Milvus batch insert failed: {}", e)))?;
+        post_json_ok(&url, &body, &[], "Milvus batch insert failed")?;
         let count = vectors.len();
         for (id, vec, meta) in vectors {
             self.cache.insert(
@@ -1928,13 +1968,9 @@ impl VectorDb for MilvusClient {
             "limit": limit,
             "outputFields": ["*"]
         });
-        let mut resp = ureq::post(&url)
-            .header("Content-Type", "application/json")
-            .send_json(&body)
-            .map_err(|e| AiError::Other(format!("Milvus search failed: {}", e)))?;
+        let resp = post_json_ok(&url, &body, &[], "Milvus search failed")?;
         let json: serde_json::Value = resp
-            .body_mut()
-            .read_json()
+            .json()
             .map_err(|e| AiError::Other(format!("Milvus response parse failed: {}", e)))?;
 
         let mut results = Vec::new();
@@ -1968,9 +2004,12 @@ impl VectorDb for MilvusClient {
             "collectionName": self.collection_name(),
             "filter": format!("id == \"{}\"", id)
         });
-        let _ = ureq::post(&url)
-            .header("Content-Type", "application/json")
-            .send_json(&body);
+        // El resultado se DESCARTA, igual que antes del puerto, y por eso este
+        // `delete` contesta por la cache local y no por el servidor: con el
+        // backend caido o contestando 401 devuelve `Ok(true)`. Apuntado en la
+        // tarea N158 --- arreglarlo cambia lo que ve el llamante, y eso no es
+        // parte de mover el modulo detras del puerto.
+        let _ = post_json_ok(&url, &body, &[], "delete failed");
         Ok(self.cache.remove(id).is_some())
     }
 
@@ -1985,13 +2024,9 @@ impl VectorDb for MilvusClient {
 
     fn health_check(&self) -> AiResult<bool> {
         let url = format!("{}/v2/vectordb/collections/list", self.base_url);
-        match ureq::post(&url)
-            .header("Content-Type", "application/json")
-            .send_json(&serde_json::json!({}))
-        {
-            Ok(_) => Ok(true),
-            Err(_) => Ok(false),
-        }
+        let request = HttpRequest::post_json(&url, &serde_json::json!({}))
+            .map_err(|e| failed("Milvus health check failed", e))?;
+        Ok(probe_is_healthy(&request))
     }
 
     fn backend_info(&self) -> BackendInfo {
@@ -2053,10 +2088,7 @@ impl VectorDb for WeaviateClient {
             "properties": metadata,
             "vector": vector
         });
-        ureq::post(&url)
-            .header("Content-Type", "application/json")
-            .send_json(&body)
-            .map_err(|e| AiError::Other(format!("Weaviate insert failed: {}", e)))?;
+        post_json_ok(&url, &body, &[], "Weaviate insert failed")?;
         self.cache.insert(
             id.to_string(),
             StoredVector {
@@ -2089,10 +2121,7 @@ impl VectorDb for WeaviateClient {
             })
             .collect();
         let body = serde_json::json!({ "objects": objects });
-        ureq::post(&url)
-            .header("Content-Type", "application/json")
-            .send_json(&body)
-            .map_err(|e| AiError::Other(format!("Weaviate batch insert failed: {}", e)))?;
+        post_json_ok(&url, &body, &[], "Weaviate batch insert failed")?;
         let count = vectors.len();
         for (id, vec, meta) in vectors {
             self.cache.insert(
@@ -2125,13 +2154,9 @@ impl VectorDb for WeaviateClient {
             class, vector_str, limit
         );
         let body = serde_json::json!({ "query": graphql_query });
-        let mut resp = ureq::post(&url)
-            .header("Content-Type", "application/json")
-            .send_json(&body)
-            .map_err(|e| AiError::Other(format!("Weaviate search failed: {}", e)))?;
+        let resp = post_json_ok(&url, &body, &[], "Weaviate search failed")?;
         let json: serde_json::Value = resp
-            .body_mut()
-            .read_json()
+            .json()
             .map_err(|e| AiError::Other(format!("Weaviate response parse failed: {}", e)))?;
 
         let mut results = Vec::new();
@@ -2169,11 +2194,16 @@ impl VectorDb for WeaviateClient {
             return Ok(Some(cached.clone()));
         }
         let url = format!("{}/v1/objects/{}/{}", self.base_url, self.class_name(), id);
-        match ureq::get(&url).call() {
-            Ok(mut resp) => {
+        // `is_success()` y no solo `Ok(..)`: hoy un 404 llega como `Err` y cae
+        // en `Ok(None)` --- «no esta», que es la respuesta correcta. Detras del
+        // puerto el 404 es un `Ok`, y como el parseo de abajo esta hecho de
+        // `unwrap_or_default()`, leeria el cuerpo del error y devolveria
+        // `Some(StoredVector { vector: [], metadata: {} })`: un vector
+        // INVENTADO, con embedding vacio, por el que una busqueda puntuaria.
+        match UreqClient.send(&HttpRequest::get(&url)) {
+            Ok(resp) if resp.is_success() => {
                 let json: serde_json::Value = resp
-                    .body_mut()
-                    .read_json()
+                    .json()
                     .map_err(|e| AiError::Other(format!("Weaviate get parse failed: {}", e)))?;
                 let vector: Vec<f32> = json
                     .get("vector")
@@ -2195,13 +2225,20 @@ impl VectorDb for WeaviateClient {
                     timestamp: 0,
                 }))
             }
-            Err(_) => Ok(None),
+            // El no-2xx va por aqui, junto al fallo de transporte: las dos
+            // cosas significan «no hay vector que devolver».
+            Ok(_) | Err(_) => Ok(None),
         }
     }
 
     fn delete(&mut self, id: &str) -> AiResult<bool> {
         let url = format!("{}/v1/objects/{}/{}", self.base_url, self.class_name(), id);
-        let _ = ureq::delete(&url).call();
+        // El resultado se DESCARTA, igual que antes del puerto, y por eso este
+        // `delete` contesta por la cache local y no por el servidor: con el
+        // backend caido o contestando 401 devuelve `Ok(true)`. Apuntado en la
+        // tarea N158 --- arreglarlo cambia lo que ve el llamante, y eso no es
+        // parte de mover el modulo detras del puerto.
+        let _ = UreqClient.send(&HttpRequest::new(HttpMethod::Delete, &url));
         Ok(self.cache.remove(id).is_some())
     }
 
@@ -2216,10 +2253,7 @@ impl VectorDb for WeaviateClient {
 
     fn health_check(&self) -> AiResult<bool> {
         let url = format!("{}/v1/.well-known/ready", self.base_url);
-        match ureq::get(&url).call() {
-            Ok(_) => Ok(true),
-            Err(_) => Ok(false),
-        }
+        Ok(probe_is_healthy(&HttpRequest::get(&url)))
     }
 
     fn backend_info(&self) -> BackendInfo {
@@ -2279,10 +2313,7 @@ impl VectorDb for RedisVectorClient {
             "vector": vector,
             "metadata": metadata
         });
-        ureq::post(&url)
-            .header("Content-Type", "application/json")
-            .send_json(&body)
-            .map_err(|e| AiError::Other(format!("Redis vector insert failed: {}", e)))?;
+        post_json_ok(&url, &body, &[], "Redis vector insert failed")?;
         self.cache.insert(
             id.to_string(),
             StoredVector {
@@ -2310,10 +2341,7 @@ impl VectorDb for RedisVectorClient {
                 "vector": vector,
                 "metadata": metadata
             });
-            ureq::post(&url)
-                .header("Content-Type", "application/json")
-                .send_json(&body)
-                .map_err(|e| AiError::Other(format!("Redis vector batch insert failed: {}", e)))?;
+            post_json_ok(&url, &body, &[], "Redis vector batch insert failed")?;
             self.cache.insert(
                 id.clone(),
                 StoredVector {
@@ -2342,13 +2370,9 @@ impl VectorDb for RedisVectorClient {
             "query_vector": query,
             "k": limit
         });
-        let mut resp = ureq::post(&url)
-            .header("Content-Type", "application/json")
-            .send_json(&body)
-            .map_err(|e| AiError::Other(format!("Redis vector search failed: {}", e)))?;
+        let resp = post_json_ok(&url, &body, &[], "Redis vector search failed")?;
         let json: serde_json::Value = resp
-            .body_mut()
-            .read_json()
+            .json()
             .map_err(|e| AiError::Other(format!("Redis vector response parse failed: {}", e)))?;
 
         let mut results = Vec::new();
@@ -2380,11 +2404,16 @@ impl VectorDb for RedisVectorClient {
             return Ok(Some(cached.clone()));
         }
         let url = format!("{}/get/{}", self.base_url, id);
-        match ureq::get(&url).call() {
-            Ok(mut resp) => {
+        // `is_success()` y no solo `Ok(..)`: hoy un 404 llega como `Err` y cae
+        // en `Ok(None)` --- «no esta», que es la respuesta correcta. Detras del
+        // puerto el 404 es un `Ok`, y como el parseo de abajo esta hecho de
+        // `unwrap_or_default()`, leeria el cuerpo del error y devolveria
+        // `Some(StoredVector { vector: [], metadata: {} })`: un vector
+        // INVENTADO, con embedding vacio, por el que una busqueda puntuaria.
+        match UreqClient.send(&HttpRequest::get(&url)) {
+            Ok(resp) if resp.is_success() => {
                 let json: serde_json::Value = resp
-                    .body_mut()
-                    .read_json()
+                    .json()
                     .map_err(|e| AiError::Other(format!("Redis vector get parse failed: {}", e)))?;
                 let vector: Vec<f32> = json
                     .get("vector")
@@ -2406,15 +2435,20 @@ impl VectorDb for RedisVectorClient {
                     timestamp: 0,
                 }))
             }
-            Err(_) => Ok(None),
+            // El no-2xx va por aqui, junto al fallo de transporte: las dos
+            // cosas significan «no hay vector que devolver».
+            Ok(_) | Err(_) => Ok(None),
         }
     }
 
     fn delete(&mut self, id: &str) -> AiResult<bool> {
         let url = format!("{}/del/{}", self.base_url, id);
-        let _ = ureq::post(&url)
-            .header("Content-Type", "application/json")
-            .send_json(&serde_json::json!({}));
+        // El resultado se DESCARTA, igual que antes del puerto, y por eso este
+        // `delete` contesta por la cache local y no por el servidor: con el
+        // backend caido o contestando 401 devuelve `Ok(true)`. Apuntado en la
+        // tarea N158 --- arreglarlo cambia lo que ve el llamante, y eso no es
+        // parte de mover el modulo detras del puerto.
+        let _ = post_json_ok(&url, &serde_json::json!({}), &[], "delete failed");
         Ok(self.cache.remove(id).is_some())
     }
 
@@ -2429,10 +2463,7 @@ impl VectorDb for RedisVectorClient {
 
     fn health_check(&self) -> AiResult<bool> {
         let url = format!("{}/ping", self.base_url);
-        match ureq::get(&url).call() {
-            Ok(_) => Ok(true),
-            Err(_) => Ok(false),
-        }
+        Ok(probe_is_healthy(&HttpRequest::get(&url)))
     }
 
     fn backend_info(&self) -> BackendInfo {
@@ -2491,10 +2522,13 @@ impl VectorDb for ElasticsearchClient {
             "vector": vector,
             "metadata": metadata
         });
-        ureq::put(&url)
-            .header("Content-Type", "application/json")
-            .send_json(&body)
-            .map_err(|e| AiError::Other(format!("Elasticsearch insert failed: {}", e)))?;
+        let what = "Elasticsearch insert failed";
+        send_ok(
+            &HttpRequest::new(HttpMethod::Put, &url)
+                .json(&body)
+                .map_err(|e| failed(what, e))?,
+            what,
+        )?;
         self.cache.insert(
             id.to_string(),
             StoredVector {
@@ -2525,10 +2559,14 @@ impl VectorDb for ElasticsearchClient {
             bulk_body.push('\n');
         }
         let url = format!("{}/_bulk", self.base_url);
-        ureq::post(&url)
-            .header("Content-Type", "application/x-ndjson")
-            .send(&bulk_body)
-            .map_err(|e| AiError::Other(format!("Elasticsearch bulk insert failed: {}", e)))?;
+        // `x-ndjson` y no JSON: el bulk de Elasticsearch es una linea por
+        // operacion, asi que el cuerpo va crudo y la cabecera la pone el sitio.
+        send_ok(
+            &HttpRequest::new(HttpMethod::Post, &url)
+                .header("Content-Type", "application/x-ndjson")
+                .body(bulk_body.into_bytes()),
+            "Elasticsearch bulk insert failed",
+        )?;
         let count = vectors.len();
         for (id, vector, metadata) in vectors {
             self.cache.insert(
@@ -2563,13 +2601,9 @@ impl VectorDb for ElasticsearchClient {
             },
             "size": limit
         });
-        let mut resp = ureq::post(&url)
-            .header("Content-Type", "application/json")
-            .send_json(&body)
-            .map_err(|e| AiError::Other(format!("Elasticsearch search failed: {}", e)))?;
+        let resp = post_json_ok(&url, &body, &[], "Elasticsearch search failed")?;
         let json: serde_json::Value = resp
-            .body_mut()
-            .read_json()
+            .json()
             .map_err(|e| AiError::Other(format!("Elasticsearch response parse failed: {}", e)))?;
 
         let mut results = Vec::new();
@@ -2606,9 +2640,15 @@ impl VectorDb for ElasticsearchClient {
             return Ok(Some(cached.clone()));
         }
         let url = format!("{}/{}/_doc/{}", self.base_url, self.index_name(), id);
-        match ureq::get(&url).call() {
-            Ok(mut resp) => {
-                let json: serde_json::Value = resp.body_mut().read_json().map_err(|e| {
+        // `is_success()` y no solo `Ok(..)`: hoy un 404 llega como `Err` y cae
+        // en `Ok(None)` --- «no esta», que es la respuesta correcta. Detras del
+        // puerto el 404 es un `Ok`, y como el parseo de abajo esta hecho de
+        // `unwrap_or_default()`, leeria el cuerpo del error y devolveria
+        // `Some(StoredVector { vector: [], metadata: {} })`: un vector
+        // INVENTADO, con embedding vacio, por el que una busqueda puntuaria.
+        match UreqClient.send(&HttpRequest::get(&url)) {
+            Ok(resp) if resp.is_success() => {
+                let json: serde_json::Value = resp.json().map_err(|e| {
                     AiError::Other(format!("Elasticsearch get parse failed: {}", e))
                 })?;
                 if let Some(source) = json.get("_source") {
@@ -2635,13 +2675,20 @@ impl VectorDb for ElasticsearchClient {
                     Ok(None)
                 }
             }
-            Err(_) => Ok(None),
+            // El no-2xx va por aqui, junto al fallo de transporte: las dos
+            // cosas significan «no hay vector que devolver».
+            Ok(_) | Err(_) => Ok(None),
         }
     }
 
     fn delete(&mut self, id: &str) -> AiResult<bool> {
         let url = format!("{}/{}/_doc/{}", self.base_url, self.index_name(), id);
-        let _ = ureq::delete(&url).call();
+        // El resultado se DESCARTA, igual que antes del puerto, y por eso este
+        // `delete` contesta por la cache local y no por el servidor: con el
+        // backend caido o contestando 401 devuelve `Ok(true)`. Apuntado en la
+        // tarea N158 --- arreglarlo cambia lo que ve el llamante, y eso no es
+        // parte de mover el modulo detras del puerto.
+        let _ = UreqClient.send(&HttpRequest::new(HttpMethod::Delete, &url));
         Ok(self.cache.remove(id).is_some())
     }
 
@@ -2656,10 +2703,7 @@ impl VectorDb for ElasticsearchClient {
 
     fn health_check(&self) -> AiResult<bool> {
         let url = format!("{}/_cluster/health", self.base_url);
-        match ureq::get(&url).call() {
-            Ok(_) => Ok(true),
-            Err(_) => Ok(false),
-        }
+        Ok(probe_is_healthy(&HttpRequest::get(&url)))
     }
 
     fn backend_info(&self) -> BackendInfo {
@@ -2684,6 +2728,124 @@ impl VectorDb for ElasticsearchClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Un no-2xx en `get` NO puede inventarse un vector.
+    ///
+    /// Es el sitio mas peligroso de migrar este modulo. Antes del puerto, un
+    /// 404 llegaba como `Err` y caia en `Ok(None)` --- «no esta», que es la
+    /// respuesta correcta. Detras del puerto el 404 es un `Ok`, y el parseo de
+    /// `get` esta hecho de `unwrap_or_default()`: leeria el cuerpo del error,
+    /// no encontraria ni `vector` ni `metadata`, y devolveria
+    /// `Some(StoredVector { vector: [], metadata: {} })`.
+    ///
+    /// O sea un vector que **no existe**, con embedding vacio, por el que una
+    /// busqueda semantica puntuaria --- y `get` diria `Some`, que es lo que el
+    /// llamante usa para decidir si hace falta volver a indexar.
+    ///
+    /// **Hay tres** `get` con esta guarda escrita en linea, uno por backend, y
+    /// por eso hay tres tests y no uno. La leccion es de V432, dos horas antes:
+    /// un invariante repetido N veces necesita N tests, y un test escrito a
+    /// mano para uno de los sitios se lee como cobertura del invariante
+    /// cubriendo 1/N. (Los sondeos de salud no necesitan esto porque su guarda
+    /// SI esta extraida, en `probe_is_healthy`: una ocurrencia, un test.)
+    fn assert_a_404_is_absence_and_not_an_empty_vector(
+        make: impl FnOnce(String) -> Box<dyn VectorDb>,
+    ) {
+        let server = crate::http_client::MockHttpServer::start();
+        // El cuerpo parece una respuesta BUENA --- lleva `vector`, `metadata` y
+        // el `_source` que usa Elasticsearch --- y el estado dice 404. Es el
+        // caso separador, y hizo falta: con un cuerpo de error normal la
+        // mutacion M12 SOBREVIVIA en Elasticsearch, porque su parseo mira si
+        // existe `_source` y un cuerpo de error no lo tiene. El test pasaba por
+        // el camino sano y no podia fallar.
+        //
+        // Lo que se afirma asi es el invariante entero: un no-2xx no devuelve
+        // vector **ni aunque el cuerpo parezca uno**. Una pasarela o una cache
+        // delante del backend pueden contestar exactamente esto.
+        server.enqueue_json(
+            404,
+            serde_json::json!({
+                "vector": [0.9, 0.9, 0.9],
+                "metadata": {"se_cuela": true},
+                "_source": {"vector": [0.9], "metadata": {"se_cuela": true}},
+                "properties": {"se_cuela": true}
+            }),
+        );
+
+        let store = make(server.url());
+        let found = store.get("no-existe").expect("un 404 no es un fallo");
+
+        assert!(
+            found.is_none(),
+            "un 404 significa que no esta, no un vector vacio: {:?}",
+            found
+        );
+    }
+
+    #[test]
+    fn test_weaviate_get_does_not_invent_a_vector_out_of_an_error_body() {
+        assert_a_404_is_absence_and_not_an_empty_vector(|url| {
+            Box::new(WeaviateClient::new(url, VectorDbConfig::default()))
+        });
+    }
+
+    #[test]
+    fn test_redis_get_does_not_invent_a_vector_out_of_an_error_body() {
+        assert_a_404_is_absence_and_not_an_empty_vector(|url| {
+            Box::new(RedisVectorClient::new(url, VectorDbConfig::default()))
+        });
+    }
+
+    #[test]
+    fn test_elasticsearch_get_does_not_invent_a_vector_out_of_an_error_body() {
+        assert_a_404_is_absence_and_not_an_empty_vector(|url| {
+            Box::new(ElasticsearchClient::new(url, VectorDbConfig::default()))
+        });
+    }
+
+    /// Y el otro lado de la misma moneda: un 500 no es un backend sano.
+    ///
+    /// Los seis sondeos de salud que hablan HTTP decian `Ok(_) => Ok(true)`, y
+    /// eso valia porque `ureq` metia el no-2xx en el `Err`. Detras del puerto
+    /// el `Ok(_)` casa tambien con un 500, asi que sin `is_success()` un
+    /// backend que contesta «error interno» pasa por sano --- y el que elige
+    /// backend se queda con el roto.
+    #[test]
+    fn test_health_check_does_not_call_a_500_healthy() {
+        let server = crate::http_client::MockHttpServer::start();
+        server.enqueue_text(500, "index corrupted");
+
+        let store = WeaviateClient::new(server.url(), VectorDbConfig::default());
+        assert!(
+            !store.health_check().expect("el sondeo no propaga"),
+            "un 500 no es sano"
+        );
+    }
+
+    /// Lo que se GANA, y no solo lo que se conserva: el mensaje del rechazo.
+    ///
+    /// Antes, `send_json(..)?` daba `AiError::Other("Chroma add failed: http
+    /// status: 400")` y el motivo se perdia, porque en `ureq` 3 un
+    /// `Error::StatusCode` no lleva respuesta. Ahora el cuerpo viaja en el
+    /// mensaje, que es donde el backend explica QUE rechazo.
+    #[test]
+    fn test_a_rejection_carries_the_body_that_explains_it() {
+        let server = crate::http_client::MockHttpServer::start();
+        server.enqueue_text(400, "dimension mismatch: expected 1536, got 3");
+
+        let mut store = ChromaClient::new(server.url(), VectorDbConfig::default());
+        let err = store
+            .insert("v1", vec![0.1, 0.2, 0.3], serde_json::json!({}))
+            .expect_err("un 400 sigue siendo un error");
+
+        let text = err.to_string();
+        assert!(
+            text.contains("dimension mismatch"),
+            "el cuerpo tiene que llegar al mensaje: {}",
+            text
+        );
+        assert!(text.contains("400"), "y el estado tambien: {}", text);
+    }
 
     #[test]
     fn test_distance_metrics() {

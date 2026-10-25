@@ -70,6 +70,32 @@ impl HttpMethod {
     pub fn takes_body(self) -> bool {
         matches!(self, Self::Post | Self::Put | Self::Patch)
     }
+
+    /// El metodo a partir de su nombre, **sin defecto silencioso**.
+    ///
+    /// Devuelve `None` para un nombre que no conoce, y eso es deliberado: lo
+    /// natural seria caer en `Get`, y entonces un `request("PATCH", ..)` mal
+    /// escrito mandaria un `GET` --- la peticion saldria, el servidor
+    /// contestaria algo, y nadie veria que se pidio otra cosa.
+    ///
+    /// Es el inverso exacto de [`HttpMethod::as_str`], y hay un test que
+    /// recorre las siete variantes para que siga siendolo cuando se anada una
+    /// octava. Acepta el nombre en cualquier caja: los sitios que lo necesitan
+    /// lo traen de una cadena de configuracion.
+    pub fn from_name(name: &str) -> Option<Self> {
+        let upper = name.to_ascii_uppercase();
+        [
+            Self::Get,
+            Self::Post,
+            Self::Put,
+            Self::Delete,
+            Self::Head,
+            Self::Patch,
+            Self::Options,
+        ]
+        .into_iter()
+        .find(|method| method.as_str() == upper)
+    }
 }
 
 /// Una peticion HTTP, con lo que los 60 modulos que hablan `ureq` a pelo
@@ -165,10 +191,20 @@ impl HttpRequest {
     /// darse cuenta fue una de las trampas de la subida a `ureq` 3: algunos
     /// servidores rechazan JSON sin declarar.
     pub fn post_json(url: impl Into<String>, body: &serde_json::Value) -> Result<Self> {
+        Self::new(HttpMethod::Post, url).json(body)
+    }
+
+    /// Pone un cuerpo JSON con su `Content-Type`, **con el metodo que sea**.
+    ///
+    /// [`HttpRequest::post_json`] cubre los 21 sitios medidos que mandan JSON
+    /// por `POST`, pero no todo JSON va por `POST`: Elasticsearch indexa con
+    /// `PUT` y hay APIs que actualizan con `PATCH`. Antes de esto, el unico
+    /// camino era `.body(serde_json::to_vec(..)?)` mas la cabecera a mano ---
+    /// o sea, el sitio volvia a decidir lo que el puerto existe para decidir
+    /// una vez.
+    pub fn json(self, body: &serde_json::Value) -> Result<Self> {
         let bytes = serde_json::to_vec(body).context("failed to serialize request body")?;
-        Ok(Self::new(HttpMethod::Post, url)
-            .header("Content-Type", "application/json")
-            .body(bytes))
+        Ok(self.header("Content-Type", "application/json").body(bytes))
     }
 
     /// Anade una cabecera.
@@ -1108,6 +1144,79 @@ mod tests {
             head
         );
         assert!(lower.contains("x-custom-thing: 42"), "head = {}", head);
+    }
+
+    /// `from_name` recorre las variantes para que sea el inverso EXACTO de
+    /// `as_str`, y el test las recorre tambien --- no una lista escrita a mano,
+    /// que es como se queda fuera la octava variante que alguien anada.
+    ///
+    /// `OPTIONS` ya se quedo fuera una vez de un barrido que miraba solo los
+    /// patrones que yo habia listado (ver el comentario de la variante).
+    #[test]
+    fn test_method_from_name_is_the_exact_inverse_of_as_str() {
+        let all = [
+            HttpMethod::Get,
+            HttpMethod::Post,
+            HttpMethod::Put,
+            HttpMethod::Delete,
+            HttpMethod::Head,
+            HttpMethod::Patch,
+            HttpMethod::Options,
+        ];
+        for method in all {
+            assert_eq!(
+                HttpMethod::from_name(method.as_str()),
+                Some(method),
+                "{} no vuelve de su propio nombre",
+                method.as_str()
+            );
+            assert_eq!(
+                HttpMethod::from_name(&method.as_str().to_ascii_lowercase()),
+                Some(method),
+                "{} en minusculas tiene que valer: el nombre llega de configuracion",
+                method.as_str()
+            );
+        }
+
+        // Y lo que de verdad justifica el `Option`: un nombre desconocido NO cae
+        // en `Get`. Si cayera, un metodo mal escrito mandaria un `GET`, el
+        // servidor contestaria algo y nadie veria que se pidio otra cosa.
+        assert_eq!(HttpMethod::from_name("TRACE"), None);
+        assert_eq!(HttpMethod::from_name("GETT"), None);
+        assert_eq!(HttpMethod::from_name(""), None);
+    }
+
+    /// El cuerpo JSON con un metodo que no es `POST`: Elasticsearch indexa con
+    /// `PUT`, y hasta V433 el puerto solo sabia poner JSON en un `POST`.
+    ///
+    /// Se comprueba **en el cable**, no en los campos del struct: que el metodo
+    /// viaje como `PUT` y que el `Content-Type` vaya puesto. Mirar
+    /// `request.headers` solo probaria que el constructor hace lo que dice su
+    /// propio codigo.
+    #[test]
+    fn test_json_body_travels_with_any_method() {
+        let server = MockHttpServer::start();
+        server.enqueue_json(201, serde_json::json!({"result": "created"}));
+
+        let request = HttpRequest::new(HttpMethod::Put, format!("{}/index/_doc/1", server.url()))
+            .json(&serde_json::json!({"vector": [0.5]}))
+            .expect("un Value siempre serializa");
+        let response = UreqClient.send(&request).expect("el mock contesto");
+        assert_eq!(response.status, 201);
+
+        let head = server
+            .last_request_head()
+            .expect("el servidor guardo la cabecera")
+            .to_ascii_lowercase();
+        assert!(head.starts_with("put /index/_doc/1"), "head = {}", head);
+        assert!(
+            head.contains("content-type: application/json"),
+            "head = {}",
+            head
+        );
+
+        let (_, _, body) = server.last_request().expect("y el cuerpo");
+        assert!(body.contains("\"vector\""), "body = {}", body);
     }
 
     /// El contrato de fondo: el no-2xx vuelve ENTERO, con cuerpo y estado, y no
