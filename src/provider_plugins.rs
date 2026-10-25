@@ -11,6 +11,7 @@ use std::sync::mpsc::Sender;
 use std::time::Duration;
 
 use crate::config::{AiConfig, AiProvider};
+use crate::http_client::{HttpClient, HttpMethod, HttpRequest, HttpResponse, UreqClient};
 use crate::messages::{AiResponse, ChatMessage};
 use crate::models::ModelInfo;
 use crate::tools::{ProviderCapabilities, ProviderPlugin, ToolCall, ToolDefinition};
@@ -18,6 +19,63 @@ use crate::tools::{ProviderCapabilities, ProviderPlugin, ToolCall, ToolDefinitio
 // ============================================================================
 // Ollama Provider
 // ============================================================================
+
+/// Manda una peticion por el puerto HTTP y **exige un 2xx**, conservando el
+/// `context` que cada sitio ya tenia.
+///
+/// Las 27 llamadas de este modulo se apoyaban en que `.call()?` y
+/// `.send_json(..)?` convertian un no-2xx en `Err`. Detras del puerto un no-2xx
+/// vuelve como `Ok` --- con su cuerpo, que es la razon de que el puerto sea asi
+/// ---, de modo que la decision hay que decirla. Dicha una vez, aqui.
+///
+/// Lo que se gana al decirla: el mensaje pasa de «http status: 404» a llevar el
+/// texto con el que el servidor explica el rechazo. En un modulo cuyo trabajo
+/// es hablar con Ollama, LM Studio, text-generation-webui y cualquier API
+/// compatible con OpenAI, ese texto es casi siempre el diagnostico entero ---
+/// «model not found», «context length exceeded», «invalid api key».
+fn send_expecting_2xx(request: &HttpRequest, context: &'static str) -> Result<HttpResponse> {
+    let response = UreqClient.send(request).context(context)?;
+    response.error_for_status().context(context)?;
+    Ok(response)
+}
+
+/// Abre un flujo por el puerto HTTP y **exige un 2xx antes de leer un trozo**.
+///
+/// Este es el invariante peligroso del modulo, y vive aqui por una razon
+/// aprendida dos versiones antes: en V432 la misma comprobacion estaba escrita
+/// en linea en los cuatro cierres de streaming de `providers.rs`, la mutacion
+/// llevaba `occurrences = 4`, y **tres sobrevivieron** --- no porque fueran
+/// inocuas, sino porque tres de las cuatro rutas no tenian ningun test.
+///
+/// Hay CINCO rutas de streaming en este modulo (cuatro directas y una que
+/// construye la peticion por partes, para poner la `Authorization`), asi que
+/// escribirlo en linea serian cinco copias y cinco tests. Extraido es **una
+/// ocurrencia y un test**.
+///
+/// Lo que pasa sin el: detras del puerto un no-2xx vuelve como `Ok`, asi que el
+/// cuerpo del rechazo se emitiria trozo a trozo **como si fuera lo que dijo el
+/// modelo**. El usuario leeria una pagina de error creyendo que es la respuesta
+/// del asistente, y nada en el programa se queja.
+fn send_streaming_expecting_2xx(
+    request: &HttpRequest,
+    context: &'static str,
+) -> Result<crate::http_client::HttpStream> {
+    let mut stream = UreqClient.send_streaming(request).context(context)?;
+    stream.error_for_status().context(context)?;
+    Ok(stream)
+}
+
+/// Igual que [`send_expecting_2xx`] pero sin mensaje propio, para los seis
+/// sitios que propagaban con un `?` a secas.
+///
+/// Se deja sin `context` a proposito: inventarle uno cambiaria el texto del
+/// error que ve el llamante, y migrar un modulo detras del puerto no es sitio
+/// para eso.
+fn send_expecting_2xx_bare(request: &HttpRequest) -> Result<HttpResponse> {
+    let response = UreqClient.send(request)?;
+    response.error_for_status()?;
+    Ok(response)
+}
 
 /// Ollama provider plugin
 #[derive(Debug)]
@@ -47,14 +105,9 @@ impl OllamaProvider {
     /// Check if Ollama is running
     pub fn check_health(&self) -> bool {
         let url = format!("{}/api/tags", self.base_url);
-        match ureq::get(&url)
-            .config()
-            .timeout_global(Some(Duration::from_secs(5)))
-            .build()
-            .call()
-        {
+        match UreqClient.send(&HttpRequest::get(&url).timeout(Duration::from_secs(5))) {
             Ok(resp) => {
-                let is_ok = resp.status() == 200;
+                let is_ok = resp.status == 200;
                 self.available
                     .store(is_ok, std::sync::atomic::Ordering::SeqCst);
                 is_ok
@@ -112,14 +165,12 @@ impl ProviderPlugin for OllamaProvider {
 
     fn list_models(&self) -> Result<Vec<ModelInfo>> {
         let url = format!("{}/api/tags", self.base_url);
-        let mut resp = ureq::get(&url)
-            .config()
-            .timeout_global(Some(self.timeout))
-            .build()
-            .call()
-            .context("Failed to connect to Ollama")?;
+        let resp = send_expecting_2xx(
+            &HttpRequest::get(&url).timeout(self.timeout),
+            "Failed to connect to Ollama",
+        )?;
 
-        let body: Value = resp.body_mut().read_json()?;
+        let body: Value = resp.json()?;
         let models = body
             .get("models")
             .and_then(|m| m.as_array())
@@ -164,14 +215,12 @@ impl ProviderPlugin for OllamaProvider {
         });
         crate::providers::apply_ollama_seed(&mut payload["options"], config);
 
-        let mut resp = ureq::post(&url)
-            .config()
-            .timeout_global(Some(self.timeout))
-            .build()
-            .send_json(&payload)
-            .context("Failed to send request to Ollama")?;
+        let resp = send_expecting_2xx(
+            &HttpRequest::post_json(&url, &payload)?.timeout(self.timeout),
+            "Failed to send request to Ollama",
+        )?;
 
-        let body: Value = resp.body_mut().read_json()?;
+        let body: Value = resp.json()?;
         let content = body
             .get("message")
             .and_then(|m| m.get("content"))
@@ -201,14 +250,12 @@ impl ProviderPlugin for OllamaProvider {
         });
         crate::providers::apply_ollama_seed(&mut payload["options"], config);
 
-        let resp = ureq::post(&url)
-            .config()
-            .timeout_global(Some(self.timeout))
-            .build()
-            .send_json(&payload)
-            .context("Failed to send streaming request to Ollama")?;
+        let resp = send_streaming_expecting_2xx(
+            &HttpRequest::post_json(&url, &payload)?.timeout(self.timeout),
+            "Failed to send streaming request to Ollama",
+        )?;
 
-        let reader = std::io::BufReader::new(resp.into_body().into_reader());
+        let reader = std::io::BufReader::new(resp.body);
         let mut full_response = String::new();
 
         use std::io::BufRead;
@@ -275,14 +322,12 @@ impl ProviderPlugin for OllamaProvider {
             payload["tools"] = Value::Array(tool_schemas);
         }
 
-        let mut resp = ureq::post(&url)
-            .config()
-            .timeout_global(Some(self.timeout))
-            .build()
-            .send_json(&payload)
-            .context("Failed to send tool request to Ollama")?;
+        let resp = send_expecting_2xx(
+            &HttpRequest::post_json(&url, &payload)?.timeout(self.timeout),
+            "Failed to send tool request to Ollama",
+        )?;
 
-        let body: Value = resp.body_mut().read_json()?;
+        let body: Value = resp.json()?;
 
         // Extract content from message (Ollama puts it directly on message, not choices[0])
         let content = body
@@ -340,13 +385,11 @@ impl ProviderPlugin for OllamaProvider {
                 "input": text
             });
 
-            let mut resp = ureq::post(&url)
-                .config()
-                .timeout_global(Some(self.timeout))
-                .build()
-                .send_json(&payload)?;
+            let resp = send_expecting_2xx_bare(
+                &HttpRequest::post_json(&url, &payload)?.timeout(self.timeout),
+            )?;
 
-            let body: Value = resp.body_mut().read_json()?;
+            let body: Value = resp.json()?;
             if let Some(embedding) = body
                 .get("embeddings")
                 .and_then(|e| e.as_array())
@@ -397,14 +440,9 @@ impl LmStudioProvider {
     /// Check if LM Studio is running
     pub fn check_health(&self) -> bool {
         let url = format!("{}/v1/models", self.base_url);
-        match ureq::get(&url)
-            .config()
-            .timeout_global(Some(Duration::from_secs(5)))
-            .build()
-            .call()
-        {
+        match UreqClient.send(&HttpRequest::get(&url).timeout(Duration::from_secs(5))) {
             Ok(resp) => {
-                let is_ok = resp.status() == 200;
+                let is_ok = resp.status == 200;
                 self.available
                     .store(is_ok, std::sync::atomic::Ordering::SeqCst);
                 is_ok
@@ -460,14 +498,12 @@ impl ProviderPlugin for LmStudioProvider {
 
     fn list_models(&self) -> Result<Vec<ModelInfo>> {
         let url = format!("{}/v1/models", self.base_url);
-        let mut resp = ureq::get(&url)
-            .config()
-            .timeout_global(Some(self.timeout))
-            .build()
-            .call()
-            .context("Failed to connect to LM Studio")?;
+        let resp = send_expecting_2xx(
+            &HttpRequest::get(&url).timeout(self.timeout),
+            "Failed to connect to LM Studio",
+        )?;
 
-        let body: Value = resp.body_mut().read_json()?;
+        let body: Value = resp.json()?;
         let models = body
             .get("data")
             .and_then(|d| d.as_array())
@@ -500,14 +536,12 @@ impl ProviderPlugin for LmStudioProvider {
             "stream": false
         });
 
-        let mut resp = ureq::post(&url)
-            .config()
-            .timeout_global(Some(self.timeout))
-            .build()
-            .send_json(&payload)
-            .context("Failed to send request to LM Studio")?;
+        let resp = send_expecting_2xx(
+            &HttpRequest::post_json(&url, &payload)?.timeout(self.timeout),
+            "Failed to send request to LM Studio",
+        )?;
 
-        let body: Value = resp.body_mut().read_json()?;
+        let body: Value = resp.json()?;
         let content = body
             .get("choices")
             .and_then(|c| c.as_array())
@@ -537,14 +571,12 @@ impl ProviderPlugin for LmStudioProvider {
             "stream": true
         });
 
-        let resp = ureq::post(&url)
-            .config()
-            .timeout_global(Some(self.timeout))
-            .build()
-            .send_json(&payload)
-            .context("Failed to send streaming request to LM Studio")?;
+        let resp = send_streaming_expecting_2xx(
+            &HttpRequest::post_json(&url, &payload)?.timeout(self.timeout),
+            "Failed to send streaming request to LM Studio",
+        )?;
 
-        let reader = std::io::BufReader::new(resp.into_body().into_reader());
+        let reader = std::io::BufReader::new(resp.body);
         let mut full_response = String::new();
 
         use std::io::BufRead;
@@ -613,14 +645,9 @@ impl TextGenWebUIProvider {
     /// Check if text-generation-webui is running
     pub fn check_health(&self) -> bool {
         let url = format!("{}/v1/models", self.base_url);
-        match ureq::get(&url)
-            .config()
-            .timeout_global(Some(Duration::from_secs(5)))
-            .build()
-            .call()
-        {
+        match UreqClient.send(&HttpRequest::get(&url).timeout(Duration::from_secs(5))) {
             Ok(resp) => {
-                let is_ok = resp.status() == 200;
+                let is_ok = resp.status == 200;
                 self.available
                     .store(is_ok, std::sync::atomic::Ordering::SeqCst);
                 is_ok
@@ -676,14 +703,12 @@ impl ProviderPlugin for TextGenWebUIProvider {
 
     fn list_models(&self) -> Result<Vec<ModelInfo>> {
         let url = format!("{}/v1/models", self.base_url);
-        let mut resp = ureq::get(&url)
-            .config()
-            .timeout_global(Some(self.timeout))
-            .build()
-            .call()
-            .context("Failed to connect to text-generation-webui")?;
+        let resp = send_expecting_2xx(
+            &HttpRequest::get(&url).timeout(self.timeout),
+            "Failed to connect to text-generation-webui",
+        )?;
 
-        let body: Value = resp.body_mut().read_json()?;
+        let body: Value = resp.json()?;
         let models = body
             .get("data")
             .and_then(|d| d.as_array())
@@ -716,14 +741,12 @@ impl ProviderPlugin for TextGenWebUIProvider {
             "stream": false
         });
 
-        let mut resp = ureq::post(&url)
-            .config()
-            .timeout_global(Some(self.timeout))
-            .build()
-            .send_json(&payload)
-            .context("Failed to send request to text-generation-webui")?;
+        let resp = send_expecting_2xx(
+            &HttpRequest::post_json(&url, &payload)?.timeout(self.timeout),
+            "Failed to send request to text-generation-webui",
+        )?;
 
-        let body: Value = resp.body_mut().read_json()?;
+        let body: Value = resp.json()?;
         let content = body
             .get("choices")
             .and_then(|c| c.as_array())
@@ -753,14 +776,12 @@ impl ProviderPlugin for TextGenWebUIProvider {
             "stream": true
         });
 
-        let resp = ureq::post(&url)
-            .config()
-            .timeout_global(Some(self.timeout))
-            .build()
-            .send_json(&payload)
-            .context("Failed to send streaming request to text-generation-webui")?;
+        let resp = send_streaming_expecting_2xx(
+            &HttpRequest::post_json(&url, &payload)?.timeout(self.timeout),
+            "Failed to send streaming request to text-generation-webui",
+        )?;
 
-        let reader = std::io::BufReader::new(resp.into_body().into_reader());
+        let reader = std::io::BufReader::new(resp.body);
         let mut full_response = String::new();
 
         use std::io::BufRead;
@@ -959,14 +980,9 @@ impl KoboldCppProvider {
     /// Check if Kobold.cpp is running
     pub fn check_health(&self) -> bool {
         let url = format!("{}/api/v1/model", self.base_url);
-        match ureq::get(&url)
-            .config()
-            .timeout_global(Some(Duration::from_secs(5)))
-            .build()
-            .call()
-        {
+        match UreqClient.send(&HttpRequest::get(&url).timeout(Duration::from_secs(5))) {
             Ok(resp) => {
-                let is_ok = resp.status() == 200;
+                let is_ok = resp.status == 200;
                 self.available
                     .store(is_ok, std::sync::atomic::Ordering::SeqCst);
                 is_ok
@@ -1018,14 +1034,12 @@ impl ProviderPlugin for KoboldCppProvider {
 
     fn list_models(&self) -> Result<Vec<ModelInfo>> {
         let url = format!("{}/api/v1/model", self.base_url);
-        let mut resp = ureq::get(&url)
-            .config()
-            .timeout_global(Some(self.timeout))
-            .build()
-            .call()
-            .context("Failed to connect to Kobold.cpp")?;
+        let resp = send_expecting_2xx(
+            &HttpRequest::get(&url).timeout(self.timeout),
+            "Failed to connect to Kobold.cpp",
+        )?;
 
-        let body: Value = resp.body_mut().read_json()?;
+        let body: Value = resp.json()?;
         let model_name = body
             .get("result")
             .and_then(|r| r.as_str())
@@ -1049,14 +1063,12 @@ impl ProviderPlugin for KoboldCppProvider {
             "temperature": config.temperature,
         });
 
-        let mut resp = ureq::post(&url)
-            .config()
-            .timeout_global(Some(self.timeout))
-            .build()
-            .send_json(&payload)
-            .context("Failed to send request to Kobold.cpp")?;
+        let resp = send_expecting_2xx(
+            &HttpRequest::post_json(&url, &payload)?.timeout(self.timeout),
+            "Failed to send request to Kobold.cpp",
+        )?;
 
-        let body: Value = resp.body_mut().read_json()?;
+        let body: Value = resp.json()?;
         let content = body
             .get("results")
             .and_then(|r| r.as_array())
@@ -1084,14 +1096,12 @@ impl ProviderPlugin for KoboldCppProvider {
             "temperature": config.temperature,
         });
 
-        let resp = ureq::post(&url)
-            .config()
-            .timeout_global(Some(self.timeout))
-            .build()
-            .send_json(&payload)
-            .context("Failed to send streaming request to Kobold.cpp")?;
+        let resp = send_streaming_expecting_2xx(
+            &HttpRequest::post_json(&url, &payload)?.timeout(self.timeout),
+            "Failed to send streaming request to Kobold.cpp",
+        )?;
 
-        let reader = std::io::BufReader::new(resp.into_body().into_reader());
+        let reader = std::io::BufReader::new(resp.body);
         let mut full_response = String::new();
 
         use std::io::BufRead;
@@ -1172,18 +1182,15 @@ impl OpenAICompatibleProvider {
     /// Check if the provider is running
     pub fn check_health(&self) -> bool {
         let url = format!("{}/v1/models", self.base_url);
-        let mut req = ureq::get(&url)
-            .config()
-            .timeout_global(Some(Duration::from_secs(5)))
-            .build();
+        let mut req = HttpRequest::get(&url).timeout(Duration::from_secs(5));
 
         if let Some(ref key) = self.api_key {
             req = req.header("Authorization", &format!("Bearer {}", key));
         }
 
-        match req.call() {
+        match UreqClient.send(&req) {
             Ok(resp) => {
-                let is_ok = resp.status() == 200;
+                let is_ok = resp.status == 200;
                 self.available
                     .store(is_ok, std::sync::atomic::Ordering::SeqCst);
                 is_ok
@@ -1239,20 +1246,15 @@ impl ProviderPlugin for OpenAICompatibleProvider {
 
     fn list_models(&self) -> Result<Vec<ModelInfo>> {
         let url = format!("{}/v1/models", self.base_url);
-        let mut req = ureq::get(&url)
-            .config()
-            .timeout_global(Some(self.timeout))
-            .build();
+        let mut req = HttpRequest::get(&url).timeout(self.timeout);
 
         if let Some(ref key) = self.api_key {
             req = req.header("Authorization", &format!("Bearer {}", key));
         }
 
-        let mut resp = req
-            .call()
-            .context("Failed to connect to OpenAI-compatible API")?;
+        let resp = send_expecting_2xx(&req, "Failed to connect to OpenAI-compatible API")?;
 
-        let body: Value = resp.body_mut().read_json()?;
+        let body: Value = resp.json()?;
         let base_url = self.base_url.clone();
         let models = body
             .get("data")
@@ -1291,18 +1293,15 @@ impl ProviderPlugin for OpenAICompatibleProvider {
             "stream": false
         });
 
-        let mut req = ureq::post(&url)
-            .config()
-            .timeout_global(Some(self.timeout))
-            .build();
+        let mut req = HttpRequest::new(HttpMethod::Post, &url).timeout(self.timeout);
 
         if let Some(ref key) = self.api_key {
             req = req.header("Authorization", &format!("Bearer {}", key));
         }
 
-        let mut resp = req.send_json(&payload).context("Failed to send request")?;
+        let resp = send_expecting_2xx(&req.json(&payload)?, "Failed to send request")?;
 
-        let body: Value = resp.body_mut().read_json()?;
+        let body: Value = resp.json()?;
         let content = body
             .get("choices")
             .and_then(|c| c.as_array())
@@ -1332,20 +1331,16 @@ impl ProviderPlugin for OpenAICompatibleProvider {
             "stream": true
         });
 
-        let mut req = ureq::post(&url)
-            .config()
-            .timeout_global(Some(self.timeout))
-            .build();
+        let mut req = HttpRequest::new(HttpMethod::Post, &url).timeout(self.timeout);
 
         if let Some(ref key) = self.api_key {
             req = req.header("Authorization", &format!("Bearer {}", key));
         }
 
-        let resp = req
-            .send_json(&payload)
-            .context("Failed to send streaming request")?;
+        let resp =
+            send_streaming_expecting_2xx(&req.json(&payload)?, "Failed to send streaming request")?;
 
-        let reader = std::io::BufReader::new(resp.into_body().into_reader());
+        let reader = std::io::BufReader::new(resp.body);
         let mut full_response = String::new();
 
         use std::io::BufRead;
@@ -1411,20 +1406,15 @@ impl ProviderPlugin for OpenAICompatibleProvider {
             payload["tools"] = Value::Array(tool_schemas);
         }
 
-        let mut req = ureq::post(&url)
-            .config()
-            .timeout_global(Some(self.timeout))
-            .build();
+        let mut req = HttpRequest::new(HttpMethod::Post, &url).timeout(self.timeout);
 
         if let Some(ref key) = self.api_key {
             req = req.header("Authorization", &format!("Bearer {}", key));
         }
 
-        let mut resp = req
-            .send_json(&payload)
-            .context("Failed to send request with tools")?;
+        let resp = send_expecting_2xx(&req.json(&payload)?, "Failed to send request with tools")?;
 
-        let body: Value = resp.body_mut().read_json()?;
+        let body: Value = resp.json()?;
 
         // Extract content
         let content = body
@@ -1452,10 +1442,7 @@ impl ProviderPlugin for OpenAICompatibleProvider {
     fn generate_embeddings(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
         let url = format!("{}/v1/embeddings", self.base_url);
 
-        let mut req = ureq::post(&url)
-            .config()
-            .timeout_global(Some(self.timeout))
-            .build();
+        let mut req = HttpRequest::new(HttpMethod::Post, &url).timeout(self.timeout);
 
         if let Some(ref key) = self.api_key {
             req = req.header("Authorization", &format!("Bearer {}", key));
@@ -1466,8 +1453,8 @@ impl ProviderPlugin for OpenAICompatibleProvider {
             "input": texts
         });
 
-        let mut resp = req.send_json(&payload)?;
-        let body: Value = resp.body_mut().read_json()?;
+        let resp = send_expecting_2xx_bare(&req.json(&payload)?)?;
+        let body: Value = resp.json()?;
 
         let embeddings = body
             .get("data")
@@ -1742,16 +1729,13 @@ impl ProviderPlugin for HuggingFaceInferenceProvider {
 
     fn list_models(&self) -> Result<Vec<ModelInfo>> {
         let url = "https://huggingface.co/api/models?pipeline_tag=text-generation&sort=downloads&limit=20";
-        let mut req = ureq::get(url)
-            .config()
-            .timeout_global(Some(Duration::from_secs(10)))
-            .build();
+        let mut req = HttpRequest::get(url).timeout(Duration::from_secs(10));
         if let Some(ref key) = self.api_key {
             req = req.header("Authorization", &format!("Bearer {}", key));
         }
 
-        let mut resp = req.call()?;
-        let body: Value = resp.body_mut().read_json()?;
+        let resp = send_expecting_2xx_bare(&req)?;
+        let body: Value = resp.json()?;
 
         let models = body
             .as_array()
@@ -1806,16 +1790,13 @@ impl ProviderPlugin for HuggingFaceInferenceProvider {
             }
         });
 
-        let mut req = ureq::post(&url)
-            .config()
-            .timeout_global(Some(self.timeout))
-            .build();
+        let mut req = HttpRequest::new(HttpMethod::Post, &url).timeout(self.timeout);
         if let Some(ref key) = self.api_key {
             req = req.header("Authorization", &format!("Bearer {}", key));
         }
 
-        let mut resp = req.send_json(&payload)?;
-        let body: Value = resp.body_mut().read_json()?;
+        let resp = send_expecting_2xx_bare(&req.json(&payload)?)?;
+        let body: Value = resp.json()?;
 
         // HF returns array of generated texts
         let text = body
@@ -1864,16 +1845,13 @@ impl ProviderPlugin for HuggingFaceInferenceProvider {
             "inputs": texts
         });
 
-        let mut req = ureq::post(&url)
-            .config()
-            .timeout_global(Some(self.timeout))
-            .build();
+        let mut req = HttpRequest::new(HttpMethod::Post, &url).timeout(self.timeout);
         if let Some(ref key) = self.api_key {
             req = req.header("Authorization", &format!("Bearer {}", key));
         }
 
-        let mut resp = req.send_json(&payload)?;
-        let body: Value = resp.body_mut().read_json()?;
+        let resp = send_expecting_2xx_bare(&req.json(&payload)?)?;
+        let body: Value = resp.json()?;
 
         let embeddings = body
             .as_array()
@@ -1901,6 +1879,146 @@ impl ProviderPlugin for HuggingFaceInferenceProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// El invariante peligroso de este modulo: un no-2xx **no se emite como si
+    /// fuera lo que dijo el modelo**.
+    ///
+    /// Antes del puerto lo garantizaba `send_json(..)?`, que convertia el no-2xx
+    /// en `Err`. Detras del puerto llega como `Ok`, asi que sin el filtro de
+    /// `send_streaming_expecting_2xx` el cuerpo del rechazo se emitiria trozo a
+    /// trozo y el usuario leeria una pagina de error creyendo que es la
+    /// respuesta del asistente.
+    ///
+    /// UN test y no cinco porque la comprobacion esta **extraida**: hay cinco
+    /// rutas de streaming en el modulo y todas pasan por el mismo ayudante. En
+    /// V432, con la misma comprobacion escrita en linea cuatro veces, tres de
+    /// las cuatro mutaciones sobrevivieron por falta de test.
+    #[test]
+    fn test_streaming_does_not_emit_an_error_body_as_model_output() {
+        let server = crate::http_client::MockHttpServer::start();
+        server.enqueue_text(500, "model runner crashed");
+
+        let provider = OllamaProvider::new(&server.url());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let err = provider
+            .generate_streaming(
+                &AiConfig::default(),
+                &[ChatMessage::user("hola")],
+                "eres un asistente",
+                &tx,
+            )
+            .expect_err("un 500 es un error, no una respuesta");
+
+        let text = format!("{:#}", err);
+        assert!(text.contains("500"), "el estado va en el mensaje: {}", text);
+        assert!(
+            text.contains("model runner crashed"),
+            "y el CUERPO tambien, que es donde el servidor explica el rechazo: {}",
+            text
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "no debe emitirse ni un trozo cuando el servidor contesta 500"
+        );
+    }
+
+    /// Un backend que contesta 500 NO esta disponible.
+    ///
+    /// Los cinco sondeos de este modulo ya comparaban el estado a mano
+    /// (`== 200`), asi que son los unicos del barrido que no cambiaban de
+    /// sentido al cruzar el puerto --- y estos tests fijan justo eso, para que
+    /// el `== 200` no se relaje a un `Ok(_)` al tocarlo manana.
+    ///
+    /// **Cinco tests**, uno por proveedor, porque la comparacion esta escrita en
+    /// linea cinco veces (la mutacion M17 lleva `occurrences = 5`). Al contrario
+    /// que el invariante de streaming, aqui no se puede extraer sin tocar cinco
+    /// `impl` ajenos a esta migracion: el sondeo de cada proveedor construye su
+    /// propia URL y, en uno, su propia cabecera de autorizacion.
+    fn assert_500_is_not_available(make: impl FnOnce(String) -> Box<dyn ProviderPlugin>) {
+        let server = crate::http_client::MockHttpServer::start();
+        server.enqueue_text(500, "internal error");
+
+        let provider = make(server.url());
+        assert!(
+            !provider.is_available(),
+            "un 500 no es un backend disponible"
+        );
+    }
+
+    #[test]
+    fn test_ollama_is_not_available_on_500() {
+        assert_500_is_not_available(|url| Box::new(OllamaProvider::new(&url)));
+    }
+
+    #[test]
+    fn test_lm_studio_is_not_available_on_500() {
+        assert_500_is_not_available(|url| Box::new(LmStudioProvider::new(&url)));
+    }
+
+    #[test]
+    fn test_text_gen_webui_is_not_available_on_500() {
+        assert_500_is_not_available(|url| Box::new(TextGenWebUIProvider::new(&url)));
+    }
+
+    #[test]
+    fn test_kobold_is_not_available_on_500() {
+        assert_500_is_not_available(|url| Box::new(KoboldCppProvider::new(&url)));
+    }
+
+    #[test]
+    fn test_openai_compatible_is_not_available_on_500() {
+        assert_500_is_not_available(|url| Box::new(OpenAICompatibleProvider::new("prueba", &url)));
+    }
+
+    /// Y el tercer camino: los cinco sitios que propagaban con un `?` a secas.
+    ///
+    /// Pasan por `send_expecting_2xx_bare`, que no les pone mensaje propio
+    /// --- inventarles uno cambiaria el error que ve el llamante --- pero SI
+    /// exige el 2xx. Sin eso, `generate_embeddings` devolveria `Ok` con un
+    /// vector vacio por cada texto: un embedding que no existe, con el que una
+    /// busqueda semantica puntuaria.
+    #[test]
+    fn test_embeddings_do_not_come_back_empty_from_a_500() {
+        let server = crate::http_client::MockHttpServer::start();
+        server.enqueue_text(500, "embedding model not loaded");
+
+        let provider = OllamaProvider::new(&server.url());
+        let err = provider
+            .generate_embeddings(&["hola"])
+            .expect_err("un 500 es un error, no un embedding");
+
+        let text = format!("{:#}", err);
+        assert!(text.contains("500"), "el estado va en el mensaje: {}", text);
+    }
+
+    /// Lo que se GANA con el puerto, no solo lo que se conserva: el motivo.
+    ///
+    /// `ureq` 3 mete el no-2xx en un `Error::StatusCode(u16)` que **no lleva la
+    /// respuesta**, asi que el texto con el que el servidor explica el rechazo
+    /// --- «model not found», «context length exceeded» --- no llegaba a ningun
+    /// sitio. Ahora viaja en el mensaje.
+    #[test]
+    fn test_a_rejection_carries_the_body_that_explains_it() {
+        let server = crate::http_client::MockHttpServer::start();
+        server.enqueue_text(404, "model \"llama3.1:8b\" not found, try pulling it first");
+
+        let provider = OllamaProvider::new(&server.url());
+        let err = provider
+            .generate(
+                &AiConfig::default(),
+                &[ChatMessage::user("hola")],
+                "eres un asistente",
+            )
+            .expect_err("un 404 sigue siendo un error");
+
+        let text = format!("{:#}", err);
+        assert!(text.contains("404"), "el estado: {}", text);
+        assert!(
+            text.contains("not found, try pulling it first"),
+            "el consejo del servidor es casi todo el diagnostico: {}",
+            text
+        );
+    }
 
     #[test]
     fn test_ollama_provider_creation() {

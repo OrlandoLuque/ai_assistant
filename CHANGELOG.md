@@ -5,6 +5,65 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v311 (2026-10-25) - V435: `provider_plugins` detras del puerto, y la leccion de V432 aplicada al reves (0.2.394)
+
+N77. Los **27 sitios** de `provider_plugins.rs` quedan detras del puerto. Cero `ureq::`. Van
+**10 modulos de 55**, y con este caen los dos que hablan con proveedores: `providers.rs` (V432) y
+este, que es su equivalente para los plugins.
+
+### La leccion de V432, aplicada al contrario
+
+En V432 el invariante «un no-2xx no se emite como respuesta del modelo» estaba escrito **en linea
+en los cuatro cierres de streaming**, la mutacion llevaba `occurrences = 4`, y **tres
+sobrevivieron** --- no porque fueran inocuas, sino porque tres de las cuatro rutas no tenian
+ningun test.
+
+Aqui hay **cinco** rutas de streaming, asi que escribirlo en linea serian cinco copias y cinco
+tests. Extraido a `send_streaming_expecting_2xx` es **una ocurrencia y un test**. Esa es la forma
+preferible siempre que se pueda: no «escribe N tests», sino «haz que el invariante tenga un solo
+sitio donde vivir».
+
+Donde **no** se puede, se escriben los N. Los cinco sondeos de disponibilidad comparan el estado
+cada uno en su `impl` (cada proveedor arma su propia URL, y uno su propia `Authorization`), asi
+que la mutacion **M17** lleva `occurrences = 5` y hay cinco tests, uno por proveedor.
+
+### La quinta ruta de streaming no la vio el clasificador
+
+Las 27 llamadas se clasificaron por su cadena antes de tocar nada --- 8 formas distintas --- y aun
+asi la lista decia **cuatro** rutas de streaming. Son cinco: la quinta construye la peticion por
+partes (para poner la `Authorization`) y lo que la hace de streaming esta **tres lineas mas
+abajo**, en un `into_body().into_reader()` que el clasificador no mira.
+
+Lo que la encontro fue contar `into_body().into_reader()` en el fichero. Un clasificador de
+llamadas no ve lo que se hace con la respuesta --- y en este puerto, eso es justo la diferencia
+entre `send` y `send_streaming`, o sea entre emitir trozos y bufferizar un corpus entero.
+
+De paso, el clasificador tenia un defecto que **me mintio dos veces igual**: normalizaba el
+nombre del metodo, asi que `ureq::get` y `ureq::post` acababan en la misma forma. En `vector_db`
+mezclo 8 POST con un PUT, y aqui 1 GET con 6 POST. Las dos veces lo cazo el contador de
+ocurrencias del script de migracion, no la lectura. Arreglado.
+
+### Los tres caminos, y lo que cambia en cada uno
+
+* **14 bufferizados** pasan por `send_expecting_2xx`, que conserva el `.context(..)` de cada sitio
+  y exige el 2xx. Lo que se gana: el mensaje pasa de «http status: 404» a llevar el cuerpo ---
+  «model "llama3.1:8b" not found, try pulling it first». En `ureq` 3 un `Error::StatusCode` no
+  lleva la respuesta, asi que ese consejo **no existia** para el llamante.
+* **5 propagaban con un `?` a secas**, y pasan por un ayudante sin mensaje propio. Sin `context`
+  **a proposito**: inventarles uno cambiaria el error que ve el llamante, y migrar un modulo no es
+  sitio para eso. Sin el filtro, `generate_embeddings` contestaria `Ok` con un vector vacio por
+  texto --- un embedding que no existe, por el que una busqueda semantica puntuaria igual.
+* **5 sondeos** ya comparaban `== 200` a mano, asi que son los unicos del barrido que **no**
+  cambiaban de sentido al cruzar el puerto. Se conserva el `== 200` y no se «mejora» a
+  `is_success()`: hoy un 204 cuenta como no disponible, y eso es comportamiento, no un descuido
+  que me toque arreglar de paso.
+
+### Verificacion
+
+**27 de 27 mutaciones** mueren (19 de antes mas las 8 nuevas contando ocurrencias). Clippy
+`-D warnings` en 0 con los tres conjuntos de CI (`FEATURES_STD --all-targets`, `FEATURES_MIN` y
+`FEATURES_NETWORK`), tests de libreria y doctests, puertas de mutacion y de enlaces.
+
 ## [Unreleased] - v310 (2026-10-25) - V434: la guia prometia un mock que nadie de fuera puede usar (0.2.393)
 
 Migrar `vector_db` obligo a leerse la seccion del puerto HTTP en `docs/GUIDE.md`, y resulto decir

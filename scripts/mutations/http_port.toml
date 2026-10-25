@@ -294,3 +294,80 @@ invariant = "un cuerpo JSON va con su `Content-Type`, con el metodo que sea"
 before = """        Ok(self.header("Content-Type", "application/json").body(bytes))"""
 after = """        Ok(self.body(bytes))"""
 occurrences = 1
+
+# ===========================================================================
+# M15: el camino caliente de los plugins vuelve a emitir el error como respuesta
+# ===========================================================================
+# Mismo invariante que M9, en el otro modulo que hace streaming. La diferencia
+# es la LECCION APLICADA: en V432 esta comprobacion estaba escrita en linea
+# cuatro veces y tres mutaciones sobrevivieron por falta de test. Aqui hay CINCO
+# rutas de streaming y la comprobacion esta extraida a un ayudante, asi que es
+# **una ocurrencia y un test**.
+[[mutation]]
+id = "M15"
+file = "src/provider_plugins.rs"
+filter = "provider_plugins::tests::test_streaming_does_not_emit_an_error_body_as_model_output"
+invariant = "un no-2xx en una ruta de streaming es un error, no contenido del modelo"
+before = """    let mut stream = UreqClient.send_streaming(request).context(context)?;
+    stream.error_for_status().context(context)?;
+    Ok(stream)"""
+after = """    let stream = UreqClient.send_streaming(request).context(context)?;
+    Ok(stream)"""
+occurrences = 1
+
+# ===========================================================================
+# M16: el motivo del rechazo se pierde en los 14 sitios bufferizados
+# ===========================================================================
+# `ureq` 3 mete el no-2xx en un `Error::StatusCode(u16)` que NO lleva la
+# respuesta, asi que el texto con el que el servidor explica el rechazo
+# --- «model not found, try pulling it first» --- no llegaba a ningun sitio.
+# Sin el `error_for_status`, ademas, el no-2xx deja de ser un error.
+[[mutation]]
+id = "M16"
+file = "src/provider_plugins.rs"
+filter = "provider_plugins::tests::test_a_rejection_carries_the_body_that_explains_it"
+invariant = "un no-2xx de un proveedor es un error, y su mensaje LLEVA el cuerpo"
+before = """    let response = UreqClient.send(request).context(context)?;
+    response.error_for_status().context(context)?;
+    Ok(response)"""
+after = """    let response = UreqClient.send(request).context(context)?;
+    Ok(response)"""
+occurrences = 1
+
+# ===========================================================================
+# M17: un backend que contesta 500 pasa por disponible
+# ===========================================================================
+# Los cinco sondeos comparan el estado a mano. Eran los UNICOS sitios del modulo
+# que no cambiaban de sentido al cruzar el puerto, y la mutacion existe para que
+# el `== 200` no se relaje manana a un `Ok(_)`.
+#
+# CINCO ocurrencias y cinco tests, uno por proveedor. No se puede extraer sin
+# tocar cinco `impl` ajenos a la migracion: el sondeo de cada proveedor arma su
+# propia URL y uno de ellos su propia `Authorization`.
+[[mutation]]
+id = "M17"
+file = "src/provider_plugins.rs"
+filter = "is_not_available_on_500"
+invariant = "disponible significa 2xx; contestar 500 no es estar disponible"
+before = """                let is_ok = resp.status == 200;"""
+after = """                let is_ok = true;"""
+occurrences = 5
+
+# ===========================================================================
+# M18: un 500 devuelve embeddings vacios en vez de un error
+# ===========================================================================
+# Los cinco sitios que propagaban con un `?` a secas pasan por el ayudante sin
+# mensaje. Sin el filtro, `generate_embeddings` contesta `Ok` con un vector
+# vacio por texto: un embedding que no existe, por el que una busqueda semantica
+# puntuaria igual.
+[[mutation]]
+id = "M18"
+file = "src/provider_plugins.rs"
+filter = "provider_plugins::tests::test_embeddings_do_not_come_back_empty_from_a_500"
+invariant = "un no-2xx sigue siendo un error aunque el sitio no le ponga mensaje"
+before = """    let response = UreqClient.send(request)?;
+    response.error_for_status()?;
+    Ok(response)"""
+after = """    let response = UreqClient.send(request)?;
+    Ok(response)"""
+occurrences = 1
