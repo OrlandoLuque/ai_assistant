@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v310 (2026-10-25) - V434: la guia prometia un mock que nadie de fuera puede usar (0.2.393)
+
+Migrar `vector_db` obligo a leerse la seccion del puerto HTTP en `docs/GUIDE.md`, y resulto decir
+dos cosas falsas --- las dos **comprobables**, las dos del tipo que esta casa colecciona: no un
+fallo, sino una promesa que el codigo no cumple.
+
+### El mock que no existe fuera de la crate
+
+La guia enseñaba, como ejemplo de uso de la libreria:
+
+```rust
+#[cfg(test)]
+let mock = MockHttpClient::with_response(json!({"models": []}));
+```
+
+`MockHttpClient` es un struct **privado** dentro del `#[cfg(test)] mod tests` de
+`src/http_client.rs`. `MockHttpServer` tambien esta bajo `#[cfg(test)]` y no esta re-exportado.
+O sea que **ninguno de los dos existe para un consumidor**: quien copiara el ejemplo no compilaba.
+
+Es la clase de defecto invisible a los tests unitarios **por construccion**, porque compilan dentro
+de la crate. Y duele mas de lo normal aqui: el puerto HTTP existe para hacer el I/O testeable, y un
+puerto cuyo mock no puede usar nadie de fuera es medio puerto. Decidir si se expone (una feature
+`test-utils`, un modulo `testing`) es la tarea **N159**.
+
+### El campo que no se llama asi, y que ademas no se puede poner
+
+Cuatro ejemplos escribian `VectorDbConfig { dimension: 384, ..Default::default() }`. El campo es
+`dimensions`, en plural --- pero eso es lo de menos: `VectorDbConfig` lleva `#[non_exhaustive]`, asi
+que **la sintaxis de literal de struct es ilegal fuera de la crate**, incluso con
+`..Default::default()`. Y no hay builder ni setters.
+
+Lo unico que un consumidor puede obtener es `VectorDbConfig::default()`, mientras que **los diez
+constructores de backend piden un config**. O sea que desde fuera se queda con la dimension por
+defecto, que es exactamente el campo que decide su modelo de embeddings. Tarea **N160**.
+
+Es el mismo hueco que N6/V247 vino a cerrar (builders para los config `#[non_exhaustive]`), y que
+se cerro dejando este tipo fuera.
+
+### Lo que se hace aqui, y lo que no
+
+La seccion 49 pasa a describir el puerto que hay --- empezando por lo unico que un llamante **tiene**
+que saber, que `Ok` no significa 2xx --- y las dos limitaciones quedan escritas donde se tropieza con
+ellas, con su numero de tarea. **No se toca codigo**: exponer un mock y anadir un builder son
+decisiones de API, y las decide el autor.
+
+Y la leccion metodologica, que es la de siempre con otra forma: estas dos no las encontro una
+auditoria de documentacion, las encontro **ir a usar la pagina**. Un `grep` de nombres no ve que
+`MockHttpClient` existe y es inalcanzable; el consumidor si.
+
 ## [Unreleased] - v309 (2026-10-25) - V433: `vector_db` entero detras del puerto, y `delete()` contesta por la cache (0.2.392)
 
 N77. Los **38 sitios** de `vector_db.rs` --- el fichero con mas `ureq` de la crate --- quedan

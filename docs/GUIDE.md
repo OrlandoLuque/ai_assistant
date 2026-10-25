@@ -2170,22 +2170,55 @@ safe_log!("API response: {}", sensitive_data);
 
 ---
 
-## 49. HTTP Client Abstraction
+## 49. HTTP Client Port
 
-**What**: Testable HTTP client trait for provider communication.
+**What**: the one place in the crate that decides how HTTP is spoken — methods, headers,
+timeouts, body limits, redirects, and connection pooling.
 
 ```rust
-use ai_assistant::http_client::{HttpClient, UreqClient};
+use ai_assistant::{HttpClient, HttpMethod, HttpRequest, UreqClient};
+use std::time::Duration;
 
-// Production: use the real client
-let client = UreqClient;
-let models = fetch_ollama_models_with(&client, "http://localhost:11434")?;
+let request = HttpRequest::post_json(
+    "http://localhost:11434/api/chat",
+    &serde_json::json!({"model": "llama3.1:8b"}),
+)?
+.header("Authorization", "Bearer a-token")
+.timeout(Duration::from_secs(60));
 
-// Tests: use a mock
-#[cfg(test)]
-let mock = MockHttpClient::with_response(json!({"models": []}));
-let models = fetch_ollama_models_with(&mock, "http://localhost:11434")?;
+let response = UreqClient.send(&request)?;
 ```
+
+**The one thing a caller must know: `Ok` does not mean 2xx.** A rejection comes back as
+`Ok` with its status, headers and **body** — because that body is where the server
+explains itself, and `ureq`'s `Error::StatusCode` carries no response at all. So every
+call site decides, explicitly:
+
+```rust
+if response.is_success() {
+    let body = response.json()?;
+} else {
+    // The provider's message, and its Retry-After, are still here.
+    eprintln!("HTTP {}: {}", response.status, response.text()?);
+}
+
+// Or, when a non-2xx is simply an error: the body goes into the message.
+response.error_for_status()?;
+```
+
+Also available: `send_streaming` (the body stays a `Read`, for SSE and for downloads
+too big to buffer), `HttpRequest::json` for a JSON body with any method, and
+`HttpMethod::from_name` for a method that arrives as a string — it returns `Option`, with
+no silent fall back to `GET`.
+
+Connections are pooled process-wide: `UreqClient` is a unit struct and the pooling lives
+in a shared agent behind it, so call sites get it without asking.
+
+> **Mocks are internal, for now.** `MockHttpServer` and `MockHttpClient` live under
+> `#[cfg(test)]`, so they exist for this crate's own tests and **cannot be used from
+> outside it**. Writing `MockHttpClient::with_response(..)` in your own crate does not
+> compile. Exposing a mock to consumers behind a `test-utils` feature is an open decision
+> (task N159); until then, test against a local server of your own.
 
 ---
 
@@ -2197,12 +2230,20 @@ let models = fetch_ollama_models_with(&mock, "http://localhost:11434")?;
 - `embeddings` — enables the base VectorDb trait and InMemoryVectorDb
 - `vector-lancedb` — adds LanceDB embedded backend
 
+> **`dimensions` is not settable from outside the crate yet.** `VectorDbConfig` is
+> `#[non_exhaustive]` and has neither a builder nor setters, so a consumer crate can
+> only obtain `VectorDbConfig::default()` — and the struct-literal syntax these examples
+> used until V433 (`VectorDbConfig { dimension: 384, ..Default::default() }`) does not
+> compile outside this crate, besides naming the field wrong: it is `dimensions`.
+> Every backend constructor takes a config, so from outside you are stuck at the default
+> dimension, which is exactly the field your embedding model decides. Open as task N160.
+
 ### InMemoryVectorDb (Tier 0)
 
 ```rust
 use ai_assistant::vector_db::{VectorDbBuilder, VectorDbBackend, VectorDbConfig};
 
-let config = VectorDbConfig { dimension: 384, ..Default::default() };
+let config = VectorDbConfig::default();  // ver la nota sobre `dimensions`
 let mut db = VectorDbBuilder::new()
     .backend(VectorDbBackend::InMemory)
     .config(config)
@@ -2232,7 +2273,7 @@ println!("Backend: {}, healthy: {}", health.backend, health.is_healthy);
 ```rust
 use ai_assistant::vector_db::{VectorDbBuilder, VectorDbConfig};
 
-let config = VectorDbConfig { dimension: 384, ..Default::default() };
+let config = VectorDbConfig::default();  // ver la nota sobre `dimensions`
 let mut db = VectorDbBuilder::new()
     .lance("./my_vectors")  // Path to LanceDB directory
     .config(config)
@@ -2253,7 +2294,7 @@ println!("{}: tier {}, persistence={}", info.name, info.tier, info.supports_pers
 ```rust
 use ai_assistant::vector_db::{VectorDbBuilder, VectorDbConfig};
 
-let config = VectorDbConfig { dimension: 384, ..Default::default() };
+let config = VectorDbConfig::default();  // ver la nota sobre `dimensions`
 let mut db = VectorDbBuilder::new()
     .qdrant("http://localhost:6333", "my_collection")
     .config(config)
@@ -2279,7 +2320,7 @@ println!("Migrated: {} exported, {} imported", result.exported, result.imported)
 ```rust
 use ai_assistant::vector_db::{HybridVectorSearch, InMemoryVectorDb};
 
-let vector_db = InMemoryVectorDb::new(VectorDbConfig { dimension: 384, ..Default::default() });
+let vector_db = InMemoryVectorDb::new(VectorDbConfig::default());
 let mut hybrid = HybridVectorSearch::new(vector_db, 0.7); // 0.7 = vector weight
 
 hybrid.add_document("doc1", vec![0.1; 384], "The quick brown fox", metadata)?;
