@@ -5,6 +5,57 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v313 (2026-10-25) - V437: la puerta de cifras del README hizo su trabajo, y encontro cuatro mas (0.2.396)
+
+CI en rojo tras V436, y **no por la migracion**: la puerta `check_readme_numbers.py` (V373) tumbo
+el trabajo de tests con un mensaje exacto ---
+`README says ~558,000, the tree has 563,728 (1.0% off, tolerance 1%)`.
+
+Las cinco versiones de hoy anadieron codigo (tests, ayudantes, comentarios) y la cifra de la
+portada se paso del 1 % de tolerancia. **Es exactamente para esto que existe la puerta**, y vale
+la pena decir que funciono: el numero de la primera linea del README llevaba derivando y nadie lo
+habria visto.
+
+Corregido con lo medido hoy en 0.2.395, y de paso las otras cuatro cifras que la puerta **no**
+comprueba por diseno:
+
+| | decia | mide |
+|---|---|---|
+| lineas | ~558K | **563.728** |
+| ficheros en la linea 7 | 574 | **575** (la linea 245 ya decia 575 --- el README se contradecia) |
+| tests con `FEATURES_STD` | 9.030 | **9.096** |
+| tests con `--features full` | 7.252 | **7.312** |
+| tests con el minimo de ocho | 5.224 | **5.279** |
+
+La puerta dice en su propia cabecera que el recuento de tests **no** lo verifica, porque hace falta
+correr la suite; lo que SI comprueba es que las cuatro menciones concuerden entre si y que la orden
+escrita al lado sea la que corre CI. O sea que el README podia estar coherentemente desfasado, y lo
+estaba.
+
+### Y la web, que carga su propio juego de cifras
+
+La puerta de la web (V142) estaba **en verde** --- sus 14 cifras comprobadas cuadraban --- y aun asi
+tres numeros estaban mal, por el mismo motivo: tampoco comprueba el recuento de tests.
+
+* **9.029 tests** en 26 sitios de 5 paginas (y `9.029` con punto en 3 mas). Fijate en que NO era
+  9.030: la web y el README llevaban cifras **distintas** y las dos rancias.
+* **559K lineas** en 12 sitios de 6 paginas.
+* Y el tercer escondite que ya conocia: **`og-image-source.html` decia 6.874 tests**, que es la
+  mas vieja de todas --- esa pagina es la que se renderiza para la miniatura que sale al compartir
+  el enlace. Corregida la fuente; **el PNG sigue mostrando 6.874** y hay que regenerarlo
+  renderizando esa pagina, cosa que no puedo hacer yo.
+
+### Lo que esto dice de las puertas de cifras
+
+Las dos puertas pasaban mientras cinco numeros de portada estaban mal, y no es un fallo de las
+puertas: **las dos declaran por escrito que el recuento de tests no entra**, porque verificarlo
+exige correr la suite entera y eso no cabe en un script de forma. La decision es correcta y tiene
+un coste, y el coste es este.
+
+Lo que lo cerraria: que el trabajo de tests de CI, que YA corre la suite y tiene el numero delante,
+compare su salida con lo que afirman el README y la web. Es la unica parte del proceso que puede
+hacerlo sin pagar nada, porque el numero ya esta ahi.
+
 ## [Unreleased] - v312 (2026-10-25) - V436: `cloud_connectors` saca `ureq` de sus firmas, y mi verde no compilaba el fichero (0.2.395)
 
 N77. Los **19 sitios** de `cloud_connectors.rs` quedan detras del puerto. Van **11 modulos de 55**.
