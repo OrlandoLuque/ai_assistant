@@ -5,6 +5,81 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v308 (2026-10-25) - V432: el camino caliente detras del puerto, y un diagnostico que no podia dispararse (0.2.391)
+
+N77. `providers.rs` --- 14 sitios, de los que diez son las llamadas de chat --- queda detras del
+puerto. Solo se dejan los **6 del `ConnectionPoolHandle`**, que esperan una decision del autor
+(esta en la tarea #77: es una capacidad PUBLICADA sin llamantes de produccion, no codigo muerto
+interno).
+
+### El invariante que hacia esta migracion peligrosa
+
+Los diez POST viven dentro de un `retry_with_config`, y hoy `send_json(..)?` convierte un no-2xx
+en `Err`: **eso** es lo que hace que se reintente y que el fallo llegue al usuario como error.
+Detras del puerto el no-2xx es un `Ok`, asi que sin un filtro explicito:
+
+* en los cuatro sitios de **streaming**, el cuerpo del error se emitiria **trozo a trozo como si
+  fuera lo que dijo el modelo**. El usuario leeria una pagina de error de nginx creyendo que es la
+  respuesta del asistente, y nada en el programa se queja;
+* en los cinco **bufferizados**, se intentaria parsear la pagina de error buscando
+  `message.content`.
+
+Por eso cada cierre lleva ahora un `error_for_status()?`, y por eso **hay un test de verdad**:
+monta un `MockHttpServer` que contesta 500, apunta ahi una de las rutas de streaming, y comprueba
+las tres cosas que importan --- que devuelve error, que el mensaje lleva el estado **y el cuerpo**,
+y que **al canal no llego ni un trozo**.
+
+Hay **cuatro** tests y no uno, y esa correccion la forzo la puerta de mutacion. La mutacion **M9**
+quita el filtro, y como el patron aparece cuatro veces, `occurrences = 4` **son cuatro
+mutaciones**: una muere y **tres sobrevivieron**. No porque quitar el filtro fuera inocuo en esas
+tres, sino porque **tres de las cuatro rutas de streaming no tenian ningun test** --- ni este ni
+otro. El test escrito a mano para Ollama se leia como cobertura del invariante y cubria un cuarto
+de el.
+
+Ahora la asercion esta escrita **una vez** (`assert_500_is_an_error_and_emits_nothing`, con la
+configuracion y la llamada como parametros) y las cuatro rutas --- `generate_ollama_streaming`,
+`generate_openai_streaming` y las dos `_cancellable` --- tienen cada una su test. El filtro de M9
+pasa a ser la subcadena comun de los cuatro nombres, para que cada ocurrencia tenga quien la vea.
+
+Para el flujo hizo falta un `HttpStream::error_for_status()` nuevo, que lee hasta 4 KiB del cuerpo
+para el mensaje: en un flujo el cuerpo del error es tan util como en una respuesta bufferizada, y
+sin eso el llamante tendria que elegir entre perderlo o leerse el flujo entero.
+
+### Y un diagnostico que, hasta hoy, NO PODIA DISPARARSE
+
+`looks_like_mmproj_error` busca «mmproj», «no clip», «clip model», «vision model not loaded»… para
+dar un mensaje util cuando un servidor rechaza una peticion de vision porque no cargo el proyector
+multimodal. Esas palabras **solo aparecen en el cuerpo de la respuesta**.
+
+Y el sitio que lo usa no ponia `http_status_as_error(false)`, asi que un 400 del servidor llegaba
+como `ureq::Error::StatusCode(400)` --- **sin cuerpo**. O sea que el `e.to_string()` que se le pasa
+al detector nunca podia contener ninguna de las ocho palabras que busca: **el consejo sobre
+`--mmproj` estaba escrito y era inalcanzable.** Migrar el sitio lo arregla, porque
+`error_for_status()` mete el cuerpo en el mensaje.
+
+Es la clase de defecto que esta casa colecciona: no un fallo, sino **una ayuda que no puede
+llegar**.
+
+### Lo demas, decidido sitio por sitio
+
+* **El chequeo de salud** deja de pasar por las variantes de error: 2xx sano, 3xx/4xx degradado
+  (el servidor CONTESTA), 5xx y fallo de transporte enfermo. El mapeo es el mismo, pero antes el
+  5xx llegaba como `Err(StatusCode(5xx))` y caia en el `Err(_)` de «enfermo» --- correcto por
+  casualidad, y leyendose como un fallo de red.
+* **El sondeo de version de Kobold** se queda con `is_success()` y no con `is_ok()`: hoy un 404 NO
+  anade el modelo, y se conserva. En descubrimiento de modelos, inventar uno que no existe es peor
+  que no encontrar el que si.
+* **`fetch_ollama_model_context`** es silencioso a proposito (`.ok()?`), pero el filtro hace falta
+  igual: sin el se parsearia la pagina de error buscando `num_ctx`.
+
+### Verificacion
+
+**12 de 12 mutaciones** mueren --- doce y no nueve porque la de los cuatro cierres cuenta cuatro
+veces, que es justo lo que hizo falta para ver el agujero. Clippy `-D warnings` en 0 con `FEATURES_STD --all-targets`,
+`FEATURES_MIN` y el conjunto ANCHO; tests de libreria y doctests; puertas de mutacion y enlaces.
+
+Van **8 modulos de 55**, y con `providers` cae el que mas importaba.
+
 ## [Unreleased] - v307 (2026-10-25) - V431: el puerto se queda el pool, y eso lo convierte en una mejora y no solo en orden (0.2.390)
 
 N77. Lo que paro la migracion de `providers` en V430 era que el puerto construia un

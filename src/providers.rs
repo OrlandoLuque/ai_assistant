@@ -6,7 +6,7 @@ use std::sync::mpsc::Sender;
 
 use crate::config::{AiConfig, AiProvider};
 use crate::conversation_control::CancellationToken;
-use crate::http_client::{HttpClient, UreqClient};
+use crate::http_client::{HttpClient, HttpRequest, UreqClient};
 use crate::messages::{AiResponse, ChatMessage};
 use crate::models::ModelInfo;
 use crate::retry::retry_with_config;
@@ -48,14 +48,14 @@ pub fn fetch_openai_compatible_models(
 /// probe (with a best-effort version-check fallback).
 pub fn fetch_kobold_models(base_url: &str) -> Result<Vec<ModelInfo>> {
     let url = format!("{}/api/v1/model", base_url);
-    let mut response = ureq::get(&url)
-        .config()
-        .timeout_global(Some(MODEL_PROBE_TIMEOUT))
-        .build()
-        .call()
+    let response = UreqClient
+        .send(&HttpRequest::get(&url).timeout(MODEL_PROBE_TIMEOUT))
         .context("Failed to connect to Kobold.cpp")?;
+    // Sin esto, un no-2xx seguiria hasta `json()` y el usuario veria un error de
+    // parseo en vez de «el servidor contesto 404».
+    response.error_for_status()?;
 
-    let body: serde_json::Value = response.body_mut().read_json()?;
+    let body: serde_json::Value = response.json()?;
 
     let mut models = Vec::new();
 
@@ -75,12 +75,13 @@ pub fn fetch_kobold_models(base_url: &str) -> Result<Vec<ModelInfo>> {
     // If no model from result, check if Kobold is running (best-effort, no retry)
     if models.is_empty() {
         let version_url = format!("{}/api/v1/info/version", base_url);
-        if ureq::get(&version_url)
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(2)))
-            .build()
-            .call()
-            .is_ok()
+        // `is_success()` y no solo `is_ok()`: hoy `.call()` metia el no-2xx en
+        // el `Err`, asi que un 404 en `/info/version` NO anadia el modelo
+        // fantasma. Se conserva --- en descubrimiento de modelos, inventar uno
+        // que no existe es peor que no encontrar el que si.
+        if UreqClient
+            .send(&HttpRequest::get(&version_url).timeout(std::time::Duration::from_secs(2)))
+            .is_ok_and(|r| r.is_success())
         {
             models.push(ModelInfo {
                 name: "Kobold Model".to_string(),
@@ -352,16 +353,18 @@ pub fn generate_ollama_streaming(
 
     // Retry only the connection; stream reading is not retried
     let response = retry_with_config(config.retry_config.clone(), || {
-        let resp = ureq::post(&url)
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(300)))
-            .build()
-            .send_json(&request_body)?;
+        let mut resp = UreqClient.send_streaming(
+            &HttpRequest::post_json(&url, &request_body)?
+                .timeout(std::time::Duration::from_secs(300)),
+        )?;
+        // Conserva lo que `send_json(..)?` garantizaba: un no-2xx es un error,
+        // asi que se reintenta y se reporta en vez de emitirse como respuesta.
+        resp.error_for_status()?;
         Ok(resp)
     })
     .context("Failed to send request to Ollama")?;
 
-    let reader = std::io::BufReader::new(response.into_body().into_reader());
+    let reader = std::io::BufReader::new(response.body);
     let mut full_response = String::new();
 
     for line in reader.lines() {
@@ -442,16 +445,18 @@ pub fn generate_openai_streaming(
 
     // Retry only the connection; stream reading is not retried
     let response = retry_with_config(config.retry_config.clone(), || {
-        let resp = ureq::post(&url)
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(300)))
-            .build()
-            .send_json(&request_body)?;
+        let mut resp = UreqClient.send_streaming(
+            &HttpRequest::post_json(&url, &request_body)?
+                .timeout(std::time::Duration::from_secs(300)),
+        )?;
+        // Conserva lo que `send_json(..)?` garantizaba: un no-2xx es un error,
+        // asi que se reintenta y se reporta en vez de emitirse como respuesta.
+        resp.error_for_status()?;
         Ok(resp)
     })
     .context("Failed to send request to LLM API")?;
 
-    let reader = std::io::BufReader::new(response.into_body().into_reader());
+    let reader = std::io::BufReader::new(response.body);
     let mut full_response = String::new();
 
     for line in reader.lines() {
@@ -512,17 +517,20 @@ pub fn generate_ollama_response(
         "options": ollama_chat_options(config, system_prompt, conversation),
     });
 
-    let mut response = retry_with_config(config.retry_config.clone(), || {
-        let resp = ureq::post(&url)
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(120)))
-            .build()
-            .send_json(&request_body)?;
+    let response = retry_with_config(config.retry_config.clone(), || {
+        let resp = UreqClient.send(
+            &HttpRequest::post_json(&url, &request_body)?
+                .timeout(std::time::Duration::from_secs(120)),
+        )?;
+        // Igual que arriba: el no-2xx sigue siendo un error para que el
+        // reintento ocurra --- y ahora el mensaje LLEVA EL CUERPO, que es donde
+        // el servidor explica el rechazo.
+        resp.error_for_status()?;
         Ok(resp)
     })
     .context("Failed to send request to Ollama")?;
 
-    let body: serde_json::Value = response.body_mut().read_json()?;
+    let body: serde_json::Value = response.json()?;
 
     let content = body
         .get("message")
@@ -582,17 +590,20 @@ pub fn generate_openai_response(
         "stream": false
     });
 
-    let mut response = retry_with_config(config.retry_config.clone(), || {
-        let resp = ureq::post(&url)
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(120)))
-            .build()
-            .send_json(&request_body)?;
+    let response = retry_with_config(config.retry_config.clone(), || {
+        let resp = UreqClient.send(
+            &HttpRequest::post_json(&url, &request_body)?
+                .timeout(std::time::Duration::from_secs(120)),
+        )?;
+        // Igual que arriba: el no-2xx sigue siendo un error para que el
+        // reintento ocurra --- y ahora el mensaje LLEVA EL CUERPO, que es donde
+        // el servidor explica el rechazo.
+        resp.error_for_status()?;
         Ok(resp)
     })
     .context("Failed to send request to API")?;
 
-    let body: serde_json::Value = response.body_mut().read_json()?;
+    let body: serde_json::Value = response.json()?;
 
     let content = body
         .get("choices")
@@ -661,17 +672,20 @@ pub fn generate_ollama_response_with_images(
         "options": ollama_options_with_ctx(config, num_ctx),
     });
 
-    let mut response = retry_with_config(config.retry_config.clone(), || {
-        let resp = ureq::post(&url)
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(180)))
-            .build()
-            .send_json(&request_body)?;
+    let response = retry_with_config(config.retry_config.clone(), || {
+        let resp = UreqClient.send(
+            &HttpRequest::post_json(&url, &request_body)?
+                .timeout(std::time::Duration::from_secs(180)),
+        )?;
+        // Igual que arriba: el no-2xx sigue siendo un error para que el
+        // reintento ocurra --- y ahora el mensaje LLEVA EL CUERPO, que es donde
+        // el servidor explica el rechazo.
+        resp.error_for_status()?;
         Ok(resp)
     })
     .context("Failed to send vision request to Ollama")?;
 
-    let body: serde_json::Value = response.body_mut().read_json()?;
+    let body: serde_json::Value = response.json()?;
     let content = body
         .get("message")
         .and_then(|m| m.get("content"))
@@ -727,12 +741,15 @@ pub fn generate_openai_compat_response_with_images(
         "stream": false,
     });
 
-    let mut response = retry_with_config(config.retry_config.clone(), || {
-        let resp = ureq::post(&url)
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(180)))
-            .build()
-            .send_json(&request_body)?;
+    let response = retry_with_config(config.retry_config.clone(), || {
+        let resp = UreqClient.send(
+            &HttpRequest::post_json(&url, &request_body)?
+                .timeout(std::time::Duration::from_secs(180)),
+        )?;
+        // Igual que arriba: el no-2xx sigue siendo un error para que el
+        // reintento ocurra --- y ahora el mensaje LLEVA EL CUERPO, que es donde
+        // el servidor explica el rechazo.
+        resp.error_for_status()?;
         Ok(resp)
     })
     .map_err(|e: anyhow::Error| {
@@ -751,7 +768,7 @@ pub fn generate_openai_compat_response_with_images(
         }
     })?;
 
-    let body: serde_json::Value = response.body_mut().read_json()?;
+    let body: serde_json::Value = response.json()?;
     let content = body
         .get("choices")
         .and_then(|c| c.get(0))
@@ -856,17 +873,20 @@ pub fn generate_kobold_response(
         "rep_pen": 1.1
     });
 
-    let mut response = retry_with_config(config.retry_config.clone(), || {
-        let resp = ureq::post(&url)
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(120)))
-            .build()
-            .send_json(&request_body)?;
+    let response = retry_with_config(config.retry_config.clone(), || {
+        let resp = UreqClient.send(
+            &HttpRequest::post_json(&url, &request_body)?
+                .timeout(std::time::Duration::from_secs(120)),
+        )?;
+        // Igual que arriba: el no-2xx sigue siendo un error para que el
+        // reintento ocurra --- y ahora el mensaje LLEVA EL CUERPO, que es donde
+        // el servidor explica el rechazo.
+        resp.error_for_status()?;
         Ok(resp)
     })
     .context("Failed to send request to Kobold.cpp")?;
 
-    let body: serde_json::Value = response.body_mut().read_json()?;
+    let body: serde_json::Value = response.json()?;
 
     // Kobold returns results in an array
     let content = body
@@ -1127,16 +1147,18 @@ pub fn generate_ollama_streaming_cancellable(
 
     // Retry only the connection; stream reading is not retried
     let response = retry_with_config(config.retry_config.clone(), || {
-        let resp = ureq::post(&url)
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(300)))
-            .build()
-            .send_json(&request_body)?;
+        let mut resp = UreqClient.send_streaming(
+            &HttpRequest::post_json(&url, &request_body)?
+                .timeout(std::time::Duration::from_secs(300)),
+        )?;
+        // Conserva lo que `send_json(..)?` garantizaba: un no-2xx es un error,
+        // asi que se reintenta y se reporta en vez de emitirse como respuesta.
+        resp.error_for_status()?;
         Ok(resp)
     })
     .context("Failed to send request to Ollama")?;
 
-    let reader = std::io::BufReader::new(response.into_body().into_reader());
+    let reader = std::io::BufReader::new(response.body);
     let mut full_response = String::new();
 
     for line in reader.lines() {
@@ -1218,16 +1240,18 @@ pub fn generate_openai_streaming_cancellable(
 
     // Retry only the connection; stream reading is not retried
     let response = retry_with_config(config.retry_config.clone(), || {
-        let resp = ureq::post(&url)
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(300)))
-            .build()
-            .send_json(&request_body)?;
+        let mut resp = UreqClient.send_streaming(
+            &HttpRequest::post_json(&url, &request_body)?
+                .timeout(std::time::Duration::from_secs(300)),
+        )?;
+        // Conserva lo que `send_json(..)?` garantizaba: un no-2xx es un error,
+        // asi que se reintenta y se reporta en vez de emitirse como respuesta.
+        resp.error_for_status()?;
         Ok(resp)
     })
     .context("Failed to send request to OpenAI-compatible API")?;
 
-    let reader = std::io::BufReader::new(response.into_body().into_reader());
+    let reader = std::io::BufReader::new(response.body);
     let mut full_response = String::new();
 
     for line in reader.lines() {
@@ -1464,14 +1488,21 @@ fn fetch_ollama_model_context(base_url: &str, model_name: &str) -> Option<usize>
         "name": model_name
     });
 
-    let mut response = ureq::post(&url)
-        .config()
-        .timeout_global(Some(std::time::Duration::from_secs(5)))
-        .build()
-        .send_json(&body)
+    let response = UreqClient
+        .send(
+            &HttpRequest::post_json(&url, &body)
+                .ok()?
+                .timeout(std::time::Duration::from_secs(5)),
+        )
         .ok()?;
+    // Este sitio es silencioso a proposito (`.ok()?` devuelve `None`), pero el
+    // filtro hace falta igual: sin el, un no-2xx llegaria como `Ok` y se
+    // intentaria parsear la pagina de error buscando `num_ctx`.
+    if !response.is_success() {
+        return None;
+    }
 
-    let json: serde_json::Value = response.body_mut().read_json().ok()?;
+    let json: serde_json::Value = response.json().ok()?;
 
     // Try to get num_ctx from model_info first (more reliable)
     if let Some(ctx) = json
@@ -2428,14 +2459,16 @@ impl ResilientProviderRegistry {
     pub fn check_health(&mut self, provider: &ProviderConfig) -> ProviderHealthStatus {
         let url = format!("{}/", provider.base_url);
         log::debug!("[llm] health_check provider={} url={}", provider.name, url);
-        let status = match ureq::get(&url)
-            .config()
-            .timeout_global(Some(Duration::from_secs(5)))
-            .build()
-            .call()
+        // El mapeo es el mismo que antes, dicho sin pasar por las variantes de
+        // error de `ureq`: 2xx sano, 3xx/4xx degradado (el servidor CONTESTA),
+        // 5xx y fallo de transporte enfermo. Antes el 5xx llegaba como
+        // `Err(StatusCode(5xx))` y caia en el `Err(_)`, que es por donde se
+        // entendia mal: parecia un fallo de red.
+        let status = match UreqClient.send(&HttpRequest::get(&url).timeout(Duration::from_secs(5)))
         {
-            Ok(_) => ProviderHealthStatus::Healthy,
-            Err(ureq::Error::StatusCode(code)) if code < 500 => ProviderHealthStatus::Degraded,
+            Ok(resp) if resp.is_success() => ProviderHealthStatus::Healthy,
+            Ok(resp) if resp.status < 500 => ProviderHealthStatus::Degraded,
+            Ok(_) => ProviderHealthStatus::Unhealthy,
             Err(_) => ProviderHealthStatus::Unhealthy,
         };
         log::info!(
@@ -3895,6 +3928,92 @@ mod provider_logging_tests {
         let result = generate_response(&config, &conversation, "test prompt");
         // It will fail (no server) but should have logged the attempt
         assert!(result.is_err() || result.is_ok());
+    }
+
+    /// Comprueba, para UNA de las cuatro rutas de streaming, el invariante mas
+    /// peligroso de migrar este modulo: **un no-2xx no se emite como si fuera
+    /// la respuesta del modelo**.
+    ///
+    /// Antes lo garantizaba `send_json(..)?`, que convertia el no-2xx en `Err` y
+    /// con eso disparaba el reintento y el reporte. Detras del puerto el no-2xx
+    /// llega como `Ok`, asi que sin el `error_for_status()` del cierre el cuerpo
+    /// del error llegaria al canal como texto del asistente --- el usuario
+    /// leeria una pagina de error de nginx creyendo que es lo que dijo el
+    /// modelo, y nada en el programa se queja.
+    ///
+    /// Una sola implementacion de la asercion para las cuatro rutas. La primera
+    /// version tenia el cuerpo escrito a mano para Ollama, y la puerta de
+    /// mutacion enseno por que no basta: `occurrences = 4` son CUATRO
+    /// mutaciones, y tres sobrevivieron porque **tres de las cuatro rutas no
+    /// tenian ningun test**.
+    ///
+    /// `max_retries = 0` para que no tarde: lo que se comprueba es la decision,
+    /// no el backoff.
+    fn assert_500_is_an_error_and_emits_nothing(
+        configure: impl FnOnce(&mut AiConfig, String),
+        call: impl FnOnce(&AiConfig, &std::sync::mpsc::Sender<AiResponse>) -> Result<()>,
+    ) {
+        let server = crate::http_client::MockHttpServer::start();
+        server.enqueue_text(500, "model crashed upstream");
+
+        let mut config = ollama_config();
+        config.retry_config.max_retries = 0;
+        configure(&mut config, server.url());
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let err = call(&config, &tx).expect_err("un 500 es un error, no una respuesta");
+
+        let text = format!("{:#}", err);
+        assert!(text.contains("500"), "el estado va en el mensaje: {}", text);
+        assert!(
+            text.contains("model crashed upstream"),
+            "y el CUERPO tambien, que es donde el servidor explica el rechazo: {}",
+            text
+        );
+
+        // Y lo que de verdad importa: al canal no llego nada.
+        assert!(
+            rx.try_recv().is_err(),
+            "no debe emitirse ni un trozo cuando el servidor contesta 500"
+        );
+    }
+
+    #[test]
+    fn test_streaming_does_not_emit_an_error_body_as_model_output() {
+        assert_500_is_an_error_and_emits_nothing(
+            |config, url| config.ollama_url = url,
+            |config, tx| generate_ollama_streaming(config, &[], "eres un asistente", tx),
+        );
+    }
+
+    #[test]
+    fn test_openai_streaming_does_not_emit_an_error_body_as_model_output() {
+        assert_500_is_an_error_and_emits_nothing(
+            |config, url| config.provider = AiProvider::OpenAICompatible { base_url: url },
+            |config, tx| generate_openai_streaming(config, &[], "eres un asistente", tx),
+        );
+    }
+
+    #[test]
+    fn test_ollama_cancellable_does_not_emit_an_error_body_as_model_output() {
+        let token = crate::conversation_control::CancellationToken::new();
+        assert_500_is_an_error_and_emits_nothing(
+            |config, url| config.ollama_url = url,
+            |config, tx| {
+                generate_ollama_streaming_cancellable(config, &[], "eres un asistente", tx, &token)
+            },
+        );
+    }
+
+    #[test]
+    fn test_openai_cancellable_does_not_emit_an_error_body_as_model_output() {
+        let token = crate::conversation_control::CancellationToken::new();
+        assert_500_is_an_error_and_emits_nothing(
+            |config, url| config.provider = AiProvider::OpenAICompatible { base_url: url },
+            |config, tx| {
+                generate_openai_streaming_cancellable(config, &[], "eres un asistente", tx, &token)
+            },
+        );
     }
 
     #[test]

@@ -171,3 +171,32 @@ before = """        let mut response = SHARED_AGENT
 after = """        let mut response = ureq::Agent::new_with_defaults()
             .run(Self::prepare(request)?)"""
 occurrences = 1
+
+# ===========================================================================
+# M9: el camino caliente vuelve a emitir el cuerpo de un error como respuesta
+# ===========================================================================
+# El invariante mas peligroso de toda la migracion. Antes lo garantizaba
+# `send_json(..)?`: un no-2xx era `Err`, y con eso se reintentaba y se reportaba.
+# Detras del puerto el no-2xx es un `Ok`, asi que quitar el `error_for_status()`
+# del cierre hace que el cuerpo del error se emita trozo a trozo **como si fuera
+# lo que dijo el modelo**. El usuario leeria una pagina de error de nginx
+# creyendo que es la respuesta del asistente, y nada en el programa se queja.
+#
+# Se mutan los CUATRO cierres de streaming a la vez: son identicos, y el test
+# cubre el de Ollama.
+[[mutation]]
+id = "M9"
+file = "src/providers.rs"
+# El filtro es un SUBSTRING, y casa con los cuatro tests --- uno por ruta.
+# La primera version apuntaba solo al de Ollama y tres de las cuatro
+# mutaciones SOBREVIVIERON: no porque la mutacion fuera inocua, sino porque
+# esas tres rutas no tenian ningun test. `occurrences = 4` son cuatro
+# mutaciones, y cada una necesita quien la vea.
+filter = "does_not_emit_an_error_body_as_model_output"
+invariant = "un no-2xx en el camino caliente es un ERROR, no contenido: sin esto el cuerpo del error llega al usuario como texto del asistente"
+before = """        // Conserva lo que `send_json(..)?` garantizaba: un no-2xx es un error,
+        // asi que se reintenta y se reporta en vez de emitirse como respuesta.
+        resp.error_for_status()?;
+        Ok(resp)"""
+after = """        Ok(resp)"""
+occurrences = 4

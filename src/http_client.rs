@@ -14,6 +14,7 @@
 //! ```
 
 use anyhow::{Context, Result};
+use std::io::Read as _;
 use std::time::Duration;
 
 /// Tope por defecto del cuerpo que `send` se trae a memoria: 10 MiB, el mismo
@@ -319,6 +320,37 @@ impl HttpStream {
     /// Busca una cabecera ignorando mayusculas, igual que [`HttpResponse::header`].
     pub fn header(&self, name: &str) -> Option<&str> {
         find_header(&self.headers, name)
+    }
+
+    /// Error si el estado no es 2xx, leyendo hasta 4 KiB del cuerpo para el
+    /// mensaje.
+    ///
+    /// Existe porque en un flujo el cuerpo del error es tan util como en una
+    /// respuesta bufferizada --- es donde el proveedor explica el rechazo --- y
+    /// sin esto el llamante tendria que elegir entre perderlo o leerse el flujo
+    /// entero. El tope de 4 KiB es para que una pagina de error de 5 MB no se
+    /// cuele en un mensaje de error.
+    ///
+    /// Y es lo que impide el fallo que de verdad importa en una ruta de
+    /// streaming: **transmitir el cuerpo de un error como si fuera la respuesta
+    /// del modelo**.
+    pub fn error_for_status(&mut self) -> Result<()> {
+        if self.is_success() {
+            return Ok(());
+        }
+        let mut buf = Vec::new();
+        let _ = std::io::Read::read_to_end(&mut (&mut self.body).take(4096), &mut buf);
+        let shown = String::from_utf8_lossy(&buf);
+        let shown = shown.trim();
+        anyhow::bail!(
+            "HTTP {}{}",
+            self.status,
+            if shown.is_empty() {
+                String::new()
+            } else {
+                format!(": {}", shown)
+            }
+        )
     }
 }
 
