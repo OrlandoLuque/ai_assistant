@@ -5,6 +5,77 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v315 (2026-10-26) - V439: la puerta de cobertura de features existia, estaba ROJA, y nadie podia verlo (0.2.398)
+
+N162, decidido por el autor: puerta derivada de `Cargo.toml` con exclusiones justificadas y
+ratchet. Al ir a construirla resulto que **ya existia** --- `UNCOVERED_BACKLOG` en
+`feature_matrix.rs`, con su razon escrita y su comprobacion en las dos direcciones. Lo que
+faltaba era otra cosa, y peor.
+
+### Estaba roja, y por un motivo falso
+
+Al ejecutarla por primera vez en mucho tiempo, fallo:
+
+```
+a NEW feature is declared that nothing in CI compiles: ["tabular-sqlite", "tabular-polars"]
+```
+
+Y CI **si** los compila: hay un trabajo con `--features "tabular,tabular-polars"` que ademas los
+prueba. El analizador leia la matriz y los bloques `FEATURES_*`, pero **no los `--features` de las
+lineas `run:`** --- donde viven el trabajo de tabular, el clippy de la GUI y los binarios --- ni
+seguia el grafo de `Cargo.toml`, asi que `tabular-sqlite` le parecia huerfano aunque `tabular` lo
+encienda.
+
+Una puerta que grita en falso es peor que no tener puerta: la forma barata de callarla es anadir
+el nombre a la lista con un motivo inventado, y entonces la lista afirma «nadie lo compila» sobre
+algo que CI construye. Esa es exactamente la forma de defecto que este proyecto ya tiene fichada.
+
+### Lo que no se veia, y por que
+
+**La puerta no corre en CI.** Vive en la bateria del harness, que se lanza a mano. Asi que llevaba
+roja quien sabe cuanto, diciendo algo falso, sin que nadie la mirara. Ahora es un paso de
+`harness-battery`, justo detras del `cargo build` que ese trabajo ya hace --- cuesta segundos --- y
+antes de los 585 tests, porque falla en milisegundos.
+
+### Y una pregunta que estaba mal planteada: compilar NO es probar
+
+Al ensenarle el grafo, cinco entradas del backlog pasaron a contar como cubiertas. Tres lo estaban
+de verdad (`aes-gcm`, `zip` y `pdf-extract` los encienden `security` y `documents`, que si corren
+en trabajos de test). **Las otras dos no**: `code-sandbox` y `cloud-connectors` entran solo por
+`gui-pro`, y ese trabajo es `cargo clippy --bin` --- compila la libreria y no ejecuta un solo test.
+
+O sea que mi arreglo, tal cual, habria hecho que la puerta **dejara de senalar justo el agujero que
+la motivo**: los 57 tests de `cloud_connectors`, diez de ellos de SSRF, que no corre nadie.
+
+Asi que la pregunta se parte en dos listas, cada una con su comprobacion:
+
+* `UNCOVERED_BACKLOG` --- nada lo compila. Un fallo de **compilacion** pasa.
+* `COMPILED_BUT_NOT_EXERCISED` --- cargo lo enciende, pero ningun `cargo test` lo ejercita. Un
+  fallo de **comportamiento** pasa. Dos entradas, cada una con su motivo.
+
+Y una tercera direccion nueva: **nada declarado puede estar compilado-sin-probar sin figurar en la
+lista**. Es lo que permitio que `cloud-connectors` llegara a 57 tests sin ejecutar sin constar en
+ninguna parte.
+
+### El fallo que me costo mas encontrar, y que es de libro
+
+El analizador de los trabajos de test descartaba **las 36 entradas de la matriz** y acusaba a
+`server-axum`, `p2p`, `coap` y ocho mas de no tener tests. El motivo: el token que queda al cortar
+`"$FEATURES_MIN,${{ matrix.features }}"` por el primer espacio es `${{`, que **empieza por `$`**,
+asi que entraba en la rama de variables de entorno, buscaba una variable llamada `{{`, no la
+encontraba y lo tiraba **en silencio**. Dos ramas en el orden equivocado.
+
+No lo encontre razonando --- lo intente tres veces y las tres me equivoque de teoria --- sino
+imprimiendo el conjunto que el analizador construia. Cuando dos instrumentos discrepan, el que
+manda es el que puedes mirar por dentro.
+
+### Verificacion
+
+Nueve tests en el modulo, todos en verde, incluidos **tres nuevos** que prueban por separado las
+piezas que faltaban: leer los `--features` sueltos, expandir el grafo de `Cargo.toml`, y no colar
+`$FEATURES_STD` ni `${{ matrix.features }}` como si fueran nombres de feature. Clippy
+`-D warnings` en 0 sobre el binario del harness.
+
 ## [Unreleased] - v314 (2026-10-25) - V438: borrado `ConnectionPoolHandle`, que prometia agrupar conexiones y no agrupaba ninguna (0.2.397)
 
 Decision del autor. Con esto **se cierra lo que bloqueaba la tarea #77**.

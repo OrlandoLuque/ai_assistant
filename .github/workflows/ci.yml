@@ -604,6 +604,18 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build ai_test_harness
         run: cargo build --bin ai_test_harness --features "full,browser"
+      # V439: la puerta de cobertura de features existia desde V313 y NUNCA
+      # corria en CI --- solo dentro de la bateria, que se lanza a mano. Cuando
+      # por fin se ejecuto estaba ROJA, y por un motivo falso: su analizador no
+      # leia los `--features` de las lineas `run:` ni seguia el grafo de
+      # Cargo.toml, asi que acusaba a `tabular-polars` de no compilarse mientras
+      # un trabajo lo estaba probando.
+      #
+      # Va antes de la bateria y en este trabajo porque el binario ya esta
+      # compilado aqui: el paso cuesta segundos. Y va primero porque falla en
+      # milisegundos, asi que no tiene sentido esperar a los 585 tests.
+      - name: Feature coverage ratchet
+        run: cargo test --bin ai_test_harness --features "full,browser" -- feature_matrix::tests
       - name: Run full battery (585 tests / 131 categories)
         # --all runs every category; --no-color keeps logs clean. Two
         # tests are skipped automatically when Ollama is not reachable
