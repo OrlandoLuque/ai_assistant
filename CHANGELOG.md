@@ -5,6 +5,61 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v319 (2026-10-26) - V443: los dobles de prueba salen a la calle, y la puerta de anoche me pillo (0.2.402)
+
+N159, decidido por el autor (opcion 1): `MockHttpServer` tras una feature `test-utils`.
+
+### Que estaba mal, exactamente
+
+Los dos servidores de prueba de este puerto --- `MockHttpServer` y el `StallingServer` que
+nacio ayer en V440 --- vivian bajo `#[cfg(test)]` a secas. O sea que existian **solo para
+los tests de esta crate**: escribir `MockHttpServer::start()` desde otra no compilaba, y a
+un consumidor que quisiera probar su codigo contra el puerto le quedaba montarse un servidor
+TCP a mano. Que es exactamente el trabajo que estos dos ya hacen aqui dentro.
+
+Ahora la puerta es `#[cfg(any(test, feature = "test-utils"))]`, con re-export en `lib.rs`
+bajo la misma condicion. **Las dos cosas hacen falta**: sin el re-export los tipos son
+`pub` y aun asi no se pueden *nombrar* desde fuera --- el mismo hueco que
+`#[non_exhaustive]` sin constructor, publico de nombre y no de uso.
+
+La feature no arrastra nada: cero dependencias nuevas, cero codigo de produccion. Y no va en
+`default`, porque un servidor de mentira en un binario de release no le sirve a nadie.
+
+### Lo que lo prueba es un DOCTEST, y el motivo importa
+
+Un test de aqui dentro **no puede** detectar que falta el re-export: compila dentro de la
+crate, donde el tipo se alcanza por su ruta de modulo. Es invisible por construccion. Un
+doctest compila **fuera**, como un consumidor cualquiera, asi que es el unico instrumento
+que contesta la pregunta de verdad.
+
+El ejemplo nuevo usa `ai_assistant::{HttpClient, HttpRequest, MockHttpServer, UreqClient}`,
+encola un 200, hace la peticion y comprueba las dos direcciones: lo que volvio **y lo que
+llego al cable**.
+
+### Y aqui la parte que mas me gusta: la puerta de V439 funciono
+
+Al declarar `test-utils` en `Cargo.toml`, el ratchet de cobertura de features que se arreglo
+anoche fallo inmediatamente:
+
+```
+a NEW feature is declared that nothing in CI compiles: ["test-utils"]
+Add them to the matrix in ci.yml, or to NOT_IN_CI with the reason.
+```
+
+Primera vez que esa puerta se enfrenta a una feature genuinamente nueva, y la caza con el
+mensaje correcto. **Veinticuatro horas** entre construir el detector y que te detecte a ti.
+
+La feature entra en `FEATURES_STD` y no en la matriz, y la eleccion no es casual: el trabajo
+de doctests corre `cargo test --features "$FEATURES_STD" --doc`, y la matriz corre
+`--lib`. Metido en la matriz, mi doctest habria **compilado sin ejecutarse nunca** --- que es
+literalmente la distincion entre las dos listas del ratchet, cayendo en ella el dia despues
+de escribirla.
+
+### Verificacion
+
+98 doctests en verde (uno mas que ayer, el nuevo), 9.121 tests de `FEATURES_STD`, clippy
+`-D warnings --all-targets`. El ratchet de features, verde otra vez.
+
 ## [Unreleased] - v318 (2026-10-26) - V442: `speech.rs` detras del puerto, y seis llamadas a la nube que no tenian plazo (0.2.401)
 
 Fase 4 hexagonal (#77), modulo doce de 55: `speech.rs`, 18 sitios `ureq` en cinco

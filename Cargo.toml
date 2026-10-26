@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.401"
+version = "0.2.402"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -54,6 +54,20 @@ bench = false
 # Default: full functionality (code has interdependencies)
 # Use specific features for minimal builds after refactoring dependencies
 default = ["full"]
+
+# Dobles de prueba para quien CONSUME la libreria.
+#
+# `MockHttpServer` y `StallingServer` existian ya, pero bajo `#[cfg(test)]`: o
+# sea solo para los tests de esta crate. Un consumidor que quisiera probar su
+# codigo contra el puerto HTTP no tenia nada --- escribir
+# `MockHttpServer::start()` en otra crate no compilaba --- y la unica salida era
+# montarse un servidor TCP a mano, que es justo el trabajo que estos dos tipos
+# ya hacen aqui dentro (N159).
+#
+# No lleva nada mas que lo que ya habia: ni dependencias nuevas, ni codigo de
+# produccion. Se activa a proposito y no por defecto, porque un `MockHttpServer`
+# en un binario de release no le sirve a nadie.
+test-utils = []
 
 # === Optional Feature Groups ===
 # NOTE (V76 feature hygiene): the former `core = []` marker was removed. Core

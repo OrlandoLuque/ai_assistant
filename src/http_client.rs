@@ -846,13 +846,13 @@ macro_rules! validate_features {
 /// atasco realista --- el servidor no se murio: el TCP sigue abierto, y un
 /// cierre lo veria el cliente al instante. Simplemente dejo de hablar. Eso
 /// es lo que un plazo total no sabe distinguir de "va lento".
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 pub struct StallingServer {
     addr: std::net::SocketAddr,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 impl StallingServer {
     /// Promete 1000 bytes, entrega cinco, y se calla para siempre.
     pub fn start() -> Self {
@@ -924,26 +924,48 @@ impl StallingServer {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 impl Drop for StallingServer {
     fn drop(&mut self) {
         self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
-/// A mock HTTP server that listens on localhost and serves queued responses.
-/// Used for testing modules that make real HTTP calls (mcp_client, media_generation, etc.)
+/// Un servidor HTTP de mentira que escucha en localhost y sirve respuestas
+/// encoladas.
 ///
-/// # Example
-/// ```rust,no_run
-/// let mut server = MockHttpServer::start();
+/// Disponible para los tests de esta crate y, tras la feature **`test-utils`**,
+/// para quien la consuma. Antes de V443 vivia bajo `#[cfg(test)]` a secas, asi
+/// que escribir `MockHttpServer::start()` en otra crate **no compilaba** y la
+/// unica salida era montarse un servidor TCP a mano --- que es exactamente el
+/// trabajo que esto ya hacia aqui dentro.
+///
+/// ```rust
+/// # #[cfg(feature = "test-utils")]
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use ai_assistant::{HttpClient, HttpRequest, MockHttpServer, UreqClient};
+///
+/// let server = MockHttpServer::start();
 /// server.enqueue_json(200, serde_json::json!({"result": "ok"}));
-/// // Use server.url() as the base URL for the module under test
-/// let url = server.url();
-/// // ... make HTTP call to url ...
-/// let received = server.last_request();
+///
+/// let response = UreqClient.send(&HttpRequest::get(server.url()))?;
+/// assert_eq!(response.status, 200);
+/// assert_eq!(response.json()?["result"], "ok");
+///
+/// // Y se puede comprobar lo que LLEGO al cable, no solo lo que volvio.
+/// let (method, path, _body) = server.last_request().expect("recorded");
+/// assert_eq!(method, "GET");
+/// assert_eq!(path, "/");
+/// # Ok(())
+/// # }
+/// # #[cfg(not(feature = "test-utils"))]
+/// # fn main() {}
 /// ```
-#[cfg(test)]
+///
+/// Para probar un **atasco** --- un servidor que manda las cabeceras y se calla
+/// --- esta [`StallingServer`], que es otra cosa: este escribe la respuesta
+/// entera de una vez.
+#[cfg(any(test, feature = "test-utils"))]
 pub struct MockHttpServer {
     addr: std::net::SocketAddr,
     /// Queued responses: (status_code, content_type, body)
@@ -958,7 +980,7 @@ pub struct MockHttpServer {
     _handle: Option<std::thread::JoinHandle<()>>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 impl MockHttpServer {
     /// Start a new mock server on a random port.
     pub fn start() -> Self {

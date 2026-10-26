@@ -724,6 +724,16 @@ pub use http_client::{
     DEFAULT_MAX_BODY_BYTES, DEFAULT_STALL_TIMEOUT,
 };
 
+/// Dobles de prueba del puerto HTTP, tras la feature `test-utils`.
+///
+/// Sin esto el re-export no existe y los tipos, aunque `pub`, **no se pueden
+/// nombrar desde otra crate**: es el mismo hueco que `#[non_exhaustive]` sin
+/// constructor --- publico de nombre y no de uso. Y es invisible a los tests de
+/// aqui dentro por construccion, porque compilan DENTRO. Lo que lo prueba es un
+/// doctest, que compila fuera.
+#[cfg(any(test, feature = "test-utils"))]
+pub use http_client::{MockHttpServer, StallingServer};
+
 #[cfg(feature = "server-tls")]
 pub use server::load_tls_config;
 pub use server::{

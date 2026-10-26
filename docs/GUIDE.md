@@ -2277,11 +2277,31 @@ needed a live vLLM, so none had a test.
 Done so far: `health_check`, `vllm_capability`. Nine of the eleven migrated modules still
 instantiate `UreqClient` directly — `providers.rs` is the big one.
 
-> **Mocks are internal, for now.** `MockHttpServer` and `MockHttpClient` live under
-> `#[cfg(test)]`, so they exist for this crate's own tests and **cannot be used from
-> outside it**. Writing `MockHttpClient::with_response(..)` in your own crate does not
-> compile. Exposing a mock to consumers behind a `test-utils` feature is an open decision
-> (task N159); until then, test against a local server of your own.
+### Test doubles for consumers: the `test-utils` feature
+
+Two of the doubles this crate uses for its own tests are available to you, behind
+`test-utils` (off by default — a mock server in a release binary helps nobody):
+
+```toml
+[dev-dependencies]
+ai_assistant = { version = "0.2", features = ["test-utils"] }
+```
+
+- **`MockHttpServer`** — listens on localhost, serves queued responses, and records what
+  reached the wire: method, path, body, raw headers, and how many TCP *connections* were
+  opened (which is how connection reuse becomes observable without timing anything).
+- **`StallingServer`** — sends headers, then part of the body, then goes quiet *without
+  closing*. For testing stall timeouts, and for the opposite case: `dribbling(bytes, gap)`
+  delivers the whole body a byte at a time, which is the only way to tell a per-read
+  timeout from a total one.
+
+Until V443 both were `#[cfg(test)]`, so writing `MockHttpServer::start()` in another crate
+did not compile and the only option was hand-rolling a TCP server — exactly the work these
+two already did in here.
+
+`MockHttpClient` stays internal: it pins the status at 200, which makes it the wrong tool
+for most things a consumer wants to test. Implement `HttpClient` yourself — it is one
+required method — and see "Injecting a different client" below for where to hand it in.
 
 ---
 
