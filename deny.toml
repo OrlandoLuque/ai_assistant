@@ -90,10 +90,22 @@ ignore = [
     #
     # Y subiendo `lancedb` de 0.26 a 0.40 --- catorce versiones menores --- el
     # error es el MISMO: `lance-encoding v13.0.0`, la ultima publicada, sigue
-    # pidiendo `zstd = "^0.13"`. `polars-arrow` y `polars-parquet` estan tambien
-    # en su ultima version (0.55.2). No hay nada que subir: upstream no ha
-    # movido el major, y el salto 7->8 de zstd-safe es rompiente, asi que un
-    # `[patch.crates-io]` no compilaria.
+    # pidiendo `zstd = "^0.13"`.
+    #
+    # Y no es un padre, son LOS CINCO. Leido de sus propios manifiestos en la
+    # cache del registro (2026-10-26), sin tocar el arbol:
+    #
+    #   lance-encoding 2.0.0    zstd = "0.13"
+    #   polars-parquet 0.55.2   zstd = "0.13"
+    #   polars-arrow   0.55.2   zstd = "0.13"
+    #   arrow-ipc      57.3.0   zstd = "0.13.0"
+    #   tantivy-sstable 0.5.0   zstd = "0.13"
+    #
+    # Asi que NO hay arreglo parcial: quitar una feature no baja el major,
+    # porque cargo resuelve una sola version de zstd para todo el grafo y
+    # cualquiera de los cinco la ancla en 0.13. Tendrian que moverse todos. El
+    # salto 7->8 de zstd-safe es rompiente, asi que un `[patch.crates-io]`
+    # tampoco compilaria.
     #
     # ALCANCE MEDIDO (2026-10-26, `cargo tree --all-features -e features`): las
     # features de zstd-safe encendidas son arrays, experimental, legacy, std y

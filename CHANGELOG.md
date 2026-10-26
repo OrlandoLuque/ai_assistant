@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v322 (2026-10-27) - V445b: no es un padre, son LOS CINCO (0.2.405)
+
+El motivo escrito en V445 decia que el arreglo no es alcanzable y daba el error del resolutor
+como prueba. Era cierto y estaba **incompleto**: el resolutor para en el primer bloqueador, y
+yo lo cite como si fuera el unico.
+
+Desactivando `lancedb` aparece el siguiente --- `polars-parquet 0.55.2`, que tambien es la
+ultima publicada. Y leyendo los manifiestos de los cinco padres en la cache del registro, sin
+tocar el arbol:
+
+| Padre | Requisito |
+|---|---|
+| `lance-encoding` 2.0.0 | `zstd = "0.13"` |
+| `polars-parquet` 0.55.2 | `zstd = "0.13"` |
+| `polars-arrow` 0.55.2 | `zstd = "0.13"` |
+| `arrow-ipc` 57.3.0 | `zstd = "0.13.0"` |
+| `tantivy-sstable` 0.5.0 | `zstd = "0.13"` |
+
+**Los cinco.** Lo que eso cambia no es la conclusion, es la *forma* de la conclusion: no hay
+arreglo parcial, y **quitar una feature no sirve de nada**, porque cargo resuelve una sola
+version de zstd para todo el grafo y cualquiera de los cinco la ancla en 0.13. La opcion
+«quitar `vector-lancedb` y `tabular-polars`» que se barajo antes de suprimir no habria
+funcionado: quedaban `arrow-ipc` y `tantivy-sstable`.
+
+Tambien arregla la senal que N169 tiene que vigilar. Escrita como estaba --- «cuando
+lance-encoding o polars-parquet suban» --- habria dado un falso positivo: que uno suba no
+basta. La senal es una orden, `cargo update -p zstd --precise 0.14.3`, y que no de error.
+
+### Por que esto merece un commit propio
+
+Una suppression se lee una vez al ponerla y otra al re-chequearla, tres meses despues, y la
+segunda vez nadie reconstruye la medicion. El motivo tiene que aguantar solo. «No lo podemos
+subir porque lance lo pincha» invita a probar «¿y si quitamos lance?»; «los cinco lo pinchan,
+aqui estan» cierra la pregunta.
+
+Y el patron es el de siempre en este repositorio: **el primer error de una herramienta no es
+el inventario de errores.** El resolutor de cargo es perezoso a proposito.
+
+### Verificacion
+
+`check_rustsec_ignores.py` -> 15 supresiones identicas en los tres sitios, cada una con
+motivo. `check_recheck_dates.py` -> las 15 vigentes. El arbol se restauro desde copia tras las
+pruebas: `git status` de `Cargo.toml` y `Cargo.lock`, vacio.
+
 ## [Unreleased] - v321 (2026-10-26) - V445: cuatro advisories de zstd, y el arreglo no existe aun --- probado, no supuesto (0.2.404)
 
 CI y Supply Chain se pusieron en rojo con el Cargo.lock **sin tocar**: el commit anterior
