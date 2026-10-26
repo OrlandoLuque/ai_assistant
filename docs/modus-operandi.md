@@ -237,6 +237,19 @@ reads as advice and gets skipped. They are grouped by the question they answer.
     Two changes, and only one of them is visible from in here.* Same family as
     `#[non_exhaustive]` without a constructor: public in name, not in use.
 
+10e. **Run the numbers gates as part of a change, not after pushing it.** A change to
+    `Cargo.toml` metadata moves figures that live nowhere near it, and the gates know which.
+    *Case (V443, the night's only red CI): declaring one feature made the tree 99 where the
+    README said 98, and the same push left a fifth `9091` in the badge URL and a
+    `cargo test --features ...` line naming 23 features when CI's set had 24 --- three
+    complaints, all of them mine to have found. I ran `check_readme_numbers.py` only after the
+    **website** gate objected, which was after the push.* The cost of asking first is seconds:
+    ```bash
+    python scripts/check_readme_numbers.py && python scripts/check_website_numbers.py ../ai_assistant-website
+    ```
+    And the same number lives in `CLAUDE.md` and `docs/CAPABILITIES.md`, which **neither gate
+    reads** --- which is how `95 features` survived four features being added.
+
 ### C. Features and CI
 
 11. **A superset of features does not substitute for each set CI builds.** Passing on `A` and on
