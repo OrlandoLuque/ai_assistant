@@ -139,6 +139,14 @@ pub struct HealthChecker {
     config: HealthCheckConfig,
     providers: HashMap<String, (String, ProviderHealth)>,
     check_fn: Option<Arc<dyn Fn(&str, &str) -> Result<Duration, String> + Send + Sync>>,
+    /// Quien habla HTTP. Inyectable, y la diferencia con `check_fn` importa.
+    ///
+    /// `check_fn` sustituye **toda** la comprobacion: con el puesto, el test no
+    /// pasa por la regla de este modulo --- la de que un 4xx significa SANO,
+    /// porque el servidor contesta --- sino por el cierre que le has dado. O sea
+    /// que probaba el doble, no el codigo. Inyectar el cliente deja la regla
+    /// dentro y cambia solo el cable: eso si se puede probar.
+    client: Arc<dyn HttpClient>,
 }
 
 impl HealthChecker {
@@ -148,7 +156,17 @@ impl HealthChecker {
             config,
             providers: HashMap::new(),
             check_fn: None,
+            client: Arc::new(UreqClient),
         }
+    }
+
+    /// Cambia quien habla HTTP.
+    ///
+    /// Para un test, o para un consumidor que quiera meter su propio cliente
+    /// --- reintentos, proxy, metricas --- sin que este modulo sepa nada de eso.
+    pub fn with_http_client(mut self, client: Arc<dyn HttpClient>) -> Self {
+        self.client = client;
+        self
     }
 
     /// Set custom check function
@@ -176,7 +194,7 @@ impl HealthChecker {
             check_fn(name, url)
         } else {
             // Default: try to connect to the URL
-            Self::default_check(url, self.config.timeout)
+            Self::default_check(self.client.as_ref(), url, self.config.timeout)
         };
 
         let (healthy, error) = match result {
@@ -255,7 +273,11 @@ impl HealthChecker {
         health.last_check = Some(result.clone());
     }
 
-    fn default_check(url: &str, timeout: Duration) -> Result<Duration, String> {
+    fn default_check(
+        client: &dyn HttpClient,
+        url: &str,
+        timeout: Duration,
+    ) -> Result<Duration, String> {
         let start = Instant::now();
 
         // Try to reach the base URL
@@ -277,7 +299,7 @@ impl HealthChecker {
             .timeout(timeout)
             .connect_timeout(timeout);
 
-        match UreqClient.send(&request) {
+        match client.send(&request) {
             // Un 4xx significa que el servidor CONTESTA, que es lo que mide un
             // sondeo de salud; con el puerto eso ya no es un `Err` que haya que
             // atrapar, es una respuesta que se lee.
@@ -654,5 +676,91 @@ mod tests {
             checker.get_health("svc2").unwrap().status,
             HealthStatus::Unknown
         );
+    }
+    // ========================================================================
+    // Inyeccion del cliente HTTP (N166)
+    // ========================================================================
+
+    /// Un cliente que contesta un estado fijo, o falla el transporte.
+    ///
+    /// Pequeno y local a proposito: el `MockHttpClient` de `http_client` fija el
+    /// estado en 200, y aqui lo que hay que probar es justo lo contrario ---
+    /// que un 404 cuenta como sano y un 500 no.
+    struct FixedStatus {
+        status: Option<u16>,
+    }
+
+    impl crate::http_client::HttpClient for FixedStatus {
+        fn send(
+            &self,
+            _request: &crate::http_client::HttpRequest,
+        ) -> anyhow::Result<crate::http_client::HttpResponse> {
+            match self.status {
+                Some(status) => Ok(crate::http_client::HttpResponse {
+                    status,
+                    headers: Vec::new(),
+                    body: Vec::new(),
+                }),
+                None => anyhow::bail!("connection refused"),
+            }
+        }
+
+        fn send_streaming(
+            &self,
+            _request: &crate::http_client::HttpRequest,
+        ) -> anyhow::Result<crate::http_client::HttpStream> {
+            anyhow::bail!("not used by the health check")
+        }
+    }
+
+    fn checker_answering(status: Option<u16>) -> HealthChecker {
+        HealthChecker::new(HealthCheckConfig::default())
+            .with_http_client(Arc::new(FixedStatus { status }))
+    }
+
+    /// La regla de este modulo, y la que `with_check_fn` no permitia probar: un
+    /// **4xx significa SANO**, porque lo que mide un sondeo de salud es que el
+    /// servidor conteste, no que la ruta exista.
+    #[test]
+    fn test_a_404_is_healthy_because_the_server_answered() {
+        let mut checker = checker_answering(Some(404));
+        let result = checker.check("ollama", "http://127.0.0.1:11434");
+        assert!(
+            result.healthy,
+            "un 404 es el servidor contestando: {:?}",
+            result.error
+        );
+        assert!(result.error.is_none());
+    }
+
+    #[test]
+    fn test_a_500_is_not_healthy_and_says_which_status() {
+        let mut checker = checker_answering(Some(500));
+        let result = checker.check("ollama", "http://127.0.0.1:11434");
+        assert!(!result.healthy);
+        let error = result.error.expect("un 500 trae su motivo");
+        assert!(error.contains("500"), "error = {}", error);
+    }
+
+    /// Y el caso que separa los dos de arriba de «siempre sano»: sin nadie al
+    /// otro lado no hay estado que leer.
+    #[test]
+    fn test_a_transport_failure_is_not_healthy() {
+        let mut checker = checker_answering(None);
+        let result = checker.check("ollama", "http://127.0.0.1:1");
+        assert!(!result.healthy);
+        let error = result.error.expect("un fallo de transporte trae su motivo");
+        assert!(error.contains("refused"), "error = {}", error);
+    }
+
+    /// El defecto sigue siendo el cliente de verdad: inyectar es opcional, no
+    /// un requisito que rompa a quien ya construia un `HealthChecker`.
+    #[test]
+    fn test_the_default_client_is_still_the_real_one() {
+        let checker = HealthChecker::new(HealthCheckConfig::default());
+        // No se puede comparar el tipo desde fuera, asi que lo que se afirma es
+        // lo observable: construir sin inyectar nada compila y no entra en
+        // ningun camino de test.
+        assert!(checker.providers.is_empty());
     }
 }

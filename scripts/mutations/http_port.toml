@@ -495,3 +495,64 @@ invariant = "la descarga de corpus vigila el silencio y no la duracion: `.timeou
 before = "        .long_lived(opts.timeout, opts.stall_timeout)"
 after = "        .timeout(opts.stall_timeout)"
 occurrences = 1
+
+# ============================================================================
+# N166 --- inyeccion del cliente
+# ============================================================================
+
+[[mutation]]
+id = "M27"
+file = "src/health_check.rs"
+features = "full"
+filter = "health_check::tests::test_a_"
+invariant = "un 4xx significa SANO (el servidor contesta) y un 5xx no; esta regla era INPROBABLE hasta V441, porque el unico punto de sustitucion era `with_check_fn`, que reemplaza la comprobacion entera y por tanto esta regla tambien"
+before = "            Ok(resp) if resp.status < 500 => Ok(start.elapsed()),"
+after = "            Ok(resp) if resp.status < 400 => Ok(start.elapsed()),"
+occurrences = 1
+
+[[mutation]]
+id = "M28"
+file = "src/health_check.rs"
+features = "full"
+filter = "health_check::tests::test_a_"
+invariant = "el cliente inyectado se USA; si `default_check` vuelve a `UreqClient` el campo se acepta, se documenta y no hace nada --- y los tests pasarian a hablar con el puerto 11434 de verdad"
+before = "        match client.send(&request) {"
+after = "        match crate::http_client::UreqClient.send(&request) {"
+occurrences = 1
+
+[[mutation]]
+id = "M29"
+file = "src/vllm_capability.rs"
+features = "full"
+filter = "vllm_capability::tests::test_a"
+invariant = "en `/v1/load_lora_adapter` un 404 significa LoRA apagado y CUALQUIER otro estado significa que la ruta existe; la regla era inprobable sin un vLLM en marcha"
+before = "            Ok(resp) => resp.status != 404,"
+after = "            Ok(resp) => resp.is_success(),"
+occurrences = 1
+
+[[mutation]]
+id = "M30"
+file = "src/vllm_capability.rs"
+features = "full"
+filter = "vllm_capability::tests::test_a"
+invariant = "`/health` decide `healthy`: sin el filtro de 2xx, un 503 de un servidor que todavia carga pesos se leeria como listo"
+before = """        client
+            .send(&HttpRequest::get(&url).timeout(std::time::Duration::from_secs(3)))
+            .is_ok_and(|resp| resp.is_success())
+    };"""
+after = """        client
+            .send(&HttpRequest::get(&url).timeout(std::time::Duration::from_secs(3)))
+            .is_ok()
+    };"""
+occurrences = 1
+
+[[mutation]]
+id = "M31"
+file = "src/vllm_capability.rs"
+features = "full"
+filter = "vllm_capability::tests::test_a"
+invariant = "`/v1/models` SI es autoritativo: un no-2xx ahi tiene que hundir el sondeo entero, porque sin la lista de modelos no se sabe nada del servidor"
+before = """        resp.error_for_status()?;
+        let v: serde_json::Value = resp.json()?;"""
+after = """        let v: serde_json::Value = resp.json()?;"""
+occurrences = 1

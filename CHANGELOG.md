@@ -5,6 +5,71 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v317 (2026-10-26) - V441: la regla de que un 404 es SANO llevaba ahi desde siempre y no habia forma de probarla (0.2.400)
+
+N166, primera pasada: el puerto HTTP era un puerto de **forma** --- el tipo existe, el trait
+existe --- pero **de funcion no**, porque los 55 sitios instanciaban `UreqClient` a mano. Un
+puerto que solo se puede usar con su unica implementacion concreta no desacopla nada.
+
+La decision del autor fue aplicarlo **modulo a modulo**, no de golpe. Esto son los dos
+primeros, elegidos porque en los dos se podia ver el precio de no tenerlo.
+
+### `health_check`: el punto de sustitucion que existia probaba el doble, no el codigo
+
+`HealthChecker` ya tenia una salida de emergencia: `with_check_fn`, que acepta un cierre.
+Pero sustituye **toda** la comprobacion, asi que un test que la use no pasa por la regla de
+este modulo:
+
+```rust
+Ok(resp) if resp.status < 500 => Ok(start.elapsed()),
+```
+
+Que es una decision de verdad, y no obvia: **un 4xx cuenta como SANO**, porque lo que mide un
+sondeo de salud es que el servidor conteste, no que la ruta exista. Llevaba ahi desde que el
+modulo se escribio y **ningun test la tocaba** --- no por descuido, sino porque el unico
+mecanismo disponible la reemplazaba junto con el resto.
+
+Con el cliente inyectado (`with_http_client`), la regla se queda dentro y lo que cambia es el
+cable. Tres tests: un 404 es sano, un 500 no y dice su estado, y un fallo de transporte
+tampoco --- ese tercero es el que separa los dos primeros de «siempre sano».
+
+### `vllm_capability`: cuatro reglas que necesitaban un vLLM en marcha
+
+`probe_vllm` toca cuatro rutas y cada una manda sobre un campo distinto:
+
+| Ruta | Regla |
+|---|---|
+| `/v1/models` | autoritativa: si falla, el sondeo entero falla |
+| `/version` | ausente **no** es un fallo, solo «no se sabe la version» |
+| `/health` | manda sobre `healthy`, y nada mas |
+| `/v1/load_lora_adapter` | 404 = LoRA apagado; **cualquier otro estado** = la ruta existe |
+
+Las cuatro eran inprobables sin un servidor vLLM corriendo, asi que ninguna tenia test. Ahora
+`probe_vllm_with` toma el cliente --- `_with` es la convencion que ya usaban
+`fetch_ollama_models_with` y compania, no un invento --- y hay cinco tests con un doble que
+contesta **por ruta** y no por orden de llamada, porque el orden no es parte del contrato.
+
+Y `vllm_wait_until_ready_with`, que hace probable el camino de **exito**: hasta ahora el unico
+test posible era el del plazo agotado contra un puerto cerrado, o sea la mitad de la funcion,
+y justo la mitad que no es su razon de existir. El test nuevo pone un `/health` que contesta
+503, 503 y luego 200.
+
+De paso salio una cuenta que vale la pena decir: son **cuatro** peticiones a `/health`, no
+tres. Tres del bucle de espera y una cuarta del sondeo, que vuelve a preguntar para rellenar
+su propio campo. Una peticion redundante --- no un fallo, pero queda escrita en el test en
+vez de ajustar el numero sin mirar, que es como un test deja de describir lo que el codigo
+hace.
+
+### Verificacion
+
+Cinco mutaciones nuevas (M27-M31), todas mueren: la regla del 4xx, que el cliente inyectado
+se USE de verdad (si `default_check` vuelve a `UreqClient`, el campo se acepta, se documenta y
+no hace nada --- y los tests pasarian a hablar con el 11434 de verdad), la del 404 de LoRA, la
+de `/health`, y la de `/v1/models`. Clippy `-D warnings` en los dos conjuntos de CI.
+
+**Quedan nueve modulos** de los once migrados, y el grande es `providers.rs`. Esta pasada fija
+la forma; el resto es mecanico.
+
 ## [Unreleased] - v316 (2026-10-26) - V440: 60 segundos para bajar un GGUF de 5 GB, y el comentario decia que era por trozo (0.2.399)
 
 N163, decidido por el autor: **plazo de ATASCO** en el puerto, no un plazo total mayor. La

@@ -78,13 +78,30 @@ impl VLlmCapability {
 /// yields a valid capability. Returns `Err(String)` only if `/v1/models`
 /// itself cannot be reached (the authoritative "is this a vLLM?" signal).
 pub fn probe_vllm(base_url: &str) -> Result<VLlmCapability, String> {
+    probe_vllm_with(&UreqClient, base_url)
+}
+
+/// Igual que [`probe_vllm`], con el cliente HTTP puesto desde fuera.
+///
+/// El sufijo `_with` es la convencion que ya usa `fetch_ollama_models_with` y
+/// compania: la version corta se queda como la puerta de entrada comoda y esta
+/// hace el trabajo.
+///
+/// Existe porque las cuatro reglas de este sondeo --- que un 404 en
+/// `/v1/load_lora_adapter` significa «LoRA no se habilito» y cualquier otro
+/// estado significa «la ruta existe», que la ausencia de `/version` no es un
+/// fallo, que `/health` manda sobre `healthy`, y que `/v1/models` si es
+/// autoritativo --- **no se podian probar sin un vLLM en marcha**. Un puerto que
+/// solo se puede usar con su unica implementacion concreta es un puerto de
+/// forma y no de funcion (N166).
+pub fn probe_vllm_with(client: &dyn HttpClient, base_url: &str) -> Result<VLlmCapability, String> {
     let base = base_url.trim_end_matches('/');
 
     // `/v1/models` is the authoritative check — if this fails, the server is
     // either down or not OpenAI-compatible.
     let models_url = format!("{}/v1/models", base);
     let models_body: serde_json::Value = retry_with_config(RetryConfig::fast(), || {
-        let resp = UreqClient
+        let resp = client
             .send(&HttpRequest::get(&models_url).timeout(std::time::Duration::from_secs(5)))?;
         // `error_for_status` conserva el comportamiento de `.call()`, que ante
         // un no-2xx daba `Err` y hacia reintentar --- pero ahora el mensaje
@@ -100,7 +117,7 @@ pub fn probe_vllm(base_url: &str) -> Result<VLlmCapability, String> {
     // version. Don't retry hard — a single try is enough.
     let engine_version = {
         let url = format!("{}/version", base);
-        UreqClient
+        client
             .send(&HttpRequest::get(&url).timeout(std::time::Duration::from_secs(3)))
             .ok()
             .filter(|resp| resp.is_success())
@@ -111,7 +128,7 @@ pub fn probe_vllm(base_url: &str) -> Result<VLlmCapability, String> {
     // `/health` is OpenAI-compatible-ish — 200 means ready.
     let healthy = {
         let url = format!("{}/health", base);
-        UreqClient
+        client
             .send(&HttpRequest::get(&url).timeout(std::time::Duration::from_secs(3)))
             .is_ok_and(|resp| resp.is_success())
     };
@@ -128,7 +145,7 @@ pub fn probe_vllm(base_url: &str) -> Result<VLlmCapability, String> {
         // error es un error.
         let probe =
             HttpRequest::new(HttpMethod::Options, &url).timeout(std::time::Duration::from_secs(3));
-        match UreqClient.send(&probe) {
+        match client.send(&probe) {
             // 404 = LoRA no se habilito al arrancar. Cualquier otro estado
             // (405, 400, 200) significa que la ruta existe.
             Ok(resp) => resp.status != 404,
@@ -185,16 +202,31 @@ pub fn vllm_wait_until_ready(
     timeout: std::time::Duration,
     interval: std::time::Duration,
 ) -> Result<VLlmCapability, String> {
+    vllm_wait_until_ready_with(&UreqClient, base_url, timeout, interval)
+}
+
+/// Igual que [`vllm_wait_until_ready`], con el cliente HTTP puesto desde fuera.
+///
+/// Lo que esto hace probable es el camino de EXITO: que un `/health` que
+/// contesta mal y luego bien devuelve la capacidad, en vez de agotar el plazo.
+/// Antes el unico test posible era el del plazo agotado contra un puerto
+/// cerrado --- o sea, la mitad de la funcion.
+pub fn vllm_wait_until_ready_with(
+    client: &dyn HttpClient,
+    base_url: &str,
+    timeout: std::time::Duration,
+    interval: std::time::Duration,
+) -> Result<VLlmCapability, String> {
     let base = base_url.trim_end_matches('/');
     let health_url = format!("{}/health", base);
     let deadline = std::time::Instant::now() + timeout;
 
     loop {
-        let healthy = UreqClient
+        let healthy = client
             .send(&HttpRequest::get(&health_url).timeout(std::time::Duration::from_secs(2)))
             .is_ok_and(|resp| resp.is_success());
         if healthy {
-            return probe_vllm(base);
+            return probe_vllm_with(client, base);
         }
         if std::time::Instant::now() >= deadline {
             return Err(format!(
@@ -379,5 +411,215 @@ mod tests {
             supports_lora: false,
         };
         assert_eq!(cap.max_context_length(), None);
+    }
+    // ========================================================================
+    // Inyeccion del cliente HTTP (N166)
+    // ========================================================================
+
+    /// Un cliente que contesta POR RUTA.
+    ///
+    /// Hace falta asi y no con una cola de respuestas porque `probe_vllm` toca
+    /// cuatro rutas y lo que se prueba es que cada una manda sobre su campo:
+    /// una cola acoplaria el test al ORDEN de las llamadas, que no es parte del
+    /// contrato.
+    struct ByPath {
+        routes: Vec<(&'static str, u16, serde_json::Value)>,
+    }
+
+    impl crate::http_client::HttpClient for ByPath {
+        fn send(
+            &self,
+            request: &crate::http_client::HttpRequest,
+        ) -> anyhow::Result<crate::http_client::HttpResponse> {
+            for (suffix, status, body) in &self.routes {
+                if request.url.ends_with(suffix) {
+                    return Ok(crate::http_client::HttpResponse {
+                        status: *status,
+                        headers: Vec::new(),
+                        body: serde_json::to_vec(body)?,
+                    });
+                }
+            }
+            anyhow::bail!("no route configured for {}", request.url)
+        }
+
+        fn send_streaming(
+            &self,
+            _request: &crate::http_client::HttpRequest,
+        ) -> anyhow::Result<crate::http_client::HttpStream> {
+            anyhow::bail!("not used by the probe")
+        }
+    }
+
+    fn models_ok() -> serde_json::Value {
+        serde_json::json!({
+            "object": "list",
+            "data": [{"id": "Qwen/Qwen2.5-7B-Instruct", "max_model_len": 32768}]
+        })
+    }
+
+    /// La regla que no se podia probar sin un vLLM en marcha: en
+    /// `/v1/load_lora_adapter` un **404 significa que LoRA no se habilito**, y
+    /// cualquier otro estado significa que la ruta existe.
+    #[test]
+    fn test_a_404_on_the_lora_route_means_lora_is_off() {
+        let client = ByPath {
+            routes: vec![
+                ("/v1/models", 200, models_ok()),
+                ("/version", 200, serde_json::json!({"version": "0.6.3"})),
+                ("/health", 200, serde_json::json!({})),
+                ("/v1/load_lora_adapter", 404, serde_json::json!({})),
+            ],
+        };
+        let cap = probe_vllm_with(&client, "http://vllm.test").expect("el sondeo sale bien");
+        assert!(!cap.supports_lora, "un 404 es LoRA apagado");
+        assert!(cap.healthy);
+        assert_eq!(cap.engine_version.as_deref(), Some("0.6.3"));
+        assert!(cap.has_model("Qwen/Qwen2.5-7B-Instruct"));
+    }
+
+    /// El caso separador: con 405 --- metodo no permitido --- la ruta EXISTE, asi
+    /// que LoRA esta. Sin este test, «siempre false» pasaria el de arriba.
+    #[test]
+    fn test_a_405_on_the_lora_route_means_the_route_exists() {
+        let client = ByPath {
+            routes: vec![
+                ("/v1/models", 200, models_ok()),
+                ("/version", 200, serde_json::json!({"version": "0.6.3"})),
+                ("/health", 200, serde_json::json!({})),
+                ("/v1/load_lora_adapter", 405, serde_json::json!({})),
+            ],
+        };
+        let cap = probe_vllm_with(&client, "http://vllm.test").expect("el sondeo sale bien");
+        assert!(
+            cap.supports_lora,
+            "405 es la ruta contestando que no es ese metodo"
+        );
+    }
+
+    /// `/version` es propio de vLLM: que no este solo significa que no sabemos
+    /// la version, **no** que el sondeo falle.
+    #[test]
+    fn test_a_missing_version_route_is_not_a_failure() {
+        let client = ByPath {
+            routes: vec![
+                ("/v1/models", 200, models_ok()),
+                ("/version", 404, serde_json::json!({})),
+                ("/health", 200, serde_json::json!({})),
+                ("/v1/load_lora_adapter", 404, serde_json::json!({})),
+            ],
+        };
+        let cap = probe_vllm_with(&client, "http://vllm.test")
+            .expect("sin /version el sondeo sigue valiendo");
+        assert_eq!(cap.engine_version, None);
+        assert!(cap.healthy, "la salud la decide /health, no /version");
+    }
+
+    /// Y `/health` manda sobre `healthy`, independientemente del resto.
+    #[test]
+    fn test_an_unhealthy_health_route_is_reported_without_failing_the_probe() {
+        let client = ByPath {
+            routes: vec![
+                ("/v1/models", 200, models_ok()),
+                ("/version", 200, serde_json::json!({"version": "0.6.3"})),
+                ("/health", 503, serde_json::json!({})),
+                ("/v1/load_lora_adapter", 404, serde_json::json!({})),
+            ],
+        };
+        let cap = probe_vllm_with(&client, "http://vllm.test").expect("el sondeo sale bien");
+        assert!(!cap.healthy, "un 503 en /health no es estar sano");
+        // Pero el resto se sigue leyendo: un servidor cargando pesos contesta
+        // /v1/models y todavia no esta listo.
+        assert!(cap.has_model("Qwen/Qwen2.5-7B-Instruct"));
+    }
+
+    /// `/v1/models` SI es autoritativo: si falla, no hay capacidad que devolver.
+    #[test]
+    fn test_a_failing_models_route_fails_the_whole_probe() {
+        let client = ByPath {
+            routes: vec![("/v1/models", 500, serde_json::json!({"error": "boom"}))],
+        };
+        let err = probe_vllm_with(&client, "http://vllm.test")
+            .expect_err("sin /v1/models no se sabe nada del servidor");
+        assert!(err.contains("/v1/models"), "err = {}", err);
+        assert!(err.contains("500"), "err = {}", err);
+    }
+    /// El camino de EXITO de la espera, que era inalcanzable: `/health`
+    /// contesta mal las dos primeras veces y bien la tercera.
+    ///
+    /// Lo unico que se podia probar antes era el plazo agotado contra un puerto
+    /// cerrado, o sea la mitad de la funcion --- y justo la mitad que no es la
+    /// razon de existir de la otra.
+    #[test]
+    fn test_the_wait_returns_as_soon_as_health_turns_green() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct HealthyOnThirdTry {
+            calls: AtomicUsize,
+        }
+
+        impl crate::http_client::HttpClient for HealthyOnThirdTry {
+            fn send(
+                &self,
+                request: &crate::http_client::HttpRequest,
+            ) -> anyhow::Result<crate::http_client::HttpResponse> {
+                if request.url.ends_with("/health") {
+                    let n = self.calls.fetch_add(1, Ordering::Relaxed);
+                    // Cargando pesos: contesta, pero con 503.
+                    let status = if n < 2 { 503 } else { 200 };
+                    return Ok(crate::http_client::HttpResponse {
+                        status,
+                        headers: Vec::new(),
+                        body: Vec::new(),
+                    });
+                }
+                let body = if request.url.ends_with("/v1/models") {
+                    models_ok()
+                } else {
+                    serde_json::json!({})
+                };
+                // `/version` y la ruta de LoRA contestan 404: ni version ni LoRA.
+                let status = if request.url.ends_with("/v1/models") {
+                    200
+                } else {
+                    404
+                };
+                Ok(crate::http_client::HttpResponse {
+                    status,
+                    headers: Vec::new(),
+                    body: serde_json::to_vec(&body)?,
+                })
+            }
+
+            fn send_streaming(
+                &self,
+                _request: &crate::http_client::HttpRequest,
+            ) -> anyhow::Result<crate::http_client::HttpStream> {
+                anyhow::bail!("not used by the wait")
+            }
+        }
+
+        let client = HealthyOnThirdTry {
+            calls: AtomicUsize::new(0),
+        };
+        let cap = vllm_wait_until_ready_with(
+            &client,
+            "http://vllm.test",
+            std::time::Duration::from_secs(5),
+            std::time::Duration::from_millis(10),
+        )
+        .expect("en la tercera vuelta /health contesta 200");
+        assert!(cap.has_model("Qwen/Qwen2.5-7B-Instruct"));
+        assert!(cap.healthy);
+        // CUATRO llamadas a `/health`, y el numero dice algo: tres del bucle de
+        // espera --- si saliera a la primera, el 503 no contaria como «todavia
+        // no» y la espera no serviria de nada --- mas una cuarta del sondeo, que
+        // vuelve a preguntar para rellenar su propio campo `healthy`.
+        //
+        // Esa cuarta es redundante: la espera acaba de comprobarlo. Es una
+        // peticion de mas, no un fallo, y se deja escrita aqui en vez de
+        // ajustar el numero sin mirar --- que es como un test deja de describir
+        // lo que el codigo hace.
+        assert_eq!(client.calls.load(Ordering::Relaxed), 4);
     }
 }

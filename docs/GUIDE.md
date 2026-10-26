@@ -2251,6 +2251,32 @@ first token — 166 s, measured on this repository's own hardware.
 Connections are pooled process-wide: `UreqClient` is a unit struct and the pooling lives
 in a shared agent behind it, so call sites get it without asking.
 
+### Injecting a different client
+
+The port is being made injectable module by module, because a port you can only use with
+its one concrete implementation does not decouple anything. Two shapes, both already in
+the crate:
+
+```rust
+// A struct that holds one: `with_http_client` on the builder.
+let checker = HealthChecker::new(config).with_http_client(Arc::new(my_client));
+
+// A free function: the `_with` suffix takes the client, the short name keeps the
+// convenient default (`probe_vllm`, `fetch_ollama_models_with`, …).
+let capability = probe_vllm_with(&my_client, "http://localhost:8000")?;
+```
+
+What this buys is not abstraction for its own sake. It is the only way to test the rules
+a module actually encodes. `HealthChecker` had an escape hatch before — `with_check_fn`,
+which takes a closure — but it replaces the *whole* check, so a test using it never
+reaches this module's own rule: that a **4xx counts as healthy**, because what a health
+probe measures is that the server answers, not that the route exists. That rule shipped
+untested for as long as the module existed. Same for the four rules in `probe_vllm`: they
+needed a live vLLM, so none had a test.
+
+Done so far: `health_check`, `vllm_capability`. Nine of the eleven migrated modules still
+instantiate `UreqClient` directly — `providers.rs` is the big one.
+
 > **Mocks are internal, for now.** `MockHttpServer` and `MockHttpClient` live under
 > `#[cfg(test)]`, so they exist for this crate's own tests and **cannot be used from
 > outside it**. Writing `MockHttpClient::with_response(..)` in your own crate does not
