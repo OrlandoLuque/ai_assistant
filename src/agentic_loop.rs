@@ -25,6 +25,15 @@ pub struct LoopConfig {
     pub max_context_tokens: usize,
 }
 
+with_setters!(LoopConfig {
+    with_max_iterations -> max_iterations: usize,
+    with_auto_search -> auto_search: bool,
+    with_search_triggers -> search_triggers: Vec<String>,
+    with_system_prompt -> system_prompt: String,
+    with_include_tool_history -> include_tool_history: bool,
+    with_max_context_tokens -> max_context_tokens: usize,
+});
+
 impl Default for LoopConfig {
     fn default() -> Self {
         Self {

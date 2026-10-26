@@ -28,6 +28,14 @@ pub struct BenchmarkConfig {
     pub measure_memory: bool,
 }
 
+with_setters!(BenchmarkConfig {
+    with_iterations -> iterations: usize,
+    with_warmup_iterations -> warmup_iterations: usize,
+    with_timeout_ms -> timeout_ms: u64,
+    with_record_individual -> record_individual: bool,
+    with_measure_memory -> measure_memory: bool,
+});
+
 impl Default for BenchmarkConfig {
     fn default() -> Self {
         Self {

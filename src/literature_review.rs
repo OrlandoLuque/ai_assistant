@@ -165,6 +165,16 @@ pub struct LiteratureReviewConfig {
     pub fields_of_study: Vec<String>,
 }
 
+with_setters!(LiteratureReviewConfig {
+    with_max_papers -> max_papers: usize,
+    with_search_depth -> search_depth: SearchDepth,
+    with_synthesis_style -> synthesis_style: SynthesisStyle,
+    with_include_citation_graph -> include_citation_graph: bool,
+    with_bibliography_format -> bibliography_format: BibliographyFormat,
+    with_year_range -> year_range: Option<(u16, u16)>,
+    with_fields_of_study -> fields_of_study: Vec<String>,
+});
+
 impl Default for LiteratureReviewConfig {
     fn default() -> Self {
         Self {

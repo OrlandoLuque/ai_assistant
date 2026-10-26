@@ -785,6 +785,10 @@ mod inner {
         pub flattening: FlatteningStrategy,
     }
 
+    with_setters!(DatasetConfig {
+        with_format -> format: DatasetFormat,
+    });
+
     impl DatasetConfig {
         pub fn new(format: DatasetFormat) -> Self {
             Self {

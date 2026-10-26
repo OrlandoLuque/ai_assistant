@@ -76,6 +76,16 @@ pub struct CacheConfig {
     pub cleanup_interval: Duration,
 }
 
+with_setters!(CacheConfig {
+    with_max_entries -> max_entries: usize,
+    with_default_ttl -> default_ttl: Duration,
+    with_ttl_by_type -> ttl_by_type: HashMap<String, Duration>,
+    with_fuzzy_matching -> fuzzy_matching: bool,
+    with_similarity_threshold -> similarity_threshold: f32,
+    with_auto_cleanup -> auto_cleanup: bool,
+    with_cleanup_interval -> cleanup_interval: Duration,
+});
+
 impl Default for CacheConfig {
     fn default() -> Self {
         let mut ttl_by_type = HashMap::new();

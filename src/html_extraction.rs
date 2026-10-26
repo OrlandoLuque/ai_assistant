@@ -236,6 +236,15 @@ pub struct HtmlExtractionConfig {
     pub strip_scripts: bool,
 }
 
+with_setters!(HtmlExtractionConfig {
+    with_rules -> rules: Vec<ExtractionRule>,
+    with_extract_metadata -> extract_metadata: bool,
+    with_extract_tables -> extract_tables: bool,
+    with_extract_lists -> extract_lists: bool,
+    with_extract_links -> extract_links: bool,
+    with_strip_scripts -> strip_scripts: bool,
+});
+
 impl Default for HtmlExtractionConfig {
     fn default() -> Self {
         Self {

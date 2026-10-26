@@ -20,6 +20,13 @@ pub struct OpenHabConfig {
     pub verify_ssl: bool,
 }
 
+with_setters!(OpenHabConfig {
+    with_base_url -> base_url: String,
+    with_api_token -> api_token: Option<String>,
+    with_timeout_secs -> timeout_secs: u64,
+    with_verify_ssl -> verify_ssl: bool,
+});
+
 impl Default for OpenHabConfig {
     fn default() -> Self {
         Self {

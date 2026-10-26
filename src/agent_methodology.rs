@@ -38,6 +38,20 @@ pub struct AgentMethodology {
     pub immutable_after_start: bool,
 }
 
+with_setters!(AgentMethodology {
+    with_name -> name: String,
+    with_approach -> approach: TaskApproach,
+    with_reasoning -> reasoning: ReasoningStrategy,
+    with_planning -> planning: PlanningPolicy,
+    with_review -> review: ReviewPolicy,
+    with_recovery -> recovery: RecoveryStrategy,
+    with_communication -> communication: CommunicationStyle,
+    with_risk_tolerance -> risk_tolerance: RiskTolerance,
+    with_workflow -> workflow: WorkflowProtocol,
+    with_review_triggers -> review_triggers: ReviewTriggers,
+    with_immutable_after_start -> immutable_after_start: bool,
+});
+
 /// How the agent approaches a task at the highest level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]

@@ -132,6 +132,16 @@ pub struct ParserConfig {
     pub parse_nested_json: bool,
 }
 
+with_setters!(ParserConfig {
+    with_extract_code -> extract_code: bool,
+    with_extract_json -> extract_json: bool,
+    with_extract_lists -> extract_lists: bool,
+    with_extract_tables -> extract_tables: bool,
+    with_extract_links -> extract_links: bool,
+    with_extract_headings -> extract_headings: bool,
+    with_parse_nested_json -> parse_nested_json: bool,
+});
+
 impl Default for ParserConfig {
     fn default() -> Self {
         Self {

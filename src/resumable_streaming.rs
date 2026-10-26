@@ -45,6 +45,13 @@ pub struct ResumableStreamConfig {
     pub stale_timeout: Duration,
 }
 
+with_setters!(ResumableStreamConfig {
+    with_checkpoint_interval -> checkpoint_interval: u64,
+    with_max_checkpoints -> max_checkpoints: usize,
+    with_max_replay_buffer -> max_replay_buffer: usize,
+    with_stale_timeout -> stale_timeout: Duration,
+});
+
 impl Default for ResumableStreamConfig {
     fn default() -> Self {
         Self {
@@ -319,6 +326,14 @@ pub struct SseReconnectConfig {
     /// Whether to honor the server's `retry:` field.
     pub respect_server_retry: bool,
 }
+
+with_setters!(SseReconnectConfig {
+    with_max_attempts -> max_attempts: u32,
+    with_initial_retry_ms -> initial_retry_ms: u64,
+    with_max_retry_ms -> max_retry_ms: u64,
+    with_backoff_multiplier -> backoff_multiplier: f64,
+    with_respect_server_retry -> respect_server_retry: bool,
+});
 
 impl Default for SseReconnectConfig {
     fn default() -> Self {

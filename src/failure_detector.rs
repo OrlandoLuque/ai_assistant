@@ -284,6 +284,13 @@ pub struct HeartbeatConfig {
     pub suspicious_threshold: f64,
 }
 
+with_setters!(HeartbeatConfig {
+    with_interval -> interval: Duration,
+    with_phi_threshold -> phi_threshold: f64,
+    with_max_samples -> max_samples: usize,
+    with_suspicious_threshold -> suspicious_threshold: f64,
+});
+
 impl Default for HeartbeatConfig {
     fn default() -> Self {
         Self {

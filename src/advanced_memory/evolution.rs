@@ -47,6 +47,15 @@ pub struct EvolutionConfig {
     pub llm_enhanced: bool,
 }
 
+with_setters!(EvolutionConfig {
+    with_success_boost -> success_boost: f64,
+    with_failure_penalty -> failure_penalty: f64,
+    with_min_confidence_to_keep -> min_confidence_to_keep: f64,
+    with_auto_create_threshold -> auto_create_threshold: usize,
+    with_max_procedures -> max_procedures: usize,
+    with_llm_enhanced -> llm_enhanced: bool,
+});
+
 impl Default for EvolutionConfig {
     fn default() -> Self {
         Self {

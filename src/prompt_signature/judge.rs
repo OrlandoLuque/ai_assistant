@@ -129,6 +129,12 @@ pub struct JudgeConfig {
     pub temperature: f64,
 }
 
+with_setters!(JudgeConfig {
+    with_rubric -> rubric: JudgeRubric,
+    with_few_shot_examples -> few_shot_examples: Vec<JudgeExample>,
+    with_temperature -> temperature: f64,
+});
+
 /// A few-shot example demonstrating judge behavior.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JudgeExample {

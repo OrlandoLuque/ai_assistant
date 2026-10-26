@@ -191,6 +191,16 @@ pub struct DocumentParserConfig {
     pub normalize_whitespace: bool,
 }
 
+with_setters!(DocumentParserConfig {
+    with_preserve_paragraphs -> preserve_paragraphs: bool,
+    with_extract_metadata -> extract_metadata: bool,
+    with_extract_sections -> extract_sections: bool,
+    with_extract_tables -> extract_tables: bool,
+    with_max_size_bytes -> max_size_bytes: usize,
+    with_strip_tags -> strip_tags: bool,
+    with_normalize_whitespace -> normalize_whitespace: bool,
+});
+
 impl Default for DocumentParserConfig {
     fn default() -> Self {
         Self {

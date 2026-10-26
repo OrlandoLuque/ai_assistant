@@ -933,6 +933,14 @@ pub struct SummaryConfig {
     pub include_sentiment: bool,
 }
 
+with_setters!(SummaryConfig {
+    with_enabled -> enabled: bool,
+    with_trigger_message_count -> trigger_message_count: usize,
+    with_max_summary_tokens -> max_summary_tokens: usize,
+    with_include_topics -> include_topics: bool,
+    with_include_sentiment -> include_sentiment: bool,
+});
+
 impl Default for SummaryConfig {
     fn default() -> Self {
         Self {

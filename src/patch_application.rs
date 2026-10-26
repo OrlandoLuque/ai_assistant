@@ -516,6 +516,13 @@ pub struct PatchConfig {
     pub continue_on_error: bool,
 }
 
+with_setters!(PatchConfig {
+    with_fuzzy -> fuzzy: bool,
+    with_fuzz_lines -> fuzz_lines: usize,
+    with_ignore_whitespace -> ignore_whitespace: bool,
+    with_continue_on_error -> continue_on_error: bool,
+});
+
 impl Default for PatchConfig {
     fn default() -> Self {
         Self {

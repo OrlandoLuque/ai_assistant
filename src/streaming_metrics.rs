@@ -42,6 +42,13 @@ pub struct MetricsConfig {
     pub chars_per_token: f32,
 }
 
+with_setters!(MetricsConfig {
+    with_window_size -> window_size: usize,
+    with_min_tokens_for_rate -> min_tokens_for_rate: usize,
+    with_estimate_from_chars -> estimate_from_chars: bool,
+    with_chars_per_token -> chars_per_token: f32,
+});
+
 impl Default for MetricsConfig {
     fn default() -> Self {
         Self {

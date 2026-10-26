@@ -18,6 +18,14 @@ pub struct SanitizationConfig {
     pub block_prompt_injection: bool,
 }
 
+with_setters!(SanitizationConfig {
+    with_max_input_length -> max_input_length: usize,
+    with_max_consecutive_newlines -> max_consecutive_newlines: usize,
+    with_strip_control_chars -> strip_control_chars: bool,
+    with_normalize_unicode -> normalize_unicode: bool,
+    with_block_prompt_injection -> block_prompt_injection: bool,
+});
+
 impl Default for SanitizationConfig {
     fn default() -> Self {
         Self {

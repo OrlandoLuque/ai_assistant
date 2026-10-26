@@ -225,6 +225,17 @@ pub struct TranslationAnalysisConfig {
     pub max_segments: usize,
 }
 
+with_setters!(TranslationAnalysisConfig {
+    with_glossary -> glossary: Glossary,
+    with_min_severity -> min_severity: f32,
+    with_check_numbers -> check_numbers: bool,
+    with_check_glossary -> check_glossary: bool,
+    with_check_completeness -> check_completeness: bool,
+    with_check_register -> check_register: bool,
+    with_enable_llm_analysis -> enable_llm_analysis: bool,
+    with_max_segments -> max_segments: usize,
+});
+
 impl Default for TranslationAnalysisConfig {
     fn default() -> Self {
         Self {

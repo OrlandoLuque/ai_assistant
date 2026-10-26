@@ -568,6 +568,15 @@ pub struct CostAwareConfig {
     pub track_by_model: bool,
 }
 
+with_setters!(CostAwareConfig {
+    with_enabled -> enabled: bool,
+    with_daily_budget -> daily_budget: Option<f64>,
+    with_monthly_budget -> monthly_budget: Option<f64>,
+    with_per_request_limit -> per_request_limit: Option<f64>,
+    with_alert_threshold_pct -> alert_threshold_pct: f64,
+    with_track_by_model -> track_by_model: bool,
+});
+
 impl Default for CostAwareConfig {
     fn default() -> Self {
         Self {

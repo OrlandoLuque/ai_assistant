@@ -137,6 +137,20 @@ pub struct KnowledgeGraphConfig {
     pub relation_types: Vec<String>,
 }
 
+with_setters!(KnowledgeGraphConfig {
+    with_max_traversal_depth -> max_traversal_depth: usize,
+    with_max_entities_per_query -> max_entities_per_query: usize,
+    with_max_chunks_per_entity -> max_chunks_per_entity: usize,
+    with_min_relation_confidence -> min_relation_confidence: f32,
+    with_chunk_size -> chunk_size: usize,
+    with_chunk_overlap -> chunk_overlap: usize,
+    with_resolve_aliases -> resolve_aliases: bool,
+    with_infer_relations -> infer_relations: bool,
+    with_cache_size -> cache_size: usize,
+    with_entity_types -> entity_types: Vec<String>,
+    with_relation_types -> relation_types: Vec<String>,
+});
+
 impl Default for KnowledgeGraphConfig {
     fn default() -> Self {
         Self {

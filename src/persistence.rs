@@ -41,6 +41,15 @@ pub struct BackupConfig {
     pub timestamp_format: String,
 }
 
+with_setters!(BackupConfig {
+    with_enabled -> enabled: bool,
+    with_backup_dir -> backup_dir: PathBuf,
+    with_max_backups -> max_backups: usize,
+    with_interval_hours -> interval_hours: u32,
+    with_compress -> compress: bool,
+    with_timestamp_format -> timestamp_format: String,
+});
+
 impl Default for BackupConfig {
     fn default() -> Self {
         Self {
@@ -486,6 +495,13 @@ pub struct MigrationConfig {
     pub index_for_search: bool,
 }
 
+with_setters!(MigrationConfig {
+    with_min_messages -> min_messages: usize,
+    with_max_age_days -> max_age_days: u32,
+    with_delete_after_migration -> delete_after_migration: bool,
+    with_index_for_search -> index_for_search: bool,
+});
+
 impl Default for MigrationConfig {
     fn default() -> Self {
         Self {
@@ -686,6 +702,15 @@ pub struct PersistentCacheConfig {
     /// Cleanup interval in seconds
     pub cleanup_interval_seconds: u64,
 }
+
+with_setters!(PersistentCacheConfig {
+    with_max_entries -> max_entries: usize,
+    with_default_ttl_seconds -> default_ttl_seconds: u64,
+    with_compress_large_values -> compress_large_values: bool,
+    with_compression_threshold -> compression_threshold: usize,
+    with_auto_cleanup -> auto_cleanup: bool,
+    with_cleanup_interval_seconds -> cleanup_interval_seconds: u64,
+});
 
 impl Default for PersistentCacheConfig {
     fn default() -> Self {

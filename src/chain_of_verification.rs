@@ -87,6 +87,16 @@ pub struct CoVeConfig {
     pub max_llm_calls: usize,
 }
 
+with_setters!(CoVeConfig {
+    with_enabled -> enabled: bool,
+    with_max_claims_to_verify -> max_claims_to_verify: usize,
+    with_verification_source -> verification_source: VerificationSource,
+    with_correction_mode -> correction_mode: CorrectionMode,
+    with_min_support_similarity -> min_support_similarity: f64,
+    with_ungrounded_strategy -> ungrounded_strategy: UngroundedClaimStrategy,
+    with_max_llm_calls -> max_llm_calls: usize,
+});
+
 impl Default for CoVeConfig {
     fn default() -> Self {
         Self {

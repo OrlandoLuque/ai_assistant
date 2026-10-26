@@ -24,6 +24,12 @@ pub struct ComparisonConfig {
     pub metric_weights: HashMap<String, f64>,
 }
 
+with_setters!(ComparisonConfig {
+    with_confidence_level -> confidence_level: f64,
+    with_elo_k_factor -> elo_k_factor: f64,
+    with_metric_weights -> metric_weights: HashMap<String, f64>,
+});
+
 impl Default for ComparisonConfig {
     fn default() -> Self {
         Self {

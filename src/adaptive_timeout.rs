@@ -65,6 +65,16 @@ pub struct AdaptiveTimeoutConfig {
     pub sensitivity: f64,
 }
 
+with_setters!(AdaptiveTimeoutConfig {
+    with_min_timeout -> min_timeout: Duration,
+    with_max_timeout -> max_timeout: Duration,
+    with_initial_timeout -> initial_timeout: Duration,
+    with_multiplier -> multiplier: f64,
+    with_percentile -> percentile: Percentile,
+    with_window_size -> window_size: usize,
+    with_sensitivity -> sensitivity: f64,
+});
+
 impl AdaptiveTimeoutConfig {
     /// Conservative preset: 3.0x P99, floor 1s, ceiling 120s.
     ///

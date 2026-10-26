@@ -54,6 +54,12 @@ pub struct ImageExtractionConfig {
     pub extract_dimensions: bool,
 }
 
+with_setters!(ImageExtractionConfig {
+    with_min_size_bytes -> min_size_bytes: usize,
+    with_max_images -> max_images: usize,
+    with_extract_dimensions -> extract_dimensions: bool,
+});
+
 impl Default for ImageExtractionConfig {
     fn default() -> Self {
         Self {

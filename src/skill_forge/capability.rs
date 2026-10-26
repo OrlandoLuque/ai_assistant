@@ -18,6 +18,10 @@ pub struct CapabilitySet {
     pub items: BTreeSet<Capability>,
 }
 
+with_setters!(CapabilitySet {
+    with_items -> items: BTreeSet<Capability>,
+});
+
 impl CapabilitySet {
     pub fn empty() -> Self {
         Self::default()

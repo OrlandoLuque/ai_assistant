@@ -58,6 +58,15 @@ pub struct DenseEmbeddingConfig {
     pub batch_size: usize,
 }
 
+with_setters!(DenseEmbeddingConfig {
+    with_model_id -> model_id: String,
+    with_dimension -> dimension: usize,
+    with_max_seq_length -> max_seq_length: usize,
+    with_pooling -> pooling: PoolingStrategy,
+    with_normalize -> normalize: bool,
+    with_batch_size -> batch_size: usize,
+});
+
 impl Default for DenseEmbeddingConfig {
     fn default() -> Self {
         Self {
@@ -485,6 +494,13 @@ pub struct SparseEmbeddingConfig {
     /// Use IDF weighting
     pub use_idf: bool,
 }
+
+with_setters!(SparseEmbeddingConfig {
+    with_vocab_size -> vocab_size: u32,
+    with_max_terms -> max_terms: usize,
+    with_min_weight -> min_weight: f32,
+    with_use_idf -> use_idf: bool,
+});
 
 impl Default for SparseEmbeddingConfig {
     fn default() -> Self {

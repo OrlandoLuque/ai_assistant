@@ -53,6 +53,13 @@ pub struct EvalAgentConfig {
     pub metadata: HashMap<String, String>,
 }
 
+with_setters!(EvalAgentConfig {
+    with_default_model -> default_model: ModelIdentifier,
+    with_name -> name: String,
+    with_subtask_max_tokens -> subtask_max_tokens: HashMap<String, usize>,
+    with_subtask_templates -> subtask_templates: HashMap<String, String>,
+});
+
 impl Default for EvalAgentConfig {
     fn default() -> Self {
         Self {

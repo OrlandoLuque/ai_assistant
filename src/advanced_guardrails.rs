@@ -140,6 +140,14 @@ pub struct ConstitutionalConfig {
     pub focus_categories: Vec<String>,
 }
 
+with_setters!(ConstitutionalConfig {
+    with_principles -> principles: Vec<ConstitutionalPrinciple>,
+    with_revision_rounds -> revision_rounds: u32,
+    with_min_priority -> min_priority: u32,
+    with_include_reasoning -> include_reasoning: bool,
+    with_focus_categories -> focus_categories: Vec<String>,
+});
+
 impl Default for ConstitutionalConfig {
     fn default() -> Self {
         Self {
@@ -409,6 +417,13 @@ pub struct BiasConfig {
     pub allowlist: HashSet<String>,
 }
 
+with_setters!(BiasConfig {
+    with_dimensions -> dimensions: Vec<BiasDimension>,
+    with_sensitivity -> sensitivity: f32,
+    with_custom_patterns -> custom_patterns: HashMap<BiasDimension, Vec<String>>,
+    with_allowlist -> allowlist: HashSet<String>,
+});
+
 impl Default for BiasConfig {
     fn default() -> Self {
         Self {
@@ -676,6 +691,14 @@ pub struct ToxicityConfig {
     /// Allowlist (override blocklist)
     pub allowlist: HashSet<String>,
 }
+
+with_setters!(ToxicityConfig {
+    with_categories -> categories: Vec<ToxicityCategory>,
+    with_category_sensitivity -> category_sensitivity: HashMap<ToxicityCategory, f32>,
+    with_threshold -> threshold: f32,
+    with_blocklist -> blocklist: HashSet<String>,
+    with_allowlist -> allowlist: HashSet<String>,
+});
 
 impl Default for ToxicityConfig {
     fn default() -> Self {

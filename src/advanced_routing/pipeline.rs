@@ -41,6 +41,14 @@ pub struct PipelineConfig {
     pub discovery: Option<DiscoveryConfig>,
 }
 
+with_setters!(PipelineConfig {
+    with_synthesis_interval -> synthesis_interval: u64,
+    with_min_pulls_for_synthesis -> min_pulls_for_synthesis: u64,
+    with_quality_threshold -> quality_threshold: f64,
+    with_auto_minimize -> auto_minimize: bool,
+    with_discovery -> discovery: Option<DiscoveryConfig>,
+});
+
 impl Default for PipelineConfig {
     fn default() -> Self {
         Self {

@@ -352,6 +352,15 @@ pub struct BanditConfig {
     pub reward_policy: RewardPolicy,
 }
 
+with_setters!(BanditConfig {
+    with_strategy -> strategy: BanditStrategy,
+    with_prior_alpha -> prior_alpha: f64,
+    with_prior_beta -> prior_beta: f64,
+    with_min_pulls_before_prune -> min_pulls_before_prune: u64,
+    with_decay_factor -> decay_factor: f64,
+    with_reward_policy -> reward_policy: RewardPolicy,
+});
+
 impl Default for BanditConfig {
     fn default() -> Self {
         Self {

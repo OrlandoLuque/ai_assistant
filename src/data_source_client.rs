@@ -144,6 +144,22 @@ pub struct DataSourceConfig {
     pub ssrf_protection: bool,
 }
 
+with_setters!(DataSourceConfig {
+    with_base_url -> base_url: String,
+    with_auth -> auth: AuthMethod,
+    with_rate_limit -> rate_limit: RateLimitPolicy,
+    with_timeout_ms -> timeout_ms: u64,
+    with_headers -> headers: HashMap<String, String>,
+    with_user_agent -> user_agent: String,
+    with_pagination -> pagination: PaginationStrategy,
+    with_cache_enabled -> cache_enabled: bool,
+    with_cache_ttl_ms -> cache_ttl_ms: u64,
+    with_max_cache_entries -> max_cache_entries: usize,
+    with_max_retries -> max_retries: usize,
+    with_retry_delay_ms -> retry_delay_ms: u64,
+    with_ssrf_protection -> ssrf_protection: bool,
+});
+
 impl Default for DataSourceConfig {
     fn default() -> Self {
         Self {

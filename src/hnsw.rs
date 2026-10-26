@@ -28,6 +28,14 @@ pub struct HnswConfig {
     pub metric: DistanceMetric,
 }
 
+with_setters!(HnswConfig {
+    with_m -> m: usize,
+    with_m_max -> m_max: usize,
+    with_ef_construction -> ef_construction: usize,
+    with_ef_search -> ef_search: usize,
+    with_metric -> metric: DistanceMetric,
+});
+
 impl Default for HnswConfig {
     fn default() -> Self {
         Self {

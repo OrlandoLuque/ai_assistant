@@ -110,6 +110,13 @@ pub struct RotationConfig {
     pub rate_limit_recovery_time: Duration,
 }
 
+with_setters!(RotationConfig {
+    with_auto_rotate -> auto_rotate: bool,
+    with_rotation_interval -> rotation_interval: Option<Duration>,
+    with_max_errors_before_rotation -> max_errors_before_rotation: u64,
+    with_rate_limit_recovery_time -> rate_limit_recovery_time: Duration,
+});
+
 impl Default for RotationConfig {
     fn default() -> Self {
         Self {

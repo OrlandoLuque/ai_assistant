@@ -2005,6 +2005,14 @@ mod inner {
         pub output_format: AnalysisOutputFormat,
     }
 
+    with_setters!(VideoAnalysisConfig {
+        with_extraction_strategy -> extraction_strategy: FrameExtractionStrategy,
+        with_max_frames -> max_frames: usize,
+        with_analysis_prompt -> analysis_prompt: String,
+        with_include_timestamps -> include_timestamps: bool,
+        with_output_format -> output_format: AnalysisOutputFormat,
+    });
+
     impl Default for VideoAnalysisConfig {
         fn default() -> Self {
             Self {

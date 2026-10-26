@@ -45,6 +45,12 @@ pub struct HardwareInfo {
     pub os: OsInfo,
 }
 
+with_setters!(HardwareInfo {
+    with_cpu -> cpu: CpuInfo,
+    with_ram -> ram: RamInfo,
+    with_source -> source: HardwareSource,
+});
+
 // ---------------------------------------------------------------------------
 // Constructors
 //
@@ -269,6 +275,13 @@ pub struct CpuInfo {
     pub features: CpuFeatures,
 }
 
+with_setters!(CpuInfo {
+    with_brand -> brand: String,
+    with_logical_cores -> logical_cores: usize,
+    with_physical_cores -> physical_cores: usize,
+    with_vendor -> vendor: String,
+});
+
 /// Coarse-grained CPU feature flags useful to a model recommender.
 /// Not exhaustive — extended in lock-step with backends that gain
 /// per-instruction-set optimisations.
@@ -282,6 +295,15 @@ pub struct CpuFeatures {
     pub f16c: bool,
     pub neon: bool,
 }
+
+with_setters!(CpuFeatures {
+    with_avx -> avx: bool,
+    with_avx2 -> avx2: bool,
+    with_avx512 -> avx512: bool,
+    with_fma -> fma: bool,
+    with_f16c -> f16c: bool,
+    with_neon -> neon: bool,
+});
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -309,6 +331,12 @@ pub struct GpuInfo {
     pub backend_support: Vec<String>,
 }
 
+with_setters!(GpuInfo {
+    with_name -> name: String,
+    with_vendor -> vendor: GpuVendor,
+    with_vram_bytes -> vram_bytes: u64,
+});
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -329,6 +357,12 @@ pub struct OsInfo {
     pub kernel: String,
     pub arch: String,
 }
+
+with_setters!(OsInfo {
+    with_arch -> arch: String,
+    with_family -> family: String,
+    with_name -> name: String,
+});
 
 /// Errors a probe can surface. Most failures are logged and folded
 /// into empty subsections instead of returning `Err` — this enum

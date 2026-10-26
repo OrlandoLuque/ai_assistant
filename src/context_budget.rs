@@ -114,6 +114,25 @@ pub struct ContextBudgetConfig {
     pub enable_strategy_learning: bool,
 }
 
+with_setters!(ContextBudgetConfig {
+    with_rag_base_score -> rag_base_score: f32,
+    with_memory_base_score -> memory_base_score: f32,
+    with_procedural_base_score -> procedural_base_score: f32,
+    with_reference_base_score -> reference_base_score: f32,
+    with_graph_base_score -> graph_base_score: f32,
+    with_notes_base_score -> notes_base_score: f32,
+    with_scoring_mode -> scoring_mode: ScoringMode,
+    with_memory_max_tokens -> memory_max_tokens: usize,
+    with_procedural_max_tokens -> procedural_max_tokens: usize,
+    with_procedural_max_items -> procedural_max_items: usize,
+    with_min_response_reserve -> min_response_reserve: usize,
+    with_compression_min_remaining -> compression_min_remaining: usize,
+    with_compression_min_score -> compression_min_score: f32,
+    with_compression_score_penalty -> compression_score_penalty: f32,
+    with_overflow_strategy -> overflow_strategy: OverflowStrategy,
+    with_enable_strategy_learning -> enable_strategy_learning: bool,
+});
+
 impl Default for ContextBudgetConfig {
     fn default() -> Self {
         Self {

@@ -1804,6 +1804,30 @@ pub struct AdvisorConfig {
     pub academic_api_keys_present: bool,
 }
 
+with_setters!(AdvisorConfig {
+    with_caching_enabled -> caching_enabled: bool,
+    with_rag_enabled -> rag_enabled: bool,
+    with_guardrails_enabled -> guardrails_enabled: bool,
+    with_pii_detection_enabled -> pii_detection_enabled: bool,
+    with_access_control_enabled -> access_control_enabled: bool,
+    with_audit_logging_enabled -> audit_logging_enabled: bool,
+    with_otel_enabled -> otel_enabled: bool,
+    with_memory_persistence_enabled -> memory_persistence_enabled: bool,
+    with_advanced_routing_enabled -> advanced_routing_enabled: bool,
+    with_budget_limits_set -> budget_limits_set: bool,
+    with_rate_limiting_enabled -> rate_limiting_enabled: bool,
+    with_content_encryption_enabled -> content_encryption_enabled: bool,
+    with_eval_suite_used -> eval_suite_used: bool,
+    with_distributed_enabled -> distributed_enabled: bool,
+    with_constrained_decoding_enabled -> constrained_decoding_enabled: bool,
+    with_hitl_enabled -> hitl_enabled: bool,
+    with_active_features -> active_features: Vec<String>,
+    with_anti_hallucination_enabled -> anti_hallucination_enabled: bool,
+    with_quality_gates_configured -> quality_gates_configured: bool,
+    with_research_mode_enabled -> research_mode_enabled: bool,
+    with_academic_api_keys_present -> academic_api_keys_present: bool,
+});
+
 // =============================================================================
 // Butler Advisor
 // =============================================================================

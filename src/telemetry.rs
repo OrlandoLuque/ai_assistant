@@ -19,6 +19,15 @@ pub struct TelemetryConfig {
     pub flush_interval: Duration,
 }
 
+with_setters!(TelemetryConfig {
+    with_enabled -> enabled: bool,
+    with_collect_latency -> collect_latency: bool,
+    with_collect_tokens -> collect_tokens: bool,
+    with_collect_errors -> collect_errors: bool,
+    with_sample_rate -> sample_rate: f64,
+    with_flush_interval -> flush_interval: Duration,
+});
+
 impl Default for TelemetryConfig {
     fn default() -> Self {
         Self {

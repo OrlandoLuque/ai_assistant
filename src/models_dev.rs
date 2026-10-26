@@ -522,6 +522,13 @@ pub struct HardwareRequirements {
     pub backends: Vec<Backend>,
 }
 
+with_setters!(HardwareRequirements {
+    with_min_vram_bytes -> min_vram_bytes: Option<u64>,
+    with_min_ram_bytes -> min_ram_bytes: u64,
+    with_gpu_archs -> gpu_archs: Vec<GpuArch>,
+    with_backends -> backends: Vec<Backend>,
+});
+
 impl HardwareRequirements {
     /// True if the variant has no GPU requirement and a runnable RAM
     /// figure.
@@ -567,6 +574,15 @@ pub struct ModelVariant {
     #[serde(default)]
     pub license: String,
 }
+
+with_setters!(ModelVariant {
+    with_id -> id: String,
+    with_modifier -> modifier: Option<VariantModifier>,
+    with_provenance -> provenance: Provenance,
+    with_size_bytes -> size_bytes: u64,
+    with_source -> source: ModelSource,
+    with_variant_kind -> variant_kind: VariantKind,
+});
 
 /// A LoRA adapter — a low-rank patch applied on top of a base model.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -625,6 +641,15 @@ pub struct ModelFamily {
     #[serde(default)]
     pub lora_adapters: Vec<LoraAdapter>,
 }
+
+with_setters!(ModelFamily {
+    with_context_window -> context_window: Option<u32>,
+    with_display_name -> display_name: String,
+    with_id -> id: String,
+    with_lora_adapters -> lora_adapters: Vec<LoraAdapter>,
+    with_modality -> modality: Modality,
+    with_training_cutoff -> training_cutoff: Option<String>,
+});
 
 impl ModelVariant {
     /// A variant with the three things that cannot be guessed: what it is

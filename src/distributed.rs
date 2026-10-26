@@ -449,6 +449,15 @@ pub struct DhtConfig {
     pub cache: DhtCacheConfig,
 }
 
+with_setters!(DhtConfig {
+    with_k -> k: usize,
+    with_replication_factor -> replication_factor: usize,
+    with_alpha -> alpha: usize,
+    with_node_timeout -> node_timeout: Duration,
+    with_cleanup_interval -> cleanup_interval: Duration,
+    with_cache -> cache: DhtCacheConfig,
+});
+
 impl Default for DhtConfig {
     fn default() -> Self {
         Self {
@@ -1239,6 +1248,15 @@ pub struct MapReduceConfig {
     /// Retry count for failed tasks
     pub max_retries: u32,
 }
+
+with_setters!(MapReduceConfig {
+    with_num_mappers -> num_mappers: usize,
+    with_num_reducers -> num_reducers: usize,
+    with_chunk_size -> chunk_size: usize,
+    with_use_combiner -> use_combiner: bool,
+    with_task_timeout -> task_timeout: Duration,
+    with_max_retries -> max_retries: u32,
+});
 
 impl Default for MapReduceConfig {
     fn default() -> Self {

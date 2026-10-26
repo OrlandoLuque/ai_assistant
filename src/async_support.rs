@@ -542,6 +542,13 @@ pub struct AsyncRetryConfig {
     pub backoff_factor: f64,
 }
 
+with_setters!(AsyncRetryConfig {
+    with_max_attempts -> max_attempts: usize,
+    with_initial_delay -> initial_delay: Duration,
+    with_max_delay -> max_delay: Duration,
+    with_backoff_factor -> backoff_factor: f64,
+});
+
 impl Default for AsyncRetryConfig {
     fn default() -> Self {
         Self {

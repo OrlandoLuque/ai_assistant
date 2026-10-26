@@ -157,6 +157,24 @@ pub struct RagDebugConfig {
     pub feature_filter: Vec<String>,
 }
 
+with_setters!(RagDebugConfig {
+    with_enabled -> enabled: bool,
+    with_level -> level: RagDebugLevel,
+    with_log_to_file -> log_to_file: bool,
+    with_log_path -> log_path: Option<PathBuf>,
+    with_log_to_stderr -> log_to_stderr: bool,
+    with_include_timestamps -> include_timestamps: bool,
+    with_include_timing -> include_timing: bool,
+    with_max_entries -> max_entries: usize,
+    with_log_chunks -> log_chunks: bool,
+    with_log_llm_details -> log_llm_details: bool,
+    with_log_embeddings -> log_embeddings: bool,
+    with_log_scores -> log_scores: bool,
+    with_pretty_json -> pretty_json: bool,
+    with_log_rotation -> log_rotation: Option<usize>,
+    with_feature_filter -> feature_filter: Vec<String>,
+});
+
 impl Default for RagDebugConfig {
     fn default() -> Self {
         Self {

@@ -785,6 +785,14 @@ pub struct WsReconnectConfig {
     pub jitter: bool,
 }
 
+with_setters!(WsReconnectConfig {
+    with_max_attempts -> max_attempts: u32,
+    with_initial_backoff -> initial_backoff: Duration,
+    with_max_backoff -> max_backoff: Duration,
+    with_backoff_multiplier -> backoff_multiplier: f64,
+    with_jitter -> jitter: bool,
+});
+
 impl Default for WsReconnectConfig {
     fn default() -> Self {
         Self {

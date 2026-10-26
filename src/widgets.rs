@@ -676,6 +676,16 @@ pub struct RagWidgetConfig {
     pub conversation_tooltip: String,
 }
 
+with_setters!(RagWidgetConfig {
+    with_knowledge_rag_editable -> knowledge_rag_editable: bool,
+    with_conversation_rag_editable -> conversation_rag_editable: bool,
+    with_show_context_full_hint -> show_context_full_hint: bool,
+    with_knowledge_label -> knowledge_label: String,
+    with_conversation_label -> conversation_label: String,
+    with_knowledge_tooltip -> knowledge_tooltip: String,
+    with_conversation_tooltip -> conversation_tooltip: String,
+});
+
 impl Default for RagWidgetConfig {
     fn default() -> Self {
         Self {
@@ -1041,6 +1051,21 @@ pub struct NotesManagerConfig {
     /// Knowledge notes editor title
     pub knowledge_title: String,
 }
+
+with_setters!(NotesManagerConfig {
+    with_session_enabled -> session_enabled: bool,
+    with_global_enabled -> global_enabled: bool,
+    with_knowledge_enabled -> knowledge_enabled: bool,
+    with_session_label -> session_label: String,
+    with_global_label -> global_label: String,
+    with_knowledge_label -> knowledge_label: String,
+    with_session_tooltip -> session_tooltip: String,
+    with_global_tooltip -> global_tooltip: String,
+    with_knowledge_tooltip -> knowledge_tooltip: String,
+    with_session_title -> session_title: String,
+    with_global_title -> global_title: String,
+    with_knowledge_title -> knowledge_title: String,
+});
 
 impl Default for NotesManagerConfig {
     fn default() -> Self {
@@ -1550,6 +1575,18 @@ pub struct NotesEditorConfig {
     /// Whether knowledge notes are enabled
     pub knowledge_notes_enabled: bool,
 }
+
+with_setters!(NotesEditorConfig {
+    with_session_button_label -> session_button_label: String,
+    with_global_button_label -> global_button_label: String,
+    with_knowledge_button_label -> knowledge_button_label: String,
+    with_session_tooltip -> session_tooltip: String,
+    with_global_tooltip -> global_tooltip: String,
+    with_knowledge_tooltip -> knowledge_tooltip: String,
+    with_session_notes_enabled -> session_notes_enabled: bool,
+    with_global_notes_enabled -> global_notes_enabled: bool,
+    with_knowledge_notes_enabled -> knowledge_notes_enabled: bool,
+});
 
 impl Default for NotesEditorConfig {
     fn default() -> Self {
@@ -3757,6 +3794,15 @@ pub struct KnowledgeSelectorConfig {
     /// Show document stats (chunk count) next to each source
     pub show_stats: bool,
 }
+
+with_setters!(KnowledgeSelectorConfig {
+    with_label -> label: String,
+    with_allow_none -> allow_none: bool,
+    with_allow_all -> allow_all: bool,
+    with_allow_multi -> allow_multi: bool,
+    with_width -> width: f32,
+    with_show_stats -> show_stats: bool,
+});
 
 impl Default for KnowledgeSelectorConfig {
     fn default() -> Self {

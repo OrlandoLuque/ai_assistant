@@ -113,6 +113,14 @@ pub struct AgentConfig {
     pub system_prompt: Option<String>,
 }
 
+with_setters!(AgentConfig {
+    with_max_retries -> max_retries: usize,
+    with_max_steps -> max_steps: usize,
+    with_stop_on_error -> stop_on_error: bool,
+    with_system_prompt -> system_prompt: Option<String>,
+    with_verbose -> verbose: bool,
+});
+
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {

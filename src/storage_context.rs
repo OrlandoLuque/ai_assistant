@@ -31,6 +31,14 @@ pub struct StorageConfig {
     pub schema_version: u32,
 }
 
+with_setters!(StorageConfig {
+    with_data_dir -> data_dir: PathBuf,
+    with_auto_save_interval_secs -> auto_save_interval_secs: u64,
+    with_restore_on_startup -> restore_on_startup: bool,
+    with_persist_on_shutdown -> persist_on_shutdown: bool,
+    with_schema_version -> schema_version: u32,
+});
+
 impl Default for StorageConfig {
     fn default() -> Self {
         Self {

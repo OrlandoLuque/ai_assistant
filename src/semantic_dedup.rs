@@ -24,6 +24,13 @@ pub struct SemanticDedupConfig {
     pub max_groups_per_batch: usize,
 }
 
+with_setters!(SemanticDedupConfig {
+    with_identical_threshold -> identical_threshold: f32,
+    with_similar_threshold -> similar_threshold: f32,
+    with_enable_fusion -> enable_fusion: bool,
+    with_max_groups_per_batch -> max_groups_per_batch: usize,
+});
+
 impl Default for SemanticDedupConfig {
     fn default() -> Self {
         Self {

@@ -35,6 +35,14 @@ pub struct ConfigSearchConfig {
     pub objective: SearchObjective,
 }
 
+with_setters!(ConfigSearchConfig {
+    with_confidence_level -> confidence_level: f64,
+    with_min_samples -> min_samples: usize,
+    with_max_evaluations -> max_evaluations: usize,
+    with_adaptive_priority -> adaptive_priority: bool,
+    with_objective -> objective: SearchObjective,
+});
+
 impl Default for ConfigSearchConfig {
     fn default() -> Self {
         Self {

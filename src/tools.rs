@@ -948,6 +948,13 @@ pub struct ToolRetryConfig {
     pub retry_on_error: bool,
 }
 
+with_setters!(ToolRetryConfig {
+    with_max_retries -> max_retries: u32,
+    with_backoff_base_ms -> backoff_base_ms: u64,
+    with_backoff_multiplier -> backoff_multiplier: f64,
+    with_retry_on_error -> retry_on_error: bool,
+});
+
 impl Default for ToolRetryConfig {
     fn default() -> Self {
         Self {

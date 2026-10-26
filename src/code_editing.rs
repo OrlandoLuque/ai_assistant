@@ -35,6 +35,17 @@ pub struct LanguageConfig {
     pub extensions: Vec<String>,
 }
 
+with_setters!(LanguageConfig {
+    with_language -> language: String,
+    with_line_comment -> line_comment: Option<String>,
+    with_block_comment_start -> block_comment_start: Option<String>,
+    with_block_comment_end -> block_comment_end: Option<String>,
+    with_string_delimiters -> string_delimiters: Vec<char>,
+    with_indent_size -> indent_size: usize,
+    with_use_tabs -> use_tabs: bool,
+    with_extensions -> extensions: Vec<String>,
+});
+
 impl LanguageConfig {
     /// Get configuration for Rust
     pub fn rust() -> Self {

@@ -183,6 +183,16 @@ pub struct FaithfulnessConfig {
     pub max_llm_calls: usize,
 }
 
+with_setters!(FaithfulnessConfig {
+    with_decomposition_method -> decomposition_method: DecompositionMethod,
+    with_nli_method -> nli_method: NliMethod,
+    with_min_faithfulness_score -> min_faithfulness_score: f64,
+    with_ungrounded_strategy -> ungrounded_strategy: UngroundedClaimStrategy,
+    with_word_overlap_entailment_threshold -> word_overlap_entailment_threshold: f64,
+    with_word_overlap_contradiction_threshold -> word_overlap_contradiction_threshold: f64,
+    with_max_llm_calls -> max_llm_calls: usize,
+});
+
 impl Default for FaithfulnessConfig {
     fn default() -> Self {
         Self {

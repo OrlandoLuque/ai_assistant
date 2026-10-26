@@ -115,6 +115,25 @@ pub struct PromotionContext<'a> {
     pub recent_invocations: u64,
 }
 
+impl<'a> PromotionContext<'a> {
+    /// All three fields are required, so this is the whole construction path.
+    ///
+    /// Written by hand rather than through `with_setters!`: the macro takes a
+    /// bare identifier and this type carries a lifetime. A context is also not
+    /// a configuration — there is nothing here to leave at a default.
+    pub fn new(
+        skill: &'a SkillDefinition,
+        caller_capabilities: &'a CapabilitySet,
+        recent_invocations: u64,
+    ) -> Self {
+        Self {
+            skill,
+            caller_capabilities,
+            recent_invocations,
+        }
+    }
+}
+
 /// A single gate. Implementations are caller-supplied so the crate stays
 /// policy-agnostic. Provide implementations of common gates (e.g.
 /// `IntegrityGate`, `ThresholdGate`) in this module.

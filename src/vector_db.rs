@@ -299,6 +299,15 @@ pub struct VectorDbConfig {
     pub qdrant_api_key: Option<String>,
 }
 
+with_setters!(VectorDbConfig {
+    with_dimensions -> dimensions: usize,
+    with_distance_metric -> distance_metric: DistanceMetric,
+    with_max_vectors -> max_vectors: Option<usize>,
+    with_collection_name -> collection_name: String,
+    with_qdrant_url -> qdrant_url: Option<String>,
+    with_qdrant_api_key -> qdrant_api_key: Option<String>,
+});
+
 impl Default for VectorDbConfig {
     fn default() -> Self {
         Self {

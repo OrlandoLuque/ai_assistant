@@ -205,6 +205,14 @@ pub struct AcademicSearchConfig {
     pub timeout: Duration,
 }
 
+with_setters!(AcademicSearchConfig {
+    with_max_results -> max_results: usize,
+    with_year_range -> year_range: Option<(u16, u16)>,
+    with_fields_of_study -> fields_of_study: Vec<String>,
+    with_sort_by -> sort_by: SortField,
+    with_timeout -> timeout: Duration,
+});
+
 impl Default for AcademicSearchConfig {
     fn default() -> Self {
         Self {

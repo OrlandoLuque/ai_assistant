@@ -169,6 +169,13 @@ pub struct ReplConfig {
     pub show_timestamps: bool,
 }
 
+with_setters!(ReplConfig {
+    with_prompt_string -> prompt_string: String,
+    with_max_history -> max_history: usize,
+    with_show_metrics -> show_metrics: bool,
+    with_show_timestamps -> show_timestamps: bool,
+});
+
 impl Default for ReplConfig {
     fn default() -> Self {
         Self {

@@ -40,6 +40,13 @@ pub struct RedisConfig {
     pub key_prefix: String,
 }
 
+with_setters!(RedisConfig {
+    with_url -> url: String,
+    with_pool_size -> pool_size: usize,
+    with_connect_timeout_ms -> connect_timeout_ms: u64,
+    with_key_prefix -> key_prefix: String,
+});
+
 fn default_pool_size() -> usize {
     10
 }

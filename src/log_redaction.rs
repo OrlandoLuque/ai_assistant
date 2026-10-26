@@ -40,6 +40,17 @@ pub struct RedactionConfig {
     pub replacement: String,
 }
 
+with_setters!(RedactionConfig {
+    with_enabled -> enabled: bool,
+    with_redact_api_keys -> redact_api_keys: bool,
+    with_redact_auth_tokens -> redact_auth_tokens: bool,
+    with_redact_url_passwords -> redact_url_passwords: bool,
+    with_redact_pem_blocks -> redact_pem_blocks: bool,
+    with_redact_emails -> redact_emails: bool,
+    with_custom_patterns -> custom_patterns: Vec<String>,
+    with_replacement -> replacement: String,
+});
+
 impl Default for RedactionConfig {
     fn default() -> Self {
         Self {

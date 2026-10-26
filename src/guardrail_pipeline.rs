@@ -676,6 +676,12 @@ pub struct StreamingGuardrailConfig {
     pub max_buffer_size: usize,
 }
 
+with_setters!(StreamingGuardrailConfig {
+    with_min_buffer_size -> min_buffer_size: usize,
+    with_eval_interval -> eval_interval: usize,
+    with_max_buffer_size -> max_buffer_size: usize,
+});
+
 impl Default for StreamingGuardrailConfig {
     fn default() -> Self {
         Self {
@@ -1482,6 +1488,15 @@ pub struct OutputPiiConfig {
     pub check_ip_addresses: bool,
 }
 
+with_setters!(OutputPiiConfig {
+    with_action -> action: PiiAction,
+    with_check_emails -> check_emails: bool,
+    with_check_phones -> check_phones: bool,
+    with_check_ssns -> check_ssns: bool,
+    with_check_credit_cards -> check_credit_cards: bool,
+    with_check_ip_addresses -> check_ip_addresses: bool,
+});
+
 impl Default for OutputPiiConfig {
     fn default() -> Self {
         Self {
@@ -1947,6 +1962,10 @@ impl Guard for OutputPiiGuard {
 pub struct OutputToxicityConfig {
     pub severity_threshold: f64,
 }
+
+with_setters!(OutputToxicityConfig {
+    with_severity_threshold -> severity_threshold: f64,
+});
 
 impl Default for OutputToxicityConfig {
     fn default() -> Self {

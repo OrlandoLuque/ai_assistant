@@ -801,6 +801,12 @@ pub struct RedTeamConfig {
     pub min_severity: AttackSeverity,
 }
 
+with_setters!(RedTeamConfig {
+    with_attacks_per_category -> attacks_per_category: usize,
+    with_categories -> categories: Vec<AttackCategory>,
+    with_min_severity -> min_severity: AttackSeverity,
+});
+
 impl Default for RedTeamConfig {
     fn default() -> Self {
         Self {

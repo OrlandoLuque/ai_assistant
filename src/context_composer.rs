@@ -171,6 +171,15 @@ pub struct ContextComposerConfig {
     pub hybrid_compaction: bool,
 }
 
+with_setters!(ContextComposerConfig {
+    with_total_budget -> total_budget: usize,
+    with_response_reserve -> response_reserve: usize,
+    with_section_budgets -> section_budgets: Vec<SectionBudget>,
+    with_overflow_detection -> overflow_detection: bool,
+    with_overflow_thresholds -> overflow_thresholds: OverflowThresholds,
+    with_hybrid_compaction -> hybrid_compaction: bool,
+});
+
 impl Default for ContextComposerConfig {
     fn default() -> Self {
         Self {

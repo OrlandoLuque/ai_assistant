@@ -472,6 +472,23 @@ pub struct RagPipelineConfig {
     pub graph_max_depth: usize,
 }
 
+with_setters!(RagPipelineConfig {
+    with_rag_config -> rag_config: RagTierConfig,
+    with_timeout_ms -> timeout_ms: Option<u64>,
+    with_llm_timeout_ms -> llm_timeout_ms: u64,
+    with_continue_on_error -> continue_on_error: bool,
+    with_min_chunks -> min_chunks: usize,
+    with_enable_caching -> enable_caching: bool,
+    with_dedup_threshold -> dedup_threshold: f32,
+    with_max_query_variants -> max_query_variants: usize,
+    with_max_sub_queries -> max_sub_queries: usize,
+    with_rerank_top_k -> rerank_top_k: usize,
+    with_compression_target_tokens -> compression_target_tokens: usize,
+    with_sentence_window_size -> sentence_window_size: usize,
+    with_agentic_max_iterations -> agentic_max_iterations: usize,
+    with_graph_max_depth -> graph_max_depth: usize,
+});
+
 impl Default for RagPipelineConfig {
     fn default() -> Self {
         Self {

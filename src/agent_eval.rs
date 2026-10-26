@@ -200,6 +200,13 @@ pub struct AnalyzerConfig {
     pub efficiency_weight: f64,
 }
 
+with_setters!(AnalyzerConfig {
+    with_include_failed_steps -> include_failed_steps: bool,
+    with_cost_weight -> cost_weight: f64,
+    with_time_weight -> time_weight: f64,
+    with_efficiency_weight -> efficiency_weight: f64,
+});
+
 impl Default for AnalyzerConfig {
     fn default() -> Self {
         Self {

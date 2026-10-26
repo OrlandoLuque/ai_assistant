@@ -163,6 +163,17 @@ pub struct QualityConfig {
     pub llm_enhanced: bool,
 }
 
+with_setters!(QualityConfig {
+    with_min_response_length -> min_response_length: usize,
+    with_max_response_length -> max_response_length: usize,
+    with_check_repetition -> check_repetition: bool,
+    with_repetition_threshold -> repetition_threshold: f32,
+    with_check_relevance -> check_relevance: bool,
+    with_check_code -> check_code: bool,
+    with_check_safety -> check_safety: bool,
+    with_llm_enhanced -> llm_enhanced: bool,
+});
+
 impl Default for QualityConfig {
     fn default() -> Self {
         Self {

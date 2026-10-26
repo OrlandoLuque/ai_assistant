@@ -53,6 +53,16 @@ pub struct ExtractionConfig {
     pub llm_enhanced: bool,
 }
 
+with_setters!(ExtractionConfig {
+    with_min_confidence -> min_confidence: f64,
+    with_max_extractions_per_turn -> max_extractions_per_turn: usize,
+    with_extract_facts -> extract_facts: bool,
+    with_extract_entities -> extract_entities: bool,
+    with_extract_procedures -> extract_procedures: bool,
+    with_extract_preferences -> extract_preferences: bool,
+    with_llm_enhanced -> llm_enhanced: bool,
+});
+
 impl Default for ExtractionConfig {
     fn default() -> Self {
         Self {

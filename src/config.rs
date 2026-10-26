@@ -271,6 +271,21 @@ pub struct AiConfig {
     pub stream_timeouts: StreamTimeouts,
 }
 
+with_setters!(AiConfig {
+    with_custom_url -> custom_url: String,
+    with_embedding_model -> embedding_model: Option<String>,
+    with_kobold_url -> kobold_url: String,
+    with_llamacpp_url -> llamacpp_url: String,
+    with_lm_studio_url -> lm_studio_url: String,
+    with_local_ai_url -> local_ai_url: String,
+    with_mmproj_path -> mmproj_path: Option<std::path::PathBuf>,
+    with_ollama_num_ctx -> ollama_num_ctx: Option<usize>,
+    with_ollama_url -> ollama_url: String,
+    with_stream_timeouts -> stream_timeouts: StreamTimeouts,
+    with_text_gen_webui_url -> text_gen_webui_url: String,
+    with_vllm_url -> vllm_url: String,
+});
+
 /// Plazos de red de una respuesta en **streaming**, en segundos.
 ///
 /// Dos valores y no uno, porque un stream de tokens no se vigila con un plazo

@@ -27,6 +27,15 @@ pub struct EmbeddingCacheConfig {
     pub cache_path: Option<String>,
 }
 
+with_setters!(EmbeddingCacheConfig {
+    with_max_entries -> max_entries: usize,
+    with_max_memory_bytes -> max_memory_bytes: usize,
+    with_ttl -> ttl: Duration,
+    with_enable_lru -> enable_lru: bool,
+    with_persist -> persist: bool,
+    with_cache_path -> cache_path: Option<String>,
+});
+
 impl Default for EmbeddingCacheConfig {
     fn default() -> Self {
         Self {

@@ -79,6 +79,14 @@ pub struct VerificationConfig {
     pub max_age_days: u64,
 }
 
+with_setters!(VerificationConfig {
+    with_min_confidence -> min_confidence: f64,
+    with_min_sources -> min_sources: usize,
+    with_reliability_weight -> reliability_weight: f64,
+    with_check_freshness -> check_freshness: bool,
+    with_max_age_days -> max_age_days: u64,
+});
+
 impl Default for VerificationConfig {
     fn default() -> Self {
         Self {

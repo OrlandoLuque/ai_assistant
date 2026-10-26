@@ -372,6 +372,14 @@ pub struct MultiModalConfig {
     pub include_modalities: Vec<ModalityType>,
 }
 
+with_setters!(MultiModalConfig {
+    with_text_weight -> text_weight: f64,
+    with_image_weight -> image_weight: f64,
+    with_top_k -> top_k: usize,
+    with_min_score -> min_score: f64,
+    with_include_modalities -> include_modalities: Vec<ModalityType>,
+});
+
 impl Default for MultiModalConfig {
     fn default() -> Self {
         Self {

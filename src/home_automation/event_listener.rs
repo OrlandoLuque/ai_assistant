@@ -21,6 +21,13 @@ pub struct EventListenerConfig {
     pub entity_filter: Vec<String>,
 }
 
+with_setters!(EventListenerConfig {
+    with_auto_start -> auto_start: bool,
+    with_reconnect_delay_ms -> reconnect_delay_ms: u64,
+    with_max_reconnect_attempts -> max_reconnect_attempts: u32,
+    with_entity_filter -> entity_filter: Vec<String>,
+});
+
 impl Default for EventListenerConfig {
     fn default() -> Self {
         Self {

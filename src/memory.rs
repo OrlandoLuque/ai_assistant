@@ -161,6 +161,16 @@ pub struct MemoryConfig {
     pub consolidation_threshold: f32,
 }
 
+with_setters!(MemoryConfig {
+    with_max_memories -> max_memories: usize,
+    with_decay_half_life_days -> decay_half_life_days: f64,
+    with_min_importance -> min_importance: f32,
+    with_summarize_threshold -> summarize_threshold: usize,
+    with_max_recall_results -> max_recall_results: usize,
+    with_auto_consolidate -> auto_consolidate: bool,
+    with_consolidation_threshold -> consolidation_threshold: f32,
+});
+
 impl Default for MemoryConfig {
     fn default() -> Self {
         Self {

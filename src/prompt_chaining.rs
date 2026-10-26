@@ -29,6 +29,14 @@ pub struct ChainConfig {
     pub cache_intermediates: bool,
 }
 
+with_setters!(ChainConfig {
+    with_max_steps -> max_steps: usize,
+    with_step_timeout -> step_timeout: Duration,
+    with_chain_timeout -> chain_timeout: Duration,
+    with_continue_on_error -> continue_on_error: bool,
+    with_cache_intermediates -> cache_intermediates: bool,
+});
+
 impl Default for ChainConfig {
     fn default() -> Self {
         Self {

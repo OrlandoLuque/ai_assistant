@@ -251,6 +251,11 @@ pub struct HfConfig {
     pub timeout: Duration,
 }
 
+with_setters!(HfConfig {
+    with_base_url -> base_url: String,
+    with_timeout -> timeout: Duration,
+});
+
 impl HfConfig {
     pub fn new() -> Self {
         Self {

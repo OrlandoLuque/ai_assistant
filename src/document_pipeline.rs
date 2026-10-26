@@ -294,6 +294,12 @@ pub struct DocumentPipelineConfig {
     pub reuse_container: bool,
 }
 
+with_setters!(DocumentPipelineConfig {
+    with_image -> image: String,
+    with_timeout -> timeout: Duration,
+    with_reuse_container -> reuse_container: bool,
+});
+
 impl Default for DocumentPipelineConfig {
     fn default() -> Self {
         Self {

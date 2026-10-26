@@ -152,6 +152,59 @@
 #![allow(clippy::map_entry)]
 
 // =============================================================================
+// INTERNAL MACROS
+// =============================================================================
+//
+// Defined here, before the first `mod`, because `macro_rules!` is visible to the
+// modules declared *after* it and to nothing before. Not exported: it generates
+// public API, it is not public API itself.
+
+/// Generates `with_*` setters for a `#[non_exhaustive]` configuration struct.
+///
+/// `#[non_exhaustive]` forbids the struct-literal syntax outside this crate —
+/// including `..Default::default()`. So a consumer who only has `Default` can
+/// read the default value and **change nothing**, which is half a contract: the
+/// attribute exists so that adding a field tomorrow does not break anybody, and
+/// it only works if there is another way in. This macro is that other way.
+///
+/// The setter name is spelled out rather than derived from the field, because
+/// building an identifier from a fragment needs a proc-macro and this crate has
+/// none. Writing both is also what lets `scripts/check_config_constructible.py`
+/// verify that **every** field has a setter: that gate is what stops the next
+/// config from shipping unconfigurable.
+///
+/// ```ignore
+/// with_setters!(SearchConfig {
+///     with_max_results -> max_results: usize,
+///     with_providers   -> providers: Vec<Provider>,
+/// });
+/// ```
+///
+/// Attributes written before a line are copied onto the method, which is how a
+/// `#[cfg(feature = "...")]` field keeps its setter under the same gate.
+macro_rules! with_setters {
+    ($ty:ident {
+        $( $(#[$fattr:meta])* $setter:ident -> $field:ident : $fty:ty ),* $(,)?
+    }) => {
+        impl $ty {
+            $(
+                $(#[$fattr])*
+                #[doc = concat!("Sets `", stringify!($field), "` and returns `self`.")]
+                #[doc = ""]
+                #[doc = concat!("Chainable setter for [`", stringify!($ty), "`], which is")]
+                #[doc = "`#[non_exhaustive]` and therefore cannot be built with a struct"]
+                #[doc = "literal from another crate."]
+                #[must_use]
+                pub fn $setter(mut self, value: $fty) -> Self {
+                    self.$field = value;
+                    self
+                }
+            )*
+        }
+    };
+}
+
+// =============================================================================
 // CORE MODULES (always available)
 // =============================================================================
 

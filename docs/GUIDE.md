@@ -11104,3 +11104,88 @@ The cost module is hardened against 10 attack vectors catalogued in `docs/IMPROV
 - **Negative pricing** → `estimated_cost_saved()` clamps `input_cost_per_million` to `>= 0.0`
 
 For concurrent use, wrap `CostDashboard` in `Arc<Mutex<_>>` — the struct itself is single-threaded by design.
+## 192. Configuring a `#[non_exhaustive]` Config: `with_*` Setters (V446)
+
+Nearly every configuration type in this crate is `#[non_exhaustive]`. That
+attribute exists for you: a field added in 0.2.410 will not break code written
+against 0.2.405. What it costs is the struct **expression**, `..Default::default()`
+included:
+
+```rust,ignore
+// error[E0639]: cannot create non-exhaustive struct using struct expression
+let cfg = VectorDbConfig { dimensions: 1536, ..Default::default() };
+```
+
+What it does **not** cost is assigning to a field of a value you already own —
+every field of every config here is `pub`, so this always worked and still does:
+
+```rust,ignore
+let mut cfg = VectorDbConfig::default();
+cfg.dimensions = 1536;
+```
+
+That is the honest shape of the problem, measured with two throwaway crates
+rather than remembered: not a locked door, a door you can only go through one
+statement at a time. You could not build a config in argument position, could
+not chain, and needed a `mut` binding for a value you were about to hand away.
+
+Since V446 you can do it in one expression:
+
+```rust
+use ai_assistant::VectorDbConfig;
+
+let cfg = VectorDbConfig::default()
+    .with_dimensions(1536)
+    .with_collection_name("papers".to_string());
+```
+
+Every public field of every input config has a `with_<field>` that takes the
+field's own type and returns `Self`. There are **204** such types; 17 more have a
+dedicated `*Builder` (used where there are required fields or validation at
+construction) and 15 have a `new` that takes the values with no sensible default
+— `S2SConfig::new(model_id, input_format, output_format, capability)`, for
+instance, because guessing an audio format would send the wrong bytes to the
+model.
+
+### The case that *was* a locked door
+
+A config with no `Default` **and** no function returning it cannot be obtained at
+any price, and there setters are no help at all. `MockHttpServer` (N159) was one:
+a test double nobody outside the crate could point anywhere. The gate calls this
+class `NO_SEED` and keeps it separate from the merely awkward case, because the
+fix is different — a producer, not a setter.
+
+Measured 2026-10-26: of 316 `#[non_exhaustive]` public structs, **174 that a
+public function takes as an argument** were in one of the two states. Both cases
+that got noticed were noticed the hard way, months apart, by somebody trying to
+use the library.
+
+### Unit tests cannot see this, by construction
+
+`#[non_exhaustive]` does not apply inside the declaring crate, so a unit test
+builds these with a literal and passes. The instruments that *can* see it are
+doctests — they compile as a separate crate — and a real consumer crate. This is
+the same blind spot as the 11 unbuildable core types found in V317.
+
+It is enforced by `scripts/check_config_constructible.py`, a CI gate that fails
+on `NO_SEED`, on a type whose fields cannot be set in one expression, and on
+setters that do not cover every public field. That last half is the one that
+matters going forward: a config that grows a field without growing its setter is
+a hole that only a consumer finds.
+
+### Setters whose name is not `with_<field>`
+
+Some predate the sweep and read better: `AiConfig::with_model` sets
+`selected_model`. The gate reads a setter's **body**, not its name, so it counts
+`self.selected_model = ...` as covering that field and does not demand a second
+setter. Hand-written setters stay as they are.
+
+### Three types are deliberately still closed
+
+`SkillDefinition`, `WasmArtifact` and `ConfigSearchResult` are records the
+library should produce, not configurations you fill in: they carry computed
+hashes, signatures and status labels. Handing out a setter for
+`ed25519_sig_hex` would be handing out a way to write a provenance by hand. They
+are listed with their reasons in
+`scripts/config_constructible_baseline.toml`, and what they need is a producer,
+which is design work rather than a setter.

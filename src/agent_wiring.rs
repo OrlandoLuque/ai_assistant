@@ -716,6 +716,15 @@ pub struct SupervisorConfig {
     pub supervisor_model: Option<String>,
 }
 
+with_setters!(SupervisorConfig {
+    with_enabled -> enabled: bool,
+    with_idle_streak_threshold -> idle_streak_threshold: usize,
+    with_budget_warning_percent -> budget_warning_percent: f64,
+    with_iteration_warning_margin -> iteration_warning_margin: usize,
+    with_min_interval -> min_interval: Duration,
+    with_supervisor_model -> supervisor_model: Option<String>,
+});
+
 impl Default for SupervisorConfig {
     fn default() -> Self {
         Self {

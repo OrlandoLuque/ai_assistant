@@ -55,6 +55,12 @@ pub struct ContainerSandboxConfig {
     pub shared_folder_path: Option<std::path::PathBuf>,
 }
 
+with_setters!(ContainerSandboxConfig {
+    with_reuse_containers -> reuse_containers: bool,
+    with_sandbox_config -> sandbox_config: SandboxConfig,
+    with_shared_folder_path -> shared_folder_path: Option<std::path::PathBuf>,
+});
+
 impl ContainerSandboxConfig {
     /// Get the Docker image for a language.
     pub fn image_for(&self, lang: &Language) -> Option<&str> {
@@ -435,6 +441,14 @@ pub struct SandboxSelectorConfig {
     /// Whether network access is allowed inside the sandbox.
     pub network_enabled: bool,
 }
+
+with_setters!(SandboxSelectorConfig {
+    with_preferred_backends -> preferred_backends: Vec<String>,
+    with_max_memory_mb -> max_memory_mb: u64,
+    with_max_cpu_percent -> max_cpu_percent: f64,
+    with_max_runtime_secs -> max_runtime_secs: u64,
+    with_network_enabled -> network_enabled: bool,
+});
 
 impl Default for SandboxSelectorConfig {
     fn default() -> Self {

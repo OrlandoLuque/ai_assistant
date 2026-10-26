@@ -5,6 +5,115 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v323 (2026-10-27) - V446: un config que solo se puede configurar de uno en uno (0.2.406)
+
+Tarea N78, decidida por el autor el 2026-10-26. **1.065 setters `with_*` sobre 204 tipos**,
+mas una puerta de CI que impide el 205.
+
+### Primero, lo que `#[non_exhaustive]` hace de verdad
+
+Esto lo escribi mal en la primera version de esta entrada, y lo arregle **midiendolo** con
+dos crates de juguete (2026-10-27) en vez de recordarlo:
+
+```rust
+// crate B, consumiendo la crate A
+let _y = a::PubFields { a: 1, ..Default::default() };   // error[E0639]
+let mut z = a::PubFields::default();  z.a = 1;          // COMPILA Y CORRE
+```
+
+El atributo rechaza la **expresion** de struct, con `..Default::default()` incluido. **No**
+rechaza asignar a un campo `pub` de un valor que ya tienes. Y los 239 tipos de entrada de
+esta crate tienen todos sus campos `pub`, asi que un consumidor **no estaba encerrado** en
+los que tienen `Default`: estaba obligado a una variable `mut` y una sentencia por campo, sin
+poder construir uno en posicion de argumento ni encadenar.
+
+Eso es un defecto de ergonomia, no un muro --- y decirlo bien importa, porque el muro
+existe en otro sitio y es lo que esta puerta tiene que distinguir.
+
+### El muro de verdad: cuando NADA devuelve un valor
+
+Un tipo sin `Default` **y** sin ninguna funcion que lo devuelva no se puede obtener de
+ninguna manera, y ahi los setters no sirven para nada. `MockHttpServer` (N159) era uno: un
+doble de pruebas que nadie de fuera podia apuntar a ningun sitio. La puerta llama a esa clase
+`NO_SEED` y la mantiene **aparte** de la incomoda, porque el arreglo es otro --- un productor,
+no un setter.
+
+Los dos casos que se detectaron antes de esta tarea se detectaron por las malas, con meses de
+diferencia, por alguien intentando usar la libreria: `MockHttpServer` (muro) y
+`VectorDbConfig.dimensions` (incomodo).
+
+### Lo que hay ahora
+
+| Clase | Antes | Ahora |
+|---|---|---|
+| Setters `with_*` completos | 39 | **204** |
+| `*Builder` dedicado | 17 | 17 |
+| `new` que toma valores | 14 | 15 |
+| **Sin camino de una expresion** | **174** | **3** |
+
+```rust
+let cfg = VectorDbConfig::default()
+    .with_dimensions(1536)
+    .with_collection_name("papers".to_string());
+```
+
+Los 17 `*Builder` que ya existian **se quedan**, por decision del autor: un builder se gana su
+tipo extra cuando hay campos obligatorios o validacion al construir, y estos configs son
+todo-opcional con `Default`.
+
+Tres tipos siguen cerrados **a proposito** --- `SkillDefinition`, `WasmArtifact`,
+`ConfigSearchResult`. No son configuraciones: son registros con hashes calculados, firmas y
+etiquetas de estado. Un `with_ed25519_sig_hex` seria repartir una forma de escribir una
+procedencia a mano. Estan en `scripts/config_constructible_baseline.toml` con su motivo y en
+la tarea N170.
+
+### El macro escribe los dos nombres, y eso es deliberado
+
+```rust
+with_setters!(VectorDbConfig {
+    with_dimensions -> dimensions: usize,
+    with_collection_name -> collection_name: String,
+});
+```
+
+Construir un identificador a partir de un fragmento necesita un proc-macro y esta crate no
+tiene ninguno. Pero escribir los dos tiene premio: **la puerta puede comprobar que cada campo
+tiene su setter**. Un config que crece un campo sin crecer su setter se ve con un regex, en vez
+de ser un hueco que solo encuentra un consumidor. Esa mitad vale mas que el arreglo masivo:
+N6 (V247) ya hizo esto una vez y cerro sobre 58 de ~290 tipos.
+
+### Cuatro cosas que la puerta aprendio equivocandose primero
+
+1. **`^impl` anclado a la columna 0 no ve los `impl` dentro de un modulo.** `impl Default for
+   VadConfig` esta indentado cuatro espacios; con eso la medicion dijo que siete tipos no
+   tenian `Default`. El 181 de la tarea era 174.
+2. **Un setter se reconoce por su CUERPO, no por su nombre.** `AiConfig::with_model` asigna
+   `selected_model`; una regla por nombres habria pedido un segundo setter. Igual con los
+   constructores llamados `with_*` que devuelven `Self { campo, ..default }` sin asignar nada
+   --- `DiskSpillConfig::with_threshold`, `RrfOptions::with_k`.
+3. **Una lista completa de setters sobre un tipo que nadie devuelve no vale nada.** La primera
+   version solo buscaba `new`, y `HardwareInfo::detect()` no se llama `new`: habria dado por
+   buenos unos setters inservibles. Ahora cuenta cualquier funcion asociada publica que
+   devuelva el tipo.
+4. **El `>` de `->` no cierra un generico.** Partiendo campos por comas de nivel 0, un
+   `Option<Arc<dyn Fn(&str) -> f64>>` descoloco el contador y el macro recibio `,,`.
+
+El `--self-test` tiene un caso por cada una: ocho en total.
+
+### Verificacion
+
+`cargo check` y `cargo clippy --all-targets -D warnings` limpios en los DOS conjuntos de CI
+(FEATURES_STD y FEATURES_NETWORK). `cargo fmt --check` limpio --- rustfmt indenta el macro
+como cualquier otro item, y hubo que corregirlo. **9.129 tests en verde, 0 fallos.** La
+puerta: `--self-test` 8 casos; el barrido, 236 de entrada con camino, 77 salidas, 3 pendientes
+con ratchet a 3.
+
+Y la puerta de cifras del README hizo su trabajo en el acto: anadir un trabajo a `ci.yml`
+dejo en falso el «14 automated gates» del README y de la web, en los tres sitios donde esa
+cifra esta escrita.
+
+Cierra tambien **N160** y deja N170 abierta para los tres registros.
+
 ## [Unreleased] - v322 (2026-10-27) - V445b: no es un padre, son LOS CINCO (0.2.405)
 
 El motivo escrito en V445 decia que el arreglo no es alcanzable y daba el error del resolutor

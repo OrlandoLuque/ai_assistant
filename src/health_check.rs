@@ -120,6 +120,16 @@ pub struct HealthCheckConfig {
     pub check_type: HealthCheckType,
 }
 
+with_setters!(HealthCheckConfig {
+    with_interval -> interval: Duration,
+    with_timeout -> timeout: Duration,
+    with_failure_threshold -> failure_threshold: usize,
+    with_success_threshold -> success_threshold: usize,
+    with_max_history -> max_history: usize,
+    with_degraded_threshold -> degraded_threshold: Duration,
+    with_check_type -> check_type: HealthCheckType,
+});
+
 impl Default for HealthCheckConfig {
     fn default() -> Self {
         Self {

@@ -133,6 +133,14 @@ pub struct S3Config {
     pub path_style: bool,
 }
 
+with_setters!(S3Config {
+    with_access_key_id -> access_key_id: String,
+    with_bucket -> bucket: String,
+    with_region -> region: String,
+    with_secret_access_key -> secret_access_key: String,
+    with_session_token -> session_token: Option<String>,
+});
+
 impl S3Config {
     /// Create config for a standard AWS S3 bucket.
     pub fn new(bucket: &str, region: &str, access_key_id: &str, secret_access_key: &str) -> Self {
@@ -500,6 +508,10 @@ pub struct GoogleDriveConfig {
     /// Root folder ID (default: "root")
     pub root_folder_id: String,
 }
+
+with_setters!(GoogleDriveConfig {
+    with_access_token -> access_token: String,
+});
 
 impl GoogleDriveConfig {
     pub fn new(access_token: &str) -> Self {

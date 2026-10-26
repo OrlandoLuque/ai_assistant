@@ -60,6 +60,14 @@ pub struct ProcedureExport {
     pub procedures: Vec<Procedure>,
 }
 
+with_setters!(ProcedureExport {
+    with_version -> version: u32,
+    with_exported_at -> exported_at: String,
+    with_source -> source: String,
+    with_user_id -> user_id: String,
+    with_procedures -> procedures: Vec<Procedure>,
+});
+
 impl Default for ProcedureExport {
     fn default() -> Self {
         Self {
@@ -83,6 +91,12 @@ pub struct ProcedureImportOptions {
     /// If true, reset imported procedure confidence to 0.5.
     pub reset_confidence: bool,
 }
+
+with_setters!(ProcedureImportOptions {
+    with_merge -> merge: bool,
+    with_skip_duplicates -> skip_duplicates: bool,
+    with_reset_confidence -> reset_confidence: bool,
+});
 
 impl Default for ProcedureImportOptions {
     fn default() -> Self {

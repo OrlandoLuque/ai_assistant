@@ -343,6 +343,42 @@ jobs:
       - name: Run duplicate-type ratchet
         run: python3 scripts/check_duplicate_types.py
 
+  config-constructible:
+    name: Configs buildable from outside
+    runs-on: ubuntu-latest
+    # V446: fail when a `#[non_exhaustive]` struct that a public function takes as
+    # an argument cannot be configured from another crate in ONE expression.
+    #
+    # Measured with two throwaway crates (2026-10-27), because the first version of
+    # this gate was written on a belief: `#[non_exhaustive]` rejects the struct
+    # expression, `..Default::default()` included (error[E0639]), and does NOT
+    # reject assigning to a `pub` field of a value you own. So with a `Default` the
+    # consumer was not locked out --- they were pushed into a `mut` binding and one
+    # statement per field, and could not build one in argument position.
+    #
+    # Two classes, kept apart on purpose: NO_SEED is the hard lockout (nothing
+    # returns a value, `MockHttpServer` before N159), MISSING is the awkward one
+    # (`VectorDbConfig.dimensions` before N160). 174 of 316 were in one or the
+    # other.
+    #
+    # Unit tests cannot see any of this: `#[non_exhaustive]` does not apply inside
+    # the declaring crate, so they build these with a literal and pass. That is why
+    # it is a gate and not a test.
+    #
+    # It also checks COVERAGE --- every public field needs a setter --- which is the
+    # half that stops the next one: a config that grows a field without growing its
+    # setter is a silent hole that only a consumer finds.
+    steps:
+      - uses: actions/checkout@v5
+      # The self-test first: its cases include an `impl` indented inside a module
+      # (a `^impl` regex reported 7 types as having no `Default` while
+      # `impl Default for VadConfig` sat four spaces in) and a field whose type
+      # contains `->`.
+      - name: Self-test the constructibility scanner
+        run: python3 scripts/check_config_constructible.py --self-test
+      - name: Check every input config can be built
+        run: python3 scripts/check_config_constructible.py
+
   audit:
     name: Security Audit
     runs-on: ubuntu-latest

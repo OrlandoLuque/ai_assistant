@@ -1,0 +1,36 @@
+# Baseline de `check_config_constructible.py` --- tipos de ENTRADA sin camino de
+# construccion desde fuera de la crate.
+#
+# Dos secciones, porque «lo he mirado y esta bien» y «hay que hacer algo y se
+# sabe que» son afirmaciones distintas, y mezclarlas es como una exencion sin
+# argumentar sobrevive dos anos leyendose como revisada:
+#
+#   [allowed]  no hay nada que hacer. Lleva motivo, y el motivo tiene que seguir
+#              siendo verdad --- comprobarlo, no comprobar que exista.
+#   [pending]  hay que hacer algo, se sabe que, y esta en una tarea. El `ratchet`
+#              es el numero de pendientes: puede BAJAR, nunca subir, y un nombre
+#              ya arreglado hay que quitarlo (la puerta falla si se queda).
+#
+# NO hay seccion «sin triar» en este fichero: los 174 que la primera medicion
+# encontro se arreglaron en V446, y los tres de abajo estan juzgados uno a uno.
+
+[allowed]
+
+[pending]
+ratchet = 3
+
+# Los tres son del mismo tipo de problema y NO son configuraciones: son
+# REGISTROS que la libreria deberia producir, con campos calculados que un
+# consumidor no debe poder poner a mano. Un `with_*` por campo seria la respuesta
+# equivocada --- haria falta decidir que es obligatorio, que se calcula y que no
+# se toca, y eso es diseno, no un setter. Tarea #254 (N170).
+
+# 12 campos, ninguno opcional, y NADA publico lo produce: el unico sitio de toda
+# la crate que construye uno es `mock_search_result` en los tests de
+# `advanced_routing::bootstrap`. Pero `bootstrap::from_search_result` SI es
+# publica y lo toma por referencia, asi que desde fuera esa funcion es
+# inalcanzable: no hay forma de obtener el argumento. Lo que falta no es un
+# setter, es el productor (o que la funcion acepte algo mas pequeno).
+SkillDefinition = "campos calculados (content_hash_hex) y de estado (status) que el registro debe fijar; `insert()` es publica, asi que hace falta UN camino, pero decidir cual exige elegir que valor de `SkillStatus` y `SkillMode` es seguro por defecto --- un `Approved` por descuido seria un agujero"
+WasmArtifact = "lleva blake3_hex, ed25519_sig_hex y signed_by: un consumidor que los ponga a mano esta fabricando una procedencia. El verificador comprueba la firma contra la clave, asi que no es explotable, pero la forma correcta es un productor que firme, no siete setters"
+ConfigSearchResult = "no lo produce nada publico --- solo un helper de test --- y `bootstrap::from_search_result` es publica y lo pide. O falta el productor o la funcion pide demasiado; en los dos casos es diseno y no un setter"

@@ -49,6 +49,16 @@ pub struct PoolConfig {
     pub health_check_interval: Duration,
 }
 
+with_setters!(PoolConfig {
+    with_max_connections_per_host -> max_connections_per_host: usize,
+    with_max_total_connections -> max_total_connections: usize,
+    with_connect_timeout -> connect_timeout: Duration,
+    with_read_timeout -> read_timeout: Duration,
+    with_idle_timeout -> idle_timeout: Duration,
+    with_keep_alive -> keep_alive: bool,
+    with_health_check_interval -> health_check_interval: Duration,
+});
+
 impl Default for PoolConfig {
     fn default() -> Self {
         Self {

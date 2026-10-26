@@ -165,6 +165,16 @@ pub struct EnrichmentConfig {
     pub dedup_enabled: bool,
 }
 
+with_setters!(EnrichmentConfig {
+    with_sources -> sources: Vec<EnrichmentSource>,
+    with_merge_strategy -> merge_strategy: MergeStrategy,
+    with_min_enrichment_confidence -> min_enrichment_confidence: f32,
+    with_duplicate_threshold -> duplicate_threshold: f32,
+    with_max_enrichments -> max_enrichments: usize,
+    with_auto_tagging -> auto_tagging: bool,
+    with_dedup_enabled -> dedup_enabled: bool,
+});
+
 impl Default for EnrichmentConfig {
     fn default() -> Self {
         Self {

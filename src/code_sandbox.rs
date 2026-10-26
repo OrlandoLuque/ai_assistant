@@ -73,6 +73,16 @@ pub struct SandboxConfig {
     pub detect_dangerous: bool,
 }
 
+with_setters!(SandboxConfig {
+    with_timeout -> timeout: Duration,
+    with_max_output_bytes -> max_output_bytes: usize,
+    with_capture_stderr -> capture_stderr: bool,
+    with_env_vars -> env_vars: HashMap<String, String>,
+    with_work_dir -> work_dir: Option<PathBuf>,
+    with_interpreters -> interpreters: HashMap<String, String>,
+    with_detect_dangerous -> detect_dangerous: bool,
+});
+
 impl Default for SandboxConfig {
     fn default() -> Self {
         Self {

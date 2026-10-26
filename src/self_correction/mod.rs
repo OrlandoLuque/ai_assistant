@@ -187,6 +187,17 @@ pub struct SelfCorrectionConfig {
     pub ledger_path: Option<PathBuf>,
 }
 
+with_setters!(SelfCorrectionConfig {
+    with_max_attempts -> max_attempts: usize,
+    with_max_total_tokens -> max_total_tokens: usize,
+    with_max_total_cost_usd -> max_total_cost_usd: f64,
+    with_max_total_time_ms -> max_total_time_ms: u64,
+    with_min_improvement -> min_improvement: f64,
+    with_sanitize_feedback -> sanitize_feedback: bool,
+    with_sanitize_max_chars -> sanitize_max_chars: usize,
+    with_ledger_path -> ledger_path: Option<PathBuf>,
+});
+
 impl Default for SelfCorrectionConfig {
     fn default() -> Self {
         Self {

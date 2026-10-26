@@ -76,6 +76,15 @@ pub struct McpClientConfig {
     pub client_info: ClientInfo,
 }
 
+with_setters!(McpClientConfig {
+    with_url -> url: String,
+    with_auth -> auth: McpClientAuth,
+    with_timeout_ms -> timeout_ms: u64,
+    with_max_retries -> max_retries: usize,
+    with_protocol_version -> protocol_version: String,
+    with_client_info -> client_info: ClientInfo,
+});
+
 impl Default for McpClientConfig {
     fn default() -> Self {
         Self {

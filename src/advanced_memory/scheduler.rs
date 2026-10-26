@@ -35,6 +35,14 @@ pub struct SchedulerConfig {
     pub batch_size: usize,
 }
 
+with_setters!(SchedulerConfig {
+    with_batch_size -> batch_size: usize,
+    with_compression_interval_secs -> compression_interval_secs: u64,
+    with_consolidation_interval_secs -> consolidation_interval_secs: u64,
+    with_decay_interval_secs -> decay_interval_secs: u64,
+    with_gc_interval_secs -> gc_interval_secs: u64,
+});
+
 impl Default for SchedulerConfig {
     fn default() -> Self {
         Self {

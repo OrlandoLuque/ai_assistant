@@ -317,6 +317,13 @@ pub struct HybridRagConfig {
     pub min_semantic_score: f32,
 }
 
+with_setters!(HybridRagConfig {
+    with_bm25_weight -> bm25_weight: f32,
+    with_semantic_weight -> semantic_weight: f32,
+    with_semantic_enabled -> semantic_enabled: bool,
+    with_min_semantic_score -> min_semantic_score: f32,
+});
+
 impl Default for HybridRagConfig {
     fn default() -> Self {
         Self {
@@ -2185,6 +2192,14 @@ pub struct DiscourseConfig {
     /// Whether to respect paragraph breaks as boundaries
     pub respect_paragraphs: bool,
 }
+
+with_setters!(DiscourseConfig {
+    with_min_chunk_size -> min_chunk_size: usize,
+    with_max_chunk_size -> max_chunk_size: usize,
+    with_coherence_threshold -> coherence_threshold: f64,
+    with_respect_headings -> respect_headings: bool,
+    with_respect_paragraphs -> respect_paragraphs: bool,
+});
 
 impl Default for DiscourseConfig {
     fn default() -> Self {

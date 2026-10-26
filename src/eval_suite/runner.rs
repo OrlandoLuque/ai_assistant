@@ -73,6 +73,17 @@ pub struct RunConfig {
     pub prompt_template: Option<String>,
 }
 
+with_setters!(RunConfig {
+    with_samples_per_problem -> samples_per_problem: usize,
+    with_temperature -> temperature: f32,
+    with_max_tokens -> max_tokens: Option<usize>,
+    with_timeout_secs -> timeout_secs: u64,
+    with_max_retries -> max_retries: usize,
+    with_model_id -> model_id: ModelIdentifier,
+    with_chain_of_thought -> chain_of_thought: bool,
+    with_prompt_template -> prompt_template: Option<String>,
+});
+
 impl Default for RunConfig {
     fn default() -> Self {
         Self {

@@ -116,6 +116,11 @@ pub struct ProviderConfig {
     pub api_key: Option<String>,
 }
 
+with_setters!(ProviderConfig {
+    with_custom_url -> custom_url: Option<String>,
+    with_model -> model: String,
+});
+
 impl Default for ProviderConfig {
     fn default() -> Self {
         Self {

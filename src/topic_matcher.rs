@@ -46,6 +46,22 @@ pub struct TopicMatchConfig {
     pub granular_batch_size: usize,
 }
 
+with_setters!(TopicMatchConfig {
+    with_enabled -> enabled: bool,
+    with_off_topic_penalty -> off_topic_penalty: f32,
+    with_partial_match_factor -> partial_match_factor: f32,
+    with_on_topic_threshold -> on_topic_threshold: f32,
+    with_min_word_length -> min_word_length: usize,
+    with_max_keywords -> max_keywords: usize,
+    with_llm_enabled -> llm_enabled: bool,
+    with_llm_batch_size -> llm_batch_size: usize,
+    with_max_llm_calls_per_query -> max_llm_calls_per_query: usize,
+    with_autocut_enabled -> autocut_enabled: bool,
+    with_autocut_min_gap_ratio -> autocut_min_gap_ratio: f32,
+    with_granular_scoring_enabled -> granular_scoring_enabled: bool,
+    with_granular_batch_size -> granular_batch_size: usize,
+});
+
 impl Default for TopicMatchConfig {
     fn default() -> Self {
         Self {

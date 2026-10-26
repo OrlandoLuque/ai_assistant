@@ -260,6 +260,15 @@ pub struct QueueConfig {
     pub fair_scheduling: bool,
 }
 
+with_setters!(QueueConfig {
+    with_max_size -> max_size: usize,
+    with_anti_starvation -> anti_starvation: bool,
+    with_age_boost_interval -> age_boost_interval: Duration,
+    with_deadline_urgent_threshold -> deadline_urgent_threshold: Duration,
+    with_max_per_user -> max_per_user: Option<usize>,
+    with_fair_scheduling -> fair_scheduling: bool,
+});
+
 impl Default for QueueConfig {
     fn default() -> Self {
         Self {

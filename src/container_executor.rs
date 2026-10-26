@@ -164,6 +164,18 @@ pub struct ContainerConfig {
     pub container_name_prefix: String,
 }
 
+with_setters!(ContainerConfig {
+    with_docker_host -> docker_host: Option<String>,
+    with_default_timeout -> default_timeout: Duration,
+    with_default_memory_limit -> default_memory_limit: u64,
+    with_default_cpu_quota -> default_cpu_quota: i64,
+    with_allowed_bind_mount_prefixes -> allowed_bind_mount_prefixes: Vec<std::path::PathBuf>,
+    with_default_network_mode -> default_network_mode: NetworkMode,
+    with_auto_pull -> auto_pull: bool,
+    with_cleanup_policy -> cleanup_policy: ContainerCleanupPolicy,
+    with_container_name_prefix -> container_name_prefix: String,
+});
+
 impl Default for ContainerConfig {
     fn default() -> Self {
         Self {

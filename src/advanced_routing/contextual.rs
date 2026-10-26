@@ -460,6 +460,14 @@ pub struct DiscoveryConfig {
     pub discovered_rule_priority_boost: u32,
 }
 
+with_setters!(DiscoveryConfig {
+    with_max_observations -> max_observations: usize,
+    with_min_samples_per_split -> min_samples_per_split: usize,
+    with_min_gain -> min_gain: f64,
+    with_num_split_points -> num_split_points: usize,
+    with_discovered_rule_priority_boost -> discovered_rule_priority_boost: u32,
+});
+
 impl Default for DiscoveryConfig {
     fn default() -> Self {
         Self {

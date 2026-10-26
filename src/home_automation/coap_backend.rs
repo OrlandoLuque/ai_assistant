@@ -34,6 +34,14 @@ pub struct CoapConfig {
     pub max_requests_per_second: u32,
 }
 
+with_setters!(CoapConfig {
+    with_default_timeout_ms -> default_timeout_ms: u64,
+    with_max_retransmissions -> max_retransmissions: u32,
+    with_observe_enabled -> observe_enabled: bool,
+    with_max_observe_subscriptions -> max_observe_subscriptions: usize,
+    with_max_requests_per_second -> max_requests_per_second: u32,
+});
+
 impl Default for CoapConfig {
     fn default() -> Self {
         Self {

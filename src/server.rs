@@ -110,6 +110,13 @@ pub struct AuthConfig {
     pub exempt_paths: Vec<String>,
 }
 
+with_setters!(AuthConfig {
+    with_enabled -> enabled: bool,
+    with_bearer_tokens -> bearer_tokens: Vec<String>,
+    with_api_keys -> api_keys: Vec<String>,
+    with_exempt_paths -> exempt_paths: Vec<String>,
+});
+
 impl std::fmt::Debug for AuthConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AuthConfig")
@@ -162,6 +169,14 @@ pub struct CorsConfig {
     /// Whether to include `Access-Control-Allow-Credentials: true` (default: false).
     pub allow_credentials: bool,
 }
+
+with_setters!(CorsConfig {
+    with_allowed_origins -> allowed_origins: Vec<String>,
+    with_allowed_methods -> allowed_methods: Vec<String>,
+    with_allowed_headers -> allowed_headers: Vec<String>,
+    with_max_age_secs -> max_age_secs: u64,
+    with_allow_credentials -> allow_credentials: bool,
+});
 
 impl Default for CorsConfig {
     fn default() -> Self {
@@ -299,6 +314,26 @@ pub struct ServerConfig {
     #[serde(default)]
     pub trust_proxy: bool,
 }
+
+with_setters!(ServerConfig {
+    with_host -> host: String,
+    with_port -> port: u16,
+    with_max_body_size -> max_body_size: usize,
+    with_read_timeout_secs -> read_timeout_secs: u64,
+    with_auth -> auth: AuthConfig,
+    with_cors -> cors: CorsConfig,
+    with_max_headers -> max_headers: usize,
+    with_max_header_line -> max_header_line: usize,
+    with_body_read_timeout_ms -> body_read_timeout_ms: u64,
+    with_max_message_length -> max_message_length: usize,
+    with_enrichment -> enrichment: EnrichmentConfig,
+    with_tls -> tls: Option<TlsConfig>,
+    with_rate_limiter -> rate_limiter: Option<Arc<ServerRateLimiter>>,
+    #[cfg(feature = "security")]
+    with_guardrail_pipeline -> guardrail_pipeline: Option<Arc<Mutex<crate::guardrail_pipeline::GuardrailPipeline>>>,
+    with_budget_manager -> budget_manager: Option<Arc<Mutex<crate::cost::BudgetManager>>>,
+    with_trust_proxy -> trust_proxy: bool,
+});
 
 // ── Enrichment sub-config structs ────────────────────────────────────
 

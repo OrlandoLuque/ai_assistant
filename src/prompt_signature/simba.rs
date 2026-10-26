@@ -86,6 +86,16 @@ pub struct SimbaConfig {
     pub mini_batch_size: usize,
 }
 
+with_setters!(SimbaConfig {
+    with_population_size -> population_size: usize,
+    with_generations -> generations: usize,
+    with_mutation_rate -> mutation_rate: f64,
+    with_cooling_schedule -> cooling_schedule: CoolingSchedule,
+    with_tournament_size -> tournament_size: usize,
+    with_elite_count -> elite_count: usize,
+    with_mini_batch_size -> mini_batch_size: usize,
+});
+
 impl Default for SimbaConfig {
     fn default() -> Self {
         Self {

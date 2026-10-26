@@ -134,6 +134,13 @@ pub struct AuditConfig {
     pub event_filter: Vec<AuditEventType>,
 }
 
+with_setters!(AuditConfig {
+    with_enabled -> enabled: bool,
+    with_max_events -> max_events: usize,
+    with_log_message_content -> log_message_content: bool,
+    with_event_filter -> event_filter: Vec<AuditEventType>,
+});
+
 impl Default for AuditConfig {
     fn default() -> Self {
         Self {

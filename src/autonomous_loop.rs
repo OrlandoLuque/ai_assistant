@@ -141,6 +141,12 @@ pub struct CostConfig {
     pub cost_callback: Option<Arc<dyn Fn(&str, &HashMap<String, String>) -> f64 + Send + Sync>>,
 }
 
+with_setters!(CostConfig {
+    with_default_cost_per_call -> default_cost_per_call: f64,
+    with_tool_costs -> tool_costs: HashMap<String, f64>,
+    with_cost_callback -> cost_callback: Option<Arc<dyn Fn(&str, &HashMap<String, String>) -> f64 + Send + Sync>>,
+});
+
 impl CostConfig {
     pub fn new() -> Self {
         Self {

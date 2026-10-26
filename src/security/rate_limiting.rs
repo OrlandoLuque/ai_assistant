@@ -18,6 +18,13 @@ pub struct RateLimitConfig {
     pub cooldown_seconds: u64,
 }
 
+with_setters!(RateLimitConfig {
+    with_requests_per_minute -> requests_per_minute: usize,
+    with_tokens_per_minute -> tokens_per_minute: usize,
+    with_max_concurrent -> max_concurrent: usize,
+    with_cooldown_seconds -> cooldown_seconds: u64,
+});
+
 impl Default for RateLimitConfig {
     fn default() -> Self {
         Self {

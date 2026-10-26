@@ -1917,6 +1917,39 @@ mod inner {
         pub capability: AudioModelCapability,
     }
 
+    impl S2SConfig {
+        /// The four facts that have no sensible default: which model, which
+        /// formats each way, and what the model can actually do with audio.
+        ///
+        /// `AudioFormat` and `AudioModelCapability` are plain enums with no
+        /// `Default` — guessing `Pcm16` here would send the wrong bytes to a
+        /// model that wanted WAV, and guessing a capability would claim audio
+        /// support the model may not have. `voice_id` is the one optional
+        /// field, and has its setter below.
+        pub fn new(
+            model_id: impl Into<String>,
+            input_format: AudioFormat,
+            output_format: AudioFormat,
+            capability: AudioModelCapability,
+        ) -> Self {
+            Self {
+                model_id: model_id.into(),
+                input_format,
+                output_format,
+                voice_id: None,
+                capability,
+            }
+        }
+    }
+
+    with_setters!(S2SConfig {
+        with_model_id -> model_id: String,
+        with_input_format -> input_format: AudioFormat,
+        with_output_format -> output_format: AudioFormat,
+        with_voice_id -> voice_id: Option<String>,
+        with_capability -> capability: AudioModelCapability,
+    });
+
     /// Fallback strategy when the model does not support direct audio I/O.
     #[non_exhaustive]
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

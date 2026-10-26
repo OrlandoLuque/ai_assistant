@@ -1012,6 +1012,15 @@ pub struct LoraConfig {
     pub task_type: LoraTaskType,
 }
 
+with_setters!(LoraConfig {
+    with_rank -> rank: u32,
+    with_alpha -> alpha: f32,
+    with_dropout -> dropout: f32,
+    with_target_modules -> target_modules: Vec<String>,
+    with_bias -> bias: LoraBias,
+    with_task_type -> task_type: LoraTaskType,
+});
+
 /// LoRA bias configuration
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]

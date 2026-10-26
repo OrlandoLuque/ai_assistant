@@ -39,6 +39,12 @@ pub struct BulkheadConfig {
     pub max_wait: Duration,
 }
 
+with_setters!(BulkheadConfig {
+    with_name -> name: String,
+    with_max_concurrent -> max_concurrent: usize,
+    with_max_wait -> max_wait: Duration,
+});
+
 impl Default for BulkheadConfig {
     fn default() -> Self {
         Self {

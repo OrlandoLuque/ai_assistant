@@ -344,6 +344,17 @@ pub struct OtelConfig {
     pub resource_attributes: HashMap<String, String>,
 }
 
+with_setters!(OtelConfig {
+    with_service_name -> service_name: String,
+    with_endpoint -> endpoint: String,
+    with_export_enabled -> export_enabled: bool,
+    with_max_buffer_size -> max_buffer_size: usize,
+    with_sampling_rate -> sampling_rate: f64,
+    with_sampling_policy -> sampling_policy: SamplingPolicy,
+    with_privacy -> privacy: PrivacyConfig,
+    with_resource_attributes -> resource_attributes: HashMap<String, String>,
+});
+
 impl Default for OtelConfig {
     fn default() -> Self {
         Self {

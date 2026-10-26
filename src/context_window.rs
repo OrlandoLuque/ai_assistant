@@ -125,6 +125,14 @@ pub struct ContextWindowConfig {
     pub preserve_system: bool,
 }
 
+with_setters!(ContextWindowConfig {
+    with_max_tokens -> max_tokens: usize,
+    with_response_reserve -> response_reserve: usize,
+    with_min_messages -> min_messages: usize,
+    with_eviction_strategy -> eviction_strategy: EvictionStrategy,
+    with_preserve_system -> preserve_system: bool,
+});
+
 impl Default for ContextWindowConfig {
     fn default() -> Self {
         Self {
@@ -573,6 +581,12 @@ pub struct AutoTokenConfig {
     /// Fallback max tokens when the model context window is unknown
     pub fallback_max_tokens: usize,
 }
+
+with_setters!(AutoTokenConfig {
+    with_model_context_window -> model_context_window: Option<usize>,
+    with_response_reserve -> response_reserve: usize,
+    with_fallback_max_tokens -> fallback_max_tokens: usize,
+});
 
 impl Default for AutoTokenConfig {
     fn default() -> Self {

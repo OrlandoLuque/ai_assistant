@@ -101,6 +101,14 @@ pub struct FeedMonitorConfig {
     pub timeout_ms: u64,
 }
 
+with_setters!(FeedMonitorConfig {
+    with_feeds -> feeds: HashMap<String, String>,
+    with_check_interval_secs -> check_interval_secs: u64,
+    with_max_entries_per_feed -> max_entries_per_feed: usize,
+    with_user_agent -> user_agent: String,
+    with_timeout_ms -> timeout_ms: u64,
+});
+
 impl Default for FeedMonitorConfig {
     fn default() -> Self {
         Self {

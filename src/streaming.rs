@@ -50,6 +50,15 @@ pub struct StreamingConfig {
     pub auto_chunk: bool,
 }
 
+with_setters!(StreamingConfig {
+    with_buffer_size -> buffer_size: usize,
+    with_high_water_mark -> high_water_mark: usize,
+    with_low_water_mark -> low_water_mark: usize,
+    with_backpressure_timeout -> backpressure_timeout: Duration,
+    with_chunk_size -> chunk_size: usize,
+    with_auto_chunk -> auto_chunk: bool,
+});
+
 impl Default for StreamingConfig {
     fn default() -> Self {
         Self {
@@ -624,6 +633,10 @@ pub struct DiskSpillConfig {
     /// Directory for spill files (defaults to system temp dir).
     pub spill_dir: Option<std::path::PathBuf>,
 }
+
+with_setters!(DiskSpillConfig {
+    with_spill_dir -> spill_dir: Option<std::path::PathBuf>,
+});
 
 impl Default for DiskSpillConfig {
     fn default() -> Self {

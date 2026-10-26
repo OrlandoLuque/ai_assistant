@@ -17,6 +17,15 @@ pub struct UserRateLimitConfig {
     pub burst_allowance: u32,
 }
 
+with_setters!(UserRateLimitConfig {
+    with_requests_per_minute -> requests_per_minute: u32,
+    with_requests_per_hour -> requests_per_hour: u32,
+    with_requests_per_day -> requests_per_day: u32,
+    with_tokens_per_minute -> tokens_per_minute: u64,
+    with_tokens_per_day -> tokens_per_day: u64,
+    with_burst_allowance -> burst_allowance: u32,
+});
+
 impl Default for UserRateLimitConfig {
     fn default() -> Self {
         Self {

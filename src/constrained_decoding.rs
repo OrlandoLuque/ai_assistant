@@ -1459,6 +1459,11 @@ mod inner {
         pub abort_on_invalid: bool,
     }
 
+    with_setters!(StreamingValidationConfig {
+        with_max_recovery_attempts -> max_recovery_attempts: usize,
+        with_abort_on_invalid -> abort_on_invalid: bool,
+    });
+
     impl Default for StreamingValidationConfig {
         fn default() -> Self {
             Self {

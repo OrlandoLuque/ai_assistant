@@ -91,6 +91,10 @@ pub struct IntegrityConfig {
     pub binary_path: Option<String>,
 }
 
+with_setters!(IntegrityConfig {
+    with_abort_on_failure -> abort_on_failure: bool,
+});
+
 impl Default for IntegrityConfig {
     fn default() -> Self {
         Self {

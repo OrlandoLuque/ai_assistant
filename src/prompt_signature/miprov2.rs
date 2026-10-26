@@ -38,6 +38,14 @@ pub struct MIPROv2Config {
     pub search_strategy: DiscreteSearchStrategy,
 }
 
+with_setters!(MIPROv2Config {
+    with_max_bootstrapped_demos -> max_bootstrapped_demos: usize,
+    with_max_labeled_demos -> max_labeled_demos: usize,
+    with_num_instruction_candidates -> num_instruction_candidates: usize,
+    with_num_trials -> num_trials: usize,
+    with_search_strategy -> search_strategy: DiscreteSearchStrategy,
+});
+
 impl Default for MIPROv2Config {
     fn default() -> Self {
         Self {

@@ -65,6 +65,15 @@ pub struct SearchConfig {
     pub time_range: Option<TimeRange>,
 }
 
+with_setters!(SearchConfig {
+    with_max_results -> max_results: usize,
+    with_timeout -> timeout: Duration,
+    with_safe_search -> safe_search: SafeSearch,
+    with_language -> language: Option<String>,
+    with_region -> region: Option<String>,
+    with_time_range -> time_range: Option<TimeRange>,
+});
+
 impl Default for SearchConfig {
     fn default() -> Self {
         Self {

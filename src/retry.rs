@@ -32,6 +32,18 @@ pub struct RetryConfig {
     pub rate_limit_strategy: RateLimitStrategy,
 }
 
+with_setters!(RetryConfig {
+    with_max_retries -> max_retries: u32,
+    with_initial_delay -> initial_delay: Duration,
+    with_max_delay -> max_delay: Duration,
+    with_backoff_multiplier -> backoff_multiplier: f64,
+    with_add_jitter -> add_jitter: bool,
+    with_jitter_factor -> jitter_factor: f64,
+    with_attempt_timeout -> attempt_timeout: Option<Duration>,
+    with_retryable_errors -> retryable_errors: Vec<RetryableError>,
+    with_rate_limit_strategy -> rate_limit_strategy: RateLimitStrategy,
+});
+
 impl Default for RetryConfig {
     fn default() -> Self {
         Self {

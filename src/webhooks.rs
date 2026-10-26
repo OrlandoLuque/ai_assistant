@@ -34,6 +34,13 @@ pub struct WebhookConfig {
     pub headers: HashMap<String, String>,
 }
 
+with_setters!(WebhookConfig {
+    with_retry_count -> retry_count: u32,
+    with_retry_delay -> retry_delay: Duration,
+    with_timeout -> timeout: Duration,
+    with_url -> url: String,
+});
+
 impl WebhookConfig {
     pub fn new(url: &str) -> Self {
         Self {

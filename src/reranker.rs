@@ -23,6 +23,12 @@ pub struct RerankerConfig {
     pub min_score: f64,
 }
 
+with_setters!(RerankerConfig {
+    with_top_k -> top_k: usize,
+    with_diversity_lambda -> diversity_lambda: f64,
+    with_min_score -> min_score: f64,
+});
+
 impl Default for RerankerConfig {
     fn default() -> Self {
         Self {

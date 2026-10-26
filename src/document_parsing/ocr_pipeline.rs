@@ -77,6 +77,13 @@ pub struct TesseractConfig {
     pub oem: u32,
 }
 
+with_setters!(TesseractConfig {
+    with_binary_path -> binary_path: String,
+    with_language -> language: String,
+    with_psm -> psm: u32,
+    with_oem -> oem: u32,
+});
+
 impl Default for TesseractConfig {
     fn default() -> Self {
         Self {
@@ -158,6 +165,12 @@ pub struct OcrPipelineConfig {
     /// Name of the preferred backend that should be tried first.
     pub preferred_backend: Option<String>,
 }
+
+with_setters!(OcrPipelineConfig {
+    with_min_confidence -> min_confidence: f32,
+    with_merge_results -> merge_results: bool,
+    with_preferred_backend -> preferred_backend: Option<String>,
+});
 
 impl Default for OcrPipelineConfig {
     fn default() -> Self {

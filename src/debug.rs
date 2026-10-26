@@ -149,6 +149,18 @@ pub struct DebugConfig {
     pub enable_timing: bool,
 }
 
+with_setters!(DebugConfig {
+    with_level -> level: DebugLevel,
+    with_max_entries -> max_entries: usize,
+    with_log_to_stderr -> log_to_stderr: bool,
+    with_include_timestamps -> include_timestamps: bool,
+    with_include_components -> include_components: bool,
+    with_component_filter -> component_filter: Vec<String>,
+    with_log_requests -> log_requests: bool,
+    with_log_tokens -> log_tokens: bool,
+    with_enable_timing -> enable_timing: bool,
+});
+
 impl Default for DebugConfig {
     fn default() -> Self {
         Self {

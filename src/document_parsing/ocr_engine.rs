@@ -16,6 +16,12 @@ pub struct OcrConfig {
     pub binarize_threshold: Option<u8>,
 }
 
+with_setters!(OcrConfig {
+    with_min_confidence -> min_confidence: f32,
+    with_char_height -> char_height: usize,
+    with_binarize_threshold -> binarize_threshold: Option<u8>,
+});
+
 impl Default for OcrConfig {
     fn default() -> Self {
         Self {

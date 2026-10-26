@@ -228,6 +228,16 @@ pub struct CrawlPolicyConfig {
     pub timeout_ms: u64,
 }
 
+with_setters!(CrawlPolicyConfig {
+    with_user_agent -> user_agent: String,
+    with_default_delay_ms -> default_delay_ms: u64,
+    with_max_delay_ms -> max_delay_ms: u64,
+    with_respect_robots_txt -> respect_robots_txt: bool,
+    with_cache_robots_txt -> cache_robots_txt: bool,
+    with_robots_cache_ttl_secs -> robots_cache_ttl_secs: u64,
+    with_timeout_ms -> timeout_ms: u64,
+});
+
 impl Default for CrawlPolicyConfig {
     fn default() -> Self {
         Self {

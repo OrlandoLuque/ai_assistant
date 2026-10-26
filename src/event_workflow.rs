@@ -955,6 +955,13 @@ mod inner {
         pub recovery_enabled: bool,
     }
 
+    with_setters!(DurableConfig {
+        with_backend -> backend: DurableBackend,
+        with_auto_checkpoint -> auto_checkpoint: bool,
+        with_retention_policy -> retention_policy: RetentionPolicy,
+        with_recovery_enabled -> recovery_enabled: bool,
+    });
+
     impl Default for DurableConfig {
         fn default() -> Self {
             Self {

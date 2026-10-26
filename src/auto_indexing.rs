@@ -183,6 +183,19 @@ pub struct AutoIndexConfig {
     pub preserve_metadata: bool,
 }
 
+with_setters!(AutoIndexConfig {
+    with_chunking_strategy -> chunking_strategy: IndexChunkingStrategy,
+    with_target_chunk_tokens -> target_chunk_tokens: usize,
+    with_overlap_tokens -> overlap_tokens: usize,
+    with_max_chunk_tokens -> max_chunk_tokens: usize,
+    with_min_chunk_tokens -> min_chunk_tokens: usize,
+    with_force_reindex -> force_reindex: bool,
+    with_supported_extensions -> supported_extensions: Vec<String>,
+    with_default_tags -> default_tags: Vec<String>,
+    with_max_document_size -> max_document_size: usize,
+    with_preserve_metadata -> preserve_metadata: bool,
+});
+
 impl Default for AutoIndexConfig {
     fn default() -> Self {
         Self {

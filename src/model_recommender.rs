@@ -64,6 +64,16 @@ pub struct RecommendationRequest {
     pub max_size_bytes: Option<u64>,
 }
 
+with_setters!(RecommendationRequest {
+    with_allow_abliterated -> allow_abliterated: bool,
+    with_allow_uncensored -> allow_uncensored: bool,
+    with_language -> language: Option<String>,
+    with_max_latency_ms -> max_latency_ms: Option<u32>,
+    with_max_size_bytes -> max_size_bytes: Option<u64>,
+    with_min_quality_tier -> min_quality_tier: QualityTier,
+    with_task -> task: TaskKind,
+});
+
 /// Builders, because the struct is `#[non_exhaustive]`.
 ///
 /// Outside this crate `RecommendationRequest { min_quality_tier, ..Default::default() }`

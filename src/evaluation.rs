@@ -582,6 +582,14 @@ pub struct AbTestConfig {
     pub confidence_level: f64,
 }
 
+with_setters!(AbTestConfig {
+    with_confidence_level -> confidence_level: f64,
+    with_min_samples -> min_samples: usize,
+    with_name -> name: String,
+    with_variant_a -> variant_a: String,
+    with_variant_b -> variant_b: String,
+});
+
 impl AbTestConfig {
     pub fn new(name: &str, variant_a: &str, variant_b: &str) -> Self {
         Self {
@@ -1055,6 +1063,12 @@ pub struct LlmJudgeConfig {
     /// hay dos iguales que formen mayoria de nada.
     pub num_judges: usize,
 }
+
+with_setters!(LlmJudgeConfig {
+    with_metrics -> metrics: Vec<MetricType>,
+    with_rubric -> rubric: Option<String>,
+    with_num_judges -> num_judges: usize,
+});
 
 impl Default for LlmJudgeConfig {
     fn default() -> Self {

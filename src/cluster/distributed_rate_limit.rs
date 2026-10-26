@@ -41,6 +41,13 @@ pub struct DistributedRateLimitConfig {
     pub sync_interval_secs: u64,
 }
 
+with_setters!(DistributedRateLimitConfig {
+    with_local_limit -> local_limit: u64,
+    with_local_window_secs -> local_window_secs: u64,
+    with_global_limit -> global_limit: u64,
+    with_sync_interval_secs -> sync_interval_secs: u64,
+});
+
 impl Default for DistributedRateLimitConfig {
     fn default() -> Self {
         Self {

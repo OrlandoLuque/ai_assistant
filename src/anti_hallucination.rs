@@ -205,6 +205,20 @@ pub struct AntiHallucinationConfig {
     pub abstention_message: Option<String>,
 }
 
+with_setters!(AntiHallucinationConfig {
+    with_enabled -> enabled: bool,
+    with_ungrounded_strategy -> ungrounded_strategy: UngroundedClaimStrategy,
+    with_abstention_enabled -> abstention_enabled: bool,
+    with_abstention_threshold -> abstention_threshold: f64,
+    with_confidence_scoring_enabled -> confidence_scoring_enabled: bool,
+    with_auto_temperature_enabled -> auto_temperature_enabled: bool,
+    with_factual_query_temperature -> factual_query_temperature: f32,
+    with_mark_format -> mark_format: String,
+    with_min_confidence_for_output -> min_confidence_for_output: f64,
+    with_max_extra_llm_calls -> max_extra_llm_calls: usize,
+    with_abstention_message -> abstention_message: Option<String>,
+});
+
 impl Default for AntiHallucinationConfig {
     fn default() -> Self {
         Self {
@@ -690,6 +704,13 @@ pub struct GroundedGenerationConfig {
     /// Minimum similarity score (0.0–1.0) for a sentence-chunk anchor.
     pub min_anchor_similarity: f64,
 }
+
+with_setters!(GroundedGenerationConfig {
+    with_enabled -> enabled: bool,
+    with_anchor_method -> anchor_method: ChunkAnchorMethod,
+    with_ungrounded_strategy -> ungrounded_strategy: UngroundedClaimStrategy,
+    with_min_anchor_similarity -> min_anchor_similarity: f64,
+});
 
 impl Default for GroundedGenerationConfig {
     fn default() -> Self {

@@ -1385,6 +1385,17 @@ pub struct RagTierConfig {
     pub hybrid_weights: HybridWeights,
 }
 
+with_setters!(RagTierConfig {
+    with_agentic_max_iterations -> agentic_max_iterations: usize,
+    with_crag_quality_threshold -> crag_quality_threshold: f32,
+    with_dynamic_context -> dynamic_context: bool,
+    with_hybrid_weights -> hybrid_weights: HybridWeights,
+    with_max_knowledge_tokens -> max_knowledge_tokens: usize,
+    with_min_relevance_score -> min_relevance_score: f32,
+    with_rerank_model -> rerank_model: Option<String>,
+    with_self_reflection_threshold -> self_reflection_threshold: f32,
+});
+
 impl Default for RagTierConfig {
     fn default() -> Self {
         Self {

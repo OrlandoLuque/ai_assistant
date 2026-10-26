@@ -205,6 +205,16 @@ pub struct SelectionConfig {
     pub max_tokens: Option<usize>,
 }
 
+with_setters!(SelectionConfig {
+    with_max_examples -> max_examples: usize,
+    with_min_quality -> min_quality: f64,
+    with_similarity_weight -> similarity_weight: f64,
+    with_quality_weight -> quality_weight: f64,
+    with_success_weight -> success_weight: f64,
+    with_prefer_diversity -> prefer_diversity: bool,
+    with_max_tokens -> max_tokens: Option<usize>,
+});
+
 impl Default for SelectionConfig {
     fn default() -> Self {
         Self {

@@ -77,6 +77,20 @@ pub struct ClusterConfig {
     pub replication_factor: usize,
 }
 
+with_setters!(ClusterConfig {
+    with_node_id -> node_id: String,
+    with_quic_addr -> quic_addr: SocketAddr,
+    with_bootstrap_peers -> bootstrap_peers: Vec<SocketAddr>,
+    with_join_token -> join_token: Option<String>,
+    with_data_dir -> data_dir: PathBuf,
+    with_heartbeat_interval_ms -> heartbeat_interval_ms: u64,
+    with_phi_threshold -> phi_threshold: f64,
+    with_sync_interval_secs -> sync_interval_secs: u64,
+    with_snapshot_interval_secs -> snapshot_interval_secs: u64,
+    with_max_connections -> max_connections: usize,
+    with_replication_factor -> replication_factor: usize,
+});
+
 fn default_heartbeat_interval_ms() -> u64 {
     1000
 }

@@ -52,6 +52,16 @@ pub struct ChunkingConfig {
     pub preserve_code_blocks: bool,
 }
 
+with_setters!(ChunkingConfig {
+    with_strategy -> strategy: ChunkingStrategy,
+    with_target_tokens -> target_tokens: usize,
+    with_min_tokens -> min_tokens: usize,
+    with_max_tokens -> max_tokens: usize,
+    with_overlap_tokens -> overlap_tokens: usize,
+    with_preserve_markdown -> preserve_markdown: bool,
+    with_preserve_code_blocks -> preserve_code_blocks: bool,
+});
+
 impl Default for ChunkingConfig {
     fn default() -> Self {
         Self {
@@ -864,6 +874,15 @@ pub struct RerankConfig {
     /// Penalty for very long chunks
     pub length_penalty: f32,
 }
+
+with_setters!(RerankConfig {
+    with_keyword_weight -> keyword_weight: f32,
+    with_recency_weight -> recency_weight: f32,
+    with_priority_weight -> priority_weight: f32,
+    with_section_weight -> section_weight: f32,
+    with_exact_match_boost -> exact_match_boost: f32,
+    with_length_penalty -> length_penalty: f32,
+});
 
 impl Default for RerankConfig {
     fn default() -> Self {

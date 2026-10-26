@@ -88,6 +88,16 @@ pub struct KeepaliveConfig {
     pub auto_reconnect: bool,
 }
 
+with_setters!(KeepaliveConfig {
+    with_heartbeat_interval -> heartbeat_interval: Duration,
+    with_heartbeat_timeout -> heartbeat_timeout: Duration,
+    with_failure_threshold -> failure_threshold: u32,
+    with_reconnect_delay -> reconnect_delay: Duration,
+    with_max_reconnect_attempts -> max_reconnect_attempts: u32,
+    with_degraded_latency_ms -> degraded_latency_ms: u64,
+    with_auto_reconnect -> auto_reconnect: bool,
+});
+
 impl Default for KeepaliveConfig {
     fn default() -> Self {
         Self {

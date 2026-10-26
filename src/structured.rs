@@ -1260,6 +1260,13 @@ pub struct EnforcementConfig {
     pub feedback_on_error: bool,
 }
 
+with_setters!(EnforcementConfig {
+    with_max_retries -> max_retries: u32,
+    with_include_response_format -> include_response_format: bool,
+    with_include_schema_in_prompt -> include_schema_in_prompt: bool,
+    with_feedback_on_error -> feedback_on_error: bool,
+});
+
 impl Default for EnforcementConfig {
     fn default() -> Self {
         Self {

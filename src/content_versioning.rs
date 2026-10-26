@@ -186,6 +186,13 @@ pub struct VersioningConfig {
     pub store_content: bool,
 }
 
+with_setters!(VersioningConfig {
+    with_max_versions -> max_versions: usize,
+    with_auto_diff -> auto_diff: bool,
+    with_change_threshold -> change_threshold: f64,
+    with_store_content -> store_content: bool,
+});
+
 impl Default for VersioningConfig {
     fn default() -> Self {
         Self {

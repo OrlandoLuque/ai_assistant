@@ -30,6 +30,12 @@ pub struct PgVectorConfig {
     pub dimensions: usize,
 }
 
+with_setters!(PgVectorConfig {
+    with_connection_string -> connection_string: String,
+    with_table_name -> table_name: String,
+    with_dimensions -> dimensions: usize,
+});
+
 impl Default for PgVectorConfig {
     fn default() -> Self {
         Self {

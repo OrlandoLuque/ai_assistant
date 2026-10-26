@@ -162,6 +162,12 @@ pub struct QueryExpanderConfig {
     pub prompt_template: Option<String>,
 }
 
+with_setters!(QueryExpanderConfig {
+    with_max_expansions -> max_expansions: usize,
+    with_use_synonyms -> use_synonyms: bool,
+    with_prompt_template -> prompt_template: Option<String>,
+});
+
 impl Default for QueryExpanderConfig {
     fn default() -> Self {
         Self {
@@ -299,6 +305,12 @@ pub struct MultiQueryConfig {
     /// Custom prompt template
     pub prompt_template: Option<String>,
 }
+
+with_setters!(MultiQueryConfig {
+    with_max_sub_queries -> max_sub_queries: usize,
+    with_min_complexity_threshold -> min_complexity_threshold: f32,
+    with_prompt_template -> prompt_template: Option<String>,
+});
 
 impl Default for MultiQueryConfig {
     fn default() -> Self {
@@ -438,6 +450,12 @@ pub struct HydeConfig {
     pub prompt_template: Option<String>,
 }
 
+with_setters!(HydeConfig {
+    with_target_length -> target_length: usize,
+    with_num_hypotheticals -> num_hypotheticals: usize,
+    with_prompt_template -> prompt_template: Option<String>,
+});
+
 impl Default for HydeConfig {
     fn default() -> Self {
         Self {
@@ -552,6 +570,12 @@ pub struct LlmRerankerConfig {
     /// appended regardless, because without them there is nothing to rank.
     pub prompt_template: Option<String>,
 }
+
+with_setters!(LlmRerankerConfig {
+    with_max_chunks -> max_chunks: usize,
+    with_chunk_preview_length -> chunk_preview_length: usize,
+    with_prompt_template -> prompt_template: Option<String>,
+});
 
 impl Default for LlmRerankerConfig {
     fn default() -> Self {
@@ -785,6 +809,11 @@ pub struct RrfConfig {
     pub max_results: usize,
 }
 
+with_setters!(RrfConfig {
+    with_k -> k: f32,
+    with_max_results -> max_results: usize,
+});
+
 impl Default for RrfConfig {
     fn default() -> Self {
         Self {
@@ -888,6 +917,12 @@ pub struct CompressionConfig {
     /// Custom prompt template
     pub prompt_template: Option<String>,
 }
+
+with_setters!(CompressionConfig {
+    with_target_tokens -> target_tokens: usize,
+    with_min_tokens -> min_tokens: usize,
+    with_prompt_template -> prompt_template: Option<String>,
+});
 
 impl Default for CompressionConfig {
     fn default() -> Self {
@@ -1012,6 +1047,11 @@ pub struct SelfRagConfig {
     pub context_preview_length: usize,
 }
 
+with_setters!(SelfRagConfig {
+    with_confidence_threshold -> confidence_threshold: f32,
+    with_context_preview_length -> context_preview_length: usize,
+});
+
 impl Default for SelfRagConfig {
     fn default() -> Self {
         Self {
@@ -1135,6 +1175,11 @@ pub struct CragConfig {
     pub ambiguous_threshold: f32,
 }
 
+with_setters!(CragConfig {
+    with_correct_threshold -> correct_threshold: f32,
+    with_ambiguous_threshold -> ambiguous_threshold: f32,
+});
+
 impl Default for CragConfig {
     fn default() -> Self {
         Self {
@@ -1245,6 +1290,10 @@ pub struct AdaptiveStrategyConfig {
     /// Whether to use LLM for strategy selection
     pub use_llm: bool,
 }
+
+with_setters!(AdaptiveStrategyConfig {
+    with_use_llm -> use_llm: bool,
+});
 
 impl Default for AdaptiveStrategyConfig {
     fn default() -> Self {
@@ -1404,6 +1453,12 @@ pub struct GraphRagConfig {
     pub entity_types: Vec<String>,
 }
 
+with_setters!(GraphRagConfig {
+    with_max_depth -> max_depth: usize,
+    with_max_entities -> max_entities: usize,
+    with_entity_types -> entity_types: Vec<String>,
+});
+
 /// Trait for graph database operations
 pub trait GraphDatabase {
     /// Add entity to graph
@@ -1514,6 +1569,12 @@ pub struct RaptorConfig {
     pub summary_length: usize,
 }
 
+with_setters!(RaptorConfig {
+    with_max_levels -> max_levels: usize,
+    with_chunks_per_summary -> chunks_per_summary: usize,
+    with_summary_length -> summary_length: usize,
+});
+
 impl Default for RaptorConfig {
     fn default() -> Self {
         Self {
@@ -1603,6 +1664,12 @@ pub struct MmrConfig {
     /// Which similarity metric to use for diversity
     pub diversity_metric: DiversityMetric,
 }
+
+with_setters!(MmrConfig {
+    with_lambda -> lambda: f64,
+    with_top_k -> top_k: usize,
+    with_diversity_metric -> diversity_metric: DiversityMetric,
+});
 
 impl Default for MmrConfig {
     fn default() -> Self {
@@ -1881,6 +1948,12 @@ pub struct RouterConfig {
     /// Fallback retriever when confidence is low
     pub fallback_retriever: Option<String>,
 }
+
+with_setters!(RouterConfig {
+    with_default_retriever -> default_retriever: String,
+    with_complexity_mapping -> complexity_mapping: HashMap<String, String>,
+    with_fallback_retriever -> fallback_retriever: Option<String>,
+});
 
 impl Default for RouterConfig {
     fn default() -> Self {

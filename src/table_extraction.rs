@@ -241,6 +241,16 @@ pub struct TableExtractorConfig {
     pub first_row_is_header: bool,
 }
 
+with_setters!(TableExtractorConfig {
+    with_detect_markdown -> detect_markdown: bool,
+    with_detect_ascii -> detect_ascii: bool,
+    with_detect_html -> detect_html: bool,
+    with_detect_delimited -> detect_delimited: bool,
+    with_min_columns -> min_columns: usize,
+    with_min_rows -> min_rows: usize,
+    with_first_row_is_header -> first_row_is_header: bool,
+});
+
 impl Default for TableExtractorConfig {
     fn default() -> Self {
         Self {

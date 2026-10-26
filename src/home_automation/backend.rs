@@ -24,6 +24,14 @@ pub struct HomeConfig {
     pub timeout_secs: u64,
 }
 
+with_setters!(HomeConfig {
+    with_backend_type -> backend_type: String,
+    with_base_url -> base_url: String,
+    with_token -> token: String,
+    with_verify_ssl -> verify_ssl: bool,
+    with_timeout_secs -> timeout_secs: u64,
+});
+
 impl Default for HomeConfig {
     fn default() -> Self {
         Self {

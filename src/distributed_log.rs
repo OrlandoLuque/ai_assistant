@@ -84,6 +84,16 @@ pub struct DistributedLogEntry {
     pub attributes: HashMap<String, String>,
 }
 
+with_setters!(DistributedLogEntry {
+    with_level -> level: LogLevel,
+    with_message -> message: String,
+    with_node_id -> node_id: String,
+    with_operation -> operation: String,
+    with_span_id -> span_id: String,
+    with_timestamp_ms -> timestamp_ms: u64,
+    with_trace_id -> trace_id: String,
+});
+
 impl DistributedLogEntry {
     /// Create a new log entry with the current timestamp.
     pub fn new(
@@ -250,6 +260,15 @@ pub struct LogCollectorConfig {
     /// Minimum level to collect.
     pub min_level: LogLevel,
 }
+
+with_setters!(LogCollectorConfig {
+    with_enabled -> enabled: bool,
+    with_max_entries_per_trace -> max_entries_per_trace: usize,
+    with_max_active_traces -> max_active_traces: usize,
+    with_retention_secs -> retention_secs: u64,
+    with_share_logs -> share_logs: bool,
+    with_min_level -> min_level: LogLevel,
+});
 
 impl Default for LogCollectorConfig {
     fn default() -> Self {

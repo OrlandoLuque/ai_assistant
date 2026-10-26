@@ -182,6 +182,10 @@ pub struct EvalSamplingConfig {
     pub max_samples_per_hour: usize,
 }
 
+with_setters!(EvalSamplingConfig {
+    with_sample_rate -> sample_rate: f64,
+});
+
 #[cfg(feature = "eval")]
 impl Default for EvalSamplingConfig {
     fn default() -> Self {

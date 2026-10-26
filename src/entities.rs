@@ -135,6 +135,16 @@ pub struct EntityExtractorConfig {
     pub custom_patterns: Vec<EntityCustomPattern>,
 }
 
+with_setters!(EntityExtractorConfig {
+    with_min_confidence -> min_confidence: f32,
+    with_extract_persons -> extract_persons: bool,
+    with_extract_organizations -> extract_organizations: bool,
+    with_extract_locations -> extract_locations: bool,
+    with_extract_technical -> extract_technical: bool,
+    with_extract_links -> extract_links: bool,
+    with_custom_patterns -> custom_patterns: Vec<EntityCustomPattern>,
+});
+
 impl Default for EntityExtractorConfig {
     fn default() -> Self {
         Self {
@@ -857,6 +867,14 @@ pub struct FactExtractorConfig {
     /// Maximum facts to store per session
     pub max_facts_per_session: usize,
 }
+
+with_setters!(FactExtractorConfig {
+    with_min_confidence -> min_confidence: f32,
+    with_extract_preferences -> extract_preferences: bool,
+    with_extract_technical -> extract_technical: bool,
+    with_extract_goals -> extract_goals: bool,
+    with_max_facts_per_session -> max_facts_per_session: usize,
+});
 
 impl Default for FactExtractorConfig {
     fn default() -> Self {

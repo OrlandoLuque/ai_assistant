@@ -57,6 +57,16 @@ pub struct BatchConfig {
     pub continue_on_error: bool,
 }
 
+with_setters!(BatchConfig {
+    with_max_concurrent -> max_concurrent: usize,
+    with_request_delay -> request_delay: Duration,
+    with_max_retries -> max_retries: usize,
+    with_retry_delay -> retry_delay: Duration,
+    with_batch_timeout -> batch_timeout: Option<Duration>,
+    with_request_timeout -> request_timeout: Duration,
+    with_continue_on_error -> continue_on_error: bool,
+});
+
 impl Default for BatchConfig {
     fn default() -> Self {
         Self {

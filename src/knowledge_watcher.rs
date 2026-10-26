@@ -26,6 +26,14 @@ pub struct WatcherConfig {
     pub max_file_size: u64,
 }
 
+with_setters!(WatcherConfig {
+    with_poll_interval -> poll_interval: Duration,
+    with_auto_reindex -> auto_reindex: bool,
+    with_watch_extensions -> watch_extensions: Vec<String>,
+    with_exclude_paths -> exclude_paths: Vec<PathBuf>,
+    with_max_file_size -> max_file_size: u64,
+});
+
 impl Default for WatcherConfig {
     fn default() -> Self {
         Self {

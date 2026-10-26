@@ -28,6 +28,15 @@ pub struct GEPAConfig {
     pub tournament_size: usize,
 }
 
+with_setters!(GEPAConfig {
+    with_population_size -> population_size: usize,
+    with_generations -> generations: usize,
+    with_mutation_rate -> mutation_rate: f64,
+    with_crossover_rate -> crossover_rate: f64,
+    with_elitism_count -> elitism_count: usize,
+    with_tournament_size -> tournament_size: usize,
+});
+
 impl Default for GEPAConfig {
     fn default() -> Self {
         Self {

@@ -280,6 +280,25 @@ pub struct AdaptiveThinkingConfig {
     pub cot_instructions_override: Option<HashMap<ThinkingDepth, String>>,
 }
 
+with_setters!(AdaptiveThinkingConfig {
+    with_enabled -> enabled: bool,
+    with_min_depth -> min_depth: ThinkingDepth,
+    with_max_depth -> max_depth: ThinkingDepth,
+    with_inject_cot_instructions -> inject_cot_instructions: bool,
+    with_parse_thinking_tags -> parse_thinking_tags: bool,
+    with_strip_thinking_from_response -> strip_thinking_from_response: bool,
+    with_transparent_thinking_parse -> transparent_thinking_parse: bool,
+    with_adjust_temperature -> adjust_temperature: bool,
+    with_auto_temperature_factual -> auto_temperature_factual: bool,
+    with_factual_temperature -> factual_temperature: f32,
+    with_adjust_rag_tier -> adjust_rag_tier: bool,
+    with_rag_tier_priority -> rag_tier_priority: RagTierPriority,
+    with_adjust_max_tokens -> adjust_max_tokens: bool,
+    with_temperature_map -> temperature_map: Option<HashMap<ThinkingDepth, f32>>,
+    with_max_tokens_map -> max_tokens_map: Option<HashMap<ThinkingDepth, u32>>,
+    with_cot_instructions_override -> cot_instructions_override: Option<HashMap<ThinkingDepth, String>>,
+});
+
 impl Default for AdaptiveThinkingConfig {
     fn default() -> Self {
         Self {

@@ -26,6 +26,40 @@ pub struct CustomDeviceDefinition {
     pub alerts: Vec<ThresholdAlert>,
 }
 
+impl CustomDeviceDefinition {
+    /// A read-only device with no alerts: the four fields that identify it.
+    ///
+    /// There is no `Default` on purpose — a device with no entity id and no
+    /// state source is not a device. The three remaining fields are genuinely
+    /// optional and have `with_*` setters.
+    pub fn new(
+        name: impl Into<String>,
+        entity_id: impl Into<String>,
+        device_type: impl Into<String>,
+        state_source: StateSource,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            entity_id: entity_id.into(),
+            device_type: device_type.into(),
+            state_source,
+            command_target: None,
+            attributes_schema: None,
+            alerts: Vec::new(),
+        }
+    }
+}
+
+with_setters!(CustomDeviceDefinition {
+    with_name -> name: String,
+    with_entity_id -> entity_id: String,
+    with_device_type -> device_type: String,
+    with_state_source -> state_source: StateSource,
+    with_command_target -> command_target: Option<CommandTarget>,
+    with_attributes_schema -> attributes_schema: Option<serde_json::Value>,
+    with_alerts -> alerts: Vec<ThresholdAlert>,
+});
+
 /// Source of device state data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]

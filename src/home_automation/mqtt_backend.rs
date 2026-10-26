@@ -44,6 +44,20 @@ pub struct MqttConfig {
     pub max_total_commands_per_minute: u32,
 }
 
+with_setters!(MqttConfig {
+    with_broker_url -> broker_url: String,
+    with_username -> username: Option<String>,
+    with_password_key -> password_key: Option<String>,
+    with_client_id -> client_id: String,
+    with_use_tls -> use_tls: bool,
+    with_allow_insecure_mqtt -> allow_insecure_mqtt: bool,
+    with_topic_convention -> topic_convention: TopicConvention,
+    with_discovery_enabled -> discovery_enabled: bool,
+    with_keepalive_secs -> keepalive_secs: u64,
+    with_max_commands_per_minute -> max_commands_per_minute: u32,
+    with_max_total_commands_per_minute -> max_total_commands_per_minute: u32,
+});
+
 impl Default for MqttConfig {
     fn default() -> Self {
         Self {

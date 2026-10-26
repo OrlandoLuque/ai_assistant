@@ -54,6 +54,14 @@ pub struct MctsConfig {
     pub discount_factor: f64,
 }
 
+with_setters!(MctsConfig {
+    with_max_iterations -> max_iterations: usize,
+    with_exploration_constant -> exploration_constant: f64,
+    with_max_depth -> max_depth: usize,
+    with_simulation_depth -> simulation_depth: usize,
+    with_discount_factor -> discount_factor: f64,
+});
+
 impl Default for MctsConfig {
     fn default() -> Self {
         Self {
@@ -927,6 +935,12 @@ pub struct RefinementConfig {
     /// Whether to re-plan when a step fails.
     pub replan_on_failure: bool,
 }
+
+with_setters!(RefinementConfig {
+    with_max_iterations -> max_iterations: usize,
+    with_improvement_threshold -> improvement_threshold: f64,
+    with_replan_on_failure -> replan_on_failure: bool,
+});
 
 impl Default for RefinementConfig {
     fn default() -> Self {

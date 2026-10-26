@@ -131,6 +131,14 @@ pub struct MemoryServiceConfig {
     pub persistence_path: String,
 }
 
+with_setters!(MemoryServiceConfig {
+    with_max_episodes -> max_episodes: usize,
+    with_max_procedures -> max_procedures: usize,
+    with_decay_factor -> decay_factor: f64,
+    with_flush_interval -> flush_interval: Duration,
+    with_persistence_path -> persistence_path: String,
+});
+
 impl Default for MemoryServiceConfig {
     fn default() -> Self {
         Self {

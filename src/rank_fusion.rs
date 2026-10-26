@@ -61,6 +61,10 @@ pub struct RrfOptions {
     pub normalise: bool,
 }
 
+with_setters!(RrfOptions {
+    with_normalise -> normalise: bool,
+});
+
 impl Default for RrfOptions {
     fn default() -> Self {
         Self {

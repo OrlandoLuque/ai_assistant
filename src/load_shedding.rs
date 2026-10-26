@@ -56,6 +56,16 @@ pub struct LoadSheddingConfig {
     pub cooldown: Duration,
 }
 
+with_setters!(LoadSheddingConfig {
+    with_strategy -> strategy: SheddingStrategy,
+    with_cpu_threshold -> cpu_threshold: f64,
+    with_memory_threshold -> memory_threshold: f64,
+    with_queue_depth_threshold -> queue_depth_threshold: usize,
+    with_latency_threshold -> latency_threshold: Duration,
+    with_priority_protection -> priority_protection: bool,
+    with_cooldown -> cooldown: Duration,
+});
+
 impl Default for LoadSheddingConfig {
     fn default() -> Self {
         Self::conservative()

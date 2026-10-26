@@ -23,6 +23,14 @@ pub struct EmbeddingConfig {
     pub ngram_range: (usize, usize),
 }
 
+with_setters!(EmbeddingConfig {
+    with_dimensions -> dimensions: usize,
+    with_min_word_freq -> min_word_freq: usize,
+    with_max_vocab_size -> max_vocab_size: usize,
+    with_use_subwords -> use_subwords: bool,
+    with_ngram_range -> ngram_range: (usize, usize),
+});
+
 impl Default for EmbeddingConfig {
     fn default() -> Self {
         Self {
@@ -405,6 +413,12 @@ pub struct HybridSearchConfig {
     /// Minimum semantic score to consider
     pub min_semantic_score: f32,
 }
+
+with_setters!(HybridSearchConfig {
+    with_keyword_weight -> keyword_weight: f32,
+    with_semantic_weight -> semantic_weight: f32,
+    with_min_semantic_score -> min_semantic_score: f32,
+});
 
 impl Default for HybridSearchConfig {
     fn default() -> Self {
