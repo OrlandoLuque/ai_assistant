@@ -44,7 +44,17 @@ Esto te da el contexto completo: dónde estamos, qué se ha hecho, cómo trabaja
   - La licencia PolyForm Noncommercial sigue aplicando y prohíbe el uso comercial, pero
     **el código es legible por cualquiera y ya se ha bifurcado una vez**: cualquier decisión
     sobre PI o secreto industrial debe partir de ese hecho, no de suponer que está oculto.
-- **Feature flags**: 95 (multi-agent, security, analytics, rag, distributed, autonomous, gui-pro, audio-io, gpu-sharing, research, etc.). El conjunto mínimo soportado son ocho, documentado en `Cargo.toml` y verificado en CI.
+- **Feature flags**: **99** contando `default`, o 98 con nombre propio (multi-agent, security,
+  analytics, rag, distributed, autonomous, gui-pro, audio-io, gpu-sharing, research,
+  `test-utils`…). Re-medido el 2026-10-26 en 0.2.402; decía 95.
+  - **99 es como lo cuenta la puerta** (`len(manifest["features"])` en
+    `scripts/check_readme_numbers.py`), y es la cifra que CI exige en el README y en la web.
+    Dos definiciones para una pregunta es como una cifra se queda vieja pareciendo defendible
+    en las dos versiones, así que aquí se usa la de la puerta y ninguna otra.
+  - La puerta **no mira este fichero** ni `docs/CAPABILITIES.md`: por eso el 95 sobrevivió a
+    cuatro features nuevas en ambos. Al tocar la cifra en cualquiera de los cuatro sitios,
+    corre `check_readme_numbers.py` y `check_website_numbers.py` igualmente.
+  - El conjunto mínimo soportado son ocho, documentado en `Cargo.toml` y verificado en CI.
 - **Binarios**: 41 declarados en `Cargo.toml` (V305 añadió `ai_mcp_server`). El inventario
   es `docs/BINARIES.md`, y desde V305 CI comprueba que coincide con el manifiesto: decía 26
   de 41, y una página que se llama a sí misma exhaustiva y va al 60 % contesta «no existe»

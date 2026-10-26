@@ -252,16 +252,30 @@ Counts, which are facts and are regenerable:
 
 | | |
 |---|---|
-| features declared in `Cargo.toml` | 95 |
+| features declared in `Cargo.toml` | 99 |
 | `[[bin]]` entries | 41 |
-| `pub mod` in `lib.rs` | 339 |
-| of those, behind a `#[cfg(feature)]` | 187 |
+| `pub mod` in `lib.rs` | 345 |
+| of those, behind a `#[cfg(feature)]` | 193 |
 
-Measured 2026-09-24 — and the binary count came out as 40 first, because the
-regex assumed `name` follows `[[bin]]` immediately and one entry puts `path`
-first. `scripts/check_binaries_documented.py`, which CI runs, says 41. Prefer
-the existing checker to a fresh regex; if you must write one, make it disagree
-with something you can verify.
+Re-measured **2026-10-26** at 0.2.402; the previous set (95 / 41 / 339 / 187,
+2026-09-24) had drifted on three of four.
+
+**The feature count is 99 because that is how the gate counts it** —
+`len(manifest["features"])` in `scripts/check_readme_numbers.py`, which includes
+the `default` entry. There are 98 named features plus `default`. Two numbers for
+one question is how a figure goes stale while both halves look defensible, so
+this table uses the gated definition and nothing else.
+
+That gate guards the README and the website, **not this file**, which is why the
+95 above survived four features being added. If you change a count here, run
+`check_readme_numbers.py` and `check_website_numbers.py` anyway — they know the
+tree, and the three places that state the number have to agree.
+
+And the binary count came out as 40 first, because the regex assumed `name`
+follows `[[bin]]` immediately and one entry puts `path` first.
+`scripts/check_binaries_documented.py`, which CI runs, says 41. Prefer the
+existing checker to a fresh regex; if you must write one, make it disagree with
+something you can verify.
 
 `docs/BINARIES.md` is the binary inventory; `docs/README.md` indexes the 198
 files in `docs/`.
