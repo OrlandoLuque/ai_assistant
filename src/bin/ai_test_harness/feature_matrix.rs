@@ -140,7 +140,6 @@ full = [",
 /// So the cost of closing this list is CI minutes, not repair work. That is a
 /// budget decision for the maintainer, which is why the list records the fact
 /// rather than acting on it.
-
 #[cfg(test)]
 const UNCOVERED_BACKLOG: &[&str] = &[
     // Platform-specific: the Linux runner cannot build these at all.
