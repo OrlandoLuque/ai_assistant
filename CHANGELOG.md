@@ -5,6 +5,77 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v318 (2026-10-26) - V442: `speech.rs` detras del puerto, y seis llamadas a la nube que no tenian plazo (0.2.401)
+
+Fase 4 hexagonal (#77), modulo doce de 55: `speech.rs`, 18 sitios `ureq` en cinco
+proveedores (OpenAI, Google, Piper, Coqui, ElevenLabs) mas dos de clonado de voz
+(ElevenLabs, XTTS v2). Cero `ureq::` al acabar.
+
+Como en los once anteriores, lo que se aprende no es la mecanica del cambio sino lo que
+aparece al tener que decidir cada sitio uno por uno.
+
+### Seis llamadas a APIs de pago SIN plazo ninguno
+
+`ureq::post(url).header(..).send(..)` sin `.config().timeout_global(..)` **no tiene plazo**:
+`ureq` 3 espera indefinidamente. Asi estaban la sintesis expresiva de OpenAI, tres llamadas
+de ElevenLabs (TTS, TTS con voz clonada, listar voces), la de subir una muestra de voz y la
+de borrar. Una API colgada colgaba el hilo, sin mas. Ahora todas llevan plazo --- 120 s las
+que generan o suben audio, 30 s las de listar y borrar.
+
+No es un fallo del autor del modulo: es que el plazo en `ureq` se pone en una cadena aparte
+(`.config().timeout_global(..).build()`) que es facil de olvidar, y nada lo recuerda. En el
+puerto es un campo de `HttpRequest` con valor por defecto, asi que olvidarlo da 30 s, no
+infinito.
+
+### Un fallo LATENTE que el puerto destapo: Coqui se declaraba muerto estando vivo
+
+`CoquiTtsProvider::is_available()` era `.call().is_ok()`, y en `ureq` 3 eso es falso ante
+cualquier no-2xx. La API de Coqui vive en `/api/tts`: un `GET` a la URL base contesta **404
+en un servidor que funciona perfectamente**. O sea que la funcion decia `false` con el
+servidor en marcha.
+
+Y lo mejor: **Piper ya lo tenia resuelto**, a mano, con un brazo explicito:
+
+```rust
+Err(ureq::Error::StatusCode(400)) => true, // Server is up, just rejects empty GET
+```
+
+Dos sitios con la misma pregunta, escrita de dos formas, y solo uno de los dos acertaba. Es
+exactamente lo que pasa cuando una decision no tiene un unico sitio donde vivir. Detras del
+puerto se escribe una sola vez y la pregunta queda dicha como es: **contestar algo, lo que
+sea, es estar vivo**. El brazo del 400 desaparece --- no porque se tire, sino porque el 404
+y el 400 ya no son errores.
+
+Y en XTTS v2 lo mismo costaba **dos peticiones por sondeo**: un `GET` a `/api/tts`, y si
+fallaba otro a la raiz `||`-ado, porque con `ureq` el 404 del primero era `Err`. Ahora una.
+
+### Lo que habia que no perder
+
+* **El borrado.** `ureq::delete(..).call()?` --- el `?` hacia que un no-2xx fuera error.
+  Detras del puerto hay que decirlo a mano, y perderlo daria `Ok(())` al llamante sobre una
+  voz que sigue existiendo. La peor clase de exito.
+* **Los errores que no son audio.** Un 401 de ElevenLabs es JSON y un 500 de Piper es texto;
+  los dos se habrian escrito en el `Vec<u8>` de audio como si fueran un MP3. Seis rutas de
+  sintesis comprueban el estado **antes de leer un byte**.
+* **El tope de cuerpo.** Las cuatro rutas que devuelven audio van por `send_streaming`,
+  porque el tope por defecto del puerto son 10 MiB y un texto largo lo pasa. Y la de Google
+  TTS **no puede** --- el audio viene en base64 dentro del JSON, asi que hay que bufferizar
+  para parsear --- de modo que sube el tope a 64 MiB con el motivo escrito al lado: base64
+  infla un tercio, asi que 10 MiB de cuerpo son 7,5 MiB de audio.
+
+### Verificacion
+
+Siete tests nuevos, y los tres de arriba con su mutacion (M32-M34), todas mueren: el borrado
+que falla con 404, el 500 de Piper que no es un WAV, y el 404 de Coqui que si es un servidor
+vivo. Dos de los siete son casos **separadores** --- «no hay nadie escuchando» y «el 200 si
+borra» --- porque sin ellos `true` y `Err` constantes pasarian los otros.
+
+Clippy `-D warnings --all-targets` sobre `FEATURES_STD`, que es donde viven `audio` y
+`voice-agent`.
+
+**Doce de 55.** Quedan `academic_search` (16 sitios), `server`, `butler` y
+`paper_fulltext`, mas los que `ureq` toca desde los binarios.
+
 ## [Unreleased] - v317 (2026-10-26) - V441: la regla de que un 404 es SANO llevaba ahi desde siempre y no habia forma de probarla (0.2.400)
 
 N166, primera pasada: el puerto HTTP era un puerto de **forma** --- el tipo existe, el trait

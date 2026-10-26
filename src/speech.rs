@@ -6,6 +6,7 @@
 //!
 //! Feature-gated behind the `audio` feature flag (handled by lib.rs).
 
+use crate::http_client::{HttpClient, HttpMethod, HttpRequest, UreqClient};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::io::Read as IoRead;
@@ -343,21 +344,30 @@ impl SpeechProvider for OpenAISpeechProvider {
         // End boundary
         body.extend_from_slice(format!("--{}--\r\n", boundary).as_bytes());
 
-        let mut response = ureq::post(&url)
-            .header("Authorization", &format!("Bearer {}", api_key))
+        // Detras del puerto (N77). El multipart no necesita nada especial: son
+        // bytes mas una cabecera `Content-Type` con su boundary, que es lo que
+        // ya se construia a mano aqui arriba.
+        let request = HttpRequest::new(HttpMethod::Post, &url)
+            .header("Authorization", format!("Bearer {}", api_key))
             .header(
                 "Content-Type",
-                &format!("multipart/form-data; boundary={}", boundary),
+                format!("multipart/form-data; boundary={}", boundary),
             )
-            .config()
-            .timeout_global(Some(self.config.timeout))
-            .build()
-            .send(&body)
+            .body(body)
+            .timeout(self.config.timeout);
+        let response = UreqClient
+            .send(&request)
+            .context("OpenAI transcription request failed")?;
+        // `Ok` ya no significa 2xx, asi que la decision se toma aqui --- y se
+        // GANA algo al tomarla: `ureq::Error::StatusCode` no llevaba respuesta,
+        // asi que hasta ahora un 401 o un 429 de OpenAI llegaban sin el mensaje
+        // del proveedor. Ahora el cuerpo va en el error.
+        response
+            .error_for_status()
             .context("OpenAI transcription request failed")?;
 
         let json: serde_json::Value = response
-            .body_mut()
-            .read_json()
+            .json()
             .context("Failed to parse OpenAI transcription response")?;
 
         let text = json["text"].as_str().unwrap_or("").to_string();
@@ -412,19 +422,25 @@ impl SpeechProvider for OpenAISpeechProvider {
             "speed": options.speed,
         });
 
-        let response = ureq::post(&url)
-            .header("Authorization", &format!("Bearer {}", api_key))
-            .header("Content-Type", "application/json")
-            .config()
-            .timeout_global(Some(self.config.timeout))
-            .build()
-            .send_json(body)
+        // `send_streaming` y NO `send`: esto devuelve AUDIO, y el tope por
+        // defecto del puerto son 10 MiB. Un texto largo pasa de ahi sin
+        // dificultad, y `send` habria fallado donde antes funcionaba. Es la
+        // cuarta vez en la migracion que ese tope habria sido una regresion.
+        let request = HttpRequest::post_json(&url, &body)?
+            .header("Authorization", format!("Bearer {}", api_key))
+            .timeout(self.config.timeout);
+        let mut response = UreqClient
+            .send_streaming(&request)
+            .context("OpenAI TTS request failed")?;
+        // Antes de leer un byte: el JSON de error de OpenAI no es audio, y sin
+        // esto se escribiria en el `Vec` como si lo fuera.
+        response
+            .error_for_status()
             .context("OpenAI TTS request failed")?;
 
         let mut audio = Vec::new();
         response
-            .into_body()
-            .into_reader()
+            .body
             .read_to_end(&mut audio)
             .context("Failed to read TTS audio response")?;
 
@@ -548,18 +564,18 @@ impl SpeechProvider for GoogleSpeechProvider {
             }
         });
 
-        let mut response = ureq::post(url)
-            .header("Content-Type", "application/json")
+        let request = HttpRequest::post_json(url, &body)?
             .header("x-goog-api-key", api_key)
-            .config()
-            .timeout_global(Some(self.config.timeout))
-            .build()
-            .send_json(body)
+            .timeout(self.config.timeout);
+        let response = UreqClient
+            .send(&request)
+            .context("Google STT request failed")?;
+        response
+            .error_for_status()
             .context("Google STT request failed")?;
 
         let json: serde_json::Value = response
-            .body_mut()
-            .read_json()
+            .json()
             .context("Failed to parse Google STT response")?;
 
         // Parse Google's results array
@@ -646,18 +662,23 @@ impl SpeechProvider for GoogleSpeechProvider {
             }
         });
 
-        let mut response = ureq::post(url)
-            .header("Content-Type", "application/json")
+        // Aqui el audio viene en base64 DENTRO del JSON, asi que hay que
+        // bufferizarlo para parsearlo --- `send_streaming` no sirve. Lo que si
+        // hace falta es subir el tope: base64 infla un tercio, de modo que 10
+        // MiB de cuerpo son ~7,5 MiB de audio, y una sintesis larga los pasa.
+        let request = HttpRequest::post_json(url, &body)?
             .header("x-goog-api-key", api_key)
-            .config()
-            .timeout_global(Some(self.config.timeout))
-            .build()
-            .send_json(body)
+            .timeout(self.config.timeout)
+            .max_body_bytes(64 * 1024 * 1024);
+        let response = UreqClient
+            .send(&request)
+            .context("Google TTS request failed")?;
+        response
+            .error_for_status()
             .context("Google TTS request failed")?;
 
         let json: serde_json::Value = response
-            .body_mut()
-            .read_json()
+            .json()
             .context("Failed to parse Google TTS response")?;
 
         let audio_b64 = json["audioContent"]
@@ -710,18 +731,20 @@ impl PiperTtsProvider {
         self
     }
 
-    /// Check if the Piper server is reachable.
+    /// Esta el servidor de Piper ahi.
+    ///
+    /// Con el puerto, el brazo que habia aqui para `Err(StatusCode(400))`
+    /// --- «el servidor esta, solo rechaza un GET vacio» --- **desaparece**, y no
+    /// porque se tire: es que el 400 ya no es un error. Un no-2xx vuelve como
+    /// `Ok` con su estado, asi que «el servidor contesto algo» y «no hay nadie»
+    /// dejan de ser la misma variante y la pregunta se escribe tal como es.
+    ///
+    /// Exactamente lo contrario de lo que `ureq` obligaba a hacer: enumerar a
+    /// mano los codigos que significan «esta vivo», y olvidarse de los demas.
     pub fn is_available(&self) -> bool {
-        match ureq::get(&self.base_url)
-            .config()
-            .timeout_global(Some(Duration::from_secs(2)))
-            .build()
-            .call()
-        {
-            Ok(_) => true,
-            Err(ureq::Error::StatusCode(400)) => true, // Server is up, just rejects empty GET
-            Err(_) => false,
-        }
+        UreqClient
+            .send(&HttpRequest::get(&self.base_url).timeout(Duration::from_secs(2)))
+            .is_ok()
     }
 }
 
@@ -756,18 +779,22 @@ impl SpeechProvider for PiperTtsProvider {
             anyhow::bail!("Cannot synthesize empty text");
         }
 
-        let response = ureq::post(&self.base_url)
+        let request = HttpRequest::new(HttpMethod::Post, &self.base_url)
             .header("Content-Type", "text/plain")
-            .config()
-            .timeout_global(Some(self.timeout))
-            .build()
-            .send(text)
+            .body(text.as_bytes().to_vec())
+            .timeout(self.timeout);
+        let mut response = UreqClient
+            .send_streaming(&request)
+            .context("Piper TTS request failed")?;
+        // Un 500 de Piper no es un WAV. Antes `.send(..)?` lo convertia en `Err`
+        // y aqui no habia nada que decidir; ahora si, y la decision es la misma.
+        response
+            .error_for_status()
             .context("Piper TTS request failed")?;
 
         let mut audio = Vec::new();
         response
-            .into_body()
-            .into_reader()
+            .body
             .read_to_end(&mut audio)
             .context("Failed to read Piper TTS audio response")?;
 
@@ -839,13 +866,21 @@ impl CoquiTtsProvider {
         self
     }
 
-    /// Check if the Coqui TTS server is reachable.
+    /// Esta el servidor de Coqui ahi.
+    ///
+    /// Esto **cambia de comportamiento, y a mejor**. `.call().is_ok()` en
+    /// `ureq` 3 es falso ante cualquier no-2xx, y la API de Coqui vive en
+    /// `/api/tts`: un `GET` a la URL base contesta 404 en un servidor que
+    /// funciona perfectamente. O sea que `is_available()` decia **false con el
+    /// servidor en marcha**.
+    ///
+    /// Era el mismo caso que Piper ya tenia resuelto a mano con su brazo para
+    /// el 400, y aqui nadie se habia dado cuenta --- que es lo que pasa cuando
+    /// la misma pregunta se escribe dos veces de dos formas. Con el puerto se
+    /// escribe una sola: contestar algo, lo que sea, es estar vivo.
     pub fn is_available(&self) -> bool {
-        ureq::get(&self.base_url)
-            .config()
-            .timeout_global(Some(Duration::from_secs(2)))
-            .build()
-            .call()
+        UreqClient
+            .send(&HttpRequest::get(&self.base_url).timeout(Duration::from_secs(2)))
             .is_ok()
     }
 }
@@ -891,17 +926,17 @@ impl SpeechProvider for CoquiTtsProvider {
             url.push_str(&format!("&language_id={}", urlencoding::encode(language)));
         }
 
-        let response = ureq::get(&url)
-            .config()
-            .timeout_global(Some(self.timeout))
-            .build()
-            .call()
+        let mut response = UreqClient
+            .send_streaming(&HttpRequest::get(&url).timeout(self.timeout))
+            .context("Coqui TTS request failed")?;
+        // Igual que en Piper: un error del servidor no es un WAV.
+        response
+            .error_for_status()
             .context("Coqui TTS request failed")?;
 
         let mut audio = Vec::new();
         response
-            .into_body()
-            .into_reader()
+            .body
             .read_to_end(&mut audio)
             .context("Failed to read Coqui TTS audio response")?;
 
@@ -1362,16 +1397,23 @@ impl ExpressiveOpenAiTtsProvider {
             "instructions": emotion_instruction,
         });
 
-        let response = ureq::post("https://api.openai.com/v1/audio/speech")
-            .header("Authorization", &format!("Bearer {}", self.api_key))
-            .header("Content-Type", "application/json")
-            .send(&body.to_string())
+        // Detras del puerto (N77), y con un plazo: esta llamada NO tenia
+        // ninguno. `ureq` 3 sin `timeout_global` espera indefinidamente, asi
+        // que una API colgada colgaba el hilo. Dos minutos para una sintesis
+        // expresiva, que es lenta de por si.
+        let request = HttpRequest::post_json("https://api.openai.com/v1/audio/speech", &body)?
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .timeout(Duration::from_secs(120));
+        let mut response = UreqClient
+            .send_streaming(&request)
+            .context("Failed to call OpenAI Expressive TTS API")?;
+        response
+            .error_for_status()
             .context("Failed to call OpenAI Expressive TTS API")?;
 
         let mut audio = Vec::new();
         response
-            .into_body()
-            .into_reader()
+            .body
             .read_to_end(&mut audio)
             .context("Failed to read audio response")?;
 
@@ -1489,17 +1531,21 @@ impl SpeechProvider for ElevenLabsProvider {
             }
         });
 
-        let response = ureq::post(&url)
+        let request = HttpRequest::post_json(&url, &body)?
             .header("xi-api-key", &self.api_key)
-            .header("Content-Type", "application/json")
             .header("Accept", "audio/mpeg")
-            .send(&body.to_string())
+            .timeout(Duration::from_secs(120));
+        let mut response = UreqClient
+            .send_streaming(&request)
+            .context("Failed to call ElevenLabs TTS API")?;
+        // Un 401 de ElevenLabs es JSON, no un MP3.
+        response
+            .error_for_status()
             .context("Failed to call ElevenLabs TTS API")?;
 
         let mut audio = Vec::new();
         response
-            .into_body()
-            .into_reader()
+            .body
             .read_to_end(&mut audio)
             .context("Failed to read ElevenLabs audio response")?;
 
@@ -1802,16 +1848,24 @@ impl VoiceCloneProvider for ElevenLabsCloneProvider {
         // Closing boundary
         body.extend_from_slice(format!("--{}--\r\n", boundary).as_bytes());
 
-        let mut response = ureq::post(&url)
+        // Sube una muestra de audio, asi que el plazo tiene que ser generoso:
+        // esta llamada no tenia ninguno.
+        let request = HttpRequest::new(HttpMethod::Post, &url)
             .header("xi-api-key", &self.api_key)
             .header(
                 "Content-Type",
-                &format!("multipart/form-data; boundary={}", boundary),
+                format!("multipart/form-data; boundary={}", boundary),
             )
-            .send(&body)
+            .body(body)
+            .timeout(Duration::from_secs(120));
+        let response = UreqClient
+            .send(&request)
+            .context("Failed to call ElevenLabs Add Voice API")?;
+        response
+            .error_for_status()
             .context("Failed to call ElevenLabs Add Voice API")?;
 
-        let json: serde_json::Value = response.body_mut().read_json()?;
+        let json: serde_json::Value = response.json()?;
         let voice_id = json["voice_id"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("No voice_id in ElevenLabs response"))?
@@ -1840,17 +1894,20 @@ impl VoiceCloneProvider for ElevenLabsCloneProvider {
             }
         });
 
-        let response = ureq::post(&url)
+        let request = HttpRequest::post_json(&url, &body)?
             .header("xi-api-key", &self.api_key)
-            .header("Content-Type", "application/json")
             .header("Accept", "audio/mpeg")
-            .send(&body.to_string())
+            .timeout(Duration::from_secs(120));
+        let mut response = UreqClient
+            .send_streaming(&request)
+            .context("Failed to call ElevenLabs TTS with cloned voice")?;
+        response
+            .error_for_status()
             .context("Failed to call ElevenLabs TTS with cloned voice")?;
 
         let mut audio = Vec::new();
         response
-            .into_body()
-            .into_reader()
+            .body
             .read_to_end(&mut audio)
             .context("Failed to read ElevenLabs cloned voice audio")?;
 
@@ -1865,12 +1922,17 @@ impl VoiceCloneProvider for ElevenLabsCloneProvider {
     fn list_cloned_voices(&self) -> Result<Vec<ClonedVoiceProfile>> {
         let url = format!("{}/voices", self.base_url);
 
-        let mut response = ureq::get(&url)
+        let request = HttpRequest::get(&url)
             .header("xi-api-key", &self.api_key)
-            .call()
+            .timeout(Duration::from_secs(30));
+        let response = UreqClient
+            .send(&request)
+            .context("Failed to list ElevenLabs voices")?;
+        response
+            .error_for_status()
             .context("Failed to list ElevenLabs voices")?;
 
-        let json: serde_json::Value = response.body_mut().read_json()?;
+        let json: serde_json::Value = response.json()?;
         let voices = json["voices"]
             .as_array()
             .map(|arr| {
@@ -1895,9 +1957,16 @@ impl VoiceCloneProvider for ElevenLabsCloneProvider {
     fn delete_cloned_voice(&self, voice_id: &ClonedVoiceId) -> Result<()> {
         let url = format!("{}/voices/{}", self.base_url, voice_id);
 
-        ureq::delete(&url)
+        // El `?` de `.call()` hacia que un no-2xx fuera error, y eso NO se
+        // puede perder: un borrado que contesta 404 y devuelve `Ok(())` es la
+        // peor clase de exito --- el llamante cree que la voz ya no esta.
+        let request = HttpRequest::new(HttpMethod::Delete, &url)
             .header("xi-api-key", &self.api_key)
-            .call()
+            .timeout(Duration::from_secs(30));
+        UreqClient
+            .send(&request)
+            .context("Failed to delete ElevenLabs voice")?
+            .error_for_status()
             .context("Failed to delete ElevenLabs voice")?;
 
         Ok(())
@@ -2003,18 +2072,17 @@ impl VoiceCloneProvider for XttsCloneProvider {
             "language": "en"
         });
 
-        let response = ureq::post(&url)
-            .header("Content-Type", "application/json")
-            .config()
-            .timeout_global(Some(Duration::from_secs(60)))
-            .build()
-            .send(&body.to_string())
+        let request = HttpRequest::post_json(&url, &body)?.timeout(Duration::from_secs(60));
+        let mut response = UreqClient
+            .send_streaming(&request)
+            .context("Failed to call XTTS v2 TTS API")?;
+        response
+            .error_for_status()
             .context("Failed to call XTTS v2 TTS API")?;
 
         let mut audio = Vec::new();
         response
-            .into_body()
-            .into_reader()
+            .body
             .read_to_end(&mut audio)
             .context("Failed to read XTTS audio response")?;
 
@@ -2048,19 +2116,19 @@ impl VoiceCloneProvider for XttsCloneProvider {
     }
 
     fn is_available(&self) -> bool {
-        // Check if the XTTS server is reachable
-        ureq::get(&format!("{}/api/tts", self.base_url))
-            .config()
-            .timeout_global(Some(Duration::from_secs(2)))
-            .build()
-            .call()
+        // Eran DOS peticiones unidas por `||`, y el `||` existia solo porque
+        // con `ureq` un 404 era `Err`: si `/api/tts` contestaba 404 --- que es
+        // lo normal ante un GET --- habia que preguntarle a la raiz por si
+        // acaso. Detras del puerto el 404 es un `Ok`, asi que la primera ya
+        // responde la pregunta y la segunda no puede decir nada nuevo.
+        //
+        // Una peticion menos por sondeo, y una rama menos que mantener.
+        UreqClient
+            .send(
+                &HttpRequest::get(format!("{}/api/tts", self.base_url))
+                    .timeout(Duration::from_secs(2)),
+            )
             .is_ok()
-            || ureq::get(&self.base_url)
-                .config()
-                .timeout_global(Some(Duration::from_secs(2)))
-                .build()
-                .call()
-                .is_ok()
     }
 
     fn clone_provider_name(&self) -> &str {
@@ -3108,5 +3176,99 @@ mod tests {
         assert_eq!(base64_encode(b""), "");
         assert_eq!(base64_encode(b"ab"), "YWI=");
         assert_eq!(base64_encode(b"abc"), "YWJj");
+    }
+    // ------------------------------------------------------------------
+    // Detras del puerto HTTP (N77): lo que cambia de comportamiento
+    // ------------------------------------------------------------------
+
+    /// Piper: el brazo `Err(StatusCode(400)) => true` desaparecio, y la
+    /// pregunta sigue contestandose igual --- mejor, porque ya no hay que
+    /// enumerar a mano los codigos que significan «esta vivo».
+    #[test]
+    fn test_piper_is_available_when_the_server_rejects_the_probe() {
+        let server = crate::http_client::MockHttpServer::start();
+        server.enqueue_text(400, "empty body");
+        let piper = PiperTtsProvider::new(&server.url());
+        assert!(
+            piper.is_available(),
+            "un 400 es el servidor contestando, o sea que esta"
+        );
+    }
+
+    /// Y el caso separador: sin nadie escuchando, no esta. Sin este test,
+    /// `is_available() { true }` pasaria el de arriba.
+    #[test]
+    fn test_piper_is_not_available_when_nobody_listens() {
+        // Puerto 1: reservado, nada escucha ahi.
+        let piper = PiperTtsProvider::new("http://127.0.0.1:1");
+        assert!(!piper.is_available());
+    }
+
+    /// Coqui: esto **cambia** de resultado, y a mejor. Su API vive en
+    /// `/api/tts`, asi que un `GET` a la raiz contesta 404 en un servidor que
+    /// funciona --- y con `ureq` eso era `Err`, de modo que `is_available()`
+    /// decia **false con el servidor en marcha**.
+    #[test]
+    fn test_coqui_is_available_even_though_the_root_path_is_a_404() {
+        let server = crate::http_client::MockHttpServer::start();
+        server.enqueue_text(404, "not found");
+        let coqui = CoquiTtsProvider::new(&server.url());
+        assert!(
+            coqui.is_available(),
+            "la API de Coqui esta en /api/tts; un 404 en la raiz no significa que no haya servidor"
+        );
+    }
+
+    #[test]
+    fn test_coqui_is_not_available_when_nobody_listens() {
+        let coqui = CoquiTtsProvider::new("http://127.0.0.1:1");
+        assert!(!coqui.is_available());
+    }
+
+    /// Un 500 no es un WAV. Antes `.call()?` lo convertia en `Err` sin que
+    /// hubiera nada que decidir aqui; detras del puerto hay que decidirlo, y la
+    /// decision es la misma --- con la ventaja de que el cuerpo del error llega
+    /// al mensaje.
+    #[test]
+    fn test_piper_synthesize_does_not_return_the_error_body_as_audio() {
+        let server = crate::http_client::MockHttpServer::start();
+        server.enqueue_text(500, "model not loaded");
+        let piper = PiperTtsProvider::new(&server.url());
+        let err = piper
+            .synthesize("hola", &SynthesisOptions::default())
+            .expect_err("un 500 no es audio");
+        let text = format!("{:#}", err);
+        assert!(text.contains("500"), "err = {}", text);
+        assert!(text.contains("model not loaded"), "err = {}", text);
+    }
+
+    /// La regla que mas facil era perder al migrar: un borrado que contesta 404
+    /// y devuelve `Ok(())` es la peor clase de exito, porque el llamante cree
+    /// que la voz ya no esta.
+    #[test]
+    fn test_deleting_a_cloned_voice_fails_loudly_on_a_404() {
+        let server = crate::http_client::MockHttpServer::start();
+        server.enqueue_text(404, "voice_not_found");
+        let cloner = ElevenLabsCloneProvider::new("test-key").with_base_url(&server.url());
+        let err = cloner
+            .delete_cloned_voice(&"xyz".to_string())
+            .expect_err("un 404 al borrar NO es un borrado");
+        let text = format!("{:#}", err);
+        assert!(text.contains("404"), "err = {}", text);
+        assert!(text.contains("voice_not_found"), "err = {}", text);
+    }
+
+    /// Y el caso sano, que es el que separa al de arriba de «siempre falla».
+    #[test]
+    fn test_deleting_a_cloned_voice_succeeds_on_a_200() {
+        let server = crate::http_client::MockHttpServer::start();
+        server.enqueue_text(200, "{}");
+        let cloner = ElevenLabsCloneProvider::new("test-key").with_base_url(&server.url());
+        cloner
+            .delete_cloned_voice(&"xyz".to_string())
+            .expect("un 200 si es un borrado");
+        let (method, path, _) = server.last_request().expect("llego la peticion");
+        assert_eq!(method, "DELETE");
+        assert!(path.contains("/voices/xyz"), "path = {}", path);
     }
 }

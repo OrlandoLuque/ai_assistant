@@ -556,3 +556,59 @@ before = """        resp.error_for_status()?;
         let v: serde_json::Value = resp.json()?;"""
 after = """        let v: serde_json::Value = resp.json()?;"""
 occurrences = 1
+
+# ============================================================================
+# speech.rs --- migracion al puerto (#77)
+# ============================================================================
+
+[[mutation]]
+id = "M32"
+file = "src/speech.rs"
+features = "full,audio,voice-agent"
+filter = "speech::tests::test_deleting_a_cloned_voice"
+invariant = "un borrado que contesta 404 NO es un borrado: era `.call()?` y el `?` lo hacia error; detras del puerto hay que decirlo a mano, y perderlo daria `Ok(())` al llamante sobre una voz que sigue ahi"
+before = """        UreqClient
+            .send(&request)
+            .context("Failed to delete ElevenLabs voice")?
+            .error_for_status()
+            .context("Failed to delete ElevenLabs voice")?;"""
+after = """        UreqClient
+            .send(&request)
+            .context("Failed to delete ElevenLabs voice")?;"""
+occurrences = 1
+
+[[mutation]]
+id = "M33"
+file = "src/speech.rs"
+features = "full,audio,voice-agent"
+filter = "speech::tests::test_piper_synthesize_does_not_return_the_error_body_as_audio"
+invariant = "el cuerpo de un error de Piper no es un WAV: sin la comprobacion se escribiria en el `Vec` de audio como si lo fuera"
+before = """        response
+            .error_for_status()
+            .context("Piper TTS request failed")?;"""
+after = ""
+occurrences = 1
+
+[[mutation]]
+id = "M34"
+file = "src/speech.rs"
+features = "full,audio,voice-agent"
+filter = "speech::tests::test_coqui_is_available"
+invariant = "un sondeo de disponibilidad pregunta si el servidor CONTESTA, no si contesta 2xx: la API de Coqui vive en /api/tts, asi que exigir un 2xx en la raiz declaraba muerto a un servidor vivo"
+before = """    pub fn is_available(&self) -> bool {
+        UreqClient
+            .send(&HttpRequest::get(&self.base_url).timeout(Duration::from_secs(2)))
+            .is_ok()
+    }
+}
+
+impl SpeechProvider for CoquiTtsProvider {"""
+after = """    pub fn is_available(&self) -> bool {
+        UreqClient
+            .send(&HttpRequest::get(&self.base_url).timeout(Duration::from_secs(2)))
+            .is_ok_and(|r| r.is_success())
+    }
+}
+
+impl SpeechProvider for CoquiTtsProvider {"""
+occurrences = 1
