@@ -158,6 +158,20 @@ reads as advice and gets skipped. They are grouped by the question they answer.
    `model_integration` use.* And when adding the missing failure tests, add the **positive** one
    too: three failure tests alone also pass on a thing that reports everything as a failure.
 
+6b. **A replaceable closure is not an injection point if it replaces the rule you want to test.**
+    *Case (V441): `HealthChecker::with_check_fn` takes a closure and substitutes the **whole**
+    check, so a test using it never reaches this module's own rule --- that a 4xx counts as
+    HEALTHY, because what a health probe measures is that the server answers. That rule shipped
+    untested for as long as the module existed, not through carelessness but because the only
+    available mechanism replaced it along with everything else.* Inject the **collaborator**
+    (`Arc<dyn HttpClient>`), not the decision.
+
+6c. **A selector that matches nothing must fail, never report success.** *Case (V440):
+    `mutate.py --only M22,M23` printed "0 of 0 mutations behaved as the spec says" and exited
+    zero. Two bugs in one line --- the flag was `action="append"`, so the comma list arrived as
+    a single id, and selecting nothing was not an error.* A gate that answers a question nobody
+    asked is worse than a gate that is absent, because its OK gets quoted.
+
 ### B. Claims, documentation and gates
 
 6. **No claim about somebody else's code without a test that proves it.** *Case: two confident
@@ -196,6 +210,33 @@ reads as advice and gets skipped. They are grouped by the question they answer.
     configured graph, so the two do **not** cover the same thing, and a suppression can be
     load-bearing for one and inert for the other.
 
+10b. **A gate that does not run in CI is a gate that lies in peace.** Not "might rot" --- it
+    rots, and nobody sees the message it has been printing. *Case (V439): the feature-coverage
+    ratchet existed since V313, with its reasons written and its two-way check. It lived in the
+    harness battery, which is launched by hand. First run in months: **red, and saying something
+    false** --- it accused `tabular-polars` of being uncompiled while a job was testing it,
+    because its parser read neither the inline `--features` on `run:` lines nor the Cargo
+    feature graph.* The cheap way to silence a gate that cries wolf is to add the name to its
+    exclusion list with an invented reason, and then the list asserts "nobody compiles this"
+    about something CI builds. **Put the gate in CI the same day you write it, or it is a
+    private script.**
+
+10c. **The same number is written in as many spellings as it has sites.** A text sweep for one
+    spelling leaves the others, and what is left reads as reviewed. *Case (V442b-V443b): the
+    test count lived as `9,096` in 26 places, `9096` without a separator in one, and `9.096`
+    with a dot --- the Spanish page --- in three more; and after fixing the four `9,091` in the
+    README prose, a fifth survived in the badge URL as `tests-9091`.* Ask the gate, not the
+    editor: `check_readme_numbers.py` and `check_website_numbers.py` compare against the tree
+    and found every one of them.
+
+10d. **A doctest is the only instrument that answers "can a consumer use this?"** A unit test
+    compiles **inside** the crate, where a type is reachable by its module path, so it cannot
+    see a missing re-export. The hole is invisible by construction. *Case (V443): widening
+    `#[cfg(test)]` to `#[cfg(any(test, feature = "test-utils"))]` makes `MockHttpServer` compile
+    --- and it still cannot be **named** from another crate without the `pub use` in `lib.rs`.
+    Two changes, and only one of them is visible from in here.* Same family as
+    `#[non_exhaustive]` without a constructor: public in name, not in use.
+
 ### C. Features and CI
 
 11. **A superset of features does not substitute for each set CI builds.** Passing on `A` and on
@@ -216,6 +257,26 @@ reads as advice and gets skipped. They are grouped by the question they answer.
     *Case: found a broken clippy locally, assumed it was CI's, fixed it, still red — that job
     runs `--lib`, which does not compile `#[cfg(test)]`, so it could never have seen what I
     "fixed". A local failure found the same afternoon is a second bug, not evidence.*
+
+13b. **"Compiled by CI" and "exercised by CI" are different questions, and conflating them hides
+    behaviour regressions.** A feature reachable only from a `cargo clippy --bin` job compiles
+    the library and runs **no test**: a compile error gets caught, a behaviour change does not.
+    *Case (V439): `cloud-connectors` reached **57 tests, ten of them about SSRF**, that no job
+    ran --- it enters only through `gui-pro`, which is a clippy job.* The ratchet keeps two
+    lists for that reason (`UNCOVERED_BACKLOG` / `COMPILED_BUT_NOT_EXERCISED`), each with its
+    own failure class. When teaching a gate about the feature graph, check you have not just
+    taught it to stop reporting the gap that motivated it.
+
+13c. **Where a feature goes in CI decides whether your test runs.** The matrix runs `--lib`; the
+    doctest job runs `--features "$FEATURES_STD" --doc`. *Case (V443): adding `test-utils` to
+    the matrix instead of `FEATURES_STD` would have left the new doctest **compiled and never
+    executed** --- literally the distinction in 13b, fallen into the day after writing it.*
+
+13d. **Verify with the command CI runs, not an equivalent-looking one.** *Case (V439b): verified
+    with `cargo test --bin ai_test_harness` and clippy over the library, and CI runs
+    `clippy --features "$FEATURES_STD" --all-targets`, which compiles the harness binary's
+    **test** target. One blank line between a doc comment and its constant --- an error under
+    `-D warnings` --- that neither of my two commands could see.*
 
 ### D. Reading tool output
 
