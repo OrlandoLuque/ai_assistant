@@ -8,7 +8,7 @@ A comprehensive Rust library for LLM integration — local and cloud. 19 provide
 
 ![Rust](https://img.shields.io/badge/Rust-Edition%202021-orange)
 ![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)
-![Tests](https://img.shields.io/badge/tests-9091-brightgreen)
+![Tests](https://img.shields.io/badge/tests-9121-brightgreen)
 ![LOC](https://img.shields.io/badge/LOC-563K-blue)
 ![Gates](https://img.shields.io/badge/CI%20gates-14-blue)
 
@@ -247,7 +247,7 @@ The table below is a selection, not the inventory.
   recurring defect class here. The honest version is that it gets hunted in documented sweeps
   and then gated: `docs/CAPABILITIES.md` marks what is `hecho` / `parcial` / `no`, and
   `CHANGELOG.md` records each sweep and what it found
-- **98 feature flags**: granular dependency control, with the minimum supported set compiled
+- **99 feature flags**: granular dependency control, with the minimum supported set compiled
   in CI so "it builds with everything on" is not the only thing verified
 - **~423,000 lines of Rust**: Single crate, modular architecture
 - **Security audited**: 300+ attack vectors catalogued and mitigated (exhaustive multi-pass audit)
@@ -274,7 +274,7 @@ cargo build --features "full,autonomous,scheduler,butler,browser,distributed-age
 # Run tests -- this is the set CI runs (FEATURES_STD in .github/workflows/ci.yml).
 # A narrower set compiles fewer tests, so it reports a different number: `--features
 # full` alone builds 7,330 of the 9,121, and the eight-feature minimum 5,295.
-cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing,local-inference,ffi,tabular" --lib
+cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing,local-inference,ffi,tabular,test-utils" --lib
 ```
 
 ## Installation
