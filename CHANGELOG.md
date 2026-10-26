@@ -5,6 +5,82 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v321 (2026-10-26) - V445: cuatro advisories de zstd, y el arreglo no existe aun --- probado, no supuesto (0.2.404)
+
+CI y Supply Chain se pusieron en rojo con el Cargo.lock **sin tocar**: el commit anterior
+habia pasado dos horas antes y lo unico que cambio fue la base de datos de advisories.
+Cuatro vulnerabilidades nuevas en la familia zstd, del 2026-10-26:
+
+| ID | Crate | Que es |
+|---|---|---|
+| 2026-0391 | `zstd` | datos de un flujo abandonado se filtran al siguiente sobre un contexto reutilizado |
+| 2026-0398 | `zstd-safe` | `Seekable::decompress` pone la longitud de un `Vec` por encima de su capacidad |
+| 2026-0403 | `zstd-safe` | memoria sin inicializar al fallar la descompresion en flujo de un frame legacy |
+| 2026-0410 | `zstd-sys` | el shim del asignador de WebAssembly corrompe memoria al fallar una asignacion |
+
+### Lo primero fue intentar arreglarlas, no suprimirlas
+
+Y la respuesta la dio la herramienta:
+
+```
+$ cargo update -p zstd --precise 0.14.3
+error: failed to select a version for the requirement `zstd = "^0.13"`
+required by package `lance-encoding v2.0.0`
+```
+
+Subiendo `lancedb` de 0.26 a **0.40** --- catorce versiones menores --- el error es el
+**mismo**: `lance-encoding v13.0.0`, la ultima publicada, sigue pidiendo `zstd = "^0.13"`.
+`polars-arrow` y `polars-parquet` estan tambien en su ultima version (0.55.2). Asi que no hay
+nada que subir: **upstream no ha movido el major**, y el salto 7->8 de `zstd-safe` es
+rompiente, de modo que un `[patch.crates-io]` no compilaria.
+
+Esto importa decirlo asi porque mi primera lectura fue del `Cargo.lock` --- «polars esta en la
+ultima, no se puede» --- y eso era una conclusion, no una medicion. Lo que la convierte en un
+hecho es el error del resolutor, dos veces, con dos arboles distintos.
+
+### El alcance, medido antes de escribir el motivo
+
+`cargo tree --all-features -e features -i zstd-safe` dice que las features encendidas son
+`arrays`, `experimental`, `legacy`, `std` y `zdict_builder`. Con eso:
+
+* **0398 no se compila**: `seekable` no esta en la lista. El codigo vulnerable no entra en el
+  binario.
+* **0410 no toca nuestros objetivos**: `wasm32` no aparece ni una vez en `ci.yml`, y el shim
+  solo se compila para wasm. Pero un consumidor que compile esto a wasm32 **si** estaria
+  afectado, y la entrada lo dice en vez de callarlo.
+* **0403 si se compila** --- `legacy` esta encendida ---, y hace falta un frame en formato
+  anterior a zstd 0.8 **y** que su descompresion falle. Los ficheros que escribe esta pila no
+  son legacy, asi que el camino pasa por leer uno ajeno y malformado.
+* **0391 si se compila** y esta en el camino normal. Es la unica sin atenuante.
+
+**Dos de cuatro son alcanzables**, asi que esto no es «no nos aplica»: es riesgo aceptado con
+fecha. La alternativa era quitar `vector-lancedb` y `tabular-polars`, que es perder capacidad
+documentada.
+
+### Y la puerta fue mas estricta que yo
+
+Puse las cuatro bajo un bloque de comentario compartido, y `check_rustsec_ignores.py` lo
+rechazo:
+
+```
+deny.toml: no reason given above: RUSTSEC-2026-0398, 0403, 0410
+```
+
+Tenia razon, y lo dice el propio fichero: cuatro ids bajo un comentario son tres entradas sin
+nota propia, que es «how an argued suppression becomes an unargued one». Cada una lleva ahora
+su motivo y su fecha, y el contexto compartido vive en un bloque aparte.
+
+### Verificacion
+
+`cargo deny check advisories` -> **advisories ok**. `cargo audit` con la lista -> solo avisos,
+ninguna vulnerabilidad. `check_rustsec_ignores.py` -> 15 supresiones identicas en los tres
+sitios (`deny.toml`, `ci.yml`, `supply-chain.yml`), cada una con motivo.
+`check_recheck_dates.py` -> las 15 con re-chequeo vigente.
+
+**Aparte, para la proxima vez:** `clipboard-win 5.4.1` sale como **yanked**
+(RUSTSEC-2026-0406). Es un aviso, no una vulnerabilidad, y CI no falla por el --- queda dicho
+porque es la clase de cosa que se descubre tarde.
+
 ## [Unreleased] - v320 (2026-10-26) - V444: `delete()` contestaba por la cache y decia «borrado» con el indice intacto (0.2.403)
 
 N158, decidido por el autor: **opcion 3, la fina**. Se le planteo que la tercera situacion

@@ -75,6 +75,71 @@ db-urls = ["https://github.com/rustsec/advisory-db"]
 # June to October 2026 are all still open. The runbook
 # `docs/runbooks/rustsec-handling.md` is the policy.
 ignore = [
+    # ---- La familia zstd, cuatro advisories del 2026-10-26 -----------------
+    #
+    # Contexto comun a las cuatro, y lo que NO se pudo hacer. CI se puso en
+    # rojo ese dia con el Cargo.lock sin tocar: el commit anterior habia pasado
+    # dos horas antes, y lo unico que cambio fue la base de datos de advisories.
+    #
+    # ARREGLO UPSTREAM: zstd >=0.14.3, zstd-safe >=8.2.0, zstd-sys >=2.1.2.
+    # NO es alcanzable, y esto se PROBO, no se supuso:
+    #
+    #   $ cargo update -p zstd --precise 0.14.3
+    #   error: failed to select a version for the requirement `zstd = "^0.13"`
+    #   required by package `lance-encoding v2.0.0`
+    #
+    # Y subiendo `lancedb` de 0.26 a 0.40 --- catorce versiones menores --- el
+    # error es el MISMO: `lance-encoding v13.0.0`, la ultima publicada, sigue
+    # pidiendo `zstd = "^0.13"`. `polars-arrow` y `polars-parquet` estan tambien
+    # en su ultima version (0.55.2). No hay nada que subir: upstream no ha
+    # movido el major, y el salto 7->8 de zstd-safe es rompiente, asi que un
+    # `[patch.crates-io]` no compilaria.
+    #
+    # ALCANCE MEDIDO (2026-10-26, `cargo tree --all-features -e features`): las
+    # features de zstd-safe encendidas son arrays, experimental, legacy, std y
+    # zdict_builder. `seekable` NO esta. Cada entrada de abajo dice que implica
+    # eso para ella.
+    #
+    # DOS de las cuatro son alcanzables, asi que esto no es «no nos aplica»: es
+    # riesgo aceptado con fecha, porque la alternativa es quitar
+    # `vector-lancedb` y `tabular-polars`.
+    #
+    # Re-check by: 2027-01-26 O cuando lance-encoding / polars-parquet suban a
+    # zstd 0.14 (lo que ocurra primero) --- entonces BORRAR las cuatro, no
+    # renovarlas. Tracked como N169.
+
+    # zstd 0.13.3: datos de un flujo abandonado se filtran al siguiente cuando
+    # se reutiliza el contexto de compresion. COMPILADO y en el camino normal:
+    # es la unica de las cuatro sin atenuante de alcance. En nuestro uso la
+    # fuga seria de nuestros propios datos a nuestros propios datos, dentro del
+    # mismo proceso --- lance y polars comprimen columnas que ya son nuestras.
+    # Riesgo aceptado; ver el bloque de arriba para por que no se puede subir.
+    # Re-check by: 2027-01-26 O cuando upstream suba a zstd 0.14 — BORRAR.
+    "RUSTSEC-2026-0391",
+    # zstd-safe 7.2.4: `Seekable::decompress` pone la longitud de un `Vec` por
+    # encima de su capacidad para offsets pasado el final. NO COMPILADO: la
+    # feature `seekable` de zstd-safe no esta encendida (medido 2026-10-26 con
+    # `cargo tree --all-features -e features -i zstd-safe`; las encendidas son
+    # arrays, experimental, legacy, std, zdict_builder). El codigo vulnerable
+    # no entra en el binario.
+    # Re-check by: 2027-01-26 O cuando upstream suba a zstd-safe 8.2 — BORRAR.
+    "RUSTSEC-2026-0398",
+    # zstd-safe 7.2.4: memoria sin inicializar expuesta cuando falla la
+    # descompresion EN FLUJO de un frame legacy. COMPILADO --- la feature
+    # `legacy` si esta encendida ---, y hace falta un frame en formato anterior
+    # a zstd 0.8 **y** que su descompresion falle. Los ficheros que escribe
+    # esta pila no son legacy, asi que el camino requiere leer un fichero ajeno
+    # y malformado. Riesgo aceptado con esa condicion escrita.
+    # Re-check by: 2027-01-26 O cuando upstream suba a zstd-safe 8.2 — BORRAR.
+    "RUSTSEC-2026-0403",
+    # zstd-sys 2.0.16: el shim del asignador de WebAssembly corrompe memoria al
+    # fallar una asignacion. No toca nuestros objetivos: `wasm32` no aparece ni
+    # una vez en `.github/workflows/ci.yml` (medido 2026-10-26), y el shim solo
+    # se compila para objetivos wasm. OJO: un consumidor que compile esta
+    # libreria a wasm32 CON `vector-lancedb` o `tabular-polars` SI estaria
+    # afectado --- eso no lo arregla esta entrada, lo documenta.
+    # Re-check by: 2027-01-26 O cuando upstream suba a zstd-sys 2.1.2 — BORRAR.
+    "RUSTSEC-2026-0410",
     # webbrowser 0.8.15: on Unix, a hostile `BROWSER` environment variable can
     # inject arguments into the spawned browser command. Fixed upstream in
     # 1.2.2, which we cannot reach: the crate is transitive via

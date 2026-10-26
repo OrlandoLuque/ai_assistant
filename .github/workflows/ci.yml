@@ -405,9 +405,28 @@ jobs:
       #                       class only; cargo-deny denies unmaintained,
       #                       cargo-audit only warns. Revisit when egui
       #                       migrates to skrifa/fontations.
+      #   RUSTSEC-2026-0391 — zstd: datos de un flujo abandonado se filtran al
+      #   RUSTSEC-2026-0398     siguiente sobre un contexto reutilizado, y tres
+      #   RUSTSEC-2026-0403     mas en zstd-safe / zstd-sys. Publicadas el
+      #   RUSTSEC-2026-0410     2026-10-26. El arreglo (zstd 0.14.3 /
+      #                       zstd-safe 8.2.0) NO es alcanzable: `lance-encoding
+      #                       13.0.0`, la ultima publicada, sigue pidiendo
+      #                       `zstd ^0.13`, y polars-parquet esta tambien en su
+      #                       ultima version. PROBADO con
+      #                       `cargo update -p zstd --precise 0.14.3`.
+      #                       Alcance medido: 0398 no se compila (feature
+      #                       `seekable` apagada) y 0410 no toca nuestros
+      #                       objetivos (sin wasm32 en CI); 0403 y 0391 SI son
+      #                       alcanzables y se aceptan con fecha. Ver deny.toml
+      #                       para la medicion completa.
+      #                       DELETE las cuatro cuando upstream suba (N169).
       - name: Run cargo audit
         run: |
           cargo audit \
+            --ignore RUSTSEC-2026-0391 \
+            --ignore RUSTSEC-2026-0398 \
+            --ignore RUSTSEC-2026-0403 \
+            --ignore RUSTSEC-2026-0410 \
             --ignore RUSTSEC-2025-0141 \
             --ignore RUSTSEC-2024-0436 \
             --ignore RUSTSEC-2025-0134 \
