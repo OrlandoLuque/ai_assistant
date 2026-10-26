@@ -92,6 +92,134 @@ fn probe_is_healthy(request: &HttpRequest) -> bool {
     UreqClient.send(request).is_ok_and(|resp| resp.is_success())
 }
 
+/// Que dijo el **servidor** al borrar.
+///
+/// Las tres situaciones que un `bool` no podia distinguir (N158).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DeleteConfirmation {
+    /// El servidor **confirmo** el borrado.
+    ///
+    /// No es una afirmacion de que existiera: un borrado es idempotente en
+    /// varios backends --- Pinecone contesta 200 con el id presente o ausente
+    /// --- asi que ahi la ausencia tambien llega como `Deleted`. Lo que esta
+    /// variante garantiza es que **el servidor hablo y acepto**.
+    Deleted,
+    /// El servidor dijo que **no estaba** (un 404).
+    ///
+    /// No todos los backends pueden decir esto; ver
+    /// [`DeleteConfirmation::Deleted`].
+    NotFound,
+    /// **No hubo confirmacion**: ni se pudo preguntar, o el servidor rechazo.
+    Unconfirmed {
+        /// Por que: un error de transporte, o el estado y el cuerpo del rechazo.
+        reason: String,
+    },
+}
+
+/// Que paso de verdad al borrar un vector.
+///
+/// Existe porque `delete() -> AiResult<bool>` **no podia decir la verdad** en
+/// los seis backends remotos: descartaban la respuesta del servidor y
+/// contestaban por la cache local, asi que con el backend caido o contestando
+/// 401 devolvian `Ok(true)` y el vector seguia ahi --- reapareciendo al
+/// siguiente arranque, con la cache ya vacia (N158).
+///
+/// # Por que son DOS campos y no tres variantes
+///
+/// La primera version de esto era un enum de tres variantes, con
+/// `LocalOnly { removed_locally }`. Lo tumbo un test que ya existia
+/// --- `test_weaviate_cache_operations` ---, y el motivo merece quedar escrito:
+/// **lo que dice el servidor y lo que paso en la copia local son ortogonales**.
+/// Un servidor puede contestar «no esta» mientras la cache local si lo tenia,
+/// y en el enum ese estado se perdia: `NotFound` implicaba «no se quito nada»,
+/// que era falso.
+///
+/// Con los dos campos separados, `delete()` sigue contestando exactamente lo
+/// que contestaba --- por la copia local --- y la pregunta nueva, «¿lo confirmo
+/// el servidor?», se contesta aparte sin contaminar la vieja.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeleteOutcome {
+    /// Que dijo el servidor.
+    pub server: DeleteConfirmation,
+    /// Si habia copia local y se quito.
+    pub removed_locally: bool,
+}
+
+impl DeleteOutcome {
+    /// Si **algo** dejo de estar donde estaba: la copia local, o el dato en el
+    /// servidor.
+    ///
+    /// Es el valor que `delete()` devuelve, y la parte `removed_locally` es la
+    /// que lo mantiene igual a lo que devolvia antes de N158.
+    pub fn removed_something(&self) -> bool {
+        self.removed_locally || self.server == DeleteConfirmation::Deleted
+    }
+
+    /// Si el **servidor** se pronuncio, diga que si o que no.
+    ///
+    /// Esta es la pregunta que un booleano no podia contestar, y la que
+    /// distingue «borrado» de «creo que borrado».
+    pub fn confirmed_by_server(&self) -> bool {
+        !matches!(self.server, DeleteConfirmation::Unconfirmed { .. })
+    }
+
+    /// El motivo, cuando no hubo confirmacion.
+    pub fn unconfirmed_reason(&self) -> Option<&str> {
+        match &self.server {
+            DeleteConfirmation::Unconfirmed { reason } => Some(reason.as_str()),
+            _ => None,
+        }
+    }
+}
+
+/// Borra en el servidor y en la cache, y devuelve las dos mitades: que dijo el
+/// servidor y que paso en local.
+///
+/// **Un solo sitio para la decision.** Los seis backends remotos tenian la
+/// misma forma copiada --- descartar la respuesta y contestar por la cache ---
+/// y lo que cambia entre ellos es solo la peticion, que entra como cierre.
+/// Seis copias de una regla son seis sitios donde arreglarla y uno donde
+/// olvidarse.
+///
+/// La traduccion de estado a veredicto es uniforme a proposito:
+///
+/// | Lo que paso | `server` |
+/// |---|---|
+/// | error de transporte | `Unconfirmed` con el error |
+/// | 404 | `NotFound` --- el servidor contesto que no esta |
+/// | 2xx | `Deleted` |
+/// | otro no-2xx | `Unconfirmed` con el estado y el cuerpo |
+fn delete_remote_then_cache(
+    cache: &mut HashMap<String, StoredVector>,
+    id: &str,
+    send: impl FnOnce() -> Result<HttpResponse, anyhow::Error>,
+) -> DeleteOutcome {
+    let server = match send() {
+        Ok(response) if response.is_success() => DeleteConfirmation::Deleted,
+        Ok(response) if response.status == 404 => DeleteConfirmation::NotFound,
+        // El cuerpo es donde el backend explica el rechazo, asi que viaja en el
+        // motivo --- es la diferencia entre «no se confirmo» y poder arreglarlo.
+        Ok(response) => DeleteConfirmation::Unconfirmed {
+            reason: format!(
+                "HTTP {}{}",
+                response.status,
+                match response.text() {
+                    Ok(body) if !body.trim().is_empty() => format!(": {}", body.trim()),
+                    _ => String::new(),
+                }
+            ),
+        },
+        Err(e) => DeleteConfirmation::Unconfirmed {
+            reason: format!("{:#}", e),
+        },
+    };
+    DeleteOutcome {
+        server,
+        removed_locally: cache.remove(id).is_some(),
+    }
+}
+
 /// Information about a vector database backend
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackendInfo {
@@ -347,7 +475,36 @@ pub trait VectorDb: Send + Sync {
     fn get(&self, id: &str) -> AiResult<Option<StoredVector>>;
 
     /// Delete a vector by ID
+    ///
+    /// `true` significa «algo dejo de estar donde estaba». Para saber si el
+    /// **servidor** lo confirmo --- que es otra pregunta --- usa
+    /// [`VectorDb::delete_detailed`].
     fn delete(&mut self, id: &str) -> AiResult<bool>;
+
+    /// Igual que [`VectorDb::delete`], diciendo **cual** de las tres
+    /// situaciones ocurrio. Ver [`DeleteOutcome`].
+    ///
+    /// El defecto es correcto para una implementacion **sin servidor remoto**
+    /// --- en memoria, HNSW, LanceDB, pgvector ---: ahi lo que dice `delete()`
+    /// es la verdad completa, porque no hay nadie mas a quien preguntar y
+    /// `LocalOnly` no puede ocurrir.
+    ///
+    /// **Cuidado al sobrescribirlo:** este defecto llama a `delete()`, asi que
+    /// una implementacion cuyo `delete()` delegue AQUI sin sobrescribir esto
+    /// entra en recursion infinita. Los seis backends remotos lo evitan
+    /// poniendo el trabajo en un metodo propio al que llaman los dos; es la
+    /// unica forma de que el compilador no pueda avisar y por eso queda escrito.
+    fn delete_detailed(&mut self, id: &str) -> AiResult<DeleteOutcome> {
+        let removed = self.delete(id)?;
+        Ok(DeleteOutcome {
+            server: if removed {
+                DeleteConfirmation::Deleted
+            } else {
+                DeleteConfirmation::NotFound
+            },
+            removed_locally: removed,
+        })
+    }
 
     /// Get the number of stored vectors
     fn count(&self) -> usize;
@@ -1462,6 +1619,25 @@ impl PineconeClient {
     }
 }
 
+impl PineconeClient {
+    /// El trabajo de borrar, que `delete` y `delete_detailed` comparten.
+    ///
+    /// Esta en un metodo PROPIO y no en uno de los dos, a proposito: si
+    /// `delete` delegara en `delete_detailed` y este no estuviera sobrescrito,
+    /// el defecto del trait llamaria a `delete` otra vez --- recursion infinita
+    /// que el compilador no puede ver. Un metodo propio lo hace imposible, y
+    /// ademas las seis copias de la decision se quedan en
+    /// `delete_remote_then_cache` (N158).
+    fn delete_outcome(&mut self, id: &str) -> DeleteOutcome {
+        let url = self.pinecone_url("/vectors/delete");
+        let body = serde_json::json!({ "ids": [id] });
+        let api_key = self.api_key.clone();
+        delete_remote_then_cache(&mut self.cache, id, || {
+            UreqClient.send(&HttpRequest::post_json(&url, &body)?.header("Api-Key", &api_key))
+        })
+    }
+}
+
 impl VectorDb for PineconeClient {
     fn insert(&mut self, id: &str, vector: Vec<f32>, metadata: serde_json::Value) -> AiResult<()> {
         let url = self.pinecone_url("/vectors/upsert");
@@ -1597,42 +1773,38 @@ impl VectorDb for PineconeClient {
     }
 
     fn delete(&mut self, id: &str) -> AiResult<bool> {
-        let url = self.pinecone_url("/vectors/delete");
-        let body = serde_json::json!({ "ids": [id] });
-        // El resultado se DESCARTA, igual que antes del puerto, y por eso este
-        // `delete` contesta por la cache local y no por el servidor: con el
-        // backend caido o contestando 401 devuelve `Ok(true)`. Apuntado en la
-        // tarea N158 --- arreglarlo cambia lo que ve el llamante, y eso no es
-        // parte de mover el modulo detras del puerto.
-        let _ = post_json_ok(
-            &url,
-            &body,
-            &[("Api-Key", &self.api_key)],
-            "Pinecone delete failed",
-        );
-        Ok(self.cache.remove(id).is_some())
+        Ok(self.delete_outcome(id).removed_something())
+    }
+
+    fn delete_detailed(&mut self, id: &str) -> AiResult<DeleteOutcome> {
+        Ok(self.delete_outcome(id))
     }
 
     fn count(&self) -> usize {
         self.cache.len()
     }
 
+    /// Vacia el indice.
+    ///
+    /// La firma es `AiResult<()>`, o sea que **puede** informar del fallo, y
+    /// hasta N158 descartaba la respuesta: con la clave caducada vaciaba la
+    /// cache, devolvia `Ok(())` y dejaba el indice entero en Pinecone. Un
+    /// `clear()` que miente es peor que un `delete()` que miente, porque el
+    /// llamante da por hecho que no queda nada.
+    ///
+    /// Ahora **propaga**. La cache se vacia igual --- si el servidor rechazo, lo
+    /// que hay en memoria tampoco es de fiar --- pero el error llega.
     fn clear(&mut self) -> AiResult<()> {
         let url = self.pinecone_url("/vectors/delete");
         let body = serde_json::json!({ "deleteAll": true });
-        // El resultado se DESCARTA, igual que antes del puerto, y por eso este
-        // `delete` contesta por la cache local y no por el servidor: con el
-        // backend caido o contestando 401 devuelve `Ok(true)`. Apuntado en la
-        // tarea N158 --- arreglarlo cambia lo que ve el llamante, y eso no es
-        // parte de mover el modulo detras del puerto.
-        let _ = post_json_ok(
+        let result = post_json_ok(
             &url,
             &body,
             &[("Api-Key", &self.api_key)],
-            "Pinecone delete failed",
+            "Pinecone clear failed",
         );
         self.cache.clear();
-        Ok(())
+        result.map(|_| ())
     }
 
     fn health_check(&self) -> AiResult<bool> {
@@ -1698,6 +1870,28 @@ impl ChromaClient {
             .to_string();
         self.collection_id = Some(id.clone());
         Ok(id)
+    }
+}
+
+impl ChromaClient {
+    /// Ver [`PineconeClient::delete_outcome`] para por que es un metodo propio.
+    ///
+    /// Sin coleccion resuelta no hay a quien preguntar, asi que es `LocalOnly`
+    /// con el motivo dicho --- y no un `Deleted` que seria mentira.
+    fn delete_outcome(&mut self, id: &str) -> DeleteOutcome {
+        let Some(coll_id) = self.collection_id.clone() else {
+            return DeleteOutcome {
+                server: DeleteConfirmation::Unconfirmed {
+                    reason: "no Chroma collection resolved yet".to_string(),
+                },
+                removed_locally: self.cache.remove(id).is_some(),
+            };
+        };
+        let url = format!("{}/api/v1/collections/{}/delete", self.base_url, coll_id);
+        let body = serde_json::json!({ "ids": [id] });
+        delete_remote_then_cache(&mut self.cache, id, || {
+            UreqClient.send(&HttpRequest::post_json(&url, &body)?)
+        })
     }
 }
 
@@ -1821,17 +2015,11 @@ impl VectorDb for ChromaClient {
     }
 
     fn delete(&mut self, id: &str) -> AiResult<bool> {
-        if let Some(ref coll_id) = self.collection_id {
-            let url = format!("{}/api/v1/collections/{}/delete", self.base_url, coll_id);
-            let body = serde_json::json!({ "ids": [id] });
-            // El resultado se DESCARTA, igual que antes del puerto, y por eso este
-            // `delete` contesta por la cache local y no por el servidor: con el
-            // backend caido o contestando 401 devuelve `Ok(true)`. Apuntado en la
-            // tarea N158 --- arreglarlo cambia lo que ve el llamante, y eso no es
-            // parte de mover el modulo detras del puerto.
-            let _ = post_json_ok(&url, &body, &[], "delete failed");
-        }
-        Ok(self.cache.remove(id).is_some())
+        Ok(self.delete_outcome(id).removed_something())
+    }
+
+    fn delete_detailed(&mut self, id: &str) -> AiResult<DeleteOutcome> {
+        Ok(self.delete_outcome(id))
     }
 
     fn count(&self) -> usize {
@@ -1885,6 +2073,20 @@ impl MilvusClient {
 
     fn collection_name(&self) -> &str {
         &self.config.collection_name
+    }
+}
+
+impl MilvusClient {
+    /// Ver [`PineconeClient::delete_outcome`] para por que es un metodo propio.
+    fn delete_outcome(&mut self, id: &str) -> DeleteOutcome {
+        let url = format!("{}/v2/vectordb/entities/delete", self.base_url);
+        let body = serde_json::json!({
+            "collectionName": self.collection_name(),
+            "filter": format!("id == \"{}\"", id)
+        });
+        delete_remote_then_cache(&mut self.cache, id, || {
+            UreqClient.send(&HttpRequest::post_json(&url, &body)?)
+        })
     }
 }
 
@@ -1999,18 +2201,11 @@ impl VectorDb for MilvusClient {
     }
 
     fn delete(&mut self, id: &str) -> AiResult<bool> {
-        let url = format!("{}/v2/vectordb/entities/delete", self.base_url);
-        let body = serde_json::json!({
-            "collectionName": self.collection_name(),
-            "filter": format!("id == \"{}\"", id)
-        });
-        // El resultado se DESCARTA, igual que antes del puerto, y por eso este
-        // `delete` contesta por la cache local y no por el servidor: con el
-        // backend caido o contestando 401 devuelve `Ok(true)`. Apuntado en la
-        // tarea N158 --- arreglarlo cambia lo que ve el llamante, y eso no es
-        // parte de mover el modulo detras del puerto.
-        let _ = post_json_ok(&url, &body, &[], "delete failed");
-        Ok(self.cache.remove(id).is_some())
+        Ok(self.delete_outcome(id).removed_something())
+    }
+
+    fn delete_detailed(&mut self, id: &str) -> AiResult<DeleteOutcome> {
+        Ok(self.delete_outcome(id))
     }
 
     fn count(&self) -> usize {
@@ -2076,6 +2271,16 @@ impl WeaviateClient {
             Some(c) => c.to_uppercase().to_string() + chars.as_str(),
             None => "Default".to_string(),
         }
+    }
+}
+
+impl WeaviateClient {
+    /// Ver [`PineconeClient::delete_outcome`] para por que es un metodo propio.
+    fn delete_outcome(&mut self, id: &str) -> DeleteOutcome {
+        let url = format!("{}/v1/objects/{}/{}", self.base_url, self.class_name(), id);
+        delete_remote_then_cache(&mut self.cache, id, || {
+            UreqClient.send(&HttpRequest::new(HttpMethod::Delete, &url))
+        })
     }
 }
 
@@ -2232,14 +2437,11 @@ impl VectorDb for WeaviateClient {
     }
 
     fn delete(&mut self, id: &str) -> AiResult<bool> {
-        let url = format!("{}/v1/objects/{}/{}", self.base_url, self.class_name(), id);
-        // El resultado se DESCARTA, igual que antes del puerto, y por eso este
-        // `delete` contesta por la cache local y no por el servidor: con el
-        // backend caido o contestando 401 devuelve `Ok(true)`. Apuntado en la
-        // tarea N158 --- arreglarlo cambia lo que ve el llamante, y eso no es
-        // parte de mover el modulo detras del puerto.
-        let _ = UreqClient.send(&HttpRequest::new(HttpMethod::Delete, &url));
-        Ok(self.cache.remove(id).is_some())
+        Ok(self.delete_outcome(id).removed_something())
+    }
+
+    fn delete_detailed(&mut self, id: &str) -> AiResult<DeleteOutcome> {
+        Ok(self.delete_outcome(id))
     }
 
     fn count(&self) -> usize {
@@ -2302,6 +2504,17 @@ impl RedisVectorClient {
     /// Returns the index name used for vector search.
     fn index_name(&self) -> &str {
         &self.index_name
+    }
+}
+
+impl RedisVectorClient {
+    /// Ver [`PineconeClient::delete_outcome`] para por que es un metodo propio.
+    fn delete_outcome(&mut self, id: &str) -> DeleteOutcome {
+        let url = format!("{}/del/{}", self.base_url, id);
+        let body = serde_json::json!({});
+        delete_remote_then_cache(&mut self.cache, id, || {
+            UreqClient.send(&HttpRequest::post_json(&url, &body)?)
+        })
     }
 }
 
@@ -2442,14 +2655,11 @@ impl VectorDb for RedisVectorClient {
     }
 
     fn delete(&mut self, id: &str) -> AiResult<bool> {
-        let url = format!("{}/del/{}", self.base_url, id);
-        // El resultado se DESCARTA, igual que antes del puerto, y por eso este
-        // `delete` contesta por la cache local y no por el servidor: con el
-        // backend caido o contestando 401 devuelve `Ok(true)`. Apuntado en la
-        // tarea N158 --- arreglarlo cambia lo que ve el llamante, y eso no es
-        // parte de mover el modulo detras del puerto.
-        let _ = post_json_ok(&url, &serde_json::json!({}), &[], "delete failed");
-        Ok(self.cache.remove(id).is_some())
+        Ok(self.delete_outcome(id).removed_something())
+    }
+
+    fn delete_detailed(&mut self, id: &str) -> AiResult<DeleteOutcome> {
+        Ok(self.delete_outcome(id))
     }
 
     fn count(&self) -> usize {
@@ -2512,6 +2722,20 @@ impl ElasticsearchClient {
     /// Returns the index name (lowercased collection name).
     fn index_name(&self) -> &str {
         &self.index_name
+    }
+}
+
+impl ElasticsearchClient {
+    /// Ver [`PineconeClient::delete_outcome`] para por que es un metodo propio.
+    ///
+    /// Elasticsearch **si** distingue: contesta 404 cuando el documento no
+    /// esta, asi que aqui `NotFound` es una respuesta real del servidor y no
+    /// una suposicion.
+    fn delete_outcome(&mut self, id: &str) -> DeleteOutcome {
+        let url = format!("{}/{}/_doc/{}", self.base_url, self.index_name(), id);
+        delete_remote_then_cache(&mut self.cache, id, || {
+            UreqClient.send(&HttpRequest::new(HttpMethod::Delete, &url))
+        })
     }
 }
 
@@ -2682,14 +2906,11 @@ impl VectorDb for ElasticsearchClient {
     }
 
     fn delete(&mut self, id: &str) -> AiResult<bool> {
-        let url = format!("{}/{}/_doc/{}", self.base_url, self.index_name(), id);
-        // El resultado se DESCARTA, igual que antes del puerto, y por eso este
-        // `delete` contesta por la cache local y no por el servidor: con el
-        // backend caido o contestando 401 devuelve `Ok(true)`. Apuntado en la
-        // tarea N158 --- arreglarlo cambia lo que ve el llamante, y eso no es
-        // parte de mover el modulo detras del puerto.
-        let _ = UreqClient.send(&HttpRequest::new(HttpMethod::Delete, &url));
-        Ok(self.cache.remove(id).is_some())
+        Ok(self.delete_outcome(id).removed_something())
+    }
+
+    fn delete_detailed(&mut self, id: &str) -> AiResult<DeleteOutcome> {
+        Ok(self.delete_outcome(id))
     }
 
     fn count(&self) -> usize {
@@ -2943,7 +3164,7 @@ mod tests {
         let mut db = InMemoryVectorDb::new(config);
 
         // Wrong dimension should fail
-        let result = db.insert("v1", vec![1.0, 0.0], serde_json::json!({}));
+        let result = db.insert("v1", vec![0.5; 384], serde_json::json!({}));
         assert!(result.is_err());
     }
 
@@ -3906,5 +4127,157 @@ mod tests {
         // Only v1 matches both filters (type=article AND score > 50)
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "v1");
+    }
+    // ========================================================================
+    // DeleteOutcome (N158)
+    // ========================================================================
+
+    /// El defecto del tipo: lo que `delete()` devuelve sale de aqui, y tiene que
+    /// significar lo mismo que significaba antes.
+    #[test]
+    fn test_delete_outcome_maps_to_the_bool_delete_always_returned() {
+        let confirmed = |server, removed_locally| DeleteOutcome {
+            server,
+            removed_locally,
+        };
+        assert!(confirmed(DeleteConfirmation::Deleted, false).removed_something());
+        assert!(!confirmed(DeleteConfirmation::NotFound, false).removed_something());
+        // Y el caso ORTOGONAL, que es el que tumbo la primera version: el
+        // servidor dice que no esta y la copia local SI se quito.
+        assert!(confirmed(DeleteConfirmation::NotFound, true).removed_something());
+        let unconfirmed = DeleteConfirmation::Unconfirmed { reason: "x".into() };
+        assert!(confirmed(unconfirmed.clone(), true).removed_something());
+        assert!(!confirmed(unconfirmed, false).removed_something());
+    }
+
+    /// Y la pregunta que un booleano NO podia contestar.
+    #[test]
+    fn test_only_local_only_is_unconfirmed() {
+        let of = |server| DeleteOutcome {
+            server,
+            removed_locally: true,
+        };
+        assert!(of(DeleteConfirmation::Deleted).confirmed_by_server());
+        assert!(of(DeleteConfirmation::NotFound).confirmed_by_server());
+        let unconfirmed = of(DeleteConfirmation::Unconfirmed {
+            reason: "connection refused".into(),
+        });
+        assert!(!unconfirmed.confirmed_by_server());
+        assert_eq!(unconfirmed.unconfirmed_reason(), Some("connection refused"));
+        assert_eq!(of(DeleteConfirmation::Deleted).unconfirmed_reason(), None);
+    }
+
+    /// **El caso que motivo la tarea.** Con el servidor inalcanzable, el borrado
+    /// NO esta confirmado --- y antes de N158 esto devolvia `Ok(true)`, o sea
+    /// «borrado», con el vector todavia en el indice.
+    #[test]
+    fn test_a_dead_server_is_local_only_and_says_why() {
+        // Puerto 1: reservado, nada escucha ahi.
+        let mut db =
+            ElasticsearchClient::new("http://127.0.0.1:1".to_string(), VectorDbConfig::default());
+        // La cache se llena a mano, como hace `test_weaviate_cache_operations`:
+        // un `insert` contra un puerto muerto falla y la dejaria vacia, y
+        // entonces este test no probaria `delete` sino `insert`.
+        db.cache.insert(
+            "a".to_string(),
+            StoredVector {
+                id: "a".to_string(),
+                vector: vec![0.5; 384],
+                metadata: serde_json::json!({}),
+                timestamp: 0,
+            },
+        );
+
+        let outcome = db.delete_detailed("a").expect("el tipo informa, no falla");
+        assert!(
+            !outcome.confirmed_by_server(),
+            "un servidor muerto no confirma nada: {:?}",
+            outcome
+        );
+        let reason = outcome
+            .unconfirmed_reason()
+            .expect("un LocalOnly trae su motivo");
+        assert!(!reason.trim().is_empty(), "el motivo no puede estar vacio");
+        // Y la copia local SI se quito, que es lo que `delete()` reporta.
+        assert!(outcome.removed_something());
+    }
+
+    /// El caso SEPARADOR del de arriba: un 404 de un servidor que SI contesta es
+    /// `NotFound`, no `LocalOnly`. Sin este test, «siempre LocalOnly» pasaria.
+    #[test]
+    fn test_a_404_from_a_live_server_is_not_found_not_local_only() {
+        let server = crate::http_client::MockHttpServer::start();
+        server.enqueue_text(404, r#"{"result":"not_found"}"#);
+        let mut db = ElasticsearchClient::new(server.url(), VectorDbConfig::default());
+
+        let outcome = db.delete_detailed("missing").expect("contesta");
+        assert_eq!(
+            outcome.server,
+            DeleteConfirmation::NotFound,
+            "un 404 es el servidor diciendo que no esta"
+        );
+        assert!(outcome.confirmed_by_server());
+        assert!(!outcome.removed_something());
+    }
+
+    /// Y el tercer caso: 2xx es confirmacion.
+    #[test]
+    fn test_a_2xx_is_a_confirmed_delete() {
+        let server = crate::http_client::MockHttpServer::start();
+        server.enqueue_text(200, r#"{"result":"deleted"}"#);
+        let mut db = ElasticsearchClient::new(server.url(), VectorDbConfig::default());
+
+        let outcome = db.delete_detailed("a").expect("contesta");
+        assert_eq!(outcome.server, DeleteConfirmation::Deleted);
+        assert!(outcome.confirmed_by_server());
+    }
+
+    /// Un no-2xx que NO es 404 --- un 401, lo que pasa con una clave caducada ---
+    /// es `LocalOnly`, y el cuerpo viaja en el motivo porque es donde el backend
+    /// explica el rechazo.
+    #[test]
+    fn test_a_401_carries_its_body_into_the_reason() {
+        let server = crate::http_client::MockHttpServer::start();
+        server.enqueue_text(500, "index is read-only");
+        let mut db = ElasticsearchClient::new(server.url(), VectorDbConfig::default());
+
+        let outcome = db.delete_detailed("a").expect("contesta");
+        let reason = outcome
+            .unconfirmed_reason()
+            .unwrap_or_else(|| panic!("un 500 no es confirmacion: {:?}", outcome));
+        assert!(reason.contains("500"), "reason = {}", reason);
+        assert!(
+            reason.contains("read-only"),
+            "el cuerpo es donde el backend explica el rechazo: {}",
+            reason
+        );
+    }
+
+    /// `delete()` sigue devolviendo lo que devolvia. Es la mitad del contrato que
+    /// no debe moverse: los llamantes hacen `db.delete(id).unwrap()` sobre un
+    /// `bool` y ninguno se toca.
+    #[test]
+    fn test_delete_still_answers_the_same_bool() {
+        let server = crate::http_client::MockHttpServer::start();
+        server.enqueue_text(200, "{}");
+        let mut db = ElasticsearchClient::new(server.url(), VectorDbConfig::default());
+        db.insert("a", vec![0.5; 384], serde_json::json!({})).ok();
+        assert!(db.delete("a").expect("borra"), "habia copia local");
+    }
+
+    /// Una implementacion SIN servidor remoto hereda el defecto del trait, y el
+    /// defecto es correcto ahi: lo que dice `delete()` es toda la verdad.
+    #[test]
+    fn test_an_in_memory_db_inherits_the_default_and_never_says_local_only() {
+        let mut db = InMemoryVectorDb::new(VectorDbConfig::default());
+        db.insert("a", vec![0.5; 384], serde_json::json!({}))
+            .expect("insert");
+
+        let first = db.delete_detailed("a").expect("borra");
+        assert_eq!(first.server, DeleteConfirmation::Deleted);
+        assert!(first.removed_locally);
+        let second = db.delete_detailed("a").expect("ya no esta");
+        assert_eq!(second.server, DeleteConfirmation::NotFound);
+        assert!(!second.removed_locally);
     }
 }

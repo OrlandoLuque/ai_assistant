@@ -2321,7 +2321,46 @@ required method — and see "Injecting a different client" below for where to ha
 > Every backend constructor takes a config, so from outside you are stuck at the default
 > dimension, which is exactly the field your embedding model decides. Open as task N160.
 
-### InMemoryVectorDb (Tier 0)
+### Deleting: `delete()` answers locally, `delete_detailed()` asks the server
+
+`delete() -> AiResult<bool>` means **"something stopped being where it was"**. In the six
+remote backends that bool was, until V444, computed purely from the local cache — the
+server's reply was discarded — so with the backend down or answering 401 it returned
+`Ok(true)` while the vector was still in the index, ready to reappear on the next start
+with an empty cache.
+
+`delete_detailed()` returns both halves of the question:
+
+```rust
+use ai_assistant::{DeleteConfirmation, VectorDb};
+
+let outcome = db.delete_detailed("vec_1")?;
+if !outcome.confirmed_by_server() {
+    // The local copy is gone; the server never said so.
+    eprintln!("unconfirmed delete: {}", outcome.unconfirmed_reason().unwrap_or("?"));
+}
+match outcome.server {
+    DeleteConfirmation::Deleted => {}                       // the server accepted
+    DeleteConfirmation::NotFound => {}                      // the server said it is not there
+    DeleteConfirmation::Unconfirmed { .. } => {}            // nobody confirmed anything
+    _ => {}                                                 // `#[non_exhaustive]`
+}
+```
+
+Two things worth knowing before you read a result:
+
+- **`Deleted` is not a claim that it existed.** A delete is idempotent in several
+  backends — Pinecone answers 200 whether the id is there or not — so absence arrives as
+  `Deleted` too. What the variant guarantees is that the server spoke and accepted.
+  Elasticsearch *does* distinguish, so there `NotFound` is a real answer.
+- **The server's verdict and the local copy are orthogonal**, which is why they are two
+  fields and not three enum variants. A server can say "not there" while the local cache
+  did have it; collapsing that into one value is what the first version of this type got
+  wrong, and an existing test caught it.
+
+Implementations with no remote server — in-memory, HNSW, LanceDB, pgvector — inherit the
+trait's default, which is correct for them: what `delete()` says is the whole truth,
+because there is nobody else to ask.
 
 ```rust
 use ai_assistant::vector_db::{VectorDbBuilder, VectorDbBackend, VectorDbConfig};

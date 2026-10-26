@@ -1387,9 +1387,10 @@ pub use embedding_cache::{
 
 #[cfg(feature = "embeddings")]
 pub use vector_db::{
-    migrate_vectors, string_id_to_u64, BackendInfo, DistanceMetric, FilterOperation,
-    HybridVectorSearch, InMemoryVectorDb, MetadataFilter, QdrantClient, StoredVector, VectorDb,
-    VectorDbBackend, VectorDbBuilder, VectorDbConfig, VectorMigrationResult, VectorSearchResult,
+    migrate_vectors, string_id_to_u64, BackendInfo, DeleteConfirmation, DeleteOutcome,
+    DistanceMetric, FilterOperation, HybridVectorSearch, InMemoryVectorDb, MetadataFilter,
+    QdrantClient, StoredVector, VectorDb, VectorDbBackend, VectorDbBuilder, VectorDbConfig,
+    VectorMigrationResult, VectorSearchResult,
 };
 
 // LanceDB vector database backend (Tier 2 — embedded, persistent)

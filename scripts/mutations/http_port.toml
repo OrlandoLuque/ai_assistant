@@ -612,3 +612,51 @@ after = """    pub fn is_available(&self) -> bool {
 
 impl SpeechProvider for CoquiTtsProvider {"""
 occurrences = 1
+
+# ============================================================================
+# N158 --- DeleteOutcome
+# ============================================================================
+
+[[mutation]]
+id = "M35"
+file = "src/vector_db.rs"
+features = "full"
+filter = "vector_db::tests::test_a_dead_server_is_local_only_and_says_why"
+invariant = "un error de TRANSPORTE no es una confirmacion: si cae en el brazo de `Deleted`, un servidor muerto vuelve a leerse como borrado --- que es el defecto entero de N158"
+before = """        Err(e) => DeleteConfirmation::Unconfirmed {
+            reason: format!("{:#}", e),
+        },"""
+after = """        Err(_) => DeleteConfirmation::Deleted,"""
+occurrences = 1
+
+[[mutation]]
+id = "M36"
+file = "src/vector_db.rs"
+features = "full"
+filter = "vector_db::tests::test_a_401_carries_its_body_into_the_reason"
+invariant = "un no-2xx que no es 404 tampoco es confirmacion: un 401 por clave caducada tiene que llegar como `Unconfirmed`, no como borrado"
+before = "        Ok(response) if response.is_success() => DeleteConfirmation::Deleted,"
+after = "        Ok(_) => DeleteConfirmation::Deleted,"
+occurrences = 1
+
+[[mutation]]
+id = "M37"
+file = "src/vector_db.rs"
+features = "full"
+filter = "vector_db::tests::test_weaviate_cache_operations"
+invariant = "`removed_something()` tiene que seguir contestando por la copia LOCAL: quitarle ese termino es la primera version de este tipo, que confundia el veredicto del servidor con lo que paso en local y rompio un test que ya existia"
+before = "        self.removed_locally || self.server == DeleteConfirmation::Deleted"
+after = "        self.server == DeleteConfirmation::Deleted"
+occurrences = 1
+
+[[mutation]]
+id = "M38"
+file = "src/vector_db.rs"
+features = "full"
+filter = "vector_db::tests::test_a_404_from_a_live_server_is_not_found_not_local_only"
+invariant = "un 404 es el servidor CONTESTANDO que no esta, no una falta de confirmacion; confundirlos borra la distincion que hace util a `confirmed_by_server`"
+before = "        Ok(response) if response.status == 404 => DeleteConfirmation::NotFound,"
+after = """        Ok(response) if response.status == 404 => DeleteConfirmation::Unconfirmed {
+            reason: "404".to_string(),
+        },"""
+occurrences = 1

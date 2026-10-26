@@ -5,6 +5,91 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v320 (2026-10-26) - V444: `delete()` contestaba por la cache y decia «borrado» con el indice intacto (0.2.403)
+
+N158, decidido por el autor: **opcion 3, la fina**. Se le planteo que la tercera situacion
+describe un estado que un booleano elimina, y que cuesta once implementaciones; reafirmo la 3.
+
+### El defecto
+
+Siete sitios con la misma forma --- el `delete()` de Pinecone, Chroma, Milvus, Weaviate,
+Redis y Elasticsearch, mas el `clear()` de Pinecone:
+
+```rust
+let _ = post_json_ok(&url, &body, &[], "delete failed");  // descartado
+Ok(self.cache.remove(id).is_some())                       // responde la CACHE
+```
+
+Con el backend caido o contestando 401 devolvia `Ok(true)` **y el vector seguia ahi**,
+listo para reaparecer al siguiente arranque con la cache ya vacia. Y la firma ya era
+`AiResult<bool>`, o sea que **podia** informar: sus hermanas `insert` y `search` propagan
+con `?`.
+
+El `clear()` es peor y por eso se arreglo aparte: con la clave caducada vaciaba la cache,
+devolvia `Ok(())` y dejaba el indice entero en Pinecone. Un `clear()` que miente es peor que
+un `delete()` que miente, porque el llamante da por hecho que no queda nada. Ahora propaga.
+
+### La forma, y por que NO son tres variantes
+
+La primera version fue el enum de tres variantes que la tarea sugeria, con
+`LocalOnly { removed_locally }`. **La tumbo un test que ya existia**, y el motivo merece
+quedar escrito porque es un error de modelado, no un descuido:
+
+`test_weaviate_cache_operations` apunta a `localhost:8080`, donde en esta maquina hay un
+llama-server escuchando, asi que el `DELETE` recibe un **404 de verdad**. Mi enum lo traducia
+a `NotFound`, y de ahi `removed_something() == false` --- cuando la cache **si** tenia la
+entrada y **si** se quito. Un booleano que cambiaba de valor segun lo que contestara un
+servidor que no sabe nada de la cache.
+
+Lo que dice el servidor y lo que paso en la copia local son **ortogonales**, asi que son dos
+campos:
+
+```rust
+pub struct DeleteOutcome {
+    pub server: DeleteConfirmation,   // Deleted | NotFound | Unconfirmed { reason }
+    pub removed_locally: bool,
+}
+```
+
+Las tres situaciones siguen distinguidas --- en `DeleteConfirmation` ---, `delete()` sigue
+contestando exactamente lo que contestaba (por la copia local), y la pregunta nueva
+--- «¿lo confirmo el servidor?» --- se contesta aparte sin contaminar la vieja.
+
+Dos cosas que el tipo dice en voz alta: `Deleted` **no** afirma que existiera (un borrado es
+idempotente en varios backends; Pinecone contesta 200 con el id presente o ausente), y
+Elasticsearch **si** distingue, asi que ahi `NotFound` es una respuesta real.
+
+### La recursion que el compilador no puede ver
+
+El defecto de `delete_detailed()` en el trait llama a `delete()`, que es lo correcto para las
+cinco implementaciones sin servidor remoto. Pero si un backend hace que `delete()` delegue en
+`delete_detailed()` **sin** sobrescribirlo, los dos se llaman en circulo --- y eso no da un
+error de compilacion, da un desbordamiento de pila en tiempo de ejecucion.
+
+Los seis backends remotos lo evitan poniendo el trabajo en un `delete_outcome()` propio al
+que llaman los dos. Queda escrito en el doc del trait porque es la clase de trampa que solo
+se ve cuando ya te ha pasado.
+
+### Lo que NO costo once implementaciones
+
+El trait ya documenta que admite metodos nuevos con implementacion por defecto, asi que son
+**seis** sobrescrituras y **cero** llamantes tocados. Las cinco restantes heredan el defecto,
+y se comprobo que es correcto para las dos que estan tras features propias: `PgVectorDb`
+devuelve `Err` siempre (es un generador de SQL sin conexion) y `LanceVectorDb` propaga con
+`?`. Ninguna tiene el defecto.
+
+**Y `vector-pgvector` no aparece ni una vez en `ci.yml`** --- esta en el backlog del ratchet
+de V439, con su motivo ---, asi que se compilo y se probo a mano aqui: 15 tests en verde. Es
+la leccion de V436: un `cargo build` que no compila tu fichero tambien devuelve 0.
+
+### Verificacion
+
+9.129 tests de `FEATURES_STD` en verde, clippy `-D warnings --all-targets` en los dos
+conjuntos de CI. Ocho tests nuevos, dos de ellos **casos separadores** --- un 404 de un
+servidor vivo no es un fallo de confirmacion, y el 2xx si lo es ---, y cuatro mutaciones
+(M35-M38) que mueren. La de `removed_something()` la mata el test preexistente que esto
+rompio, que es la mejor prueba de que la correccion iba en la direccion correcta.
+
 ## [Unreleased] - v319 (2026-10-26) - V443: los dobles de prueba salen a la calle, y la puerta de anoche me pillo (0.2.402)
 
 N159, decidido por el autor (opcion 1): `MockHttpServer` tras una feature `test-utils`.
