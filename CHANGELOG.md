@@ -5,6 +5,94 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v316 (2026-10-26) - V440: 60 segundos para bajar un GGUF de 5 GB, y el comentario decia que era por trozo (0.2.399)
+
+N163, decidido por el autor: **plazo de ATASCO** en el puerto, no un plazo total mayor. La
+idea era suya y el razonamiento es el que importa --- cuando un proceso **da senales de
+vida**, lo que hay que vigilar es el silencio, no el reloj.
+
+### Un plazo total es la herramienta equivocada en LAS DOS direcciones
+
+Para un stream de tokens o una descarga de dos gigas, un plazo total falla por corto y por
+largo a la vez:
+
+* **Corto** mata una generacion legitima de seis minutos.
+* **Largo** tarda esos mismos seis minutos en darse cuenta de que el servidor murio.
+
+`HttpRequest::stall_timeout` --- `timeout_per_read` de `ureq` 3, que **reinicia la cuenta en
+cada lectura** --- corta a los N segundos de silencio y no le pone techo a lo que va bien.
+Va con `long_lived(total, atasco)`, que pone las dos mitades juntas porque una sin la otra no
+sirve: un atasco de 30 s sobre el total de 30 s por defecto no se dispara **jamas**, y eso
+esta probado, no supuesto (`test_a_stall_longer_than_the_total_is_inert`).
+
+### Lo que el barrido encontro, que es peor de lo que iba buscando
+
+Tres descargas con un plazo TOTAL donde hacia falta uno de atasco, y la primera es un fallo
+en produccion:
+
+**`gguf_downloader`** --- el campo se documenta como «plazo para la peticion inicial y
+**cada trozo**», con 60 s por defecto, y se aplicaba como `timeout_global`, que en `ureq` 3
+es de punta a punta y sigue contando mientras se lee el cuerpo. O sea **60 segundos para
+bajar un modelo entero**: uno de 5 GB a 100 Mb/s tarda siete minutos, asi que moria siempre.
+Y como `resume: true` conserva el `.part`, el reintento avanzaba otro minuto --- lo que hace
+que el fallo se lea como **una red mala** y no como un plazo mal puesto. El comentario
+describia la intencion correcta; la linea de abajo hacia otra cosa. Es exactamente la forma
+de deuda que este proyecto ya tiene fichada.
+
+**Descarga de corpus** (`eval_benchmarks::http`) --- 60 s totales para ficheros de 50 MB
+(FEVER) y de cientos (MLDR).
+
+**S3 y Google Drive** --- 300 s y 60 s totales para un objeto de tamano desconocido.
+
+En las tres el plazo total pasa a ser un **techo** (`DEFAULT_LONG_LIVED_TIMEOUT`, una hora;
+`None` en el GGUF, donde hay modelos de 70 GB) y el guardia es el silencio
+(`DEFAULT_STALL_TIMEOUT`, 60 s).
+
+### Y una distincion que hace falta para no romper nada
+
+El plazo de atasco **solo vale donde los bytes fluyen**. Una generacion NO en streaming no
+manda nada hasta terminar, asi que para ella «sin bytes durante N segundos» es un plazo total
+con otro nombre, y mataria una respuesta larga legitima. Por eso se aplica a los cuatro
+`send_streaming` de `providers.rs` y **no** a los cinco `send`, que siguen con sus 120 y 180 s.
+
+El valor tampoco puede ser agresivo: la primera ficha puede tardar. En este repositorio se
+midio una recarga de Ollama de **166 s** cuando tuvo que repartir capas con la CPU, y esa
+espera cuenta como silencio. De ahi que el defecto de streaming sea 180 s y no 30.
+
+### Configurable, que era la pregunta del autor
+
+`AiConfig` no tenia **ni un** campo de plazo: los 300 s de un stream eran un literal en
+`providers.rs`. Ahora hay `AiConfig::stream_timeouts` (`StreamTimeouts { total_secs,
+stall_secs }`, 1800/180 por defecto, con `with_*`), y las dos claves tambien se ponen desde
+el fichero de configuracion (`generation.stream_timeout_secs`, `generation.stream_stall_secs`).
+Un fichero escrito antes de hoy sigue cargando --- hay test.
+
+### El test que la mutacion obligo a escribir
+
+Las cinco mutaciones nuevas (M22-M26) mueren, pero dos de ellas no morian al principio y lo
+que ensenaron vale mas que el arreglo:
+
+* **M23** (`timeout_per_read` -> `timeout_recv_body`) **sobrevivio** a los tres primeros
+  tests. Los dos plazos matan un cuerpo que no llega nunca; solo uno de los dos deja pasar
+  uno que llega **despacio**. Hizo falta un servidor que **gotea** --- doce bytes con 120 ms
+  entre cada uno, segundo y medio de transferencia bajo un plazo de 400 ms --- y ese test es,
+  de paso, la mejor demostracion de para que sirve todo esto.
+* **M25 y M26** sobrevivieron porque **nadie probaba una descarga**. `gguf_downloader` no
+  tiene llamante dentro de la crate: es API publica para el kit y la GUI. Dos tests nuevos
+  con servidor local, y el arreglo del GGUF pasa de afirmado a verificado.
+
+### De paso: `--only` de `mutate.py` seleccionaba NADA y lo llamaba exito
+
+`--only M22,M23` imprimia «0 of 0 mutations behaved as the spec says» y salia bien. Dos
+fallos en una linea: la bandera es `action="append"`, asi que la lista llegaba como un unico
+id `"M22,M23"`; y no seleccionar nada no era un error. Ahora parte por comas y **falla** si
+un id no existe. Un selector que no casa con nada contesta una pregunta que nadie hizo.
+
+### Verificacion
+
+`cargo clippy --all-targets -- -D warnings` sobre `FEATURES_STD` y sobre el conjunto minimo,
+en verde. Trece tests nuevos. Las cinco mutaciones mueren.
+
 ## [Unreleased] - v315 (2026-10-26) - V439: la puerta de cobertura de features existia, estaba ROJA, y nadie podia verlo (0.2.398)
 
 N162, decidido por el autor: puerta derivada de `Cargo.toml` con exclusiones justificadas y

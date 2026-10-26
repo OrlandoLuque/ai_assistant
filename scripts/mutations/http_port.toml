@@ -435,3 +435,63 @@ before = """        if !body.is_empty() {
         }"""
 after = """        request = request.body(body.to_vec());"""
 occurrences = 1
+
+# ============================================================================
+# N163 --- plazo de atasco
+# ============================================================================
+
+[[mutation]]
+id = "M22"
+file = "src/http_client.rs"
+features = "full"
+filter = "http_client::tests::test_the_stall_timeout"
+invariant = "el plazo de atasco llega de verdad a `ureq` como `timeout_per_read`; sin esta linea el campo se acepta, se documenta y no hace nada --- que es el modo de fallo caro, porque la peticion sigue funcionando"
+before = """        if let Some(stall) = request.stall_timeout {
+            config = config.timeout_per_read(Some(stall));
+        }"""
+after = """        if false {
+            config = config.timeout_per_read(request.stall_timeout);
+        }"""
+occurrences = 1
+
+[[mutation]]
+id = "M23"
+file = "src/http_client.rs"
+features = "full"
+filter = "http_client::tests::test_a_slow_but_alive_transfer_is_not_a_stall"
+invariant = "`timeout_per_read` y NO `timeout_recv_body`: el que reinicia la cuenta en cada lectura es el primero; el segundo es un total para el cuerpo, o sea otro plazo total disfrazado"
+before = "            config = config.timeout_per_read(Some(stall));"
+after = "            config = config.timeout_recv_body(Some(stall));"
+occurrences = 1
+
+[[mutation]]
+id = "M24"
+file = "src/http_client.rs"
+features = "full"
+filter = "http_client::tests::test_long_lived_sets_both_halves_of_the_decision"
+invariant = "`long_lived` pone las DOS mitades; poner solo el atasco sobre el total de 30 s por defecto lo deja inerte, y es el error facil que este metodo existe para evitar"
+before = """    pub fn long_lived(mut self, total: Duration, stall: Duration) -> Self {
+        self.timeout = total;"""
+after = """    pub fn long_lived(mut self, _total: Duration, stall: Duration) -> Self {"""
+occurrences = 1
+
+[[mutation]]
+id = "M25"
+file = "src/gguf_downloader.rs"
+features = "full"
+filter = "gguf_downloader::tests::test_a_slow_download_is_not_a_timeout"
+invariant = "la descarga de GGUF usa el plazo como ATASCO, no como total: con `timeout_global` 60 s cualquier modelo que tarde mas de un minuto en transferirse moria por plazo, y con `resume` el reintento lo disfrazaba de red mala"
+before = """        .timeout_global(None)
+        .timeout_per_read(Some(req.timeout))"""
+after = """        .timeout_global(Some(req.timeout))"""
+occurrences = 1
+
+[[mutation]]
+id = "M26"
+file = "src/eval_benchmarks/http.rs"
+features = "full,eval"
+filter = "eval_benchmarks::http::tests::test_a_slow_corpus_download_is_not_a_timeout"
+invariant = "la descarga de corpus vigila el silencio y no la duracion: `.timeout(opts.timeout)` a secas era 60 s totales para ficheros de decenas o cientos de MB"
+before = "        .long_lived(opts.timeout, opts.stall_timeout)"
+after = "        .timeout(opts.stall_timeout)"
+occurrences = 1

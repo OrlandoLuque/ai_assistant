@@ -626,7 +626,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--spec", action="append", default=[], help="a TOML spec file")
     parser.add_argument("--all", action="store_true", help=f"every spec in {SPEC_DIR}")
-    parser.add_argument("--only", action="append", default=[], help="run only these ids")
+    parser.add_argument(
+        "--only",
+        action="append",
+        default=[],
+        help="run only these ids; repeatable, and accepts a comma-separated list",
+    )
     parser.add_argument("--keep-going", action="store_true", help="always exit 0")
     parser.add_argument("--verbose", action="store_true", help="dump cargo output on build failure")
     parser.add_argument(
@@ -659,11 +664,24 @@ def main() -> int:
 
     _install_guards()
 
+    # `--only M22,M23` used to select NOTHING and report "0 of 0 ... behaved as
+    # the spec says", which reads like success. Two bugs in one line: the flag is
+    # `action="append"`, so a comma list arrived as the single id "M22,M23"; and
+    # selecting nothing was not an error. A selector that silently matches
+    # nothing is the worst kind of gate --- it answers a question nobody asked.
+    only = {part for arg in args.only for part in arg.split(",") if part}
     rows: list[tuple[str, str, str, str, str]] = []
+    if only:
+        known = {m.id for spec_path in specs for m in load_spec(spec_path)}
+        unknown = sorted(only - known)
+        if unknown:
+            print(f"--only names no such mutation: {', '.join(unknown)}")
+            print(f"known in these specs: {', '.join(sorted(known))}")
+            return 2
     for spec_path in specs:
         mutations = load_spec(spec_path)
         for mutation in mutations:
-            if args.only and mutation.id not in args.only:
+            if only and mutation.id not in only:
                 continue
             print(f"-- {spec_path.name} {mutation.id}: {mutation.invariant}", flush=True)
             for label, verdict, detail in apply_one(mutation, args.verbose):

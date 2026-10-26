@@ -23,8 +23,20 @@ pub const MAX_DOWNLOAD_BYTES: u64 = 200 * 1024 * 1024;
 /// control can compose `ureq` directly.
 #[derive(Debug, Clone)]
 pub struct DownloadOptions {
-    /// Per-request timeout.
+    /// Plazo TOTAL de la descarga, como tope.
+    ///
+    /// Valia 60 s, y con `timeout_global` eso es de punta a punta --- sigue
+    /// contando mientras se escribe el cuerpo. O sea que cualquier corpus que
+    /// tardara mas de un minuto en transferirse moria por plazo, y los de aqui
+    /// llegan a 50 MB (FEVER) y a los cientos (MLDR). Lo que guarda la descarga
+    /// ahora es `stall_timeout`; esto es solo el techo.
     pub timeout: Duration,
+    /// Plazo de ATASCO: segundos de silencio antes de rendirse.
+    ///
+    /// Es el plazo correcto para una descarga, porque los bytes fluyen desde el
+    /// primero: un minuto sin recibir nada **si** significa que se murio algo,
+    /// y no significa "el fichero es grande".
+    pub stall_timeout: Duration,
     /// Optional expected size in bytes for cache-hit short-circuit + sanity check.
     pub expected_size: Option<u64>,
     /// Override of the global download cap.
@@ -36,7 +48,8 @@ pub struct DownloadOptions {
 impl Default for DownloadOptions {
     fn default() -> Self {
         Self {
-            timeout: Duration::from_secs(60),
+            timeout: crate::http_client::DEFAULT_LONG_LIVED_TIMEOUT,
+            stall_timeout: crate::http_client::DEFAULT_STALL_TIMEOUT,
             expected_size: None,
             max_bytes: MAX_DOWNLOAD_BYTES,
             user_agent: concat!("ai_assistant-eval_benchmarks/", env!("CARGO_PKG_VERSION"))
@@ -100,7 +113,7 @@ fn download_one(url: &str, dest: &Path, opts: &DownloadOptions) -> Result<PathBu
     // que es para lo que `HttpStream` lo lleva: sin el, un 404 con pagina de
     // error se escribiria y se renombraria como si fuera el corpus.
     let request = HttpRequest::get(url)
-        .timeout(opts.timeout)
+        .long_lived(opts.timeout, opts.stall_timeout)
         .header("User-Agent", opts.user_agent.clone());
     let resp = UreqClient
         .send_streaming(&request)
@@ -204,5 +217,35 @@ mod tests {
         let opts = DownloadOptions::default();
         assert!(opts.user_agent.starts_with("ai_assistant-eval_benchmarks/"));
         assert!(opts.max_bytes > 0);
+    }
+    /// Lo mismo que en el descargador de GGUF, y por el mismo motivo: el plazo
+    /// de `DownloadOptions` valia 60 s y era TOTAL, asi que cualquier corpus
+    /// que tardara mas de un minuto en transferirse moria --- y aqui hay
+    /// corpus de 50 MB (FEVER) y de cientos (MLDR). Lo pidio la mutacion M26.
+    #[test]
+    fn test_a_slow_corpus_download_is_not_a_timeout() {
+        let server = crate::http_client::StallingServer::dribbling(12, Duration::from_millis(120));
+        let dir = std::env::temp_dir().join(format!("corpus_slow_{}", std::process::id()));
+        let dest = dir.join("corpus.jsonl");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let url = server.url();
+        let opts = DownloadOptions {
+            timeout: Duration::from_secs(10),
+            stall_timeout: Duration::from_millis(400),
+            ..Default::default()
+        };
+        let started = std::time::Instant::now();
+        let path = download_file(&[&url], &dest, &opts)
+            .expect("una descarga lenta no es un plazo agotado");
+        let elapsed = started.elapsed();
+
+        assert_eq!(std::fs::read(&path).expect("escrito").len(), 12);
+        assert!(
+            elapsed >= Duration::from_millis(800),
+            "acabo en {:?}, asi que el servidor no goteo",
+            elapsed
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

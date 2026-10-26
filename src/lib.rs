@@ -371,7 +371,7 @@ pub use assistant::{
     AiAssistant, ContextBudgetStatus, ContextMode, FreshContextEffectiveness, FreshContextStatus,
     FreshContextWarning, SummaryResult,
 };
-pub use config::{AiConfig, AiProvider};
+pub use config::{AiConfig, AiProvider, StreamTimeouts};
 pub use context::{
     clear_context_size_cache, context_size_cache_len, estimate_tokens, estimate_tokens_for_model,
     get_model_context_size, get_model_context_size_cached, ContextUsage,
@@ -720,7 +720,8 @@ pub use log_redaction::{contains_sensitive, redact, redact_with_config, Redactio
 pub use http_client::{
     fetch_kobold_models_with, fetch_ollama_models_with, fetch_openai_models_with,
     parse_kobold_models, parse_ollama_models, parse_openai_models, HttpClient, HttpMethod,
-    HttpRequest, HttpResponse, HttpStream, UreqClient, DEFAULT_MAX_BODY_BYTES,
+    HttpRequest, HttpResponse, HttpStream, UreqClient, DEFAULT_LONG_LIVED_TIMEOUT,
+    DEFAULT_MAX_BODY_BYTES, DEFAULT_STALL_TIMEOUT,
 };
 
 #[cfg(feature = "server-tls")]

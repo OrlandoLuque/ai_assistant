@@ -38,8 +38,17 @@ pub struct DownloadRequest {
     /// If true, attempt `Range`-based resume when the destination
     /// already exists and is smaller than the remote file.
     pub resume: bool,
-    /// HTTP timeout for the initial request and each chunk. Defaults to
-    /// 60 s — GGUFs are large and upstream can be slow.
+    /// Plazo de **ATASCO**: cuanto se espera sin recibir un byte, no cuanto
+    /// dura la descarga. Por defecto 60 s.
+    ///
+    /// Lo que este campo dice es lo que siempre quiso decir --- "la peticion
+    /// inicial y cada trozo" --- pero hasta V440 se aplicaba como
+    /// `timeout_global`, que en `ureq` 3 es de punta a punta y **sigue contando
+    /// mientras se lee el cuerpo**. O sea: 60 segundos para bajar un GGUF
+    /// entero. Un modelo de 5 GB a 100 Mb/s tarda siete minutos, asi que la
+    /// descarga moria siempre; con `resume: true` el `.part` sobrevivia y el
+    /// reintento avanzaba otro minuto, lo que hace que el fallo se lea como una
+    /// red mala en vez de como un plazo mal puesto.
     pub timeout: Duration,
 }
 
@@ -133,9 +142,13 @@ pub fn download(
     };
 
     // Build request.
+    // `timeout_per_read` y NO `timeout_global`: ver [`DownloadRequest::timeout`].
+    // Un GGUF no tiene tamano acotado --- hay modelos de 70 GB --- asi que el
+    // plazo total se queda en `None` a proposito y el guardia es el silencio.
     let mut agent = ureq::get(&req.url)
         .config()
-        .timeout_global(Some(req.timeout))
+        .timeout_global(None)
+        .timeout_per_read(Some(req.timeout))
         .build();
     if let Some(tok) = &req.bearer_token {
         agent = agent.header("Authorization", &format!("Bearer {}", tok));
@@ -555,5 +568,41 @@ mod tests {
         assert_eq!(req.bearer_token.as_deref(), Some("hf_xxx"));
         assert!(!req.resume);
         assert_eq!(req.timeout, Duration::from_secs(10));
+    }
+    /// Una descarga LENTA pero viva tiene que llegar entera.
+    ///
+    /// Es el test que faltaba, y lo pidio la mutacion M25: `DownloadRequest`
+    /// documentaba su plazo como "la peticion inicial y cada trozo", y se
+    /// aplicaba como `timeout_global`, que es de punta a punta. O sea 60 s para
+    /// bajar un GGUF entero --- un modelo de 5 GB a 100 Mb/s tarda siete
+    /// minutos. Con `resume: true` el `.part` sobrevivia y el reintento avanzaba
+    /// otro minuto, que es lo que disfrazaba el plazo de red mala.
+    ///
+    /// Aqui son doce bytes con 120 ms entre cada uno: casi segundo y medio de
+    /// transferencia con un plazo de 400 ms. Pasa porque el plazo es por
+    /// lectura; con `timeout_global` fallaria.
+    #[test]
+    fn test_a_slow_download_is_not_a_timeout() {
+        let server = crate::http_client::StallingServer::dribbling(12, Duration::from_millis(120));
+        let dir = std::env::temp_dir().join(format!("gguf_slow_{}", std::process::id()));
+        let dest = dir.join("model.gguf");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let req =
+            DownloadRequest::new(server.url(), &dest).with_timeout(Duration::from_millis(400));
+        let started = std::time::Instant::now();
+        let got = download(&req, None).expect("una descarga lenta no es un plazo agotado");
+        let elapsed = started.elapsed();
+
+        assert_eq!(got.bytes, 12, "llego el fichero entero");
+        assert_eq!(std::fs::read(&dest).expect("escrito").len(), 12);
+        // Y de verdad goteo: si hubiera acabado al instante, el test no separa
+        // un plazo por lectura de un plazo total.
+        assert!(
+            elapsed >= Duration::from_millis(800),
+            "acabo en {:?}, asi que el servidor no goteo",
+            elapsed
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

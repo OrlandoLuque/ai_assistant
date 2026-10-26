@@ -232,6 +232,24 @@ pub struct GenerationConfig {
     /// backend randomise per request. See [`crate::config::AiConfig::seed`].
     #[serde(default)]
     pub seed: Option<u64>,
+
+    /// Tope total de una respuesta en streaming, en segundos.
+    ///
+    /// `None` usa el defecto de [`crate::config::StreamTimeouts`]. Que esto se
+    /// pueda poner desde el fichero es la mitad que faltaba de N163: el valor
+    /// era un literal de 300 s en `providers.rs`, asi que no habia manera de
+    /// tocarlo ni desde la API ni desde la configuracion.
+    #[serde(default)]
+    pub stream_timeout_secs: Option<u64>,
+
+    /// Segundos de SILENCIO tolerados en una respuesta en streaming.
+    ///
+    /// Es el plazo que de verdad vigila un stream; ver
+    /// [`crate::config::StreamTimeouts::stall_secs`]. Subirlo tiene sentido con
+    /// un modelo que tarda en cargar; bajarlo, con un servicio que deberia
+    /// contestar al instante.
+    #[serde(default)]
+    pub stream_stall_secs: Option<u64>,
 }
 
 fn default_temperature() -> f32 {
@@ -252,6 +270,8 @@ impl Default for GenerationConfig {
             max_tokens: None,
             stop_sequences: Vec::new(),
             seed: None,
+            stream_timeout_secs: None,
+            stream_stall_secs: None,
         }
     }
 }
@@ -825,6 +845,16 @@ impl ConfigFile {
             ollama_num_ctx: None,
             embedding_model: None,
             seed: self.generation.seed,
+            stream_timeouts: {
+                let mut t = crate::config::StreamTimeouts::default();
+                if let Some(secs) = self.generation.stream_timeout_secs {
+                    t = t.with_total_secs(secs);
+                }
+                if let Some(secs) = self.generation.stream_stall_secs {
+                    t = t.with_stall_secs(secs);
+                }
+                t
+            },
         }
     }
 
@@ -2756,5 +2786,34 @@ knowledge_enabled = true
         assert!(parsed.containers.mcp_enabled);
         assert_eq!(parsed.containers.default_timeout_secs, 90);
         assert_eq!(parsed.containers.allowed_images, vec!["python:3.12-slim"]);
+    }
+    // ========================================================================
+    // Plazos de streaming desde el fichero (N163)
+    // ========================================================================
+
+    /// Las dos claves nuevas tienen que llegar a `AiConfig`, no quedarse en el
+    /// fichero. Es la mitad que mas se olvida: `to_ai_config` construye el
+    /// struct a mano, asi que un campo nuevo que nadie copia se queda en su
+    /// defecto para siempre --- le pasa hoy a `mmproj_path`,
+    /// `ollama_num_ctx` y `embedding_model`, que el fichero no transporta.
+    #[test]
+    fn test_the_stream_timeout_keys_reach_the_ai_config() {
+        let mut file = ConfigFile::default();
+        file.generation.stream_timeout_secs = Some(45);
+        file.generation.stream_stall_secs = Some(7);
+        let config = file.to_ai_config();
+        assert_eq!(config.stream_timeouts.total_secs, 45);
+        assert_eq!(config.stream_timeouts.stall_secs, 7);
+    }
+
+    /// Y sin las claves, el defecto --- no un cero, que seria "sin plazo" o
+    /// "plazo instantaneo" segun quien lo lea.
+    #[test]
+    fn test_absent_stream_timeout_keys_keep_the_defaults() {
+        let config = ConfigFile::default().to_ai_config();
+        assert_eq!(
+            config.stream_timeouts,
+            crate::config::StreamTimeouts::default()
+        );
     }
 }

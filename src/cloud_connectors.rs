@@ -347,13 +347,20 @@ impl S3Client {
             is_safe_url(url),
             "SSRF blocked: S3 request URL points to a private/internal address"
         );
-        let request = self.signed_request(
-            HttpMethod::Get,
-            url,
-            &[],
-            &[],
-            std::time::Duration::from_secs(300),
-        );
+        // El plazo era 300 s TOTALES, que para un objeto de tamano desconocido
+        // es la herramienta equivocada: mata una descarga legitima grande y
+        // ademas tarda cinco minutos en darse cuenta de que el otro lado murio.
+        // Lo que guarda una descarga es el silencio. Ver
+        // [`crate::http_client::DEFAULT_STALL_TIMEOUT`].
+        let request = self
+            .signed_request(
+                HttpMethod::Get,
+                url,
+                &[],
+                &[],
+                crate::http_client::DEFAULT_LONG_LIVED_TIMEOUT,
+            )
+            .stall_timeout(crate::http_client::DEFAULT_STALL_TIMEOUT);
         let mut stream = UreqClient
             .send_streaming(&request)
             .context("S3 GET failed")?;
@@ -635,12 +642,19 @@ impl CloudStorage for GoogleDriveClient {
         // esto descarga un fichero de Drive, que puede ser mucho mayor. Hoy la
         // lectura no tiene tope y asi se queda. El mismo cuidado hizo falta en
         // el descargador de modelos (V429).
+        // Y el plazo era de 60 s TOTALES para un fichero de Drive de tamano
+        // desconocido --- el mismo error que en S3 y en el descargador de
+        // GGUF, un plazo total donde hace falta uno de atasco.
         let mut resp = UreqClient
-            .send_streaming(&self.authorized(
-                HttpMethod::Get,
-                &url,
-                std::time::Duration::from_secs(60),
-            ))
+            .send_streaming(
+                &self
+                    .authorized(
+                        HttpMethod::Get,
+                        &url,
+                        crate::http_client::DEFAULT_LONG_LIVED_TIMEOUT,
+                    )
+                    .stall_timeout(crate::http_client::DEFAULT_STALL_TIMEOUT),
+            )
             .context("Google Drive GET failed")?;
         // Antes de leer un byte: un 404 o un 401 no son el contenido del
         // fichero, y sin esto se escribirian en el `Vec` como si lo fueran.

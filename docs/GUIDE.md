@@ -2211,6 +2211,43 @@ too big to buffer), `HttpRequest::json` for a JSON body with any method, and
 `HttpMethod::from_name` for a method that arrives as a string — it returns `Option`, with
 no silent fall back to `GET`.
 
+### Long-lived connections: watch the silence, not the clock
+
+A total timeout is the wrong instrument for a token stream or a multi-gigabyte download,
+and it is wrong in **both** directions: set it short and it kills a legitimate six-minute
+generation; set it long and you wait that same six minutes to notice the server died.
+
+`HttpRequest::long_lived(total, stall)` sets the two halves of the decision together:
+
+```rust
+use std::time::{Duration};
+use ai_assistant::{DEFAULT_LONG_LIVED_TIMEOUT, DEFAULT_STALL_TIMEOUT, HttpRequest};
+
+// A download: one hour of total budget as a ceiling, 60 s of silence as the policy.
+let request = HttpRequest::get(url)
+    .long_lived(DEFAULT_LONG_LIVED_TIMEOUT, DEFAULT_STALL_TIMEOUT);
+```
+
+The *stall* timeout restarts on every read, so a slow-but-alive transfer finishes while a
+silent socket fails in seconds. The *total* is only a ceiling, so a connection that
+dribbles one byte a minute cannot hold a thread forever.
+
+Two traps worth naming:
+
+- **A stall timeout alone does nothing.** On the default 30 s total, the total cuts first
+  and the stall never fires. That is why `long_lived` takes both — `stall_timeout()` alone
+  is for requests that already carry a generous total.
+- **It is wrong for a non-streaming generation.** A buffered completion sends no bytes
+  until it is done, so "no bytes for N seconds" is just a total timeout with a different
+  name — and it would kill a long answer. The streaming routes in `providers.rs` use it;
+  the buffered ones deliberately do not.
+
+For LLM streaming the values are configuration, not constants: `AiConfig::stream_timeouts`
+(`StreamTimeouts { total_secs, stall_secs }`, default 1800/180), also settable from a
+config file as `generation.stream_timeout_secs` and `generation.stream_stall_secs`. The
+stall default is 180 s and not 30 s because a cold model load can take minutes before the
+first token — 166 s, measured on this repository's own hardware.
+
 Connections are pooled process-wide: `UreqClient` is a unit struct and the pooling lives
 in a shared agent behind it, so call sites get it without asking.
 

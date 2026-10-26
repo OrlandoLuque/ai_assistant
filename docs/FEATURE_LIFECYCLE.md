@@ -154,6 +154,27 @@ section.
 - `cargo metadata` plus a manual review at each minor bump
   catches `experimental_*` flags that have outlived the two-minor
   window.
+- **Feature coverage ratchet** (`feature_matrix.rs`, in CI under the
+  `harness-battery` job since V439). It derives the list of declared
+  features from `Cargo.toml`, works out what `.github/workflows/ci.yml`
+  actually enables — matrix entries, the `FEATURES_*` variables, the
+  inline `--features` on bare `run:` lines, and the implies-graph those
+  expand to — and fails if a **new** feature joins either backlog
+  without being named.
+
+  Two backlogs, because *compiled* and *tested* are different questions
+  and conflating them hides behaviour regressions:
+
+  | List | What CI does | What slips through |
+  |---|---|---|
+  | `UNCOVERED_BACKLOG` | nothing compiles it | a compile error |
+  | `COMPILED_BUT_NOT_EXERCISED` | compiles, no `cargo test` runs it | a behaviour change |
+
+  A feature reachable only from a `cargo clippy --bin` job belongs in the
+  second list, not the first: that is how `cloud-connectors` reached 57
+  tests — ten of them about SSRF — that no job ran. Every entry carries a
+  written reason, and shrinking both lists is the goal; growing either one
+  has to be deliberate.
 
 ## What this policy is NOT
 

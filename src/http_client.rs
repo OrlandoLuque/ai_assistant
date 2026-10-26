@@ -24,6 +24,29 @@ use std::time::Duration;
 /// peor, JSON valido con menos datos.
 pub const DEFAULT_MAX_BODY_BYTES: u64 = 10 * 1024 * 1024;
 
+/// Plazo de ATASCO por defecto para una transferencia: 60 s de silencio.
+///
+/// Sesenta y no treinta porque un servidor de LLM que carga el modelo en frio
+/// tarda en contestar la primera cabecera, y eso cuenta como lectura: en este
+/// mismo repositorio se midio una recarga de 166 s cuando Ollama tuvo que
+/// repartir capas con la CPU. Para una **descarga** 60 s de silencio son
+/// muchisimos --- los bytes fluyen desde el primero --- y para un **stream de
+/// tokens** son el margen justo de la primera ficha.
+///
+/// Ver [`HttpRequest::stall_timeout`].
+pub const DEFAULT_STALL_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Plazo TOTAL por defecto de una conexion de vida larga: una hora.
+///
+/// Es un **tope**, no una politica: lo que corta un servidor muerto es el plazo
+/// de atasco. Esto solo esta para que una conexion que gotea un byte cada
+/// cincuenta segundos no se quede indefinidamente.
+///
+/// Una hora y no `None` porque una biblioteca que retiene un hilo y un socket
+/// para siempre no es educada; donde el tamano es de verdad arbitrario --- un
+/// GGUF de 70 GB --- el sitio lo dice y pone `None` a mano.
+pub const DEFAULT_LONG_LIVED_TIMEOUT: Duration = Duration::from_secs(3600);
+
 /// Metodo HTTP.
 ///
 /// Los seis que el barrido de 2026-10-23 encontro en uso: `GET` y `POST` en 35 y
@@ -159,6 +182,26 @@ pub struct HttpRequest {
     /// escuchando" y "el servidor tarda" se vuelven el mismo error. Medido en
     /// V422.
     pub connect_timeout: Option<Duration>,
+    /// Plazo de ATASCO: cuanto se espera **sin que llegue un byte**, no cuanto
+    /// dura la peticion entera.
+    ///
+    /// Es el plazo que sirve para una conexion de vida larga que da senales de
+    /// vida --- un stream de tokens, la descarga de un corpus de 2 GB. Para
+    /// esas, un plazo total es la herramienta equivocada en las **dos**
+    /// direcciones: corto mata una generacion legitima de seis minutos, y largo
+    /// tarda ese mismo rato en darse cuenta de que el servidor se murio. Un
+    /// plazo de atasco corta a los N segundos de silencio y no le pone techo a
+    /// lo que va bien.
+    ///
+    /// `None` --- el defecto --- es lo que `ureq` hace hoy: ningun plazo por
+    /// lectura. Es deliberado: el campo llego despues de los 55 sitios, y
+    /// encenderlo de golpe para todos habria cambiado el comportamiento de
+    /// peticiones que nadie habia medido.
+    ///
+    /// No confundir con el modulo `stall_detection`, que es **otra cosa**: alli
+    /// el atasco es semantico --- el modelo repite la misma llamada a
+    /// herramienta en circulos --- y se mide en turnos, no en bytes.
+    pub stall_timeout: Option<Duration>,
     /// Cuantas redirecciones seguir. `Some(0)` las prohibe (proteccion SSRF).
     pub max_redirects: Option<u32>,
     /// Tope del cuerpo a traer a memoria. Ver [`DEFAULT_MAX_BODY_BYTES`].
@@ -175,6 +218,7 @@ impl HttpRequest {
             body: None,
             timeout: Duration::from_secs(30),
             connect_timeout: None,
+            stall_timeout: None,
             max_redirects: None,
             max_body_bytes: DEFAULT_MAX_BODY_BYTES,
         }
@@ -228,6 +272,39 @@ impl HttpRequest {
     /// Pone el plazo de conexion.
     pub fn connect_timeout(mut self, timeout: Duration) -> Self {
         self.connect_timeout = Some(timeout);
+        self
+    }
+
+    /// Pone el plazo de atasco. Ver [`HttpRequest::stall_timeout`].
+    ///
+    /// Ojo con usarlo suelto: **sobre el plazo total por defecto no hace nada**.
+    /// El total corta a los 30 s y un atasco de 30 s nunca llega a dispararse.
+    /// Para una conexion de vida larga, lo que se quiere es
+    /// [`HttpRequest::long_lived`], que pone los dos a la vez.
+    pub fn stall_timeout(mut self, timeout: Duration) -> Self {
+        self.stall_timeout = Some(timeout);
+        self
+    }
+
+    /// Configura la peticion para una conexion de **vida larga que da senales
+    /// de vida**: plazo total generoso y plazo de atasco corto.
+    ///
+    /// Los dos valores van juntos porque uno sin el otro no sirve, y esa es la
+    /// razon de que esto sea un metodo y no dos:
+    ///
+    /// * Solo el de atasco, sobre el total por defecto de 30 s --- el total
+    ///   corta primero y el de atasco no se entera. Es el error facil.
+    /// * Solo el total, subiendolo --- es exactamente lo que esto viene a
+    ///   sustituir: 300 s de total son 300 s de espera ante un servidor muerto.
+    ///
+    /// `stall` tiene que ser **menor** que `total` para servir de algo; si no,
+    /// queda inerte (lo prueba
+    /// `test_a_stall_longer_than_the_total_is_inert`). No se valida en tiempo
+    /// de ejecucion a proposito: el puerto no devuelve errores de
+    /// configuracion, y un `panic!` por esto seria peor que el plazo.
+    pub fn long_lived(mut self, total: Duration, stall: Duration) -> Self {
+        self.timeout = total;
+        self.stall_timeout = Some(stall);
         self
     }
 
@@ -528,6 +605,12 @@ impl UreqClient {
         if let Some(connect) = request.connect_timeout {
             config = config.timeout_connect(Some(connect));
         }
+        // `timeout_per_read` y no `timeout_recv_body`: el que reinicia la cuenta
+        // en cada lectura es este. `timeout_recv_body` es un total para el
+        // cuerpo, o sea otro plazo total --- justo lo que no queremos.
+        if let Some(stall) = request.stall_timeout {
+            config = config.timeout_per_read(Some(stall));
+        }
         if let Some(max) = request.max_redirects {
             config = config.max_redirects(max);
         }
@@ -750,6 +833,103 @@ macro_rules! validate_features {
 // ============================================================================
 // Mock HTTP Server (test-only)
 // ============================================================================
+
+// ============================================================================
+// Stalling / dribbling server (test-only)
+// ============================================================================
+
+/// Un servidor que manda las cabeceras, un trozo del cuerpo, y luego **se
+/// calla sin cerrar la conexion**.
+///
+/// No sirve `MockHttpServer` para esto: escribe la respuesta entera de una
+/// vez. Lo que hace falta aqui es lo contrario, y es el unico caso de
+/// atasco realista --- el servidor no se murio: el TCP sigue abierto, y un
+/// cierre lo veria el cliente al instante. Simplemente dejo de hablar. Eso
+/// es lo que un plazo total no sabe distinguir de "va lento".
+#[cfg(test)]
+pub struct StallingServer {
+    addr: std::net::SocketAddr,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+#[cfg(test)]
+impl StallingServer {
+    /// Promete 1000 bytes, entrega cinco, y se calla para siempre.
+    pub fn start() -> Self {
+        Self::spawn(1000, 5, Duration::ZERO)
+    }
+
+    /// El caso CONTRARIO: una transferencia **lenta pero viva**. Entrega el
+    /// cuerpo entero, byte a byte, esperando `gap` entre cada uno.
+    ///
+    /// Es el caso que separa un plazo de atasco de un plazo total: cualquier
+    /// plazo total lo bastante corto para detectar un servidor muerto mata
+    /// tambien esto, y un plazo por lectura no, porque ningun hueco
+    /// individual llega al limite. Sin este servidor, cambiar
+    /// `timeout_per_read` por `timeout_recv_body` pasaba todos los tests ---
+    /// los dos matan un cuerpo que no llega nunca, y solo uno de los dos
+    /// deja pasar uno que llega despacio. Lo dijo la mutacion M23, no yo.
+    pub fn dribbling(bytes: usize, gap: Duration) -> Self {
+        Self::spawn(bytes, bytes, gap)
+    }
+
+    fn spawn(promised: usize, sent: usize, gap: Duration) -> Self {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop_clone = stop.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                stream.set_read_timeout(Some(Duration::from_secs(2))).ok();
+                let mut chunk = [0u8; 4096];
+                let _ = std::io::Read::read(&mut stream, &mut chunk);
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\
+                     Content-Length: {}\r\nConnection: keep-alive\r\n\r\n",
+                    promised
+                );
+                if std::io::Write::write_all(&mut stream, head.as_bytes()).is_err() {
+                    continue;
+                }
+                let mut broken = false;
+                for _ in 0..sent {
+                    if std::io::Write::write_all(&mut stream, b"x").is_err() {
+                        broken = true;
+                        break;
+                    }
+                    std::io::Write::flush(&mut stream).ok();
+                    if !gap.is_zero() {
+                        std::thread::sleep(gap);
+                    }
+                }
+                if broken {
+                    continue;
+                }
+                // Con el socket en la mano hasta que el test acabe: si se
+                // prometio mas de lo enviado, el cliente sigue esperando lo
+                // que falta. Un CIERRE lo veria al instante, y eso es otro
+                // error --- no un atasco.
+                while !stop_clone.load(std::sync::atomic::Ordering::Relaxed) {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                return;
+            }
+        });
+        Self { addr, stop }
+    }
+
+    pub fn url(&self) -> String {
+        format!("http://{}/atascado", self.addr)
+    }
+}
+
+#[cfg(test)]
+impl Drop for StallingServer {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
 
 /// A mock HTTP server that listens on localhost and serves queued responses.
 /// Used for testing modules that make real HTTP calls (mcp_client, media_generation, etc.)
@@ -1800,6 +1980,155 @@ mod tests {
         let (method, path, _) = server.last_request().unwrap();
         assert_eq!(method, "POST");
         assert!(path.contains("/api/chat"));
+    }
+
+    // ========================================================================
+    // Plazo de atasco (N163)
+    // ========================================================================
+
+    #[test]
+    fn test_the_stall_timeout_cuts_a_silent_server_without_burning_the_total() {
+        let server = StallingServer::start();
+        let started = std::time::Instant::now();
+        let err = UreqClient
+            .send(
+                &HttpRequest::get(server.url())
+                    .long_lived(Duration::from_secs(10), Duration::from_millis(300)),
+            )
+            .expect_err("un servidor que se calla a mitad del cuerpo tiene que fallar");
+        let elapsed = started.elapsed();
+        // Lo que se prueba NO es que falle --- un plazo total tambien falla ---
+        // sino que falla PRONTO: a los 300 ms de silencio, no a los 10 s.
+        assert!(
+            elapsed < Duration::from_secs(3),
+            "corto a los {:?}, o sea que actuo el plazo total y no el de atasco: {}",
+            elapsed,
+            err
+        );
+    }
+
+    /// El caso separador del de arriba.
+    ///
+    /// Sin esto, "fallo en 300 ms" podria deberse a cualquier otra cosa --- un
+    /// `Content-Length` que `ureq` no se cree, un cierre que yo no vi --- y el
+    /// test anterior pasaria sin probar nada. Aqui el mismo servidor, el mismo
+    /// camino y **sin** plazo de atasco tarda todo el total.
+    #[test]
+    fn test_without_a_stall_timeout_the_same_server_burns_the_whole_total() {
+        let server = StallingServer::start();
+        let started = std::time::Instant::now();
+        UreqClient
+            .send(&HttpRequest::get(server.url()).timeout(Duration::from_secs(2)))
+            .expect_err("sin plazo de atasco corta el total, pero corta");
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed >= Duration::from_millis(1500),
+            "fallo a los {:?} SIN plazo de atasco puesto, asi que el test de arriba \
+             no demuestra nada: algo mas esta cortando",
+            elapsed
+        );
+    }
+
+    /// Lo que afirma la documentacion de [`HttpRequest::long_lived`].
+    #[test]
+    fn test_a_stall_longer_than_the_total_is_inert() {
+        let server = StallingServer::start();
+        let started = std::time::Instant::now();
+        UreqClient
+            .send(
+                &HttpRequest::get(server.url())
+                    .long_lived(Duration::from_secs(2), Duration::from_secs(30)),
+            )
+            .expect_err("corta el total");
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed >= Duration::from_millis(1500),
+            "corto a los {:?} con un atasco de 30 s sobre un total de 2 s, \
+             o sea que el atasco NO es lo que la documentacion dice que es",
+            elapsed
+        );
+    }
+
+    /// El caso de verdad: el plazo tiene que seguir vivo en el lector que
+    /// `send_streaming` devuelve, que es donde se consumen los tokens.
+    ///
+    /// Que la configuracion se aplique a la peticion no implica que alcance a
+    /// las lecturas de despues --- son dos cosas, y la segunda es la que
+    /// importa para un stream.
+    #[test]
+    fn test_the_stall_timeout_survives_into_the_streaming_reader() {
+        let server = StallingServer::start();
+        let mut stream = UreqClient
+            .send_streaming(
+                &HttpRequest::get(server.url())
+                    .long_lived(Duration::from_secs(10), Duration::from_millis(300)),
+            )
+            .expect("las cabeceras si llegan");
+        assert!(stream.is_success());
+
+        let started = std::time::Instant::now();
+        let mut body = Vec::new();
+        let err = std::io::Read::read_to_end(&mut stream.body, &mut body)
+            .expect_err("el cuerpo se queda a medias");
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(3),
+            "el lector tardo {:?}, o sea que el plazo de atasco NO llega al flujo: {}",
+            elapsed,
+            err
+        );
+        // Y lo que si llego, llego: el atasco no se come los bytes buenos.
+        assert_eq!(&body[..], b"xxxxx");
+    }
+
+    /// La otra mitad, y la que de verdad justifica el campo: una transferencia
+    /// **lenta pero viva** llega entera.
+    ///
+    /// Doce bytes con 120 ms entre cada uno son casi un segundo y medio de
+    /// transferencia, muy por encima del plazo de atasco de 400 ms --- y aun asi
+    /// pasa, porque ningun hueco individual llega a 400 ms. Un plazo total de
+    /// 400 ms la habria matado, y un plazo total generoso no habria detectado un
+    /// servidor muerto.
+    ///
+    /// Este test existe porque la mutacion M23 ---
+    /// `timeout_per_read` -> `timeout_recv_body` --- SOBREVIVIO a los tres
+    /// anteriores: los dos plazos matan un cuerpo que no llega nunca, y solo uno
+    /// de los dos deja pasar uno que llega despacio.
+    #[test]
+    fn test_a_slow_but_alive_transfer_is_not_a_stall() {
+        let server = StallingServer::dribbling(12, Duration::from_millis(120));
+        let started = std::time::Instant::now();
+        let response = UreqClient
+            .send(
+                &HttpRequest::get(server.url())
+                    .long_lived(Duration::from_secs(10), Duration::from_millis(400)),
+            )
+            .expect("una transferencia lenta NO es un atasco");
+        let elapsed = started.elapsed();
+        assert!(response.is_success());
+        assert_eq!(response.body.len(), 12, "llego el cuerpo entero");
+        // Y tardo lo que tenia que tardar: si hubiera acabado en 50 ms, el
+        // servidor no estaria goteando y el test no probaria nada.
+        assert!(
+            elapsed >= Duration::from_millis(800),
+            "acabo en {:?}, asi que el servidor no goteo y este test no separa nada",
+            elapsed
+        );
+    }
+
+    #[test]
+    fn test_long_lived_sets_both_halves_of_the_decision() {
+        let req = HttpRequest::get("http://x/")
+            .long_lived(Duration::from_secs(600), Duration::from_secs(30));
+        assert_eq!(req.timeout, Duration::from_secs(600));
+        assert_eq!(req.stall_timeout, Some(Duration::from_secs(30)));
+        // Y el defecto sigue siendo `None`: encenderlo para los 55 sitios de
+        // golpe habria cambiado el comportamiento de peticiones sin medir.
+        assert_eq!(HttpRequest::get("http://x/").stall_timeout, None);
+        assert_eq!(
+            HttpRequest::get("http://x/").timeout,
+            Duration::from_secs(30)
+        );
     }
 
     // ========================================================================

@@ -261,6 +261,74 @@ pub struct AiConfig {
     /// Currently sent to Ollama; providers that do not accept a seed ignore it.
     #[serde(default)]
     pub seed: Option<u64>,
+    /// Plazos de red de las llamadas en streaming.
+    ///
+    /// Ver [`StreamTimeouts`]. Hasta V440 `AiConfig` no tenia **ni un** campo
+    /// de plazo: los 300 s de un stream eran un literal en `providers.rs`, asi
+    /// que un llamante con un modelo que carga lento no tenia forma de subirlos
+    /// ni de bajarlos.
+    #[serde(default)]
+    pub stream_timeouts: StreamTimeouts,
+}
+
+/// Plazos de red de una respuesta en **streaming**, en segundos.
+///
+/// Dos valores y no uno, porque un stream de tokens no se vigila con un plazo
+/// total:
+///
+/// * `total_secs` es un **tope**, para que una conexion que gotea no se quede
+///   para siempre.
+/// * `stall_secs` es la politica: tantos segundos **sin recibir un token** y se
+///   da por muerto.
+///
+/// Solo se aplican al streaming. Una generacion NO en streaming no manda nada
+/// hasta terminar, asi que para ella un plazo de atasco seria un plazo total
+/// disfrazado --- y mataria una respuesta larga legitima. Esa distincion es la
+/// razon de que esto no se aplique a los cinco `send` de `providers.rs`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct StreamTimeouts {
+    /// Tope total de un stream, en segundos. Por defecto 1800 (media hora).
+    pub total_secs: u64,
+    /// Segundos de silencio tolerados. Por defecto 180.
+    ///
+    /// Ciento ochenta y no treinta porque la primera ficha puede tardar: en
+    /// este repositorio se midio una recarga de Ollama de **166 s** cuando tuvo
+    /// que repartir capas con la CPU, y eso cuenta como silencio.
+    pub stall_secs: u64,
+}
+
+impl Default for StreamTimeouts {
+    fn default() -> Self {
+        Self {
+            total_secs: 1800,
+            stall_secs: 180,
+        }
+    }
+}
+
+impl StreamTimeouts {
+    /// El tope total como [`std::time::Duration`].
+    pub fn total(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.total_secs)
+    }
+
+    /// El plazo de atasco como [`std::time::Duration`].
+    pub fn stall(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.stall_secs)
+    }
+
+    /// Cambia el tope total.
+    pub fn with_total_secs(mut self, secs: u64) -> Self {
+        self.total_secs = secs;
+        self
+    }
+
+    /// Cambia el plazo de atasco.
+    pub fn with_stall_secs(mut self, secs: u64) -> Self {
+        self.stall_secs = secs;
+        self
+    }
 }
 
 impl std::fmt::Debug for AiConfig {
@@ -297,6 +365,7 @@ impl std::fmt::Debug for AiConfig {
             .field("ollama_num_ctx", &self.ollama_num_ctx)
             .field("embedding_model", &self.embedding_model)
             .field("seed", &self.seed)
+            .field("stream_timeouts", &self.stream_timeouts)
             .finish()
     }
 }
@@ -322,6 +391,7 @@ impl Default for AiConfig {
             ollama_num_ctx: None,
             embedding_model: None,
             seed: None,
+            stream_timeouts: StreamTimeouts::default(),
         }
     }
 }
@@ -767,5 +837,58 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(config.get_api_key(), Some("my-azure-key".to_string()));
+    }
+    // ========================================================================
+    // Plazos de streaming (N163)
+    // ========================================================================
+
+    #[test]
+    fn test_stream_timeouts_default_is_a_cap_plus_a_stall_and_not_one_number() {
+        let t = StreamTimeouts::default();
+        // El de atasco tiene que ser MENOR que el total, o es inerte: un plazo
+        // por lectura mas largo que el total no se dispara nunca.
+        assert!(
+            t.stall() < t.total(),
+            "un atasco de {:?} sobre un total de {:?} no salta jamas",
+            t.stall(),
+            t.total()
+        );
+        // Y tiene que dar margen a una carga de modelo en frio, que en este
+        // repositorio se midio en 166 s.
+        assert!(
+            t.stall() >= std::time::Duration::from_secs(166),
+            "con {:?} de atasco, una recarga de Ollama de 166 s se lee como              servidor muerto",
+            t.stall()
+        );
+    }
+
+    #[test]
+    fn test_stream_timeouts_setters_reach_the_durations() {
+        let t = StreamTimeouts::default()
+            .with_total_secs(60)
+            .with_stall_secs(5);
+        assert_eq!(t.total(), std::time::Duration::from_secs(60));
+        assert_eq!(t.stall(), std::time::Duration::from_secs(5));
+    }
+
+    /// Un fichero de configuracion escrito antes de V440 no lleva la clave, y
+    /// tiene que seguir cargando con el defecto en vez de fallar.
+    #[test]
+    fn test_a_config_without_the_new_key_still_deserializes() {
+        let json = serde_json::json!({
+            "provider": "Ollama",
+            "selected_model": "llama3.1:8b",
+            "ollama_url": "http://127.0.0.1:11434",
+            "lm_studio_url": "",
+            "text_gen_webui_url": "",
+            "kobold_url": "",
+            "local_ai_url": "",
+            "custom_url": "",
+            "max_history_messages": 20,
+            "temperature": 0.7
+        });
+        let config: AiConfig =
+            serde_json::from_value(json).expect("un config viejo tiene que cargar");
+        assert_eq!(config.stream_timeouts, StreamTimeouts::default());
     }
 }

@@ -354,8 +354,14 @@ pub fn generate_ollama_streaming(
     // Retry only the connection; stream reading is not retried
     let response = retry_with_config(config.retry_config.clone(), || {
         let mut resp = UreqClient.send_streaming(
-            &HttpRequest::post_json(&url, &request_body)?
-                .timeout(std::time::Duration::from_secs(300)),
+            // `long_lived` y no `.timeout(300)`: lo que vigila un stream de
+            // tokens es el SILENCIO, no la duracion. Con un total de 300 s una
+            // generacion larga legitima moria, y un servidor muerto tardaba
+            // cinco minutos en notarse. Configurable: `AiConfig::stream_timeouts`.
+            &HttpRequest::post_json(&url, &request_body)?.long_lived(
+                config.stream_timeouts.total(),
+                config.stream_timeouts.stall(),
+            ),
         )?;
         // Conserva lo que `send_json(..)?` garantizaba: un no-2xx es un error,
         // asi que se reintenta y se reporta en vez de emitirse como respuesta.
@@ -446,8 +452,14 @@ pub fn generate_openai_streaming(
     // Retry only the connection; stream reading is not retried
     let response = retry_with_config(config.retry_config.clone(), || {
         let mut resp = UreqClient.send_streaming(
-            &HttpRequest::post_json(&url, &request_body)?
-                .timeout(std::time::Duration::from_secs(300)),
+            // `long_lived` y no `.timeout(300)`: lo que vigila un stream de
+            // tokens es el SILENCIO, no la duracion. Con un total de 300 s una
+            // generacion larga legitima moria, y un servidor muerto tardaba
+            // cinco minutos en notarse. Configurable: `AiConfig::stream_timeouts`.
+            &HttpRequest::post_json(&url, &request_body)?.long_lived(
+                config.stream_timeouts.total(),
+                config.stream_timeouts.stall(),
+            ),
         )?;
         // Conserva lo que `send_json(..)?` garantizaba: un no-2xx es un error,
         // asi que se reintenta y se reporta en vez de emitirse como respuesta.
@@ -1148,8 +1160,14 @@ pub fn generate_ollama_streaming_cancellable(
     // Retry only the connection; stream reading is not retried
     let response = retry_with_config(config.retry_config.clone(), || {
         let mut resp = UreqClient.send_streaming(
-            &HttpRequest::post_json(&url, &request_body)?
-                .timeout(std::time::Duration::from_secs(300)),
+            // `long_lived` y no `.timeout(300)`: lo que vigila un stream de
+            // tokens es el SILENCIO, no la duracion. Con un total de 300 s una
+            // generacion larga legitima moria, y un servidor muerto tardaba
+            // cinco minutos en notarse. Configurable: `AiConfig::stream_timeouts`.
+            &HttpRequest::post_json(&url, &request_body)?.long_lived(
+                config.stream_timeouts.total(),
+                config.stream_timeouts.stall(),
+            ),
         )?;
         // Conserva lo que `send_json(..)?` garantizaba: un no-2xx es un error,
         // asi que se reintenta y se reporta en vez de emitirse como respuesta.
@@ -1241,8 +1259,14 @@ pub fn generate_openai_streaming_cancellable(
     // Retry only the connection; stream reading is not retried
     let response = retry_with_config(config.retry_config.clone(), || {
         let mut resp = UreqClient.send_streaming(
-            &HttpRequest::post_json(&url, &request_body)?
-                .timeout(std::time::Duration::from_secs(300)),
+            // `long_lived` y no `.timeout(300)`: lo que vigila un stream de
+            // tokens es el SILENCIO, no la duracion. Con un total de 300 s una
+            // generacion larga legitima moria, y un servidor muerto tardaba
+            // cinco minutos en notarse. Configurable: `AiConfig::stream_timeouts`.
+            &HttpRequest::post_json(&url, &request_body)?.long_lived(
+                config.stream_timeouts.total(),
+                config.stream_timeouts.stall(),
+            ),
         )?;
         // Conserva lo que `send_json(..)?` garantizaba: un no-2xx es un error,
         // asi que se reintenta y se reporta en vez de emitirse como respuesta.
