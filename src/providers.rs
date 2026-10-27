@@ -20,11 +20,21 @@ use crate::session::UserPreferences;
 const MODEL_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// Fetch models from Ollama API. Single-attempt, short-timeout discovery probe.
+///
+/// Uses the default `ureq` adapter; [`fetch_ollama_models_with`] takes the port.
 pub fn fetch_ollama_models(base_url: &str) -> Result<Vec<ModelInfo>> {
-    // Route the probe through the `HttpClient` port (hexagonal F4) and reuse the
-    // shared parser — same 3s timeout, no more inlined `ureq` + duplicated parse.
+    fetch_ollama_models_with(&UreqClient, base_url)
+}
+
+/// [`fetch_ollama_models`] over a caller-supplied HTTP port.
+///
+/// Not a delegation to `http_client::fetch_ollama_models_with`, which looks like
+/// the same function and uses a **5 second** timeout: this one is a discovery
+/// probe and keeps `MODEL_PROBE_TIMEOUT` (3s). Collapsing the two would be a
+/// silent behaviour change, so the three lines stay duplicated on purpose.
+pub fn fetch_ollama_models_with(client: &dyn HttpClient, base_url: &str) -> Result<Vec<ModelInfo>> {
     let url = format!("{}/api/tags", base_url);
-    let body = UreqClient
+    let body = client
         .get_json(&url, MODEL_PROBE_TIMEOUT.as_secs())
         .context("Failed to fetch Ollama models")?;
     Ok(crate::http_client::parse_ollama_models(&body))
@@ -36,9 +46,17 @@ pub fn fetch_openai_compatible_models(
     base_url: &str,
     provider: AiProvider,
 ) -> Result<Vec<ModelInfo>> {
-    // Route through the `HttpClient` port (hexagonal F4) + shared parser.
+    fetch_openai_compatible_models_with(&UreqClient, base_url, provider)
+}
+
+/// [`fetch_openai_compatible_models`] over a caller-supplied HTTP port.
+pub fn fetch_openai_compatible_models_with(
+    client: &dyn HttpClient,
+    base_url: &str,
+    provider: AiProvider,
+) -> Result<Vec<ModelInfo>> {
     let url = format!("{}/v1/models", base_url);
-    let body = UreqClient
+    let body = client
         .get_json(&url, MODEL_PROBE_TIMEOUT.as_secs())
         .context("Failed to fetch OpenAI-compatible models")?;
     Ok(crate::http_client::parse_openai_models(&body, provider))
@@ -47,8 +65,13 @@ pub fn fetch_openai_compatible_models(
 /// Fetch models from Kobold.cpp API. Single-attempt, short-timeout discovery
 /// probe (with a best-effort version-check fallback).
 pub fn fetch_kobold_models(base_url: &str) -> Result<Vec<ModelInfo>> {
+    fetch_kobold_models_with(&UreqClient, base_url)
+}
+
+/// [`fetch_kobold_models`] over a caller-supplied HTTP port.
+pub fn fetch_kobold_models_with(client: &dyn HttpClient, base_url: &str) -> Result<Vec<ModelInfo>> {
     let url = format!("{}/api/v1/model", base_url);
-    let response = UreqClient
+    let response = client
         .send(&HttpRequest::get(&url).timeout(MODEL_PROBE_TIMEOUT))
         .context("Failed to connect to Kobold.cpp")?;
     // Sin esto, un no-2xx seguiria hasta `json()` y el usuario veria un error de
@@ -79,7 +102,7 @@ pub fn fetch_kobold_models(base_url: &str) -> Result<Vec<ModelInfo>> {
         // el `Err`, asi que un 404 en `/info/version` NO anadia el modelo
         // fantasma. Se conserva --- en descubrimiento de modelos, inventar uno
         // que no existe es peor que no encontrar el que si.
-        if UreqClient
+        if client
             .send(&HttpRequest::get(&version_url).timeout(std::time::Duration::from_secs(2)))
             .is_ok_and(|r| r.is_success())
         {
@@ -335,6 +358,16 @@ pub fn generate_ollama_streaming(
     system_prompt: &str,
     tx: &Sender<AiResponse>,
 ) -> Result<()> {
+    generate_ollama_streaming_with(&UreqClient, config, conversation, system_prompt, tx)
+}
+/// [`generate_ollama_streaming`] over a caller-supplied HTTP port.
+pub fn generate_ollama_streaming_with(
+    client: &dyn HttpClient,
+    config: &AiConfig,
+    conversation: &[ChatMessage],
+    system_prompt: &str,
+    tx: &Sender<AiResponse>,
+) -> Result<()> {
     let url = format!("{}/api/chat", config.ollama_url);
     log::debug!(
         "[llm] ollama_streaming model={} url={}",
@@ -353,7 +386,7 @@ pub fn generate_ollama_streaming(
 
     // Retry only the connection; stream reading is not retried
     let response = retry_with_config(config.retry_config.clone(), || {
-        let mut resp = UreqClient.send_streaming(
+        let mut resp = client.send_streaming(
             // `long_lived` y no `.timeout(300)`: lo que vigila un stream de
             // tokens es el SILENCIO, no la duracion. Con un total de 300 s una
             // generacion larga legitima moria, y un servidor muerto tardaba
@@ -409,6 +442,16 @@ pub fn generate_openai_streaming(
     system_prompt: &str,
     tx: &Sender<AiResponse>,
 ) -> Result<()> {
+    generate_openai_streaming_with(&UreqClient, config, conversation, system_prompt, tx)
+}
+/// [`generate_openai_streaming`] over a caller-supplied HTTP port.
+pub fn generate_openai_streaming_with(
+    client: &dyn HttpClient,
+    config: &AiConfig,
+    conversation: &[ChatMessage],
+    system_prompt: &str,
+    tx: &Sender<AiResponse>,
+) -> Result<()> {
     log::debug!(
         "[llm] openai_streaming provider={:?} model={}",
         config.provider,
@@ -451,7 +494,7 @@ pub fn generate_openai_streaming(
 
     // Retry only the connection; stream reading is not retried
     let response = retry_with_config(config.retry_config.clone(), || {
-        let mut resp = UreqClient.send_streaming(
+        let mut resp = client.send_streaming(
             // `long_lived` y no `.timeout(300)`: lo que vigila un stream de
             // tokens es el SILENCIO, no la duracion. Con un total de 300 s una
             // generacion larga legitima moria, y un servidor muerto tardaba
@@ -512,6 +555,15 @@ pub fn generate_ollama_response(
     conversation: &[ChatMessage],
     system_prompt: &str,
 ) -> Result<String> {
+    generate_ollama_response_with(&UreqClient, config, conversation, system_prompt)
+}
+/// [`generate_ollama_response`] over a caller-supplied HTTP port.
+pub fn generate_ollama_response_with(
+    client: &dyn HttpClient,
+    config: &AiConfig,
+    conversation: &[ChatMessage],
+    system_prompt: &str,
+) -> Result<String> {
     let url = format!("{}/api/chat", config.ollama_url);
     log::debug!(
         "[llm] ollama_request model={} url={} temperature={}",
@@ -530,7 +582,7 @@ pub fn generate_ollama_response(
     });
 
     let response = retry_with_config(config.retry_config.clone(), || {
-        let resp = UreqClient.send(
+        let resp = client.send(
             &HttpRequest::post_json(&url, &request_body)?
                 .timeout(std::time::Duration::from_secs(120)),
         )?;
@@ -556,6 +608,15 @@ pub fn generate_ollama_response(
 
 /// Generate non-streaming response using OpenAI-compatible API
 pub fn generate_openai_response(
+    config: &AiConfig,
+    conversation: &[ChatMessage],
+    system_prompt: &str,
+) -> Result<String> {
+    generate_openai_response_with(&UreqClient, config, conversation, system_prompt)
+}
+/// [`generate_openai_response`] over a caller-supplied HTTP port.
+pub fn generate_openai_response_with(
+    client: &dyn HttpClient,
     config: &AiConfig,
     conversation: &[ChatMessage],
     system_prompt: &str,
@@ -603,7 +664,7 @@ pub fn generate_openai_response(
     });
 
     let response = retry_with_config(config.retry_config.clone(), || {
-        let resp = UreqClient.send(
+        let resp = client.send(
             &HttpRequest::post_json(&url, &request_body)?
                 .timeout(std::time::Duration::from_secs(120)),
         )?;
@@ -637,6 +698,15 @@ pub fn generate_openai_response(
 /// `minicpm-v`, `llava-phi3`); Ollama will reject the request otherwise.
 #[cfg(feature = "vision")]
 pub fn generate_ollama_response_with_images(
+    config: &AiConfig,
+    messages: &[crate::vision::VisionMessage],
+    system_prompt: &str,
+) -> Result<String> {
+    generate_ollama_response_with_images_with(&UreqClient, config, messages, system_prompt)
+}
+/// [`generate_ollama_response_with_images`] over a caller-supplied HTTP port.
+pub fn generate_ollama_response_with_images_with(
+    client: &dyn HttpClient,
     config: &AiConfig,
     messages: &[crate::vision::VisionMessage],
     system_prompt: &str,
@@ -685,7 +755,7 @@ pub fn generate_ollama_response_with_images(
     });
 
     let response = retry_with_config(config.retry_config.clone(), || {
-        let resp = UreqClient.send(
+        let resp = client.send(
             &HttpRequest::post_json(&url, &request_body)?
                 .timeout(std::time::Duration::from_secs(180)),
         )?;
@@ -715,6 +785,15 @@ pub fn generate_ollama_response_with_images(
 /// servers expect. Whether the request succeeds depends on the loaded model.
 #[cfg(feature = "vision")]
 pub fn generate_openai_compat_response_with_images(
+    config: &AiConfig,
+    messages: &[crate::vision::VisionMessage],
+    system_prompt: &str,
+) -> Result<String> {
+    generate_openai_compat_response_with_images_with(&UreqClient, config, messages, system_prompt)
+}
+/// [`generate_openai_compat_response_with_images`] over a caller-supplied HTTP port.
+pub fn generate_openai_compat_response_with_images_with(
+    client: &dyn HttpClient,
     config: &AiConfig,
     messages: &[crate::vision::VisionMessage],
     system_prompt: &str,
@@ -754,7 +833,7 @@ pub fn generate_openai_compat_response_with_images(
     });
 
     let response = retry_with_config(config.retry_config.clone(), || {
-        let resp = UreqClient.send(
+        let resp = client.send(
             &HttpRequest::post_json(&url, &request_body)?
                 .timeout(std::time::Duration::from_secs(180)),
         )?;
@@ -852,6 +931,15 @@ pub fn generate_kobold_response(
     conversation: &[ChatMessage],
     system_prompt: &str,
 ) -> Result<String> {
+    generate_kobold_response_with(&UreqClient, config, conversation, system_prompt)
+}
+/// [`generate_kobold_response`] over a caller-supplied HTTP port.
+pub fn generate_kobold_response_with(
+    client: &dyn HttpClient,
+    config: &AiConfig,
+    conversation: &[ChatMessage],
+    system_prompt: &str,
+) -> Result<String> {
     let url = format!("{}/api/v1/generate", config.kobold_url);
     log::debug!(
         "[llm] kobold_request model={} url={} temperature={}",
@@ -886,7 +974,7 @@ pub fn generate_kobold_response(
     });
 
     let response = retry_with_config(config.retry_config.clone(), || {
-        let resp = UreqClient.send(
+        let resp = client.send(
             &HttpRequest::post_json(&url, &request_body)?
                 .timeout(std::time::Duration::from_secs(120)),
         )?;
@@ -1146,6 +1234,24 @@ pub fn generate_ollama_streaming_cancellable(
     tx: &Sender<AiResponse>,
     cancel_token: &CancellationToken,
 ) -> Result<()> {
+    generate_ollama_streaming_cancellable_with(
+        &UreqClient,
+        config,
+        conversation,
+        system_prompt,
+        tx,
+        cancel_token,
+    )
+}
+/// [`generate_ollama_streaming_cancellable`] over a caller-supplied HTTP port.
+pub fn generate_ollama_streaming_cancellable_with(
+    client: &dyn HttpClient,
+    config: &AiConfig,
+    conversation: &[ChatMessage],
+    system_prompt: &str,
+    tx: &Sender<AiResponse>,
+    cancel_token: &CancellationToken,
+) -> Result<()> {
     let url = format!("{}/api/chat", config.ollama_url);
 
     let messages = build_messages_array(system_prompt, conversation, config.max_history_messages);
@@ -1159,7 +1265,7 @@ pub fn generate_ollama_streaming_cancellable(
 
     // Retry only the connection; stream reading is not retried
     let response = retry_with_config(config.retry_config.clone(), || {
-        let mut resp = UreqClient.send_streaming(
+        let mut resp = client.send_streaming(
             // `long_lived` y no `.timeout(300)`: lo que vigila un stream de
             // tokens es el SILENCIO, no la duracion. Con un total de 300 s una
             // generacion larga legitima moria, y un servidor muerto tardaba
@@ -1221,6 +1327,24 @@ pub fn generate_openai_streaming_cancellable(
     tx: &Sender<AiResponse>,
     cancel_token: &CancellationToken,
 ) -> Result<()> {
+    generate_openai_streaming_cancellable_with(
+        &UreqClient,
+        config,
+        conversation,
+        system_prompt,
+        tx,
+        cancel_token,
+    )
+}
+/// [`generate_openai_streaming_cancellable`] over a caller-supplied HTTP port.
+pub fn generate_openai_streaming_cancellable_with(
+    client: &dyn HttpClient,
+    config: &AiConfig,
+    conversation: &[ChatMessage],
+    system_prompt: &str,
+    tx: &Sender<AiResponse>,
+    cancel_token: &CancellationToken,
+) -> Result<()> {
     let base_url = match &config.provider {
         AiProvider::LMStudio => config.lm_studio_url.clone(),
         AiProvider::TextGenWebUI => config.text_gen_webui_url.clone(),
@@ -1258,7 +1382,7 @@ pub fn generate_openai_streaming_cancellable(
 
     // Retry only the connection; stream reading is not retried
     let response = retry_with_config(config.retry_config.clone(), || {
-        let mut resp = UreqClient.send_streaming(
+        let mut resp = client.send_streaming(
             // `long_lived` y no `.timeout(300)`: lo que vigila un stream de
             // tokens es el SILENCIO, no la duracion. Con un total de 300 s una
             // generacion larga legitima moria, y un servidor muerto tardaba
@@ -1425,18 +1549,30 @@ pub fn generate_response_streaming_cancellable(
 /// Fetch the context window size for a model from the provider
 /// Returns the context size in tokens, or None if it couldn't be determined
 pub fn fetch_model_context_size(config: &AiConfig, model_name: &str) -> Option<usize> {
+    fetch_model_context_size_with(&UreqClient, config, model_name)
+}
+/// [`fetch_model_context_size`] over a caller-supplied HTTP port.
+pub fn fetch_model_context_size_with(
+    client: &dyn HttpClient,
+    config: &AiConfig,
+    model_name: &str,
+) -> Option<usize> {
     match &config.provider {
-        AiProvider::Ollama => fetch_ollama_model_context(&config.ollama_url, model_name),
-        AiProvider::KoboldCpp => fetch_kobold_context_size(&config.kobold_url),
-        AiProvider::LMStudio => fetch_openai_model_context(&config.lm_studio_url, model_name),
-        AiProvider::TextGenWebUI => {
-            fetch_openai_model_context(&config.text_gen_webui_url, model_name)
+        AiProvider::Ollama => fetch_ollama_model_context(client, &config.ollama_url, model_name),
+        AiProvider::KoboldCpp => fetch_kobold_context_size(client, &config.kobold_url),
+        AiProvider::LMStudio => {
+            fetch_openai_model_context(client, &config.lm_studio_url, model_name)
         }
-        AiProvider::LocalAI => fetch_openai_model_context(&config.local_ai_url, model_name),
-        AiProvider::LlamaCpp => fetch_openai_model_context(&config.llamacpp_url, model_name),
-        AiProvider::VLLM => fetch_openai_model_context(&config.vllm_url, model_name),
+        AiProvider::TextGenWebUI => {
+            fetch_openai_model_context(client, &config.text_gen_webui_url, model_name)
+        }
+        AiProvider::LocalAI => fetch_openai_model_context(client, &config.local_ai_url, model_name),
+        AiProvider::LlamaCpp => {
+            fetch_openai_model_context(client, &config.llamacpp_url, model_name)
+        }
+        AiProvider::VLLM => fetch_openai_model_context(client, &config.vllm_url, model_name),
         AiProvider::OpenAICompatible { base_url } => {
-            fetch_openai_model_context(base_url, model_name)
+            fetch_openai_model_context(client, base_url, model_name)
         }
         AiProvider::OpenAI => {
             // OpenAI doesn't expose context size via API; use well-known sizes
@@ -1504,15 +1640,23 @@ pub fn fetch_model_context_size(config: &AiConfig, model_name: &str) -> Option<u
     }
 }
 
-/// Fetch context size from Ollama using /api/show
-fn fetch_ollama_model_context(base_url: &str, model_name: &str) -> Option<usize> {
+/// Context size from Ollama's `/api/show`, over the caller's HTTP port.
+///
+/// Private and with no short twin on purpose: there is no external API to keep,
+/// so it takes the client and that is all. A short wrapper here would have had
+/// no callers left, which `-D warnings` catches.
+fn fetch_ollama_model_context(
+    client: &dyn HttpClient,
+    base_url: &str,
+    model_name: &str,
+) -> Option<usize> {
     let url = format!("{}/api/show", base_url);
 
     let body = serde_json::json!({
         "name": model_name
     });
 
-    let response = UreqClient
+    let response = client
         .send(
             &HttpRequest::post_json(&url, &body)
                 .ok()?
@@ -1563,13 +1707,14 @@ fn fetch_ollama_model_context(base_url: &str, model_name: &str) -> Option<usize>
     None
 }
 
-/// Fetch context size from Kobold.cpp
-fn fetch_kobold_context_size(base_url: &str) -> Option<usize> {
+/// Context size from Kobold.cpp, over the caller's HTTP port. Tries
+/// `/api/v1/config/max_context_length` and falls back to `/api/extra/true_max_context_length`.
+fn fetch_kobold_context_size(client: &dyn HttpClient, base_url: &str) -> Option<usize> {
     // Try the max_context_length endpoint
     let url = format!("{}/api/v1/config/max_context_length", base_url);
 
     // Routed through the HttpClient port (F4).
-    if let Ok(json) = UreqClient.get_json(&url, 5) {
+    if let Ok(json) = client.get_json(&url, 5) {
         if let Some(result) = json.get("value").and_then(|v| v.as_u64()) {
             return Some(result as usize);
         }
@@ -1577,7 +1722,7 @@ fn fetch_kobold_context_size(base_url: &str) -> Option<usize> {
 
     // Try alternative endpoint
     let url_alt = format!("{}/api/extra/true_max_context_length", base_url);
-    if let Ok(json) = UreqClient.get_json(&url_alt, 5) {
+    if let Ok(json) = client.get_json(&url_alt, 5) {
         if let Some(result) = json.get("value").and_then(|v| v.as_u64()) {
             return Some(result as usize);
         }
@@ -1586,13 +1731,17 @@ fn fetch_kobold_context_size(base_url: &str) -> Option<usize> {
     None
 }
 
-/// Fetch context size from OpenAI-compatible API
-fn fetch_openai_model_context(base_url: &str, model_name: &str) -> Option<usize> {
+/// Context size from an OpenAI-compatible server, over the caller's HTTP port.
+fn fetch_openai_model_context(
+    client: &dyn HttpClient,
+    base_url: &str,
+    model_name: &str,
+) -> Option<usize> {
     // Try to get specific model info
     let url = format!("{}/v1/models/{}", base_url, model_name);
 
     // Routed through the HttpClient port (F4).
-    if let Ok(json) = UreqClient.get_json(&url, 5) {
+    if let Ok(json) = client.get_json(&url, 5) {
         // LM Studio and some others include context_length
         if let Some(ctx) = json.get("context_length").and_then(|v| v.as_u64()) {
             return Some(ctx as usize);
@@ -1610,7 +1759,7 @@ fn fetch_openai_model_context(base_url: &str, model_name: &str) -> Option<usize>
     // Try listing all models and finding ours
     let models_url = format!("{}/v1/models", base_url);
     // Routed through the HttpClient port (F4).
-    if let Ok(json) = UreqClient.get_json(&models_url, 5) {
+    if let Ok(json) = client.get_json(&models_url, 5) {
         if let Some(data) = json.get("data").and_then(|d| d.as_array()) {
             for model in data {
                 if model.get("id").and_then(|i| i.as_str()) == Some(model_name) {
@@ -2099,6 +2248,10 @@ pub struct ResilientProviderRegistry {
     recovery_secs: u64,
     /// Health status per provider (keyed by `ProviderConfig::name`)
     health_status: HashMap<String, ProviderHealthStatus>,
+    /// The HTTP port `check_health` talks through. Injectable, because the rule
+    /// it encodes --- a 4xx is DEGRADED, since the server answered --- could not
+    /// be tested without a live server answering 404 on demand.
+    client: std::sync::Arc<dyn HttpClient>,
     /// Per-provider rate-limit state (keyed by `ProviderConfig::name`)
     rate_limits: HashMap<String, ProviderRateState>,
     /// Optional bulkhead registry — when set, each provider attempt must acquire
@@ -2132,10 +2285,23 @@ impl ResilientProviderRegistry {
             recovery_secs: 30,
             health_status,
             rate_limits,
+            client: std::sync::Arc::new(UreqClient),
             bulkhead_registry: None,
             #[cfg(any(test, feature = "chaos-testing"))]
             fault_injector: None,
         }
+    }
+
+    /// Replace the HTTP client `check_health` talks through.
+    ///
+    /// Same shape as [`crate::health_check`] and the vector backends: the port
+    /// is injected, not a closure that replaces the whole check. A closure would
+    /// substitute the rule being tested — see the `with_check_fn` note in
+    /// `health_check`.
+    #[must_use]
+    pub fn with_http_client(mut self, client: std::sync::Arc<dyn HttpClient>) -> Self {
+        self.client = client;
+        self
     }
 
     /// Add a fallback provider. Providers are tried in ascending priority order.
@@ -2415,7 +2581,9 @@ impl ResilientProviderRegistry {
         // 5xx y fallo de transporte enfermo. Antes el 5xx llegaba como
         // `Err(StatusCode(5xx))` y caia en el `Err(_)`, que es por donde se
         // entendia mal: parecia un fallo de red.
-        let status = match UreqClient.send(&HttpRequest::get(&url).timeout(Duration::from_secs(5)))
+        let status = match self
+            .client
+            .send(&HttpRequest::get(&url).timeout(Duration::from_secs(5)))
         {
             Ok(resp) if resp.is_success() => ProviderHealthStatus::Healthy,
             Ok(resp) if resp.status < 500 => ProviderHealthStatus::Degraded,
@@ -4023,5 +4191,148 @@ mod provider_logging_tests {
         assert!(!reg.is_circuit_open("cb-log-test"));
         reg.record_failure("cb-log-test");
         assert!(reg.is_circuit_open("cb-log-test"));
+    }
+}
+
+// ===========================================================================
+// N166: la regla que `check_health` codifica, por fin con test
+// ===========================================================================
+//
+// Hasta V447 esta regla --- 2xx sano, 3xx/4xx DEGRADADO porque el servidor
+// contesta, 5xx y fallo de transporte enfermo --- necesitaba un servidor real
+// contestando cada codigo a peticion, asi que no tenia ninguno. Y es una regla
+// con opinion: el 4xx se cuenta como «el servidor esta ahi», no como fallo.
+#[cfg(test)]
+mod health_rule_tests {
+    use super::*;
+    use crate::http_client::{HttpResponse, HttpStream};
+
+    /// Contesta siempre el mismo codigo. Un doble, no un servidor: el test no
+    /// depende de que haya un puerto libre ni de lo que escuche en localhost
+    /// (ver N168).
+    struct FixedStatus(u16);
+
+    impl HttpClient for FixedStatus {
+        fn send(&self, _request: &HttpRequest) -> Result<HttpResponse> {
+            Ok(HttpResponse {
+                status: self.0,
+                headers: Vec::new(),
+                body: Vec::new(),
+            })
+        }
+        fn send_streaming(&self, _request: &HttpRequest) -> Result<HttpStream> {
+            anyhow::bail!("el doble de estado no hace streaming")
+        }
+    }
+
+    /// Falla el transporte: no hay respuesta ninguna.
+    struct NoTransport;
+
+    impl HttpClient for NoTransport {
+        fn send(&self, _request: &HttpRequest) -> Result<HttpResponse> {
+            anyhow::bail!("conexion rehusada")
+        }
+        fn send_streaming(&self, _request: &HttpRequest) -> Result<HttpStream> {
+            anyhow::bail!("conexion rehusada")
+        }
+    }
+
+    fn registry_with(client: std::sync::Arc<dyn HttpClient>) -> ResilientProviderRegistry {
+        ResilientProviderRegistry::new(ProviderConfig::new("p", "http://example.invalid"))
+            .with_http_client(client)
+    }
+
+    #[test]
+    fn two_hundred_is_healthy() {
+        let mut reg = registry_with(std::sync::Arc::new(FixedStatus(200)));
+        let p = ProviderConfig::new("p", "http://example.invalid");
+        assert_eq!(reg.check_health(&p), ProviderHealthStatus::Healthy);
+    }
+
+    #[test]
+    fn four_hundred_four_is_degraded_not_unhealthy() {
+        // El caso que da nombre a la regla: un 404 significa que el servidor
+        // CONTESTA. Antes esto llegaba como `Err(StatusCode(404))` y se leia
+        // como un fallo de red.
+        let mut reg = registry_with(std::sync::Arc::new(FixedStatus(404)));
+        let p = ProviderConfig::new("p", "http://example.invalid");
+        assert_eq!(reg.check_health(&p), ProviderHealthStatus::Degraded);
+    }
+
+    #[test]
+    fn three_hundred_two_is_degraded() {
+        let mut reg = registry_with(std::sync::Arc::new(FixedStatus(302)));
+        let p = ProviderConfig::new("p", "http://example.invalid");
+        assert_eq!(reg.check_health(&p), ProviderHealthStatus::Degraded);
+    }
+
+    #[test]
+    fn five_hundred_is_unhealthy() {
+        let mut reg = registry_with(std::sync::Arc::new(FixedStatus(500)));
+        let p = ProviderConfig::new("p", "http://example.invalid");
+        assert_eq!(reg.check_health(&p), ProviderHealthStatus::Unhealthy);
+    }
+
+    #[test]
+    fn transport_failure_is_unhealthy() {
+        let mut reg = registry_with(std::sync::Arc::new(NoTransport));
+        let p = ProviderConfig::new("p", "http://example.invalid");
+        assert_eq!(reg.check_health(&p), ProviderHealthStatus::Unhealthy);
+    }
+
+    #[test]
+    fn the_status_is_also_stored_not_only_returned() {
+        // La funcion promete las dos cosas en su doc; sin esto, devolverlo y no
+        // guardarlo pasaria desapercibido.
+        let mut reg = registry_with(std::sync::Arc::new(FixedStatus(200)));
+        let p = ProviderConfig::new("stored", "http://example.invalid");
+        reg.check_health(&p);
+        assert_eq!(
+            reg.health_status.get("stored"),
+            Some(&ProviderHealthStatus::Healthy)
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // Y que el puerto NO se corta en el primer salto
+    // ---------------------------------------------------------------------
+
+    /// Cuenta las peticiones y contesta un 500, para ver si el cliente
+    /// inyectado llega hasta el fondo del `match` de proveedores.
+    struct Counting(std::sync::atomic::AtomicUsize);
+
+    impl HttpClient for Counting {
+        fn send(&self, _request: &HttpRequest) -> Result<HttpResponse> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(HttpResponse {
+                status: 500,
+                headers: Vec::new(),
+                body: Vec::new(),
+            })
+        }
+        fn send_streaming(&self, _request: &HttpRequest) -> Result<HttpStream> {
+            anyhow::bail!("sin streaming")
+        }
+    }
+
+    #[test]
+    fn the_injected_client_reaches_the_provider_dispatch() {
+        // `fetch_model_context_size_with` reparte en un `match` de 20 ramas. Si
+        // el cliente se quedara en la puerta y las ramas siguieran usando
+        // `UreqClient`, este contador seria 0 --- que es justo el defecto que
+        // N166 persigue: un puerto de forma y no de funcion.
+        let counting = Counting(std::sync::atomic::AtomicUsize::new(0));
+        let mut config = AiConfig::default();
+        config.provider = AiProvider::Ollama;
+        config.ollama_url = "http://example.invalid".to_string();
+
+        let got = fetch_model_context_size_with(&counting, &config, "llama3");
+
+        assert_eq!(got, None, "un 500 no da tamano de contexto");
+        assert_eq!(
+            counting.0.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "el cliente inyectado tiene que llegar a la rama de Ollama"
+        );
     }
 }

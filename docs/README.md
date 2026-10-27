@@ -134,7 +134,21 @@ Documentation drifts silently, so some of it is enforced:
   go red with no code change, the day a deadline passes; that is the mechanism, and an
   entry within three weeks of its deadline warns instead of failing.
 
-All fourteen run in CI **here**. Three more live in `scripts/` and no job in this repository
+- `scripts/check_config_constructible.py` — a `#[non_exhaustive]` struct that a public
+  function takes as an argument must be configurable from another crate **in one
+  expression**. Measured 2026-10-26: **174 of 316** such structs were not. The attribute
+  rejects the struct expression, `..Default::default()` included, and that part is
+  frequently misremembered as stronger than it is — it does *not* stop you assigning to a
+  `pub` field of a value you own, so the usual case was awkward (a `mut` binding, one
+  statement per field, no construction in argument position) rather than impossible. The
+  class that *is* impossible has its own name here, `NO_SEED`: nothing returns a value and
+  there is no `Default`, so no setter can help. Unit tests cannot see any of it, because
+  `#[non_exhaustive]` does not apply inside the declaring crate — they build these with a
+  literal and pass. The gate also checks **coverage**, every public field needs a setter,
+  which is the half that stops the next one: V247 already did this sweep once and closed
+  over 58 of ~290 types.
+
+All fifteen run in CI **here**. Three more live in `scripts/` and no job in this repository
 runs them:
 
 - `scripts/check_release_ready.py` — a pre-release step that needs a human to read it.

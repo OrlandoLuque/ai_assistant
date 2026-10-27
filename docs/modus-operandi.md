@@ -250,6 +250,30 @@ reads as advice and gets skipped. They are grouped by the question they answer.
     And the same number lives in `CLAUDE.md` and `docs/CAPABILITIES.md`, which **neither gate
     reads** --- which is how `95 features` survived four features being added.
 
+10f. **Run *every* `scripts/check_*.py` before pushing, not the ones the change seems to be
+    about.** The previous rule was followed and still produced a red: V446 added one job to
+    `ci.yml`, I ran the two numbers gates, fixed the README's `14 automated gates` and the
+    website's, and pushed --- and `check_checkers_documented.py` went red in CI because
+    `docs/README.md` still said *«All fourteen run in CI»* and its per-gate list was missing the
+    new one. **Adding a CI job is itself a numbers change, in three places.** There are 18
+    checkers and they cost seconds next to one red run:
+    ```bash
+    for s in scripts/check_*.py; do python "$s" || echo "FALLO $s"; done
+    # las dos `check_website_*` quieren la ruta del repo de la web
+    ```
+
+10g. **Do not reason about cross-crate visibility from memory --- two crates and one
+    `cargo run` settle it in ten seconds.** *Case (V446): I wrote "a consumer can read the
+    default and change NOTHING" into a gate docstring, a CI comment, a CHANGELOG entry and
+    `docs/GUIDE.md` before measuring. `#[non_exhaustive]` rejects the struct **expression**
+    (`..Default::default()` included) and does **not** stop assigning to a `pub` field of a
+    value you own. The claim had to be rewritten in all four places.* What tipped me off was the
+    website's own older text, which said the correct thing. The distinction that matters: a type
+    with a `Default` and `pub` fields was **awkward** (a `mut` binding, one statement per field,
+    no construction in argument position); a type that nothing returns and that has no `Default`
+    is **unobtainable**, and there no setter helps. The gate keeps them as separate failing
+    classes for that reason.
+
 ### C. Features and CI
 
 11. **A superset of features does not substitute for each set CI builds.** Passing on `A` and on

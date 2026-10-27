@@ -5,6 +5,91 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v324 (2026-10-27) - V447: el puerto llegaba a la puerta y no al fondo del `match` (0.2.407)
+
+N166, segunda entrega: **`providers.rs`**, el modulo con mas sitios del barrido (20) y el
+camino caliente de generacion. Y el que tenia la regla con opinion que nadie podia probar.
+
+### La regla que no tenia test, y ahora si
+
+`ResilientProviderRegistry::check_health` decide en tres tramos, y el de en medio es una
+**opinion**: un 4xx cuenta como «el servidor esta ahi», no como fallo.
+
+| Respuesta | Estado |
+|---|---|
+| 2xx | `Healthy` |
+| 3xx / 4xx | `Degraded` --- el servidor **contesta** |
+| 5xx | `Unhealthy` |
+| sin respuesta | `Unhealthy` |
+
+Para probarlo hacia falta un servidor contestando 404 a peticion, asi que no tenia ninguna
+prueba. El registro recibe ahora `Arc<dyn HttpClient>` (`with_http_client`), y con dos dobles
+de doce lineas --- uno que contesta un codigo fijo, otro que falla el transporte --- los cinco
+tramos quedan fijados. Mas uno que comprueba lo que la funcion promete en su doc y no se
+miraba: que el estado **se guarda** en el mapa, no solo se devuelve.
+
+**Y los tests discriminan, medido.** No a mano: las tres mutaciones estan declaradas en
+`scripts/mutations/provider_health.toml`, que es lo que hace que la puerta «Mutation specs
+still match the code» las vigile de aqui en adelante.
+
+| | Mutacion | Mata a |
+|---|---|---|
+| M1 | `resp.status < 500` -> `< 400` | `four_hundred_four_is_degraded_not_unhealthy` |
+| M2 | se desactiva la rama de exito | `two_hundred_is_healthy` |
+| M3 | guarda `Unknown` en vez del veredicto | `the_status_is_also_stored_not_only_returned` |
+
+Las tres **mueren**, cada una en el test que le toca. M3 es la que importa mas de las tres y
+no es sobre el HTTP: una funcion que promete en su doc guardar Y devolver, y deja de guardar,
+sigue devolviendo bien --- cualquier test que solo lea el valor devuelto pasa mientras el mapa
+dice `Unknown` para siempre. Es la clase de defecto que mas veces ha aparecido en este
+repositorio.
+
+Los dobles son dobles, no servidores: nada escucha en un puerto, asi que no heredan el
+problema de N168 (tests que pasan o fallan segun lo que corra en la maquina).
+
+### Y que el puerto llegue al FONDO, no a la puerta
+
+`fetch_model_context_size` reparte en un `match` de veinte proveedores y llama a tres
+ayudantes que hablan HTTP. Inyectar el cliente **solo** en la entrada habria dejado las ramas
+usando `UreqClient`, que es exactamente el defecto que N166 persigue: un puerto de forma y no
+de funcion. Asi que el cliente se enhebra por las ocho llamadas del `match`, y hay un test
+con un cliente que CUENTA peticiones para comprobarlo --- si se quedara en la puerta, el
+contador seria 0.
+
+### Lo migrado
+
+Trece funciones libres publicas tienen ahora su par `_with(client, ..)`, con el nombre corto
+delegando en `&UreqClient`: los tres `fetch_*_models`, los nueve `generate_*` (streaming,
+no-streaming, con imagenes y cancelables) y `fetch_model_context_size`.
+
+Dos detalles que no se ven en el diff:
+
+* **Los tres ayudantes privados NO llevan par.** Son `fn`, no `pub fn`: no hay API externa
+  que conservar, asi que toman el cliente y punto. Dejarles el envoltorio corto los habria
+  dejado sin llamantes, y `-D warnings` lo caza en CI --- que es como se descubrio.
+* **`fetch_ollama_models_with` NO delega en el de `http_client`**, que se llama igual y
+  parece el mismo. El de `http_client` usa **5 s** y este es una sonda de descubrimiento con
+  `MODEL_PROBE_TIMEOUT` (3 s). Unificarlos seria un cambio de comportamiento en silencio,
+  asi que las tres lineas se quedan duplicadas **a proposito**, dicho en el codigo para que
+  nadie lo «simplifique».
+
+### Lo que NO entra, y por que
+
+`generate_response` y `generate_response_streaming` --- los dos despachadores de alto nivel
+--- no tocan `UreqClient`: van por `llm_provider::raw_provider_from_config(..)`, la fabrica de
+adaptadores de la fase 3. Inyectarles el puerto es cambiar esa fabrica y los adaptadores, que
+es trabajo de #76 / #77 y no de N166. Queda escrito aqui para que la frontera no se lea como
+un olvido.
+
+### Verificacion
+
+`cargo clippy --all-targets -D warnings` limpio en FEATURES_STD y FEATURES_NETWORK.
+`cargo fmt --check` limpio. **9.140 tests** (7 nuevos), 0 fallos.
+
+Quedan ocho modulos de los once migrados: academic_search (16), cloud_connectors (11),
+vector_db (9), server (9), provider_plugins (9), butler (9), paper_fulltext (2) y
+eval_benchmarks/http (2). Mas `speech.rs`, que entro en V442 sin inyeccion.
+
 ## [Unreleased] - v323 (2026-10-27) - V446: un config que solo se puede configurar de uno en uno (0.2.406)
 
 Tarea N78, decidida por el autor el 2026-10-26. **1.065 setters `with_*` sobre 204 tipos**,

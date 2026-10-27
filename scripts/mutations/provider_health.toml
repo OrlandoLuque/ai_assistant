@@ -1,0 +1,48 @@
+# The health-grading rule of `ResilientProviderRegistry::check_health` (V447, N166).
+#
+# Why this rule and not another: it is the one place in `providers.rs` that holds
+# an OPINION rather than a mechanic. 2xx healthy and 5xx unhealthy are not
+# interesting; the middle band is:
+#
+#     3xx / 4xx -> Degraded, because the server ANSWERED
+#
+# That is a judgement about what a health probe measures, and until V447 it had
+# no test at all, because proving it needed a server returning 404 on demand.
+# Now the registry takes an injected `Arc<dyn HttpClient>` and two twelve-line
+# doubles cover all five bands.
+#
+# A rule with no test and a rule with a test that cannot see it look the same
+# from the outside, so these mutations exist to tell them apart: each moves a
+# boundary, or removes a promise, and must kill a NAMED test.
+#
+# Run: python scripts/mutate.py --spec scripts/mutations/provider_health.toml
+
+features = "full"
+filter = "providers::health_rule_tests"
+
+[[mutation]]
+id = "M1"
+file = "src/providers.rs"
+filter = "providers::health_rule_tests::four_hundred_four_is_degraded_not_unhealthy"
+invariant = "a 4xx is DEGRADED and not UNHEALTHY: the server answered, which is what a health probe measures. Moving the boundary to 400 turns every 4xx into `Unhealthy` and reads, from the outside, exactly like a transport failure -- which is how it was misread before V422, when a 4xx arrived as `Err(StatusCode(404))`."
+before = "            Ok(resp) if resp.status < 500 => ProviderHealthStatus::Degraded,"
+after = "            Ok(resp) if resp.status < 400 => ProviderHealthStatus::Degraded,"
+occurrences = 1
+
+[[mutation]]
+id = "M2"
+file = "src/providers.rs"
+filter = "providers::health_rule_tests::two_hundred_is_healthy"
+invariant = "a 2xx is HEALTHY and nothing weaker. Disabling the success arm makes a 200 fall through to the `< 500` arm and come back `Degraded` -- a provider that works, reported as half-broken, which is what makes a fallback chain skip a healthy server."
+before = "            Ok(resp) if resp.is_success() => ProviderHealthStatus::Healthy,"
+after = "            Ok(resp) if resp.status == 0 => ProviderHealthStatus::Healthy,"
+occurrences = 1
+
+[[mutation]]
+id = "M3"
+file = "src/providers.rs"
+filter = "providers::health_rule_tests::the_status_is_also_stored_not_only_returned"
+invariant = "`check_health` promises two things in its own doc -- it STORES the verdict in the registry's map and returns it. Storing something OTHER than what it decided leaves the returned value correct, so every test that only reads the return value keeps passing while the map says `Unknown` forever. This is the declared-debt class: a promise in a doc comment that the code stops keeping."
+before = "            .insert(provider.name.clone(), status.clone());"
+after = "            .insert(provider.name.clone(), ProviderHealthStatus::Unknown);"
+occurrences = 1

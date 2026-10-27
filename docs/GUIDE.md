@@ -2274,8 +2274,33 @@ probe measures is that the server answers, not that the route exists. That rule 
 untested for as long as the module existed. Same for the four rules in `probe_vllm`: they
 needed a live vLLM, so none had a test.
 
-Done so far: `health_check`, `vllm_capability`. Nine of the eleven migrated modules still
-instantiate `UreqClient` directly — `providers.rs` is the big one.
+`providers.rs` (V447) is the same story twice over. Its
+`ResilientProviderRegistry::check_health` grades a provider in three bands, and the middle
+one is an opinion: **3xx and 4xx are `Degraded`, not `Unhealthy`**, because the server
+answered. Proving that needed a server returning 404 on demand, so it had no test at all
+until the registry took an `Arc<dyn HttpClient>`.
+
+And it is where injection can most easily be done *badly*. `fetch_model_context_size`
+dispatches over twenty providers and three of those branches speak HTTP: injecting at the
+entry point only would leave the branches on `UreqClient`, which is the original defect
+wearing a parameter. The client is threaded through all eight calls, and a test with a
+request-counting double asserts it arrives — if it stopped at the door the count would be
+zero.
+
+The boundary, so it does not read as an oversight: `generate_response` and
+`generate_response_streaming` do **not** touch `UreqClient`. They go through
+`llm_provider::raw_provider_from_config(..)`, the phase-3 adapter factory, so injecting the
+port there means changing that factory and its adapters.
+
+```rust
+// Thirteen free functions in `providers.rs` now come in pairs:
+let models = fetch_ollama_models_with(&my_client, "http://localhost:11434")?;
+let ctx = fetch_model_context_size_with(&my_client, &config, "llama3");
+```
+
+Done so far: `health_check`, `vllm_capability`, `providers`. Eight of the eleven migrated
+modules still instantiate `UreqClient` directly — `academic_search` (16 sites) is now the
+biggest.
 
 ### Test doubles for consumers: the `test-utils` feature
 
