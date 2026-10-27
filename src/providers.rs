@@ -705,6 +705,7 @@ pub fn generate_ollama_response_with_images(
     generate_ollama_response_with_images_with(&UreqClient, config, messages, system_prompt)
 }
 /// [`generate_ollama_response_with_images`] over a caller-supplied HTTP port.
+#[cfg(feature = "vision")]
 pub fn generate_ollama_response_with_images_with(
     client: &dyn HttpClient,
     config: &AiConfig,
@@ -792,6 +793,7 @@ pub fn generate_openai_compat_response_with_images(
     generate_openai_compat_response_with_images_with(&UreqClient, config, messages, system_prompt)
 }
 /// [`generate_openai_compat_response_with_images`] over a caller-supplied HTTP port.
+#[cfg(feature = "vision")]
 pub fn generate_openai_compat_response_with_images_with(
     client: &dyn HttpClient,
     config: &AiConfig,

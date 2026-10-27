@@ -5,6 +5,58 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v326 (2026-10-27) - V447b: el generador copio la firma y dejo atras la puerta (0.2.409)
+
+CI en rojo en V447, y en **catorce trabajos a la vez**: el conjunto minimo, Clippy y Cargo
+Check con features estrechas, Tabular, y diez de la Feature Matrix. Todos con el mismo error:
+
+```
+error[E0433]: cannot find `vision` in `crate`
+error[E0425]: cannot find function `looks_like_mmproj_error` in this scope
+```
+
+### Lo que paso
+
+Dos de las trece funciones que ganaron par `_with` estaban **gateadas**:
+
+```rust
+#[cfg(feature = "vision")]
+pub fn generate_ollama_response_with_images(..)
+```
+
+El script que genero los pares ancla en `^(pub )?fn NOMBRE\(` y reescribe desde ahi. El
+`#[cfg(..)]` esta **una linea por encima** del ancla, asi que se quedo con la funcion corta y
+la nueva `_with` nacio sin puerta --- compilandose siempre, y referenciando `crate::vision` y
+un ayudante que no existen sin la feature.
+
+Con `full` encendido las dos features estan, y por eso los dos conjuntos con los que verifique
+(FEATURES_STD y FEATURES_NETWORK) pasaron limpios. **Eso ya tiene una regla escrita en
+`docs/modus-operandi.md`**, la 11: «un superconjunto de features no sustituye a cada conjunto
+que CI construye». No hacia falta una regla nueva; hacia falta seguir la que hay.
+
+### El arreglo
+
+Los dos `#[cfg(feature = "vision")]` restaurados sobre las funciones `_with`. Verificado con
+los comandos que usan los trabajos que fallaron, no con un superconjunto:
+
+```
+cargo check --no-default-features --features "$FEATURES_MIN"              0 errores
+cargo check --no-default-features --features "$FEATURES_MIN,multi-agent"  0 errores
+cargo check --no-default-features --features "$FEATURES_MIN,vision"       0 errores
+cargo check --no-default-features --features "$FEATURES_MIN,workflows"    0 errores
+```
+
+El de `vision` importa especialmente: comprueba que la version gateada **sigue** compilando
+cuando la feature esta, que es lo que el arreglo podria haber roto en el otro sentido.
+
+### Lo que esto dice del generador
+
+Un generador que reescribe una firma tiene que arrastrar lo que hay **encima** de la firma, no
+solo la firma. Es el mismo descuido que dejo tres doc-comments auto-referenciales en los
+ayudantes privados (`/// [`X`] over a caller-supplied HTTP port` sobre la propia `X`),
+corregidos antes de empujar V447. El codigo generado se revisa como codigo escrito, y el
+atributo de arriba es parte del codigo.
+
 ## [Unreleased] - v325 (2026-10-27) - V448: un trabajo colgado no era un fallo, era 51 minutos y una muerte sin nombre (0.2.408)
 
 Ninguno de los 21 trabajos de `ci.yml` tenia `timeout-minutes`, asi que heredaban el defecto
