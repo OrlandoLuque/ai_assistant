@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v325 (2026-10-27) - V448: un trabajo colgado no era un fallo, era 51 minutos y una muerte sin nombre (0.2.408)
+
+Ninguno de los 21 trabajos de `ci.yml` tenia `timeout-minutes`, asi que heredaban el defecto
+de GitHub: **360 minutos**. Y eso no es teorico --- paso esta misma noche.
+
+### Lo que se vio
+
+El trabajo `Tests` de V445b murio tras **51 minutos** con `conclusion: failure` y, en el paso
+`Check doc links`, `conclusion: null` --- igual que en los cinco pasos siguientes, que no
+llegaron a empezar. Ningun log, ningun error, nada que leer. Los cuatro pasos de tests habian
+pasado.
+
+En la ejecucion verde de dos horas antes ese mismo paso tardo **87 segundos**.
+
+Asi que no fue un fallo de codigo ni una puerta en rojo: fue un paso que se quedo quieto y se
+llevo el runner por delante. Relanzado sin tocar nada, verde. Lo unico que costo fue el rato
+de averiguar que no habia nada que averiguar, que es exactamente el coste que un «rojo sin
+dueno» tiene a la manana siguiente.
+
+### El arreglo
+
+Un tope por trabajo, de unas **tres veces** lo medido en dos ejecuciones verdes
+(2026-10-26/27):
+
+| Trabajo | Medido | Tope |
+|---|---|---|
+| Benchmarks | 17 min | 40 |
+| Tests | 9 min | 25 |
+| Functional Test Battery | 5 min | 25 |
+| Cargo Check / Clippy / Coverage / Security Audit / Binary Compilation | 3-4 min | 20 |
+| las once puertas rapidas | 0-1 min | 10 |
+| el resto (Feature Matrix, Tabular) | 2-8 min | 25 |
+
+Tres veces y no el doble: una ejecucion con la cache fria tarda mas, y un tope que salta por
+lentitud normal es peor que no tenerlo --- ensena a relanzar sin leer, que es justo el habito
+que hace invisible el primer fallo real.
+
+**Lo que cambia no es el resultado, es el diagnostico.** El mismo cuelgue, con esto puesto,
+habria dado «el trabajo excedio su tope de 25 minutos» a los 25 minutos, con su nombre y en
+el sitio donde se quedo.
+
 ## [Unreleased] - v324 (2026-10-27) - V447: el puerto llegaba a la puerta y no al fondo del `match` (0.2.407)
 
 N166, segunda entrega: **`providers.rs`**, el modulo con mas sitios del barrido (20) y el

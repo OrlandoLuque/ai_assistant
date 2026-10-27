@@ -47,6 +47,7 @@ jobs:
   check:
     name: Cargo Check
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.98.0
@@ -71,6 +72,7 @@ jobs:
   test:
     name: Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.98.0
@@ -153,6 +155,7 @@ jobs:
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.98.0
@@ -190,6 +193,7 @@ jobs:
   clippy-gui:
     name: Clippy (GUI binaries)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # V415 (N155). NINGUN otro trabajo compila la combinacion `gui,gui-pro`, y
     # eso no es una laguna teorica: la primera vez que se corrio este comando
     # (V409) encontro DOS CONSTANTES MUERTAS EN LA LIBRERIA -- `SHA256_K` y
@@ -224,6 +228,7 @@ jobs:
   fmt:
     name: Format
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.98.0
@@ -235,6 +240,7 @@ jobs:
   deprecation-policy:
     name: Deprecation policy
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # V127 (C.6): every #[deprecated(...)] attribute in src/ must
     # carry both `since = ` and `note = ` per docs/FEATURE_LIFECYCLE.md.
     # The checker is stdlib-only Python 3.11+ (ubuntu-latest default).
@@ -246,6 +252,7 @@ jobs:
   feature-dep-drift:
     name: Feature/dep drift
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # V154 (#1B): fail if a feature references `dep:X` while `X` is also a
     # feature gated in src/ via cfg(feature = "X"). That drift silently
     # disables the gated code path (and its tests) — the exact bug that
@@ -258,6 +265,7 @@ jobs:
   mutation-specs:
     name: Mutation specs still match the code
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # V356: the mutation specs in scripts/mutations/ are `before` strings copied
     # out of source files. The moment one of those lines is edited -- a rename, a
     # `cargo fmt` reflow, a refactor moving a match arm -- the spec stops matching
@@ -278,6 +286,7 @@ jobs:
   openapi-routes:
     name: OpenAPI vs routes
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # V302: fail when the embedded server serves a route that /openapi.json does not
     # declare, or declares one it does not serve. The spec is a contract -- it is what a
     # third party generates their client from -- and the failure is silent in one
@@ -291,6 +300,7 @@ jobs:
   documented-cli:
     name: Documented CLI
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # V292: fail if docs show an `ai_cli` command line the binary would not accept.
     # A wrong flag does not error — the flag loops end in a catch-all that folds any
     # unrecognised word into the positional argument — so a copy-pasted command
@@ -308,6 +318,7 @@ jobs:
   binaries-documented:
     name: Binary inventory
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # V305: fail when docs/BINARIES.md and Cargo.toml disagree about which binaries
     # exist. The page opens by calling itself "the authoritative inventory of every
     # executable binary shipped by the crate" and had been listing 26 of 41 — asked
@@ -322,6 +333,7 @@ jobs:
   duplicate-types:
     name: Duplicate type names
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # V362: fail when a NEW enum name is declared twice with different variants.
     # Measured on 2026-10-01: 215 duplicated type names, of which 35 are divergent
     # enums. Every one of them was found by accident while looking for something
@@ -346,6 +358,7 @@ jobs:
   config-constructible:
     name: Configs buildable from outside
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # V446: fail when a `#[non_exhaustive]` struct that a public function takes as
     # an argument cannot be configured from another crate in ONE expression.
     #
@@ -382,6 +395,7 @@ jobs:
   audit:
     name: Security Audit
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
 
@@ -487,6 +501,7 @@ jobs:
   tabular-polars:
     name: Tabular — Polars engine and cross-engine agreement
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -539,6 +554,7 @@ jobs:
   feature-matrix:
     name: Feature Matrix (${{ matrix.features }})
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -627,6 +643,7 @@ jobs:
   binaries:
     name: Binary Compilation
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.98.0
@@ -645,6 +662,7 @@ jobs:
   harness-battery:
     name: Functional Test Battery
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     # V154 (#1A): the in-repo `ai_test_harness` runs 585 functional tests
     # across 131 categories. It is NOT cfg-gated like the lib unit tests,
     # so it catches a class of bug the `test` job above structurally
@@ -680,6 +698,7 @@ jobs:
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.98.0
@@ -698,6 +717,7 @@ jobs:
   benchmark:
     name: Benchmarks
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     if: github.event_name == 'push'
     # V126 (C.5): the explicit `bench-budget` step below now gates
     # CI for benchmarks that have a declared budget in
@@ -779,6 +799,7 @@ jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [check, test, clippy, fmt, binaries]
     steps:
