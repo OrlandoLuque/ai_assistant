@@ -470,6 +470,19 @@ jobs:
       #                       alcanzables y se aceptan con fecha. Ver deny.toml
       #                       para la medicion completa.
       #                       DELETE las cuatro cuando upstream suba (N169).
+      #   RUSTSEC-2026-0367 — zip: cuatro advisories, todas sobre `extract`
+      #   RUSTSEC-2026-0368     (bits SUID/SGID conservados, symlinks fuera del
+      #   RUSTSEC-2026-0369     destino, permisos aplicados a traves de un
+      #   RUSTSEC-2026-0429     symlink, y abort del proceso por el tamano
+      #                       declarado de un symlink). La funcion vulnerable es
+      #                       `extract` en las cuatro, y no la llama ninguno de
+      #                       los tres dependientes del lock: nosotros (solo
+      #                       `ZipArchive::new` / `ZipWriter::new`), candle-core,
+      #                       y la build-dep de utoipa-swagger-ui, que SI
+      #                       descomprime pero con su propio bucle `by_index`.
+      #                       Re-medido el 2026-11-03. El arreglo es >= 9.0.0:
+      #                       siete majors para el nuestro (N153) y fuera de
+      #                       nuestra mano para los otros dos. Ver deny.toml.
       - name: Run cargo audit
         run: |
           cargo audit \
@@ -487,6 +500,7 @@ jobs:
             --ignore RUSTSEC-2026-0367 \
             --ignore RUSTSEC-2026-0368 \
             --ignore RUSTSEC-2026-0369 \
+            --ignore RUSTSEC-2026-0429 \
             --ignore RUSTSEC-2026-0257
 
   # The expensive tabular engine, on its own because it drags 397 crates and

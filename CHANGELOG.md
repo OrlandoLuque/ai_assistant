@@ -5,6 +5,101 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v327 (2026-11-03) - V449: el arbol sin tocar y CI en rojo: cinco advisories nuevas (0.2.410)
+
+El ultimo push fue el 2026-10-27 y dejo **CI y Supply Chain en verde**. El 2026-11-02, sobre el
+**mismo commit** `03294f8` y sin una linea cambiada, la ejecucion programada de Supply Chain se
+puso en rojo en los dos trabajos que miran advisories: `cargo audit` y
+`cargo deny check advisories`. Lo unico que habia cambiado era la base de datos de RustSec.
+
+### Como se diagnostico, y que NO se pudo hacer
+
+Los logs de la ejecucion **no se pudieron leer**. La regla 13 del modus-operandi dice «no
+teorices sobre por que fallo CI, preguntaselo», y aqui la pregunta rebota: la API contesta
+`403 Must have admin rights to Repository` a `actions/jobs/<id>/logs` sin autenticar, y `gh` no
+arranca en esta maquina porque su `config.yml` esta bajo las ACL del perfil anterior. Asi que
+se hizo lo segundo mejor, que no es una teoria: **reproducirlo**, con las mismas dos
+herramientas, contra un clon fresco de `advisory-db` y con la lista de `--ignore` sacada del
+propio `ci.yml` en vez de escrita a mano.
+
+Las dos herramientas dan exactamente el mismo conjunto: **cinco IDs** que no estaban en la
+lista de supresiones.
+
+### Las cuatro de wasmtime: arreglo de verdad, no supresion
+
+`RUSTSEC-2026-0420` (wasmtime-wasi: un `send` UDP de wasip3 puede entregar un datagrama a una
+direccion que solo tenia permiso de recepcion), `RUSTSEC-2026-0422` (panico por chequeo de
+tipos insuficiente con argumentos `i31` / `nullref`), `RUSTSEC-2026-0423` (confusion de tipos
+entre engines con struct-types creados por el host) y `RUSTSEC-2026-0424` (uso de memoria sin
+limite al transferir recursos prestados entre componentes). Las cuatro, publicadas el
+2026-10-29, estan parcheadas en `>= 49.0.5, < 50.0.0` --- y `Cargo.toml` pide `^49.0.2`, asi
+que el arreglo cabe **dentro del requisito que ya hay**: 32 paquetes, todos de parche
+(49.0.4 -> 49.0.5, cranelift 0.136.4 -> 0.136.5). Ni un major, ni un crate nuevo.
+
+Esto es lo que le paso a `RUSTSEC-2026-0222` en V276, y la nota que dejo en `deny.toml` dice
+por que importa: **una entrada cuyo bloqueo se levanta se borra, no se renueva**. Aqui no hubo
+ni que crearla.
+
+Aviso honesto sobre el alcance de la verificacion: `skill-forge` --- la unica feature que mete
+wasmtime --- **no aparece en ningun conjunto de features de CI**, asi que CI nunca compila
+wasmtime y no puede confirmar este bump. Se comprobo en local con
+`cargo check --features skill-forge --lib`.
+
+### La de `zip`: la cuarta de una familia que ya estaba suprimida
+
+`RUSTSEC-2026-0429`: `ZipArchive::extract` dimensiona el buffer del destino de un symlink con
+el tamano declarado en el directorio central, antes de leer un byte, y `Vec::with_capacity` es
+infalible --- cuando la reserva se rechaza **aborta el proceso**. El arreglo es `>= 9.0.0` y el
+nuestro es `2`: siete versiones mayores, deuda propia aparte (N153), y fuera de nuestra mano
+para los otros dos `zip` del lock.
+
+Suprimida, con la medicion **rehecha hoy y no heredada** de la del 2026-10-20, porque heredarla
+es exactamente la regla 7 («una supresion cuya razon escrita es falsa parece revisada, asi que
+nadie la vuelve a leer»). Los tres dependientes, uno por uno:
+
+| dependiente | version de `zip` | que llama |
+|---|---|---|
+| nosotros (declarado) | 2.4.2 | 11 `ZipArchive::new` + 6 `ZipWriter::new`, cero `extract` |
+| `candle-core 0.10.2` | 7.2.0 | 7 `ZipArchive::new` + 1 `ZipWriter::new`, cero `extract` |
+| `utoipa-swagger-ui 9.0.2` | 3.0.0 | descomprime, pero con su propio bucle |
+
+### Dos razones escritas que estaban mal, corregidas
+
+La tercera fila es lo que esta medicion anade, y corrige dos frases que llevaban tres semanas
+en `deny.toml` sonando a revisadas:
+
+- `3.0.0 (sin arista normal)` --- cierto y sin terminar: es una **build-dependency** de
+  `utoipa-swagger-ui`. Ese tercer `zip` del lock **no se habia abierto nunca**, y era el unico
+  de los tres que podia romper la razon, porque **si** descomprime (el dist de Swagger UI, en
+  su `build.rs`). No la rompe: lo hace con su propio bucle `by_index()` + `enclosed_name()` +
+  `io::copy`, y pone los permisos sobre el fichero regular que acaba de crear. No llama ni a
+  `ZipArchive::extract` ni a `ZipStreamReader::extract`.
+- `candle-core, el unico otro dependiente` --- **falso**: son dos, y el segundo es el que no se
+  habia mirado.
+
+### Verificado
+
+```bash
+cargo audit -n --db <clon fresco> $(flags de --ignore sacados de ci.yml)   # 16 flags -> exit 0
+cargo deny check advisories licenses bans sources                          # todo ok, 0 errores
+```
+
+`advisories ok, bans ok, licenses ok, sources ok` sobre las 955 cajas del grafo completo, con
+una base de datos **mas nueva** que la que vio la ejecucion roja (clonada el 2026-11-03).
+
+Las dos puertas de Python que vigilan esta lista (`check_rustsec_ignores.py`, que exige que
+`deny.toml` y los dos workflows digan lo mismo y que cada entrada lleve razon, y
+`check_recheck_dates.py`, que exige que la fecha de re-chequeo siga en el futuro) **no se
+pudieron ejecutar aqui**: en esta maquina no hay Python todavia. Se portaron las dos a Node y
+se comprobo antes que el port **discrimina**, con cuatro casos que tienen que fallar: entrada
+en los workflows y no en `deny.toml`, al reves, un `\n` literal en la linea de flags (el bug de
+V419) y una fecha vencida. Los cuatro fallan; el arbol real pasa con 16 supresiones.
+
+Y el `\n` literal no es un caso de laboratorio: **paso hoy**, insertando la linea nueva. El
+`printf` escribio una barra invertida y una `n` en vez de un salto, dejando dos `--ignore` en
+una sola linea --- el fallo exacto que `shell_problems` existe para cazar, que la comprobacion
+de IDs habria dado por bueno. Lo cazo primero el `od -c`.
+
 ## [Unreleased] - v326 (2026-10-27) - V447b: el generador copio la firma y dejo atras la puerta (0.2.409)
 
 CI en rojo en V447, y en **catorce trabajos a la vez**: el conjunto minimo, Clippy y Cargo

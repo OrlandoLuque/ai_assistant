@@ -339,7 +339,8 @@ ignore = [
     # Re-check by: 2027-03-15 OR when BOTH lopdf and the egui stack drop it,
     # or ttf-parser gets a maintainer again.
     "RUSTSEC-2026-0192",
-    # --- las tres de `zip` (2026-10-09/10). Medicion comun, hecha el 2026-10-20
+    # --- la familia `zip`: CUATRO advisories (2026-10-09/10 y 2026-10-22).
+    # Medicion comun de las tres primeras, hecha el 2026-10-20
     # leyendo los usos y no suponiendolos:
     #
     #   Nosotros usamos `ZipArchive::new` (6 sitios), `ZipWriter::new`,
@@ -355,7 +356,8 @@ ignore = [
     #   aspecto de revisada.
     #
     #   Tres versiones en el lock: 2.4.2 (la nuestra, declarada), 3.0.0 (sin
-    #   arista normal) y 7.2.0 (por candle). El arreglo esta en >= 9.0.0: siete
+    #   arista normal -- es una build-dependency; ver RUSTSEC-2026-0429) y
+    #   7.2.0 (por candle). El arreglo esta en >= 9.0.0: siete
     #   versiones mayores de salto para la nuestra, y fuera de nuestra mano para
     #   la de candle. Subir la nuestra es deuda legitima aparte (N153).
     #
@@ -370,7 +372,9 @@ ignore = [
     "RUSTSEC-2026-0367",
     # zip: `ZipArchive::extract` crea symlinks que apuntan donde diga el archivo.
     # La funcion vulnerable es `extract`, y no la llamamos -- ni nosotros ni
-    # candle-core, el unico otro dependiente (ver medicion arriba).
+    # candle-core, ni la build-dep de utoipa-swagger-ui -- los tres
+    # dependientes del lock, re-medidos el 2026-11-03 en la entrada de
+    # RUSTSEC-2026-0429.
     # Re-check by: 2026-12-15 OR cuando subamos nuestro `zip` a >= 9 (N153).
     "RUSTSEC-2026-0368",
     # zip: `ZipStreamReader::extract()` y `ZipArchive::extract()` aplican los
@@ -379,6 +383,46 @@ ignore = [
     # menciona siquiera.
     # Re-check by: 2026-12-15 OR cuando subamos nuestro `zip` a >= 9 (N153).
     "RUSTSEC-2026-0369",
+    # zip, la CUARTA de la familia `extract` (advisory del 2026-10-22, que
+    # entro en la base de datos despues del ultimo push: CI se puso en rojo
+    # el 2026-11-02 con el Cargo.lock sin tocar). `ZipArchive::extract`
+    # dimensiona el buffer del destino de un symlink con el tamano declarado
+    # en el directorio central, antes de leer un solo byte, y
+    # `Vec::with_capacity` es infalible: cuando la reserva se rechaza, ABORTA
+    # el proceso. La funcion vulnerable vuelve a ser `extract`, igual que en
+    # las tres de arriba.
+    #
+    # RE-MEDIDO hoy, 2026-11-03, y no heredado: heredar la medicion del
+    # 2026-10-20 seria exactamente la razon-con-aspecto-de-revisada que esta
+    # lista persigue. Lo que sale, con los tres `zip` del lock uno por uno:
+    #
+    #   nosotros (zip 2.4.2, declarado) ...... 11 `ZipArchive::new` + 6
+    #       `ZipWriter::new`, CERO `.extract(` sobre un zip y cero
+    #       `ZipStreamReader`. Los 11 no contradicen los "6 sitios" de la
+    #       medicion de arriba: el codigo ha crecido desde el 20/10, y lo
+    #       que NO ha cambiado es que todas las llamadas siguen siendo
+    #       `::new`. (Los `.extract(` que aparecen en `src/` son de
+    #       extractores de entidades, HTML, metadatos de papers y hechos:
+    #       ninguno es un zip.)
+    #   candle-core 0.10.2 (zip 7.2.0) ....... 7 `ZipArchive::new` + 1
+    #       `ZipWriter::new`, cero `.extract(`. Leido del fuente en la cache
+    #       del registro, no supuesto.
+    #   utoipa-swagger-ui 9.0.2 (zip 3.0.0) .. es la arista que la medicion
+    #       de arriba llama "sin arista normal", y ahora tiene nombre: es una
+    #       **build-dependency**. Y descomprime de verdad --- el dist de
+    #       Swagger UI, en su `build.rs` ---, asi que era la unica de las
+    #       tres que podia romper la razon. No la rompe: lo hace con su
+    #       propio bucle `by_index()` + `enclosed_name()` + `io::copy`, y
+    #       pone los permisos sobre el fichero regular que acaba de crear.
+    #       No llama a `ZipArchive::extract` ni a
+    #       `ZipStreamReader::extract`. Hasta hoy ese tercer `zip` del lock
+    #       no se habia abierto.
+    #
+    # El arreglo es >= 9.0.0, el mismo de las otras tres: siete versiones
+    # mayores de salto para el nuestro (deuda propia, N153) y fuera de
+    # nuestra mano para los otros dos.
+    # Re-check by: 2026-12-15 OR cuando subamos nuestro `zip` a >= 9 (N153).
+    "RUSTSEC-2026-0429",
 ]
 
 # ----------------------------------------------------------------
