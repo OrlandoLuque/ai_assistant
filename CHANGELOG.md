@@ -5,6 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v328 (2026-11-03) - V449b: cuatro razones falsas en `ci.yml`, y la copia que las hacia parecer revisadas (0.2.411)
+
+V449 dejo CI en verde. Al escribir su entrada aparecio otra cosa: `ci.yml` **repetia**
+las razones de `deny.toml` en prosa, y **cuatro de esos bloques decian cosas que
+`deny.toml` ya habia medido como falsas el 2026-10-13**. Llevaban tres semanas asi, con
+aspecto de revisadas.
+
+### Las cuatro
+
+- **La frase de cabecera**: «Ignored advisories all live in transitive dependencies that
+  cannot be bumped without major upstream upgrades». **TRES de esos crates los
+  declaramos nosotros** --- `bincode = "1"`, `rustls-pemfile`, `zip` ---, asi que no hay
+  nadie arriba bloqueando: la deuda es propia. Esa frase era el marco de todo el bloque.
+- **0141 y 0134**, marcados `(transitive)`: los dos son nuestros. `cargo tree -i` lo dijo
+  en V401 y `deny.toml` lo recogio; aqui no.
+- **0194 y 0195**: culpaban a la cadena de `wayland-scanner` y a «XML de build-time de
+  ficheros de protocolo de confianza». El crate entra por nuestro `tabular-polars`, via
+  `object_store` con `cloud` y `http`: **XML que llega por la red**. La razon no solo era
+  falsa, era falsa en la direccion que tranquiliza.
+- **0192**: ataba su revision a «cuando egui migre a skrifa/fontations», teniendo **dos**
+  raices independientes (`lopdf` por pdf-extract, y la pila de egui). La condicion no
+  podia cumplirse nunca, que es peor que no tener condicion: se lee como un plan.
+
+### El arreglo no es re-sincronizar: es dejar de duplicar
+
+Dos copias de una razon son una razon y un pasivo, y esta es la **tercera** vez que este
+repositorio lo aprende --- la primera fue el bloque de shell que comparaba las tres
+listas en paralelo a `check_rustsec_ignores.py`, y se borro por esto mismo; la segunda,
+el `check_rustsec_ignores.py` que comparaba dos ficheros de tres. Re-escribir la prosa
+en `ci.yml` la habria dejado correcta hoy y falsa otra vez al siguiente re-chequeo, que
+es exactamente lo que paso.
+
+Asi que `deny.toml` queda como **unica fuente** de la razon y de la medicion, y `ci.yml`
+se queda con un **indice**: una linea por ID diciendo de que va, para saber que silencia
+cada flag sin abrir el otro fichero. 68 lineas de prosa duplicada fuera, 51 de indice y
+de por que no hay prosa dentro.
+
+### Verificado
+
+Con las puertas de verdad, que hoy por fin se pueden ejecutar en esta maquina (Python
+3.13.14 instalado por la Store, porque el instalador oficial muere en
+`AppData\Local\Package Cache`, que sigue bajo las ACL del perfil anterior):
+
+```
+check_rustsec_ignores.py -> OK - 16 suppressed advisories, identical in
+                            deny.toml, ci.yml, supply-chain.yml, each with a reason
+check_recheck_dates.py   -> OK: las 16 supresiones tienen re-chequeo vigente
+```
+
+Y el indice afirma «en el mismo orden que los flags de abajo», asi que se **comprobo
+programaticamente** que lo esta: 16 y 16, posicion por posicion. Un comentario que dice
+«mismo orden» y no lo esta es la misma clase de defecto que esta entrada corrige.
+
 ## [Unreleased] - v327 (2026-11-03) - V449: el arbol sin tocar y CI en rojo: cinco advisories nuevas (0.2.410)
 
 El ultimo push fue el 2026-10-27 y dejo **CI y Supply Chain en verde**. El 2026-11-02, sobre el

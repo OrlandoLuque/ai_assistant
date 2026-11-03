@@ -415,74 +415,57 @@ jobs:
           key: cargo-audit
       - name: Install cargo-audit
         run: cargo install --locked cargo-audit
-      # Ignored advisories all live in transitive dependencies that
-      # cannot be bumped without major upstream upgrades:
-      #   RUSTSEC-2025-0141 — bincode unmaintained (transitive)
-      #   RUSTSEC-2024-0436 — paste unmaintained (transitive)
-      #   RUSTSEC-2025-0134 — rustls-pemfile unmaintained (transitive)
-      #   RUSTSEC-2026-0002 — lru unsound IterMut (transitive via
-      #                       tantivy/lance; no direct lru usage)
-      #   (RUSTSEC-2026-0187 was here — lopdf stack overflow. DELETED in V355
-      #    rather than renewed, because its own revisit condition had come true:
-      #    pdf-extract 0.12.1 depends on lopdf ^0.42, so bumping 0.7 -> 0.12
-      #    fixed it at the source. Same as 0222 before it — an entry whose
-      #    blocker has lifted is deleted, not re-read and kept.)
-      #   RUSTSEC-2026-0194 — quick-xml quadratic run time on duplicate
-      #                       attribute names. Transitive via
-      #                       wayland-scanner (pins quick-xml ^0.39, can't
-      #                       reach >=0.41); build-time XML of trusted
-      #                       wayland protocol files only, no direct use in
-      #                       src/. Revisit when wayland-scanner bumps it.
-      #   RUSTSEC-2026-0195 — quick-xml again: same crate, same pinned version,
-      #                       a second DoS (unbounded namespace-declaration
-      #                       allocation in NsReader). Same reasoning and the
-      #                       same revisit condition as 0194 above. It was the
-      #                       one entry with no note here, which is how an
-      #                       argued suppression becomes an unargued one.
-      #   (RUSTSEC-2026-0222 was here. It was the only entry with an upstream
-      #    fix, held back because the fix needed a newer toolchain than the repo
-      #    pinned. V276 moved the pin to 1.98 and wasmtime to 46, so the entry
-      #    was DELETED rather than renewed — which is what its own note said to
-      #    do the moment the toolchain moved.)
-      #   RUSTSEC-2026-0257 — webbrowser: hostile $BROWSER can inject arguments
-      #                       into the spawned command (Unix only). Fixed in
-      #                       1.2.2, unreachable: transitive via egui-winit
-      #                       0.27.2, which pins ^0.8. Needs the egui stack
-      #                       upgraded past 0.27 — same blocker as 0192 below.
-      #                       DELETE this ignore when that lands (N37).
-      #   RUSTSEC-2026-0192 — ttf-parser unmaintained (no safe upgrade;
-      #                       transitive via egui/epaint/ab_glyph). DoS-
-      #                       class only; cargo-deny denies unmaintained,
-      #                       cargo-audit only warns. Revisit when egui
-      #                       migrates to skrifa/fontations.
-      #   RUSTSEC-2026-0391 — zstd: datos de un flujo abandonado se filtran al
-      #   RUSTSEC-2026-0398     siguiente sobre un contexto reutilizado, y tres
-      #   RUSTSEC-2026-0403     mas en zstd-safe / zstd-sys. Publicadas el
-      #   RUSTSEC-2026-0410     2026-10-26. El arreglo (zstd 0.14.3 /
-      #                       zstd-safe 8.2.0) NO es alcanzable: `lance-encoding
-      #                       13.0.0`, la ultima publicada, sigue pidiendo
-      #                       `zstd ^0.13`, y polars-parquet esta tambien en su
-      #                       ultima version. PROBADO con
-      #                       `cargo update -p zstd --precise 0.14.3`.
-      #                       Alcance medido: 0398 no se compila (feature
-      #                       `seekable` apagada) y 0410 no toca nuestros
-      #                       objetivos (sin wasm32 en CI); 0403 y 0391 SI son
-      #                       alcanzables y se aceptan con fecha. Ver deny.toml
-      #                       para la medicion completa.
-      #                       DELETE las cuatro cuando upstream suba (N169).
-      #   RUSTSEC-2026-0367 — zip: cuatro advisories, todas sobre `extract`
-      #   RUSTSEC-2026-0368     (bits SUID/SGID conservados, symlinks fuera del
-      #   RUSTSEC-2026-0369     destino, permisos aplicados a traves de un
-      #   RUSTSEC-2026-0429     symlink, y abort del proceso por el tamano
-      #                       declarado de un symlink). La funcion vulnerable es
-      #                       `extract` en las cuatro, y no la llama ninguno de
-      #                       los tres dependientes del lock: nosotros (solo
-      #                       `ZipArchive::new` / `ZipWriter::new`), candle-core,
-      #                       y la build-dep de utoipa-swagger-ui, que SI
-      #                       descomprime pero con su propio bucle `by_index`.
-      #                       Re-medido el 2026-11-03. El arreglo es >= 9.0.0:
-      #                       siete majors para el nuestro (N153) y fuera de
-      #                       nuestra mano para los otros dos. Ver deny.toml.
+      # Las 16 supresiones y POR QUE cada una no nos alcanza viven en `deny.toml`,
+      # que es la UNICA fuente: ahi estan las mediciones, con fecha, y la linea
+      # `Re-check by:` que `scripts/check_recheck_dates.py` hace cumplir. Aqui no
+      # se repiten: solo se nombran, para saber de que va cada flag sin abrir el
+      # otro fichero.
+      #
+      # Se repetian, y es exactamente lo que fallo. El 2026-11-03, al anadir la
+      # cuarta de `zip`, resulto que cuatro de los bloques de prosa de aqui
+      # decian cosas que `deny.toml` ya habia medido como FALSAS el 2026-10-13:
+      #
+      #   * la frase de cabecera, «all live in transitive dependencies that
+      #     cannot be bumped»: TRES de esos crates los declaramos nosotros
+      #     (bincode 1, rustls-pemfile, zip), asi que no hay nadie arriba que
+      #     nos este bloqueando;
+      #   * 0141 y 0134 marcados «(transitive)»: los dos son nuestros;
+      #   * 0194 y 0195 culpaban a la cadena de wayland-scanner y a «XML de
+      #     build-time de ficheros de protocolo de confianza», cuando el crate
+      #     entra por nuestro `tabular-polars` via `object_store` con `cloud` y
+      #     `http` --- o sea XML que llega por la red;
+      #   * 0192 ataba su revision a «cuando egui migre a skrifa/fontations»,
+      #     teniendo DOS raices independientes (lopdf y egui), asi que la
+      #     condicion no podia cumplirse nunca.
+      #
+      # Y las cuatro seguian pareciendo revisadas, que es la regla 7 del
+      # modus-operandi. Dos copias de una razon son una razon y un pasivo: la
+      # misma leccion que el bloque de shell que comparaba las tres listas en
+      # paralelo a `check_rustsec_ignores.py` y que se borro por esto mismo.
+      #
+      # El indice, en el mismo orden que los flags de abajo:
+      #   RUSTSEC-2026-0391  zstd: fuga entre flujos en un contexto reutilizado
+      #   RUSTSEC-2026-0398  zstd-safe: `Seekable::decompress` pone len > capacity
+      #   RUSTSEC-2026-0403  zstd-safe: memoria sin inicializar en frame legacy
+      #   RUSTSEC-2026-0410  zstd-sys: shim del asignador de WebAssembly
+      #   RUSTSEC-2025-0141  bincode 1.3.3 sin mantenimiento (declarado por nosotros)
+      #   RUSTSEC-2024-0436  paste sin mantenimiento (22 dependientes, egui no)
+      #   RUSTSEC-2025-0134  rustls-pemfile sin mantenimiento (declarado por nosotros)
+      #   RUSTSEC-2026-0002  lru: `IterMut` unsound (transitiva, tantivy/lance)
+      #   RUSTSEC-2026-0194  quick-xml: tiempo cuadratico en atributos duplicados
+      #   RUSTSEC-2026-0195  quick-xml: asignacion ilimitada de namespaces
+      #   RUSTSEC-2026-0192  ttf-parser sin mantenimiento (dos raices: lopdf y egui)
+      #   RUSTSEC-2026-0367  zip: conserva los bits SUID/SGID al extraer
+      #   RUSTSEC-2026-0368  zip: symlinks fuera del destino al extraer
+      #   RUSTSEC-2026-0369  zip: permisos aplicados a traves de un symlink
+      #   RUSTSEC-2026-0429  zip: abort del proceso por el tamano de un symlink
+      #   RUSTSEC-2026-0257  webbrowser: inyeccion de argumentos via BROWSER
+      #
+      # Dos que ESTUVIERON aqui y se borraron, para que nadie las reponga:
+      # RUSTSEC-2026-0187 (lopdf, V355) y RUSTSEC-2026-0222 (wasmtime, V276).
+      # Las dos se fueron porque su bloqueo se levanto, y una entrada asi se
+      # BORRA, no se renueva. Las cuatro de wasmtime del 2026-10-29 no llegaron
+      # a entrar por lo mismo: el parche cabia en `^49.0.2` (V449).
       - name: Run cargo audit
         run: |
           cargo audit \
