@@ -383,7 +383,7 @@ impl TableEngine for SqliteTableEngine {
             ));
         }
 
-        let columns: Vec<String> = stmt.column_names().into_iter().map(String::from).collect();
+        let columns: Vec<String> = stmt.column_names().map(String::from).collect();
 
         let mut rows_out: Vec<Vec<Cell>> = Vec::new();
         let mut truncated = false;

@@ -5,6 +5,173 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v329 (2026-11-13) - V450: el SQLite que empaquetamos devolvia memoria ajena, y arreglar el rojo del lunes no bastaba (0.2.412)
+
+`Supply Chain` fallo el **lunes 2026-11-09** y se descubrio el **viernes 13**, mirandolo a
+mano. Cuatro dias. No es un fallo de CI: una ejecucion `schedule` no interrumpe a nadie.
+
+Y el rojo que mostraba el log **no era todo el rojo**. Al re-auditar con la base de
+advisories al 2026-11-12 aparecieron **tres mas**, publicadas despues de aquella ejecucion.
+Arreglar lo que el log decia habria dejado CI rojo igual, con la sensacion de haberlo
+arreglado --- que es la parte de esta entrada que conviene recordar.
+
+### 1. La causa del rojo del lunes: `RUSTSEC-2026-0459`
+
+`libsqlite3-sys` 0.28.0, CVE-2026-119375. SQLite anterior a 3.54.0 devuelve **memoria de
+page-cache sin inicializar** cuando se abre una base de datos junto a un `-wal` cuyo tamano
+de pagina no coincide con el de la base: un par de ficheros preparado hace que consultas
+normales devuelvan bytes del propio proceso. El vector es local y exige que la victima abra
+los ficheros.
+
+No nos roza, nos da de pleno:
+
+- `Cargo.toml` pedia `rusqlite = { features = ["bundled"] }`, o sea que **el SQLite
+  vulnerable lo empaquetamos nosotros**. El advisory dice que una build enlazada contra el
+  SQLite del sistema no esta afectada por la copia del crate; la nuestra no es ese caso.
+- `rusqlite` lo enciende `tools`, que esta incluso en `FEATURES_MIN`. Esta en casi toda
+  build que hacemos, no en un rincon opcional.
+
+**Un solo camino, medido antes de tomarlo.** `cargo audit` dice «Upgrade to >=0.39.0», y
+`libsqlite3-sys` 0.39 **solo existe desde `rusqlite` 0.41**: lo dice el texto del advisory y
+lo confirma el resolutor. `cargo update -p libsqlite3-sys` no sirve, porque `rusqlite` 0.31
+requiere `~0.28`. No habia bump de parche posible --- diez versiones menores de golpe:
+
+```
+rusqlite       0.31.0 -> 0.41.1
+libsqlite3-sys 0.28.0 -> 0.39.1    (SQLite 3.54.1)
+hashlink       0.9.1  -> 0.12.2
++ rsqlite-vfs 0.1.1, sqlite-wasm-rs 0.5.5
+```
+
+Verificado en la fuente del crate y no solo en el lock:
+`libsqlite3-sys-0.39.1/sqlite3/sqlite3.h` lleva `#define SQLITE_VERSION "3.54.1"`, por
+encima del umbral del advisory.
+
+**Lo que costo: 41 conversiones, y ningun otro cambio de API.** `rusqlite` 0.41 **retiro
+`ToSql` y `FromSql` para `usize` y `u64`**, porque los dos son lossy contra el `i64` que
+SQLite guarda de verdad. 41 errores de compilacion en tres ficheros --- `rag.rs` 22,
+`knowledge_graph.rs` 10, `persistence.rs` 9 --- **todos de esa clase y de ninguna otra**:
+diez versiones menores y el resto de la API que usamos no se movio.
+
+Las escrituras pasan a `as i64`; las lecturas leen `i64` y convierten al tipo declarado.
+Ninguna conversion puede truncar en la practica: son `COUNT(*)`, `SUM()`, contadores de
+tokens y posiciones de chunk --- no negativos y a distancia astronomica de 2^63.
+
+Mas uno que solo da clippy, no el compilador: `column_names()` devolvia `Vec<&str>` y ahora
+devuelve un iterador, asi que el `.into_iter()` de `tabular/sqlite_engine.rs:386` se volvio
+una conversion inutil.
+
+### 2. FTS5: la pregunta que el compilador no podia contestar
+
+Usamos **FTS5** (`knowledge_graph.rs`, `mcp_task_tools.rs`, `rag.rs`) y solo pedimos
+`bundled`. Si el SQLite nuevo viniera compilado sin FTS5, **todo compilaria y fallaria en
+ejecucion**: ninguna puerta que mire compilacion lo veria. Comprobado de las dos maneras:
+
+- estaticamente, comparando el `build.rs` de las dos versiones de `libsqlite3-sys`:
+  `SQLITE_ENABLE_FTS5` sigue definido. Las dos unicas opciones que el build nuevo suelta son
+  `SQLITE_ENABLE_MEMORY_MANAGEMENT` --- no hay una sola llamada a `release_memory`,
+  `shrink_memory` ni a limites de heap en todo `src/` --- y `SQLITE_ENABLE_STAT2`, obsoleta
+  en SQLite y sustituida por `STAT4`, que sigue activa;
+- y ejecutando los tests que crean tablas virtuales y buscan en ellas.
+
+### 3. Las tres que el log del lunes no conocia: `openssl`
+
+Re-auditando con la base al 2026-11-12, tres vulnerabilidades mas, todas en `openssl`
+0.10.78 y todas transitivas (`native-tls` <- `reqwest` / `object_store` <- `polars`):
+
+| ID | que es | parcheado en |
+|----|--------|--------------|
+| `RUSTSEC-2026-0474` | `X509Ref::ocsp_responders` puede producir un `&str` que no es UTF-8 valido | >= 0.10.79 |
+| `RUSTSEC-2026-0476` | desbordamiento de bufer en AES key wrap con padding, en `cipher_update` | >= 0.10.79 |
+| `RUSTSEC-2026-0477` | el mismo desbordamiento en `cipher_update_inplace` | >= 0.10.80 |
+
+No las declaramos nosotras, asi que el arreglo es un bump de lock dentro del `^0.10` que ya
+existe --- la misma forma que las cuatro de wasmtime en V449, sin entrada de supresion que
+luego haya que recordar.
+
+### Verificado
+
+Todo medido en esta maquina antes de empujar, con `rustc 1.98.0` --- el mismo que usa CI
+(`dtolnay/rust-toolchain@1.98.0`), asi que no es un «funciona en mi version».
+
+**Supply chain**, que es de lo que iba el rojo. Tres mediciones, en tres estados distintos
+del lock, porque la de en medio es la que importa:
+
+```
+1) CI del lunes, con su base de advisories:
+   error: 1 vulnerability found!            (RUSTSEC-2026-0459)
+
+2) aqui, YA arreglado 0459, con la base al 2026-11-12:
+   error: 3 vulnerabilities found!          (0474, 0476, 0477 -- openssl)
+   <- este es el estado en el que «arreglar el rojo del lunes» habria parecido suficiente
+
+3) aqui, con las dos cosas arregladas, misma base:
+   cargo audit  -> exit 0, warning: 16 allowed warnings found
+   cargo deny   -> advisories ok, bans ok, licenses ok, sources ok
+```
+
+`licenses ok` no es un detalle de tramite: incluye las dos cajas que el bump trajo nuevas
+(`rsqlite-vfs`, `sqlite-wasm-rs`), y `bans ok` que no aparecio ningun duplicado nuevo.
+
+Y las dos puertas de las supresiones, que siguen contando lo mismo porque **no se anadio
+ninguna**: las cuatro advisories se arreglan, no se silencian.
+
+```
+check_rustsec_ignores.py -> OK - 16 suppressed advisories, identical in
+                            deny.toml, ci.yml, supply-chain.yml, each with a reason
+check_recheck_dates.py   -> OK: las 16 supresiones tienen re-chequeo vigente
+```
+
+**Compilacion, formato y lints**, con los conjuntos de features de `ci.yml` uno por uno:
+
+```
+cargo check --features full                                  exit 0
+cargo check --features FEATURES_STD                          exit 0
+cargo check --features FEATURES_NETWORK                      exit 0
+cargo check --no-default-features --features FEATURES_MIN    exit 0
+cargo check --no-default-features --features tabular         exit 0
+cargo check --no-default-features --features tabular-polars  exit 0
+cargo fmt -- --check                                         limpio
+cargo clippy --features FEATURES_STD --all-targets -D warnings       exit 0
+cargo clippy --features FEATURES_NETWORK --all-targets -D warnings   exit 0
+cargo clippy --no-default-features --features FEATURES_MIN -D warnings  exit 0
+cargo clippy --features tabular,tabular-polars --lib --tests -D warnings exit 0
+```
+
+Cero avisos en todas. `--all-targets` importa aqui mas que de costumbre: es lo unico que
+compila el codigo de los TESTS, y es donde salio el `column_names()`.
+
+**Tests:**
+
+```
+cargo test --features FEATURES_STD --lib                     9136 passed, 0 failed
+cargo test --features FEATURES_STD --test '*'                todas ok (109 la mayor)
+cargo test --no-default-features --features FEATURES_MIN     5310 passed, 0 failed
+cargo test --features FEATURES_STD --doc                       98 passed, 0 failed, 19 ignored
+cargo test --features tabular,tabular-polars --lib tabular     55 passed, 0 failed
+cargo test --no-default-features --features FEATURES_MIN --lib rag::
+                                                              103 passed, 0 failed   <- FTS5
+```
+
+Dieciseis puertas, cero fallos. La ultima de la lista es la que importa para esta
+entrada: es la que prueba que el SQLite 3.54.1 empaquetado sigue teniendo FTS5, y
+es la unica pregunta de aqui que no puede contestar un compilador.
+
+### Lo que este rojo deja abierto, y no se arregla aqui
+
+**Un rojo programado no tiene dueno.** Que el fallo tardara cuatro dias en encontrarse no es
+un detalle de este advisory: es una propiedad del calendario entero. Las supresiones con
+`Re-check by:` estan disenadas para poner CI en rojo el dia que vencen --- **seis vencen el
+2026-12-15** --- y ese diseno supone que alguien ve el rojo. Si un rojo programado tarda
+cuatro dias en aparecer, el calendario vale cuatro dias menos de lo que promete. Queda
+apuntado como tarea, y lo primero no es anadir otro mecanismo: es averiguar **por que no
+llego el aviso** del que ya deberia existir.
+
+**Y el corolario del punto 3**: arreglar lo que dice el log de la ejecucion roja no es lo
+mismo que estar verde. La base de advisories se movio tres dias entre aquella ejecucion y
+esta. La verificacion que vale es re-auditar con la base de HOY antes de empujar, no
+reproducir el fallo de anteayer.
+
 ## [Unreleased] - v328 (2026-11-03) - V449b: cuatro razones falsas en `ci.yml`, y la copia que las hacia parecer revisadas (0.2.411)
 
 V449 dejo CI en verde. Al escribir su entrada aparecio otra cosa: `ci.yml` **repetia**

@@ -826,7 +826,14 @@ impl RagDb {
             "SELECT content_hash, chunk_count, total_tokens, indexed_at
              FROM knowledge_sources WHERE source = ?1",
             [source],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get::<_, i64>(1)? as usize,
+                    row.get::<_, i64>(2)? as usize,
+                    row.get(3)?,
+                ))
+            },
         );
         match result {
             Ok(info) => Ok(Some(info)),
@@ -877,7 +884,7 @@ impl RagDb {
                     chunk.source,
                     chunk.section,
                     chunk.content,
-                    chunk.token_count,
+                    chunk.token_count as i64,
                     now
                 ],
             )?;
@@ -894,7 +901,7 @@ impl RagDb {
                 chunk_count = excluded.chunk_count,
                 total_tokens = excluded.total_tokens,
                 updated_at = excluded.updated_at",
-            rusqlite::params![source, content_hash, count, total_tokens, now],
+            rusqlite::params![source, content_hash, count as i64, total_tokens as i64, now],
         )?;
 
         Ok(count)
@@ -916,7 +923,12 @@ impl RagDb {
         )?;
 
         let rows = stmt.query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            Ok((
+                row.get(0)?,
+                row.get::<_, i64>(1)? as usize,
+                row.get::<_, i64>(2)? as usize,
+                row.get(3)?,
+            ))
         })?;
 
         let mut results = Vec::new();
@@ -961,13 +973,13 @@ impl RagDb {
         let mut results = Vec::new();
         let mut total_tokens = 0;
 
-        let rows = stmt.query_map(rusqlite::params![search_terms, top_k * 2], |row| {
+        let rows = stmt.query_map(rusqlite::params![search_terms, (top_k * 2) as i64], |row| {
             Ok(KnowledgeChunk {
                 id: row.get(0)?,
                 source: row.get(1)?,
                 section: row.get(2)?,
                 content: row.get(3)?,
-                token_count: row.get(4)?,
+                token_count: row.get::<_, i64>(4)? as usize,
             })
         })?;
 
@@ -1065,7 +1077,7 @@ impl RagDb {
                 source: row.get(1)?,
                 section: row.get(2)?,
                 content: row.get(3)?,
-                token_count: row.get(4)?,
+                token_count: row.get::<_, i64>(4)? as usize,
             })
         })?;
 
@@ -1154,14 +1166,14 @@ impl RagDb {
 
         let mut bm25_results: Vec<(KnowledgeChunk, f32)> = Vec::new();
 
-        let rows = stmt.query_map(rusqlite::params![search_terms, top_k * 3], |row| {
+        let rows = stmt.query_map(rusqlite::params![search_terms, (top_k * 3) as i64], |row| {
             Ok((
                 KnowledgeChunk {
                     id: row.get(0)?,
                     source: row.get(1)?,
                     section: row.get(2)?,
                     content: row.get(3)?,
-                    token_count: row.get(4)?,
+                    token_count: row.get::<_, i64>(4)? as usize,
                 },
                 row.get::<_, f64>(5)? as f32, // BM25 score
             ))
@@ -1321,12 +1333,12 @@ impl RagDb {
         let count: usize =
             self.conn
                 .query_row("SELECT COUNT(*) FROM knowledge_chunks", [], |row| {
-                    row.get(0)
+                    row.get::<_, i64>(0).map(|v| v as usize)
                 })?;
         let total_tokens: usize = self.conn.query_row(
             "SELECT COALESCE(SUM(token_count), 0) FROM knowledge_chunks",
             [],
-            |row| row.get(0),
+            |row| row.get::<_, i64>(0).map(|v| v as usize),
         )?;
         Ok((count, total_tokens))
     }
@@ -1461,7 +1473,7 @@ impl RagDb {
                 msg.role,
                 msg.content,
                 msg.timestamp.to_rfc3339(),
-                token_count,
+                token_count as i64,
                 in_context as i32,
                 now
             ],
@@ -1529,7 +1541,7 @@ impl RagDb {
                     role: row.get(2)?,
                     content: row.get(3)?,
                     timestamp: row.get(4)?,
-                    token_count: row.get(5)?,
+                    token_count: row.get::<_, i64>(5)? as usize,
                     in_context: row.get::<_, i32>(6)? != 0,
                     #[cfg(feature = "vision")]
                     images: Vec::new(),
@@ -1573,7 +1585,7 @@ impl RagDb {
                 role: row.get(2)?,
                 content: row.get(3)?,
                 timestamp: row.get(4)?,
-                token_count: row.get(5)?,
+                token_count: row.get::<_, i64>(5)? as usize,
                 in_context: row.get::<_, i32>(6)? != 0,
                 #[cfg(feature = "vision")]
                 images: Vec::new(),
@@ -1602,17 +1614,17 @@ impl RagDb {
         let total: usize = self.conn.query_row(
             "SELECT COUNT(*) FROM conversation_messages WHERE user_id = ?1 AND session_id = ?2",
             rusqlite::params![user_id, session_id],
-            |row| row.get(0),
+            |row| row.get::<_, i64>(0).map(|v| v as usize),
         )?;
         let archived: usize = self.conn.query_row(
             "SELECT COUNT(*) FROM conversation_messages WHERE user_id = ?1 AND session_id = ?2 AND in_context = 0",
             rusqlite::params![user_id, session_id],
-            |row| row.get(0),
+            |row| row.get::<_, i64>(0).map(|v| v as usize),
         )?;
         let archived_tokens: usize = self.conn.query_row(
             "SELECT COALESCE(SUM(token_count), 0) FROM conversation_messages WHERE user_id = ?1 AND session_id = ?2 AND in_context = 0",
             rusqlite::params![user_id, session_id],
-            |row| row.get(0),
+            |row| row.get::<_, i64>(0).map(|v| v as usize),
         )?;
         Ok((total, archived, archived_tokens))
     }
@@ -1752,7 +1764,7 @@ impl RagDb {
                     source: row.get(0)?,
                     section: row.get(1)?,
                     content: row.get(2)?,
-                    token_count: row.get(3)?,
+                    token_count: row.get::<_, i64>(3)? as usize,
                 })
             })?
             .filter_map(|r| r.ok())
@@ -1768,8 +1780,8 @@ impl RagDb {
                 Ok(ExportedSource {
                     source: row.get(0)?,
                     content_hash: row.get(1)?,
-                    chunk_count: row.get(2)?,
-                    total_tokens: row.get(3)?,
+                    chunk_count: row.get::<_, i64>(2)? as usize,
+                    total_tokens: row.get::<_, i64>(3)? as usize,
                 })
             })?
             .filter_map(|r| r.ok())
@@ -1820,7 +1832,7 @@ impl RagDb {
                 self.conn.execute(
                     "INSERT INTO knowledge_sources (source, content_hash, chunk_count, total_tokens, indexed_at, updated_at)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
-                    rusqlite::params![source.source, source.content_hash, source.chunk_count, source.total_tokens, now],
+                    rusqlite::params![source.source, source.content_hash, source.chunk_count as i64, source.total_tokens as i64, now],
                 )?;
             }
         }
@@ -1850,7 +1862,7 @@ impl RagDb {
                     chunk.source,
                     chunk.section,
                     chunk.content,
-                    chunk.token_count,
+                    chunk.token_count as i64,
                     now
                 ],
             )?;

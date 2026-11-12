@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.411"
+version = "0.2.412"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -666,7 +666,7 @@ pdf-extract = { version = "0.12", optional = true }
 # Optional egui support for widgets
 egui = { version = "0.27", optional = true }
 # Optional SQLite for RAG storage
-rusqlite = { version = "0.31", features = ["bundled"], optional = true }
+rusqlite = { version = "0.41", features = ["bundled"], optional = true }
 # Tabular data (feature `tabular-sqlite`). Small: csv-core + memchr + itoa + ryu.
 # Used instead of splitting on commas because quoted fields with embedded
 # commas and newlines are a classic source of silently wrong tables.

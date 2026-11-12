@@ -984,7 +984,9 @@ impl KnowledgeGraphStore {
         #[cfg(feature = "analytics")]
         {
             let entity_count: usize = conn
-                .query_row("SELECT COUNT(*) FROM entities", [], |row| row.get(0))
+                .query_row("SELECT COUNT(*) FROM entities", [], |row| {
+                    row.get::<_, i64>(0).map(|v| v as usize)
+                })
                 .unwrap_or(0);
             crate::scalability_monitor::check_scalability(
                 crate::scalability_monitor::Subsystem::KnowledgeGraph,
@@ -1226,7 +1228,7 @@ impl KnowledgeGraphStore {
 
         conn.execute(
             "INSERT INTO chunks (source_doc, content, position, content_hash) VALUES (?1, ?2, ?3, ?4)",
-            params![source_doc, content, position, content_hash],
+            params![source_doc, content, position as i64, content_hash],
         )?;
 
         Ok(conn.last_insert_rowid())
@@ -1246,7 +1248,7 @@ impl KnowledgeGraphStore {
                VALUES (?1, ?2, ?3, ?4, 1)
                ON CONFLICT(entity_id, chunk_id) DO UPDATE SET
                    mention_count = mention_count + 1"#,
-            params![entity_id, chunk_id, position, context],
+            params![entity_id, chunk_id, position.map(|p| p as i64), context],
         )?;
         Ok(())
     }
@@ -1283,7 +1285,7 @@ impl KnowledgeGraphStore {
             .map(|id| Box::new(*id) as Box<dyn rusqlite::ToSql>)
             .collect();
         params_vec.push(Box::new(
-            self.config.max_chunks_per_entity * entity_ids.len(),
+            (self.config.max_chunks_per_entity * entity_ids.len()) as i64,
         ));
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
@@ -1330,24 +1332,30 @@ impl KnowledgeGraphStore {
     pub fn get_stats(&self) -> Result<GraphStats> {
         let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
 
-        let total_entities: usize =
-            conn.query_row("SELECT COUNT(*) FROM entities", [], |row| row.get(0))?;
+        let total_entities: usize = conn.query_row("SELECT COUNT(*) FROM entities", [], |row| {
+            row.get::<_, i64>(0).map(|v| v as usize)
+        })?;
 
         let total_relations: usize =
-            conn.query_row("SELECT COUNT(*) FROM relations", [], |row| row.get(0))?;
+            conn.query_row("SELECT COUNT(*) FROM relations", [], |row| {
+                row.get::<_, i64>(0).map(|v| v as usize)
+            })?;
 
-        let total_chunks: usize =
-            conn.query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))?;
+        let total_chunks: usize = conn.query_row("SELECT COUNT(*) FROM chunks", [], |row| {
+            row.get::<_, i64>(0).map(|v| v as usize)
+        })?;
 
         let total_mentions: usize =
-            conn.query_row("SELECT COUNT(*) FROM entity_mentions", [], |row| row.get(0))?;
+            conn.query_row("SELECT COUNT(*) FROM entity_mentions", [], |row| {
+                row.get::<_, i64>(0).map(|v| v as usize)
+            })?;
 
         let mut entities_by_type = HashMap::new();
         {
             let mut stmt =
                 conn.prepare("SELECT entity_type, COUNT(*) FROM entities GROUP BY entity_type")?;
             let rows = stmt.query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, usize>(1)?))
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as usize))
             })?;
             for row in rows {
                 let (t, c) = row?;
@@ -1360,7 +1368,7 @@ impl KnowledgeGraphStore {
             let mut stmt = conn
                 .prepare("SELECT relation_type, COUNT(*) FROM relations GROUP BY relation_type")?;
             let rows = stmt.query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, usize>(1)?))
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as usize))
             })?;
             for row in rows {
                 let (t, c) = row?;

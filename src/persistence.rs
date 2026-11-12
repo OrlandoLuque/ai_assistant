@@ -960,7 +960,9 @@ impl PersistentCache {
     fn enforce_max_entries(&mut self) -> Result<()> {
         let count: usize =
             self.conn
-                .query_row("SELECT COUNT(*) FROM cache_entries", [], |row| row.get(0))?;
+                .query_row("SELECT COUNT(*) FROM cache_entries", [], |row| {
+                    row.get::<_, i64>(0).map(|v| v as usize)
+                })?;
 
         if count > self.config.max_entries {
             // Delete oldest entries based on last_accessed
@@ -969,7 +971,7 @@ impl PersistentCache {
                 "DELETE FROM cache_entries WHERE key IN (
                     SELECT key FROM cache_entries ORDER BY last_accessed ASC LIMIT ?1
                 )",
-                [to_delete],
+                [to_delete as i64],
             )?;
         }
 
@@ -980,31 +982,33 @@ impl PersistentCache {
     pub fn get_stats(&self) -> Result<CacheStats> {
         let total_entries: usize =
             self.conn
-                .query_row("SELECT COUNT(*) FROM cache_entries", [], |row| row.get(0))?;
+                .query_row("SELECT COUNT(*) FROM cache_entries", [], |row| {
+                    row.get::<_, i64>(0).map(|v| v as usize)
+                })?;
 
         let now = Utc::now().to_rfc3339();
         let expired_entries: usize = self.conn.query_row(
             "SELECT COUNT(*) FROM cache_entries WHERE expires_at < ?1",
             [&now],
-            |row| row.get(0),
+            |row| row.get::<_, i64>(0).map(|v| v as usize),
         )?;
 
         let total_access_count: u64 = self.conn.query_row(
             "SELECT COALESCE(SUM(access_count), 0) FROM cache_entries",
             [],
-            |row| row.get(0),
+            |row| row.get::<_, i64>(0).map(|v| v as u64),
         )?;
 
         let compressed_entries: usize = self.conn.query_row(
             "SELECT COUNT(*) FROM cache_entries WHERE compressed = 1",
             [],
-            |row| row.get(0),
+            |row| row.get::<_, i64>(0).map(|v| v as usize),
         )?;
 
         let total_size: usize = self.conn.query_row(
             "SELECT COALESCE(SUM(LENGTH(value)), 0) FROM cache_entries",
             [],
-            |row| row.get(0),
+            |row| row.get::<_, i64>(0).map(|v| v as usize),
         )?;
 
         Ok(CacheStats {
@@ -1043,9 +1047,9 @@ impl PersistentCache {
                     compressed: row.get::<_, i32>(0)? != 0,
                     created_at: row.get(1)?,
                     expires_at: row.get(2)?,
-                    access_count: row.get(3)?,
+                    access_count: row.get::<_, i64>(3)? as u64,
                     last_accessed: row.get(4)?,
-                    size_bytes: row.get(5)?,
+                    size_bytes: row.get::<_, i64>(5)? as usize,
                 })
             },
         );
