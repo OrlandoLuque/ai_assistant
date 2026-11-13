@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v334 (2026-11-13) - V454b: el trabajo nuevo tarda 106 s, y la decision de presupuesto que esperaba esa cifra llevaba dos anos sin ella (0.2.417)
+
+V454 anadio el trabajo de CI que compila `skill-forge` dejando una cosa escrita a medias: *"la
+primera ejecucion de este trabajo es la que da el numero"*. Esa ejecucion ya ocurrio, el numero
+existe, y dejarlo fuera seria dejar en el CHANGELOG una afirmacion que ya no es verdad --- que
+es exactamente el defecto que V449b, V451 y V452 vienen de corregir.
+
+**La primera ejecucion, sin cache que reusar (`Swatinem/rust-cache` con una `key` nueva y vacia):**
+
+```
+Skill Forge - el unico camino a wasmtime        success    106 s
+```
+
+En la misma ejecucion de CI, para que la cifra signifique algo:
+
+| trabajo | duracion |
+|---------|----------|
+| Benchmarks | 966 s |
+| Tabular --- Polars engine and cross-engine agreement | 382 s |
+| Tests | 343 s |
+| Functional Test Battery | 287 s |
+| Clippy | 228 s |
+| Security Audit | 202 s |
+| **Skill Forge** | **106 s** |
+
+Y el total de la ejecucion: **16 m 10 s**, contra los **19 m 41 s** de la de V450. O sea que el
+trabajo nuevo **no alargo el camino critico en absoluto**: los trabajos corren en paralelo y
+este es el mas corto de los que compilan Rust.
+
+### Por que esto importa mas que 106 segundos
+
+`UNCOVERED_BACKLOG` justificaba sus 21 entradas con que *"the cost of closing this list is CI
+minutes, not repair work. That is a budget decision for the maintainer"*. Esa decision estaba
+aparcada esperando una cifra, y la cifra era **106 s y cero impacto en el reloj de pared**. No
+es que la decision se tomara mal: es que llevaba desde V313 sin el dato con el que se iba a
+tomar.
+
+Las 20 que quedan en la lista merecen el mismo tratamiento --- medirlas antes de seguir
+defiriendolas --- y ahora hay un metodo y un precio de referencia para hacerlo. Esa es la
+tarea; esta entrada solo pone la primera medida.
+
+### Verificado
+
+CI y Supply Chain **verdes** en `ec1c20d` (ejecuciones 43338549098 y 43338549255), con el
+trabajo nuevo entre ellos. Las duraciones salen de
+`gh run view 43338549098 --json jobs`, restando `startedAt` de `completedAt` por trabajo: no son
+una estimacion ni una lectura a ojo de la interfaz.
+
 ## [Unreleased] - v333 (2026-11-13) - V454: nadie compilaba wasmtime, y el coste que lo justificaba no estaba medido (0.2.416)
 
 `skill-forge` es la **unica** feature que mete `wasmtime`, y hasta hoy ningun trabajo de
@@ -42,11 +90,13 @@ trabajo, `tabular-polars`, dice exactamente lo que faltaba hacer aqui:
 
 > the fix is to add the job when the feature lands, not later
 
-Lo que **sigue sin medir** es el tiempo de pared, y conviene decirlo: las 72 cajas son el mundo
-de cranelift, cuyo build script genera codigo ISLE, y el numero de cajas no predice los
-minutos. En esta maquina el `cargo check` tardo **52 s**, pero con la cache caliente de V449,
-asi que esa cifra es la incremental y no la que paga un runner en frio. **La primera ejecucion
-de este trabajo es la que da el numero**, y por eso no se ha estimado aqui.
+Lo que **seguia sin medir** cuando se escribio esta entrada era el tiempo de pared: las 72
+cajas son el mundo de cranelift, cuyo build script genera codigo ISLE, y el numero de cajas no
+predice los minutos. En esta maquina el `cargo check` tardo **52 s**, pero con la cache caliente
+de V449, asi que esa cifra es la incremental y no la que paga un runner en frio.
+
+**Ya esta medido, y lo cuenta V454b**: la primera ejecucion del trabajo, sin cache que reusar,
+tardo **106 s**.
 
 ### El trabajo, y por que `--lib` y sin tests
 
