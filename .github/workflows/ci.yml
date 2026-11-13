@@ -444,10 +444,6 @@ jobs:
       # paralelo a `check_rustsec_ignores.py` y que se borro por esto mismo.
       #
       # El indice, en el mismo orden que los flags de abajo:
-      #   RUSTSEC-2026-0391  zstd: fuga entre flujos en un contexto reutilizado
-      #   RUSTSEC-2026-0398  zstd-safe: `Seekable::decompress` pone len > capacity
-      #   RUSTSEC-2026-0403  zstd-safe: memoria sin inicializar en frame legacy
-      #   RUSTSEC-2026-0410  zstd-sys: shim del asignador de WebAssembly
       #   RUSTSEC-2025-0141  bincode 1.3.3 sin mantenimiento (declarado por nosotros)
       #   RUSTSEC-2024-0436  paste sin mantenimiento (22 dependientes, egui no)
       #   RUSTSEC-2025-0134  rustls-pemfile sin mantenimiento (declarado por nosotros)
@@ -469,10 +465,6 @@ jobs:
       - name: Run cargo audit
         run: |
           cargo audit \
-            --ignore RUSTSEC-2026-0391 \
-            --ignore RUSTSEC-2026-0398 \
-            --ignore RUSTSEC-2026-0403 \
-            --ignore RUSTSEC-2026-0410 \
             --ignore RUSTSEC-2025-0141 \
             --ignore RUSTSEC-2024-0436 \
             --ignore RUSTSEC-2025-0134 \

@@ -5,6 +5,131 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v330 (2026-11-13) - V451: catorce avisos y cuatro supresiones que sobraban, porque la razon escrita media el crate equivocado (0.2.413)
+
+V450 dejo CI verde arreglando cuatro vulnerabilidades. Esta entrada va a por lo que CI **no
+mira**: los hallazgos `informational` que `cargo audit` lista y que no hacen fallar nada,
+porque el paso de CI no lleva `-D`. Eran **16**. Quedan **2**.
+
+Y por el camino resulta que cuatro de las supresiones de la lista tampoco hacian falta: el
+arreglo existia desde el primer dia. Seis `cargo update`, ni una linea de codigo.
+
+### La razon heredada que era falsa, y por que es peor que un olvido
+
+La familia `zstd` tenia cuatro advisories suprimidos desde el 2026-10-26 --- `RUSTSEC-2026-0391`
+(zstd), `-0398` y `-0403` (zstd-safe), `-0410` (zstd-sys) --- con esta razon escrita:
+
+> ARREGLO UPSTREAM: zstd >=0.14.3, zstd-safe >=8.2.0, zstd-sys >=2.1.2.
+> **NO es alcanzable, y esto se PROBO, no se supuso:**
+>
+>     $ cargo update -p zstd --precise 0.14.3
+>     error: failed to select a version for the requirement `zstd = "^0.13"`
+>     required by package `lance-encoding v2.0.0`
+
+Y seguia con los cinco padres leidos de sus manifiestos, y con la conclusion de que la unica
+alternativa era **quitar `vector-lancedb` y `tabular-polars`**.
+
+**Todo eso es cierto.** El comando se ejecuto, el error es real, los cinco padres anclan
+`zstd = "^0.13"`. El fallo esta en QUE version se probo: cada uno de esos advisories declara
+**dos** rangos parcheados, y solo se anoto el de arriba.
+
+```
+RUSTSEC-2026-0391   patched = ["^0.13.4", ">= 0.14.3"]
+RUSTSEC-2026-0398   patched = ["^7.4.0",  ">= 8.2.0"]
+RUSTSEC-2026-0403   patched = ["^7.4.0",  ">= 8.2.0"]
+RUSTSEC-2026-0410   patched = [">= 2.1.2"]
+```
+
+`^0.13.4` cabe dentro del `^0.13` que anclan los cinco padres. `^7.4.0` cabe dentro del `7`
+que pide `zstd`. Medido el 2026-11-13, dos comandos:
+
+```
+cargo update -p zstd      --precise 0.13.4    zstd 0.13.3 -> 0.13.4
+cargo update -p zstd-safe --precise 7.4.0     zstd-safe 7.2.4 -> 7.4.0
+                                              zstd-sys 2.0.16 -> 2.1.3
+```
+
+Tres semanas de supresion de **vulnerabilidades reales** --- una de ellas, 0391, «COMPILADO y
+en el camino normal» por su propia nota --- sostenidas por una medicion correcta de la pregunta
+equivocada. Esa es la forma que el defecto tiene aqui siempre, y ya tiene memoria propia
+(`project_two_checkers_one_rule`: *su «OK» era verdad y mas pequeno que la pregunta*). Lo nuevo
+es el sitio: no estaba en un comentario de cortesia, estaba **sosteniendo la decision de no
+mirar**.
+
+Las cuatro se **borran** de las tres listas, no se renuevan, porque su bloqueo se levanto ---
+la misma regla que se aplico a `RUSTSEC-2026-0222` en V276 y a `-0187` en V355. En su sitio
+queda escrito por que, con los rangos delante, para que nadie repita la medicion pequena.
+
+**Supresiones: 16 -> 12.**
+
+### Las catorce informacionales, cada una medida
+
+| advisory | caja | teniamos | parcheado en |
+|----------|------|----------|--------------|
+| `RUSTSEC-2026-0442` | arrow-data (+buffer, +schema) | 57.3.0 | >= 57.3.2 |
+| `RUSTSEC-2026-0221` | event-listener | 5.4.1 | >= 5.4.2 |
+| `RUSTSEC-2026-0186` | memmap2 | 0.9.10 | >= 0.9.11 |
+| `RUSTSEC-2026-0486` | rustix | 1.1.4 | >= 1.1.6 |
+| `-0395` `-0396` `-0397` `-0399` `-0400` `-0401` `-0402` `-0404` `-0405` `-0406` | zstd-safe | 7.2.4 | `^7.4.0` |
+
+La que mas importa, y la que explica que esto no sea cosmetica: **`RUSTSEC-2026-0442` es una
+lectura fuera de limites** en la validacion de arrays `RunEndEncoded` (`CVE-2026-111959`), nos
+afectaba, tenia arreglo de parche desde el **2 de noviembre**, y estuvo once dias invisible
+entre quince avisos que nadie lee porque ninguno rompe nada.
+
+Dos detalles que costaron un intento cada uno:
+
+- `rustix` necesita `-p rustix@1.1.4`: hay **dos** en el lock (0.38.44 y 1.1.6) y a secas la
+  especificacion es ambigua. La 0.38.44 no esta afectada (`unaffected = ["< 1.0.0"]`).
+- `arrow-data` arrastra `arrow-buffer` y `arrow-schema`, que es lo esperado: se publican juntas.
+
+### Las dos que quedan, y que NO se tocan aqui
+
+| hallazgo | caja | por que no |
+|----------|------|------------|
+| `RUSTSEC-2026-0253` | lru 0.12.5 | parcheado en >= 0.18.2, y de 0.12 a 0.18 es un salto **mayor** en una 0.x; la caja entra por tantivy/lance |
+| yanked | clipboard-win 5.4.1 | retirada de crates.io; entra por `arboard` <- `egui-winit` <- `eframe` 0.27.2, o sea que salir de ahi es subir la pila de egui entera |
+
+Esas dos son el trabajo de la siguiente entrada, junto al `-D unsound -D yanked` que haria que
+un aviso nuevo **si** rompiera CI. Con catorce fuera, denegar deja de significar «pintar de
+rojo lo que nadie puede arreglar» y pasa a ser lo que debio ser siempre: dos entradas con razon
+escrita y fecha, el mismo trato que este repositorio da a las vulnerabilidades desde V401.
+
+Hay un cabo que conviene saber antes de escribir ese paso: el aviso de `clipboard-win` es
+`yanked` **sin ID de advisory**, asi que `-D yanked` no se puede acompanar de un
+`--ignore RUSTSEC-...` que lo excuse. O se sube la pila de egui, o `-D yanked` entra mas tarde
+que `-D unsound`.
+
+### Verificado
+
+Las mismas dieciseis puertas de CI que V450, en local, con `rustc 1.98.0`:
+
+```
+cargo check x6 (full, STD, NETWORK, MIN, tabular, tabular-polars)   exit 0
+cargo fmt -- --check                                               limpio
+cargo clippy x4 --all-targets -- -D warnings                       exit 0
+cargo test --features FEATURES_STD --lib                           9136 passed, 0 failed
+cargo test --features FEATURES_STD --test '*'                      todas ok
+cargo test --no-default-features --features FEATURES_MIN           5310 passed, 0 failed
+cargo test --features FEATURES_STD --doc                             98 passed, 0 failed
+cargo test --features tabular,tabular-polars --lib tabular           55 passed, 0 failed
+cargo test ... --lib rag::                                          103 passed, 0 failed
+```
+
+Cero fallos y cero avisos. Y las dos herramientas de supply chain, con la base de advisories al
+2026-11-12:
+
+```
+cargo audit   exit 0, y de 16 hallazgos informacionales quedan 2
+cargo deny    advisories ok, bans ok, licenses ok, sources ok
+check_rustsec_ignores.py  -> OK - 12 suppressed advisories, identical in the three files
+check_recheck_dates.py    -> OK: las 12 supresiones tienen re-chequeo vigente
+```
+
+Las dos puertas de las supresiones se ejecutaron **despues** de borrar las cuatro, que es
+cuando valen: confirman que las tres listas siguen diciendo lo mismo y que ninguna de las doce
+que quedan tiene la fecha pasada.
+
 ## [Unreleased] - v329 (2026-11-13) - V450: el SQLite que empaquetamos devolvia memoria ajena, y arreglar el rojo del lunes no bastaba (0.2.412)
 
 `Supply Chain` fallo el **lunes 2026-11-09** y se descubrio el **viernes 13**, mirandolo a
