@@ -448,6 +448,7 @@ jobs:
       #   RUSTSEC-2024-0436  paste sin mantenimiento (22 dependientes, egui no)
       #   RUSTSEC-2025-0134  rustls-pemfile sin mantenimiento (declarado por nosotros)
       #   RUSTSEC-2026-0002  lru: `IterMut` unsound (transitiva, tantivy/lance)
+      #   RUSTSEC-2026-0253  lru: use-after-free por panico en `pop()` (idem)
       #   RUSTSEC-2026-0194  quick-xml: tiempo cuadratico en atributos duplicados
       #   RUSTSEC-2026-0195  quick-xml: asignacion ilimitada de namespaces
       #   RUSTSEC-2026-0192  ttf-parser sin mantenimiento (dos raices: lopdf y egui)
@@ -457,11 +458,29 @@ jobs:
       #   RUSTSEC-2026-0429  zip: abort del proceso por el tamano de un symlink
       #   RUSTSEC-2026-0257  webbrowser: inyeccion de argumentos via BROWSER
       #
-      # Dos que ESTUVIERON aqui y se borraron, para que nadie las reponga:
-      # RUSTSEC-2026-0187 (lopdf, V355) y RUSTSEC-2026-0222 (wasmtime, V276).
-      # Las dos se fueron porque su bloqueo se levanto, y una entrada asi se
+      # Seis que ESTUVIERON aqui y se borraron, para que nadie las reponga:
+      # RUSTSEC-2026-0187 (lopdf, V355), RUSTSEC-2026-0222 (wasmtime, V276) y
+      # las cuatro de la familia zstd --- 0391, 0398, 0403, 0410 --- en V451.
+      # Todas se fueron porque su bloqueo se levanto, y una entrada asi se
       # BORRA, no se renueva. Las cuatro de wasmtime del 2026-10-29 no llegaron
       # a entrar por lo mismo: el parche cabia en `^49.0.2` (V449).
+      #
+      # Las de zstd merecen una linea aparte porque llevaban tres semanas y su
+      # razon escrita decia que el arreglo "NO es alcanzable, y esto se PROBO".
+      # Se probo de verdad, con `--precise 0.14.3`, y fallo de verdad. Lo que no
+      # se miro es que esos advisories declaran DOS rangos parcheados: `^0.13.4`
+      # y `^7.4.0` cabian dentro de los anclajes existentes. Al leer un
+      # advisory, `patched` es una LISTA.
+      #
+      # Y los tres `-D` del final del comando son V452. Hasta ese dia este paso
+      # llevaba SOLO `--ignore`, sin un `-D`, asi que las informacionales
+      # (`unsound`, `yanked`, `unmaintained`) no hacian fallar nada NUNCA: el
+      # 2026-11-13 se tragaba DIECISEIS, y una de ellas --- RUSTSEC-2026-0442,
+      # una lectura fuera de limites en arrow-data --- llevaba once dias
+      # invisible con un arreglo de parche disponible. V451 arreglo quince con
+      # seis `cargo update` y la que quedaba quedo suprimida con su razon, asi
+      # que denegar ya no significa pintar de rojo lo que nadie puede arreglar:
+      # significa que la proxima informacional se ve el dia que aparece.
       - name: Run cargo audit
         run: |
           cargo audit \
@@ -469,6 +488,7 @@ jobs:
             --ignore RUSTSEC-2024-0436 \
             --ignore RUSTSEC-2025-0134 \
             --ignore RUSTSEC-2026-0002 \
+            --ignore RUSTSEC-2026-0253 \
             --ignore RUSTSEC-2026-0194 \
             --ignore RUSTSEC-2026-0195 \
             --ignore RUSTSEC-2026-0192 \
@@ -476,7 +496,10 @@ jobs:
             --ignore RUSTSEC-2026-0368 \
             --ignore RUSTSEC-2026-0369 \
             --ignore RUSTSEC-2026-0429 \
-            --ignore RUSTSEC-2026-0257
+            --ignore RUSTSEC-2026-0257 \
+            -D unsound \
+            -D yanked \
+            -D unmaintained
 
   # The expensive tabular engine, on its own because it drags 397 crates and
   # 49.3 MiB (measured). Putting it in FEATURES_STD would slow every other job

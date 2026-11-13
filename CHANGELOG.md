@@ -5,6 +5,109 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v331 (2026-11-13) - V452: la mitad de la politica que nunca se aplico, y el aviso que la hacia falsa (0.2.414)
+
+Este repositorio trata cada supresion de advisory como una **afirmacion escrita con fecha de
+re-chequeo**, y tiene dos puertas de CI que lo vigilan. Esa politica llevaba meses aplicandose
+a **la mitad** del problema.
+
+El paso de `cargo audit` llevaba trece `--ignore` y **ningun `-D`**. Sin `-D`, los hallazgos
+`informational` --- `unsound`, `yanked`, `unmaintained` --- no hacen fallar nada **nunca**. No
+es que estuvieran suprimidos con una razon: es que no habia nada que suprimir, porque no
+rompian. Para una vulnerabilidad, silencio = una afirmacion firmada y fechada. Para una
+informacional, silencio = silencio.
+
+El coste ya se materializo y esta medido en V451: el 2026-11-13 ese paso se tragaba
+**dieciseis** hallazgos, y uno de ellos --- `RUSTSEC-2026-0442`, una **lectura fuera de
+limites** en `arrow-data` --- llevaba **once dias** invisible con un arreglo de parche
+disponible desde el 2 de noviembre.
+
+### Lo que cambia
+
+```
+ cargo audit \
+   --ignore ... (trece) \
++  -D unsound \
++  -D yanked \
++  -D unmaintained
+```
+
+En `ci.yml` y en su espejo `supply-chain.yml`, que es el que corre los lunes.
+
+**Y un bump mas, que es el que hace seguro el `-D yanked`:** `clipboard-win` 5.4.1 -> **5.4.3**.
+V451 dejo ese `yanked` como el segundo de los dos hallazgos que parecian inalcanzables, con la
+nota de que salir de ahi era "subir la pila de egui entera" --- porque entra por
+`arboard` <- `egui-winit` <- `eframe` 0.27.2. Falso otra vez, y por el mismo motivo que la
+familia `zstd`: nadie habia probado el rango pequeno. Hay **5.4.2 y 5.4.3 sin retirar dentro
+del mismo `^5`**, asi que un `cargo update` lo resuelve. Era la tercera vez en una noche que
+"no alcanzable" significaba "no medido", y esta vez la escribi yo.
+
+Esto **solo se podia hacer despues de V451**, y no por orden estetico: antes de V451 habia
+quince informacionales mas, catorce de ellas arreglables con un `cargo update`. Denegar
+entonces habria significado pintar de rojo lo que si se podia arreglar, y la respuesta natural
+habria sido escribir catorce supresiones --- catorce afirmaciones que habria habido que borrar
+a los dos dias. El orden era: **arreglar lo arreglable primero, denegar despues.**
+
+### La unica que queda, y por que esta vez la razon si esta medida
+
+`RUSTSEC-2026-0253` --- `lru` 0.12.5, posible use-after-free por falta de seguridad ante
+panico en `LruCache::pop()`. Entra a las tres listas con su razon:
+
+```
+$ cargo update -p lru@0.12.5 --precise 0.18.2
+error: failed to select a version for the requirement `lru = "^0.12.0"`
+required by package `tantivy v0.24.2`
+```
+
+De 0.12 a 0.18 es un salto **mayor** en una 0.x, asi que no cabe en ese `^`. La cadena es
+`lru <- tantivy 0.24.2 <- lance / lance-index <- lancedb 0.26.2 <- nosotros`, por la feature
+`vector-lancedb`.
+
+Y la diferencia con la familia `zstd` que V451 borro --- cuya razon decia tambien "NO es
+alcanzable, y esto se PROBO" --- es exactamente una: **aqui se comprobo el rango pequeno**.
+Ese advisory declara un `patched` unico, `[">= 0.18.2"]`, y no existe version parcheada dentro
+de 0.12. En las de `zstd` habia dos rangos y solo se miro el de arriba.
+
+Alcance: no llamamos a `pop()` --- lo usa el cache interno de tantivy --- y el fallo necesita
+ademas que el destructor de una clave o de un valor entre en panico.
+`Re-check by: 2027-02-13` O cuando tantivy publique con `lru >= 0.18.2`, y entonces se BORRA.
+
+**Supresiones: 12 -> 13.** Es la primera vez en mucho tiempo que la lista crece, y crece
+porque la vara **sube**: trece afirmaciones vigiladas valen mas que doce afirmaciones y
+dieciseis silencios.
+
+### Dos notas que este cambio convirtio en falsas, y que van arregladas
+
+Las dos estaban en el mismo sitio donde este repositorio ya ha encontrado el defecto tres
+veces, y las dos eran ciertas cuando se escribieron:
+
+- **`deny.toml`, sobre `RUSTSEC-2026-0253`**: decia que *no hacia falta* ponerla en la lista
+  "porque cargo-audit la clasifica `unsound`, y eso solo avisa". Cierto durante tres semanas, y
+  falso el dia que este commit anade `-D unsound`. Reescrita, con la entrada justo debajo.
+- **`ci.yml`, la nota de las borradas**: decia "Dos que ESTUVIERON aqui", y despues de V451 son
+  **seis**. Ahora las nombra todas y explica el fallo de medicion de las cuatro de `zstd`, para
+  que nadie repita la medicion pequena.
+
+### Verificado
+
+Con los flags **leidos del propio `ci.yml`**, no escritos a mano --- que es la unica forma de
+comprobar que el fichero produce el comando que creo que produce:
+
+```
+supresiones leidas del fichero : 13
+flags de denegacion leidos     : -D unsound -D yanked -D unmaintained
+
+cargo audit -n --db <base al 2026-11-12> <los 13> <los 3 -D>   exit 0, sin un hallazgo
+cargo deny check advisories licenses bans sources              advisories ok, bans ok,
+                                                               licenses ok, sources ok
+check_rustsec_ignores.py  -> OK - 13 suppressed advisories, identical in the three files
+check_recheck_dates.py    -> OK: las 13 supresiones tienen re-chequeo vigente
+```
+
+Y la comprobacion que de verdad prueba que la puerta nueva **muerde**: con la supresion de
+`lru` fuera de la lista, los tres `-D` dan `error: 1 denied warning found!`. Una puerta que no
+se ha visto fallar no es una puerta.
+
 ## [Unreleased] - v330 (2026-11-13) - V451: catorce avisos y cuatro supresiones que sobraban, porque la razon escrita media el crate equivocado (0.2.413)
 
 V450 dejo CI verde arreglando cuatro vulnerabilidades. Esta entrada va a por lo que CI **no

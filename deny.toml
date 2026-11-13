@@ -212,12 +212,36 @@ ignore = [
     # fails on. A re-check moves the date.
     # Also new since V385: a SECOND lru advisory, RUSTSEC-2026-0253 (potential
     # use-after-free from missing panic safety in `LruCache::pop()`), is now in
-    # the database for 0.12.5. It is NOT in this list and does not need to be:
-    # cargo-audit classes it `unsound`, which it only warns about, and
-    # cargo-deny does not report it. Noted so the next reader is not surprised
-    # by a second id on the same crate.
+    # the database for 0.12.5. Hasta V452 esta nota decia que NO hacia falta
+    # ponerla en la lista, "porque cargo-audit la clasifica `unsound`, y eso
+    # solo avisa". Era cierto y duro tres semanas: V452 anadio `-D unsound` al
+    # paso de audit y esa frase dejo de ser verdad el mismo dia. La entrada
+    # esta justo debajo, con su propia razon medida.
     # Re-check by: 2027-02-15
     "RUSTSEC-2026-0002",
+    # lru 0.12.5: posible use-after-free por falta de seguridad ante panico en
+    # `LruCache::pop()`. Transitiva, y NO alcanzable con un bump de lock ---
+    # medido el 2026-11-13, no supuesto. El parche esta en >= 0.18.2:
+    #
+    #   $ cargo update -p lru@0.12.5 --precise 0.18.2
+    #   error: failed to select a version for the requirement `lru = "^0.12.0"`
+    #   required by package `tantivy v0.24.2`
+    #
+    # De 0.12 a 0.18 es un salto MAYOR en una 0.x, asi que no cabe en ese `^`.
+    # La cadena es `lru <- tantivy 0.24.2 <- lance / lance-index <- lancedb
+    # 0.26.2 <- nosotros`, por la feature `vector-lancedb`.
+    #
+    # Y a diferencia de la familia zstd que V451 borro, aqui SI se comprobo el
+    # rango pequeno: este advisory declara un `patched` unico y no existe
+    # version parcheada dentro de 0.12. Esa es la diferencia entre una razon
+    # medida y una razon que mide el crate equivocado.
+    #
+    # Alcance: no llamamos a `pop()` --- lo usa el cache interno de tantivy ---
+    # y el fallo necesita ademas que el destructor de una clave o de un valor
+    # entre en panico.
+    # Re-check by: 2027-02-13 O cuando tantivy publique con `lru >= 0.18.2`
+    # --- entonces BORRAR, no renovar.
+    "RUSTSEC-2026-0253",
     # (RUSTSEC-2026-0187 was here -- lopdf stack overflow. DELETED in V355,
     #  not renewed: its own re-check condition had come true. pdf-extract
     #  0.12.1 depends on lopdf ^0.42, so 0.7 -> 0.12 fixed it at the source.
