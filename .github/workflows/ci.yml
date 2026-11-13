@@ -563,6 +563,43 @@ jobs:
       - name: Polars engine alone
         run: cargo check --no-default-features --features "tabular-polars" --lib
 
+  skill-forge:
+    name: Skill Forge - el unico camino a wasmtime
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # V454. `skill-forge` es la UNICA feature que mete wasmtime, y hasta hoy
+    # ningun trabajo de este fichero la encendia: `grep -c skill-forge ci.yml`
+    # daba 0, y no hay un solo `--all-features` en ningun workflow.
+    #
+    # Eso ya costo algo concreto, no hipotetico: V449 subio wasmtime 49.0.4 ->
+    # 49.0.5 para arreglar CUATRO advisories y CI no pudo confirmar el bump ---
+    # se verifico a mano, en una maquina. Un arreglo de seguridad cuya
+    # compilacion depende de que alguien se acuerde de ejecutar un comando no
+    # esta verificado: esta recordado.
+    #
+    # COSTE MEDIDO (2026-11-13, `cargo tree --offline -e normal` contra `full`):
+    # +72 cajas y +9,7 MiB de `.crate`. Es la MITAD del trabajo
+    # `tabular-polars` de arriba, que ya se paga en cada ejecucion (+140 cajas,
+    # +20,4 MiB) --- y cuyo propio comentario dice justo lo que faltaba aqui:
+    # el arreglo es anadir el trabajo cuando la feature entra, no despues.
+    # Lo que NO esta medido es el tiempo de pared: las 72 cajas son el mundo de
+    # cranelift, cuyo build script genera codigo ISLE, y el numero de cajas no
+    # predice los minutos. La primera ejecucion de este trabajo da esa cifra.
+    #
+    # `--lib` y sin tests, a proposito: la pregunta que este trabajo contesta es
+    # "compila wasmtime", que es la que estaba sin contestar, y es exactamente
+    # el comando que se corria a mano. Pasar a
+    # `cargo test --features skill-forge --lib skill_forge` contesta otra
+    # ("se prueba"), cuesta mas minutos y es decision del autor.
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.98.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: skill-forge
+      - name: Compile the WASM skill engine
+        run: cargo check --features skill-forge --lib
+
   feature-matrix:
     name: Feature Matrix (${{ matrix.features }})
     runs-on: ubuntu-latest

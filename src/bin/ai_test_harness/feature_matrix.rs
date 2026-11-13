@@ -160,7 +160,20 @@ const UNCOVERED_BACKLOG: &[&str] = &[
     "local-inference-candle",
     "embeddings-local",
     "redis-backend",
-    "skill-forge",
+    // V454 saco `skill-forge` de esta lista al darle su propio trabajo en CI
+    // (`cargo check --features skill-forge --lib`). Era la unica feature que
+    // mete wasmtime, y de las 21 de aqui la unica que esconde una dependencia
+    // con historial de seguridad: V449 subio wasmtime para arreglar cuatro
+    // advisories y ningun trabajo pudo confirmar el bump.
+    //
+    // El coste que esta lista pesaba resulto ser la mitad del de
+    // `tabular-polars`, que CI ya paga: +72 cajas contra +140 (medido el
+    // 2026-11-13). O sea que la decision de presupuesto que esta nota dejaba
+    // al mantenedor se tomo con una cifra que nadie habia medido.
+    //
+    // El trinquete de abajo es de doble sentido y por eso el trabajo nuevo y
+    // este borrado van en el MISMO commit --- igual que V330 con
+    // `local-inference`.
     "prompt-synthesis",
     "feedback-loop",
     "prompt-breeder",

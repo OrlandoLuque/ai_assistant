@@ -5,6 +5,97 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v333 (2026-11-13) - V454: nadie compilaba wasmtime, y el coste que lo justificaba no estaba medido (0.2.416)
+
+`skill-forge` es la **unica** feature que mete `wasmtime`, y hasta hoy ningun trabajo de
+`ci.yml` la encendia: `grep -c skill-forge .github/workflows/ci.yml` daba **0**, y no hay un
+solo `--all-features` en ningun workflow del repositorio.
+
+Eso ya costo algo concreto, no hipotetico: **V449 subio wasmtime 49.0.4 -> 49.0.5 para
+arreglar cuatro advisories y CI no pudo confirmar el bump**. Se verifico a mano, en una
+maquina, con `cargo check --features skill-forge --lib`. Un arreglo de seguridad cuya
+compilacion depende de que alguien se acuerde de ejecutar un comando no esta verificado: esta
+**recordado**.
+
+### No era un olvido, y eso es lo interesante
+
+`src/bin/ai_test_harness/feature_matrix.rs` mantiene `UNCOVERED_BACKLOG`: **21 features que
+ningun trabajo de CI compila**, con `skill-forge` entre ellas desde que la lista existe
+(V313), medidas el 2026-09-11 --- todas compilan, ninguna esta rota --- y con una razon
+escrita:
+
+> the cost of closing this list is CI minutes, not repair work. That is a budget decision for
+> the maintainer, which is why the list records the fact rather than acting on it.
+
+Una decision de presupuesto aparcada a conciencia, no un descuido. El problema es que **el
+presupuesto no estaba medido**. Medido ahora, con `cargo tree --offline -e normal` contra
+`full` como base:
+
+| conjunto | cajas nuevas | `.crate` a descargar |
+|----------|--------------|----------------------|
+| `full` (base) | --- (223 en total) | 37,4 MiB |
+| `+ skill-forge` | **+72** | **+9,7 MiB** |
+| `+ tabular,tabular-polars` | +140 | +20,4 MiB |
+
+O sea: **la mitad** de un trabajo que CI ya paga en cada ejecucion. Y el comentario de ese
+trabajo, `tabular-polars`, dice exactamente lo que faltaba hacer aqui:
+
+> the fix is to add the job when the feature lands, not later
+
+Lo que **sigue sin medir** es el tiempo de pared, y conviene decirlo: las 72 cajas son el mundo
+de cranelift, cuyo build script genera codigo ISLE, y el numero de cajas no predice los
+minutos. En esta maquina el `cargo check` tardo **52 s**, pero con la cache caliente de V449,
+asi que esa cifra es la incremental y no la que paga un runner en frio. **La primera ejecucion
+de este trabajo es la que da el numero**, y por eso no se ha estimado aqui.
+
+### El trabajo, y por que `--lib` y sin tests
+
+```yaml
+  skill-forge:
+    name: Skill Forge - el unico camino a wasmtime
+    timeout-minutes: 20
+    steps: [checkout@v5, rust-toolchain@1.98.0, rust-cache@v2 (key: skill-forge)]
+      - name: Compile the WASM skill engine
+        run: cargo check --features skill-forge --lib
+```
+
+La pregunta que este trabajo contesta es **"compila wasmtime"**, que es la que estaba sin
+contestar, y es literalmente el comando que se corria a mano. Pasar a
+`cargo test --features skill-forge --lib skill_forge` contesta **otra** pregunta --- "se
+prueba" ---, cuesta mas minutos, y es decision del autor. `COMPILED_BUT_NOT_EXERCISED`, en el
+mismo fichero del trinquete, existe precisamente porque esas dos preguntas se confundieron una
+vez y `cloud_connectors` se quedo con 57 tests, diez de ellos de SSRF, que no ejecutaba nadie.
+
+### El borrado va en el mismo commit, a la fuerza
+
+El trinquete es de **doble sentido**: su test se pone rojo si `UNCOVERED_BACKLOG` nombra una
+feature que CI ya compila, y `inline_features` lee los `--features` de las lineas `run:`. Asi
+que anadir el trabajo sin borrar la entrada deja CI rojo, y borrarla sin anadir el trabajo
+miente. Van juntos --- precedente: **V330** hizo lo mismo con `local-inference`.
+
+**Backlog: 21 -> 20.**
+
+### Verificado
+
+```
+cargo check --features skill-forge --lib                              exit 0, cero avisos
+cargo clippy --bin ai_test_harness --features full,browser
+             --all-targets -- -D warnings                             exit 0
+cargo test --bin ai_test_harness --features full,browser
+           -- feature_matrix::tests                                   9 passed, 0 failed
+```
+
+Y la comprobacion que prueba que la puerta **muerde**, que es la que falta casi siempre:
+devolviendo `"skill-forge"` a `UNCOVERED_BACKLOG` y repitiendo el test,
+
+```
+test ...::every_declared_feature_is_built_by_ci_or_excluded_on_purpose ... FAILED
+UNCOVERED_BACKLOG still lists features CI now compiles: ["skill-forge"]
+test result: FAILED. 8 passed; 1 failed
+```
+
+Una puerta que no se ha visto fallar no es una puerta. Esta se ha visto.
+
 ## [Unreleased] - v332 (2026-11-13) - V453: `PENDING.md` llevaba siete meses diciendo que tres cosas no existian (0.2.415)
 
 `PENDING.md` tiene 801 lineas, encabeza con **"Ultima actualizacion: 2026-04-09"** y el ultimo
