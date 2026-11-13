@@ -5,6 +5,66 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v332 (2026-11-13) - V453: `PENDING.md` llevaba siete meses diciendo que tres cosas no existian (0.2.415)
+
+`PENDING.md` tiene 801 lineas, encabeza con **"Ultima actualizacion: 2026-04-09"** y el ultimo
+commit que lo toco es `da23018`, **V74**. Entre ese dia y hoy hay mas de trescientas versiones
+que nadie reflejo ahi.
+
+Eso ya seria un documento rancio. El problema es otro: sus diecinueve secciones de
+"funcionalidad pendiente" son **afirmaciones falsificables**, y tres eran falsas.
+
+### Las tres, comprobadas contra el arbol
+
+| seccion | decia | esta en |
+|---------|-------|---------|
+| 1. OCR | "No implementado" | `src/document_parsing/ocr_pipeline.rs` |
+| 5. Aprendizaje continuo / Online Learning | "No implementado" | `src/feedback_loop/`, `src/prompt_breeder/`, `src/learning_control.rs`, binarios `ai_breeder` / `ai_breeder_gui`, features `feedback-loop`, `prompt-breeder`, `skill-forge` |
+| 11. Extraccion de imagenes de documentos | "No implementado" **y** "falta guardar los binarios" | `src/document_parsing/image_extraction.rs` |
+
+La de aprendizaje continuo es la mas llamativa: lo que dice que no existe es **V96 entero**,
+el subsistema de auto-aprendizaje. Un documento que se llama `PENDING` y nombra como pendiente
+una feature declarada en `Cargo.toml` no es un documento desactualizado, es una respuesta
+equivocada esperando la pregunta.
+
+Y una cuarta que **no** se da la vuelta, pero necesitaba matiz: la **3, video understanding**,
+sigue sin existir *como comprension de video* --- pero hay `src/vision.rs` (entrada de imagenes
+para modelos multimodales) y `src/video_filter.rs` (cadena de efectos sobre fotogramas RGBA).
+Ninguno entiende un video: el primero entiende imagenes y el segundo las procesa. Dicho asi,
+porque "no implementado" a secas invita a reimplementar lo que ya hay.
+
+Las tres falsas quedan corregidas **con la fecha de la comprobacion al lado**, y cada una con
+una linea de "lo que de verdad queda", que en dos casos no es nada parecido a lo que la seccion
+pedia:
+
+- OCR: existe el pipeline, pero `TesseractOcrBackend::recognize` devuelve vacio si no hay
+  binario de tesseract. Lo que queda es decidir si se empaqueta un backend real, no escribir OCR.
+- Aprendizaje continuo: no se ajustan los pesos de ningun modelo --- se **evoluciona el prompt
+  y se destila**. Si lo que la seccion pedia era fine-tuning, eso sigue sin existir, y es otra
+  cosa, no una version incompleta de esto.
+
+### Y una cabecera que dice lo que el documento es
+
+Lo demas del fichero --- las tablas de modulos, los recuentos de tests --- es una foto de abril
+que **no se ha reconstruido**, y la cabecera nueva lo dice en la primera linea que se lee, junto
+a donde esta el estado de verdad (`CHANGELOG.md`, `docs/CAPABILITIES.md`, `docs/README.md`).
+
+Reconstruir el inventario a mano esta noche habria producido un documento con el **aspecto** de
+estar al dia y el contenido a medias, que es estrictamente peor que uno con la fecha a la vista:
+el primero se cree, el segundo se comprueba. Es el mismo error que `CLAUDE.md` ya documenta para
+los `docs/IMPROVEMENTS_V*.md` --- leer el documento mas vistoso y tomarlo por el estado del
+proyecto --- y la razon de que la serie se detuviera en V167.
+
+### Verificado
+
+Cada correccion sale de un `ls` del fichero que se nombra, no de la memoria: `ocr_pipeline.rs`,
+`image_extraction.rs`, `feedback_loop/`, `prompt_breeder/`, `learning_control.rs`, `vision.rs`
+y `video_filter.rs` existen, y las dos ultimas se leyeron por dentro para poder decir que una
+entiende imagenes y la otra las filtra.
+
+`PENDING.md` no tiene espejo en `ai_assistant-website` (comprobado), asi que no hay HTML que
+sincronizar.
+
 ## [Unreleased] - v331 (2026-11-13) - V452: la mitad de la politica que nunca se aplico, y el aviso que la hacia falsa (0.2.414)
 
 Este repositorio trata cada supresion de advisory como una **afirmacion escrita con fecha de

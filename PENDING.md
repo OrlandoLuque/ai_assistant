@@ -1,6 +1,28 @@
 # AI Assistant — Documentacion de modulos y funcionalidad pendiente
 
-**Ultima actualizacion**: 2026-04-09
+**Ultima actualizacion del inventario**: 2026-04-09 (V74, version 0.2.74)
+**Ultima revision de afirmaciones**: 2026-11-13 (V451, version 0.2.413)
+
+> ## Lee esto antes de creerte una linea de aqui abajo
+>
+> Este documento es un **inventario de abril de 2026**. Entre esa fecha y hoy hay **mas de
+> trescientas versiones** que nadie reflejo aqui: el ultimo commit que lo toco fue `da23018`,
+> V74. O sea que las tablas de modulos y los recuentos de tests de abajo son una foto de
+> abril, no el estado actual.
+>
+> **El estado actual vive en `CHANGELOG.md`** (las entradas de cabecera), y el inventario de
+> capacidades en `docs/CAPABILITIES.md` y `docs/README.md`. Esto es exactamente el mismo
+> error que `CLAUDE.md` ya documenta para los `docs/IMPROVEMENTS_V*.md`: leer el documento mas
+> vistoso y tomarlo por el estado del proyecto.
+>
+> **Que SI se ha hecho el 2026-11-13**: repasar las diecinueve secciones de "funcionalidad
+> pendiente" del final y comprobar cada "No implementado" contra el arbol. **Tres eran
+> falsas** (OCR, aprendizaje continuo, extraccion de imagenes de documentos) y una necesitaba
+> matiz (video). Estan corregidas y marcadas con la fecha.
+>
+> **Que NO se ha hecho**: re-inventariar los 559 ficheros fuente. Hacerlo a mano habria
+> producido un documento con el aspecto de estar al dia y el contenido a medias, que es peor
+> que uno con la fecha a la vista.
 
 ---
 
@@ -518,9 +540,13 @@ Modulos de networking real para sistema distribuido:
 ## Funcionalidad aun NO implementada (para futura revision)
 
 ### 1. OCR (Reconocimiento optico de caracteres)
-- **Estado**: No implementado
+- **Estado**: **IMPLEMENTADO** — `src/document_parsing/ocr_pipeline.rs`. Esta linea decia
+  "No implementado" y era falsa; corregida el 2026-11-13 comprobando el fichero.
 - **Descripcion**: Extraer texto de imagenes y PDFs escaneados
-- **Dependencia potencial**: `tesseract` bindings o API externa
+- **Lo que de verdad queda**: `TesseractOcrBackend::recognize` devuelve vacio cuando no hay
+  binario de tesseract. V311 lo arreglo para que dejara de devolver su propio mensaje de error
+  como si fuera el texto de la pagina, y para que `process_image` aplicara `min_confidence`.
+  Queda decidir si se empaqueta un backend real.
 - **Relevancia**: Necesario para documentos antiguos escaneados
 
 ### 2. Audio/Voz
@@ -530,7 +556,11 @@ Modulos de networking real para sistema distribuido:
 - **Voice Agent**: Agente conversacional de voz con flujo bidireccional
 
 ### 3. Video understanding
-- **Estado**: No implementado
+- **Estado**: No implementado **como comprension de video**, y el matiz importa: existen
+  `src/vision.rs` (entrada de imagenes para modelos multimodales, feature `vision`) y
+  `src/video_filter.rs` (cadena de efectos sobre fotogramas RGBA, analoga a `audio_filter`).
+  Ninguno de los dos entiende un video: el primero entiende imagenes, el segundo las procesa.
+  Verificado el 2026-11-13.
 - **Descripcion**: Analisis de video frame-by-frame
 - **Relevancia**: Baja
 
@@ -548,8 +578,15 @@ Modulos de networking real para sistema distribuido:
 - **Feature**: `rag` (requiere `rusqlite`)
 
 ### 5. Aprendizaje continuo / Online Learning
-- **Estado**: No implementado
+- **Estado**: **IMPLEMENTADO** — V96 trajo el subsistema de auto-aprendizaje completo:
+  `src/feedback_loop/` (mod + dispatcher), `src/prompt_breeder/` (breeder + checkpoint),
+  `src/learning_control.rs`, los binarios `ai_breeder` y `ai_breeder_gui`, y las features
+  `feedback-loop`, `prompt-breeder` y `skill-forge`. Esta linea decia "No implementado" y era
+  falsa; corregida el 2026-11-13.
 - **Descripcion**: Integrar correcciones del usuario en tiempo real al modelo
+- **Lo que de verdad queda**: no se ajustan los pesos de ningun modelo. Lo que el subsistema
+  hace es **evolucionar el prompt y destilar**. Si lo que esta linea pedia era fine-tuning,
+  eso sigue sin existir — y es otra cosa, no una version incompleta de esto.
 - **Relevancia**: Media - requiere infraestructura significativa
 
 ### 6. Explicabilidad avanzada
@@ -580,9 +617,10 @@ Modulos de networking real para sistema distribuido:
 - **Relevancia**: Media
 
 ### 11. Extraccion de imagenes de documentos
-- **Estado**: No implementado
+- **Estado**: **IMPLEMENTADO** — `src/document_parsing/image_extraction.rs`. Esta seccion
+  decia "No implementado" y, debajo, "falta guardar los binarios": las dos afirmaciones eran
+  falsas. Corregidas el 2026-11-13.
 - **Descripcion**: Extraer imagenes embebidas de EPUB/DOCX/PDF (mapas, diagramas, tokens)
-- **Dependencia**: Ya se tiene acceso al ZIP; falta guardar los binarios
 - **Relevancia**: Media para documentos con contenido visual importante
 
 ### 12. APIs de bases de datos externas
