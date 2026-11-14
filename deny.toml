@@ -282,16 +282,51 @@ ignore = [
     # is already the newest release (`cargo update --dry-run` moves nothing), so
     # there is no lock bump available. Renewed on a SHORT leash because this is
     # the one entry whose reachability is a real question.
-    # Re-check by: 2026-12-15 OR when object_store ships a release on
-    # quick-xml >= 0.41 and polars picks it up.
+    #
+    # TRIGGER CORREGIDO el 2026-11-14 (V456). La condicion de cierre decia "cuando
+    # object_store publique sobre quick-xml >= 0.41 y polars lo recoja", y esa
+    # condicion NO PUEDE CUMPLIRSE SOLA. Medido, no supuesto:
+    #
+    #     cargo update -p quick-xml --precise 0.41.0
+    #     error: failed to select a version for the requirement `quick-xml = "^0.39"`
+    #     required by package `wayland-scanner v0.31.10`
+    #       ... wayland-client 0.31.14 <- rfd 0.17.2 <- ai_assistant
+    #
+    # O sea que quien bloquea el LOCK es wayland-scanner, no object_store. El
+    # analisis de arriba ya sabia que wayland-scanner declara `^0.39`, y tiene
+    # razon en que no es lo que pone 0.39.4 en el grafo para el argumento de
+    # ALCANCE -- pero el trigger no habla de alcance, habla de si el lock se puede
+    # mover, y para eso wayland-scanner manda igual.
+    #
+    # Y hay una razon por la que paso desapercibido: `cargo tree -i quick-xml`
+    # EN WINDOWS ve UNA sola raiz (object_store). En Linux ve DOS: object_store y
+    # wayland-scanner (por eframe 0.27 -> winit -> smithay -> wayland-client). La
+    # arista de wayland esta cerrada por plataforma, y CI corre en ubuntu. Al medir
+    # desde la maquina de desarrollo el instrumento era ciego a la mitad del grafo:
+    # usa `cargo tree --target x86_64-unknown-linux-gnu` para estas cuentas.
+    #
+    # Es la tercera vez que una condicion de cierre nombra UNA raiz habiendo DOS
+    # (ver ttf-parser abajo, re-medido en V401). Una condicion incumplible no se
+    # nota al vencer: se vuelve a aplazar la fecha y la supresion es eterna.
+    #
+    # Re-check by: 2026-12-15 OR cuando el lock pueda mover quick-xml a >= 0.41,
+    # que necesita LAS DOS cosas: (a) object_store sobre quick-xml >= 0.41 y polars
+    # recogiendolo, y (b) salir de wayland-scanner 0.31.x, que llega por rfd 0.17 y
+    # por eframe/egui 0.27 -- o sea que subir la pila de egui, que ya es deuda
+    # propia, tambien desbloquearia esta.
+    # Comprobar con: cargo update -p quick-xml --precise 0.41.0
     "RUSTSEC-2026-0194",
     # quick-xml, same crate and version, second DoS: unbounded namespace-
     # declaration allocation in NsReader. Same chain, same reachability, same
     # blocker as RUSTSEC-2026-0194 above — see that entry for the measurement.
     # It had NO trigger line of its own, which is how it survived every review:
     # "same transitive constraint" inherits a reason but not a deadline.
-    # Re-check by: 2026-12-15 OR when object_store ships a release on
-    # quick-xml >= 0.41 and polars picks it up.
+    # Re-check by: 2026-12-15 OR cuando el lock pueda mover quick-xml a >= 0.41.
+    # Esa condicion se corrigio el 2026-11-14 (V456) en la entrada de
+    # RUSTSEC-2026-0194: necesita LAS DOS raices, object_store y wayland-scanner,
+    # no solo la primera. La medicion esta alli; aqui no se duplica para que no se
+    # queden desincronizadas, pero la condicion es la misma.
+    # Comprobar con: cargo update -p quick-xml --precise 0.41.0
     "RUSTSEC-2026-0195",
     # ttf-parser 0.25.1 unmaintained. cargo-deny denies unmaintained where
     # cargo-audit only warns, which is why this is here at all.

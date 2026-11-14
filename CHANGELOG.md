@@ -5,6 +5,86 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v336 (2026-11-14) - V456: una condicion de cierre que no podia cumplirse nunca, porque el arbol de dependencias se midio desde la plataforma equivocada (0.2.419)
+
+Las supresiones de `RUSTSEC-2026-0194` y `-0195` (quick-xml) vencen el 2026-12-15 y traian
+esta condicion de cierre:
+
+> *Re-check by: 2026-12-15 OR when object_store ships a release on quick-xml >= 0.41 and
+> polars picks it up.*
+
+**Esa condicion no puede cumplirse sola.** Medido, no supuesto:
+
+```
+cargo update -p quick-xml --precise 0.41.0
+error: failed to select a version for the requirement `quick-xml = "^0.39"`
+required by package `wayland-scanner v0.31.10`
+  ... wayland-client 0.31.14 <- rfd 0.17.2 <- ai_assistant
+```
+
+Quien bloquea el lock es **wayland-scanner**, no object_store. Aunque object_store publicara
+manana sobre quick-xml 0.41, el lock seguiria clavado en 0.39.4.
+
+### Por que paso desapercibido: el instrumento era ciego a media mitad del grafo
+
+```
+cargo tree -i quick-xml --all-features                              (host: Windows)
+  -> quick-xml 0.39.4
+       object_store 0.13.2                                          UNA raiz
+
+cargo tree -i quick-xml --all-features --target x86_64-unknown-linux-gnu
+  -> quick-xml 0.39.4
+       wayland-scanner 0.31.10 (proc-macro)   <- eframe 0.27 / rfd 0.17
+       object_store 0.13.2                                          DOS raices
+```
+
+La arista de wayland esta cerrada por plataforma. Medida desde la maquina de desarrollo
+(Windows) solo aparece una raiz; **CI corre en ubuntu**, donde hay dos. El analisis original
+*si* sabia que wayland-scanner declara `^0.39` --- lo dice en su propio comentario --- y
+tiene razon en que no es lo que pone 0.39.4 en el grafo para el argumento de **alcance**. El
+fallo es que el trigger no habla de alcance: habla de si el **lock se puede mover**, y para
+eso wayland-scanner manda igual.
+
+### El patron, por tercera vez
+
+Una condicion de cierre que nombra **una** raiz habiendo **dos**:
+
+1. `ttf-parser` (V401): decia *"cuando egui deje ttf-parser"*; habia dos raices
+   independientes, `lopdf` y `owned_ttf_parser`.
+2. `zstd` y `clipboard-win` (V451): se probo **un** rango de `patched` habiendo dos.
+3. `quick-xml` (esta): nombra **un** bloqueante habiendo dos, y el segundo es invisible desde
+   la plataforma de desarrollo.
+
+Una condicion incumplible **no se nota al vencer**: alguien mira el 15 de diciembre, ve que
+object_store no ha publicado, aplaza la fecha, y la supresion se vuelve eterna con aspecto de
+revisada. Es el modo de fallo que `check_recheck_dates.py` existe para evitar y que no puede
+detectar, porque comprueba que la fecha este vigente, no que la condicion sea alcanzable.
+
+### Lo que cambia
+
+Solo comentarios de `deny.toml`: la supresion sigue, la fecha **no se ha tocado** (sigue el
+2026-12-15, porque mover una fecha sin re-medir es justo lo que esta prohibido), y la
+condicion ahora nombra las dos raices y deja escrito el comando que la comprueba. Tambien
+queda escrito que estas cuentas se hacen con `--target x86_64-unknown-linux-gnu`.
+
+Nota util de paso: salir de `wayland-scanner 0.31.x` significa subir la pila de **egui 0.27**,
+que ya es deuda propia por otras dos supresiones. Son la misma tarea.
+
+### Las otras cuatro que vencen el 2026-12-15
+
+Revisadas tambien, por si la leccion de V451/V455 aplicaba. **No aplica**: `RUSTSEC-2026-0367`,
+`-0368`, `-0369` y `-0429` (los cuatro de `zip`) declaran `patched = [">= 9.0.0"]`, **una sola
+entrada**, sin rango bajo que quepa. Las tres versiones del lock son 2.4.2, 3.0.0 y 7.2.0.
+Siguen bloqueadas de verdad, y sus condiciones (*"cuando subamos nuestro zip a >= 9"*) si son
+alcanzables. No se toca nada ahi.
+
+### Verificado
+
+`cargo deny check advisories licenses bans sources` ok; `check_rustsec_ignores.py` (13
+supresiones identicas en los tres ficheros, cada una con razon) y `check_recheck_dates.py`
+(13 con re-chequeo vigente) en verde. `Cargo.lock` **sin tocar**: el `cargo update` de arriba
+fallo, que es precisamente el resultado que se buscaba.
+
 ## [Unreleased] - v335 (2026-11-14) - V455: el bucle de recepcion de quinn-udp podia quedarse girando, y el `patched` volvia a ser una lista (0.2.418)
 
 CI y Supply Chain se pusieron en **rojo sobre `7ee23d2`, un commit que solo tocaba
