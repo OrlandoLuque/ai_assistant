@@ -5,7 +5,71 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] - v334 (2026-11-13) - V454b: el trabajo nuevo tarda 106 s, y la decision de presupuesto que esperaba esa cifra llevaba dos anos sin ella (0.2.417)
+## [Unreleased] - v335 (2026-11-14) - V455: el bucle de recepcion de quinn-udp podia quedarse girando, y el `patched` volvia a ser una lista (0.2.418)
+
+CI y Supply Chain se pusieron en **rojo sobre `7ee23d2`, un commit que solo tocaba
+`CLAUDE.md`**. Un cambio de markdown no puede romper una auditoria: lo que cambio fue la
+base de advisories, no el codigo. `RUSTSEC-2026-0538` entro en ella y la encontro.
+
+```
+Crate:    quinn-udp 0.5.14
+Title:    Receive loop can spin after a truncated datagram
+ID:       RUSTSEC-2026-0538     categoria: denial-of-service
+patched = [">= 0.5.16, < 0.6.0", ">= 0.6.3"]
+```
+
+El defecto: en los objetivos que leen un datagrama por `recvmsg` en vez de usar
+`recvmmsg`, el bucle montaba su `msghdr` una sola vez y miraba `MSG_TRUNC` **antes** de
+comprobar si `recvmsg` habia fallado. Tras descartar un datagrama mayor que el buffer, un
+`EAGAIN` posterior seguia viendo la bandera de truncamiento vieja, y el bucle encadenaba
+recepciones no bloqueantes en vez de devolver `WouldBlock`. Un emisor remoto puede
+mantener ocupada la tarea que gobierna el socket **antes de autenticar ningun paquete
+QUIC**.
+
+### Por que no se ha escrito una supresion, aunque habria colado
+
+El propio advisory dice que *Linux, Android, FreeBSD y Windows usan otras rutas de
+recepcion y no estan afectados*, y los afectados son Apple sin `fast-apple-datapath`,
+OpenBSD, NetBSD, Solaris e illumos. Con eso se podia haber escrito una razon de
+«no alcanzable» perfectamente defendible.
+
+No se ha escrito porque **el arreglo cuesta una linea del lock**. Una supresion es una
+afirmacion con fecha que alguien tiene que volver a comprobar; cambiar un numero de
+version no lo es. Y este repositorio ya lleva tres razones escritas que resultaron falsas
+(ver V451), todas ellas defendibles el dia que se escribieron.
+
+### El `patched` era una lista, otra vez
+
+Es la cuarta vez en dos noches. `quinn 0.11.9` ancla `quinn-udp` en `^0.5`, asi que el
+rango de arriba (`>= 0.6.3`) esta bloqueado por construccion y el de abajo (`>= 0.5.16`)
+cabe de sobra. Se probo **el bajo primero**, que es la leccion de V451, y entro a la
+primera:
+
+```
+Updating quinn-udp v0.5.14 -> v0.5.16
+```
+
+El lock se mueve en 10 lineas y nada mas cambia de version.
+
+### Verificado
+
+- `cargo audit` con la base de advisories clonada hoy (1.509 advisories, las mismas que
+  cargo en CI) y **las flags leidas de `supply-chain.yml`**, no de memoria: 0
+  vulnerabilidades, exit 0.
+- `cargo deny check advisories licenses bans sources`: ok.
+- `cargo fmt --check`; `cargo check --all-targets` en FEATURES_MIN, FEATURES_STD y
+  FEATURES_NETWORK; `clippy --all-targets -D warnings` en FEATURES_STD y FEATURES_NETWORK.
+- Tests: **9.136** en FEATURES_STD y **5.310** en FEATURES_MIN, 0 fallos.
+- `check_rustsec_ignores.py` y `check_recheck_dates.py`: ok, 13 supresiones intactas
+  (esta no anade ninguna).
+
+### Y una cifra propia corregida
+
+La cabecera de V454b decia que la decision de presupuesto llevaba *"dos anos"* esperando
+una cifra. V313 es del **2026-09-11**: dos meses. El asunto del commit lo decia bien
+("desde V313") y la cabecera no. Corregida aqui.
+
+## [Unreleased] - v334 (2026-11-13) - V454b: el trabajo nuevo tarda 106 s, y la decision de presupuesto que esperaba esa cifra llevaba dos meses sin ella (0.2.417)
 
 V454 anadio el trabajo de CI que compila `skill-forge` dejando una cosa escrita a medias: *"la
 primera ejecucion de este trabajo es la que da el numero"*. Esa ejecucion ya ocurrio, el numero
