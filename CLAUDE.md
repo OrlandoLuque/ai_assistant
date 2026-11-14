@@ -191,6 +191,9 @@ de un tercero, ninguna de las dos cosas recuperable. Lo que el autor quería era
 4. Zero `.unwrap()` en producción — usar proper error handling siempre
 5. Zero warnings del compilador — compilación limpia en todas las combinaciones de features
 6. Tests para todo — el proyecto tiene 9.600+ tests y debe mantenerse así
+7. **Nunca `git add -A` ni `git add .` en estos repositorios.** Nombra cada ruta. Un
+   fichero sin seguimiento (`??`) es un estado deliberado, no un descuido: precedente de
+   un documento de licenciamiento que entró así en un commit público.
 
 ## Plan Nocturno (Night Plan)
 Definido en las **instrucciones globales de usuario** (`~/.claude/CLAUDE.md`),
