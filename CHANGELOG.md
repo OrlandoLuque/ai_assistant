@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v341 (2026-11-15) - V458b: el runner desmintio el rango que publique esta manana, y por abajo (0.2.424)
+
+Ninguna linea de codigo. Dos cifras de V458 corregidas con lo que midio el runner, y una
+tercera que corregi antes de que CI acabara.
+
+### 1. El paso nuevo cuesta 32 s alli, no 48
+
+Medido en la maquina de desarrollo: 48 s. En el runner (ejecucion 43748766793): **32 s**. Mas
+barato, por lo mismo que lo hace barato en general --- las dependencias ya estan compiladas
+por los once pasos de `cargo test` que van delante, y lo unico que clippy revisa es nuestro
+crate.
+
+### 2. El trabajo completo tardo 10 min 42 s --- por DEBAJO del rango que publique
+
+V457c dejo escrito que el presupuesto honesto son «14-17 min, no 14», con tres muestras. V458
+anadio un paso y dijo 15-18. **La cuarta muestra, con el paso nuevo dentro, son 10 min 42 s**:
+la mas rapida de las cuatro haciendo mas trabajo que ninguna.
+
+Cuatro muestras del mismo trabajo: **10:42, 14:18, 15:02, 17:10**.
+
+Asi que «14-17 min» no era un rango estrecho por arriba --- que es el error que V457c creia
+haber corregido ---: **estaba mal por abajo**. Y ahi esta la leccion, que es la tercera noche
+que aparece la misma con distinto disfraz: un tiempo de pared en un runner compartido es una
+**distribucion**, no un numero, y publicarlo como rango estrecho invita a ajustar el timeout
+contra el. Con cuatro muestras la dispersion es del **60 %**.
+
+Lo que si se sostiene, y es lo unico que habia que decidir: **el peor caso observado son 17
+min contra `timeout-minutes: 30`**.
+
+Descompuesto con lo que dan las cuatro: ~10:40 es el suelo (cache caliente, runner tranquilo),
+el arbol de dependencias a frio anade ~3,5 min, y un runner con vecinos ruidosos hasta ~6 min.
+
+### 3. «~9 min repartido en once pasos» era aritmetica bajo la palabra «medido»
+
+Lo escribi en el `ci.yml` de V458 dentro de una frase que empieza por «Medido:». Los 48 s de
+las once juntas si estaban medidos; los ~9 min de las once por separado eran 48 x 11, o sea
+una extrapolacion de la medicion equivocada --- una feature sola compila menos codigo que las
+once.
+
+Medido: **38,9 s** para `prompt-breeder` sola con `--all-targets`. Luego las once por separado
+son **~7 min**, no ~9. Me pase un 25 %, y la palabra «medido» cubria la mitad de la frase.
+
+### 4. Lo que el runner conto de paso
+
+Los once pasos tardan **44-48 s cada uno** alli --- notablemente uniformes, y **mas rapidos
+que en esta maquina**, donde son 64-81 s por feature (compilacion mas ejecucion). El paso de
+los cinco binarios y el ejemplo, 83 s.
+
+60 trabajos en la ejecucion, ninguno fuera de exito. Supply Chain (43748766707) tambien verde.
+
 ## [Unreleased] - v340 (2026-11-15) - V458: las once entraron en CI con cero lints, y el primer lint que las mira destapa una poda que elegia al reves (0.2.423)
 
 La primera de la lista que V457 dejo escrita: `clippy -D warnings` sobre las once features

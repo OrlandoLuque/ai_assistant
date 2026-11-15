@@ -652,8 +652,29 @@ jobs:
     # no 14. Sigue holgado contra el timeout de 30, que es lo que habia que
     # decidir, pero una sola muestra lo habria dejado subestimado un 20 %.
     #
-    # V458 le anade el paso de `clippy`, medido en 48 s con las dependencias
-    # calientes, asi que el presupuesto pasa a 15-18 min.
+    # V458 le anade el paso de `clippy`. Y el runner corrigio las dos cifras que
+    # V458 escribio para el:
+    #
+    # - El paso de clippy tarda **32 s** alli, no 48 (ejecucion 43748766793).
+    # - El trabajo COMPLETO, con el paso nuevo dentro, tardo **10 min 42 s** ---
+    #   por DEBAJO del rango «14-17 min» de arriba, teniendo un paso mas.
+    #
+    # Cuatro muestras del mismo trabajo: 10:42, 14:18, 15:02 y 17:10. O sea que
+    # «14-17 min» no era un rango estrecho por arriba: estaba mal por abajo, y la
+    # cuarta muestra es la mas rapida de las cuatro aun haciendo mas trabajo.
+    # Descompuesto: ~10:40 es el suelo (cache caliente y runner tranquilo), el
+    # arbol de dependencias a frio anade ~3,5 min, y un runner con vecinos
+    # ruidosos anade hasta ~6 min.
+    #
+    # La conclusion practica, que es la unica que hay que mantener: el peor caso
+    # observado son 17 min contra `timeout-minutes: 30`. Un tiempo de pared en un
+    # runner compartido es una distribucion, no un numero, y publicarlo como
+    # rango estrecho invita a ajustar el timeout contra el. Con cuatro muestras la
+    # dispersion es del 60 %.
+    #
+    # Los once pasos tardan 44-48 s cada uno en el runner --- uniformes, y mas
+    # rapidos que en la maquina de desarrollo (64-81 s por feature, compilacion
+    # mas ejecucion). Los binarios, 83 s.
     #
     # Y el runner contesto lo que aqui no se podia: `hardware-rocm` y
     # `hardware-metal` compilan y pasan en ubuntu. De paso dieron CUATRO tests
@@ -729,7 +750,9 @@ jobs:
       # cada feature COMPILA sola, y once juntas la contestan en falso, porque
       # lo que a una le falta otra se lo da. Aqui la pregunta es si este codigo
       # tiene warnings, y con las once encendidas se ve el codigo de las once.
-      # Medido: 48 s juntas, contra ~9 min repartido en once pasos.
+      # Medido: 48 s juntas en la maquina de desarrollo y 32 s en el runner,
+      # contra ~7 min repartido en once pasos --- extrapolacion de UNA medicion,
+      # 38,9 s para `prompt-breeder` sola con `--all-targets`, no de las once.
       #
       # EL LIMITE, escrito para que nadie lo lea como mas de lo que es: un lint
       # que solo salta con UNA de las once encendida --- un `use` que sobra
