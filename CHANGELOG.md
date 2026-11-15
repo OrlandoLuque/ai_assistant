@@ -5,6 +5,88 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v338 (2026-11-15) - V457b: el trabajo nuevo tarda 14 min 18 s, el rotulo falso queda desmentido en ubuntu, y dos cifras mias estaban mal contadas (0.2.421)
+
+Cuatro cosas, ninguna de codigo: el numero que V457 dejo prometido, una comprobacion que solo
+podia dar el runner, un hallazgo nuevo y dos correcciones de cifras que publique yo.
+
+### 1. 14 min 18 s, a cache frio, los dieciseis pasos en verde
+
+El comentario de `uncovered-features` decia que el tiempo de pared lo daria la primera
+ejecucion, igual que V454 con `skill-forge`. Lo dio: **14 min 18 s** (ejecucion 43660293902,
+2026-11-15), con la cache de `rust-cache` recien creada, o sea pagando el arbol de dependencias.
+
+La medicion local de anoche --- once features mas los binarios, con las dependencias ya
+compiladas --- daba **14 min 42 s**. Las dos cifras miden cosas distintas y coinciden por
+casualidad; lo que importa es que ninguna se acerca al `timeout-minutes: 30` y que el trabajo
+queda por debajo de `tabular-polars`. Para comparar, en la misma ejecucion: `Tests` 7 min 26 s,
+`Skill Forge` 1 min 39 s.
+
+### 2. El rotulo «the Linux runner cannot build these at all» queda desmentido donde decia
+
+`hardware-rocm` y `hardware-metal` **compilan y pasan sus tests en ubuntu**. Eso no se podia
+afirmar desde aqui: la cabecera de `feature_matrix.rs` dice que un resultado local es una pista
+y CI es el veredicto, y el veredicto ya esta.
+
+### 3. Hallazgo nuevo: la sonda de Linux no tiene ni un test, y Linux es la plataforma de CI
+
+De los once recuentos de tests del runner, **nueve son identicos a los de Windows** y dos dan
+exactamente **cuatro menos**:
+
+| | Windows | ubuntu |
+|---|---|---|
+| `hardware-rocm` | 5.323 | **5.319** |
+| `hardware-metal` | 5.322 | **5.318** |
+
+Medido, no supuesto: el bloque `#[cfg(all(feature = "hardware-detection", target_os =
+"windows"))]` de `src/hardware_info.rs:670` tiene **4 tests**, y el bloque equivalente de
+`target_os = "linux"` (`:806`) tiene **cero**. La sonda de hardware de la plataforma en la que
+corre CI no tiene un solo test; la de la plataforma de desarrollo tiene cuatro.
+
+No lo arreglo: escribir esos tests es trabajo nuevo y no es lo que se pidio esta noche. Queda
+anotado, que es lo que la regla de orden manda hacer con lo que aparece por el camino.
+
+### 4. Dos cifras mias, mal contadas
+
+**14.100 lineas era 14.073.** La tabla de V457 contaba los dos bloques de `hardware_info.rs`
+como 227 lineas y son **200**: la diferencia son los dos bloques de respaldo
+--- `#[cfg(all(..., not(feature = ...)))]` --- que caen dentro del rango pero **los compila CI
+todos los dias**, porque son los que valen con la feature apagada. Lo que no compilaba nadie
+son `rocm_probe` (lineas 864-968, 105) y `metal_probe` (982-1076, 95). Contado ahora con un
+contador de llaves, no con un rango a ojo, que es de donde salio el 227.
+
+**«Cuatro de esos cinco binarios» eran los cinco.** `docs/BINARIES.md` inventaria `ai_acp`,
+`ai_acp_audit`, `ai_prompt_synth`, `ai_feedback` y `ai_breeder`: los cinco. Escribi cuatro
+porque conte *features* --- `acp`, `prompt-synthesis`, `feedback-loop`, `prompt-breeder` --- y
+`acp` aporta dos binarios. El ejemplo `vector_pgvector_demo` no esta ahi, y es correcto: esa
+pagina es de binarios.
+
+Las dos quedan corregidas tambien en la entrada de V457 y en el comentario de `ci.yml`, no solo
+aqui: una cifra mal en el sitio donde se lee sigue estando mal aunque haya una fe de erratas
+mas abajo.
+
+### 5. Y una nota de V454 que seguia diciendo «no esta medido»
+
+El comentario del trabajo `skill-forge` decia *«Lo que NO esta medido es el tiempo de pared»*
+dos noches despues de que V454b lo midiera (106 s). Ahora lleva esa cifra y la de hoy, 1 min
+39 s. Misma clase que lo de arriba: una nota que describe un hueco ya tapado se lee como
+pendiente, y nadie la vuelve a mirar.
+
+### Y un matiz que la medicion afino
+
+Los warnings de `prompt-breeder` no son «dos con `cfg(test)` y tres sin el»: son **dos en cada
+modo, y conjuntos distintos**.
+
+| | con `cfg(test)` | sin el |
+|---|---|---|
+| `BudgetLimit` + `Metric` sin usar (`breeder.rs:15`) | si | si |
+| `BudgetKind` sin usar (`breeder.rs:23`) | **no** | si |
+| `mut` innecesario (`budget.rs:171`, dentro de un test) | si | **no** |
+
+**Ningun modo lo ve todo.** Un trabajo hecho solo de `cargo test` pierde el de `BudgetKind` y
+uno hecho solo de `cargo check` pierde el `mut`. El trabajo de V457 lleva las dos cosas, y eso
+deja de ser una precaucion para ser un requisito medido.
+
 ## [Unreleased] - v337 (2026-11-15) - V457: once features que no compilaba ningun trabajo, y el trinquete que debia decirlo estaba verde por un comentario (0.2.420)
 
 `UNCOVERED_BACKLOG` (en `src/bin/ai_test_harness/feature_matrix.rs`) listaba **veinte features
@@ -50,12 +132,12 @@ Y lo que seguiria sin pagarse es esto, contado antes de tocar nada:
 | `sub_agents.rs` | 569 | 18 |
 | `vector_db_pgvector.rs` | 405 | 15 |
 | `stall_detection_llm.rs` | 340 | 11 |
-| los dos bloques de `hardware_info.rs` | 227 | 3 |
-| **total** | **14.100** | **277** |
+| los dos bloques de `hardware_info.rs` | 200 | 3 |
+| **total** | **14.073** | **277** |
 
-**277 tests que no ejecutaba nadie, detras de 14.100 lineas que no compilaba nadie.** Ninguno
+**277 tests que no ejecutaba nadie, detras de 14.073 lineas que no compilaba nadie.** Ninguno
 lleva `#[ignore]` y ninguno necesita un servicio levantado. Ocho de las once estan anunciadas
-en el README, y cinco binarios mas un ejemplo dependen de ellas --- cuatro de esos binarios
+en el README, y cinco binarios mas un ejemplo dependen de ellas --- los cinco binarios
 estan inventariados en `docs/BINARIES.md`, pagina que CI verifica contra el manifiesto desde
 V305.
 

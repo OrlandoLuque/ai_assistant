@@ -582,9 +582,11 @@ jobs:
     # `tabular-polars` de arriba, que ya se paga en cada ejecucion (+140 cajas,
     # +20,4 MiB) --- y cuyo propio comentario dice justo lo que faltaba aqui:
     # el arreglo es anadir el trabajo cuando la feature entra, no despues.
-    # Lo que NO esta medido es el tiempo de pared: las 72 cajas son el mundo de
-    # cranelift, cuyo build script genera codigo ISLE, y el numero de cajas no
-    # predice los minutos. La primera ejecucion de este trabajo da esa cifra.
+    # El tiempo de pared NO lo predicen las cajas --- las 72 son el mundo de
+    # cranelift, cuyo build script genera codigo ISLE --- asi que se midio con
+    # la primera ejecucion: 106 s (V454b), y 1 min 39 s el 2026-11-15. Esta
+    # nota seguia diciendo "no esta medido" dos noches despues de estarlo;
+    # corregido en V457b.
     #
     # `--lib` y sin tests, a proposito: la pregunta que este trabajo contesta es
     # "compila wasmtime", que es la que estaba sin contestar, y es exactamente
@@ -608,10 +610,10 @@ jobs:
     # (`src/bin/ai_test_harness/feature_matrix.rs`): declaradas en `Cargo.toml`,
     # ocho de ellas anunciadas en el README, y compiladas por NINGUN trabajo de
     # este fichero. Lo que habia detras, contado antes de escribir el trabajo
-    # (2026-11-15, 0.2.419): 14.100 lineas, 277 tests que no ejecutaba nadie, y
-    # cinco binarios mas un ejemplo que no compilaba ningun trabajo --- cuatro
-    # de esos cinco estan inventariados en `docs/BINARIES.md`, pagina que CI
-    # verifica contra el manifiesto desde V305.
+    # (2026-11-15, 0.2.419): 14.073 lineas, 277 tests que no ejecutaba nadie, y
+    # cinco binarios mas un ejemplo que no compilaba ningun trabajo --- los cinco
+    # binarios estan inventariados en `docs/BINARIES.md`, pagina que CI verifica
+    # contra el manifiesto desde V305.
     #
     # DOS de las once estaban rotuladas de imposibles y no lo eran:
     # `hardware-rocm` y `hardware-metal` figuraban bajo «the Linux runner cannot
@@ -629,8 +631,8 @@ jobs:
     #
     # Y UN SOLO TRABAJO, no once entradas de matriz: cada entrada de matriz es
     # un runner entero --- checkout, toolchain, cache y una compilacion de
-    # FEATURES_MIN completa --- y este fichero ya despliega 22 trabajos mas 38
-    # entradas. Aqui las dependencias se compilan una vez y cada paso recompila
+    # FEATURES_MIN completa --- y este fichero ya desplegaba 22 trabajos (23 con este) mas 38
+    # entradas de matriz. Aqui las dependencias se compilan una vez y cada paso recompila
     # solo nuestro crate.
     #
     # `cargo test --lib`, no `cargo check`: «lo compila alguien» y «lo prueba
@@ -638,11 +640,20 @@ jobs:
     # listas. Con `check` las once solo se mudarian de lista y los 277 tests
     # seguirian sin ejecutarse.
     #
-    # COSTE MEDIDO (2026-11-15, maquina de desarrollo, dependencias ya
-    # compiladas): ~70 s por feature --- 11 min 46 s las nueve primeras con su
-    # base --- y 21 s cada paso de binarios. El tiempo de pared en el runner lo
-    # dara la primera ejecucion de este trabajo, igual que con `skill-forge` en
-    # V454.
+    # COSTE MEDIDO. En el runner, primera ejecucion y por tanto a cache frio:
+    # 14 min 18 s, los dieciseis pasos en verde (ejecucion 43660293902,
+    # 2026-11-15). En la maquina de desarrollo, con las dependencias ya
+    # compiladas: ~70 s por feature y 21 s por paso de binarios, 14 min 42 s.
+    # Las dos cifras miden cosas distintas y coinciden por casualidad; lo que
+    # vale es que ninguna se acerca al timeout de 30.
+    #
+    # Y el runner contesto lo que aqui no se podia: `hardware-rocm` y
+    # `hardware-metal` compilan y pasan en ubuntu. De paso dieron CUATRO tests
+    # menos que en Windows, con motivo medido: el bloque
+    # `target_os = "windows"` de `src/hardware_info.rs:670` tiene 4 tests y el
+    # de `target_os = "linux"` (:806) no tiene NINGUNO. La sonda de hardware
+    # de la plataforma en la que corre CI no esta probada --- anotado en V457b,
+    # no arreglado.
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.98.0
