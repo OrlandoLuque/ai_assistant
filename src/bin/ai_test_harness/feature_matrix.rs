@@ -137,47 +137,84 @@ full = [",
 /// and they fail here for a *local* reason — no libclang / C++ toolchain on the
 /// dev laptop — which is a lead about this machine, not a verdict about the code.
 ///
-/// So the cost of closing this list is CI minutes, not repair work. That is a
-/// budget decision for the maintainer, which is why the list records the fact
-/// rather than acting on it.
+/// **Lo que esta nota decia hasta V457** --- *«el coste de cerrar esta lista son
+/// minutos de CI, no trabajo de reparacion; esa es una decision de presupuesto
+/// del mantenedor»* --- era verdad en la forma y falso en la cifra. Las cifras
+/// que lo sostenian se midieron **sobre `full`**, y el trabajo que habria que
+/// escribir parte de `FEATURES_MIN`: cinco de las que decian «+0 cajas»
+/// encienden paraguas (`autonomous`, `audio`, `multi-agent`, `distillation`,
+/// `advanced-memory`) que sobre `full` ya estaban encendidos y sobre el minimo
+/// no. El incremento era cierto y medido contra una base que el trabajo no usa.
+///
+/// Medido el 2026-11-15 en 0.2.419, once de las veintiuna caben en **un solo
+/// trabajo**: unos 70 s por feature en esta maquina con las dependencias ya
+/// compiladas (11 min 46 s las nueve primeras, con su base). Y la deuda que
+/// esta nota pesaba en minutos de CI era, contada, **14.100 lineas y 277 tests
+/// que no ejecutaba nadie** mas seis binarios inventariados en
+/// `docs/BINARIES.md` que no compilaba ningun trabajo.
+///
+/// Lo que queda si tiene coste medido (+6 a +72 cajas, hasta +21,2 MiB) o es
+/// otra pregunta --- `wasm` se decide por TARGET, no por conjunto de
+/// features ---, y ahi la decision de presupuesto sigue en pie.
 #[cfg(test)]
 const UNCOVERED_BACKLOG: &[&str] = &[
-    // Platform-specific: the Linux runner cannot build these at all.
-    "hardware-rocm",
-    "hardware-metal",
-    // Genuinely uncovered. Each needs triage.
+    // V457 bajo esta lista de VEINTE a NUEVE con un solo trabajo de CI,
+    // `uncovered-features`, que compila y PRUEBA once features de una en una
+    // sobre FEATURES_MIN --- de una en una a proposito: once juntas en un solo
+    // `--features` no prueban ninguna por separado, que es el mismo
+    // razonamiento ya escrito en `ci.yml` para `ffi,vision` y para los dos
+    // motores de `tabular`.
+    //
+    // DOS de las once estaban rotuladas de IMPOSIBLES y no lo eran.
+    // `hardware-rocm` y `hardware-metal` vivian bajo «Platform-specific: the
+    // Linux runner cannot build these at all». No declaran una sola
+    // dependencia --- son `= ["hardware-detection"]`, que ya esta en `full` ---
+    // y sus dos bloques son Rust puro: invocan `rocm-smi` y `system_profiler`
+    // por `Command` y parsean el JSON. `metal_probe` comprueba macOS en
+    // EJECUCION, con `cfg!`, asi que compila en cualquier plataforma. Lo decia
+    // el propio `Cargo.toml` en la nota de `hardware-detection` --- «so they
+    // need no extra Rust deps - the sub-feature is just a cfg gate» ---, o sea
+    // que el dato correcto llevaba meses escrito trescientas lineas mas abajo
+    // que la razon falsa. Eran las DOS MAS BARATAS de las veintiuna, y
+    // escondian tres tests de parseo que no ejecutaba nadie.
+    //
+    // «No se puede construir aqui» y «aqui no hay esa GPU» son dos cosas
+    // distintas, y solo la primera impide compilar.
+    //
+    // V454 saco `skill-forge` dandole su propio trabajo: era la unica feature
+    // que mete wasmtime, y V449 habia subido wasmtime para arreglar cuatro
+    // advisories sin que ningun trabajo pudiera confirmar el bump. Ese trabajo
+    // es `cargo check`, asi que su sitio ahora es
+    // [`COMPILED_BUT_NOT_EXERCISED`] --- y no constaba, porque la puerta leyo
+    // un comentario como si fuera un build. Ver `a_comment_is_not_a_build`.
+    //
+    // El trinquete de abajo es de doble sentido, asi que el trabajo nuevo y el
+    // borrado de las entradas van en el MISMO commit --- igual que V330 con
+    // `local-inference`.
+
+    // `wasm` no es una pregunta de features sino de TARGET: su codigo real
+    // esta tras `#[cfg(all(target_arch = "wasm32", feature = "wasm"))]`
+    // (`src/wasm.rs`, `src/wasm_hooks.rs`), asi que compilarlo en el runner de
+    // x86-64 compila las ramas de respaldo y no lo que importa. Cerrarlo es
+    // anadir `--target wasm32-unknown-unknown`, no una feature a un trabajo
+    // existente. Trae ademas 6 cajas (web-sys, js-sys, wasm-bindgen,
+    // getrandom).
     "wasm",
-    "vector-pgvector",
-    "prompt-fragments",
-    "stall-detection",
-    "stall-detection-llm",
-    "sub-agents",
-    "acp",
     // V330 removed `local-inference` from here by putting it in CI: it declares
     // no dependencies of its own (the umbrella is the `Backend` trait plus the
     // stub), so the CI minutes this list was weighing were almost none, and
     // leaving it out meant the V330 `LlmProvider` bridge compiled on no job.
+    // Sus dos backends concretos si cuestan: candle son +72 cajas y +5,7 MiB
+    // (medido el 2026-11-13), y `-llama-cpp` necesita libclang, por lo que
+    // esta en [`NOT_IN_CI`] y no aqui.
     "local-inference-candle",
     "embeddings-local",
     "redis-backend",
-    // V454 saco `skill-forge` de esta lista al darle su propio trabajo en CI
-    // (`cargo check --features skill-forge --lib`). Era la unica feature que
-    // mete wasmtime, y de las 21 de aqui la unica que esconde una dependencia
-    // con historial de seguridad: V449 subio wasmtime para arreglar cuatro
-    // advisories y ningun trabajo pudo confirmar el bump.
-    //
-    // El coste que esta lista pesaba resulto ser la mitad del de
-    // `tabular-polars`, que CI ya paga: +72 cajas contra +140 (medido el
-    // 2026-11-13). O sea que la decision de presupuesto que esta nota dejaba
-    // al mantenedor se tomo con una cifra que nadie habia medido.
-    //
-    // El trinquete de abajo es de doble sentido y por eso el trabajo nuevo y
-    // este borrado van en el MISMO commit --- igual que V330 con
-    // `local-inference`.
-    "prompt-synthesis",
-    "feedback-loop",
-    "prompt-breeder",
-    // GUI variants: windowing deps, same reason as `gui` itself.
+    // GUI variants: windowing deps, same reason as `gui` itself. +45 a +65
+    // cajas y hasta +21,2 MiB. Estas SI son la decision de presupuesto que la
+    // nota de arriba describia, y comparten coste con `gui`, que el trabajo
+    // `clippy-gui` ya paga: la via barata es anadirlas alli, no un trabajo
+    // nuevo.
     "gui-logs",
     "gui-recipes",
     "gui-acp",
@@ -220,6 +257,14 @@ const COMPILED_BUT_NOT_EXERCISED: &[(&str, &str)] = &[
         "lo enciende `gui-pro`, y ese trabajo es `cargo clippy --bin`: sus 57 tests \
          --- diez de ellos de SSRF, los que comprueban que apuntar S3 a \
          169.254.169.254 se bloquea --- no se ejecutan en ningun sitio. Tarea N162",
+    ),
+    (
+        "skill-forge",
+        "su trabajo (V454) es `cargo check --features skill-forge --lib`: compila wasmtime \
+         y no corre un solo test. No constaba aqui porque la puerta contaba como PROBADO lo \
+         que decia un comentario de `ci.yml`, no un paso; corregido en V457. Pasar el \
+         trabajo a `cargo test` cuesta minutos y es decision del autor, escrita en el \
+         propio `ci.yml`",
     ),
 ];
 
@@ -285,26 +330,36 @@ fn ci_matrix_features(ci_yml: &str) -> Vec<String> {
 #[cfg(test)]
 fn inline_features(ci_yml: &str) -> Vec<String> {
     let mut out = Vec::new();
-    for (_, rest) in ci_yml
-        .match_indices("--features")
-        .map(|(i, _)| (i, &ci_yml[i + "--features".len()..]))
-    {
-        // `--features "a,b"` or `--features a,b`, up to whitespace or quote.
-        let rest = rest.trim_start();
-        let rest = rest.strip_prefix('"').unwrap_or(rest);
-        let end = rest.find(['"', ' ', '\n', '\r']).unwrap_or(rest.len());
-        for name in rest[..end].split(',') {
-            let name = name.trim();
-            // `$FEATURES_STD` and friends are expanded by `ci_matrix_features`
-            // from the env block; skip the variable spellings here.
-            if name.is_empty() || name.starts_with('$') || name.contains("${{") {
-                continue;
-            }
-            if name
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-            {
-                out.push(name.to_string());
+    for line in ci_yml.lines() {
+        // Una linea de comentario NO es un build. Leerla como si lo fuera es
+        // como `skill-forge` paso a contar como PROBADO sin que ningun
+        // `cargo test` lo ejecute: lo decia una nota en prosa tres lineas
+        // debajo de su paso real, que es `cargo check`. Ver V457.
+        if line.trim_start().starts_with('#') {
+            continue;
+        }
+        for (_, rest) in line
+            .match_indices("--features")
+            .map(|(i, _)| (i, &line[i + "--features".len()..]))
+        {
+            // `--features "a,b"` or `--features a,b`, up to whitespace or quote.
+            let rest = rest.trim_start();
+            let rest = rest.strip_prefix('"').unwrap_or(rest);
+            let end = rest.find(['"', ' ', '\n', '\r']).unwrap_or(rest.len());
+            for name in rest[..end].split(',') {
+                let name = name.trim();
+                // `$FEATURES_STD` and friends are expanded by
+                // `ci_matrix_features` from the env block; skip the variable
+                // spellings here.
+                if name.is_empty() || name.starts_with('$') || name.contains("${{") {
+                    continue;
+                }
+                if name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+                {
+                    out.push(name.to_string());
+                }
             }
         }
     }
@@ -326,7 +381,8 @@ fn inline_features(ci_yml: &str) -> Vec<String> {
 fn test_job_features(ci_yml: &str, env: &[(&str, String)], matrix: &[String]) -> Vec<String> {
     let mut out = Vec::new();
     for line in ci_yml.lines() {
-        if !line.contains("cargo test") {
+        // Igual que en `inline_features`: un comentario no ejecuta tests.
+        if line.trim_start().starts_with('#') || !line.contains("cargo test") {
             continue;
         }
         let Some(at) = line.find("--features") else {
@@ -873,6 +929,37 @@ serde = \"1\"
         // `${{ matrix.features }}` desde la matriz. Colarlos aqui como si fueran
         // nombres de feature haria que la puerta diera por cubierto algo que no
         // existe.
+    }
+
+    /// Un comentario no es un build, y leerlo como si lo fuera silencio la
+    /// tercera direccion de esta puerta durante tres versiones.
+    ///
+    /// V454 dio a `skill-forge` un trabajo propio de `cargo check` y escribio,
+    /// tres lineas mas abajo y como nota para el autor, que pasarlo a
+    /// `cargo test --features skill-forge --lib` contestaria otra pregunta y
+    /// costaria mas minutos. El analizador leyo esa frase como si fuera un
+    /// paso: `skill-forge` entro en lo PROBADO, la comprobacion de «se compila
+    /// y nadie lo ejercita» no lo senalo, y [`COMPILED_BUT_NOT_EXERCISED`] no
+    /// pidio su entrada. La puerta estaba verde porque la prosa decia lo que el
+    /// paso no hacia --- que es la misma forma de defecto que este repositorio
+    /// lleva cazando desde V355, con la prosa en el sitio nuevo.
+    #[test]
+    fn a_comment_is_not_a_build() {
+        let yml = r##"
+  skill-forge:
+    # `cargo test --features skill-forge --lib skill_forge` contesta otra
+    # pregunta, cuesta mas minutos y es decision del autor.
+    steps:
+      - name: Compile the WASM skill engine
+        run: cargo check --features skill-forge --lib
+"##;
+        // Se COMPILA: lo dice el paso.
+        assert_eq!(inline_features(yml), vec!["skill-forge"]);
+        // Y no se PRUEBA: el unico `cargo test` del texto es un comentario.
+        assert!(
+            test_job_features(yml, &[], &[]).is_empty(),
+            "un `cargo test` escrito en un comentario no ejecuta ningun test"
+        );
     }
 
     #[test]

@@ -18,23 +18,25 @@ fn main() {
     // ------------------------------------------------------------------
     println!("--- 1. PgVectorConfig ---\n");
 
-    let config = PgVectorConfig {
-        connection_string: "host=localhost dbname=vectors user=postgres password=secret"
-            .to_string(),
-        table_name: "embeddings".to_string(),
-        dimensions: 384,
-    };
+    // `PgVectorConfig` es `#[non_exhaustive]`, asi que un literal de struct no
+    // compila desde fuera del crate --- y un ejemplo esta fuera. La via son los
+    // setters que `with_setters!` genera justo para esto.
+    let config = PgVectorConfig::default()
+        .with_connection_string(
+            "host=localhost dbname=vectors user=postgres password=secret".to_string(),
+        )
+        .with_table_name("embeddings".to_string())
+        .with_dimensions(384);
 
     println!("  connection_string: {}", config.connection_string);
     println!("  table_name:        {}", config.table_name);
     println!("  dimensions:        {}", config.dimensions);
 
     // Custom config for a different use case
-    let config_1536 = PgVectorConfig {
-        connection_string: "host=db.example.com dbname=ai port=5432".to_string(),
-        table_name: "openai_embeddings".to_string(),
-        dimensions: 1536,
-    };
+    let config_1536 = PgVectorConfig::default()
+        .with_connection_string("host=db.example.com dbname=ai port=5432".to_string())
+        .with_table_name("openai_embeddings".to_string())
+        .with_dimensions(1536);
     println!(
         "\n  Custom config: table={}, dims={}",
         config_1536.table_name, config_1536.dimensions

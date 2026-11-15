@@ -600,6 +600,95 @@ jobs:
       - name: Compile the WASM skill engine
         run: cargo check --features skill-forge --lib
 
+  uncovered-features:
+    name: Las once que no compilaba nadie
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # V457. Estas once features estaban en `UNCOVERED_BACKLOG`
+    # (`src/bin/ai_test_harness/feature_matrix.rs`): declaradas en `Cargo.toml`,
+    # ocho de ellas anunciadas en el README, y compiladas por NINGUN trabajo de
+    # este fichero. Lo que habia detras, contado antes de escribir el trabajo
+    # (2026-11-15, 0.2.419): 14.100 lineas, 277 tests que no ejecutaba nadie, y
+    # cinco binarios mas un ejemplo que no compilaba ningun trabajo --- cuatro
+    # de esos cinco estan inventariados en `docs/BINARIES.md`, pagina que CI
+    # verifica contra el manifiesto desde V305.
+    #
+    # DOS de las once estaban rotuladas de imposibles y no lo eran:
+    # `hardware-rocm` y `hardware-metal` figuraban bajo «the Linux runner cannot
+    # build these at all» y no declaran una sola dependencia. Sus bloques son
+    # Rust puro que invoca `rocm-smi` / `system_profiler` por `Command`; el de
+    # Metal comprueba macOS en EJECUCION, con `cfg!`. Lo decia ya el comentario
+    # de `hardware-detection` en `Cargo.toml`. Eran las dos mas baratas de la
+    # lista.
+    #
+    # UNA FEATURE POR PASO, no las once en un `--features`. Once juntas son UNA
+    # compilacion: si `a` sola no compila porque le falta un `#[cfg]` que `b` le
+    # proporciona, esa compilacion sale verde y el agujero sigue ahi. Es el
+    # mismo razonamiento que ya esta escrito para `ffi,vision` en la matriz de
+    # abajo y para los dos motores de `tabular` mas arriba.
+    #
+    # Y UN SOLO TRABAJO, no once entradas de matriz: cada entrada de matriz es
+    # un runner entero --- checkout, toolchain, cache y una compilacion de
+    # FEATURES_MIN completa --- y este fichero ya despliega 22 trabajos mas 38
+    # entradas. Aqui las dependencias se compilan una vez y cada paso recompila
+    # solo nuestro crate.
+    #
+    # `cargo test --lib`, no `cargo check`: «lo compila alguien» y «lo prueba
+    # alguien» son dos preguntas distintas y el trinquete las separa en dos
+    # listas. Con `check` las once solo se mudarian de lista y los 277 tests
+    # seguirian sin ejecutarse.
+    #
+    # COSTE MEDIDO (2026-11-15, maquina de desarrollo, dependencias ya
+    # compiladas): ~70 s por feature --- 11 min 46 s las nueve primeras con su
+    # base --- y 21 s cada paso de binarios. El tiempo de pared en el runner lo
+    # dara la primera ejecucion de este trabajo, igual que con `skill-forge` en
+    # V454.
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.98.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: uncovered-features
+      # Las seis sin dependencias propias van primero: son las mas baratas y
+      # las que fallarian antes.
+      - name: vector-pgvector
+        run: cargo test --no-default-features --features "$FEATURES_MIN,vector-pgvector" --lib
+      - name: prompt-fragments
+        run: cargo test --no-default-features --features "$FEATURES_MIN,prompt-fragments" --lib
+      - name: acp
+        run: cargo test --no-default-features --features "$FEATURES_MIN,acp" --lib
+      - name: hardware-rocm
+        run: cargo test --no-default-features --features "$FEATURES_MIN,hardware-rocm" --lib
+      - name: hardware-metal
+        run: cargo test --no-default-features --features "$FEATURES_MIN,hardware-metal" --lib
+      - name: prompt-breeder
+        run: cargo test --no-default-features --features "$FEATURES_MIN,prompt-breeder" --lib
+      # Estas cinco encienden paraguas que FEATURES_MIN no trae: `multi-agent`,
+      # `advanced-memory`, `distillation`, `autonomous` y `audio`. Por eso la
+      # medicion de «+0 cajas» hecha sobre `full` no decia nada de este trabajo.
+      - name: sub-agents
+        run: cargo test --no-default-features --features "$FEATURES_MIN,sub-agents" --lib
+      - name: prompt-synthesis
+        run: cargo test --no-default-features --features "$FEATURES_MIN,prompt-synthesis" --lib
+      - name: feedback-loop
+        run: cargo test --no-default-features --features "$FEATURES_MIN,feedback-loop" --lib
+      - name: stall-detection
+        run: cargo test --no-default-features --features "$FEATURES_MIN,stall-detection" --lib
+      - name: stall-detection-llm
+        run: cargo test --no-default-features --features "$FEATURES_MIN,stall-detection-llm" --lib
+      # Los pasos de arriba compilan la libreria en modo test, donde un import
+      # que solo usa `#[cfg(test)]` cuenta como usado. Estos la compilan SIN
+      # `cfg(test)`, que es como se vieron por primera vez tres imports muertos
+      # en `src/prompt_breeder/breeder.rs` (arreglados en V457). Y de paso
+      # compilan los targets que nada compilaba.
+      - name: Los binarios y el ejemplo que nada compilaba
+        run: |
+          cargo check --no-default-features --features "$FEATURES_MIN,acp" --bin ai_acp --bin ai_acp_audit
+          cargo check --no-default-features --features "$FEATURES_MIN,prompt-synthesis" --bin ai_prompt_synth
+          cargo check --no-default-features --features "$FEATURES_MIN,feedback-loop" --bin ai_feedback
+          cargo check --no-default-features --features "$FEATURES_MIN,prompt-breeder" --bin ai_breeder
+          cargo check --no-default-features --features "$FEATURES_MIN,vector-pgvector" --example vector_pgvector_demo
+
   feature-matrix:
     name: Feature Matrix (${{ matrix.features }})
     runs-on: ubuntu-latest

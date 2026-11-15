@@ -168,7 +168,7 @@ mod tests {
 
     #[test]
     fn max_wall_time_trips() {
-        let mut m = mk(BudgetLimit::MaxWallTime(Duration::from_millis(5)));
+        let m = mk(BudgetLimit::MaxWallTime(Duration::from_millis(5)));
         sleep(Duration::from_millis(10));
         let b = m.check().expect("breach");
         assert_eq!(b.kind, BudgetKind::WallTime);

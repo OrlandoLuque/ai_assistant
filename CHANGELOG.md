@@ -5,6 +5,189 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v337 (2026-11-15) - V457: once features que no compilaba ningun trabajo, y el trinquete que debia decirlo estaba verde por un comentario (0.2.420)
+
+`UNCOVERED_BACKLOG` (en `src/bin/ai_test_harness/feature_matrix.rs`) listaba **veinte features
+declaradas que ningun trabajo de CI compila**. La propuesta encolada decia que nueve de ellas
+costaban cero y cabian en un solo trabajo. **La propuesta estaba mal por tres sitios**, y los
+tres se ven midiendo.
+
+### 1. El «coste cero» se midio sobre `full`, y el trabajo parte de `FEATURES_MIN`
+
+La tabla del 2026-11-13 daba +0 cajas y +0,0 MiB para seis de las nueve. Es cierto contra
+`full`. Pero el trabajo que habria que escribir parte de `FEATURES_MIN`, que son ocho
+features, y sobre esa base **cinco de las nueve encienden paraguas enteros**:
+
+| feature | enciende | en MIN? |
+|---|---|---|
+| `stall-detection` | `autonomous`, `audio`, `analytics` | solo `analytics` |
+| `stall-detection-llm` | `stall-detection` → lo mismo | idem |
+| `sub-agents` | `multi-agent`, `analytics` | `multi-agent` **no** |
+| `prompt-synthesis` | `prompt-fragments`, `embeddings`, `advanced-memory`, blake3 | `advanced-memory` **no** |
+| `feedback-loop` | `distillation`, `advanced-memory`, blake3, ed25519-dalek | ninguna |
+
+El incremento era correcto y medido **contra una base que el trabajo no usa**. Tercera noche
+seguida con una cifra medida sobre el eje equivocado: V452 midio el crate equivocado
+(`zstd` en vez de `zstd-safe`), V456 la plataforma equivocada (Windows en vez de ubuntu), y
+esta la base de features.
+
+### 2. Con `cargo check` la deuda solo se muda de lista
+
+El trinquete separa a proposito «lo compila alguien» de «lo prueba alguien». Con un trabajo de
+`cargo check`, las nueve salen de `UNCOVERED_BACKLOG` y **entran en
+`COMPILED_BUT_NOT_EXERCISED`**, cada una con su motivo escrito. Veinte seguirian siendo veinte.
+
+Y lo que seguiria sin pagarse es esto, contado antes de tocar nada:
+
+| modulo | lineas | tests |
+|---|---|---|
+| `prompt_breeder/` (14 ficheros) | 5.967 | **77** |
+| `prompt_synthesis/` (7) | 1.986 | **48** |
+| `feedback_loop/` (7) | 1.666 | **35** |
+| `acp.rs` | 1.270 | 17 |
+| `prompt_fragments.rs` | 889 | 23 |
+| `stall_detection.rs` | 781 | 30 |
+| `sub_agents.rs` | 569 | 18 |
+| `vector_db_pgvector.rs` | 405 | 15 |
+| `stall_detection_llm.rs` | 340 | 11 |
+| los dos bloques de `hardware_info.rs` | 227 | 3 |
+| **total** | **14.100** | **277** |
+
+**277 tests que no ejecutaba nadie, detras de 14.100 lineas que no compilaba nadie.** Ninguno
+lleva `#[ignore]` y ninguno necesita un servicio levantado. Ocho de las once estan anunciadas
+en el README, y cinco binarios mas un ejemplo dependen de ellas --- cuatro de esos binarios
+estan inventariados en `docs/BINARIES.md`, pagina que CI verifica contra el manifiesto desde
+V305.
+
+Es la forma de `cloud-connectors`, que tiene 57 tests que no corre nadie y por eso tiene tarea
+propia (N162). La diferencia es la escala.
+
+### 3. Once juntas no prueban ninguna por separado
+
+`--features "MIN,a,b,...,k"` es UNA compilacion. Si `a` sola no compila porque le falta un
+`#[cfg]` que `b` le proporciona, esa compilacion sale verde y el agujero sigue ahi. Es el mismo
+razonamiento que ya estaba escrito en `ci.yml` para `ffi,vision` y para los dos motores de
+`tabular`.
+
+### 4. Y dos de las que la lista llamaba imposibles no lo eran
+
+`hardware-rocm` y `hardware-metal` figuraban bajo este rotulo:
+
+```
+// Platform-specific: the Linux runner cannot build these at all.
+```
+
+**Es falso.** No declaran una sola dependencia --- son `= ["hardware-detection"]`, y
+`hardware-detection` ya esta dentro de `full` --- y sus dos bloques en `src/hardware_info.rs`
+son Rust puro: invocan `rocm-smi` y `system_profiler` con `std::process::Command` y parsean el
+JSON con `serde_json`. `metal_probe` llega a comprobar macOS **en ejecucion**, con
+`cfg!(target_os = "macos")`, precisamente para compilar en cualquier plataforma.
+
+Y el dato correcto llevaba meses escrito en el mismo repositorio, trescientas lineas mas
+abajo, en el comentario de `hardware-detection` de `Cargo.toml`: *«ROCm and Metal shell out to
+vendor CLIs (rocm-smi / system_profiler) so they need no extra Rust deps --- the sub-feature
+is just a cfg gate»*. Dos documentos, uno correcto y otro falso, y el falso hacia de excusa de
+una puerta. Eran **las dos mas baratas de las veintiuna**.
+
+«No se puede construir aqui» y «aqui no hay esa GPU» son dos cosas distintas, y solo la
+primera impide compilar.
+
+### El trabajo: `uncovered-features`
+
+Un trabajo, **una feature por paso**, `cargo test --lib`, y un paso final de `cargo check`
+sobre los targets huerfanos. Un trabajo y no once entradas de matriz porque cada entrada es un
+runner entero --- checkout, toolchain, cache y una compilacion de `FEATURES_MIN` completa ---
+y `ci.yml` ya despliega 22 trabajos mas 38 entradas.
+
+MEDIDO el 2026-11-15 (maquina de desarrollo, dependencias ya compiladas):
+
+| feature | compilar | correr | tests | nuevos |
+|---|---|---|---|---|
+| `vector-pgvector` | 47 s | 17 s | 5.325 | **+15** |
+| `prompt-fragments` | 48 s | 17 s | 5.333 | **+23** |
+| `acp` | 55 s | 17 s | 5.327 | **+17** |
+| `sub-agents` | 50 s | 17 s | 5.528 | +18 (+200 de `multi-agent`) |
+| `prompt-synthesis` | 56 s | 18 s | 5.650 | +48 (+292 de `advanced-memory`) |
+| `feedback-loop` | 56 s | 17 s | 5.673 | +35 (+328 de `distillation`) |
+| `prompt-breeder` | 63 s | 17 s | 5.387 | **+77** |
+| `stall-detection` | 53 s | 17 s | 6.178 | +30 (+838 de `autonomous`+`audio`) |
+| `stall-detection-llm` | 54 s | 18 s | 6.189 | +11 |
+| `hardware-rocm` | --- | 72 s | 5.323 | +2 |
+| `hardware-metal` | --- | 65 s | 5.322 | +1 |
+
+Los recuentos **cuadran uno a uno con el inventario estatico** en las cuatro features que no
+arrastran nada: 5.310+15, +23, +17 y +77 exactamente. Total del orden de **14 minutos**,
+dentro del `timeout-minutes: 30` y por debajo de `tabular-polars` (25). Matiz, el de V454b al
+reves: con el arbol de dependencias ya compilado, que es el estado estacionario de CI con
+`rust-cache`; la primera ejecucion paga las dependencias una vez y ese numero lo da el runner.
+
+### Lo que salio al compilar lo que nadie compilaba
+
+**Cinco warnings en cuatro sitios**, contra la regla 5 («cero warnings en TODAS las
+combinaciones»): `BudgetLimit` y `Metric` sin usar en `prompt_breeder/breeder.rs:15`,
+`BudgetKind` sin usar en `:23`, un `mut` innecesario en `prompt_breeder/budget.rs:171` y
+`StallHeuristic` sin usar en `agentic_loop.rs:1268`.
+
+El de `BudgetKind` ensena por que el paso de binarios no es decorativo: el modulo padre lo
+importaba **para que el `use super::*` del modulo de tests lo alcanzara**, asi que con
+`cfg(test)` cuenta como usado y sin el esta muerto. Un trabajo que solo hiciera `cargo test` no
+lo veria nunca. El paso de `cargo check` es la unica compilacion SIN `cfg(test)` del trabajo.
+
+**Un ejemplo que no ha compilado jamas.** `examples/vector_pgvector_demo.rs` construye
+`PgVectorConfig { .. }` con un literal de struct, y el tipo es `#[non_exhaustive]`: desde fuera
+del crate --- y un ejemplo esta fuera --- eso es `error[E0639]`. El rustdoc que genera
+`with_setters!` lo dice con todas las letras. Los setters existian; el ejemplo no se actualizo
+y no habia nada que lo compilara. Arreglado con `::default()` y los tres `with_*`.
+
+**Y la puerta estaba verde por un comentario.** El trinquete tiene tres direcciones, y la
+tercera --- «esto se compila y ningun `cargo test` lo ejercita» --- estaba silenciada.
+`skill-forge` salio de `UNCOVERED_BACKLOG` en V454 con un trabajo de `cargo check`, asi que su
+sitio pasaba a ser `COMPILED_BUT_NOT_EXERCISED`, y la lista no lo pidio. El motivo: tres lineas
+debajo de su paso real hay una nota en prosa que dice que pasarlo a
+`cargo test --features skill-forge --lib` contestaria otra pregunta. **El analizador leyo esa
+frase como si fuera un paso** --- no saltaba lineas de comentario --- y metio `skill-forge` en
+el conjunto de lo probado. Comprobado en el log de CI del 2026-11-14, no deducido: el test
+corrio y salio `ok`. No era una puerta que no corriera: era una puerta verde por una razon
+falsa.
+
+Arreglado en `inline_features` y en `test_job_features`, con el test `a_comment_is_not_a_build`
+que lo fija, y `skill-forge` a `COMPILED_BUT_NOT_EXERCISED` con la razon medida. De los dos
+comentarios de `ci.yml` que contienen `--features`, el otro se salvaba por suerte: lleva una
+comilla invertida delante y el analizador la descartaba por no ser alfanumerica.
+
+### Lo que queda en la lista: nueve
+
+`wasm`, `local-inference-candle`, `embeddings-local`, `redis-backend` y las cinco `gui-*`. Las
+`gui-*` SI son la decision de presupuesto que la nota describia (+45 a +65 cajas, hasta
++21,2 MiB) y la via barata es el trabajo `clippy-gui` que ya se paga. Y `wasm` **no es una
+pregunta de features sino de target**: su codigo real esta tras
+`#[cfg(all(target_arch = "wasm32", feature = "wasm"))]`, asi que compilarlo en el runner de
+x86-64 compila las ramas de respaldo y no lo que importa; cerrarlo es anadir
+`--target wasm32-unknown-unknown`. Tambien estaba mal descrito, y ahora lo dice.
+
+### Verificacion
+
+- `cargo fmt --all -- --check` limpio, y `cargo fmt` no toco ningun fichero ajeno al cambio.
+- `cargo clippy --features "$FEATURES_STD" --all-targets -- -D warnings`: 0 avisos.
+- `cargo test --no-default-features --features "<MIN>,prompt-breeder" --lib` y lo mismo con
+  `stall-detection`: 0 avisos y 0 fallos, donde antes habia warnings.
+- `cargo check --no-default-features --features "<MIN>,prompt-breeder" --lib` --- la
+  compilacion SIN `cfg(test)` ---: 0 avisos, donde habia tres.
+- `cargo check ... --example vector_pgvector_demo`: compila, por primera vez.
+- El trinquete (`cargo test --bin ai_test_harness --features "full,browser" --
+  feature_matrix::tests`): **10 de 10**.
+- **Y las dos comprobaciones que demuestran que la puerta sostiene esto y no esta ciega:**
+  quitando solo la entrada de `skill-forge`, el trinquete se pone ROJO y la nombra
+  (`estas features se compilan pero ningun cargo test las ejercita: ["skill-forge"]`); y con
+  `ci.yml` como estaba en HEAD, ROJO nombrando las once una por una. Restaurado: verde otra
+  vez, 10 de 10.
+
+Lo que no se puede verificar desde aqui es el tiempo de pared en el runner y que las dos de
+hardware compilen en ubuntu: eso lo dice la primera ejecucion de `uncovered-features`, igual
+que paso con `skill-forge` en V454. El codigo no tiene nada especifico de plataforma, pero lo
+local es una pista y CI es el veredicto --- doctrina escrita en la cabecera de
+`feature_matrix.rs`.
+
 ## [Unreleased] - v336 (2026-11-14) - V456: una condicion de cierre que no podia cumplirse nunca, porque el arbol de dependencias se midio desde la plataforma equivocada (0.2.419)
 
 Las supresiones de `RUSTSEC-2026-0194` y `-0195` (quick-xml) vencen el 2026-12-15 y traian

@@ -12,16 +12,14 @@ use super::budget::{BudgetBreach, BudgetMeter};
 use super::cache::{CacheHit, CacheKey, EvalCache};
 use super::checkpoint::{self as ckpt, Checkpoint};
 use super::config::{
-    BudgetLimit, CheckpointPolicy, ConfigError, CrossoverStrategy, DiversityMetric,
-    FitnessObjective, FitnessSmoothing, Metric, MutationOperator, OperatorScheduler,
-    PromptBreederConfig, ReplacementPolicy, SeedProvenance, SeedSource, SelectionStrategy,
-    VoteRule,
+    CheckpointPolicy, ConfigError, CrossoverStrategy, DiversityMetric, FitnessObjective,
+    FitnessSmoothing, MutationOperator, OperatorScheduler, PromptBreederConfig, ReplacementPolicy,
+    SeedProvenance, SeedSource, SelectionStrategy, VoteRule,
 };
 use super::eval::{self, parse_output, EvalDataset, EvalExample};
 use super::fitness::{crowding_distance, pareto_ranks, FitnessEvaluator, FitnessScore};
 use super::ledger::{
-    safety_filter_kind, AbortReason, BreederEvent, BreederLedger, BreederLedgerError, BudgetKind,
-    RejectReason,
+    safety_filter_kind, AbortReason, BreederEvent, BreederLedger, BreederLedgerError, RejectReason,
 };
 use super::llm::{CostEstimator, LlmClient, TokenUsage};
 use super::operators::{apply_operator, MutationContext};
@@ -1470,7 +1468,10 @@ mod tests {
         SeedSource,
     };
     use crate::prompt_breeder::eval::{EvalDataset, EvalExample};
+    // Lo usaba el modulo padre solo para que este glob lo alcanzara, y ahi
+    // estaba muerto en la compilacion sin `cfg(test)`.
     use crate::prompt_breeder::fitness::ContainsEvaluator;
+    use crate::prompt_breeder::ledger::BudgetKind;
     use crate::prompt_breeder::llm::{FailMode, MockLlmClient};
 
     fn cfg() -> PromptBreederConfig {

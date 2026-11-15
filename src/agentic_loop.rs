@@ -1265,7 +1265,7 @@ mod tests {
     #[cfg(feature = "stall-detection")]
     #[test]
     fn test_stall_heuristic_observes_user_message() {
-        use crate::stall_detection::{KeywordStallDetector, StallDecision, StallHeuristic};
+        use crate::stall_detection::{KeywordStallDetector, StallDecision};
         let mut agent = AgenticLoop::new(LoopConfig {
             auto_search: false,
             ..Default::default()
