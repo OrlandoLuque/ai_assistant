@@ -644,8 +644,13 @@ jobs:
     # 14 min 18 s, los dieciseis pasos en verde (ejecucion 43660293902,
     # 2026-11-15). En la maquina de desarrollo, con las dependencias ya
     # compiladas: ~70 s por feature y 21 s por paso de binarios, 14 min 42 s.
-    # Las dos cifras miden cosas distintas y coinciden por casualidad; lo que
-    # vale es que ninguna se acerca al timeout de 30.
+    # Las dos cifras miden cosas distintas y coinciden por casualidad.
+    #
+    # Y la SEGUNDA ejecucion, con la cache ya caliente, tardo 17 min 10 s ---
+    # MAS que la primera a frio. O sea que aqui la varianza del runner domina
+    # sobre la cache, y el presupuesto honesto de este trabajo son 14-17 min,
+    # no 14. Sigue holgado contra el timeout de 30, que es lo que habia que
+    # decidir, pero una sola muestra lo habria dejado subestimado un 20 %.
     #
     # Y el runner contesto lo que aqui no se podia: `hardware-rocm` y
     # `hardware-metal` compilan y pasan en ubuntu. De paso dieron CUATRO tests

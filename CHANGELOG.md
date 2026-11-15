@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v339 (2026-11-15) - V457c: la segunda ejecucion tardo MAS con la cache caliente, asi que el presupuesto son 14-17 min y no 14 (0.2.422)
+
+Un comentario, ninguna linea de codigo.
+
+V457b dejo escrito que `uncovered-features` tarda **14 min 18 s**, medido en su primera
+ejecucion y por tanto a cache frio. La segunda ejecucion (43662291839, el mismo dia) tardo
+**17 min 10 s** --- con la cache de `rust-cache` ya creada, o sea **mas** con la cache
+caliente.
+
+Dos lecturas, y la segunda es la que cambia la decision:
+
+- La cache no manda en este trabajo. Restaurarla cuesta tiempo tambien, y lo que este trabajo
+  recompila once veces es **nuestro propio crate**, que la cache no guarda.
+- **El presupuesto honesto son 14-17 min, no 14.** Una sola muestra lo dejaba subestimado un
+  20 %, y el numero existe para decidir si el trabajo cabe: contra el `timeout-minutes: 30`
+  sigue holgado, que era la pregunta, pero con 17 y no con 14.
+
+Lo apunto porque la cifra de V454b --- 106 s de `skill-forge` --- tambien es de una sola
+ejecucion, y hoy ese trabajo tardo 1 min 39 s (99 s). Ahi la variacion es de segundos; aqui es
+de tres minutos. Una medicion de tiempo de pared en un runner compartido **no es una medicion
+hasta que hay dos**.
+
 ## [Unreleased] - v338 (2026-11-15) - V457b: el trabajo nuevo tarda 14 min 18 s, el rotulo falso queda desmentido en ubuntu, y dos cifras mias estaban mal contadas (0.2.421)
 
 Cuatro cosas, ninguna de codigo: el numero que V457 dejo prometido, una comprobacion que solo
