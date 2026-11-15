@@ -372,7 +372,7 @@ mod tests {
     fn test_health_check_not_connected() {
         let db = PgVectorDb::new(PgVectorConfig::default());
         // Without a real connection, health check returns false
-        assert_eq!(db.health_check().unwrap(), false);
+        assert!(!db.health_check().unwrap());
     }
 
     #[test]

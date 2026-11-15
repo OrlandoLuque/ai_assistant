@@ -5,6 +5,100 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v340 (2026-11-15) - V458: las once entraron en CI con cero lints, y el primer lint que las mira destapa una poda que elegia al reves (0.2.423)
+
+La primera de la lista que V457 dejo escrita: `clippy -D warnings` sobre las once features
+que V457 trajo a CI. La propuesta decia «en vez de `cargo test`», y eso **no** se hace: seria
+devolver los 277 tests al limbo del que acaban de salir. Es un paso **mas**, no un cambio.
+
+### 1. El hueco, comprobado feature por feature
+
+Este fichero corre clippy tres veces --- `FEATURES_STD`, `FEATURES_NETWORK` y `FEATURES_MIN`
+--- y **ninguna de las once esta en `full`**, asi que ninguno de los tres pasos veia una sola
+linea de las 14.073 que V457 trajo. Entraron en CI compiladas y probadas, y **nunca miradas
+por un lint**.
+
+### 2. Seis warnings el primer dia
+
+En codigo que ningun lint habia visto nunca:
+
+| Sitio | Lint |
+|---|---|
+| `src/prompt_breeder/eval.rs:139` y `:145` | `unnecessary_unwrap` (x2) |
+| `src/prompt_synthesis/intent.rs:218` | `unnecessary_sort_by` |
+| `src/prompt_breeder/breeder.rs:1512` | `len_zero` (codigo de test) |
+| `src/prompt_synthesis/intent.rs:357` | `len_zero` (codigo de test) |
+| `src/vector_db_pgvector.rs:375` | `bool_assert_comparison` (codigo de test) |
+
+Tres de los seis estan en codigo de test, que es la mitad del motivo de usar `--all-targets`
+y no `--lib`.
+
+### 3. El tercero no era un lint: `tick_and_prune` podaba al reves de lo que prometia
+
+`IntentClusterManager::tick_and_prune` ordenaba los clusters por inactividad descendente, con
+un comentario que decia «so we prune the stalest first». **Ese orden no decidia nada**: tres
+lineas mas abajo la lista se reordenaba por indice (necesario, para que los indices sigan
+siendo validos al borrar), y el bucle paraba al llegar al suelo `min_clusters`. O sea que
+cuando el suelo cortaba --- que es el unico caso en que el orden importa --- el que sobrevivia
+era **el de indice mas bajo**, no el menos inactivo.
+
+Con tres clusters a inactividad 3, 1 y 2 y un suelo de dos: se iba el de 2 y **se quedaba el
+de 3**, justo lo contrario de lo escrito.
+
+El arreglo aplica el suelo **donde el orden todavia existe** (`.take(before - min)`), y por
+eso el bucle ya no necesita romper por longitud.
+
+Y el test que cubria esa poda **no podia fallar**: aseguraba `len() >= 1` y `len() <= 2` con
+dos clusters y un suelo de uno, o sea las dos unicas longitudes posibles. De ahi salia el
+`len_zero` de la tabla: el lint apuntaba exactamente a la asercion vacua. Ahora dice
+`assert_eq!(m.len(), 1)`, y hay un test nuevo que **si** discrimina:
+`prune_takes_the_stalest_first_when_the_floor_bites` falla con el codigo anterior (comprobado,
+devolviendo el bloque a mano) y pasa con el nuevo.
+
+### 4. Un solo paso con las once juntas --- y aqui si, al contrario que arriba
+
+Los pasos de `cargo test` van **una feature por paso** porque alli la pregunta es si cada una
+compila sola, y once juntas la contestan en falso. Aqui la pregunta es si este codigo tiene
+warnings, y con las once encendidas se ve el codigo de las once. **Medido: 48 s juntas contra
+~9 min repartido en once pasos.** El presupuesto del trabajo pasa de 14-17 a 15-18 min, contra
+un `timeout-minutes: 30`.
+
+**El limite queda escrito en el propio `ci.yml`**, porque este paso no es lo que parece: un
+lint que solo salta con UNA de las once encendida --- un `use` que sobra cuando el codigo que
+lo necesitaba esta apagado --- no salta aqui. El extremo de «todas apagadas» lo cubre el paso
+`clippy (minimum supported features)`; este cubre el de «todas encendidas»; las de en medio no
+las cubre nadie. Un paso cuyo alcance no esta escrito es el siguiente verde por una razon
+falsa, y de eso V457 ya tuvo uno.
+
+### 5. Tres tests para el parser que reestructure
+
+`extract_first_json` paso de `is_some()` + `unwrap()` a `if let`. Su unico test usaba un
+objeto simple, asi que la **rama de array** --- que esa reestructuracion tambien toca --- no la
+cubria nada. Anadidos: array con objeto dentro, llave dentro de una cadena, y comilla
+escapada dentro de una cadena. Los tres pasan antes y despues: son anclas, no discriminantes.
+
+### 6. Lo que NO cambia
+
+El paso de `cargo check` de los cinco binarios y el ejemplo se queda. `--all-targets` los
+alcanza (verificado con `--message-format=json`: `ai_acp`, `ai_acp_audit`, `ai_breeder`,
+`ai_feedback`, `ai_prompt_synth` y `vector_pgvector_demo` estan entre los targets que clippy
+revisa), pero los alcanza **con las once encendidas**, y ese paso los compila **una feature a
+la vez**. Es la otra pregunta.
+
+### Verificacion
+
+- `cargo clippy --no-default-features --features "<MIN>,<las once>" --all-targets -- -D warnings`: **0 warnings**.
+- `prompt_breeder` 80 tests (77 + 3), `prompt_synthesis` 49 (48 + 1), `vector_db_pgvector` 15: 0 fallos.
+- Ejecucion discriminante: con la seleccion devuelta a mano al comportamiento anterior, el
+  test nuevo falla y **solo** el (11 pasan, 1 falla); restaurado, los 12 verdes.
+- Trinquete de cobertura 10/10. El parser de `cargo test` exige esa cadena en la linea, asi
+  que una linea de `clippy` **no** cuenta como «probada» y el veredicto no se mueve.
+- `cargo fmt` limpio, `ci.yml` validado (23 trabajos, 16 pasos en este trabajo).
+
+Y un detalle que habria puesto el trabajo en rojo por instalacion y no por codigo: este
+trabajo pedia el toolchain **sin componentes**, asi que `cargo clippy` no habria existido en
+el runner. Lleva ya `components: clippy`, como los otros dos trabajos que usan clippy.
+
 ## [Unreleased] - v339 (2026-11-15) - V457c: la segunda ejecucion tardo MAS con la cache caliente, asi que el presupuesto son 14-17 min y no 14 (0.2.422)
 
 Un comentario, ninguna linea de codigo.

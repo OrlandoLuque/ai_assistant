@@ -652,6 +652,9 @@ jobs:
     # no 14. Sigue holgado contra el timeout de 30, que es lo que habia que
     # decidir, pero una sola muestra lo habria dejado subestimado un 20 %.
     #
+    # V458 le anade el paso de `clippy`, medido en 48 s con las dependencias
+    # calientes, asi que el presupuesto pasa a 15-18 min.
+    #
     # Y el runner contesto lo que aqui no se podia: `hardware-rocm` y
     # `hardware-metal` compilan y pasan en ubuntu. De paso dieron CUATRO tests
     # menos que en Windows, con motivo medido: el bloque
@@ -662,6 +665,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
           key: uncovered-features
@@ -704,6 +709,45 @@ jobs:
           cargo check --no-default-features --features "$FEATURES_MIN,feedback-loop" --bin ai_feedback
           cargo check --no-default-features --features "$FEATURES_MIN,prompt-breeder" --bin ai_breeder
           cargo check --no-default-features --features "$FEATURES_MIN,vector-pgvector" --example vector_pgvector_demo
+      # V458. Los tres pasos de `clippy` de este fichero (lineas ~155-191)
+      # corren sobre `FEATURES_STD`, `FEATURES_NETWORK` y `FEATURES_MIN`, y
+      # NINGUNA de estas once esta en `full` --- comprobado una por una en
+      # `Cargo.toml`. O sea que las 14.073 lineas que V457 trajo a CI entraron
+      # con CERO lints: compiladas y probadas, pero nunca mas miradas que eso.
+      #
+      # Al escribir este paso salieron SEIS warnings en codigo que ningun lint
+      # habia visto nunca: dos `unnecessary_unwrap` en
+      # `src/prompt_breeder/eval.rs`, un `unnecessary_sort_by` en
+      # `src/prompt_synthesis/intent.rs` y tres en codigo de test (`len_zero`
+      # dos veces y un `bool_assert_comparison`). Uno de ellos apuntaba a una
+      # asercion vacua, y tirando de ahi salio que la poda de `tick_and_prune`
+      # elegia al revES de lo que prometia su propio comentario. Las dos cosas
+      # arregladas en V458.
+      #
+      # UN SOLO PASO con las once juntas --- y aqui si, al contrario que en los
+      # pasos de `cargo test` de arriba. La diferencia: alli la pregunta es si
+      # cada feature COMPILA sola, y once juntas la contestan en falso, porque
+      # lo que a una le falta otra se lo da. Aqui la pregunta es si este codigo
+      # tiene warnings, y con las once encendidas se ve el codigo de las once.
+      # Medido: 48 s juntas, contra ~9 min repartido en once pasos.
+      #
+      # EL LIMITE, escrito para que nadie lo lea como mas de lo que es: un lint
+      # que solo salta con UNA de las once encendida --- un `use` que sobra
+      # cuando el codigo que lo necesitaba esta apagado --- no salta aqui. El
+      # extremo de «todas apagadas» lo cubre el paso
+      # `clippy (minimum supported features)` de arriba, este cubre el de
+      # «todas encendidas», y las combinaciones de en medio no las cubre nadie
+      # ni hay presupuesto que las cubra.
+      #
+      # `--all-targets` y no `--lib`: es lo que alcanza el codigo de test ---
+      # tres de los seis warnings estaban ahi --- y, verificado contra
+      # `--message-format=json`, tambien los cinco binarios y el ejemplo que el
+      # paso de arriba compila sin lints (`ai_acp`, `ai_acp_audit`, `ai_breeder`,
+      # `ai_feedback`, `ai_prompt_synth`, `vector_pgvector_demo`). Ese paso se
+      # queda igualmente, porque los compila UNA FEATURE A LA VEZ, que es la
+      # otra pregunta.
+      - name: clippy sobre las once (-D warnings)
+        run: cargo clippy --no-default-features --features "$FEATURES_MIN,vector-pgvector,prompt-fragments,acp,hardware-rocm,hardware-metal,prompt-breeder,sub-agents,prompt-synthesis,feedback-loop,stall-detection,stall-detection-llm" --all-targets -- -D warnings
 
   feature-matrix:
     name: Feature Matrix (${{ matrix.features }})

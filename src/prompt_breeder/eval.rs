@@ -119,7 +119,7 @@ fn extract_first_json(raw: &str) -> Option<String> {
             escape = false;
             continue;
         }
-        if start.is_some() {
+        if let Some(s) = start {
             if in_string {
                 if escape {
                     escape = false;
@@ -136,13 +136,13 @@ fn extract_first_json(raw: &str) -> Option<String> {
                 b'}' if open_char == b'{' => {
                     depth -= 1;
                     if depth == 0 {
-                        return Some(raw[start.unwrap()..=i].to_string());
+                        return Some(raw[s..=i].to_string());
                     }
                 }
                 b']' if open_char == b'[' => {
                     depth -= 1;
                     if depth == 0 {
-                        return Some(raw[start.unwrap()..=i].to_string());
+                        return Some(raw[s..=i].to_string());
                     }
                 }
                 _ => {}
@@ -282,6 +282,33 @@ mod tests {
         let raw = "thinking...\n{\"answer\": 42} trailing";
         let parsed = parse_output(&OutputParser::JsonFirst, raw);
         assert_eq!(parsed, "{\"answer\": 42}");
+    }
+
+    /// La rama de array de `extract_first_json` no la cubria nada: el unico
+    /// test del parser usaba un objeto. V458 la reestructuro (el `is_some()` +
+    /// `unwrap()` paso a `if let`, que es el mismo codigo para las dos ramas),
+    /// asi que estos tres fijan las tres cosas que distinguen a este parser de
+    /// un `find('{')`: el cierre por profundidad, el array, y que una llave
+    /// DENTRO de una cadena no cierra nada.
+    #[test]
+    fn parser_extracts_first_json_array() {
+        let raw = "noise [1, 2, {\"a\": 3}] tail";
+        let parsed = parse_output(&OutputParser::JsonFirst, raw);
+        assert_eq!(parsed, "[1, 2, {\"a\": 3}]");
+    }
+
+    #[test]
+    fn parser_json_ignores_brace_inside_string() {
+        let raw = "pre {\"a\": \"}\"} post";
+        let parsed = parse_output(&OutputParser::JsonFirst, raw);
+        assert_eq!(parsed, "{\"a\": \"}\"}");
+    }
+
+    #[test]
+    fn parser_json_ignores_escaped_quote_inside_string() {
+        let raw = r#"{"a": "b\"}c"} tail"#;
+        let parsed = parse_output(&OutputParser::JsonFirst, raw);
+        assert_eq!(parsed, r#"{"a": "b\"}c"}"#);
     }
 
     #[test]

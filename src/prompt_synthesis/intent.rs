@@ -208,25 +208,31 @@ impl IntentClusterManager {
         let threshold = self.cfg.shrink_idle_count;
         let min = self.cfg.min_clusters;
         let before = self.clusters.len();
-        // Sort descending by idle count so we prune the stalest first.
+        // Stalest first. This order is what decides WHICH clusters go when
+        // the `min_clusters` floor means not every cluster over the threshold
+        // can go --- and until V458 it decided nothing: the sort by index
+        // below destroyed it, and the loop stopped on the floor, so the
+        // survivor was whichever happened to sit at the lowest index. With
+        // three clusters at idle 3, 1 and 2 and a floor of two, the one at
+        // idle 3 was kept and the one at idle 2 removed, the opposite of what
+        // this comment promised. The floor is applied HERE now, by `take`,
+        // while the stalest-first order still holds.
         let mut ordered: Vec<(usize, u64)> = self
             .clusters
             .iter()
             .enumerate()
             .map(|(i, c)| (i, *self.idle_counter.get(&c.id.0).unwrap_or(&0)))
             .collect();
-        ordered.sort_by(|a, b| b.1.cmp(&a.1));
+        ordered.sort_by_key(|(_, idle)| std::cmp::Reverse(*idle));
         let mut to_remove: Vec<usize> = ordered
             .into_iter()
             .filter(|(_, idle)| *idle >= threshold)
             .map(|(i, _)| i)
+            .take(before.saturating_sub(min))
             .collect();
-        // Remove largest-index-first to keep other indices valid.
+        // Remove largest-index-first to keep the other indices valid.
         to_remove.sort_unstable_by(|a, b| b.cmp(a));
         for idx in to_remove {
-            if self.clusters.len() <= min {
-                break;
-            }
             let removed = self.clusters.remove(idx);
             self.idle_counter.remove(&removed.id.0);
         }
@@ -354,8 +360,51 @@ mod tests {
         // No assign between ticks → both ages go up, prune to min_clusters.
         m.tick_and_prune();
         m.tick_and_prune();
-        assert!(m.len() >= 1);
-        assert!(m.len() <= 2);
+        // Exactly one survives: both are over the threshold and the floor is
+        // one. The two assertions that stood here (`len() >= 1` and
+        // `len() <= 2`) were the only two lengths this manager could ever
+        // reach with two clusters and a floor of one, so neither could fail.
+        assert_eq!(m.len(), 1);
+    }
+
+    /// The floor means a tick removes only SOME of the clusters that are over
+    /// the threshold, so which ones it picks is observable behaviour, and both
+    /// the doc comment and the descending sort say stalest first. This fails on
+    /// the pre-V458 code, which kept the stalest (idle 3) and removed the
+    /// cluster at idle 2 because it removed by descending index.
+    #[test]
+    fn prune_takes_the_stalest_first_when_the_floor_bites() {
+        let mut cfg = IntentClusterManagerConfig::default();
+        cfg.max_clusters = 3;
+        cfg.grow_threshold = 0.99;
+        cfg.min_clusters = 2;
+        // Raised while the idle counts are built up to three distinct values,
+        // so the build-up itself prunes nothing; lowered for the single tick
+        // under test.
+        cfg.shrink_idle_count = 100;
+        let mut m = IntentClusterManager::new(cfg);
+        let a = m.assign(&vec3(1.0, 0.0, 0.0));
+        let b = m.assign(&vec3(0.0, 1.0, 0.0));
+        let c = m.assign(&vec3(0.0, 0.0, 1.0));
+        assert_eq!(m.len(), 3);
+
+        m.tick_and_prune(); //                 idle: a=1 b=1 c=1
+        m.assign(&vec3(0.0, 0.0, 1.0)); //     idle: a=1 b=1 c=0
+        m.tick_and_prune(); //                 idle: a=2 b=2 c=1
+        m.assign(&vec3(0.0, 1.0, 0.0)); //     idle: a=2 b=0 c=1
+
+        m.cfg.shrink_idle_count = 2;
+        // The tick leaves idle a=3 b=1 c=2, so `a` and `c` are both over the
+        // threshold and the floor of two allows exactly one removal. `a` is
+        // the staler of the two.
+        assert_eq!(m.tick_and_prune(), 1);
+        let left: Vec<_> = m.clusters().into_iter().map(|cl| cl.id).collect();
+        assert!(
+            !left.contains(&a),
+            "the stalest cluster survived the prune: {left:?}"
+        );
+        assert!(left.contains(&b));
+        assert!(left.contains(&c));
     }
 
     #[test]

@@ -1509,7 +1509,7 @@ mod tests {
         let out = br.run().unwrap();
         assert_eq!(out.generations_completed, 2);
         assert!(out.best_unit.is_some());
-        assert!(out.final_population.len() > 0);
+        assert!(!out.final_population.is_empty());
     }
 
     #[test]
