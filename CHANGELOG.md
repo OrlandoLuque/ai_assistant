@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v342 (2026-11-15) - V458c: publique «32 s» de una sola muestra en el mismo commit en que escribi que hay que decir cuantas hay (0.2.425)
+
+Un comentario y esta entrada.
+
+V458b corrigio dos cifras y dejo escrita la regla: **un tiempo de pared en un runner
+compartido es una distribucion, no un numero; publica el peor caso observado y di sobre
+cuantas muestras descansa.** Y en el mismo commit publique **«el paso de clippy tarda 32 s en
+el runner»**, de **una** muestra.
+
+La ejecucion de V458b dio la segunda: **41 s**. Un 28 % mas. El paso cuesta **32-41 s**.
+
+Y da la quinta muestra del trabajo completo: **13 min 30 s**. Las cinco:
+**10:42, 13:30, 14:18, 15:02, 17:10**. La dispersion sigue siendo del 60 % y el peor caso
+observado sigue siendo 17 min contra `timeout-minutes: 30`, asi que **ninguna decision cambia**
+--- lo que cambia es que las cifras publicadas ahora son verdad.
+
+Lo anoto por la forma del error y no por los nueve segundos: escribir la regla no es cumplirla,
+y la violacion estaba una docena de lineas mas abajo en el mismo fichero. Tercera cifra de una
+sola muestra en dos dias (V454b con `skill-forge`, V457 con este trabajo, V458b con este paso).
+
 ## [Unreleased] - v341 (2026-11-15) - V458b: el runner desmintio el rango que publique esta manana, y por abajo (0.2.424)
 
 Ninguna linea de codigo. Dos cifras de V458 corregidas con lo que midio el runner, y una

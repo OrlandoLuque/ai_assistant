@@ -655,13 +655,14 @@ jobs:
     # V458 le anade el paso de `clippy`. Y el runner corrigio las dos cifras que
     # V458 escribio para el:
     #
-    # - El paso de clippy tarda **32 s** alli, no 48 (ejecucion 43748766793).
+    # - El paso de clippy tarda **32-41 s** alli, no 48 (dos muestras: 32 s en la
+    #   ejecucion 43748766793 y 41 s en la 43750483139).
     # - El trabajo COMPLETO, con el paso nuevo dentro, tardo **10 min 42 s** ---
     #   por DEBAJO del rango «14-17 min» de arriba, teniendo un paso mas.
     #
-    # Cuatro muestras del mismo trabajo: 10:42, 14:18, 15:02 y 17:10. O sea que
-    # «14-17 min» no era un rango estrecho por arriba: estaba mal por abajo, y la
-    # cuarta muestra es la mas rapida de las cuatro aun haciendo mas trabajo.
+    # CINCO muestras del mismo trabajo: 10:42, 13:30, 14:18, 15:02 y 17:10. O sea
+    # que «14-17 min» no era un rango estrecho por arriba: estaba mal por abajo, y
+    # la mas rapida de las cinco es una de las que hace mas trabajo.
     # Descompuesto: ~10:40 es el suelo (cache caliente y runner tranquilo), el
     # arbol de dependencias a frio anade ~3,5 min, y un runner con vecinos
     # ruidosos anade hasta ~6 min.
@@ -669,7 +670,7 @@ jobs:
     # La conclusion practica, que es la unica que hay que mantener: el peor caso
     # observado son 17 min contra `timeout-minutes: 30`. Un tiempo de pared en un
     # runner compartido es una distribucion, no un numero, y publicarlo como
-    # rango estrecho invita a ajustar el timeout contra el. Con cuatro muestras la
+    # rango estrecho invita a ajustar el timeout contra el. Con cinco muestras la
     # dispersion es del 60 %.
     #
     # Los once pasos tardan 44-48 s cada uno en el runner --- uniformes, y mas
@@ -750,7 +751,7 @@ jobs:
       # cada feature COMPILA sola, y once juntas la contestan en falso, porque
       # lo que a una le falta otra se lo da. Aqui la pregunta es si este codigo
       # tiene warnings, y con las once encendidas se ve el codigo de las once.
-      # Medido: 48 s juntas en la maquina de desarrollo y 32 s en el runner,
+      # Medido: 48 s juntas en la maquina de desarrollo y 32-41 s en el runner,
       # contra ~7 min repartido en once pasos --- extrapolacion de UNA medicion,
       # 38,9 s para `prompt-breeder` sola con `--all-targets`, no de las once.
       #
