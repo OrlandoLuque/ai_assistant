@@ -973,7 +973,7 @@ impl AiGuiApp {
         }
 
         // 4. Indexing polling
-        if self.assistant.is_indexing {
+        if self.assistant.is_indexing() {
             while let Some(progress) = self.assistant.poll_indexing() {
                 match progress {
                     ai_assistant::IndexingProgress::Starting {
@@ -1215,7 +1215,7 @@ impl AiGuiApp {
 
         let mut knowledge_sources = Vec::new();
         let mut knowledge_tokens = 0;
-        if let Some(ref usage) = self.assistant.last_knowledge_usage {
+        if let Some(usage) = self.assistant.last_knowledge_usage() {
             knowledge_tokens = usage.total_tokens;
             for src in &usage.sources {
                 knowledge_sources.push((src.source.clone(), src.chunks_used, src.relevance_score));
@@ -2706,7 +2706,7 @@ impl AiGuiApp {
                 .iter()
                 .filter(|k| k.status == KnowledgeStatus::Pending)
                 .count();
-            widgets::pending_documents_indicator(ui, pending, self.assistant.is_indexing);
+            widgets::pending_documents_indicator(ui, pending, self.assistant.is_indexing());
 
             if let Some((ref doc, current, total)) = self.indexing_display {
                 widgets::indexing_progress(ui, doc, current, total);
@@ -2771,7 +2771,7 @@ impl AiGuiApp {
                 .map(|k| k.doc_count)
                 .sum();
             let status = RagStatus {
-                rag_available: self.assistant.rag_db.is_some(),
+                rag_available: self.assistant.rag_db().is_some(),
                 knowledge_enabled: true,
                 conversation_enabled: false,
                 knowledge_chunks: indexed_chunks,
@@ -2811,7 +2811,7 @@ impl AiGuiApp {
                     );
                 }
                 // Last knowledge usage
-                if let Some(ref usage) = self.assistant.last_knowledge_usage {
+                if let Some(usage) = self.assistant.last_knowledge_usage() {
                     ui.colored_label(
                         Color32::from_gray(140),
                         format!(
@@ -3639,7 +3639,7 @@ impl eframe::App for AiGuiApp {
         // Request repaint while tasks are active
         if self.assistant.is_generating
             || self.assistant.is_fetching_models
-            || self.assistant.is_indexing
+            || self.assistant.is_indexing()
             || self.scan_rx.is_some()
             || self.wizard_state.pulling_model.is_some()
             || self.wizard_state.deleting_model.is_some()

@@ -732,7 +732,7 @@ impl AiAssistant {
 
         // Auto-store user message in RAG if enabled
         #[cfg(feature = "rag")]
-        if self.rag_config.auto_store_messages {
+        if self.knowledge.config.auto_store_messages {
             let _ = self.store_message_in_rag(&msg, true);
         }
 
@@ -865,7 +865,7 @@ impl AiAssistant {
 
                             // Auto-store assistant message in RAG if enabled
                             #[cfg(feature = "rag")]
-                            if self.rag_config.auto_store_messages {
+                            if self.knowledge.config.auto_store_messages {
                                 let _ = self.store_message_in_rag(&msg, true);
                             }
 

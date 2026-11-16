@@ -3337,14 +3337,14 @@ fn handle_openai_chat_completions(
         if config.enrichment.enable_rag {
             // Apply RAG sub-config
             let rconf = &config.enrichment.rag;
-            ass.rag_config.knowledge_rag_enabled = rconf.knowledge_rag;
-            ass.rag_config.conversation_rag_enabled = rconf.conversation_rag;
-            ass.rag_config.max_knowledge_tokens = rconf.max_knowledge_tokens;
-            ass.rag_config.max_conversation_tokens = rconf.max_conversation_tokens;
-            ass.rag_config.top_k_chunks = rconf.top_k_chunks;
-            ass.rag_config.min_relevance_score = rconf.min_relevance_score;
-            ass.rag_config.dynamic_context_enabled = rconf.dynamic_context;
-            ass.rag_config.auto_store_messages = rconf.auto_store_messages;
+            ass.rag_config_mut().knowledge_rag_enabled = rconf.knowledge_rag;
+            ass.rag_config_mut().conversation_rag_enabled = rconf.conversation_rag;
+            ass.rag_config_mut().max_knowledge_tokens = rconf.max_knowledge_tokens;
+            ass.rag_config_mut().max_conversation_tokens = rconf.max_conversation_tokens;
+            ass.rag_config_mut().top_k_chunks = rconf.top_k_chunks;
+            ass.rag_config_mut().min_relevance_score = rconf.min_relevance_score;
+            ass.rag_config_mut().dynamic_context_enabled = rconf.dynamic_context;
+            ass.rag_config_mut().auto_store_messages = rconf.auto_store_messages;
 
             let (knowledge, _conversation) = ass.build_rag_context(&user_message);
             knowledge_context = knowledge;
@@ -3586,14 +3586,14 @@ fn handle_openai_chat_completions_stream(
         let mut ass = assistant.lock().unwrap_or_else(|e| e.into_inner());
         if config.enrichment.enable_rag {
             let rconf = &config.enrichment.rag;
-            ass.rag_config.knowledge_rag_enabled = rconf.knowledge_rag;
-            ass.rag_config.conversation_rag_enabled = rconf.conversation_rag;
-            ass.rag_config.max_knowledge_tokens = rconf.max_knowledge_tokens;
-            ass.rag_config.max_conversation_tokens = rconf.max_conversation_tokens;
-            ass.rag_config.top_k_chunks = rconf.top_k_chunks;
-            ass.rag_config.min_relevance_score = rconf.min_relevance_score;
-            ass.rag_config.dynamic_context_enabled = rconf.dynamic_context;
-            ass.rag_config.auto_store_messages = rconf.auto_store_messages;
+            ass.rag_config_mut().knowledge_rag_enabled = rconf.knowledge_rag;
+            ass.rag_config_mut().conversation_rag_enabled = rconf.conversation_rag;
+            ass.rag_config_mut().max_knowledge_tokens = rconf.max_knowledge_tokens;
+            ass.rag_config_mut().max_conversation_tokens = rconf.max_conversation_tokens;
+            ass.rag_config_mut().top_k_chunks = rconf.top_k_chunks;
+            ass.rag_config_mut().min_relevance_score = rconf.min_relevance_score;
+            ass.rag_config_mut().dynamic_context_enabled = rconf.dynamic_context;
+            ass.rag_config_mut().auto_store_messages = rconf.auto_store_messages;
 
             let (knowledge, _conversation) = ass.build_rag_context(&user_message);
             knowledge_context = knowledge;

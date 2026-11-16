@@ -279,7 +279,7 @@ impl AiAssistant {
     #[cfg(feature = "rag")]
     pub fn fresh_context_status(&mut self, has_graph: bool) -> FreshContextStatus {
         let rag_available = self.has_rag();
-        let sources_indexed = self.registered_sources.len();
+        let sources_indexed = self.knowledge.registered_sources.len();
         let memory_available = self.memory_manager.is_some();
         let available = self.calculate_available_knowledge_tokens("estimate");
 
@@ -358,7 +358,7 @@ impl AiAssistant {
             .saturating_sub(response_reserve);
 
         #[cfg(feature = "rag")]
-        let rag_available = self.rag_db.is_some();
+        let rag_available = self.knowledge.db.is_some();
         #[cfg(not(feature = "rag"))]
         let rag_available = false;
         let memory_available = self.memory_manager.is_some();

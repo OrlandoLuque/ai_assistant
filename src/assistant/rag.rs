@@ -21,7 +21,7 @@ impl AiAssistant {
     /// assistant.register_knowledge_document("guide", "# Guide\nContent here...");
     /// ```
     pub fn set_rag_path(&mut self, db_path: &Path) {
-        self.rag_db_path = Some(db_path.to_path_buf());
+        self.knowledge.db_path = Some(db_path.to_path_buf());
     }
 
     #[cfg(feature = "rag")]
@@ -30,8 +30,8 @@ impl AiAssistant {
     /// Note: You can also use `set_rag_path()` for lazy initialization, which
     /// will create the database automatically when first needed.
     pub fn init_rag(&mut self, db_path: &Path) -> AiResult<()> {
-        self.rag_db_path = Some(db_path.to_path_buf());
-        self.rag_db = Some(RagDb::open(db_path)?);
+        self.knowledge.db_path = Some(db_path.to_path_buf());
+        self.knowledge.db = Some(RagDb::open(db_path)?);
         Ok(())
     }
 
@@ -43,24 +43,7 @@ impl AiAssistant {
     ///
     /// Returns true if RAG is available, false otherwise.
     pub(crate) fn ensure_rag_initialized(&mut self) -> bool {
-        if self.rag_db.is_some() {
-            return true;
-        }
-
-        if let Some(ref path) = self.rag_db_path.clone() {
-            match RagDb::open(path) {
-                Ok(db) => {
-                    self.rag_db = Some(db);
-                    true
-                }
-                Err(e) => {
-                    log::error!("[AI RAG] Failed to initialize database: {}", e);
-                    false
-                }
-            }
-        } else {
-            false
-        }
+        self.knowledge.ensure_initialized()
     }
 
     #[cfg(feature = "rag")]
@@ -92,10 +75,15 @@ impl AiAssistant {
     /// assistant.send_message("Help me understand the guide".to_string(), "");
     /// ```
     pub fn register_knowledge_document(&mut self, source: &str, content: &str) {
-        self.pending_documents
+        self.knowledge
+            .pending_documents
             .insert(source.to_string(), content.to_string());
-        if !self.registered_sources.contains(&source.to_string()) {
-            self.registered_sources.push(source.to_string());
+        if !self
+            .knowledge
+            .registered_sources
+            .contains(&source.to_string())
+        {
+            self.knowledge.registered_sources.push(source.to_string());
         }
     }
 
@@ -108,15 +96,15 @@ impl AiAssistant {
     ///
     /// Returns `Err` if `append_only_mode` is enabled in `RagConfig`.
     pub fn unregister_knowledge_document(&mut self, source: &str) -> AiResult<()> {
-        if self.rag_config.append_only_mode {
+        if self.knowledge.config.append_only_mode {
             return Err(AiError::Other(format!(
                 "Cannot unregister knowledge document '{}': append-only mode is enabled. \
                  Only adding new documents is allowed.",
                 source
             )));
         }
-        self.pending_documents.remove(source);
-        self.registered_sources.retain(|s| s != source);
+        self.knowledge.pending_documents.remove(source);
+        self.knowledge.registered_sources.retain(|s| s != source);
         Ok(())
     }
 
@@ -127,18 +115,18 @@ impl AiAssistant {
     ///
     /// Returns `Err` if `append_only_mode` is enabled in `RagConfig`.
     pub fn delete_knowledge_document(&mut self, source: &str) -> AiResult<()> {
-        if self.rag_config.append_only_mode {
+        if self.knowledge.config.append_only_mode {
             return Err(AiError::Other(format!(
                 "Cannot delete knowledge document '{}': append-only mode is enabled. \
                  Only adding new documents is allowed.",
                 source
             )));
         }
-        self.pending_documents.remove(source);
-        self.registered_sources.retain(|s| s != source);
+        self.knowledge.pending_documents.remove(source);
+        self.knowledge.registered_sources.retain(|s| s != source);
 
         if self.ensure_rag_initialized() {
-            if let Some(ref db) = self.rag_db {
+            if let Some(ref db) = self.knowledge.db {
                 db.delete_document(source)?;
             }
         }
@@ -151,19 +139,19 @@ impl AiAssistant {
     /// When enabled, knowledge documents can only be added, not removed.
     /// This protects against accidental deletion of important knowledge.
     pub fn set_append_only_mode(&mut self, enabled: bool) {
-        self.rag_config.append_only_mode = enabled;
+        self.knowledge.config.append_only_mode = enabled;
     }
 
     #[cfg(feature = "rag")]
     /// Check if append-only mode is enabled
     pub fn is_append_only_mode(&self) -> bool {
-        self.rag_config.append_only_mode
+        self.knowledge.config.append_only_mode
     }
 
     #[cfg(feature = "rag")]
     /// Get list of registered knowledge sources
     pub fn get_registered_sources(&self) -> &[String] {
-        &self.registered_sources
+        &self.knowledge.registered_sources
     }
 
     #[cfg(feature = "rag")]
@@ -175,7 +163,7 @@ impl AiAssistant {
     /// Returns a vector of (source_name, chunks_indexed) for documents that were indexed.
     /// Documents that were already up-to-date return 0 chunks.
     pub fn process_pending_documents(&mut self) -> Vec<(String, usize)> {
-        if self.pending_documents.is_empty() {
+        if self.knowledge.pending_documents.is_empty() {
             return Vec::new();
         }
 
@@ -186,9 +174,9 @@ impl AiAssistant {
         let mut results = Vec::new();
 
         // Take ownership of pending documents to process them
-        let documents: Vec<(String, String)> = self.pending_documents.drain().collect();
+        let documents: Vec<(String, String)> = self.knowledge.pending_documents.drain().collect();
 
-        if let Some(ref db) = self.rag_db {
+        if let Some(ref db) = self.knowledge.db {
             for (source, content) in documents {
                 match db.index_document(&source, &content) {
                     Ok(chunks) => {
@@ -207,13 +195,13 @@ impl AiAssistant {
     #[cfg(feature = "rag")]
     /// Check if there are pending documents to index
     pub fn has_pending_documents(&self) -> bool {
-        !self.pending_documents.is_empty()
+        !self.knowledge.pending_documents.is_empty()
     }
 
     #[cfg(feature = "rag")]
     /// Get the number of pending documents
     pub fn pending_document_count(&self) -> usize {
-        self.pending_documents.len()
+        self.knowledge.pending_documents.len()
     }
 
     #[cfg(feature = "rag")]
@@ -222,10 +210,11 @@ impl AiAssistant {
     /// More efficient than calling `register_knowledge_document` multiple times.
     pub fn register_documents(&mut self, documents: Vec<DocumentInfo>) {
         for doc in documents {
-            self.pending_documents
+            self.knowledge
+                .pending_documents
                 .insert(doc.source.clone(), doc.content);
-            if !self.registered_sources.contains(&doc.source) {
-                self.registered_sources.push(doc.source);
+            if !self.knowledge.registered_sources.contains(&doc.source) {
+                self.knowledge.registered_sources.push(doc.source);
             }
         }
     }
@@ -236,7 +225,7 @@ impl AiAssistant {
     /// Returns immediately. Use `poll_indexing()` to check progress.
     /// When complete, `is_indexing` will be false.
     pub fn start_background_indexing(&mut self) {
-        if self.pending_documents.is_empty() || self.is_indexing {
+        if self.knowledge.pending_documents.is_empty() || self.knowledge.is_indexing {
             return;
         }
 
@@ -244,16 +233,16 @@ impl AiAssistant {
             return;
         }
 
-        let db_path = match &self.rag_db_path {
+        let db_path = match &self.knowledge.db_path {
             Some(p) => p.clone(),
             None => return,
         };
 
-        let documents: Vec<(String, String)> = self.pending_documents.drain().collect();
+        let documents: Vec<(String, String)> = self.knowledge.pending_documents.drain().collect();
         let (tx, rx) = mpsc::channel();
 
-        self.is_indexing = true;
-        self.rx_indexing = Some(rx);
+        self.knowledge.is_indexing = true;
+        self.knowledge.rx_indexing = Some(rx);
 
         thread::spawn(move || {
             let db = match RagDb::open(&db_path) {
@@ -307,19 +296,19 @@ impl AiAssistant {
     ///
     /// Returns the latest progress update, if any.
     pub fn poll_indexing(&mut self) -> Option<IndexingProgress> {
-        if let Some(ref rx) = self.rx_indexing {
+        if let Some(ref rx) = self.knowledge.rx_indexing {
             match rx.try_recv() {
                 Ok(progress) => {
                     if matches!(progress, IndexingProgress::AllComplete { .. }) {
-                        self.is_indexing = false;
-                        self.rx_indexing = None;
+                        self.knowledge.is_indexing = false;
+                        self.knowledge.rx_indexing = None;
                     }
                     return Some(progress);
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {}
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    self.is_indexing = false;
-                    self.rx_indexing = None;
+                    self.knowledge.is_indexing = false;
+                    self.knowledge.rx_indexing = None;
                 }
             }
         }
@@ -334,7 +323,7 @@ impl AiAssistant {
     where
         F: FnMut(IndexingProgress),
     {
-        if self.pending_documents.is_empty() {
+        if self.knowledge.pending_documents.is_empty() {
             return Vec::new();
         }
 
@@ -342,11 +331,11 @@ impl AiAssistant {
             return Vec::new();
         }
 
-        let documents: Vec<(String, String)> = self.pending_documents.drain().collect();
+        let documents: Vec<(String, String)> = self.knowledge.pending_documents.drain().collect();
         let total = documents.len();
         let mut results = Vec::new();
 
-        if let Some(ref db) = self.rag_db {
+        if let Some(ref db) = self.knowledge.db {
             for (i, (source, content)) in documents.into_iter().enumerate() {
                 on_progress(IndexingProgress::Starting {
                     source: source.clone(),
@@ -386,7 +375,7 @@ impl AiAssistant {
     /// Get detailed information about a specific indexed document
     pub fn get_document_info(&mut self, source: &str) -> Option<DocumentStats> {
         if self.ensure_rag_initialized() {
-            if let Some(ref db) = self.rag_db {
+            if let Some(ref db) = self.knowledge.db {
                 if let Ok(Some((hash, chunks, tokens, indexed_at))) = db.get_source_info(source) {
                     return Some(DocumentStats {
                         source: source.to_string(),
@@ -394,13 +383,13 @@ impl AiAssistant {
                         total_tokens: tokens,
                         content_hash: hash,
                         indexed_at,
-                        is_pending: self.pending_documents.contains_key(source),
+                        is_pending: self.knowledge.pending_documents.contains_key(source),
                     });
                 }
             }
         }
         // Check if it's pending
-        if self.pending_documents.contains_key(source) {
+        if self.knowledge.pending_documents.contains_key(source) {
             return Some(DocumentStats {
                 source: source.to_string(),
                 chunk_count: 0,
@@ -419,7 +408,7 @@ impl AiAssistant {
         let mut stats = Vec::new();
 
         if self.ensure_rag_initialized() {
-            if let Some(ref db) = self.rag_db {
+            if let Some(ref db) = self.knowledge.db {
                 if let Ok(sources) = db.list_indexed_sources() {
                     for (source, chunks, tokens, indexed_at) in sources {
                         stats.push(DocumentStats {
@@ -428,7 +417,7 @@ impl AiAssistant {
                             total_tokens: tokens,
                             content_hash: String::new(), // Not needed for listing
                             indexed_at,
-                            is_pending: self.pending_documents.contains_key(&source),
+                            is_pending: self.knowledge.pending_documents.contains_key(&source),
                         });
                     }
                 }
@@ -436,7 +425,7 @@ impl AiAssistant {
         }
 
         // Add pending documents that aren't indexed yet
-        for source in self.pending_documents.keys() {
+        for source in self.knowledge.pending_documents.keys() {
             if !stats.iter().any(|s| &s.source == source) {
                 stats.push(DocumentStats {
                     source: source.clone(),
@@ -455,21 +444,21 @@ impl AiAssistant {
     #[cfg(feature = "rag")]
     /// Set the current user ID for RAG operations
     pub fn set_user_id(&mut self, user_id: &str) {
-        self.user_id = user_id.to_string();
+        self.knowledge.user_id = user_id.to_string();
     }
 
     #[cfg(feature = "rag")]
     /// Get the current user ID
     pub fn get_user_id(&self) -> &str {
-        &self.user_id
+        &self.knowledge.user_id
     }
 
     #[cfg(feature = "rag")]
     /// Get or create user in RAG database, returns global notes
     pub fn ensure_user(&mut self) -> AiResult<String> {
         if self.ensure_rag_initialized() {
-            if let Some(ref db) = self.rag_db {
-                let user = db.get_or_create_user(&self.user_id)?;
+            if let Some(ref db) = self.knowledge.db {
+                let user = db.get_or_create_user(&self.knowledge.user_id)?;
                 return Ok(user.global_notes);
             }
         }
@@ -479,13 +468,80 @@ impl AiAssistant {
     #[cfg(feature = "rag")]
     /// Check if RAG is initialized or can be initialized
     pub fn has_rag(&self) -> bool {
-        self.rag_db.is_some() || self.rag_db_path.is_some()
+        self.knowledge.has_rag()
     }
 
     #[cfg(feature = "rag")]
     /// Check if RAG database is currently open
     pub fn is_rag_initialized(&self) -> bool {
-        self.rag_db.is_some()
+        self.knowledge.db.is_some()
+    }
+
+    // === Accessors for the knowledge state ===
+    //
+    // These five replace five `pub` fields that Phase 5 moved into
+    // `KnowledgeStore`: `rag_db`, `rag_config`, `user_id` (which already had
+    // `get_user_id`/`set_user_id`), `is_indexing` and `last_knowledge_usage`.
+    // Callers outside the crate change `assistant.rag_db` to
+    // `assistant.rag_db()`; `docs/GUIDE.md:723` had been documenting the method
+    // form since before one existed.
+
+    #[cfg(feature = "rag")]
+    /// The open RAG database, if there is one.
+    ///
+    /// `None` means no database is open *yet*: a path may still be set, in
+    /// which case the next RAG operation opens it. Use `has_rag()` to ask the
+    /// configured-or-not question and `is_rag_initialized()` for open-or-not.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use ai_assistant::AiAssistant;
+    /// use std::path::Path;
+    ///
+    /// let mut assistant = AiAssistant::new();
+    /// assistant.init_rag(Path::new("./app_data/ai_rag.db")).unwrap();
+    /// assert!(assistant.rag_db().is_some());
+    /// ```
+    pub fn rag_db(&self) -> Option<&RagDb> {
+        self.knowledge.db.as_ref()
+    }
+
+    #[cfg(feature = "rag")]
+    /// Mutable access to the open RAG database, if there is one.
+    ///
+    /// Kept because the field this replaces was `pub`, so callers could already
+    /// take `&mut` to it. To *install* a database use `init_rag()` or
+    /// `set_rag_path()`, which is what the field assignment was for.
+    pub fn rag_db_mut(&mut self) -> Option<&mut RagDb> {
+        self.knowledge.db.as_mut()
+    }
+
+    #[cfg(feature = "rag")]
+    /// The RAG configuration in force.
+    pub fn rag_config(&self) -> &RagConfig {
+        &self.knowledge.config
+    }
+
+    #[cfg(feature = "rag")]
+    /// Mutable access to the RAG configuration.
+    ///
+    /// This is how the HTTP servers apply a per-request RAG override, and it is
+    /// the reason this accessor exists in `_mut` form rather than a setter per
+    /// field: `RagConfig` has eight of them.
+    pub fn rag_config_mut(&mut self) -> &mut RagConfig {
+        &mut self.knowledge.config
+    }
+
+    #[cfg(feature = "rag")]
+    /// True while background indexing is running.
+    pub fn is_indexing(&self) -> bool {
+        self.knowledge.is_indexing
+    }
+
+    #[cfg(feature = "rag")]
+    /// Knowledge usage from the most recent RAG context build, if any.
+    pub fn last_knowledge_usage(&self) -> Option<&KnowledgeUsage> {
+        self.knowledge.last_usage.as_ref()
     }
 
     #[cfg(feature = "rag")]
@@ -495,7 +551,7 @@ impl AiAssistant {
     /// management of document indexing.
     pub fn index_knowledge_document(&mut self, source: &str, content: &str) -> AiResult<usize> {
         if self.ensure_rag_initialized() {
-            if let Some(ref db) = self.rag_db {
+            if let Some(ref db) = self.knowledge.db {
                 return db.index_document(source, content).map_err(AiError::from);
             }
         }
@@ -505,9 +561,9 @@ impl AiAssistant {
     #[cfg(feature = "rag")]
     /// Clear all knowledge from the database
     pub fn clear_knowledge(&mut self) -> AiResult<()> {
-        self.pending_documents.clear();
+        self.knowledge.pending_documents.clear();
         if self.ensure_rag_initialized() {
-            if let Some(ref db) = self.rag_db {
+            if let Some(ref db) = self.knowledge.db {
                 db.clear_knowledge()?;
             }
         }
@@ -518,7 +574,7 @@ impl AiAssistant {
     /// Get knowledge base statistics (chunk count, total tokens)
     pub fn get_knowledge_stats(&mut self) -> AiResult<(usize, usize)> {
         if self.ensure_rag_initialized() {
-            if let Some(ref db) = self.rag_db {
+            if let Some(ref db) = self.knowledge.db {
                 return db.get_knowledge_stats().map_err(AiError::from);
             }
         }
@@ -560,27 +616,31 @@ impl AiAssistant {
 
         let mut knowledge_context = String::new();
         let mut conversation_context = String::new();
-        self.last_knowledge_usage = None;
+        self.knowledge.last_usage = None;
 
         // Calculate effective max tokens for knowledge
         // If dynamic context is enabled, use the available space; otherwise use configured max
-        let effective_max_knowledge_tokens = if self.rag_config.dynamic_context_enabled {
+        let effective_max_knowledge_tokens = if self.knowledge.config.dynamic_context_enabled {
             self.calculate_available_knowledge_tokens(query)
         } else {
-            self.rag_config.max_knowledge_tokens
+            self.knowledge.config.max_knowledge_tokens
         };
         crate::diag_debug!(
             "[rag-context] effective_max_knowledge_tokens={}, dynamic={}",
             effective_max_knowledge_tokens,
-            self.rag_config.dynamic_context_enabled
+            self.knowledge.config.dynamic_context_enabled
         );
 
-        if let Some(ref db) = self.rag_db {
+        if let Some(ref db) = self.knowledge.db {
             // Knowledge RAG with caching
-            if self.rag_config.knowledge_rag_enabled {
+            if self.knowledge.config.knowledge_rag_enabled {
                 // Check cache first (include effective tokens in cache key)
                 let cache_key = format!("{}_{}", query, effective_max_knowledge_tokens);
-                let cached = self.rag_cache.as_mut().and_then(|c| c.get(&cache_key));
+                let cached = self
+                    .knowledge
+                    .cache
+                    .as_mut()
+                    .and_then(|c| c.get(&cache_key));
 
                 let chunks = if let Some(cached_chunks) = cached {
                     self.metrics.record_cache_hit();
@@ -590,10 +650,10 @@ impl AiAssistant {
                     if let Ok(search_chunks) = db.search_knowledge(
                         query,
                         effective_max_knowledge_tokens,
-                        self.rag_config.top_k_chunks,
+                        self.knowledge.config.top_k_chunks,
                     ) {
                         // Cache the result
-                        if let Some(ref mut cache) = self.rag_cache {
+                        if let Some(ref mut cache) = self.knowledge.cache {
                             cache.insert(cache_key, search_chunks.clone());
                         }
                         search_chunks
@@ -605,7 +665,7 @@ impl AiAssistant {
                 crate::diag_debug!(
                     "[rag-context] retrieved {} knowledge chunks, top_k={}",
                     chunks.len(),
-                    self.rag_config.top_k_chunks
+                    self.knowledge.config.top_k_chunks
                 );
                 #[cfg(feature = "diagnostic-logging")]
                 for (i, chunk) in chunks.iter().enumerate() {
@@ -626,11 +686,11 @@ impl AiAssistant {
                 // Track knowledge usage
                 if !chunks.is_empty() {
                     let usage = KnowledgeUsage::from_chunks(query, &chunks);
-                    self.last_knowledge_usage = Some(usage.clone());
-                    self.knowledge_usage_history.insert(0, usage);
+                    self.knowledge.last_usage = Some(usage.clone());
+                    self.knowledge.usage_history.insert(0, usage);
                     // Keep history limited to last 100 entries
-                    if self.knowledge_usage_history.len() > 100 {
-                        self.knowledge_usage_history.truncate(100);
+                    if self.knowledge.usage_history.len() > 100 {
+                        self.knowledge.usage_history.truncate(100);
                     }
                 }
 
@@ -642,7 +702,7 @@ impl AiAssistant {
             // to prevent double-counting and allow independent scoring.
 
             // Conversation RAG
-            if self.rag_config.conversation_rag_enabled {
+            if self.knowledge.config.conversation_rag_enabled {
                 let session_id = self
                     .current_session
                     .as_ref()
@@ -651,10 +711,10 @@ impl AiAssistant {
 
                 // First try semantic search on archived messages
                 if let Ok(messages) = db.search_conversation(
-                    &self.user_id,
+                    &self.knowledge.user_id,
                     session_id,
                     query,
-                    self.rag_config.max_conversation_tokens / 2,
+                    self.knowledge.config.max_conversation_tokens / 2,
                     true, // exclude in-context messages
                 ) {
                     if !messages.is_empty() {
@@ -664,9 +724,9 @@ impl AiAssistant {
 
                 // Also get recent archived messages for continuity
                 if let Ok(recent) = db.get_recent_archived_messages(
-                    &self.user_id,
+                    &self.knowledge.user_id,
                     session_id,
-                    self.rag_config.max_conversation_tokens / 2,
+                    self.knowledge.config.max_conversation_tokens / 2,
                 ) {
                     if !recent.is_empty() {
                         let recent_context = build_conversation_context(&recent);
@@ -724,7 +784,7 @@ impl AiAssistant {
         query: &str,
     ) -> (String, String, Option<KnowledgeUsage>) {
         let (knowledge_context, conversation_context) = self.build_rag_context(query);
-        let usage = self.last_knowledge_usage.clone();
+        let usage = self.knowledge.last_usage.clone();
         (knowledge_context, conversation_context, usage)
     }
 
@@ -733,7 +793,7 @@ impl AiAssistant {
     ///
     /// This is updated after each call to `build_rag_context`.
     pub fn get_last_knowledge_usage(&self) -> Option<&KnowledgeUsage> {
-        self.last_knowledge_usage.as_ref()
+        self.knowledge.last_usage.as_ref()
     }
 
     #[cfg(feature = "rag")]
@@ -741,14 +801,14 @@ impl AiAssistant {
     ///
     /// Limited to the last 100 entries.
     pub fn get_knowledge_usage_history(&self) -> &[KnowledgeUsage] {
-        &self.knowledge_usage_history
+        &self.knowledge.usage_history
     }
 
     #[cfg(feature = "rag")]
     /// Clear the knowledge usage history
     pub fn clear_knowledge_usage_history(&mut self) {
-        self.knowledge_usage_history.clear();
-        self.last_knowledge_usage = None;
+        self.knowledge.usage_history.clear();
+        self.knowledge.last_usage = None;
     }
 
     #[cfg(feature = "rag")]
@@ -759,7 +819,7 @@ impl AiAssistant {
         use std::collections::HashMap;
 
         let mut frequency: HashMap<String, usize> = HashMap::new();
-        for usage in &self.knowledge_usage_history {
+        for usage in &self.knowledge.usage_history {
             for source in &usage.sources {
                 *frequency.entry(source.source.clone()).or_default() += 1;
             }
@@ -801,18 +861,18 @@ impl AiAssistant {
 
         let mut knowledge_context = String::new();
         let mut conversation_context = String::new();
-        self.last_knowledge_usage = None;
+        self.knowledge.last_usage = None;
 
         // Calculate effective max tokens for knowledge (dynamic or fixed)
-        let effective_max_knowledge_tokens = if self.rag_config.dynamic_context_enabled {
+        let effective_max_knowledge_tokens = if self.knowledge.config.dynamic_context_enabled {
             self.calculate_available_knowledge_tokens(query)
         } else {
-            self.rag_config.max_knowledge_tokens
+            self.knowledge.config.max_knowledge_tokens
         };
 
-        if let Some(ref db) = self.rag_db {
+        if let Some(ref db) = self.knowledge.db {
             // Knowledge RAG with source filtering
-            if self.rag_config.knowledge_rag_enabled && !sources.is_empty() {
+            if self.knowledge.config.knowledge_rag_enabled && !sources.is_empty() {
                 // No caching for filtered searches (cache key would need to include sources)
                 self.metrics.record_cache_miss();
 
@@ -820,7 +880,7 @@ impl AiAssistant {
                     query,
                     sources,
                     effective_max_knowledge_tokens,
-                    self.rag_config.top_k_chunks,
+                    self.knowledge.config.top_k_chunks,
                 ) {
                     // Record source access for metrics
                     for chunk in &chunks {
@@ -830,10 +890,10 @@ impl AiAssistant {
                     // Track knowledge usage
                     if !chunks.is_empty() {
                         let usage = KnowledgeUsage::from_chunks(query, &chunks);
-                        self.last_knowledge_usage = Some(usage.clone());
-                        self.knowledge_usage_history.insert(0, usage);
-                        if self.knowledge_usage_history.len() > 100 {
-                            self.knowledge_usage_history.truncate(100);
+                        self.knowledge.last_usage = Some(usage.clone());
+                        self.knowledge.usage_history.insert(0, usage);
+                        if self.knowledge.usage_history.len() > 100 {
+                            self.knowledge.usage_history.truncate(100);
                         }
                     }
 
@@ -842,7 +902,7 @@ impl AiAssistant {
             }
 
             // Conversation RAG (same as regular build_rag_context)
-            if self.rag_config.conversation_rag_enabled {
+            if self.knowledge.config.conversation_rag_enabled {
                 let session_id = self
                     .current_session
                     .as_ref()
@@ -850,10 +910,10 @@ impl AiAssistant {
                     .unwrap_or("default");
 
                 if let Ok(messages) = db.search_conversation(
-                    &self.user_id,
+                    &self.knowledge.user_id,
                     session_id,
                     query,
-                    self.rag_config.max_conversation_tokens / 2,
+                    self.knowledge.config.max_conversation_tokens / 2,
                     true,
                 ) {
                     if !messages.is_empty() {
@@ -862,9 +922,9 @@ impl AiAssistant {
                 }
 
                 if let Ok(recent) = db.get_recent_archived_messages(
-                    &self.user_id,
+                    &self.knowledge.user_id,
                     session_id,
-                    self.rag_config.max_conversation_tokens / 2,
+                    self.knowledge.config.max_conversation_tokens / 2,
                 ) {
                     if !recent.is_empty() {
                         let recent_context = build_conversation_context(&recent);
@@ -876,7 +936,7 @@ impl AiAssistant {
             }
         }
 
-        let usage = self.last_knowledge_usage.clone();
+        let usage = self.knowledge.last_usage.clone();
         (knowledge_context, conversation_context, usage)
     }
 
@@ -885,10 +945,10 @@ impl AiAssistant {
     ///
     /// Returns a list of all document sources in the knowledge base.
     pub fn get_all_knowledge_sources(&self) -> Vec<String> {
-        if let Some(ref db) = self.rag_db {
+        if let Some(ref db) = self.knowledge.db {
             db.get_knowledge_sources().unwrap_or_default()
         } else {
-            self.registered_sources.clone()
+            self.knowledge.registered_sources.clone()
         }
     }
 
@@ -897,7 +957,7 @@ impl AiAssistant {
     ///
     /// Returns stats (source_name, chunk_count, token_count) for each source.
     pub fn get_knowledge_source_stats(&self) -> Vec<(String, usize, usize)> {
-        if let Some(ref db) = self.rag_db {
+        if let Some(ref db) = self.knowledge.db {
             let sources = db.get_knowledge_sources().unwrap_or_default();
             let mut stats = Vec::new();
             for source in sources {
@@ -914,16 +974,16 @@ impl AiAssistant {
     /// Store a message in the RAG database
     pub fn store_message_in_rag(&mut self, msg: &ChatMessage, in_context: bool) -> AiResult<()> {
         if self.ensure_rag_initialized() {
-            if let Some(ref db) = self.rag_db {
+            if let Some(ref db) = self.knowledge.db {
                 let session_id = self
                     .current_session
                     .as_ref()
                     .map(|s| s.id.clone())
                     .unwrap_or_else(|| "default".to_string());
 
-                let id = db.store_message(&self.user_id, &session_id, msg, in_context)?;
+                let id = db.store_message(&self.knowledge.user_id, &session_id, msg, in_context)?;
                 if in_context {
-                    self.rag_message_ids.push(id);
+                    self.knowledge.message_ids.push(id);
                 }
             }
         }
@@ -934,20 +994,20 @@ impl AiAssistant {
     /// Archive old messages from context to RAG storage
     /// This marks messages as out-of-context but keeps them searchable
     pub fn archive_messages_to_rag(&mut self, count: usize) -> AiResult<()> {
-        if self.rag_message_ids.len() < count {
+        if self.knowledge.message_ids.len() < count {
             return Ok(());
         }
 
         if self.ensure_rag_initialized() {
-            if let Some(ref db) = self.rag_db {
+            if let Some(ref db) = self.knowledge.db {
                 let session_id = self
                     .current_session
                     .as_ref()
                     .map(|s| s.id.clone())
                     .unwrap_or_else(|| "default".to_string());
 
-                let to_archive: Vec<i64> = self.rag_message_ids.drain(..count).collect();
-                db.mark_messages_out_of_context(&self.user_id, &session_id, &to_archive)?;
+                let to_archive: Vec<i64> = self.knowledge.message_ids.drain(..count).collect();
+                db.mark_messages_out_of_context(&self.knowledge.user_id, &session_id, &to_archive)?;
             }
         }
 
@@ -958,14 +1018,14 @@ impl AiAssistant {
     /// Get conversation stats from RAG database
     pub fn get_conversation_rag_stats(&mut self) -> AiResult<(usize, usize, usize)> {
         if self.ensure_rag_initialized() {
-            if let Some(ref db) = self.rag_db {
+            if let Some(ref db) = self.knowledge.db {
                 let session_id = self
                     .current_session
                     .as_ref()
                     .map(|s| s.id.as_str())
                     .unwrap_or("default");
                 return db
-                    .get_conversation_stats(&self.user_id, session_id)
+                    .get_conversation_stats(&self.knowledge.user_id, session_id)
                     .map_err(AiError::from);
             }
         }
@@ -976,7 +1036,7 @@ impl AiAssistant {
     /// Enable or disable knowledge RAG, returning whether the change was successful
     pub fn set_knowledge_rag_enabled(&mut self, enabled: bool) -> bool {
         if self.ensure_rag_initialized() {
-            self.rag_config.knowledge_rag_enabled = enabled;
+            self.knowledge.config.knowledge_rag_enabled = enabled;
             true
         } else {
             false
@@ -987,7 +1047,7 @@ impl AiAssistant {
     /// Enable or disable conversation RAG, returning whether the change was successful
     pub fn set_conversation_rag_enabled(&mut self, enabled: bool) -> bool {
         if self.ensure_rag_initialized() {
-            self.rag_config.conversation_rag_enabled = enabled;
+            self.knowledge.config.conversation_rag_enabled = enabled;
             true
         } else {
             false
@@ -999,7 +1059,7 @@ impl AiAssistant {
     /// When enabled, messages are automatically indexed as they are sent/received
     pub fn set_auto_store_messages(&mut self, enabled: bool) -> bool {
         if self.ensure_rag_initialized() {
-            self.rag_config.auto_store_messages = enabled;
+            self.knowledge.config.auto_store_messages = enabled;
             true
         } else {
             false
@@ -1009,16 +1069,16 @@ impl AiAssistant {
     #[cfg(feature = "rag")]
     /// Check if auto-store messages is enabled
     pub fn is_auto_store_messages_enabled(&self) -> bool {
-        self.rag_config.auto_store_messages
+        self.knowledge.config.auto_store_messages
     }
 
     #[cfg(feature = "rag")]
     /// Check if enabling RAG would help with context overflow
     /// Returns (can_help_with_knowledge, can_help_with_conversation)
     pub fn can_rag_help_with_context(&self) -> (bool, bool) {
-        let has_rag = self.rag_db.is_some() || self.rag_db_path.is_some();
-        let can_knowledge = has_rag && !self.rag_config.knowledge_rag_enabled;
-        let can_conversation = has_rag && !self.rag_config.conversation_rag_enabled;
+        let has_rag = self.knowledge.db.is_some() || self.knowledge.db_path.is_some();
+        let can_knowledge = has_rag && !self.knowledge.config.knowledge_rag_enabled;
+        let can_conversation = has_rag && !self.knowledge.config.conversation_rag_enabled;
         (can_knowledge, can_conversation)
     }
 
@@ -1028,23 +1088,23 @@ impl AiAssistant {
     pub fn estimate_rag_savings(&self, current_knowledge: &str) -> usize {
         let mut savings = 0;
 
-        if !self.rag_config.knowledge_rag_enabled {
+        if !self.knowledge.config.knowledge_rag_enabled {
             // Full knowledge vs RAG-retrieved subset
             let full_tokens = estimate_tokens(current_knowledge);
-            let rag_tokens = self.rag_config.max_knowledge_tokens;
+            let rag_tokens = self.knowledge.config.max_knowledge_tokens;
             if full_tokens > rag_tokens {
                 savings += full_tokens - rag_tokens;
             }
         }
 
-        if !self.rag_config.conversation_rag_enabled && self.conversation.len() > 4 {
+        if !self.knowledge.config.conversation_rag_enabled && self.conversation.len() > 4 {
             // Estimate savings from archiving old messages
             let archive_count = self.conversation.len().saturating_sub(4);
             let archive_tokens: usize = self.conversation[..archive_count]
                 .iter()
                 .map(|m| estimate_tokens(&m.content))
                 .sum();
-            let rag_retrieval_tokens = self.rag_config.max_conversation_tokens;
+            let rag_retrieval_tokens = self.knowledge.config.max_conversation_tokens;
             if archive_tokens > rag_retrieval_tokens {
                 savings += archive_tokens - rag_retrieval_tokens;
             }
@@ -1057,8 +1117,11 @@ impl AiAssistant {
     /// Get notes for a specific knowledge source/guide
     pub fn get_knowledge_notes(&mut self, source: &str) -> Option<String> {
         if self.ensure_rag_initialized() {
-            if let Some(ref db) = self.rag_db {
-                return db.get_knowledge_notes(&self.user_id, source).ok().flatten();
+            if let Some(ref db) = self.knowledge.db {
+                return db
+                    .get_knowledge_notes(&self.knowledge.user_id, source)
+                    .ok()
+                    .flatten();
             }
         }
         None
@@ -1068,11 +1131,11 @@ impl AiAssistant {
     /// Set notes for a specific knowledge source/guide
     pub fn set_knowledge_notes(&mut self, source: &str, notes: &str) -> AiResult<()> {
         if self.ensure_rag_initialized() {
-            if let Some(ref db) = self.rag_db {
+            if let Some(ref db) = self.knowledge.db {
                 if notes.is_empty() {
-                    db.delete_knowledge_notes(&self.user_id, source)?;
+                    db.delete_knowledge_notes(&self.knowledge.user_id, source)?;
                 } else {
-                    db.set_knowledge_notes(&self.user_id, source, notes)?;
+                    db.set_knowledge_notes(&self.knowledge.user_id, source, notes)?;
                 }
             }
         }
@@ -1084,10 +1147,10 @@ impl AiAssistant {
     ///
     /// Returns both registered sources and any additional indexed sources from database.
     pub fn get_knowledge_sources(&mut self) -> Vec<String> {
-        let mut sources = self.registered_sources.clone();
+        let mut sources = self.knowledge.registered_sources.clone();
 
         if self.ensure_rag_initialized() {
-            if let Some(ref db) = self.rag_db {
+            if let Some(ref db) = self.knowledge.db {
                 if let Ok(db_sources) = db.get_knowledge_sources() {
                     for s in db_sources {
                         if !sources.contains(&s) {
@@ -1104,8 +1167,8 @@ impl AiAssistant {
     /// Build combined knowledge notes string from all sources with notes
     pub fn build_knowledge_notes_context(&mut self) -> String {
         if self.ensure_rag_initialized() {
-            if let Some(ref db) = self.rag_db {
-                if let Ok(all_notes) = db.get_all_knowledge_notes(&self.user_id) {
+            if let Some(ref db) = self.knowledge.db {
+                if let Ok(all_notes) = db.get_all_knowledge_notes(&self.knowledge.user_id) {
                     if all_notes.is_empty() {
                         return String::new();
                     }
@@ -1127,8 +1190,10 @@ impl AiAssistant {
     /// Get global notes from RAG database for current user
     pub fn get_rag_global_notes(&mut self) -> String {
         if self.ensure_rag_initialized() {
-            if let Some(ref db) = self.rag_db {
-                return db.get_user_global_notes(&self.user_id).unwrap_or_default();
+            if let Some(ref db) = self.knowledge.db {
+                return db
+                    .get_user_global_notes(&self.knowledge.user_id)
+                    .unwrap_or_default();
             }
         }
         String::new()
@@ -1138,8 +1203,8 @@ impl AiAssistant {
     /// Set global notes in RAG database for current user
     pub fn set_rag_global_notes(&mut self, notes: &str) -> AiResult<()> {
         if self.ensure_rag_initialized() {
-            if let Some(ref db) = self.rag_db {
-                db.set_user_global_notes(&self.user_id, notes)?;
+            if let Some(ref db) = self.knowledge.db {
+                db.set_user_global_notes(&self.knowledge.user_id, notes)?;
             }
         }
         Ok(())
@@ -1151,14 +1216,14 @@ impl AiAssistant {
     /// Get session notes from RAG database for current user and session
     pub fn get_rag_session_notes(&mut self) -> String {
         if self.ensure_rag_initialized() {
-            if let Some(ref db) = self.rag_db {
+            if let Some(ref db) = self.knowledge.db {
                 let session_id = self
                     .current_session
                     .as_ref()
                     .map(|s| s.id.as_str())
                     .unwrap_or("default");
                 return db
-                    .get_session_notes(&self.user_id, session_id)
+                    .get_session_notes(&self.knowledge.user_id, session_id)
                     .ok()
                     .flatten()
                     .unwrap_or_default();
@@ -1171,16 +1236,16 @@ impl AiAssistant {
     /// Set session notes in RAG database for current user and session
     pub fn set_rag_session_notes(&mut self, notes: &str) -> AiResult<()> {
         if self.ensure_rag_initialized() {
-            if let Some(ref db) = self.rag_db {
+            if let Some(ref db) = self.knowledge.db {
                 let session_id = self
                     .current_session
                     .as_ref()
                     .map(|s| s.id.clone())
                     .unwrap_or_else(|| "default".to_string());
                 if notes.is_empty() {
-                    db.delete_session_notes(&self.user_id, &session_id)?;
+                    db.delete_session_notes(&self.knowledge.user_id, &session_id)?;
                 } else {
-                    db.set_session_notes(&self.user_id, &session_id, notes)?;
+                    db.set_session_notes(&self.knowledge.user_id, &session_id, notes)?;
                 }
             }
         }
@@ -1196,7 +1261,7 @@ impl AiAssistant {
     /// be imported later or shared between installations.
     pub fn export_knowledge_to_file(&mut self, path: &std::path::Path) -> AiResult<()> {
         if self.ensure_rag_initialized() {
-            if let Some(ref db) = self.rag_db {
+            if let Some(ref db) = self.knowledge.db {
                 db.export_knowledge_to_file(path)?;
             }
         }
@@ -1217,7 +1282,7 @@ impl AiAssistant {
         replace: bool,
     ) -> AiResult<usize> {
         if self.ensure_rag_initialized() {
-            if let Some(ref db) = self.rag_db {
+            if let Some(ref db) = self.knowledge.db {
                 return db
                     .import_knowledge_from_file(path, replace)
                     .map_err(AiError::from);
@@ -1233,7 +1298,7 @@ impl AiAssistant {
     /// rather than writing directly to a file.
     pub fn export_knowledge(&mut self) -> Option<crate::rag::KnowledgeExport> {
         if self.ensure_rag_initialized() {
-            if let Some(ref db) = self.rag_db {
+            if let Some(ref db) = self.knowledge.db {
                 return db.export_knowledge().ok();
             }
         }
@@ -1252,7 +1317,7 @@ impl AiAssistant {
         replace: bool,
     ) -> AiResult<usize> {
         if self.ensure_rag_initialized() {
-            if let Some(ref db) = self.rag_db {
+            if let Some(ref db) = self.knowledge.db {
                 return db.import_knowledge(data, replace).map_err(AiError::from);
             }
         }

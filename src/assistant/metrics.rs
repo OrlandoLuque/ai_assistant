@@ -46,7 +46,7 @@ impl AiAssistant {
     /// Clear the RAG search cache
     #[cfg(feature = "rag")]
     pub fn clear_rag_cache(&mut self) {
-        if let Some(ref mut cache) = self.rag_cache {
+        if let Some(ref mut cache) = self.knowledge.cache {
             cache.clear();
         }
     }
@@ -54,7 +54,11 @@ impl AiAssistant {
     /// Get RAG cache statistics: (entries, total_hits)
     #[cfg(feature = "rag")]
     pub fn get_rag_cache_stats(&self) -> (usize, usize) {
-        self.rag_cache.as_ref().map(|c| c.stats()).unwrap_or((0, 0))
+        self.knowledge
+            .cache
+            .as_ref()
+            .map(|c| c.stats())
+            .unwrap_or((0, 0))
     }
 
     #[cfg(feature = "rag")]
@@ -62,7 +66,7 @@ impl AiAssistant {
     /// Higher priority sources appear first in search results
     pub fn set_source_priority(&mut self, source: &str, priority: i32) -> AiResult<()> {
         if self.ensure_rag_initialized() {
-            if let Some(ref db) = self.rag_db {
+            if let Some(ref db) = self.knowledge.db {
                 db.set_source_priority(source, priority)?;
             }
         }
@@ -73,7 +77,7 @@ impl AiAssistant {
     /// Get priority for a knowledge source
     pub fn get_source_priority(&mut self, source: &str) -> i32 {
         if self.ensure_rag_initialized() {
-            if let Some(ref db) = self.rag_db {
+            if let Some(ref db) = self.knowledge.db {
                 return db.get_source_priority(source).unwrap_or(0);
             }
         }

@@ -5,6 +5,135 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v343 (2026-11-16) - V459: la fachada contenia doce campos de RAG y ahora compone uno, y mi propio inventario conto 38 donde hay 68 (0.2.426)
+
+**Fase 5 del plan hexagonal**, que era la unica prioritaria con trabajo por delante y la que
+llevaba cuatro meses sin moverse ni una linea.
+
+### Lo primero, porque cambia la pregunta: el god-struct tiene 68 campos, no 38
+
+El inventario que escribi el 2026-11-14 en `HEXAGONAL_PLAN.md` dice *«38 campos, 28 de ellos
+tras un `#[cfg]`»*. **Las dos cifras son de poblaciones distintas y ninguna es el total**: 38
+son los campos **privados** y 28 los que van tras una bandera. El total nunca se conto, y
+como 28 < 38 la frase se lee perfectamente bien. Medido ahora, campo a campo, con un
+analizador del bloque de declaracion:
+
+| | antes | despues |
+|---|---:|---:|
+| campos de `AiAssistant` | **68** | **57** |
+| de ellos tras `#[cfg(feature)]` | 28 | **17** |
+| campos del racimo `rag` | **12** | **1** |
+| lineas de la declaracion | 212 | 189 |
+
+Y el racimo de `rag` eran **12 campos, no 7**. Los 7 del inventario son los privados; los
+otros cinco (`rag_db`, `rag_config`, `user_id`, `is_indexing`, `last_knowledge_usage`) eran
+`pub`, o sea **API**. Esa es la diferencia que decide el trabajo, y el inventario no la
+mencionaba.
+
+### Por que no se podia hacer la mitad
+
+La idea de extraer «los 7 privados» y dejar los `pub` donde estaban **empeora** la cohesion,
+porque la frontera pub/privado corta **tres parejas** por el medio: `rag_db_path` es la
+inicializacion perezosa de `rag_db`, `is_indexing` no significa nada sin `rx_indexing`, y
+`last_knowledge_usage` es el primer elemento de `knowledge_usage_history`. Cada pareja habria
+quedado viviendo en dos sitios. Asi que o se mueven los doce, o no se mueve nada.
+
+### Lo que hace
+
+`src/assistant/knowledge_store.rs` (nuevo, 239 lineas): `KnowledgeStore` con los doce campos
+y **el unico invariante que no le concierne a nadie mas** --- «la base esta abierta, o se
+puede abrir desde la ruta que nos dieron». Era `AiAssistant::ensure_rag_initialized`, que
+sigue existiendo como delegacion de una linea porque lo llaman doce sitios. `has_rag` igual.
+
+**No es un puerto, y es deliberado.** No hay trait, porque no hay un segundo backend de
+conocimiento que enchufar --- la mitad enchufable de RAG ya vive tras `trait VectorDb`. Un
+`trait KnowledgeStore` con exactamente un implementador repetiria el defecto que
+`PiiMaskingProvider` sigue siendo en este crate: una abstraccion exportada al publico con
+cero usuarios. Por lo mismo el tipo es `pub(crate)` y **no** se reexporta en `lib.rs`.
+
+**153 sitios reescritos** (`self.rag_db` -> `self.knowledge.db`), exactamente los 153 que
+medi antes de empezar: 145 en `assistant/rag.rs`, 4 en `metrics.rs`, 2 en `context.rs`, 2 en
+`messaging.rs`. Los `self.user_id` de `user_engagement.rs`, `security/audit.rs` y
+`priority_queue.rs` son de **otros structs** y no se tocaron.
+
+### El precio: cinco campos publicos pasan a ser accesores
+
+`assistant.rag_db` se escribe ahora `assistant.rag_db()`. Los seis accesores nuevos son
+`rag_db()`, `rag_db_mut()`, `rag_config()`, `rag_config_mut()`, `is_indexing()` y
+`last_knowledge_usage()`; `user_id` ya tenia `get_user_id`/`set_user_id` desde antes. El
+`_mut` existe porque el campo era `pub` y un llamante ya podia tomar `&mut`; quitarlo del todo
+seria perder una capacidad en silencio.
+
+**Y `docs/GUIDE.md:723` ya documentaba `assistant.rag_db()` --- un metodo que no existia.** La
+puerta de V340 comprueba que los `use` de los bloques `.md` nombren cosas que existen, pero
+una **llamada a metodo** en un bloque de documentacion no la mira nadie, asi que llevaba
+siendo falsa desde que se escribio. Este commit la vuelve verdad por el camino: la firma
+`rag_db(&self) -> Option<&RagDb>` es exactamente la que ese ejemplo necesita, porque
+`index_kpkg_ext` toma `&self`.
+
+Consumidores migrados: `server.rs` (16 sitios), `server_axum.rs` (8 escrituras + 4 lecturas),
+`ai_gui.rs` y `ai_gui-pro.rs` (6 cada uno).
+
+### Un test mio codificaba una suposicion falsa, y ensucio el arbol de trabajo
+
+Escribi `ensure_initialized_reports_failure_instead_of_panicking` dando por hecho que una ruta
+bajo un directorio inexistente no se puede abrir. **`RagDb::open` llama a
+`create_dir_all(parent)`**: no es un caso de fallo, es un caso soportado. El test fallo --- y
+de paso dejo una base de datos de 100 KiB **dentro del arbol del repositorio**, en
+`./no_such_directory_12345/`, que es justo lo que la regla 7 (`git add -A` prohibido) existe
+para que no acabe en un commit publico.
+
+Arreglado en tres sitios, no en uno:
+
+1. `ensure_initialized_creates_the_missing_parent_directory` --- el comportamiento real, fijado
+   con un test en vez de descubierto otra vez.
+2. El caso de fallo, contra algo que **de verdad** no se puede abrir en ningun sistema: una
+   ruta cuyo componente padre es un **fichero** existente, asi que `create_dir_all` no puede
+   crear el directorio.
+3. Un ayudante `temp_path()` por el que pasan **todas** las rutas de estos tests, para que
+   ninguno pueda volver a escribir en el arbol. Un test no debe poder ensuciar lo que prueba.
+
+### Verificacion
+
+- `clippy -D warnings --all-targets` en los **tres** conjuntos que usa CI: `FEATURES_STD`
+  (1 min 15 s), `FEATURES_NETWORK` (52 s) y los dos binarios GUI con `gui,gui-pro` (46 s).
+  **Cero avisos en los tres.**
+- `cargo check` con `FEATURES_MIN` destapo **dos imports huerfanos** en `mod.rs`
+  (`DEFAULT_USER_ID` y `HashMap`), que se fueron con los campos. Comprobado antes de borrarlos
+  que no los alcanza nadie por el `use super::*` de los hermanos ni desde `cfg(test)`: los
+  `HashMap` de los modulos hermanos llevan su propio `use` local. Es la leccion de V457, donde
+  `cargo check` y `cargo test` daban conjuntos **distintos** de imports muertos.
+- `KnowledgeStore`: **7 tests nuevos**, los 7 en verde, y el arbol de trabajo limpio despues.
+- Tests de integracion, los nueve binarios: **214 pasan, 0 fallan**.
+- Las cinco puertas de Python: `check_readme_numbers` **fallo, y con razon** (un fichero
+  fuente nuevo: 575 -> 576), `check_website_numbers` encontro dos insignias mas,
+  `check_doc_imports` 0 sobre trinquete 0, `check_binaries_documented` 41 de 41, y
+  `check_doc_links` **0 enlaces roto(s)** sobre trinquete 0 --- que es la que importaba aqui,
+  porque este commit añade rustdoc publico nuevo.
+
+### Y tres cifras del README que ya estaban desfasadas antes de esta noche
+
+El propio README dice que su cuenta de tests **no la comprueba ninguna puerta** (`needs the
+suite to run`), y por eso derivo. Medidas las tres con `--lib -- --list` menos los ignorados:
+
+| conjunto | decia | es | delta |
+|---|---:|---:|---:|
+| `FEATURES_STD` | 9.121 | **9.143** | +22 |
+| `full` solo | 7.330 | **7.352** | +22 |
+| `FEATURES_MIN` | 5.295 | **5.317** | +22 |
+
+**Las tres exactamente +22**, lo que dice algo util: los 22 tests nuevos estan todos en codigo
+que los tres conjuntos compilan. Siete son de este commit; los otros quince son de antes y
+nadie los conto. Y un detalle de medida: `--list` **incluye los ignorados** (9.147 = 9.143 + 4
+en STD, y 0 ignorados en `full` y en MIN, comprobado con `-- --ignored --list`), asi que las
+cifras del README son de tests **pasados** y hay que compararlas con eso y no con el total.
+
+Actualizadas las tres, mas 575 -> 576 ficheros y 563K -> 568K lineas, en los **63 sitios** que
+las nombran entre `README.md` y siete paginas de la web. **Solo esas tres cifras**: varias de
+esas frases llevan otros numeros viejos (dependencias declaradas, fechas, etiquetas de
+version) que no he medido, y cambiar un numero medido por otro medido mejora la frase aunque el
+resto siga mal, pero inventar el resto no.
+
 ## [Unreleased] - v342 (2026-11-15) - V458c: publique «32 s» de una sola muestra en el mismo commit en que escribi que hay que decir cuantas hay (0.2.425)
 
 Un comentario y esta entrada.

@@ -58,12 +58,11 @@ use crate::scheduler::Scheduler;
 use crate::trigger_system::TriggerManager;
 
 #[cfg(feature = "rag")]
+use self::knowledge_store::KnowledgeStore;
+#[cfg(feature = "rag")]
 use crate::rag::{
     build_conversation_context, build_knowledge_context, KnowledgeUsage, RagConfig, RagDb,
-    DEFAULT_USER_ID,
 };
-#[cfg(feature = "rag")]
-use std::collections::HashMap;
 
 /// Result from background indexing
 #[cfg(feature = "rag")]
@@ -339,43 +338,20 @@ pub struct AiAssistant {
     /// Current cancellation token for streaming
     cancel_token: Option<CancellationToken>,
 
-    // RAG support (optional feature)
+    /// Knowledge state: the RAG database and everything that only exists
+    /// because of it (config, user id, indexing channel, search cache, usage
+    /// history). Twelve fields and twelve `#[cfg(feature = "rag")]` attributes
+    /// until Phase 5 of the hexagonal plan; the facade COMPOSES the component
+    /// now instead of containing its state.
+    ///
+    /// Five of those twelve were `pub`. They are reachable from outside the
+    /// crate through `rag_db()`, `rag_config()`, `get_user_id()`,
+    /// `is_indexing()` and `last_knowledge_usage()` (plus the `_mut` pair where
+    /// callers wrote to them), which is the API break this phase pays for:
+    /// `assistant.rag_db` becomes `assistant.rag_db()`. `docs/GUIDE.md` had
+    /// been documenting the method form since before it existed.
     #[cfg(feature = "rag")]
-    /// RAG database for knowledge and conversation storage
-    pub rag_db: Option<RagDb>,
-    #[cfg(feature = "rag")]
-    /// RAG configuration
-    pub rag_config: RagConfig,
-    #[cfg(feature = "rag")]
-    /// IDs of messages stored in RAG DB for current session
-    rag_message_ids: Vec<i64>,
-    #[cfg(feature = "rag")]
-    /// Current user ID for multi-user RAG operations
-    pub user_id: String,
-    #[cfg(feature = "rag")]
-    /// Path for RAG database (for lazy initialization)
-    rag_db_path: Option<std::path::PathBuf>,
-    #[cfg(feature = "rag")]
-    /// Registered documents pending indexing: source_name -> content
-    pending_documents: HashMap<String, String>,
-    #[cfg(feature = "rag")]
-    /// Documents that have been registered (for tracking available sources)
-    registered_sources: Vec<String>,
-    #[cfg(feature = "rag")]
-    /// True if background indexing is in progress
-    pub is_indexing: bool,
-    #[cfg(feature = "rag")]
-    /// Channel for receiving indexing progress/results
-    rx_indexing: Option<Receiver<IndexingProgress>>,
-    #[cfg(feature = "rag")]
-    /// Cache for RAG search results
-    rag_cache: Option<crate::metrics::SearchCache<Vec<crate::rag::KnowledgeChunk>>>,
-    #[cfg(feature = "rag")]
-    /// History of knowledge usage per message (most recent first)
-    knowledge_usage_history: Vec<KnowledgeUsage>,
-    #[cfg(feature = "rag")]
-    /// Last knowledge usage from the most recent RAG context build
-    pub last_knowledge_usage: Option<KnowledgeUsage>,
+    knowledge: KnowledgeStore,
 
     /// Metrics tracker for conversation quality analysis
     #[cfg(feature = "analytics")]
@@ -611,6 +587,8 @@ mod conversation;
 #[cfg(any(feature = "containers", feature = "audio"))]
 mod execution;
 mod integrations;
+#[cfg(feature = "rag")]
+mod knowledge_store;
 mod memory;
 mod messaging;
 // Every method in here returns a `crate::metrics::*` type, so the module has
@@ -651,29 +629,7 @@ impl AiAssistant {
             pending_summary_count: 0,
             cancel_token: None,
             #[cfg(feature = "rag")]
-            rag_db: None,
-            #[cfg(feature = "rag")]
-            rag_config: RagConfig::default(),
-            #[cfg(feature = "rag")]
-            rag_message_ids: Vec::new(),
-            #[cfg(feature = "rag")]
-            user_id: DEFAULT_USER_ID.to_string(),
-            #[cfg(feature = "rag")]
-            rag_db_path: None,
-            #[cfg(feature = "rag")]
-            pending_documents: HashMap::new(),
-            #[cfg(feature = "rag")]
-            registered_sources: Vec::new(),
-            #[cfg(feature = "rag")]
-            is_indexing: false,
-            #[cfg(feature = "rag")]
-            rx_indexing: None,
-            #[cfg(feature = "rag")]
-            rag_cache: Some(crate::metrics::SearchCache::new(50, 300)), // 50 entries, 5 min TTL
-            #[cfg(feature = "rag")]
-            knowledge_usage_history: Vec::new(),
-            #[cfg(feature = "rag")]
-            last_knowledge_usage: None,
+            knowledge: KnowledgeStore::new(),
             #[cfg(feature = "analytics")]
             metrics: crate::metrics::MetricsTracker::new("default"),
             detected_context_size: None,
