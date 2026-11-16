@@ -881,15 +881,15 @@ impl AiAssistant {
 
                             // Track outcomes for active procedures
                             #[cfg(feature = "advanced-memory")]
-                            if !self.active_procedure_ids.is_empty() {
+                            if !self.procedural.active_ids.is_empty() {
                                 let success = self.current_response.len() > 20;
-                                if let Some(ref mut store) = self.procedural_store {
-                                    for pid in &self.active_procedure_ids {
+                                if let Some(ref mut store) = self.procedural.store {
+                                    for pid in &self.procedural.active_ids {
                                         let _ = store.update_outcome(pid, success);
                                     }
                                 }
-                                if let Some(ref mut evolver) = self.procedure_evolver {
-                                    for pid in &self.active_procedure_ids {
+                                if let Some(ref mut evolver) = self.procedural.evolver {
+                                    for pid in &self.procedural.active_ids {
                                         let ctx = self
                                             .conversation
                                             .last()
@@ -911,7 +911,7 @@ impl AiAssistant {
                                         );
                                     }
                                 }
-                                self.active_procedure_ids.clear();
+                                self.procedural.active_ids.clear();
                             }
 
                             // Auto-track lists in LLM response for reference resolution

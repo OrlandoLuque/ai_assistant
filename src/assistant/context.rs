@@ -363,7 +363,7 @@ impl AiAssistant {
         let rag_available = false;
         let memory_available = self.memory_manager.is_some();
         #[cfg(feature = "advanced-memory")]
-        let procedural_available = self.procedural_store.is_some();
+        let procedural_available = self.procedural.store.is_some();
         #[cfg(not(feature = "advanced-memory"))]
         let procedural_available = false;
 

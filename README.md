@@ -4,11 +4,11 @@
 
 # ai_assistant
 
-A comprehensive Rust library for LLM integration — local and cloud. 19 providers, 5-tier RAG, multi-agent orchestration, autonomous agents, distributed computing, anti-hallucination pipeline, academic research APIs, and 49+ MCP tools. Single crate, zero-runtime, 568K lines across 576 source files.
+A comprehensive Rust library for LLM integration — local and cloud. 19 providers, 5-tier RAG, multi-agent orchestration, autonomous agents, distributed computing, anti-hallucination pipeline, academic research APIs, and 49+ MCP tools. Single crate, zero-runtime, 568K lines across 577 source files.
 
 ![Rust](https://img.shields.io/badge/Rust-Edition%202021-orange)
 ![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)
-![Tests](https://img.shields.io/badge/tests-9143-brightgreen)
+![Tests](https://img.shields.io/badge/tests-9149-brightgreen)
 ![LOC](https://img.shields.io/badge/LOC-563K-blue)
 ![Gates](https://img.shields.io/badge/CI%20gates-15-blue)
 
@@ -18,7 +18,7 @@ A comprehensive Rust library for LLM integration — local and cloud. 19 provide
 > unproven in the field. What it does have is **verification you can check yourself**, because
 > the honest answer to "is this any good?" is a measurement and not an adjective:
 >
-> - **9,143 tests** (`cargo test --features "$FEATURES_STD" --lib` — the set
+> - **9,149 tests** (`cargo test --features "$FEATURES_STD" --lib` — the set
 >   [`ci.yml`](.github/workflows/ci.yml) defines and runs), and **15 automated gates** in CI —
 >   not just compile-and-test. They enforce that the documentation does not lie: every
 >   `ai_cli` command shown in the docs is accepted by the binary, every `use` in a Markdown
@@ -239,10 +239,10 @@ The table below is a selection, not the inventory.
 
 ### Code Quality
 - **Zero `.unwrap()` in production**: Proper error handling across all files
-- **9,143 tests** under the feature set CI runs. `--features full` on its own builds 7,352 of
+- **9,149 tests** under the feature set CI runs. `--features full` on its own builds 7,358 of
   them and the eight-feature minimum 5,317, which is why a single number needs the command
   next to it. `clippy --all-targets -- -D warnings` clean across two feature sets
-- **576 source files**, 568K lines. This line used to claim the whole tree was complete, with
+- **577 source files**, 568K lines. This line used to claim the whole tree was complete, with
   nothing half-finished in it, and that was false — capability built and never connected is the
   recurring defect class here. The honest version is that it gets hunted in documented sweeps
   and then gated: `docs/CAPABILITIES.md` marks what is `hecho` / `parcial` / `no`, and
@@ -273,7 +273,7 @@ cargo build --features "full,autonomous,scheduler,butler,browser,distributed-age
 
 # Run tests -- this is the set CI runs (FEATURES_STD in .github/workflows/ci.yml).
 # A narrower set compiles fewer tests, so it reports a different number: `--features
-# full` alone builds 7,352 of the 9,143, and the eight-feature minimum 5,317.
+# full` alone builds 7,358 of the 9,149, and the eight-feature minimum 5,317.
 cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing,local-inference,ffi,tabular,test-utils" --lib
 ```
 
@@ -1905,7 +1905,7 @@ cargo run --features "server-axum" --bin ai_proxy -- --backends "localhost:8091,
 | GC pauses | None | Unpredictable |
 | Runtime deps | None | Python + pip |
 | Modules | 574 | ~50 |
-| Tests | 9,143 | Varies |
+| Tests | 9,149 | Varies |
 
 See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for detailed comparisons.
 

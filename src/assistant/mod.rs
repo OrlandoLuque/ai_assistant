@@ -59,6 +59,8 @@ use crate::trigger_system::TriggerManager;
 
 #[cfg(feature = "rag")]
 use self::knowledge_store::KnowledgeStore;
+#[cfg(feature = "advanced-memory")]
+use self::procedural_memory::ProceduralMemory;
 #[cfg(feature = "rag")]
 use crate::rag::{
     build_conversation_context, build_knowledge_context, KnowledgeUsage, RagConfig, RagDb,
@@ -452,18 +454,14 @@ pub struct AiAssistant {
     /// Turn counter for tracking conversation position (used by list tracking).
     turn_counter: usize,
 
-    /// Procedural memory store for workflow procedures, checklists, and methodologies.
-    /// When populated, matching procedures are automatically injected into the system prompt.
+    /// Procedural memory: the procedure store, the evolver that tracks their
+    /// confidence from outcomes, and the ids injected in the current turn.
+    ///
+    /// Three fields until Phase 5; the facade composes the component now. All
+    /// three were private, so unlike the RAG cluster of V459 this one costs **no
+    /// API break** — the public methods keep their names and delegate.
     #[cfg(feature = "advanced-memory")]
-    procedural_store: Option<crate::advanced_memory::ProceduralStore>,
-
-    /// Procedure evolver for confidence tracking via outcome feedback.
-    #[cfg(feature = "advanced-memory")]
-    procedure_evolver: Option<crate::advanced_memory::ProcedureEvolver>,
-
-    /// IDs of procedures that were injected in the current turn (for outcome tracking).
-    #[cfg(feature = "advanced-memory")]
-    active_procedure_ids: Vec<String>,
+    procedural: ProceduralMemory,
 
     /// Optional LLM enhancer for improving pipeline quality.
     /// When set, modules like intent classification, entity extraction,
@@ -596,6 +594,8 @@ mod messaging;
 #[cfg(feature = "analytics")]
 mod metrics;
 mod models;
+#[cfg(feature = "advanced-memory")]
+mod procedural_memory;
 #[cfg(feature = "rag")]
 mod rag;
 
@@ -684,11 +684,7 @@ impl AiAssistant {
             turn_counter: 0,
 
             #[cfg(feature = "advanced-memory")]
-            procedural_store: None,
-            #[cfg(feature = "advanced-memory")]
-            procedure_evolver: None,
-            #[cfg(feature = "advanced-memory")]
-            active_procedure_ids: Vec::new(),
+            procedural: ProceduralMemory::new(),
 
             llm_enhancer: None,
 
@@ -3282,8 +3278,8 @@ ws ::= " "*"#;
         assert!(ctx.contains("--- END WORKFLOW GUIDELINES ---"));
 
         // Should have recorded active procedure IDs
-        assert_eq!(ai.active_procedure_ids.len(), 1);
-        assert_eq!(ai.active_procedure_ids[0], "p1");
+        assert_eq!(ai.procedural.active_ids.len(), 1);
+        assert_eq!(ai.procedural.active_ids[0], "p1");
     }
 
     #[cfg(feature = "advanced-memory")]
@@ -3302,7 +3298,7 @@ ws ::= " "*"#;
         // Query that doesn't match
         let ctx = ai.build_procedural_context("tell me about quantum physics", 5, 500);
         assert!(ctx.is_empty());
-        assert!(ai.active_procedure_ids.is_empty());
+        assert!(ai.procedural.active_ids.is_empty());
     }
 
     // === V75: Cost tracking tests ===

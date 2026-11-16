@@ -5,6 +5,68 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v344 (2026-11-16) - V460: el segundo racimo sale de la fachada, y este no cuesta API porque los tres campos eran privados (0.2.427)
+
+Fase 5, segundo paso. Despues de `KnowledgeStore` (V459), la **memoria procedimental**:
+`procedural_store`, `procedure_evolver` y `active_procedure_ids` pasan a
+`src/assistant/procedural_memory.rs`.
+
+**Los tres eran privados**, asi que a diferencia del racimo de RAG este **no cuesta ninguna
+ruptura de API**: los metodos publicos (`enable_procedural_memory`,
+`disable_procedural_memory`, `has_procedural_memory`, `load_procedures`,
+`procedural_store()`) conservan nombre y firma y ahora delegan.
+
+### La razon es el invariante, no el numero de campos
+
+«La memoria procedimental esta encendida» significa que **dos** campos son `Some` a la vez: un
+`ProceduralStore` que guarda los procedimientos y un `ProcedureEvolver` que les lleva la
+confianza a partir de los resultados. Ese emparejamiento se mantenia **a mano en dos sitios
+distintos** de la fachada, cada uno con su propia copia de
+`ProcedureEvolver::new(EvolutionConfig::default())`, y uno de los dos (`load_procedures`)
+tenia que acordarse de comprobar si el evolver ya existia. Ahora es **un** metodo
+(`ensure_evolver`), o sea un solo sitio que puede estar mal.
+
+Y hay un segundo invariante que estaba suelto: `disable()` limpia `active_ids`. Si no lo
+hiciera, podria llegar un informe de resultado para un procedimiento que ya no existe. Eso
+tiene su propio test, que dice por que.
+
+`enable()` y `adopt()` estan separados a proposito: el primero crea un almacen vacio de la
+capacidad pedida, el segundo adopta uno ya construido (lo que hace `load_procedures` al leer
+de fichero) **sin perder los procedimientos**. Un solo metodo que hiciera las dos cosas es
+exactamente como se pierde un fichero cargado.
+
+### Balance de los dos pasos de la noche
+
+| | antes de V459 | ahora |
+|---|---:|---:|
+| campos de `AiAssistant` | **68** | **55** |
+| tras `#[cfg(feature)]` | 28 | **15** |
+| lineas de la declaracion | 212 | **185** |
+
+33 sitios reescritos, los 33 medidos antes de empezar: 26 en `memory.rs`, 6 en `messaging.rs`,
+1 en `context.rs`.
+
+### Y la leccion de V457, otra vez, en el mismo sitio
+
+`cargo check --features full --lib` dio **limpio**. `cargo test` dio **tres errores**:
+`ai.active_procedure_ids` en el modulo de tests de `mod.rs`, con receptor `ai.` y no `self.`,
+que es lo que mi patron buscaba. Las dos cosas a la vez: `--lib` no compila `cfg(test)`, y un
+reemplazo anclado en `self.` no ve un acceso por variable. **Un `cargo check` limpio no es una
+verificacion de un renombrado.**
+
+### Verificacion
+
+- `clippy -D warnings --all-targets` en los tres conjuntos de CI: STD, NETWORK y los dos GUI.
+  **0 avisos en los tres.**
+- `cargo test --lib`: **9.149 pasan** (9.143 + los 6 del componente), 0 fallan. Integracion:
+  **214 pasan**, 0 fallan.
+- Las cuentas por conjunto confirman donde vive el codigo nuevo: `full` 7.352 -> **7.358**, y
+  **`FEATURES_MIN` no se mueve** (5.317), porque `advanced-memory` no esta en el minimo. Era
+  la prediccion antes de medirlo.
+- `fmt` limpio. Las dos puertas de cifras: README 576 -> 577 ficheros, y la de la web encontro
+  **tres insignias mas** que mi reemplazo literal no habia cogido, porque su marcado es
+  `<span class="num">` y no el texto «576 source files».
+
 ## [Unreleased] - v343 (2026-11-16) - V459: la fachada contenia doce campos de RAG y ahora compone uno, y mi propio inventario conto 38 donde hay 68 (0.2.426)
 
 **Fase 5 del plan hexagonal**, que era la unica prioritaria con trabajo por delante y la que

@@ -330,30 +330,25 @@ impl AiAssistant {
     /// keywords match the user's message.
     #[cfg(feature = "advanced-memory")]
     pub fn enable_procedural_memory(&mut self, max_procedures: usize) {
-        self.procedural_store = Some(crate::advanced_memory::ProceduralStore::new(max_procedures));
-        self.procedure_evolver = Some(crate::advanced_memory::ProcedureEvolver::new(
-            crate::advanced_memory::EvolutionConfig::default(),
-        ));
+        self.procedural.enable(max_procedures);
     }
 
     /// Disable procedural memory and discard all procedures.
     #[cfg(feature = "advanced-memory")]
     pub fn disable_procedural_memory(&mut self) {
-        self.procedural_store = None;
-        self.procedure_evolver = None;
-        self.active_procedure_ids.clear();
+        self.procedural.disable();
     }
 
     /// Whether procedural memory is enabled.
     #[cfg(feature = "advanced-memory")]
     pub fn has_procedural_memory(&self) -> bool {
-        self.procedural_store.is_some()
+        self.procedural.is_enabled()
     }
 
     /// Add a procedure to the procedural store.
     #[cfg(feature = "advanced-memory")]
     pub fn add_procedure(&mut self, procedure: crate::advanced_memory::Procedure) {
-        if let Some(ref mut store) = self.procedural_store {
+        if let Some(ref mut store) = self.procedural.store {
             store.add(procedure);
         }
     }
@@ -361,7 +356,7 @@ impl AiAssistant {
     /// List all procedures (read-only slice).
     #[cfg(feature = "advanced-memory")]
     pub fn list_procedures(&self) -> &[crate::advanced_memory::Procedure] {
-        match &self.procedural_store {
+        match &self.procedural.store {
             Some(store) => store.all(),
             None => &[],
         }
@@ -370,7 +365,7 @@ impl AiAssistant {
     /// Remove a procedure by ID. Returns the removed procedure if found.
     #[cfg(feature = "advanced-memory")]
     pub fn remove_procedure(&mut self, id: &str) -> Option<crate::advanced_memory::Procedure> {
-        if let Some(ref mut store) = self.procedural_store {
+        if let Some(ref mut store) = self.procedural.store {
             store.remove(id)
         } else {
             None
@@ -380,7 +375,7 @@ impl AiAssistant {
     /// Find procedures matching a query string.
     #[cfg(feature = "advanced-memory")]
     pub fn find_procedures(&self, query: &str) -> Vec<&crate::advanced_memory::Procedure> {
-        match &self.procedural_store {
+        match &self.procedural.store {
             Some(store) => store.find_relevant(query, 0.3, 0.1, 5),
             None => Vec::new(),
         }
@@ -393,7 +388,7 @@ impl AiAssistant {
         procedure_id: &str,
         success: bool,
     ) -> Result<(), crate::error::AiError> {
-        if let Some(ref mut store) = self.procedural_store {
+        if let Some(ref mut store) = self.procedural.store {
             store.update_outcome(procedure_id, success)
         } else {
             Ok(())
@@ -403,7 +398,7 @@ impl AiAssistant {
     /// Save the procedural store to a file. Returns error if not enabled.
     #[cfg(feature = "advanced-memory")]
     pub fn save_procedures(&self, path: &std::path::Path) -> Result<(), String> {
-        match &self.procedural_store {
+        match &self.procedural.store {
             Some(store) => store.save_to_file(path).map(|_| ()),
             None => Err("Procedural memory not enabled".to_string()),
         }
@@ -417,28 +412,23 @@ impl AiAssistant {
         max_procedures: usize,
     ) -> Result<(), String> {
         let store = crate::advanced_memory::ProceduralStore::load_from_file(path, max_procedures)?;
-        self.procedural_store = Some(store);
-        if self.procedure_evolver.is_none() {
-            self.procedure_evolver = Some(crate::advanced_memory::ProcedureEvolver::new(
-                crate::advanced_memory::EvolutionConfig::default(),
-            ));
-        }
+        self.procedural.adopt(store);
         Ok(())
     }
 
     /// Access the procedural store (read-only).
     #[cfg(feature = "advanced-memory")]
     pub fn procedural_store(&self) -> Option<&crate::advanced_memory::ProceduralStore> {
-        self.procedural_store.as_ref()
+        self.procedural.store.as_ref()
     }
 
     /// Load default builtin procedures (skip any whose ID already exists).
     #[cfg(feature = "advanced-memory")]
     pub fn load_default_procedures(&mut self) {
-        if self.procedural_store.is_none() {
+        if self.procedural.store.is_none() {
             self.enable_procedural_memory(50);
         }
-        if let Some(ref mut store) = self.procedural_store {
+        if let Some(ref mut store) = self.procedural.store {
             store.load_defaults();
         }
     }
@@ -446,7 +436,7 @@ impl AiAssistant {
     /// Create a versioned export of all procedures.
     #[cfg(feature = "advanced-memory")]
     pub fn export_procedures(&self) -> crate::advanced_memory::ProcedureExport {
-        match &self.procedural_store {
+        match &self.procedural.store {
             Some(store) => store.export("user"),
             None => crate::advanced_memory::ProcedureExport::default(),
         }
@@ -455,7 +445,7 @@ impl AiAssistant {
     /// Export procedures to a JSON file.
     #[cfg(feature = "advanced-memory")]
     pub fn export_procedures_to_file(&self, path: &std::path::Path) -> Result<(), String> {
-        match &self.procedural_store {
+        match &self.procedural.store {
             Some(store) => store.export_to_file(path, "user"),
             None => Err("Procedural memory not enabled".to_string()),
         }
@@ -468,10 +458,10 @@ impl AiAssistant {
         export: &crate::advanced_memory::ProcedureExport,
         options: &crate::advanced_memory::ProcedureImportOptions,
     ) -> crate::advanced_memory::ProcedureImportResult {
-        if self.procedural_store.is_none() {
+        if self.procedural.store.is_none() {
             self.enable_procedural_memory(50);
         }
-        match self.procedural_store.as_mut() {
+        match self.procedural.store.as_mut() {
             Some(store) => store.import(export, options),
             None => crate::advanced_memory::ProcedureImportResult::default(),
         }
@@ -484,10 +474,10 @@ impl AiAssistant {
         path: &std::path::Path,
         options: &crate::advanced_memory::ProcedureImportOptions,
     ) -> Result<crate::advanced_memory::ProcedureImportResult, String> {
-        if self.procedural_store.is_none() {
+        if self.procedural.store.is_none() {
             self.enable_procedural_memory(50);
         }
-        match self.procedural_store.as_mut() {
+        match self.procedural.store.as_mut() {
             Some(store) => store.import_from_file(path, options),
             None => Err("Procedural memory not enabled".to_string()),
         }
@@ -503,7 +493,7 @@ impl AiAssistant {
         max_procedures: usize,
         max_tokens: usize,
     ) -> String {
-        let store = match &self.procedural_store {
+        let store = match &self.procedural.store {
             Some(s) => s,
             None => return String::new(),
         };
@@ -547,7 +537,7 @@ impl AiAssistant {
         }
 
         result.push_str("--- END WORKFLOW GUIDELINES ---");
-        self.active_procedure_ids = used_ids;
+        self.procedural.active_ids = used_ids;
         result
     }
 }
