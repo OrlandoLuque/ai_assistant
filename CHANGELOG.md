@@ -5,6 +5,155 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v345 (2026-11-17) - V461: la cache del tamano de contexto se leia sin su clave en dos de los cuatro sitios, y el modelo cambia por un campo publico (0.2.428)
+
+Fase 5, tercer paso. `detected_context_size` y `detected_context_model` pasan a
+`src/assistant/context_size_cache.rs`. **Los dos eran privados**, asi que como el racimo de
+V460 este **no cuesta ninguna ruptura de API**: `detect_model_context_size`,
+`get_model_context_size` e `invalidate_context_cache` conservan nombre y firma y delegan.
+
+### Este racimo traia un fallo vivo dentro, y es la razon para extraerlo
+
+La regla entre los dos campos era «el tamano solo vale para el modelo con el que se detecto»,
+y la cumplia quien leia. **Cuatro sitios leian y dos no comprobaban el modelo**:
+`context_budget_status` y el reparto de presupuesto de `assistant/memory.rs` tomaban
+`self.detected_context_size` a secas. Y no por descuido: son metodos `&self`, y el unico
+camino que si comprueba la clave (`get_model_context_size`) necesita `&mut self`.
+
+Que eso fuera alcanzable esta medido, no supuesto:
+
+| | medido |
+|---|---:|
+| sitios que leian la pareja | 4 |
+| sitios que comprobaban el modelo antes de usarla | **2** |
+| binarios de este crate que asignan `config.selected_model` en caliente | **8** |
+| llamadas a `invalidate_context_cache` fuera de los tests | **0** |
+
+`config` es un campo **publico**: un consumidor cambia de modelo con una asignacion y no hay
+setter donde invalidar nada. Y la propia documentacion de `invalidate_context_cache` decia
+«call when model changes» mientras no la llamaba nadie. La consecuencia, despues de cambiar de
+modelo, es que esos dos sitios respondian con la ventana del modelo **anterior**: a un modelo
+de 4K se le podia decir que tenia 128K para gastar, y la recomendacion del asesor Butler
+(«contexto al N %, considera un modelo con mas ventana») se calculaba sobre ese numero.
+
+### La pareja es ahora un solo campo, y eso es el arreglo
+
+`ContextSizeCache` guarda un `Option<(String, usize)>`: **un** campo y no dos, asi que no
+puede quedarse a medias. Y la unica forma de leerlo es `get(model)`, que devuelve `None`
+cuando el modelo no coincide.
+
+Lo que cambia no es que el fallo quede corregido en dos sitios, es que **no se puede volver a
+escribir**. El tercer lector lo demuestra: el de `assistant/memory.rs` arma un `String` y no
+tiene aserto propio en esta entrada, y aun asi queda correcto, porque ya no existe la forma de
+pedir el tamano sin dar el modelo. Un arreglo que hay que acordarse de repetir en cada lector
+nuevo no es un arreglo. Es la misma eleccion que V459 hizo con `KnowledgeStore` y V460 con
+`ProceduralMemory`, un paso mas alla: alli el invariante quedo en **un** metodo, aqui queda en
+**el tipo**.
+
+La comparacion del nombre del modelo sigue siendo exacta, como era en la fachada, y eso esta
+documentado y con test: una diferencia de mayusculas es un fallo de cache aqui y un acierto en
+la cache global de `crate::context`, que minuscula su clave --- asi que el llamante recibe el
+mismo numero, una busqueda mas tarde, y nunca el de otro modelo.
+
+`invalidate_context_cache` conserva nombre y firma, pero su documentacion ya no miente: no
+hace falta para la correccion, solo fuerza que la siguiente deteccion vuelva a preguntar al
+proveedor en vez de contestar desde esta instancia.
+
+### Los dos tests de la fachada, y por que son dos
+
+- `context_budget_status_does_not_report_the_previous_models_window`: guarda 128K para
+  `llama3.2:latest`, cambia el modelo a `llama2:7b` y exige **4.096**. Es el fallo escrito
+  como test, y los dos numeros salen de la tabla estatica de `crate::context`, asi que no toca
+  la red.
+- `context_budget_status_uses_the_cache_for_the_selected_model`: guarda un centinela (99.999)
+  para el modelo seleccionado y exige ese numero. Sin este, el primero pasaria igual
+  **borrando la cache entera**, que es la otra forma de equivocarse.
+
+Mas siete tests del componente, incluido el de la diferencia de mayusculas y el de que guardar
+un modelo nuevo borra el anterior (la cache tiene una sola entrada a proposito).
+
+### Y un metodo que escribi y borre en el acto
+
+Puse un `is_empty()` en el componente para que los asertos quedaran mas cortos. Clippy
+`--all-targets` lo tumbo: *method `is_empty` is never used*, porque sus unicos llamantes
+estaban en `#[cfg(test)]` y la build de lib no compila eso. Es
+[[project_cfg_test_hides_dead_imports]] por el otro lado: ahi un `use` sobrevivia porque el
+glob de los tests lo alcanzaba, aqui un metodo moria porque solo lo alcanzaban los tests.
+
+No lo marque con `#[cfg(test)]`: la cache tiene **una** entrada, asi que «esta vacia» y «no
+tiene tamano para el modelo que guarde» son la misma frase, y los asertos pasan ahora por
+`get`, que es la puerta que usa el codigo de verdad. Un accesor cuyo unico llamante es un test
+es la clase de superficie que este proyecto lleva meses quitando.
+
+### Balance de los tres pasos de la Fase 5
+
+Medido con el mismo analizador del bloque de declaracion en los cuatro commits, para que las
+cuatro columnas sean la misma medicion y no cuatro:
+
+| | antes de V459 | V459 | V460 | ahora |
+|---|---:|---:|---:|---:|
+| campos de `AiAssistant` | **68** | 57 | 55 | **54** |
+| de ellos `pub` | 30 | 25 | 25 | **25** |
+| tras `#[cfg(feature)]` | 28 | 17 | 15 | **15** |
+| lineas de la declaracion | 212 | 189 | 185 | **191** |
+
+**Las lineas subieron seis, y no lo disimulo**: el bloque tiene un campo menos y seis lineas
+mas, porque el campo que queda lleva escrito el motivo --- que es la pareja mal leida --- en
+vez de dos comentarios de una linea que no decian nada. La cifra que mide el trabajo de esta
+fase son los campos y los `pub`, no las lineas, y esa es la leccion de la cuenta de V459: una
+metrica que mejora sola no es la que estabas arreglando.
+
+Lo que queda de la Fase 5 sigue pasando por la decision del autor sobre los **25 campos
+`pub`**, que es lo que V460 dejo medido: cada extraccion que toque uno es una ruptura de API.
+Este racimo fue el tercero **sin** ese coste.
+
+### Verificacion
+
+- `cargo clippy --all-targets -- -D warnings` en los **cinco** trabajos de clippy de CI:
+  `FEATURES_STD`, `FEATURES_NETWORK`, `FEATURES_MIN`, los dos binarios de GUI (`gui,gui-pro`)
+  y el de `FEATURES_MIN` con las once features extra que V458 metio en CI. **Cero avisos en
+  los cinco.**
+- `cargo test --features "$FEATURES_STD" --lib`: **9.158** tests, 0 fallos. Son los 9.149 de
+  V460 **mas los nueve de este commit**: siete del componente y dos de la fachada.
+- `cargo test --features "$FEATURES_STD" --test '*'`: **214** de integracion, 0 fallos.
+- `cargo test --no-default-features --features "$FEATURES_MIN"`: **5.551**, 0 fallos. **No lo
+  comparo con el 5.317 de anoche**: ese era `--lib` y este es el comando entero de CI, que son
+  dos poblaciones --- exactamente lo que V459 aprendio contando campos.
+- `cargo fmt --check` limpio, despues de pedir cuatro cambios y aplicarlos (los cuatro de
+  formato, ninguno de contenido).
+- Las dos puertas de cifras y **54 sustituciones en siete paginas**: 21 de
+  **577 -> 578 ficheros fuente** y 33 de **9.149 -> 9.158 tests**, entre README y web.
+- `check_duplicate_types.py`: sin duplicado divergente nuevo (209 nombres, 32 enums).
+
+### Tres cifras de la web que no miraba ninguna puerta
+
+Dos las encontre al sincronizar, y la tercera es un defecto de forma que vale mas que las
+otras dos juntas.
+
+`developer_guide.html` decia **«563K LOC»** donde el arbol tiene **568.443**. Y esta frase:
+
+> *«9.149 tests bajo FEATURES_STD y 7.668 bajo el otro. `src/` declara 10.138 atributos
+> `#[test]`; la diferencia son tests detras de features que ningun trabajo de CI compila.
+> Medido el 2026-10-08 en 0.2.333.»*
+
+El barrido literal cambiaba el 9.149 por 9.158 **dentro de una frase fechada**, y eso la
+rompe: la fecha deja de significar nada en cuanto una de sus cifras es de otro dia. Asi que
+medi las otras dos en vez de dejarlas: `FEATURES_NETWORK` da **7.821** (decia 7.668) y `src/`
+declara **10.743** atributos `#[test]` (decia 10.138), o sea **1.585** tests detras de
+features que ningun trabajo de CI compila. Las cuatro cifras llevan ahora la misma fecha,
+porque las cuatro se midieron juntas.
+
+### Y el primer clippy de la noche dijo que todo iba bien mientras fallaba
+
+Lo lance como `cargo clippy ... > log 2>&1; echo "EXIT=$?"; tail`, y el estado que me llego
+del segundo plano era el del **`tail`**, que termina bien sobre un log lleno de errores. Tres
+errores dentro y notificacion en verde. La cadena de puertas de esta noche ya guarda el codigo
+de cada trabajo **antes** de tocar su salida con un pipe, y cada una escribe su propio log.
+Misma clase que `project_counts_that_mix_populations`: el instrumento contestaba a una
+pregunta distinta de la que yo creia hacerle, y su respuesta se parecia a la que esperaba.
+
+---
+
 ## [Unreleased] - v344 (2026-11-16) - V460: el segundo racimo sale de la fachada, y este no cuesta API porque los tres campos eran privados (0.2.427)
 
 Fase 5, segundo paso. Despues de `KnowledgeStore` (V459), la **memoria procedimental**:

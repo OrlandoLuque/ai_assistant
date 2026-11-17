@@ -157,9 +157,12 @@ impl AiAssistant {
         }
 
         // Calculate available budget with model-aware counting + dynamic reserve
-        let model_ctx = self.detected_context_size.unwrap_or_else(|| {
-            crate::context::get_model_context_size_cached(&self.config.selected_model, |_| None)
-        });
+        let model_ctx = self
+            .context_size
+            .get(&self.config.selected_model)
+            .unwrap_or_else(|| {
+                crate::context::get_model_context_size_cached(&self.config.selected_model, |_| None)
+            });
         let system_tokens = count(&self.system_prompt_base);
         let conversation_tokens: usize = self.conversation.iter().map(|m| count(&m.content)).sum();
         let user_tokens = count(user_message);

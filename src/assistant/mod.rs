@@ -57,6 +57,7 @@ use crate::scheduler::Scheduler;
 #[cfg(feature = "scheduler")]
 use crate::trigger_system::TriggerManager;
 
+use self::context_size_cache::ContextSizeCache;
 #[cfg(feature = "rag")]
 use self::knowledge_store::KnowledgeStore;
 #[cfg(feature = "advanced-memory")]
@@ -359,11 +360,17 @@ pub struct AiAssistant {
     #[cfg(feature = "analytics")]
     pub metrics: crate::metrics::MetricsTracker,
 
-    /// Cached detected context size for the current model
-    /// None means not yet detected, Some(size) is the detected value
-    detected_context_size: Option<usize>,
-    /// Model name for which context size was detected (to invalidate cache on model change)
-    detected_context_model: Option<String>,
+    /// The context window detected for a model, together with the model it was
+    /// detected for.
+    ///
+    /// Two separate fields until Phase 5 of the hexagonal plan. The rule
+    /// between them, that a size is only valid for the model it was detected
+    /// for, was checked at two of its four read sites, and the two that skipped
+    /// it answered with the previous model's window after a model switch.
+    /// `ContextSizeCache::get` takes the model, so another model's size is now
+    /// unreachable instead of merely discouraged. Both fields were private, so
+    /// this costs no API break.
+    context_size: ContextSizeCache,
 
     /// Adaptive thinking configuration
     pub adaptive_thinking: AdaptiveThinkingConfig,
@@ -581,6 +588,7 @@ fn try_generate_vision_with_fallback(
 }
 
 mod context;
+mod context_size_cache;
 mod conversation;
 #[cfg(any(feature = "containers", feature = "audio"))]
 mod execution;
@@ -632,8 +640,7 @@ impl AiAssistant {
             knowledge: KnowledgeStore::new(),
             #[cfg(feature = "analytics")]
             metrics: crate::metrics::MetricsTracker::new("default"),
-            detected_context_size: None,
-            detected_context_model: None,
+            context_size: ContextSizeCache::new(),
             adaptive_thinking: AdaptiveThinkingConfig::default(),
             thinking_parser: None,
             last_thinking_result: None,
@@ -1430,8 +1437,9 @@ mod tests {
             ai.last_thinking_strategy.is_none(),
             "No thinking strategy by default"
         );
-        assert!(
-            ai.detected_context_size.is_none(),
+        assert_eq!(
+            ai.context_size.get(&ai.config.selected_model),
+            None,
             "No detected context size by default"
         );
         assert!(ai.cost_dashboard.is_none(), "No cost dashboard by default");
@@ -1737,12 +1745,44 @@ mod tests {
     fn test_invalidate_context_cache() {
         let mut ai = AiAssistant::new();
         // Manually set cache values
-        ai.detected_context_size = Some(8192);
-        ai.detected_context_model = Some("test-model".to_string());
+        ai.context_size.store("test-model".to_string(), 8192);
+        assert_eq!(ai.context_size.get("test-model"), Some(8192));
 
         ai.invalidate_context_cache();
-        assert!(ai.detected_context_size.is_none());
-        assert!(ai.detected_context_model.is_none());
+        assert_eq!(ai.context_size.get("test-model"), None);
+    }
+
+    #[test]
+    fn context_budget_status_uses_the_cache_for_the_selected_model() {
+        // The sentinel proves the cached value is really consulted, so the
+        // keyed read tested below cannot be "fixed" by dropping the cache.
+        let mut ai = AiAssistant::new();
+        ai.config.selected_model = "llama3.2:latest".to_string();
+        ai.context_size.store("llama3.2:latest".to_string(), 99_999);
+
+        assert_eq!(ai.context_budget_status().model_context_window, 99_999);
+    }
+
+    #[test]
+    fn context_budget_status_does_not_report_the_previous_models_window() {
+        // The defect that made this cluster worth extracting. `config` is a
+        // public field and seven of this crate's own binaries assign
+        // `selected_model` at runtime, while `invalidate_context_cache` had no
+        // caller outside tests - so a `&self` reader that skipped the model key
+        // answered with the window of the model selected before.
+        //
+        // Both numbers come from the static table in `crate::context`
+        // (llama3.2 = 128K, llama2 = 4K), so this test touches no network.
+        let mut ai = AiAssistant::new();
+        ai.context_size
+            .store("llama3.2:latest".to_string(), 128_000);
+        ai.config.selected_model = "llama2:7b".to_string();
+
+        assert_eq!(
+            ai.context_budget_status().model_context_window,
+            4_096,
+            "the budget must be computed for the selected model, not for the one the cache holds"
+        );
     }
 
     // --- Metrics Tests ---
@@ -2640,12 +2680,11 @@ ws ::= " "*"#;
         let mut ai = AiAssistant::new();
         // Force a detection to populate the cache
         let _ = ai.detect_model_context_size();
-        assert!(ai.detected_context_size.is_some());
-        assert!(ai.detected_context_model.is_some());
+        let selected = ai.config.selected_model.clone();
+        assert!(ai.context_size.get(&selected).is_some());
 
         ai.invalidate_context_cache();
-        assert!(ai.detected_context_size.is_none());
-        assert!(ai.detected_context_model.is_none());
+        assert_eq!(ai.context_size.get(&selected), None);
     }
 
     #[test]
@@ -2952,10 +2991,10 @@ ws ::= " "*"#;
     }
 
     #[test]
-    fn test_detected_context_size_none_initially() {
+    fn test_context_size_cache_is_empty_initially() {
         let ai = AiAssistant::new();
-        assert!(ai.detected_context_size.is_none());
-        assert!(ai.detected_context_model.is_none());
+        assert_eq!(ai.context_size.get(&ai.config.selected_model), None);
+        assert_eq!(ai.context_size.get("any-other-model"), None);
     }
 
     #[test]

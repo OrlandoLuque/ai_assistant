@@ -101,18 +101,15 @@ impl AiAssistant {
     /// On a cache miss the provider API is queried first; if that fails,
     /// the static model-name table is used as fallback.
     ///
-    /// The instance fields `detected_context_size` / `detected_context_model`
-    /// are kept in sync for fast per-instance access without locking.
+    /// The per-instance `ContextSizeCache` is kept in sync for fast access
+    /// without locking. It is keyed by model, so it can never answer with a
+    /// size that was detected for a different one.
     pub fn detect_model_context_size(&mut self) -> usize {
         let current_model = self.config.selected_model.clone();
 
         // Fast path: instance cache hit
-        if let (Some(cached_size), Some(ref cached_model)) =
-            (self.detected_context_size, &self.detected_context_model)
-        {
-            if cached_model == &current_model {
-                return cached_size;
-            }
+        if let Some(cached_size) = self.context_size.get(&current_model) {
+            return cached_size;
         }
 
         // Delegate to global cache (which calls fetcher on miss)
@@ -122,8 +119,7 @@ impl AiAssistant {
         });
 
         // Sync instance cache
-        self.detected_context_size = Some(size);
-        self.detected_context_model = Some(current_model);
+        self.context_size.store(current_model, size);
 
         size
     }
@@ -133,12 +129,8 @@ impl AiAssistant {
     /// Returns the instance-cached size if the model hasn't changed,
     /// otherwise delegates to `detect_model_context_size`.
     pub fn get_model_context_size(&mut self) -> usize {
-        if let (Some(cached_size), Some(ref cached_model)) =
-            (self.detected_context_size, &self.detected_context_model)
-        {
-            if cached_model == &self.config.selected_model {
-                return cached_size;
-            }
+        if let Some(cached_size) = self.context_size.get(&self.config.selected_model) {
+            return cached_size;
         }
         self.detect_model_context_size()
     }
@@ -191,10 +183,14 @@ impl AiAssistant {
         safe_available
     }
 
-    /// Invalidate the cached context size (call when model changes)
+    /// Invalidate the cached context size.
+    ///
+    /// No longer required for correctness: the cache is keyed by model, so a
+    /// size detected for another model is never returned. What this still does
+    /// is force the next detection to query the provider API again instead of
+    /// answering from this instance.
     pub fn invalidate_context_cache(&mut self) {
-        self.detected_context_size = None;
-        self.detected_context_model = None;
+        self.context_size.invalidate();
     }
 
     // === Knowledge Context Management ===
@@ -342,9 +338,12 @@ impl AiAssistant {
 
     /// Get the context budget status with recommendations from the Butler advisor.
     pub fn context_budget_status(&self) -> ContextBudgetStatus {
-        let model_ctx = self.detected_context_size.unwrap_or_else(|| {
-            crate::context::get_model_context_size_cached(&self.config.selected_model, |_| None)
-        });
+        let model_ctx = self
+            .context_size
+            .get(&self.config.selected_model)
+            .unwrap_or_else(|| {
+                crate::context::get_model_context_size_cached(&self.config.selected_model, |_| None)
+            });
         let system_tokens = crate::context::estimate_tokens(&self.system_prompt_base);
         let conversation_tokens: usize = self
             .conversation
