@@ -5,6 +5,65 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v350 (2026-11-18) - V466: la web se comprobaba consigo misma y el README consigo mismo, asi que podian derivar juntos sin que nada se pusiera rojo; y la frase fechada de la web tenia una resta que no cuadraba (0.2.433)
+
+V465 dejo el README diciendo **9.171** tests. La web seguia diciendo **9.169** en seis paginas
+y las dos puertas estaban verdes, porque cada una contestaba una pregunta mas estrecha de lo
+que parecia:
+
+| puerta | que preguntaba | que NO preguntaba |
+|---|---|---|
+| `check_readme_numbers.py` | coinciden entre si los cinco sitios del README? | coincide con la web? |
+| `check_website_numbers.py` | coinciden entre si las paginas de la web? | coincide con la biblioteca? |
+
+«La web es coherente» es una afirmacion mas estrecha que «la web es verdad», y con las dos
+puertas puestas una al lado de la otra la grieta queda en el medio: **toda la web puede
+desviarse a la vez y seguir verde**. Es lo que estaba pasando.
+
+Lo que cambia:
+
+- `check_website_numbers.py` compara ahora el recuento de la web con el que dice el README.
+  `consistency.yml` saca copia de los **dos** repositorios, asi que el README esta ahi mismo;
+- y para no tener dos analizadores que puedan discrepar, la definicion sale de un sitio:
+  `check_readme_numbers.py` expone `test_claims()` --- los cinco patrones del titular --- y la
+  puerta de la web la importa. Una pregunta, una definicion
+  ([[project_two_checkers_one_rule]]).
+
+**Comprobada contra el defecto real**: con la web en 9.169 y el README en 9.171, la puerta sale
+con codigo 1 y lo dice con las dos cifras. Y mientras se arreglaba, cazo algo que el reemplazo
+a mano se habia dejado: `ai_assistant_overview.html` escribe la cifra **con punto**
+(`9.169`, separador espanol) en tres sitios, y la busqueda por `9,169` paso de largo. O sea que
+la puerta encontro lo que no encontro la persona que la estaba arreglando.
+
+### La frase fechada de la web, re-medida entera
+
+`developer_guide.html` llevaba un parrafo con **cuatro cifras entrelazadas** y una moraleja al
+final: *«updating one number inside a dated sentence and leaving the rest is how the date stops
+meaning anything»*. Le habia pasado eso mismo:
+
+| decia | medido el 2026-11-18 |
+|---|---|
+| 9.169 tests con `FEATURES_STD` | **9.171** |
+| 7.821 con `FEATURES_NETWORK` | **7.834** |
+| 10.743 atributos `#[test]` en `src/` | **10.262** |
+| la resta: 1.585 | 10.262 - 9.171 = **1.091** |
+
+Y la resta no cuadraba ni con sus propias cifras: 10.743 - 9.169 = 1.574, no 1.585. Tres de las
+cuatro estaban mal y la cuarta era aritmeticamente imposible.
+
+Ademas la frase decia que esa resta son «tests behind features neither CI job compiles», y eso
+es mas de lo que se puede afirmar: los dos conjuntos **se solapan** (los dos incluyen `full`),
+asi que parte de esa diferencia si la compila el otro, y un recuento de atributos es una **cota
+superior** de lo que construye cualquier orden concreta. Ahora lo dice asi: *at most*, con el
+motivo al lado.
+
+### Lo que queda sin cubrir, dicho en voz alta
+
+`check_website_numbers.py` **no tiene autoprueba**, al contrario que la del README (29 casos).
+La evidencia de que la comprobacion nueva funciona es que se la vio fallar sobre el defecto
+real, que es la buena, pero no es lo mismo que un caso fijado. Montar el arnes significa
+fabricar un arbol de paginas de prueba y no se hace en un rato; queda apuntado.
+
 ## [Unreleased] - v349 (2026-11-18) - V465: se comprobaba una copia de la cifra y la que mentia era otra, en el codigo y en la puerta: la duracion que decide si un proveedor esta sano no era la que se publicaba, y del README se leia la chapa de LOC mientras una vineta debajo iba un 25% desviada (0.2.432)
 
 Las dos salieron de la **primera ejecucion limpia de la bateria local de puertas**, y las dos

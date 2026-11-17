@@ -45,7 +45,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from check_readme_numbers import LOC_TOLERANCE, measured  # noqa: E402
+from check_readme_numbers import LOC_TOLERANCE, REPO, measured, test_claims  # noqa: E402
 
 # label on the badge -> key in measured()
 BADGE_KEYS = {
@@ -184,6 +184,33 @@ def main() -> int:
             + ", ".join(f"{int(c):,}" for c in sorted(all_counts, key=int))
             + f". Not verified against the suite here, but they must agree. Seen in: {where}"
         )
+
+    # And the site's figure against the LIBRARY'S, which is the check that was
+    # missing until 2026-11-18.
+    #
+    # Everything above asks whether the site agrees with ITSELF, so the whole
+    # site can drift together and stay green -- and it had: every page said
+    # 9,169 while the README said 9,171. "The site is consistent" is a narrower
+    # claim than "the site is true", and a narrower OK is how this survives.
+    #
+    # `consistency.yml` checks out BOTH repositories, so the README is right
+    # here. Its own five statements are already held to agreement by
+    # check_readme_numbers.py, whose `test_claims` this imports: one question,
+    # one definition, rather than a second parser that can disagree with the
+    # first (project_two_checkers_one_rule).
+    #
+    # Neither figure is verified against the suite -- that is deliberate and
+    # explained in check_readme_numbers.py's header. What is verified is that
+    # the public site and the repository do not state different totals.
+    readme_counts = test_claims((REPO / "README.md").read_text(encoding="utf-8"))
+    if len(all_counts) == 1 and len(readme_counts) == 1:
+        site_n, readme_n = int(next(iter(all_counts))), next(iter(readme_counts))
+        if site_n != readme_n:
+            problems.append(
+                f"the site says {site_n:,} tests and the README says {readme_n:,}. "
+                "Neither is checked against the suite, but the public site and the "
+                "repository must not state different totals"
+            )
 
     print(f"\npaginas revisadas : {len(pages)}")
     print(f"cifras comprobadas: {checked}")

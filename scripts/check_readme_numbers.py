@@ -162,6 +162,38 @@ def loc_claims(text: str) -> list[tuple[int, str]]:
     return out
 
 
+# Every shape in which the README states the HEADLINE test count: the badge, the
+# status block, the verification list, the comparison table -- and, since
+# 2026-11-18, the sentence that compares the feature sets.
+#
+# That fifth one said "`--features full` alone builds 7,358 of the 9,149" while
+# the other four said 9,169: twenty tests of drift, for an unknown length of
+# time, invisible because the four patterns that existed all matched copies that
+# HAD been updated. Four agreeing places and one stale one is indistinguishable
+# from five agreeing places unless the fifth is read.
+TEST_COUNT_PATTERNS = (
+    r"tests-(\d+)-",
+    r"\*\*(\d[\d,]*) tests\*\*",
+    r"\| Tests \| (\d[\d,]*) \|",
+    r"of the (\d[\d,]*)",
+)
+
+
+def test_claims(text: str) -> set[int]:
+    """Every headline test count stated in `text`.
+
+    The VALUE is checked nowhere -- it needs the suite to run, see this file's
+    header. What is checked is that the statements agree: with each other here,
+    and with the website's in `check_website_numbers.py`, which imports this so
+    that one question has one definition.
+    """
+    out: set[int] = set()
+    for pattern in TEST_COUNT_PATTERNS:
+        for m in re.finditer(pattern, text):
+            out.add(int(m.group(1).replace(",", "")))
+    return out
+
+
 def problems_for(text: str, real: dict[str, int]) -> list[str]:
     """Every way `text` fails to describe `real`. Empty list means the README is true."""
     claim = stated(text)
@@ -222,20 +254,11 @@ def problems_for(text: str, real: dict[str, int]) -> list[str]:
     # and forgetting the rest. That needs no suite run: the four must agree with
     # EACH OTHER. Same shape as the gate count above, which drifted between its
     # badge and its sentence the first time it moved.
-    counts = {m.group(1).replace(",", "") for m in re.finditer(r"tests-(\d+)-", text)}
-    counts |= {m.group(1).replace(",", "") for m in re.finditer(r"\*\*(\d[\d,]*) tests\*\*", text)}
-    counts |= {m.group(1).replace(",", "") for m in re.finditer(r"\| Tests \| (\d[\d,]*) \|", text)}
-    # FIFTH place, added 2026-11-18: "`--features full` alone builds 7,358 of
-    # the 9,149". That sentence carried 9,149 while the other four said 9,169 --
-    # twenty tests of drift, sitting in the README for an unknown length of
-    # time, because the three patterns above all matched the copies that HAD
-    # been updated. Four agreeing places and one stale one is indistinguishable
-    # from five agreeing places unless the fifth is read.
-    counts |= {m.group(1).replace(",", "") for m in re.finditer(r"of the (\d[\d,]*)", text)}
+    counts = test_claims(text)
     if len(counts) > 1:
         problems.append(
             "the README states more than one test count: "
-            + ", ".join(f"{int(c):,}" for c in sorted(counts, key=int))
+            + ", ".join(f"{c:,}" for c in sorted(counts))
             + ". The value is not checked here (it needs the suite to run), but the "
             "five places that state it must agree with each other."
         )
