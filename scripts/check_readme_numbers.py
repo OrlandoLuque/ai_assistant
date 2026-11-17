@@ -144,6 +144,24 @@ FORBIDDEN = [
 ]
 
 
+# Every shape in which the README states the line count. The badge is one of
+# them and has no privileged position: until 2026-11-18 it was the ONLY one read.
+LOC_PATTERNS = (
+    (r"LOC-(\d[\d,]*)K-", 1000, "in the LOC badge"),
+    (r"(\d[\d,]*)K lines", 1000, "in prose, as `NK lines`"),
+    (r"(\d[\d,]*) lines of Rust", 1, "in prose, as `N lines of Rust`"),
+)
+
+
+def loc_claims(text: str) -> list[tuple[int, str]]:
+    """Every LOC figure stated anywhere in `text`, with where it was found."""
+    out: list[tuple[int, str]] = []
+    for pattern, scale, where in LOC_PATTERNS:
+        for m in re.finditer(pattern, text):
+            out.append((int(m.group(1).replace(",", "")) * scale, where))
+    return out
+
+
 def problems_for(text: str, real: dict[str, int]) -> list[str]:
     """Every way `text` fails to describe `real`. Empty list means the README is true."""
     claim = stated(text)
@@ -159,16 +177,44 @@ def problems_for(text: str, real: dict[str, int]) -> list[str]:
         elif got != want:
             problems.append(f"{key}: README says {got:,}, the tree has {want:,}")
 
-    want_loc, got_loc = real["loc"], claim["loc"]
-    if got_loc is None:
+    # EVERY place that states the line count, not just the badge.
+    #
+    # Until 2026-11-18 this read the badge alone, and the README stated the
+    # figure in four places. The badge said 568K while a bullet seven lines
+    # under the sentence that agreed with it still said "~423,000 lines of
+    # Rust" -- the very string this file's header names as the failure it
+    # exists to prevent. The gate was GREEN, because it answered "is the badge
+    # true?", which is narrower than "is the README true?". A narrower OK is
+    # how this survives: the same shape as the RUSTSEC ignore list living in
+    # three files with two checkers.
+    #
+    # `check_website_numbers.py` already did it the right way -- it checks every
+    # occurrence it finds against the tree -- so this is not a second definition
+    # of the question. It is the same one, asked of the README too.
+    want_loc = real["loc"]
+    if claim["loc"] is None:
         problems.append(f"the README no longer states a LOC figure. Current: {want_loc:,}")
-    else:
-        drift = abs(got_loc - want_loc) / want_loc
+    for stated_loc, where in loc_claims(text):
+        drift = abs(stated_loc - want_loc) / want_loc
         if drift > LOC_TOLERANCE:
             problems.append(
-                f"loc: README says ~{got_loc:,}, the tree has {want_loc:,} "
+                f"loc {where}: README says ~{stated_loc:,}, the tree has {want_loc:,} "
                 f"({drift:.1%} off, tolerance {LOC_TOLERANCE:.0%})"
             )
+
+    # The file count is exact, and it is already checked above at the one place
+    # that carries the bold markers -- but the opening paragraph states it again
+    # without them. Checking it per occurrence would report one stale number
+    # twice, so what is checked here is that the copies AGREE with each other:
+    # the failure that happens is editing one of two sentences.
+    file_claims = {
+        int(m.group(1).replace(",", "")) for m in re.finditer(r"(\d[\d,]*) source files", text)
+    }
+    if len(file_claims) > 1:
+        problems.append(
+            "the README states more than one source-file count: "
+            + ", ".join(f"{c:,}" for c in sorted(file_claims))
+        )
 
     # The test count is NOT verified against the suite (see this file's header).
     # But it is stated in FOUR places -- badge, status block, verification list,
@@ -179,13 +225,37 @@ def problems_for(text: str, real: dict[str, int]) -> list[str]:
     counts = {m.group(1).replace(",", "") for m in re.finditer(r"tests-(\d+)-", text)}
     counts |= {m.group(1).replace(",", "") for m in re.finditer(r"\*\*(\d[\d,]*) tests\*\*", text)}
     counts |= {m.group(1).replace(",", "") for m in re.finditer(r"\| Tests \| (\d[\d,]*) \|", text)}
+    # FIFTH place, added 2026-11-18: "`--features full` alone builds 7,358 of
+    # the 9,149". That sentence carried 9,149 while the other four said 9,169 --
+    # twenty tests of drift, sitting in the README for an unknown length of
+    # time, because the three patterns above all matched the copies that HAD
+    # been updated. Four agreeing places and one stale one is indistinguishable
+    # from five agreeing places unless the fifth is read.
+    counts |= {m.group(1).replace(",", "") for m in re.finditer(r"of the (\d[\d,]*)", text)}
     if len(counts) > 1:
         problems.append(
             "the README states more than one test count: "
             + ", ".join(f"{int(c):,}" for c in sorted(counts, key=int))
             + ". The value is not checked here (it needs the suite to run), but the "
-            "four places that state it must agree with each other."
+            "five places that state it must agree with each other."
         )
+
+    # The two COMPANION test counts, which drifted for the same reason and were
+    # not checked at all: the README says what `--features full` alone builds
+    # and what the eight-feature minimum builds, and states each of them twice.
+    # Both were twenty behind on 2026-11-18 while the headline figure was
+    # current. Their VALUES need the suite, like the headline, but each is
+    # stated in two places and those must agree.
+    for pattern, what in (
+        (r"builds (\d[\d,]*) of", "what `--features full` alone builds"),
+        (r"minimum (\d[\d,]*)", "what the eight-feature minimum builds"),
+    ):
+        seen = {m.group(1).replace(",", "") for m in re.finditer(pattern, text)}
+        if len(seen) > 1:
+            problems.append(
+                f"the README states more than one figure for {what}: "
+                + ", ".join(f"{int(c):,}" for c in sorted(seen, key=int))
+            )
 
     # A number is only reproducible if the command printed beside it is the one
     # that produces it. V387 found the README offering `cargo test --features
@@ -315,7 +385,41 @@ SELF_TEST_CASES = [
      TRUE_README.replace("tests-8990", "tests-8991"), 1),
     ("test count consistent but not verified against the suite",
      TRUE_README.replace("tests-8990", "tests-1").replace("**8,990 tests**", "**1 tests**"), 0),
-    ("LOC off by 24%", TRUE_README.replace("LOC-558K", "LOC-423K"), 1),
+    # The badge alone: the prose beside it is still right, so it is ONE problem
+    # -- which it also was before 2026-11-18, because the prose was not read.
+    ("LOC off by 24% in the badge", TRUE_README.replace("LOC-558K", "LOC-423K"), 1),
+    # Both copies moved together: two places stating a false number, two problems.
+    ("both LOC copies stale by 24%", TRUE_README.replace("558K", "423K"), 2),
+    # The EXACT shape that was live in the README while this gate said OK: a
+    # correct badge and, below it, a prose bullet from six months earlier.
+    (
+        "a stale LOC bullet below a correct badge",
+        TRUE_README + "- **~423,000 lines of Rust**: Single crate\n",
+        1,
+    ),
+    # The file count in its two shapes: with the bold markers and without them.
+    (
+        "source files stated twice with different values",
+        TRUE_README + "558K lines across 369 source files.\n",
+        1,
+    ),
+    # What actually happened: four places updated, the fifth sentence not.
+    (
+        "the fifth copy of the test count left behind",
+        TRUE_README + "`--features full` alone builds 7,358 of the 8,970.\n",
+        1,
+    ),
+    # The two companion figures, each stated twice.
+    (
+        "the full-set figure stated twice with different values",
+        TRUE_README + "full builds 7,358 of the 8,990, and full builds 7,300 of them.\n",
+        1,
+    ),
+    (
+        "the minimum figure stated twice with different values",
+        TRUE_README + "the eight-feature minimum 5,317, and the minimum 5,300.\n",
+        1,
+    ),
     # Half a per cent: a real commit moves the number this much, and failing the
     # build over it would train everyone to edit the figure without reading it.
     ("LOC off by 0.5% (inside tolerance)", TRUE_README.replace("558K", "555K"), 0),
@@ -434,12 +538,16 @@ def main() -> int:
         f"OK - README states {claim['source_files']:,} source files, "
         f"~{real['loc'] // 1000}K lines, {claim['features']} features and "
         f"{claim['ci_gates']} CI gates (badge and prose agree), and all five match the tree.\n"
+        f"The line count is compared at EVERY place that states it ({len(loc_claims(text))} of "
+        "them here), not just the badge: the badge was the only one read until 2026-11-18, and "
+        "a prose bullet sat 25% off underneath it.\n"
         "Also checked: every `cargo test --features` the README shows names a set that a job "
         f"in {CI_WORKFLOW} really runs, compared as sets so order and `$VAR` spelling do not "
         "matter.\n"
         "NOT checked here (by design, see this file's header): the test count itself, which "
-        "needs the suite to run. Its four statements must agree with each other, and the "
-        "command beside it must be CI's -- both of which ARE checked."
+        "needs the suite to run. Its five statements must agree with each other, the two "
+        "companion counts must agree with their own second copy, and the command beside the "
+        "figure must be CI's -- all of which ARE checked."
     )
     return 0
 

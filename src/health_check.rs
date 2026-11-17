@@ -22,7 +22,12 @@ pub struct HealthCheckResult {
     pub provider: String,
     /// Whether check passed
     pub healthy: bool,
-    /// Response time
+    /// Cuanto tardo la comprobacion, medido por la comprobacion misma.
+    ///
+    /// Es la duracion que devuelve la funcion de sondeo --- la peticion HTTP, o
+    /// la que inyectes con `with_check_fn` --- y no el reloj de alrededor, que
+    /// mide tambien el coste de llamarla. En el camino de error no hay duracion
+    /// que devolver: ahi es el tiempo hasta el fallo.
     pub response_time: Duration,
     /// Optional error message
     pub error: Option<String>,
@@ -207,18 +212,27 @@ impl HealthChecker {
             Self::default_check(self.client.as_ref(), url, self.config.timeout)
         };
 
-        let (healthy, error) = match result {
-            Ok(response_time) => {
-                let healthy = response_time < self.config.degraded_threshold;
-                (healthy, None)
-            }
-            Err(e) => (false, Some(e)),
+        // Una sola duracion, y es la que mide la comprobacion.
+        //
+        // Antes habia dos con el mismo nombre: la que DEVUELVE la comprobacion
+        // decidia `healthy`, y `start.elapsed()` --- el reloj de alrededor ---
+        // era la que se PUBLICABA. Con la comprobacion por omision las dos son
+        // casi iguales, porque ese reloj envuelve la peticion HTTP, asi que la
+        // asimetria no se veia; con `with_check_fn` puesta, la duracion
+        // inyectada se tiraba y lo publicado era lo que tarda en llamarse un
+        // cierre --- cero cuando la suite entera corre en paralelo.
+        //
+        // En el camino de error no hay duracion que devolver, y ahi el reloj SI
+        // es la respuesta correcta: cuanto se tardo en fallar.
+        let (healthy, response_time, error) = match result {
+            Ok(measured) => (measured < self.config.degraded_threshold, measured, None),
+            Err(e) => (false, start.elapsed(), Some(e)),
         };
 
         let check_result = HealthCheckResult {
             provider: name.to_string(),
             healthy,
-            response_time: start.elapsed(),
+            response_time,
             error,
             timestamp: Instant::now(),
             check_type: self.config.check_type,
@@ -256,10 +270,16 @@ impl HealthChecker {
         health.status = if health.consecutive_failures >= config.failure_threshold {
             HealthStatus::Unhealthy
         } else if health.consecutive_successes >= config.success_threshold {
-            if result.response_time > config.degraded_threshold {
-                HealthStatus::Degraded
-            } else {
+            // El veredicto ya se tomo en `check()`, contra el umbral y con la
+            // duracion medida. Esta rama volvia a compararla con el umbral: la
+            // MISMA pregunta contestada por segunda vez --- y, mientras las dos
+            // duraciones no eran la misma, contestada distinto. Un sondeo que
+            // devolvia 4,999 s salia SANO arriba y DEGRADADO aqui si el reloj
+            // de alrededor se pasaba de los 5 s.
+            if result.healthy {
                 HealthStatus::Healthy
+            } else {
+                HealthStatus::Degraded
             }
         } else if health.consecutive_failures > 0 {
             HealthStatus::Degraded
@@ -566,7 +586,11 @@ mod tests {
         assert_eq!(results.len(), 2);
         for result in &results {
             assert!(result.healthy);
-            assert!(result.response_time > Duration::ZERO);
+            // La duracion INYECTADA es la que se publica. Esto afirmaba
+            // `> Duration::ZERO`, que no comprueba los 50 ms de arriba sino el
+            // reloj alrededor de un cierre que no hace nada --- y lo perdia
+            // cuando la suite entera corre en paralelo.
+            assert_eq!(result.response_time, Duration::from_millis(50));
         }
 
         // After check_all, providers should have updated health
@@ -574,6 +598,45 @@ mod tests {
         assert_eq!(health_a.consecutive_successes, 1);
         let health_b = checker.get_health("provider_b").unwrap();
         assert_eq!(health_b.consecutive_successes, 1);
+    }
+
+    #[test]
+    fn test_result_publishes_the_measured_duration_not_the_surrounding_clock() {
+        // Un sondeo que dice tardar 7 s, con el umbral por omision en 5 s: no
+        // esta sano, no es un error, y lo que se publica son los 7 s. Si
+        // alguien volviera a publicar `start.elapsed()`, aqui saldrian
+        // microsegundos y las tres aserciones de abajo lo dirian.
+        let mut checker = HealthChecker::new(HealthCheckConfig::default())
+            .with_check_fn(|_, _| Ok(Duration::from_secs(7)));
+        checker.register("slow", "http://localhost:1234");
+
+        let result = checker.check("slow", "http://localhost:1234");
+
+        assert_eq!(result.response_time, Duration::from_secs(7));
+        assert!(!result.healthy);
+        assert!(result.error.is_none(), "lento no es un fallo");
+    }
+
+    #[test]
+    fn test_slow_probe_is_degraded_from_the_duration_it_reported() {
+        // «Se pasa del umbral?» se contesta UNA vez, en `check()`, con la
+        // duracion que la comprobacion devuelve, y el estado del proveedor sale
+        // de ese veredicto. Y lo que queda en el historial es esa misma
+        // duracion: la media de respuesta no puede salir de otro reloj.
+        let config =
+            HealthCheckConfig::default().with_degraded_threshold(Duration::from_millis(100));
+        let mut checker =
+            HealthChecker::new(config).with_check_fn(|_, _| Ok(Duration::from_millis(500)));
+        checker.register("slow", "http://localhost:1234");
+
+        checker.check("slow", "http://localhost:1234");
+
+        let health = checker.get_health("slow").unwrap();
+        assert_eq!(health.status, HealthStatus::Degraded);
+        assert_eq!(
+            health.last_check.as_ref().unwrap().response_time,
+            Duration::from_millis(500)
+        );
     }
 
     #[test]

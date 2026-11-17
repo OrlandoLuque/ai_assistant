@@ -20,12 +20,25 @@ Esto te da el contexto completo: dónde estamos, qué se ha hecho, cómo trabaja
 
 ## Sobre el Proyecto
 - **Librería Rust** para integración con LLMs locales y cloud
-- **540K líneas de código**, 559 archivos fuente (.rs), 9.753 tests
-  (medido el 2026-09-03 en 0.2.244; antes decía 523K/500/9.600+)
+- **568K líneas de código**, 579 archivos fuente (.rs), **9.171 tests** bajo el conjunto de
+  features que corre CI (`FEATURES_STD`). Re-medido el 2026-11-18 en 0.2.431; decía
+  540K/559/9.753, del 2026-09-03.
+  - Las dos primeras salen de **la definición de la puerta**
+    (`scripts/check_readme_numbers.py`: `src/**/*.rs` y sus saltos de línea), que es la misma
+    que exige el README y la web. Una segunda definición es como una cifra se queda vieja
+    pareciendo defendible en las dos versiones.
+  - El recuento de tests **ninguna puerta lo comprueba** —hace falta correr la suite— así que
+    va con el comando al lado o no significa nada: 9.171 es `FEATURES_STD`, `--features full`
+    a solas da menos, y el mínimo de ocho features da 5.339. El «9.753» de antes no decía con
+    qué comando se había medido, y por eso no se puede ni comparar con estas.
 - **Autor único**: Orlando José Luque Moraira (Lander) — orlando.luque@gmail.com
 - **Estado**: **el repositorio de GitHub es PÚBLICO Y ASÍ DEBE SEGUIR**
-  (`OrlandoLuque/ai_assistant`, 3 estrellas y 1 fork a 2026-09-03). No está en crates.io ni
-  distribuido a terceros de otra forma.
+  (`OrlandoLuque/ai_assistant`, **1 estrella y 0 forks**, medidos con `gh api` el
+  2026-11-18). No está en crates.io ni distribuido a terceros de otra forma.
+  - Esta línea decía «3 estrellas y 1 fork a 2026-09-03», que son las cifras de **antes** del
+    cambio de visibilidad de ese mismo día. Lo medido hoy —1 y 0— es exactamente lo que
+    describe el precedente de abajo: costó 2 de 3 estrellas y desacopló el fork. O sea que no
+    es una advertencia sobre lo que podría pasar, es el estado actual.
   - **Decidido y confirmado por el autor el 2026-09-15**: público es lo que se quiere, no un
     accidente. Queda cerrada la pregunta que esta línea dejaba abierta desde el 03/09
     («si la intención era mantenerlo privado, hay que cambiar la visibilidad, no la frase»).
@@ -190,7 +203,9 @@ de un tercero, ninguna de las dos cosas recuperable. Lo que el autor quería era
 3. Respetar la estructura modular existente basada en feature flags de Cargo
 4. Zero `.unwrap()` en producción — usar proper error handling siempre
 5. Zero warnings del compilador — compilación limpia en todas las combinaciones de features
-6. Tests para todo — el proyecto tiene 9.600+ tests y debe mantenerse así
+6. Tests para todo — **9.171** bajo el conjunto de features de CI (2026-11-18), y debe
+   mantenerse así. Aquí decía «9.600+», que no coincide con ninguna de las tres cifras que da
+   el README, porque no llevaba al lado el comando que la produce
 7. **Nunca `git add -A` ni `git add .` en estos repositorios.** Nombra cada ruta. Un
    fichero sin seguimiento (`??`) es un estado deliberado, no un descuido: precedente de
    un documento de licenciamiento que entró así en un commit público.

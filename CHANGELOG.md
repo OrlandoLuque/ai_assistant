@@ -5,6 +5,97 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v349 (2026-11-18) - V465: se comprobaba una copia de la cifra y la que mentia era otra, en el codigo y en la puerta: la duracion que decide si un proveedor esta sano no era la que se publicaba, y del README se leia la chapa de LOC mientras una vineta debajo iba un 25% desviada (0.2.432)
+
+Las dos salieron de la **primera ejecucion limpia de la bateria local de puertas**, y las dos
+son la misma forma: hay dos copias de un dato, se usa una para decidir y se comprueba la otra.
+
+### 1. `health_check`: dos duraciones con el mismo nombre
+
+El rojo no venia de ningun cambio: 5.336 tests en verde y uno en rojo,
+`health_check::tests::test_check_all_uses_stored_urls`, en una asercion de una linea. En
+`HealthChecker::check` habia dos duraciones:
+
+| de donde sale | para que se usaba |
+|---|---|
+| la que **devuelve** la comprobacion --- la peticion HTTP, o la que inyecte `with_check_fn` | decidir `healthy` contra `degraded_threshold` |
+| `start.elapsed()`, el reloj de alrededor | **la que se publicaba** en `HealthCheckResult` |
+
+Con la comprobacion por omision las dos son casi iguales, porque ese reloj envuelve la
+peticion, y por eso la asimetria no se veia. Con una funcion inyectada **la duracion inyectada
+se tiraba**: el test daba `Ok(Duration::from_millis(50))` y lo que se publicaba era lo que
+tarda en llamarse un cierre que no hace nada. De ahi el rojo --- `response_time > ZERO` sobre
+una medida que bajo carga vale cero --- y de ahi que no se reprodujera suelto: 0 fallos de 8
+con el test solo, 0 de 12 con el modulo solo, 1 de 2 con la suite entera en paralelo.
+
+**El test no comprobaba lo que parecia.** Leido, dice «los 50 ms llegan al resultado»; lo que
+afirmaba era el reloj. Es [[project_injection_vs_closure_hook]] otra vez: un cierre
+reemplazable no es un punto de inyeccion si reemplaza **la regla** que quieres probar.
+
+Y la asimetria no era solo del test. «Se pasa del umbral?» se contestaba en dos sitios y con
+dos medidas: al decidir `healthy`, con la devuelta, y al actualizar el estado del proveedor,
+con la transcurrida. Un sondeo que devolviera 4,999 s salia **SANO** en el primero y
+**DEGRADADO** en el segundo si el reloj de alrededor pasaba de los 5 s. Es el defecto de V461 y
+V462 con otro nombre, y la tercera vez que aparece.
+
+Queda: **una sola duracion**, la que mide la comprobacion, y es la que se publica --- en el
+camino de error no hay ninguna que devolver, y ahi el reloj si es la respuesta, cuanto se tardo
+en fallar. **Un solo sitio donde se decide** si esta degradado. Y **tres tests que lo
+prohiben**, comprobados por mutacion: devolviendo el defecto a mano los tres se ponen rojos
+(`left: 200ns, right: 7s`). El que fallaba afirma ahora los 50 ms inyectados en vez del reloj,
+asi que deja de depender de la carga de la maquina.
+
+Esto cambia un valor observable --- `HealthCheckResult::response_time` --- en el unico caso en
+que las dos medidas diferian de verdad, que es con `with_check_fn` puesta.
+
+### 2. `check_readme_numbers.py` estaba VERDE sobre un README que mentia
+
+Buscando el hueco que quedaba de V373 se vio que la cifra de LOC se leia **solo de la chapa**,
+y el README la dice en cuatro sitios. La chapa decia 568K y siete lineas mas abajo una vineta
+seguia diciendo `~423,000 lines of Rust`: un 25,6% de desvio. **Esa cadena exacta esta en la
+cabecera del propio guardian, como el fallo que existe para evitar.** La puerta contestaba
+«es verdad la chapa?», que es mas estrecho que «es verdad el README?», y un OK mas estrecho que
+la pregunta es como esto sobrevive --- la misma forma que la lista de RUSTSEC en tres ficheros
+con dos comprobadores.
+
+Y al mirar el recuento de tests apareci**o** la misma cosa otra vez: la puerta comprueba que
+las copias del titular **coincidan entre si**, pero leia cuatro de las **cinco**. La quinta
+---  «`--features full` alone builds 7,358 of the 9,149» --- decia **9.149** mientras las otras
+cuatro decian 9.169. Veinte tests de deriva, sin fecha conocida, invisibles porque los tres
+patrones existentes acertaban todos en las copias que SI se habian actualizado. Cuatro sitios
+que coinciden y uno que no es indistinguible de cinco que coinciden si el quinto no se lee.
+
+Las **dos cifras acompanantes** tampoco se comprobaban de ninguna manera, y las dos estaban
+veinte por detras: `--features full` a solas da **7.380** (decia 7.358) y el minimo de ocho
+features da **5.339** (decia 5.317), medidos los dos esta noche. El titular, en cambio, estaba
+al dia: o sea que alguien actualizo tres de los seis sitios.
+
+Lo que cambia en la puerta:
+
+- la cifra de LOC se compara **en cada sitio que la dice**, no solo en la chapa. No es una
+  definicion nueva: `check_website_numbers.py` ya lo hacia asi, y ahora es la misma pregunta
+  hecha tambien al README;
+- el **quinto** sitio del titular entra en la comprobacion de coincidencia;
+- y cada cifra acompanante se compara con su propia segunda copia.
+
+**Comprobada la polaridad contra el defecto real**, no solo contra el fixture: con la vineta de
+`~423,000` puesta, la puerta sale con codigo 1 y dice `423,000 contra 568,864, 25.6% off`. La
+autoprueba pasa de 23 casos a **29**, y cuatro de los seis nuevos son formas que estaban vivas
+en el README esta noche.
+
+### Y las cifras de `CLAUDE.md`, que ninguna puerta lee
+
+Decia **540K lineas, 559 ficheros, 9.753 tests** del 2026-09-03. Son 568K, 579 y 9.171: las dos
+primeras salen ya de la definicion de la puerta, y la tercera va con el comando al lado, porque
+sin el no significa nada. El «9.753» no decia con que comando se habia medido y por eso no se
+puede ni comparar.
+
+Y una que importa mas de lo que parece: la linea de estado decia «3 estrellas y 1 fork a
+2026-09-03», que son las cifras de **antes** del cambio de visibilidad de ese mismo dia.
+Medido hoy con `gh api`: **1 estrella y 0 forks**. O sea que el precedente que justifica la
+regla de no tocar la visibilidad no es una advertencia sobre lo que podria pasar: es el estado
+actual del repositorio.
+
 ## [Unreleased] - v348 (2026-11-17) - V464: de los 52 campos de la fachada hay exactamente uno que la fachada no lee nunca, y su documentacion decia que post-procesaba las respuestas (0.2.431)
 
 Salio del inventario que V462 dejo medido: al mirar los campos uno a uno, **uno de los 52 tiene
