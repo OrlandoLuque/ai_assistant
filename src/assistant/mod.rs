@@ -750,7 +750,21 @@ impl AiAssistant {
     }
 }
 
-/// Generate a conversation summary using the AI model
+/// Generate a conversation summary by asking **Ollama**.
+///
+/// The endpoint is `{config.ollama_url}/api/chat`, hardcoded, and that is
+/// **independent of the configured provider**: with OpenAI, Anthropic, LM
+/// Studio or any of the other eighteen selected, this still posts to the Ollama
+/// URL, carrying `config.selected_model` as the model name. For a cloud user
+/// that request fails, and the caller in `assistant/context.rs` answers with
+/// `create_simple_summary` instead, which is **not** an AI summary.
+///
+/// Routing this through the `LlmProvider` port is Phase 4 of
+/// `ai_assistant_plans/HEXAGONAL_PLAN.md` (the generation transport), which the
+/// plan defers to supervised work because it touches the cloud paths. Until
+/// then the behaviour is at least logged rather than silent, and written down
+/// here rather than implied by "using the AI model", which is what this comment
+/// said before.
 fn generate_conversation_summary(
     config: &AiConfig,
     messages: &[ChatMessage],
@@ -860,7 +874,13 @@ Summary:"#,
     Ok(summary)
 }
 
-/// Create a simple fallback summary without AI
+/// Create a simple fallback summary without AI: no model is called, the text is
+/// assembled from the messages themselves.
+///
+/// This is what the caller sends when `generate_conversation_summary` fails,
+/// so it is also what every non-Ollama user gets. It is a legitimate
+/// last resort, not a defect; what was a defect is that the substitution used
+/// to happen with the error discarded.
 fn create_simple_summary(messages: &[ChatMessage], previous_summary: Option<&str>) -> String {
     let mut topics: Vec<String> = Vec::new();
 

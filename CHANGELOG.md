@@ -5,6 +5,108 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v347 (2026-11-17) - V463: el resumidor de conversacion habla siempre con Ollama, y cuando falla manda un resumen por palabras clave como si fuera del modelo (0.2.430)
+
+Encontrado midiendo la **Fase 4**, que es la siguiente de la lista del plan hexagonal despues
+de la 5: lo primero que la fase necesitaba no era migrar nada, era **separar los adaptadores
+del dominio**, porque una cuenta de ficheros no puede decir si el I/O esta donde debe.
+
+### Lo que el inventario destapo al primer repaso
+
+`src/assistant/mod.rs` --- el fichero que los cuatro commits anteriores estan limpiando ---
+tiene un `ureq::post` crudo dentro:
+
+```rust
+// Use Ollama API for summarization
+let url = format!("{}/api/chat", config.ollama_url);
+```
+
+El resumen de conversacion en segundo plano **pregunta a Ollama, y solo a Ollama**. La URL es
+`config.ollama_url` y el modelo que manda es `config.selected_model`, asi que con OpenAI,
+Anthropic, LM Studio o cualquiera de los otros dieciocho seleccionados **la peticion sale
+igual hacia Ollama**, con un nombre de modelo que Ollama no tiene.
+
+**Y lo que hacia cuando fallaba es lo grave.** En `assistant/context.rs`:
+
+```rust
+Err(_) => {
+    let fallback = create_simple_summary(...);
+    let _ = tx.send(SummaryResult { summary: fallback, ... });
+}
+```
+
+El error **se descartaba** --- `Err(_)`, sin registro --- y el resumen por palabras clave
+salia por el mismo canal que el del modelo. `SummaryResult` no tiene ningun campo que diga
+cual de los dos es, asi que con el error tirado **no quedaba forma de saberlo**: ni el
+llamante, ni un log, ni un test.
+
+Para un usuario de nube, esa rama no es la excepcion: **es el camino normal**. Es la clase de
+defecto numero uno de este repositorio --- capacidad que se degrada en silencio, ver
+[[project_declared_debt_audit]] --- y estaba en la fachada.
+
+### Lo que cambio, que es poco a proposito
+
+1. El `Err(_)` pasa a `Err(e)` con un `safe_log!` que dice **que no se uso ningun modelo**. La
+   degradacion sigue ocurriendo, pero deja de ser invisible.
+2. El rustdoc decia *«Generate a conversation summary using the AI model»*. Ahora dice a que
+   endpoint va, que eso es **independiente del proveedor configurado**, y que el llamante
+   contesta con `create_simple_summary` cuando falla.
+3. El de `create_simple_summary` dice ahora quien lo recibe y cuando, que es la mitad que
+   faltaba para que la frase anterior fuera comprobable.
+
+### Lo que NO cambio, y por que no lo decido yo
+
+- **Enrutar el resumen por el puerto `LlmProvider`** es la Fase 4 (transporte de generacion),
+  que el plan **difiere a trabajo supervisado** porque toca los caminos de nube. Ademas
+  necesita `&self` y el hilo solo recibe un `AiConfig` clonado: es un cambio de diseno, no una
+  correccion.
+- **Que el resumen se niegue a intentarlo** cuando el proveedor no es Ollama, en vez de agotar
+  un `timeout_global` de **90 segundos** contra un endpoint que no va a contestar, es un cambio
+  de comportamiento con su propia decision detras. Queda dicho, no hecho.
+- **Y no hay test nuevo**, que es lo mas incomodo de esta entrada: probar esa rama exige un
+  Ollama vivo o un transporte inyectado, y el transporte inyectado **es** el arreglo de la
+  Fase 4. Un test que no puede existir hasta que se tome la decision es exactamente el motivo
+  por el que la decision importa. Lo que si queda es que el fallo se vea en el log.
+
+### El inventario de la Fase 4, que es lo que la fase no tenia
+
+Medido en `src/`, clasificando cada fichero por lo que es:
+
+| | ficheros | apariciones | de dominio |
+|---|---:|---:|---|
+| `ureq` / `reqwest` | 63 | 293 | **29 ficheros, 81 apariciones** |
+| `std::fs` | 132 | 1.045 | **43 ficheros, 333 apariciones** |
+
+El resto son adaptadores (28 y 37), binarios (5 y 39) y codigo de test (1 y 13). **Un
+adaptador de persistencia debe tocar el disco**: eso no es deuda, es su trabajo. La deuda son
+los de dominio, y por ahi empieza la fase. Los mayores:
+
+- **HTTP**: `web_search.rs` (11), `models_dev.rs` (9), `fine_tuning.rs` (7), `speech.rs` (7).
+- **disco**: `tool_safety.rs` (39), `retrieval_eval.rs` (35), `os_tools.rs` (25),
+  `butler.rs` (21).
+
+**Dos avisos sobre estas cifras, porque sin ellos no valen.** (a) La clasificacion es una
+heuristica por nombre de fichero y directorio, y su primera version metio `openai_adapter.rs` y
+cuatro `*_providers.rs` en «dominio» --- un proveedor **es** el borde exterior. Esta corregida
+y escrita en el guion, para que se pueda discutir. (b) **No comparo el 63 con el «55 ficheros»
+del plan del 14 de noviembre**: no se con que patron se midio aquel, el mio cuenta
+`\b(ureq|reqwest)\b` e incluye ficheros que solo los **mencionan en prosa** (`lib.rs` tiene dos
+asi). Dos cifras de patrones distintos no son una tendencia, que es la leccion de V459.
+
+### Verificacion
+
+- `cargo clippy --all-targets -- -D warnings` en los **cinco** conjuntos de CI: cero avisos.
+- `cargo test --features "$FEATURES_STD" --lib`: **9.169**, 0 fallos. **La misma cifra que
+  V462**, porque este commit no anade ningun test, y el motivo esta dicho arriba en vez de
+  quedar como un hueco en la tabla.
+- `cargo test --features "$FEATURES_STD" --test '*'`: **214**, 0 fallos.
+- `cargo test --no-default-features --features "$FEATURES_MIN"`: **5.562**, 0 fallos.
+- `cargo fmt --check` limpio.
+- Las dos puertas de cifras pasan **sin tocar nada**: no hay fichero nuevo ni test nuevo, y las
+  ~30 lineas de comentario caben de sobra en la tolerancia de LOC.
+
+---
+
 ## [Unreleased] - v346 (2026-11-17) - V462: «el fallback esta activo» se calculaba en cuatro sitios con tres expresiones, y el candado del indicador estaba escrito nueve veces (0.2.429)
 
 Fase 5, cuarto paso. `fallback_providers`, `fallback_enabled` y `fallback_last_provider` pasan

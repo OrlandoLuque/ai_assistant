@@ -635,7 +635,19 @@ impl AiAssistant {
                         messages_summarized: to_summarize,
                     });
                 }
-                Err(_) => {
+                Err(e) => {
+                    // Was `Err(_)`: the error was dropped and the keyword
+                    // summary went out as if the model had written it. Nothing
+                    // in `SummaryResult` says which of the two it is, so with
+                    // the error discarded there was no way at all to tell --
+                    // and `generate_conversation_summary` posts to the Ollama
+                    // URL whatever provider is configured, so for a cloud user
+                    // this branch is the normal one, not the exception.
+                    crate::safe_log!(
+                        "[summary] AI summarization failed, falling back to a keyword \
+                         summary (no model was used): {}",
+                        e
+                    );
                     let fallback =
                         create_simple_summary(&messages_to_summarize, previous_summary.as_deref());
                     let _ = tx.send(SummaryResult {
