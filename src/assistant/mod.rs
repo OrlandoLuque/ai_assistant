@@ -488,14 +488,37 @@ pub struct AiAssistant {
     /// Only active when `context_budget_config.enable_strategy_learning` is true.
     pub strategy_bandit: Option<crate::context_budget::StrategyBandit>,
 
-    /// Anti-hallucination pipeline configuration.
-    /// When enabled, LLM outputs are post-processed to detect and handle
-    /// ungrounded claims. Opt-in: disabled by default.
+    /// Anti-hallucination pipeline configuration, **stored and not applied**.
+    ///
+    /// This used to say "when enabled, LLM outputs are post-processed to detect
+    /// and handle ungrounded claims", and that is not what happens. Measured at
+    /// V464: of the 52 fields on this struct, this is **the only one the struct
+    /// never reads** — there is no `self.anti_hallucination_config` anywhere.
+    /// Setting it changes no generation path.
+    ///
+    /// The pipeline itself is real and works: `crate::anti_hallucination`'s
+    /// `AntiHallucinationPipeline` is driven by `ai_cli` (with
+    /// `AntiHallucinationConfig::production()`) and by the test harness (with
+    /// `::default()`), each building its own config and never consulting this
+    /// field. The single reader of this field is
+    /// `server_axum::verify_config_handler`, which reports `is_some()` as
+    /// `anti_hallucination_enabled` — a flag that means "somebody stored a
+    /// config here", not "outputs are being checked".
+    ///
+    /// Wiring it into generation, or removing it in favour of passing a config
+    /// where the pipeline is actually built, is a design decision for the
+    /// author; both change public API. Until then this comment is the honest
+    /// version. Contrast `quality_gate_runner` below, which **is** applied.
     #[cfg(feature = "eval")]
     pub anti_hallucination_config: Option<crate::anti_hallucination::AntiHallucinationConfig>,
 
     /// Quality gate runner for output validation.
     /// Checks faithfulness, confidence, grounding ratio against thresholds.
+    ///
+    /// Unlike `anti_hallucination_config` above, this one is **read and run**:
+    /// `server_axum`'s quality-gate handler calls `runner.run(&scores)` with it.
+    /// The two sit next to each other and are reported by the same endpoint, so
+    /// the difference is worth stating where someone will see it.
     #[cfg(feature = "eval")]
     pub quality_gate_runner: Option<crate::quality_gates::QualityGateRunner>,
 }

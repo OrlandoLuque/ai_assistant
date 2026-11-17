@@ -2327,6 +2327,14 @@ async fn verify_config_handler(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let assistant = state.assistant.lock().await;
+    // These two flags do NOT mean the same kind of thing, and the names suggest
+    // they do. `quality_gates_enabled` is backed by a path that runs: the
+    // handler above calls `runner.run(&scores)`. `anti_hallucination_enabled`
+    // only means a config object is stored on the facade — nothing reads it, so
+    // nothing post-processes any output because of it. Keeping the key names
+    // (they are published API) and saying so here; see the field's own rustdoc
+    // in `assistant/mod.rs` for the measurement and for whose decision the fix
+    // is.
     let has_ah = assistant.anti_hallucination_config.is_some();
     let has_qg = assistant.quality_gate_runner.is_some();
     Ok(Json(serde_json::json!({

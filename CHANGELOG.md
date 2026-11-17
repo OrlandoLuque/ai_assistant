@@ -5,6 +5,70 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v348 (2026-11-17) - V464: de los 52 campos de la fachada hay exactamente uno que la fachada no lee nunca, y su documentacion decia que post-procesaba las respuestas (0.2.431)
+
+Salio del inventario que V462 dejo medido: al mirar los campos uno a uno, **uno de los 52 tiene
+CERO lecturas `self.`**. No hay un solo `self.anti_hallucination_config` en todo el crate.
+
+### Lo que el campo dice y lo que el campo hace
+
+Su rustdoc decia:
+
+> *«Anti-hallucination pipeline configuration. When enabled, LLM outputs are post-processed to
+> detect and handle ungrounded claims. Opt-in: disabled by default.»*
+
+**Ponerlo no post-procesa nada.** El unico lector del campo en todo el repositorio es
+`server_axum::verify_config_handler`, que informa de su `is_some()` como
+`anti_hallucination_enabled`. O sea que ese indicador significa «alguien guardo una
+configuracion aqui», no «las respuestas se estan comprobando».
+
+**Y hay que ser preciso con lo que esto NO es**: el pipeline es real y funciona.
+`crate::anti_hallucination::AntiHallucinationPipeline` lo usa `ai_cli` con
+`AntiHallucinationConfig::production()` y lo usa el arnes de pruebas con `::default()`, **cada
+uno construyendo su propia configuracion** y sin consultar este campo. Lo que no esta cableado
+es la configuracion *de la fachada*, no la capacidad.
+
+### Los dos indicadores del mismo endpoint no significan lo mismo
+
+`/api/v1/verify/config` publica dos banderas con nombres simetricos:
+
+| bandera | que hay detras |
+|---|---|
+| `quality_gates_enabled` | **codigo que corre**: el manejador llama a `runner.run(&scores)` |
+| `anti_hallucination_enabled` | un objeto guardado que nadie lee |
+
+Los dos campos estan **declarados uno al lado del otro** en la fachada y los informa el mismo
+endpoint, asi que la asimetria es justo lo que nadie iba a notar.
+
+### Lo que hago y lo que no
+
+Digo la verdad en los tres sitios: el rustdoc del campo (con la medicion y de quien es la
+decision), el del `quality_gate_runner` de al lado (que **si** se aplica, y conviene que se lea
+ahi mismo) y un comentario en el endpoint, delante de las dos lineas que construyen las
+banderas.
+
+**No lo cableo ni lo borro.** Las dos cosas cambian API publica --- cablearlo cambia lo que
+hace una generacion, borrarlo quita un campo `pub` --- y las dos son decision del autor. Esta
+entrada existe para que esa decision no haya que redescubrirla: es la misma razon por la que
+V463 dejo el resumidor audible en vez de arreglarlo.
+
+Clase de defecto: la de siempre aqui, capacidad declarada que no esta conectada
+([[project_declared_debt_audit]], [[project_four_judges_none_wired]]). La novedad es **como se
+encontro**: no leyendo codigo a ver que pasa, sino contando lecturas por campo. Un `pub` con
+cero lecturas `self.` es una consulta, no una intuicion.
+
+### Verificacion
+
+- `cargo clippy --all-targets -- -D warnings` en los **cinco** conjuntos de CI: cero avisos.
+- `cargo test --features "$FEATURES_STD" --lib`: **9.169**, 0 fallos; **214** de integracion;
+  **5.562** en `FEATURES_MIN`. Las tres cifras iguales que V463: este commit no anade tests,
+  y no los anade porque **no cambia comportamiento** --- lo que cambia es lo que el codigo
+  dice de si mismo. Un test de un comentario no existe; la medicion que lo respalda si, y
+  esta arriba.
+- `cargo fmt --check` limpio, y las dos puertas de cifras pasan sin tocar nada.
+
+---
+
 ## [Unreleased] - v347 (2026-11-17) - V463: el resumidor de conversacion habla siempre con Ollama, y cuando falla manda un resumen por palabras clave como si fuera del modelo (0.2.430)
 
 Encontrado midiendo la **Fase 4**, que es la siguiente de la lista del plan hexagonal despues
