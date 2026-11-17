@@ -6,7 +6,6 @@ use std::sync::mpsc::{self, Receiver};
 // Only the vision fallback path takes a `Sender` directly.
 #[cfg(feature = "vision")]
 use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex};
 use std::thread;
 
 use crate::adaptive_thinking::{
@@ -62,6 +61,7 @@ use self::context_size_cache::ContextSizeCache;
 use self::knowledge_store::KnowledgeStore;
 #[cfg(feature = "advanced-memory")]
 use self::procedural_memory::ProceduralMemory;
+use self::provider_fallback::ProviderFallback;
 #[cfg(feature = "rag")]
 use crate::rag::{
     build_conversation_context, build_knowledge_context, KnowledgeUsage, RagConfig, RagDb,
@@ -381,12 +381,16 @@ pub struct AiAssistant {
     /// Last thinking strategy used (available after classification)
     pub last_thinking_strategy: Option<ThinkingStrategy>,
 
-    /// Fallback providers: list of (provider, model) pairs to try when primary fails.
-    fallback_providers: Vec<(AiProvider, String)>,
-    /// Whether automatic provider fallback is enabled.
-    fallback_enabled: bool,
-    /// Provider that served the last response (thread-safe, set by background thread).
-    fallback_last_provider: Arc<Mutex<Option<String>>>,
+    /// Provider failover: the chain to try after the primary fails, whether it
+    /// is on, and which provider actually answered.
+    ///
+    /// Three separate fields until Phase 5 of the hexagonal plan. What was
+    /// loose was not an invariant but a question with three answers: "is
+    /// failover on" was re-derived at four call sites with three different
+    /// expressions, and the indicator's lock, with its poison recovery, was
+    /// written out at nine. `ProviderFallback` has one answer and one lock. All
+    /// three fields were private, so this costs no API break.
+    fallback: ProviderFallback,
 
     /// Whether automatic conversation compaction is enabled.
     auto_compaction: bool,
@@ -420,7 +424,7 @@ pub struct AiAssistant {
     pub profile_registry: ProfileRegistry,
     #[cfg(feature = "autonomous")]
     /// Interaction manager for agent-user communication during autonomous execution.
-    interaction_manager: Option<Arc<InteractionManager>>,
+    interaction_manager: Option<std::sync::Arc<InteractionManager>>,
 
     #[cfg(feature = "butler")]
     /// Butler for environment auto-detection and configuration suggestions.
@@ -513,21 +517,19 @@ fn try_generate_vision_with_fallback(
     conversation: &[ChatMessage],
     system_prompt: &str,
     tx: &Sender<AiResponse>,
-    fallback_providers: &[(AiProvider, String)],
-    last_provider: &Arc<Mutex<Option<String>>>,
+    fallback: &ProviderFallback,
 ) {
     let vision_messages = crate::vision::agent_bridge::chat_messages_to_vision(conversation);
 
     if crate::vision::agent_bridge::vision_supported_for(config) {
         match crate::vision::generate_vision_response(config, &vision_messages, system_prompt) {
             Ok(text) => {
-                *last_provider.lock().unwrap_or_else(|e| e.into_inner()) =
-                    Some(config.provider.display_name().to_string());
+                fallback.record_winner(config.provider.display_name());
                 let _ = tx.send(AiResponse::Complete(text));
                 return;
             }
             Err(primary_err) => {
-                if fallback_providers.is_empty() {
+                if fallback.active_providers().is_empty() {
                     let _ = tx.send(AiResponse::Error(primary_err.to_string()));
                     return;
                 }
@@ -536,7 +538,7 @@ fn try_generate_vision_with_fallback(
                     config.provider.display_name(),
                     primary_err
                 );
-                for (fb_provider, fb_model) in fallback_providers {
+                for (fb_provider, fb_model) in fallback.active_providers() {
                     let mut fb_config = config.clone();
                     fb_config.provider = fb_provider.clone();
                     fb_config.selected_model = fb_model.clone();
@@ -548,13 +550,12 @@ fn try_generate_vision_with_fallback(
                         &vision_messages,
                         system_prompt,
                     ) {
-                        *last_provider.lock().unwrap_or_else(|e| e.into_inner()) =
-                            Some(fb_provider.display_name().to_string());
+                        fallback.record_winner(fb_provider.display_name());
                         let _ = tx.send(AiResponse::Complete(text));
                         return;
                     }
                 }
-                *last_provider.lock().unwrap_or_else(|e| e.into_inner()) = None;
+                fallback.clear_winner();
                 let _ = tx.send(AiResponse::Error(format!(
                     "All vision-capable providers failed. Primary error: {}",
                     primary_err
@@ -563,7 +564,7 @@ fn try_generate_vision_with_fallback(
         }
     } else {
         // Primary doesn't support vision — try first vision-capable fallback
-        for (fb_provider, fb_model) in fallback_providers {
+        for (fb_provider, fb_model) in fallback.active_providers() {
             let mut fb_config = config.clone();
             fb_config.provider = fb_provider.clone();
             fb_config.selected_model = fb_model.clone();
@@ -573,13 +574,12 @@ fn try_generate_vision_with_fallback(
             if let Ok(text) =
                 crate::vision::generate_vision_response(&fb_config, &vision_messages, system_prompt)
             {
-                *last_provider.lock().unwrap_or_else(|e| e.into_inner()) =
-                    Some(fb_provider.display_name().to_string());
+                fallback.record_winner(fb_provider.display_name());
                 let _ = tx.send(AiResponse::Complete(text));
                 return;
             }
         }
-        *last_provider.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        fallback.clear_winner();
         let _ = tx.send(AiResponse::Error(format!(
             "Provider {} does not support vision and no vision-capable fallback succeeded",
             config.provider.display_name()
@@ -604,6 +604,7 @@ mod metrics;
 mod models;
 #[cfg(feature = "advanced-memory")]
 mod procedural_memory;
+mod provider_fallback;
 #[cfg(feature = "rag")]
 mod rag;
 
@@ -645,9 +646,7 @@ impl AiAssistant {
             thinking_parser: None,
             last_thinking_result: None,
             last_thinking_strategy: None,
-            fallback_providers: Vec::new(),
-            fallback_enabled: false,
-            fallback_last_provider: Arc::new(Mutex::new(None)),
+            fallback: ProviderFallback::new(),
             auto_compaction: false,
             compaction_config: CompactionConfig::default(),
             context_mode: ContextMode::default(),
@@ -933,9 +932,9 @@ mod tests {
     }
 
     #[test]
-    fn test_fallback_last_provider_thread_safe() {
+    fn test_fallback_winner_indicator_is_shared() {
         let ai = AiAssistant::new();
-        let provider_ref = ai.fallback_last_provider.clone();
+        let provider_ref = ai.fallback.sink();
         *provider_ref.lock().unwrap() = Some("TestProvider".to_string());
         assert_eq!(ai.last_provider_used(), Some("TestProvider".to_string()));
     }
@@ -1410,11 +1409,11 @@ mod tests {
         assert!(!ai.is_summarizing, "Should not be summarizing initially");
         assert!(ai.available_models.is_empty(), "No models should be loaded");
         assert!(
-            !ai.fallback_enabled,
+            !ai.fallback_active(),
             "Fallback should be disabled by default"
         );
         assert!(
-            ai.fallback_providers.is_empty(),
+            ai.fallback.active_providers().is_empty(),
             "No fallback providers by default"
         );
         assert!(
@@ -2775,8 +2774,7 @@ ws ::= " "*"#;
     fn test_fallback_active_false_by_default() {
         let ai = AiAssistant::new();
         assert!(!ai.fallback_active());
-        assert!(!ai.fallback_enabled);
-        assert!(ai.fallback_providers.is_empty());
+        assert!(ai.fallback.active_providers().is_empty());
     }
 
     #[test]
@@ -2804,7 +2802,7 @@ ws ::= " "*"#;
         ]);
         ai.enable_fallback();
         assert!(ai.fallback_active());
-        assert_eq!(ai.fallback_providers.len(), 3);
+        assert_eq!(ai.fallback.active_providers().len(), 3);
     }
 
     #[test]
@@ -2814,11 +2812,12 @@ ws ::= " "*"#;
             (AiProvider::Ollama, "model-a".into()),
             (AiProvider::LMStudio, "model-b".into()),
         ]);
-        assert_eq!(ai.fallback_providers.len(), 2);
+        ai.enable_fallback();
+        assert_eq!(ai.fallback.active_providers().len(), 2);
 
         // Reconfigure with a single provider
         ai.configure_fallback(vec![(AiProvider::OpenAI, "gpt-4o".into())]);
-        assert_eq!(ai.fallback_providers.len(), 1);
+        assert_eq!(ai.fallback.active_providers().len(), 1);
     }
 
     // =========================================================================

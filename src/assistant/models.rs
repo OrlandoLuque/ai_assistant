@@ -97,22 +97,22 @@ impl AiAssistant {
     /// ai.enable_fallback();
     /// ```
     pub fn configure_fallback(&mut self, providers: Vec<(AiProvider, String)>) {
-        self.fallback_providers = providers;
+        self.fallback.configure(providers);
     }
 
     /// Enable automatic provider fallback.
     pub fn enable_fallback(&mut self) {
-        self.fallback_enabled = true;
+        self.fallback.enable();
     }
 
     /// Disable automatic provider fallback.
     pub fn disable_fallback(&mut self) {
-        self.fallback_enabled = false;
+        self.fallback.disable();
     }
 
     /// Returns `true` if fallback is enabled and at least one provider is configured.
     pub fn fallback_active(&self) -> bool {
-        self.fallback_enabled && !self.fallback_providers.is_empty()
+        self.fallback.is_active()
     }
 
     /// Get the name of the provider that served the last response.
@@ -120,10 +120,7 @@ impl AiAssistant {
     /// Updated asynchronously by background generation threads.
     /// Returns `None` before the first response completes.
     pub fn last_provider_used(&self) -> Option<String> {
-        self.fallback_last_provider
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
+        self.fallback.last_winner()
     }
 
     // === API Key Management ===

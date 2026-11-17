@@ -5,6 +5,150 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v346 (2026-11-17) - V462: «el fallback esta activo» se calculaba en cuatro sitios con tres expresiones, y el candado del indicador estaba escrito nueve veces (0.2.429)
+
+Fase 5, cuarto paso. `fallback_providers`, `fallback_enabled` y `fallback_last_provider` pasan
+a `src/assistant/provider_fallback.rs`. **Los tres eran privados**, asi que tampoco cuesta
+ninguna ruptura de API: `configure_fallback`, `enable_fallback`, `disable_fallback`,
+`fallback_active` y `last_provider_used` conservan nombre y firma y delegan.
+
+### Lo que estaba suelto no era un invariante, era una pregunta con tres respuestas
+
+| sitio | que preguntaba |
+|---|---|
+| `models.rs`, `fallback_active()` | `enabled && !providers.is_empty()` |
+| `messaging.rs`, cadena de generacion | solo `enabled` |
+| `messaging.rs`, vision en streaming | solo `enabled` |
+| `messaging.rs`, vision sincrona | `!enabled \|\| providers.is_empty()` |
+
+**Ninguna de las cuatro daba hoy un resultado incorrecto**, y por eso llevaban ahi: recorrer
+una lista vacia no anade eslabones a la cadena, asi que «encendido con la lista vacia» se
+comportaba igual en los cuatro. Eran cuatro oportunidades de discrepar, y solo el metodo
+publico decia la regla entera.
+
+Ahora hay **una** respuesta: `active_providers()` devuelve los proveedores a probar, y esta
+vacia siempre que el fallback no este activo. La pregunta incompleta ya no se puede hacer,
+porque los campos que necesita no son alcanzables. Esto es consolidacion, **no** cambio de
+comportamiento, y es comprobable caso por caso: con `enabled = true` y lista vacia, antes el
+bucle no anadia nada y ahora la lista activa es vacia; con `enabled = false`, antes se pasaba
+un `Vec::new()` y ahora tambien.
+
+### Y el candado del indicador estaba escrito nueve veces
+
+`*self.fallback_last_provider.lock().unwrap_or_else(|e| e.into_inner()) = Some(nombre)`
+aparecia en **nueve** sitios: tres en la fachada y **seis dentro del despachador de vision**,
+dos de ellos poniendo `None` en vez de un nombre. Nueve copias de un `lock()` y de la
+recuperacion de *poison* --- que es la que impide que un hilo de generacion que entra en
+panico deje el indicador inservible para el resto de la sesion.
+
+El candado vive ahora en los tres accesores de este tipo y en ningun otro sitio, y tiene su
+propio test con un mutex envenenado a proposito.
+
+**Como llega al hilo.** `try_generate_vision_with_fallback` corre en un hilo, asi que recibe
+un **clon** del componente en vez de dos argumentos sueltos. Es exactamente la semantica de
+antes y conviene ver por que: la lista de proveedores era un `Vec` clonado al lanzar el hilo
+(una instantanea) y el indicador era un `Arc` clonado (compartido). Un `#[derive(Clone)]`
+sobre un `struct` con un `Vec` y un `Arc` hace las dos cosas a la vez, y hay un test que lo
+fija: un clon que registra ganador lo registra **en el indicador del original**.
+
+### El unico cabo que dejo a proposito, y no es mio
+
+`ProviderFallback::sink()` devuelve el `Arc<Mutex<Option<String>>>` crudo. Existe **solo**
+porque `FallbackLlmProvider::with_winner_sink` es **API publica** y toma ese tipo: estrechar
+esa firma seria una ruptura, y eso no lo decide un componente interno. Queda escrito en el
+rustdoc de las dos partes, con el motivo, en vez de parecer un descuido.
+
+### Dos cosas que cambie en los tests, y por que
+
+`test_fallback_reconfigure_replaces_providers` llamaba a `ai.fallback_providers.len()`.
+Contar los proveedores configurados **sin** pasar por la puerta de produccion exigiria un
+accesor cuyos unicos llamantes serian tests --- que es exactamente lo que clippy tumbo anoche
+en V461 (*method `is_empty` is never used*). Asi que el test enciende el fallback y cuenta
+`active_providers()`. No pierde nada: la propiedad «configurado pero no encendido no esta
+activo» ya la fija `test_fallback_configure` y, ahora, un test propio del componente.
+
+Y `test_fallback_last_provider_thread_safe` se llama
+`test_fallback_winner_indicator_is_shared`, porque el campo del que tomaba el nombre ya no
+existe.
+
+### Ocho sitios que nombraban campos inexistentes
+
+El barrido los encontro en `messaging.rs` (2), `llm_provider.rs` (5, incluido el rustdoc de
+`with_winner_sink` y el de su propio campo) y el nombre de un test. Un comentario que nombra un campo que nadie
+declara es la deuda declarada mas barata que hay, y el momento de mirarlos es el unico en que
+alguien los mira: cuando se renombra el campo.
+
+### Balance de los cuatro pasos de la Fase 5
+
+| | antes de V459 | V459 | V460 | V461 | ahora |
+|---|---:|---:|---:|---:|---:|
+| campos de `AiAssistant` | **68** | 57 | 55 | 54 | **52** |
+| de ellos `pub` | 30 | 25 | 25 | 25 | **25** |
+| tras `#[cfg(feature)]` | 28 | 17 | 15 | 15 | **15** |
+| lineas de la declaracion | 212 | 189 | 185 | 191 | **195** |
+
+Cuatro racimos fuera, **dieciseis campos menos**, y los `pub` sin moverse desde V459 porque
+los tres ultimos racimos eran privados enteros. Las lineas siguen subiendo por la misma razon
+que en V461: un campo con el motivo escrito encima ocupa mas que tres sin nada.
+
+### Dos errores por el camino, y ninguno lo vio el conjunto grande
+
+Lo primero que fallo no fue el codigo nuevo, fueron **las puertas estrechas**, que es la
+leccion de `project_lints_follow_the_feature_set` otra vez:
+
+1. **`methods record_winner and clear_winner are never used`**, solo en `FEATURES_MIN`. No es
+   codigo muerto: **sus unicos llamantes son el camino de vision**, y la generacion de texto no
+   los necesita porque el ganador lo escribe `FallbackLlmProvider` dentro del puerto. O sea que
+   la asimetria que el plan hexagonal ya tenia anotada --- *la vision no pasa por el puerto* ---
+   se puede leer en un lint. Quedan con
+   `#[cfg_attr(not(feature = "vision"), allow(dead_code))]` y el motivo escrito encima, que es
+   la version honesta: sin `vision` **no hay llamante**, y eso es el hueco asomando.
+
+2. **`unused import: Mutex`** en la fachada, tambien solo fuera de STD. Al quitar
+   `use std::sync::{Arc, Mutex};` del padre, **se rompieron diez usos en
+   `assistant/integrations.rs`**, que los heredaba por `use super::*;`. Mi `grep` de usos de
+   `Arc` habia contestado a otra pregunta que la que yo creia hacerle: busque en `mod.rs` y el
+   consumidor estaba en otro fichero. Los diez estan bajo `#[cfg(feature = "autonomous")]`, asi
+   que `integrations.rs` tiene ahora su propio import con esa misma puerta, y el comentario
+   dice de donde venia.
+
+**Y mi cadena de puertas no tenia las cinco.** Tenia cuatro: el clippy de `FEATURES_STD` lo
+corria a mano, y por eso la primera ejecucion que lo incluyo fue la que encontro los diez usos
+roto. Una cadena con un hueco contesta en verde a una pregunta mas pequena que la que se le
+hace. Arreglada: nueve puertas, las cinco de clippy entre ellas.
+
+### Verificacion
+
+- `cargo clippy --all-targets -- -D warnings` en los **cinco** conjuntos de CI (STD 58 s,
+  NETWORK 51 s, MIN 8 s, MIN+11 42 s, los dos binarios de GUI 31 s): **cero avisos en los
+  cinco**.
+- `cargo test --features "$FEATURES_STD" --lib`: **9.169**, 0 fallos --- los 9.158 de V461 mas
+  los **once** del componente, incluido el del mutex envenenado a proposito.
+- `cargo test --features "$FEATURES_STD" --test '*'`: **214** de integracion, 0 fallos.
+- `cargo test --no-default-features --features "$FEATURES_MIN"`: **5.562**, 0 fallos (5.551 +
+  los mismos once: el componente no esta tras ninguna feature).
+- `cargo fmt --check` limpio.
+- Las dos puertas de cifras: **54 sustituciones** en siete paginas (578 -> 579 ficheros,
+  9.158 -> 9.169 tests).
+
+### Y una cifra que llevaba desfasada dentro de la tolerancia
+
+La puerta del README fallo por algo que no era mio: **la insignia decia `LOC-563K` y la prosa
+de dos lineas mas abajo decia 568K**, en el mismo fichero. La tolerancia de la puerta para las
+lineas es del **1 %**, y 563.000 contra 568.443 era un 0,96 %: cabia. Las 295 lineas del
+componente nuevo lo subieron a 568.738, el desvio paso a 1,02 % y la puerta hablo.
+
+O sea que la cifra llevaba mal un tiempo indeterminado **y la puerta lo sabia a medias**. Esa
+tolerancia esta ahi por una buena razon (que nadie tenga que actualizar el numero por trescientas
+lineas), pero tiene este efecto: la insignia y la prosa pueden discrepar entre ellas durante
+meses mientras las dos esten dentro del 1 % del arbol. La puerta compara las dos **entre si**
+para el numero de puertas de CI --- por un caso exactamente igual --- y **no** para las lineas.
+Corregido en los cinco sitios que lo decian (README, `index.html`,
+`ai_assistant_overview.html`, `product_overview.html`, `quickstart.html`). Que la puerta
+compare tambien las lineas entre si es un cambio de politica, y eso lo decide el autor.
+
+---
+
 ## [Unreleased] - v345 (2026-11-17) - V461: la cache del tamano de contexto se leia sin su clave en dos de los cuatro sitios, y el modelo cambia por un campo publico (0.2.428)
 
 Fase 5, tercer paso. `detected_context_size` y `detected_context_model` pasan a

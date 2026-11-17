@@ -52,11 +52,11 @@ impl AiAssistant {
     }
 
     /// Build the default generation chain from an explicit `base` config +
-    /// `self.fallback_providers` as a [`FallbackLlmProvider`]: the primary is a
+    /// the configured fallback chain as a [`FallbackLlmProvider`]: the primary is a
     /// `ConfigLlmProvider` over `base` (i.e. exactly `generate_response`),
     /// followed by one `ConfigLlmProvider` per fallback. Each is labelled with its
     /// provider display name, and the winner's label is written into
-    /// `self.fallback_last_provider` — so behaviour (including the "which provider
+    /// the failover component's indicator — so behaviour (including the "which provider
     /// answered" indicator) matches the legacy `try_generate_with_fallback` /
     /// `generate_sync` fallback loops, now expressed through the port.
     ///
@@ -73,18 +73,16 @@ impl AiAssistant {
             base.provider.display_name().to_string(),
             Arc::new(ConfigLlmProvider::new(base.clone())),
         ));
-        if self.fallback_enabled {
-            for (provider, model) in &self.fallback_providers {
-                let mut fb = base.clone();
-                fb.provider = provider.clone();
-                fb.selected_model = model.clone();
-                chain.push((
-                    provider.display_name().to_string(),
-                    Arc::new(ConfigLlmProvider::new(fb)),
-                ));
-            }
+        for (provider, model) in self.fallback.active_providers() {
+            let mut fb = base.clone();
+            fb.provider = provider.clone();
+            fb.selected_model = model.clone();
+            chain.push((
+                provider.display_name().to_string(),
+                Arc::new(ConfigLlmProvider::new(fb)),
+            ));
         }
-        FallbackLlmProvider::new(chain).with_winner_sink(self.fallback_last_provider.clone())
+        FallbackLlmProvider::new(chain).with_winner_sink(self.fallback.sink())
     }
 
     // === Message Handling ===
@@ -195,7 +193,7 @@ impl AiAssistant {
 
         // Hexagonal port (F5): the resolved provider is either the injected custom
         // one or the default config-dispatch fallback chain (which records the
-        // winning provider into `fallback_last_provider`).
+        // winning provider through `ProviderFallback::record_winner`).
         let provider = self.resolve_provider();
 
         thread::spawn(move || {
@@ -296,12 +294,10 @@ impl AiAssistant {
         let system_prompt =
             build_system_prompt(&self.system_prompt_base, &self.preferences, knowledge_ref);
 
-        let fallback_providers = if self.fallback_enabled {
-            self.fallback_providers.clone()
-        } else {
-            Vec::new()
-        };
-        let last_provider = self.fallback_last_provider.clone();
+        // A clone, not a borrow: the provider list is a snapshot for this
+        // generation, exactly as it was when the thread received a `Vec`, while
+        // the `Arc` inside keeps the winner indicator shared with the facade.
+        let fallback = self.fallback.clone();
 
         thread::spawn(move || {
             try_generate_vision_with_fallback(
@@ -309,8 +305,7 @@ impl AiAssistant {
                 &conversation,
                 &system_prompt,
                 &tx,
-                &fallback_providers,
-                &last_provider,
+                &fallback,
             );
         });
     }
@@ -388,20 +383,17 @@ impl AiAssistant {
 
         let response = match primary_attempt {
             Ok(r) => {
-                *self
-                    .fallback_last_provider
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner()) =
-                    Some(self.config.provider.display_name().to_string());
+                self.fallback
+                    .record_winner(self.config.provider.display_name());
                 r
             }
             Err(primary_err) => {
-                if !self.fallback_enabled || self.fallback_providers.is_empty() {
+                if !self.fallback.is_active() {
                     return Err(primary_err.into());
                 }
                 let mut last_err = primary_err;
                 let mut found = None;
-                for (provider, model) in &self.fallback_providers {
+                for (provider, model) in self.fallback.active_providers() {
                     let mut fb_config = self.config.clone();
                     fb_config.provider = provider.clone();
                     fb_config.selected_model = model.clone();
@@ -414,11 +406,7 @@ impl AiAssistant {
                         &system_prompt,
                     ) {
                         Ok(r) => {
-                            *self
-                                .fallback_last_provider
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner()) =
-                                Some(provider.display_name().to_string());
+                            self.fallback.record_winner(provider.display_name());
                             found = Some(r);
                             break;
                         }
@@ -601,7 +589,7 @@ impl AiAssistant {
 
         // Route generation through the resolved provider (F5): an injected custom
         // provider if present, otherwise the config-dispatch fallback chain, which
-        // records the winning provider's display name into `fallback_last_provider`.
+        // records the winning provider's display name through `ProviderFallback`.
         let response = self
             .resolve_provider()
             .generate(conversation, &system_prompt)?;

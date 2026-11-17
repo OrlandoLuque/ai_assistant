@@ -437,19 +437,20 @@ impl LlmProvider for MockLlmProvider {
 /// **fallback chain**: each `generate*` call tries them in order and returns the
 /// first success; if all fail it returns the *first* (primary) provider's error.
 /// This mirrors the historical `try_generate_with_fallback` / `generate_sync`
-/// fallback in `assistant/` (config + `fallback_providers`, tried in order) so
+/// fallback in `assistant/` (config + the configured chain, tried in order) so
 /// the assistant's fallback behaviour can be expressed purely through the port.
 ///
 /// Each provider carries a **display label**; the label of the one that answered
 /// is written into a shared cell (see [`with_winner_sink`](Self::with_winner_sink)),
-/// which lets the assistant keep its `fallback_last_provider` indicator working
+/// which lets the assistant keep its "which provider answered" indicator working
 /// through the port. An empty chain is a usage error: `generate*` return an error
 /// rather than panicking.
 pub struct FallbackLlmProvider {
     /// `(display label, provider)`, tried in order; index 0 is the primary.
     providers: Vec<(String, Arc<dyn LlmProvider>)>,
     /// Receives the winning provider's label (or `None` when the whole chain
-    /// fails). Shared so callers can observe it (e.g. `fallback_last_provider`).
+    /// fails). Shared so callers can observe it (e.g. the assistant's
+    /// `ProviderFallback`, whose `sink()` is passed in below).
     winner: Arc<Mutex<Option<String>>>,
 }
 
@@ -464,7 +465,10 @@ impl FallbackLlmProvider {
     }
 
     /// Route the winning provider's label into an existing shared cell instead of
-    /// this adapter's own — e.g. the assistant's `fallback_last_provider`.
+    /// this adapter's own — e.g. the cell the assistant's `ProviderFallback`
+    /// hands out. Taking the raw `Arc<Mutex<_>>` is what keeps that component
+    /// from hiding the lock entirely; narrowing this parameter would be a
+    /// breaking change to a public signature.
     pub fn with_winner_sink(mut self, sink: Arc<Mutex<Option<String>>>) -> Self {
         self.winner = sink;
         self
@@ -764,7 +768,7 @@ mod tests {
     #[test]
     fn fallback_winner_sink_is_shared_with_the_caller() {
         // The winning label lands in the shared cell the caller passed in — this
-        // is how the assistant keeps its `fallback_last_provider` up to date.
+        // is how the assistant keeps its winner indicator up to date.
         let sink = Arc::new(Mutex::new(None));
         let chain = FallbackLlmProvider::new(vec![
             ("Primary".to_string(), Arc::new(FailingProvider)),

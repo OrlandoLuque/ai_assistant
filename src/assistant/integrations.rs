@@ -1,5 +1,14 @@
 use super::*;
 
+// Not inherited from the parent's glob any more: `assistant/mod.rs` used to
+// import `Arc` for a field of its own, and this module reached it through
+// `use super::*`. When that field moved into `ProviderFallback` the parent's
+// import became unused in every feature set, and removing it broke ten uses in
+// here. Gated exactly like the methods that use it, all of which are
+// `autonomous`.
+#[cfg(feature = "autonomous")]
+use std::sync::Arc;
+
 impl AiAssistant {
     // =========================================================================
     // AUTONOMOUS AGENT INTEGRATION
