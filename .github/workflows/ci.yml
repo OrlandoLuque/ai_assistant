@@ -136,6 +136,20 @@ jobs:
       - name: Self-test the README-numbers gate
         run: python3 scripts/check_readme_numbers.py --self-test
 
+      - name: Self-test the website-numbers gate
+        # Added V469. That gate lives in THIS repository but runs in the
+        # website's `consistency.yml`, whose only trigger for a change made here
+        # is a weekly cron -- so its own polarity was never recorded anywhere.
+        # On 2026-11-18 it was found green over a site that said 9,169 tests
+        # while this README said 9,171: every check it had asked whether the
+        # site agreed with ITSELF. The cross-check added that day is the case
+        # named "the whole site drifted together" below.
+        #
+        # It needs no website directory: the fixture pages are generated from
+        # `measured()` and from this README's own headline, so the battery
+        # cannot go stale as the tree grows.
+        run: python3 scripts/check_website_numbers.py --self-test
+
       - name: Check the README's front-page numbers
         # Added V373. Four of the five figures on the front page UNDERSTATED the
         # work (6,095 tests against 8,990; 423K lines against 558K; 61 features
@@ -591,7 +605,18 @@ jobs:
     # "compila wasmtime", que es la que estaba sin contestar, y es exactamente
     # el comando que se corria a mano. Pasar a
     # `cargo test --features skill-forge --lib skill_forge` contesta otra
-    # ("se prueba"), cuesta mas minutos y es decision del autor.
+    # ("se prueba") y sigue siendo decision del autor --- pero desde V469 ya no
+    # le falta el numero, que era lo unico que impedia decidirlo:
+    #
+    #   cargo check --features skill-forge --lib                 66 s
+    #   cargo test  --features skill-forge --lib skill_forge    104 s   (+38 s)
+    #
+    # Medido el 2026-11-18 en esta maquina, con `target` templado, asi que el
+    # valor absoluto no es el del runner --- el `check` tardo 1 min 39 s alli ---
+    # pero el MARGEN si es comparable: lo que se paga de mas es compilar el
+    # arnes de tests de la biblioteca. Y lo que se compra son **60 tests** de
+    # `skill_forge` que hoy no se ejecutan en ningun trabajo de CI (corren en
+    # 0,03 s; el coste es todo compilacion).
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.98.0

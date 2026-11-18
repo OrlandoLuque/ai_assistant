@@ -148,7 +148,11 @@ Documentation drifts silently, so some of it is enforced:
   which is the half that stops the next one: V247 already did this sweep once and closed
   over 58 of ~290 types.
 
-All fifteen run in CI **here**. Three more live in `scripts/` and no job in this repository
+All sixteen run in CI **here**, with one caveat stated rather than left to be inferred:
+`check_website_numbers.py` runs here only as `--self-test`, because the comparison it performs
+needs the website checked out beside this tree; that comparison still runs in the website
+repository's CI. "A job here runs it" and "the website is checked from here" are two different
+claims and only the first is true. Two more live in `scripts/` and no job in this repository
 runs them:
 
 - `scripts/check_release_ready.py` — a pre-release step that needs a human to read it.
@@ -166,8 +170,8 @@ gates and never runs in CI:
   reviewed:` stamps, where nine of ten are over 90 days old; note that a stale stamp is **not**
   fixed by writing today's date, because the stamp means *somebody read this document that day*.
 
-The other two guard [the website](https://ai-assistant.runawaybrains.com), and are run by
-**that** repository's own CI (`.github/workflows/consistency.yml` there), which checks out both
+The other two guard [the website](https://ai-assistant.runawaybrains.com), and their
+comparison against the live site is run by **that** repository's own CI (`.github/workflows/consistency.yml` there), which checks out both
 repositories — the facts are measured in this tree and asserted over there, so nothing can
 check one against the other from a single checkout. Both import from the checkers above rather
 than counting or resolving anything themselves: one measurement, one resolver, several

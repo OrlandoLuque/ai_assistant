@@ -38,10 +38,12 @@ MANUAL = {
         "run by ai_assistant-website's own CI, which checks out both repos; "
         "no job here runs it"
     ),
-    "check_website_numbers.py": (
-        "run by ai_assistant-website's own CI, which checks out both repos; "
-        "no job here runs it"
-    ),
+    # `check_website_numbers.py` SALIO de esta lista en V469: desde entonces un
+    # trabajo de este repositorio lo ejecuta --- en modo `--self-test`, que no
+    # necesita la web al lado. La comparacion contra el sitio sigue corriendo
+    # solo alla, y la documentacion lo dice asi en vez de dejarlo entender: «un
+    # trabajo lo ejecuta» y «la web esta comprobada desde aqui» son dos
+    # afirmaciones distintas, y solo la primera es verdad.
 }
 
 WORDS = {

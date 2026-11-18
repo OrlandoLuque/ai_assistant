@@ -76,8 +76,11 @@ def as_number(raw: str) -> int | None:
 
 
 def main() -> int:
+    if len(sys.argv) >= 2 and sys.argv[1] == "--self-test":
+        return self_test()
     if len(sys.argv) < 2:
         print("usage: python scripts/check_website_numbers.py <website-dir>")
+        print("       python scripts/check_website_numbers.py --self-test")
         return 1
     site = pathlib.Path(sys.argv[1])
     pages = sorted(p for p in site.glob("*.html") if "backup" not in p.name)
@@ -230,6 +233,169 @@ def main() -> int:
         f"\nOK - la web coincide con el arbol: {real['source_files']:,} ficheros, "
         f"~{real['loc'] // 1000}K lineas, {real['features']} features."
     )
+    return 0
+
+
+# ---------------------------------------------------------------- self-test
+#
+# Until 2026-11-18 this gate had none, while the README's had 29 cases. The
+# evidence that the site-vs-README check works was having watched it fail on the
+# real defect that day -- which is the evidence that matters, and which nothing
+# records. A gate whose polarity is not written down can go quietly green again.
+#
+# The fixture pages are generated FROM `measured()` and from the README's own
+# headline, never from numbers typed in here. That is deliberate: a battery of
+# hand-written figures goes stale exactly the way the pages it guards do, and
+# then the self-test passes for the wrong reason.
+
+PAGE_TEMPLATE = """<!doctype html>
+<html><head><meta name="description" content="{meta}"></head><body>
+<div class="stat-badge"><span class="num">{files}</span><span class="label">source files</span></div>
+<div class="stat-badge"><span class="num">{loc}K</span><span class="label">lines of rust</span></div>
+<div class="stat-badge"><span class="num">{features}</span><span class="label">feature flags</span></div>
+<div class="stat-badge"><span class="num">{tests}</span><span class="label">Tests</span></div>
+</body></html>
+"""
+
+
+def _page(
+    files: int,
+    loc_k: int,
+    features: int,
+    tests: int,
+    *,
+    meta_files: int | None = None,
+    meta_loc_k: int | None = None,
+) -> str:
+    """One fixture page.
+
+    A real page states each figure TWICE -- in the hero badge and in the
+    `<meta description>` search engines show -- and the gate checks the two
+    independently, so the fixture can move one without the other. That is not a
+    contrivance: it is the badge-versus-prose drift that the README gate was
+    extended for on the same day.
+    """
+    mf = files if meta_files is None else meta_files
+    ml = loc_k if meta_loc_k is None else meta_loc_k
+    meta = f"{mf:,} source files, {ml}K LoC, {features} feature flags, {tests:,} tests"
+    return PAGE_TEMPLATE.format(
+        meta=meta, files=f"{files:,}", loc=loc_k, features=features, tests=f"{tests:,}"
+    )
+
+
+def _run_against(pages: dict[str, str]) -> int:
+    """Run the real `main()` over a temp site and return its discrepancy count."""
+    import contextlib
+    import io as _io
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        for name, body in pages.items():
+            (pathlib.Path(tmp) / name).write_text(body, encoding="utf-8")
+        buf = _io.StringIO()
+        argv = sys.argv
+        sys.argv = ["check_website_numbers.py", tmp]
+        try:
+            with contextlib.redirect_stdout(buf):
+                main()
+        finally:
+            sys.argv = argv
+    for line in buf.getvalue().splitlines():
+        if line.startswith("discrepancias"):
+            return int(line.split(":")[1])
+    raise AssertionError("the gate printed no `discrepancias` line:\n" + buf.getvalue())
+
+
+def self_test() -> int:
+    real = measured()
+    loc_k = round(real["loc"] / 1000)
+    readme = test_claims((REPO / "README.md").read_text(encoding="utf-8"))
+    if len(readme) != 1:
+        print(f"SELF-TEST CANNOT RUN: the README states {len(readme)} test counts, need exactly 1")
+        return 1
+    tests = next(iter(readme))
+
+    def site(**overrides: str) -> dict[str, str]:
+        """Five pages that agree with the tree, with named ones replaced."""
+        good = _page(real["source_files"], loc_k, real["features"], tests)
+        pages = {f"p{i}.html": good for i in range(1, 6)}
+        pages.update(overrides)
+        return pages
+
+    cases = [
+        ("a site that matches the tree", site(), 0),
+        # The file count is exact, so any drift is a problem. In the BADGE only:
+        # the `<meta>` on the same page stays right, which is what makes this one
+        # problem and not two -- and proves the two copies are read separately.
+        (
+            "a stale source-file count in the badge, the meta still right",
+            site(
+                **{
+                    "p3.html": _page(
+                        real["source_files"] - 5,
+                        loc_k,
+                        real["features"],
+                        tests,
+                        meta_files=real["source_files"],
+                    )
+                }
+            ),
+            1,
+        ),
+        # Both copies moved: two places stating a false number, two problems.
+        (
+            "a stale source-file count in badge AND meta",
+            site(**{"p3.html": _page(real["source_files"] - 5, loc_k, real["features"], tests)}),
+            2,
+        ),
+        # The LOC figure has a tolerance, because every commit moves it.
+        (
+            "a LOC badge 25% low, the meta still right",
+            site(
+                **{
+                    "p2.html": _page(
+                        real["source_files"],
+                        round(loc_k * 0.75),
+                        real["features"],
+                        tests,
+                        meta_loc_k=loc_k,
+                    )
+                }
+            ),
+            1,
+        ),
+        (
+            "a LOC figure 0.5% low (inside tolerance)",
+            site(**{"p2.html": _page(real["source_files"], round(loc_k * 0.995), real["features"], tests)}),
+            0,
+        ),
+        # Two pages disagreeing with each other about the test count.
+        (
+            "two pages stating different test counts",
+            site(**{"p4.html": _page(real["source_files"], loc_k, real["features"], tests + 20)}),
+            1,
+        ),
+        # THE 2026-11-18 DEFECT: the whole site agrees with itself and not with
+        # the library. Every check that existed before that date passed on this.
+        (
+            "the whole site drifted together, away from the README",
+            {k: _page(real["source_files"], loc_k, real["features"], tests - 2) for k in site()},
+            1,
+        ),
+    ]
+
+    bad = 0
+    print(f"autoprueba contra el arbol real: {real['source_files']:,} ficheros, "
+          f"~{loc_k}K lineas, {real['features']} features, README en {tests:,} tests\n")
+    for name, pages, expected in cases:
+        got = _run_against(pages)
+        ok = got == expected
+        bad += 0 if ok else 1
+        print(f"  {'ok  ' if ok else 'FALLO'}  {name}: {got} discrepancia(s), esperaba {expected}")
+    if bad:
+        print(f"\nAUTOPRUEBA EN ROJO: {bad} de {len(cases)} casos")
+        return 1
+    print(f"\nAUTOPRUEBA OK: {len(cases)} casos")
     return 0
 
 

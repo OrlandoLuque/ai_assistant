@@ -5,6 +5,78 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v353 (2026-11-18) - V469: la puerta de la web no tenia autoprueba, y al enchufar la suya en CI otras tres puertas pidieron correcciones en cadena (0.2.436)
+
+V466 dejo esto escrito como hueco: `check_website_numbers.py` **no tenia autoprueba**, al
+contrario que la del README (29 casos). La evidencia de que la comprobacion nueva funcionaba era
+haberla visto fallar sobre el defecto real de esa misma noche --- que es la evidencia que vale,
+y que no queda fijada en ningun sitio. Una puerta cuya polaridad no esta escrita puede volver a
+quedarse en verde sin que nadie lo note, y esta tenia un motivo de mas para que pasara: vive en
+**este** repositorio pero corre en el CI de la web, cuyo unico disparador para un cambio hecho
+aqui es un cron semanal.
+
+### Siete casos, y las paginas se generan desde la medicion
+
+Las paginas de prueba **no llevan numeros escritos a mano**: se construyen desde `measured()` y
+desde el titular del propio README. Es deliberado --- una bateria de cifras fijas se queda vieja
+exactamente igual que las paginas que vigila, y entonces la autoprueba pasa por el motivo
+equivocado --- y hace que la bateria siga valiendo cuando el arbol crezca.
+
+El caso que importa se llama **«the whole site drifted together, away from the README»**: es el
+defecto del 2026-11-18, y **todas** las comprobaciones que existian antes de esa fecha lo daban
+por bueno.
+
+### Dos casos los tuve que corregir yo, y el guardian tenia razon
+
+Esperaba **1** discrepancia donde salian **2**, dos veces. El motivo: cada pagina dice la cifra
+**dos veces** ---en la chapa y en el `<meta description>` que ensenan los buscadores--- y la
+puerta las lee **por separado**. O sea que hacia mas de lo que yo habia supuesto. Asi que en vez
+de ajustar la expectativa, los casos quedaron desdoblados:
+
+| caso | discrepancias |
+|---|---|
+| cifra vieja en la chapa, el `<meta>` bien | 1 |
+| cifra vieja en la chapa **y** en el `<meta>` | 2 |
+
+Que es, ademas, la misma deriva chapa-contra-prosa por la que se extendio la puerta del README
+el mismo dia.
+
+### Enchufarla en CI hizo que tres puertas pidieran correcciones
+
+El paso nuevo va en el trabajo `numbers`, y a partir de ahi la cadena funciono sola:
+
+1. **`check_readme_numbers.py` se puso en rojo**: los comprobadores de CI pasaron de 15 a 16 y
+   el README lo decia en dos sitios. Corregidos los dos.
+2. **`check_checkers_documented.py` se puso en rojo con dos cosas**:
+   `check_website_numbers.py` estaba en la lista `MANUAL` con la razon *«run by
+   ai_assistant-website's own CI; no job here runs it»*, que acababa de dejar de ser verdad; y
+   `docs/README.md` decia *«All fifteen run in CI»*.
+
+Y ahi hubo que ser preciso en vez de tachar y seguir: un trabajo de aqui ejecuta el guion, pero
+**en modo `--self-test`**; la comparacion contra el sitio sigue corriendo solo alla. «Un trabajo
+lo ejecuta» y «la web esta comprobada desde aqui» son dos afirmaciones distintas y solo la
+primera es cierta, asi que el documento lo dice con esas palabras. Borrar la entrada de `MANUAL`
+y dejar que el texto insinuara lo otro habria sido cambiar una frase falsa por otra.
+
+**Tres puertas pidiendo correcciones por un paso anadido es el sistema funcionando**, y las tres
+correcciones eran documentos que si no se habrian quedado callados y falsos.
+
+### Y una cifra para una decision que no es mia: `skill-forge`
+
+El trabajo `skill-forge` corre `cargo check --features skill-forge --lib` y su comentario decia
+que pasar a `cargo test` *«cuesta mas minutos y es decision del autor»*. La decision sigue
+siendo del autor, pero ya no le falta el numero, que era lo unico que la bloqueaba:
+
+| orden | tiempo |
+|---|---|
+| `cargo check --features skill-forge --lib` | 66 s |
+| `cargo test --features skill-forge --lib skill_forge` | **104 s** |
+
+**+38 s**, y lo que se compra son **60 tests** de `skill_forge` que hoy no se ejecutan en ningun
+trabajo de CI (corren en 0,03 s: el coste es todo compilacion). Medido en esta maquina con
+`target` templado, asi que el valor absoluto no es el del runner ---alli el `check` tardo 1 min
+39 s--- pero el margen si es comparable. Queda escrito en el propio comentario del trabajo.
+
 ## [Unreleased] - v352 (2026-11-18) - V468: `local_embedder` no compilaba desde la subida a ureq 3, y la razon escrita de por que su feature no esta en CI era cierta --- lo que no decia es que detras habia un modulo roto (0.2.435)
 
 Aparecio verificando V467: para comprobar que `candle 0.11` compila hacia falta un conjunto con
