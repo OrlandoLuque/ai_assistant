@@ -134,14 +134,49 @@ pub fn ensure_model(dir: &Path, repo: &str) -> Result<()> {
             continue;
         }
         let url = format!("https://huggingface.co/{repo}/resolve/main/{f}");
-        let resp = ureq::get(&url)
-            .timeout(std::time::Duration::from_secs(600))
+        let mut resp = ureq::get(&url)
+            .config()
+            // Un modelo son cientos de MiB, asi que un plazo TOTAL esta mal en
+            // las DOS direcciones: corto para una linea lenta y largo para una
+            // conexion atascada, que puede gotear un byte cada 59 s durante
+            // diez minutos sin violarlo nunca. Lo que acota de verdad es el
+            // plazo POR LECTURA --- si no llegan bytes en un minuto no van a
+            // llegar --- mas el de conexion.
+            //
+            // El codigo anterior ponia `.timeout(600 s)`, la forma global de
+            // ureq 2, y llevaba sin compilar desde que el lock subio a ureq 3.
+            // No lo vio nadie porque `embeddings-local` esta fuera de CI a
+            // proposito por el coste de candle: la razon escrita era cierta y
+            // ademas tapaba un modulo roto.
+            .timeout_connect(Some(std::time::Duration::from_secs(30)))
+            .timeout_per_read(Some(std::time::Duration::from_secs(60)))
+            .build()
             .call()
             .with_context(|| format!("download {url}"))?;
-        let mut reader = resp.into_reader();
-        let mut out = std::fs::File::create(&target)
-            .with_context(|| format!("create {}", target.display()))?;
+
+        // A un fichero aparte, y renombrar solo al terminar.
+        //
+        // La comprobacion de arriba pregunta «existe y no esta vacio», que es
+        // mas estrecho que «esta completo»: una descarga cortada a la mitad
+        // dejaba un fichero no vacio que la ejecucion siguiente daba por bueno,
+        // y entonces lo que fallaba era la carga del modelo --- lejos de aqui y
+        // sin decir que el fichero estaba a medias.
+        let partial = dir.join(format!("{f}.part"));
+        let mut out = std::fs::File::create(&partial)
+            .with_context(|| format!("create {}", partial.display()))?;
+        let mut reader = resp.body_mut().as_reader();
         std::io::copy(&mut reader, &mut out).with_context(|| format!("write {f}"))?;
+        out.sync_all().with_context(|| format!("flush {f}"))?;
+        drop(out);
+
+        // `rename` falla en Windows si el destino existe, y aqui puede existir
+        // vacio: es justo el caso que nos trajo a descargarlo.
+        if target.exists() {
+            std::fs::remove_file(&target)
+                .with_context(|| format!("remove incomplete {}", target.display()))?;
+        }
+        std::fs::rename(&partial, &target)
+            .with_context(|| format!("rename {} -> {}", partial.display(), target.display()))?;
     }
     Ok(())
 }

@@ -5,6 +5,73 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v352 (2026-11-18) - V468: `local_embedder` no compilaba desde la subida a ureq 3, y la razon escrita de por que su feature no esta en CI era cierta --- lo que no decia es que detras habia un modulo roto (0.2.435)
+
+Aparecio verificando V467: para comprobar que `candle 0.11` compila hacia falta un conjunto con
+candle, y el primero que se probo ---`embeddings-local`--- fallo con **un** error:
+
+```
+src/local_embedder.rs:138: error[E0599]: no method named `timeout` found for struct
+`RequestBuilder<B>`: method not found in `RequestBuilder<WithoutBody>`
+```
+
+No era de `candle` ni de esta noche. `ensure_model` llamaba
+`ureq::get(url).timeout(600 s).call()` y `resp.into_reader()`, que es la API de **ureq 2**, y el
+lock lleva **ureq 3.5.0 desde antes** --- comprobado en `git show HEAD:Cargo.lock`, no deducido.
+`cargo tree` no entra aqui: el metodo simplemente no existe en la version que esta en el lock.
+
+### Por que nadie lo vio
+
+`embeddings-local` esta en el listado de features que CI no compila, con esta razon:
+
+> *solo sus dos backends concretos (`-candle`, `-llama-cpp`) arrastran dependencias nativas
+> pesadas*
+
+**Y es cierta.** El coste es real y la decision de presupuesto es legitima. Lo que la nota no
+decia ---porque nadie lo habia intentado--- es que el codigo de detras **no compila**, asi que
+«no lo compila CI» estaba haciendo dos trabajos: una decision de coste y un escondite. Es
+[[project_false_suppression_reason]] en la direccion menos obvia: la razon no miente, pero la
+ausencia de la que es excusa oculta mas de lo que la razon declara.
+
+### Lo que se arreglo, y una cosa mas que estaba mal
+
+**El plazo.** Se podia traducir `timeout(600 s)` a `timeout_global(600 s)` y quedarse igual,
+pero para una descarga de cientos de MiB un plazo TOTAL esta mal en las **dos** direcciones:
+corto para una linea lenta, y largo para una conexion atascada que puede gotear un byte cada
+59 s durante diez minutos sin violarlo nunca. Lo que acota de verdad es el plazo **por
+lectura** (60 s) mas el de **conexion** (30 s). Es [[project_stall_vs_total_timeout]], y el
+puerto `HttpClient` de este repositorio ya lleva `stall_timeout` por el mismo motivo.
+
+**Y el puerto NO es la via aqui**, aunque sea la direccion del proyecto: su tope de cuerpo
+truncaria la descarga de un modelo en silencio. `Body::as_reader()` de ureq 3 no lleva limite
+---su propia documentacion lo advierte--- y es exactamente lo que hace falta para copiar a
+disco.
+
+**La descarga a medias contaba como hecha.** La guarda de arriba pregunta «existe y no esta
+vacio», que es mas estrecho que «esta completo»: una descarga cortada dejaba un fichero no
+vacio que la ejecucion siguiente daba por bueno, y lo que fallaba entonces era la **carga del
+modelo**, lejos de aqui y sin decir que el fichero estaba a medias. Ahora se baja a
+`<fichero>.part`, se sincroniza y se renombra al final; y se borra antes el destino, porque
+`rename` falla en Windows si existe ---y puede existir vacio, que es justo el caso que nos
+trajo a descargar.
+
+### Verificado con el conjunto que lo compila, que no es ninguna de las puertas
+
+Ninguna de las 14 puertas locales toca este fichero, asi que verificarlo con ellas no habria
+probado nada ([[feedback_verify_with_the_right_feature_set]]):
+
+| | resultado | tiempo (target caliente) |
+|---|---|---|
+| `cargo check --features "$FEATURES_MIN,embeddings-local"` | ok | --- |
+| `cargo clippy ... --lib --tests -- -D warnings` | **ok** | 47 s |
+| `cargo test ... --lib` | **5.339 ok**, 0 fallos | 92 s |
+
+**Y una cifra para una decision que no es mia**: el conjunto da 5.339 tests, exactamente los
+mismos que `FEATURES_MIN` a secas. O sea que `local_embedder` ---150 lineas con E/S de red,
+descarga a disco y carga de pesos--- **no aporta ni un test**. Meter la feature en CI (un
+`cargo check` cuesta el compilado de candle, que no he medido en frio) y darle tests son dos
+decisiones de presupuesto distintas, y las dos tuyas.
+
 ## [Unreleased] - v351 (2026-11-18) - V467: cuatro vulnerabilidades nuevas de `zip` y las cuatro que llevaban un mes suprimidas se arreglan con la misma subida, porque la razon que lo bloqueaba describia la version anclada y no el ecosistema (0.2.434)
 
 CI se puso en rojo **sin que nadie tocara nada**: entre el commit de ayer y el de hoy la base de
