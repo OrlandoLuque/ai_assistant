@@ -340,7 +340,7 @@ pub(crate) fn get_with_retry(
 
 /// `attempt` is 0-based, so the delays grow 1s, 2s, 4s… capped at [`MAX_BACKOFF`].
 fn retry_delay(status: u16, retry_after: Option<&str>, attempt: u32) -> Option<Duration> {
-    if status != 429 && status != 503 {
+    if !crate::http_client::status_says_slow_down(status) {
         return None;
     }
     // `Retry-After` is either seconds or an HTTP date; only the numeric form is worth

@@ -3,7 +3,10 @@
 //! Search the web and integrate results into AI responses.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
+
+use crate::http_client::{HttpClient, HttpRequest, HttpResponse, UreqClient};
 
 /// Search result
 #[derive(Debug, Clone)]
@@ -118,16 +121,86 @@ pub trait SearchProvider: Send + Sync {
     fn name(&self) -> &str;
 }
 
+/// Manda la peticion por el puerto y traduce el ESTADO antes de que el llamante
+/// vea el cuerpo.
+///
+/// Tres decisiones que estaban repetidas en los siete proveedores, y una que no
+/// estaba en ninguno:
+///
+/// - un fallo de transporte es [`SearchError::Network`], como antes;
+/// - un 429 o un 503 es [`SearchError::RateLimit`] ---la variante que existia
+///   desde el principio y que **no construia nadie**---. Los siete colapsaban
+///   todo no-2xx en `Network`, asi que «frena» y «no hay ruta al host» llegaban
+///   al llamante como el mismo error. Importa porque la cuota gratuita de
+///   Brave, Google y SerpAPI se agota a diario: lo primero que encuentra una
+///   busqueda ancha es un 429, y el mensaje mandaba a mirar la red en vez de el
+///   plan. El mismo defecto estaba ya encontrado y arreglado en
+///   `academic_search` ---su comentario lo cuenta con estas palabras--- y el
+///   arreglo se quedo en el modulo donde se aprendio;
+/// - cualquier otro no-2xx sigue siendo `Network`, pero ahora **con el cuerpo
+///   dentro del mensaje**, que es donde el proveedor explica el motivo. Con
+///   `ureq` a pelo eso se perdia: su `Error::StatusCode(u16)` no lleva la
+///   respuesta, asi que un 401 por clave caducada y un 403 por dominio no
+///   autorizado decian lo mismo.
+///
+/// Aqui **no** se reintenta, a diferencia de `academic_search`: el
+/// [`WebSearchEngine`] ya recorre los proveedores en orden y pasa al siguiente
+/// cuando uno falla, asi que dormir dentro de `search()` retrasaria justo al
+/// sustituto. La clasificacion del estado si es la misma funcion, no una copia.
+fn send_search(
+    client: &dyn HttpClient,
+    request: &HttpRequest,
+) -> Result<HttpResponse, SearchError> {
+    let response = client
+        .send(request)
+        .map_err(|e| SearchError::Network(e.to_string()))?;
+    if crate::http_client::status_says_slow_down(response.status) {
+        return Err(SearchError::RateLimit);
+    }
+    response
+        .error_for_status()
+        .map_err(|e| SearchError::Network(e.to_string()))?;
+    Ok(response)
+}
+
+/// Lo mismo, y el cuerpo parseado como JSON. Lo usan los seis proveedores de
+/// API; el de DuckDuckGo raspa HTML y pide el texto.
+fn search_json(
+    client: &dyn HttpClient,
+    request: &HttpRequest,
+) -> Result<serde_json::Value, SearchError> {
+    send_search(client, request)?
+        .json()
+        .map_err(|e| SearchError::Parse(e.to_string()))
+}
+
 /// DuckDuckGo search provider (HTML scraping - for educational purposes)
 pub struct DuckDuckGoProvider {
     base_url: String,
+    client: Arc<dyn HttpClient>,
 }
 
 impl DuckDuckGoProvider {
     pub fn new() -> Self {
         Self {
             base_url: "https://html.duckduckgo.com/html".to_string(),
+            client: Arc::new(UreqClient),
         }
+    }
+
+    /// Cambia quien habla HTTP.
+    ///
+    /// Para un test ---un doble contesta sin red y sin depender de que haya un
+    /// puerto libre--- o para un llamante que quiera poner su propio cliente
+    /// (proxy, metricas, reintentos) sin que este modulo sepa nada de eso.
+    ///
+    /// Los otros seis proveedores llevan el mismo constructor. No esta en el
+    /// trait a proposito: `SearchProvider::search` promete en su doc que los
+    /// metodos requeridos solo cambian en una version mayor, y pasar el cliente
+    /// por el metodo habria roto a cualquiera que lo implemente fuera.
+    pub fn with_http_client(mut self, client: Arc<dyn HttpClient>) -> Self {
+        self.client = client;
+        self
     }
 }
 
@@ -142,18 +215,16 @@ impl SearchProvider for DuckDuckGoProvider {
         let encoded_query = urlencoding::encode(query);
         let url = format!("{}/?q={}", self.base_url, encoded_query);
 
-        let mut response = ureq::get(&url)
-            .config()
-            .timeout_global(Some(config.timeout))
-            .build()
-            .header("User-Agent", "Mozilla/5.0 (compatible; AIAssistant/1.0)")
-            .call()
-            .map_err(|e| SearchError::Network(e.to_string()))?;
+        let request = HttpRequest::get(url)
+            .timeout(config.timeout)
+            .header("User-Agent", "Mozilla/5.0 (compatible; AIAssistant/1.0)");
 
-        let html = response
-            .body_mut()
-            .read_to_string()
-            .map_err(|e| SearchError::Network(e.to_string()))?;
+        // El fallo de lectura ya no es de red: detras del puerto el cuerpo
+        // llega entero o no llega ---un corte lo cuenta `send`---, asi que lo
+        // unico que queda aqui es «esto no es UTF-8», que es un `Parse`.
+        let html = send_search(&*self.client, &request)?
+            .text()
+            .map_err(|e| SearchError::Parse(e.to_string()))?;
 
         // Parse results from HTML
         let mut results = Vec::new();
@@ -219,6 +290,7 @@ fn html_decode(text: &str) -> String {
 pub struct BraveSearchProvider {
     api_key: String,
     base_url: String,
+    client: Arc<dyn HttpClient>,
 }
 
 impl BraveSearchProvider {
@@ -226,7 +298,14 @@ impl BraveSearchProvider {
         Self {
             api_key: api_key.to_string(),
             base_url: "https://api.search.brave.com/res/v1/web/search".to_string(),
+            client: Arc::new(UreqClient),
         }
+    }
+
+    /// Cambia quien habla HTTP. Ver [`DuckDuckGoProvider::with_http_client`].
+    pub fn with_http_client(mut self, client: Arc<dyn HttpClient>) -> Self {
+        self.client = client;
+        self
     }
 }
 
@@ -239,22 +318,12 @@ impl SearchProvider for BraveSearchProvider {
             config.max_results
         );
 
-        let mut response = ureq::get(&url)
-            .config()
-            .timeout_global(Some(config.timeout))
-            .build()
-            .header("X-Subscription-Token", &self.api_key)
-            .header("Accept", "application/json")
-            .call()
-            .map_err(|e| SearchError::Network(e.to_string()))?;
+        let request = HttpRequest::get(url)
+            .timeout(config.timeout)
+            .header("X-Subscription-Token", self.api_key.as_str())
+            .header("Accept", "application/json");
 
-        let text = response
-            .body_mut()
-            .read_to_string()
-            .map_err(|e| SearchError::Network(e.to_string()))?;
-
-        let json: serde_json::Value =
-            serde_json::from_str(&text).map_err(|e| SearchError::Parse(e.to_string()))?;
+        let json = search_json(&*self.client, &request)?;
 
         let mut results = Vec::new();
 
@@ -286,13 +355,21 @@ impl SearchProvider for BraveSearchProvider {
 /// SearXNG provider (self-hosted search)
 pub struct SearXNGProvider {
     instance_url: String,
+    client: Arc<dyn HttpClient>,
 }
 
 impl SearXNGProvider {
     pub fn new(instance_url: &str) -> Self {
         Self {
             instance_url: instance_url.trim_end_matches('/').to_string(),
+            client: Arc::new(UreqClient),
         }
+    }
+
+    /// Cambia quien habla HTTP. Ver [`DuckDuckGoProvider::with_http_client`].
+    pub fn with_http_client(mut self, client: Arc<dyn HttpClient>) -> Self {
+        self.client = client;
+        self
     }
 }
 
@@ -304,20 +381,9 @@ impl SearchProvider for SearXNGProvider {
             urlencoding::encode(query)
         );
 
-        let mut response = ureq::get(&url)
-            .config()
-            .timeout_global(Some(config.timeout))
-            .build()
-            .call()
-            .map_err(|e| SearchError::Network(e.to_string()))?;
+        let request = HttpRequest::get(url).timeout(config.timeout);
 
-        let text = response
-            .body_mut()
-            .read_to_string()
-            .map_err(|e| SearchError::Network(e.to_string()))?;
-
-        let json: serde_json::Value =
-            serde_json::from_str(&text).map_err(|e| SearchError::Parse(e.to_string()))?;
+        let json = search_json(&*self.client, &request)?;
 
         let mut results = Vec::new();
 
@@ -350,6 +416,7 @@ impl SearchProvider for SearXNGProvider {
 pub struct GoogleSearchProvider {
     api_key: String,
     cx: String,
+    client: Arc<dyn HttpClient>,
 }
 
 impl GoogleSearchProvider {
@@ -357,7 +424,18 @@ impl GoogleSearchProvider {
         Self {
             api_key: api_key.to_string(),
             cx: cx.to_string(),
+            client: Arc::new(UreqClient),
         }
+    }
+
+    /// Cambia quien habla HTTP. Ver [`DuckDuckGoProvider::with_http_client`].
+    ///
+    /// En este y en los tres siguientes es la **unica** forma de probarlos: la
+    /// URL del servicio esta incrustada, asi que no hay donde apuntar un
+    /// servidor de pruebas.
+    pub fn with_http_client(mut self, client: Arc<dyn HttpClient>) -> Self {
+        self.client = client;
+        self
     }
 }
 
@@ -371,20 +449,9 @@ impl SearchProvider for GoogleSearchProvider {
             config.max_results.min(10), // Google max is 10 per page
         );
 
-        let mut response = ureq::get(&url)
-            .config()
-            .timeout_global(Some(config.timeout))
-            .build()
-            .call()
-            .map_err(|e| SearchError::Network(e.to_string()))?;
+        let request = HttpRequest::get(url).timeout(config.timeout);
 
-        let text = response
-            .body_mut()
-            .read_to_string()
-            .map_err(|e| SearchError::Network(e.to_string()))?;
-
-        let json: serde_json::Value =
-            serde_json::from_str(&text).map_err(|e| SearchError::Parse(e.to_string()))?;
+        let json = search_json(&*self.client, &request)?;
 
         let mut results = Vec::new();
         if let Some(items) = json.get("items").and_then(|i| i.as_array()) {
@@ -410,13 +477,21 @@ impl SearchProvider for GoogleSearchProvider {
 /// See: https://learn.microsoft.com/en-us/bing/search-apis/bing-web-search/overview
 pub struct BingSearchProvider {
     api_key: String,
+    client: Arc<dyn HttpClient>,
 }
 
 impl BingSearchProvider {
     pub fn new(api_key: &str) -> Self {
         Self {
             api_key: api_key.to_string(),
+            client: Arc::new(UreqClient),
         }
+    }
+
+    /// Cambia quien habla HTTP. Ver [`DuckDuckGoProvider::with_http_client`].
+    pub fn with_http_client(mut self, client: Arc<dyn HttpClient>) -> Self {
+        self.client = client;
+        self
     }
 }
 
@@ -428,21 +503,11 @@ impl SearchProvider for BingSearchProvider {
             config.max_results,
         );
 
-        let mut response = ureq::get(&url)
-            .config()
-            .timeout_global(Some(config.timeout))
-            .build()
-            .header("Ocp-Apim-Subscription-Key", &self.api_key)
-            .call()
-            .map_err(|e| SearchError::Network(e.to_string()))?;
+        let request = HttpRequest::get(url)
+            .timeout(config.timeout)
+            .header("Ocp-Apim-Subscription-Key", self.api_key.as_str());
 
-        let text = response
-            .body_mut()
-            .read_to_string()
-            .map_err(|e| SearchError::Network(e.to_string()))?;
-
-        let json: serde_json::Value =
-            serde_json::from_str(&text).map_err(|e| SearchError::Parse(e.to_string()))?;
+        let json = search_json(&*self.client, &request)?;
 
         let mut results = Vec::new();
         if let Some(pages) = json
@@ -472,6 +537,7 @@ impl SearchProvider for BingSearchProvider {
 pub struct SerpApiProvider {
     api_key: String,
     engine: String,
+    client: Arc<dyn HttpClient>,
 }
 
 impl SerpApiProvider {
@@ -480,6 +546,7 @@ impl SerpApiProvider {
         Self {
             api_key: api_key.to_string(),
             engine: "google".to_string(),
+            client: Arc::new(UreqClient),
         }
     }
 
@@ -488,7 +555,14 @@ impl SerpApiProvider {
         Self {
             api_key: api_key.to_string(),
             engine: engine.to_string(),
+            client: Arc::new(UreqClient),
         }
+    }
+
+    /// Cambia quien habla HTTP. Ver [`DuckDuckGoProvider::with_http_client`].
+    pub fn with_http_client(mut self, client: Arc<dyn HttpClient>) -> Self {
+        self.client = client;
+        self
     }
 }
 
@@ -502,20 +576,9 @@ impl SearchProvider for SerpApiProvider {
             config.max_results,
         );
 
-        let mut response = ureq::get(&url)
-            .config()
-            .timeout_global(Some(config.timeout))
-            .build()
-            .call()
-            .map_err(|e| SearchError::Network(e.to_string()))?;
+        let request = HttpRequest::get(url).timeout(config.timeout);
 
-        let text = response
-            .body_mut()
-            .read_to_string()
-            .map_err(|e| SearchError::Network(e.to_string()))?;
-
-        let json: serde_json::Value =
-            serde_json::from_str(&text).map_err(|e| SearchError::Parse(e.to_string()))?;
+        let json = search_json(&*self.client, &request)?;
 
         let mut results = Vec::new();
         if let Some(organic) = json.get("organic_results").and_then(|o| o.as_array()) {
@@ -540,13 +603,21 @@ impl SearchProvider for SerpApiProvider {
 /// See: https://tavily.com/
 pub struct TavilyProvider {
     api_key: String,
+    client: Arc<dyn HttpClient>,
 }
 
 impl TavilyProvider {
     pub fn new(api_key: &str) -> Self {
         Self {
             api_key: api_key.to_string(),
+            client: Arc::new(UreqClient),
         }
+    }
+
+    /// Cambia quien habla HTTP. Ver [`DuckDuckGoProvider::with_http_client`].
+    pub fn with_http_client(mut self, client: Arc<dyn HttpClient>) -> Self {
+        self.client = client;
+        self
     }
 }
 
@@ -559,21 +630,13 @@ impl SearchProvider for TavilyProvider {
             "search_depth": "basic",
         });
 
-        let mut response = ureq::post("https://api.tavily.com/search")
-            .config()
-            .timeout_global(Some(config.timeout))
-            .build()
-            .header("Content-Type", "application/json")
-            .send(&body.to_string())
-            .map_err(|e| SearchError::Network(e.to_string()))?;
+        // `post_json` pone el `Content-Type` por contrato del puerto, que es
+        // donde debe estar: ponerlo a mano era la trampa de la subida a ureq 3.
+        let request = HttpRequest::post_json("https://api.tavily.com/search", &body)
+            .map_err(|e| SearchError::Parse(e.to_string()))?
+            .timeout(config.timeout);
 
-        let text = response
-            .body_mut()
-            .read_to_string()
-            .map_err(|e| SearchError::Network(e.to_string()))?;
-
-        let json: serde_json::Value =
-            serde_json::from_str(&text).map_err(|e| SearchError::Parse(e.to_string()))?;
+        let json = search_json(&*self.client, &request)?;
 
         let mut results = Vec::new();
         if let Some(items) = json.get("results").and_then(|r| r.as_array()) {
@@ -2118,5 +2181,241 @@ Disallow: /nogoogle/
         assert!(result.snippet.contains("abstract"));
         assert_eq!(result.source, "arXiv");
         assert_eq!(result.date.as_deref(), Some("2024"));
+    }
+}
+
+/// Los siete proveedores, probados sin red.
+///
+/// Antes de V470 no habia ni un test de ninguno de los siete: lo unico que se
+/// probaba de este modulo era el troceado de HTML y las funciones puras. La
+/// razon no era descuido ---la URL del servicio esta incrustada en cuatro de
+/// ellos, asi que no habia donde apuntar un servidor de pruebas---, y es
+/// exactamente el hueco que cierra inyectar el cliente.
+#[cfg(test)]
+mod transport_tests {
+    use super::*;
+    use crate::http_client::{HttpMethod, HttpStream};
+    use std::sync::Mutex;
+
+    /// Contesta una respuesta preparada y guarda la peticion que vio.
+    ///
+    /// Un doble y no un `MockHttpServer`: ademas de servir para los cuatro de
+    /// URL fija, el test no depende de que haya un puerto libre ni de lo que
+    /// escuche en localhost.
+    struct Canned {
+        status: u16,
+        body: String,
+        seen: Mutex<Option<HttpRequest>>,
+    }
+
+    impl Canned {
+        fn new(status: u16, body: &str) -> Self {
+            Self {
+                status,
+                body: body.to_string(),
+                seen: Mutex::new(None),
+            }
+        }
+
+        /// La peticion que el proveedor mando de verdad al cable.
+        fn seen(&self) -> HttpRequest {
+            self.seen
+                .lock()
+                .expect("el candado del doble")
+                .clone()
+                .expect("el proveedor no mando ninguna peticion")
+        }
+    }
+
+    impl HttpClient for Canned {
+        fn send(&self, request: &HttpRequest) -> anyhow::Result<HttpResponse> {
+            *self.seen.lock().expect("el candado del doble") = Some(request.clone());
+            Ok(HttpResponse {
+                status: self.status,
+                headers: Vec::new(),
+                body: self.body.clone().into_bytes(),
+            })
+        }
+
+        fn send_streaming(&self, _request: &HttpRequest) -> anyhow::Result<HttpStream> {
+            anyhow::bail!("el doble no hace streaming")
+        }
+    }
+
+    /// No hay respuesta ninguna: el transporte falla.
+    struct NoTransport;
+
+    impl HttpClient for NoTransport {
+        fn send(&self, _request: &HttpRequest) -> anyhow::Result<HttpResponse> {
+            anyhow::bail!("conexion rehusada")
+        }
+
+        fn send_streaming(&self, _request: &HttpRequest) -> anyhow::Result<HttpStream> {
+            anyhow::bail!("conexion rehusada")
+        }
+    }
+
+    fn config_with(max_results: usize) -> SearchConfig {
+        SearchConfig {
+            max_results,
+            ..SearchConfig::default()
+        }
+    }
+
+    #[test]
+    fn test_a_429_is_rate_limit_and_not_a_network_error() {
+        let spy = Arc::new(Canned::new(429, r#"{"error":"quota exceeded"}"#));
+        let provider = BraveSearchProvider::new("k").with_http_client(spy);
+        let err = provider
+            .search("rust", &config_with(5))
+            .expect_err("un 429 no es una lista de resultados");
+        assert!(
+            matches!(err, SearchError::RateLimit),
+            "«frena» tiene que distinguirse de «no hay ruta al host»: {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_a_503_is_rate_limit_too_because_that_is_what_the_server_means() {
+        let spy = Arc::new(Canned::new(503, "overloaded"));
+        let provider = SearXNGProvider::new("http://searx.invalid").with_http_client(spy);
+        let err = provider
+            .search("rust", &config_with(5))
+            .expect_err("un 503 no es una lista de resultados");
+        assert!(matches!(err, SearchError::RateLimit), "{err:?}");
+    }
+
+    #[test]
+    fn test_a_401_carries_the_body_that_says_why() {
+        // Lo que `ureq` tiraba: su `Error::StatusCode(u16)` no lleva la
+        // respuesta, asi que «clave caducada» y «dominio no autorizado»
+        // llegaban al llamante como el mismo "status code 401".
+        let spy = Arc::new(Canned::new(
+            401,
+            r#"{"message":"subscription token expired"}"#,
+        ));
+        let provider = BraveSearchProvider::new("k").with_http_client(spy);
+        let err = provider
+            .search("rust", &config_with(5))
+            .expect_err("un 401 no es una lista de resultados");
+        let shown = err.to_string();
+        assert!(
+            shown.contains("subscription token expired"),
+            "el motivo que da el proveedor tiene que llegar: {shown}"
+        );
+        assert!(shown.contains("401"), "y el codigo tambien: {shown}");
+    }
+
+    #[test]
+    fn test_a_transport_failure_is_still_a_network_error() {
+        let provider = BraveSearchProvider::new("k").with_http_client(Arc::new(NoTransport));
+        let err = provider
+            .search("rust", &config_with(5))
+            .expect_err("sin transporte no hay resultados");
+        assert!(matches!(err, SearchError::Network(_)), "{err:?}");
+    }
+
+    #[test]
+    fn test_google_caps_num_at_ten_even_when_asked_for_fifty() {
+        let spy = Arc::new(Canned::new(200, r#"{"items":[]}"#));
+        let provider = GoogleSearchProvider::new("key", "cx").with_http_client(spy.clone());
+        provider
+            .search("rust", &config_with(50))
+            .expect("un 200 vacio es una lista vacia");
+        let url = spy.seen().url;
+        assert!(
+            url.contains("num=10"),
+            "Google sirve 10 por pagina y pedirle 50 es pedir un error: {url}"
+        );
+    }
+
+    #[test]
+    fn test_bing_sends_its_key_in_a_header_and_not_in_the_url() {
+        let spy = Arc::new(Canned::new(200, r#"{"webPages":{"value":[]}}"#));
+        let provider = BingSearchProvider::new("secreto").with_http_client(spy.clone());
+        provider.search("rust", &config_with(3)).expect("200");
+        let request = spy.seen();
+        assert!(
+            request
+                .headers
+                .iter()
+                .any(|(n, v)| n == "Ocp-Apim-Subscription-Key" && v == "secreto"),
+            "la clave va en la cabecera: {:?}",
+            request.headers
+        );
+        assert!(
+            !request.url.contains("secreto"),
+            "y no en la URL, que es lo que acaba en los registros: {}",
+            request.url
+        );
+    }
+
+    #[test]
+    fn test_tavily_posts_the_query_as_json_and_reads_content_as_the_snippet() {
+        let spy = Arc::new(Canned::new(
+            200,
+            r#"{"results":[{"title":"T","url":"u","content":"el contenido"}]}"#,
+        ));
+        let provider = TavilyProvider::new("k").with_http_client(spy.clone());
+        let results = provider
+            .search("rust async", &config_with(3))
+            .expect("200 con un resultado");
+        let request = spy.seen();
+        assert_eq!(request.method, HttpMethod::Post);
+        assert!(
+            request
+                .headers
+                .iter()
+                .any(|(n, v)| n == "Content-Type" && v == "application/json"),
+            "el Content-Type lo pone el puerto: {:?}",
+            request.headers
+        );
+        let sent = String::from_utf8(request.body.clone().expect("un POST lleva cuerpo"))
+            .expect("el cuerpo es UTF-8");
+        assert!(
+            sent.contains("rust async"),
+            "la consulta va en el cuerpo, no en la URL: {sent}"
+        );
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].snippet, "el contenido");
+    }
+
+    #[test]
+    fn test_serpapi_parses_the_organic_results_and_nothing_else() {
+        let spy = Arc::new(Canned::new(
+            200,
+            r#"{"organic_results":[{"title":"A","link":"la","snippet":"sa"}],
+                "ads":[{"title":"anuncio","link":"lb","snippet":"sb"}]}"#,
+        ));
+        let provider = SerpApiProvider::new("k").with_http_client(spy);
+        let results = provider.search("rust", &config_with(5)).expect("200");
+        assert_eq!(results.len(), 1, "un anuncio no es un resultado organico");
+        assert_eq!(results[0].title, "A");
+    }
+
+    #[test]
+    fn test_duckduckgo_scrapes_the_html_it_is_served() {
+        let html = r#"<a class="result__a" href="https://example.com/p">Un titulo</a>
+                      <a class="result__snippet">Un resumen</a>"#;
+        let spy = Arc::new(Canned::new(200, html));
+        let provider = DuckDuckGoProvider::new().with_http_client(spy);
+        let results = provider.search("rust", &config_with(5)).expect("200");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].url, "https://example.com/p");
+        assert_eq!(results[0].title, "Un titulo");
+        assert_eq!(results[0].snippet, "Un resumen");
+    }
+
+    #[test]
+    fn test_searxng_returns_no_more_than_the_configured_maximum() {
+        let spy = Arc::new(Canned::new(
+            200,
+            r#"{"results":[{"title":"1","url":"u1","content":"c1"},
+                           {"title":"2","url":"u2","content":"c2"},
+                           {"title":"3","url":"u3","content":"c3"}]}"#,
+        ));
+        let provider = SearXNGProvider::new("http://searx.invalid/").with_http_client(spy);
+        let results = provider.search("rust", &config_with(2)).expect("200");
+        assert_eq!(results.len(), 2, "el tope es del llamante, no del servidor");
     }
 }

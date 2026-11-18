@@ -388,6 +388,23 @@ impl HttpResponse {
     }
 }
 
+/// Si el estado es el servidor diciendo «vas demasiado rapido»: 429 o 503.
+///
+/// Una regla y dos llamantes. Nacio dentro de `retry_delay`, en
+/// `academic_search`, que reintenta con espera; `web_search` necesitaba la misma
+/// clasificacion y **no** reintenta ---su motor ya pasa al proveedor
+/// siguiente---, solo quiere poder decir «frena» en vez de «no hay ruta al
+/// host». Copiar las dos lineas habria dejado dos sitios donde anadir el 509 el
+/// dia que haga falta, y uno donde olvidarse.
+///
+/// El 503 entra porque los servidores lo usan para las dos cosas ---sobrecarga
+/// y mantenimiento--- y la respuesta prudente es la misma. Lo que de verdad
+/// distingue «espera 30 s» de «espera lo que te parezca» es la cabecera
+/// `Retry-After`, y esa la lee quien decida esperar, no esta funcion.
+pub(crate) fn status_says_slow_down(status: u16) -> bool {
+    status == 429 || status == 503
+}
+
 /// Busca una cabecera por nombre **ignorando mayusculas**, que es lo que dice
 /// el RFC 9110: los nombres de cabecera son insensibles a mayusculas, y un
 /// servidor manda `retry-after` donde otro manda `Retry-After`.
@@ -1262,6 +1279,23 @@ impl MockHttpServer {
 mod tests {
     use super::*;
     use std::sync::Mutex;
+
+    /// La lista, escrita como lista: 429 y 503, y nada mas.
+    ///
+    /// Esta aqui y no en los dos llamantes porque la regla es una. Si algun dia
+    /// entra el 509 ---«Bandwidth Limit Exceeded», que algunos alojamientos
+    /// mandan por cuota--- este test es el sitio donde se dice.
+    #[test]
+    fn only_429_and_503_say_slow_down() {
+        assert!(status_says_slow_down(429), "429 Too Many Requests");
+        assert!(status_says_slow_down(503), "503 Service Unavailable");
+        for status in [200, 204, 301, 400, 401, 403, 404, 418, 500, 502, 504] {
+            assert!(
+                !status_says_slow_down(status),
+                "HTTP {status} no es «vas demasiado rapido»"
+            );
+        }
+    }
 
     /// Mock HTTP client for testing provider parsing without network access.
     struct MockHttpClient {

@@ -5,6 +5,83 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v354 (2026-11-19) - V470: los siete proveedores de busqueda detras del puerto, y la variante de error que nadie construia (0.2.437)
+
+Tarea `#77` ---confinar la E/S detras del puerto `HttpClient`---, que es el cuerpo de la
+prioritaria `#76`/`#77`. Quedaban **54 ficheros** hablando `ureq` o `reqwest` a pelo; cincuenta
+de ellos son sincronos y pueden ir al puerto tal cual. Este es el primero de esos cincuenta, y
+se eligio por una razon que no es el tamano: `web_search` **no tiene puerta de feature**, asi
+que lo compilan y lo lintan todos los trabajos de CI.
+
+### El hallazgo: `SearchError::RateLimit` existia y no la construia nadie
+
+El enum declara la variante desde el principio, su `Display` dice «Rate limited», y
+**cero** sitios la crean. Los siete proveedores colapsaban todo no-2xx en `Network(..)`, asi
+que un 429 llegaba al llamante como «Network error: http status 429»: indistinguible de que la
+conexion estuviera caida.
+
+Importa mas de lo que suena. Las cuotas gratuitas de Brave, Google y SerpAPI se agotan a
+diario, asi que lo primero que encuentra una busqueda ancha es un 429 ---y el mensaje mandaba
+al usuario a mirar su red en vez de su plan.
+
+Y el mismo defecto **estaba ya encontrado, arreglado y escrito** en `academic_search.rs`, con
+estas palabras: *«`AcademicSearchError::RateLimit` existed from the start and nothing ever
+constructed it»*. El arreglo se quedo en el modulo donde se aprendio. Es la tercera vez en dos
+noches que aparece esa forma, y por eso hay una memoria dedicada.
+
+### Una regla, dos llamantes
+
+La clasificacion ---429 o 503--- vivia dentro de `retry_delay`, en `academic_search`. Ahora es
+`http_client::status_says_slow_down`, que usan los dos: el que reintenta con espera y el que no.
+Copiar las dos lineas habria dejado dos sitios donde anadir el 509 el dia que haga falta, y uno
+donde olvidarse.
+
+`web_search` **no reintenta**, a diferencia de `academic_search`, y es deliberado: el
+`WebSearchEngine` ya recorre los proveedores en orden y pasa al siguiente cuando uno falla, asi
+que dormir dentro de `search()` retrasaria justo al sustituto.
+
+### Lo que gana el diagnostico
+
+Un no-2xx que no sea de cuota sigue siendo `Network`, pero ahora **con el cuerpo dentro del
+mensaje**. Con `ureq` a pelo eso se perdia: `Error::StatusCode(u16)` no lleva la respuesta, asi
+que un 401 por clave caducada y un 403 por dominio no autorizado decian lo mismo. Hay un test
+que lo fija con el cuerpo real de Brave.
+
+### Diez tests donde no habia ninguno
+
+De este modulo solo se probaban las funciones puras ---troceado de HTML, URL, robots---. De los
+siete proveedores, **ni uno**. Y la razon no era descuido: cuatro llevan la URL del servicio
+incrustada, asi que no habia donde apuntar un servidor de pruebas. Inyectar el cliente es lo que
+cierra ese hueco, y el doble de tests no necesita ni red ni un puerto libre.
+
+Los diez se comprobaron **por mutacion**, no por verlos verdes:
+
+| mutante | murieron | eran |
+|---|---|---|
+| `status_says_slow_down` deja de contar el 503 | 2 | el test del 503 y la lista propia de la regla |
+| se quita la clasificacion entera (el estado de antes de V470) | 2 | los del 429 y del 503 |
+
+Los ocho restantes siguieron verdes en los dos casos, que es lo que se le pide a una bateria:
+que el test que muere sea el del defecto y no otro.
+
+Dos de ellos fijan cosas que no eran transporte: que Google recorta `num` a 10 aunque se le
+pidan 50 ---su API sirve diez por pagina--- y que la clave de Bing va **en la cabecera y no en
+la URL**, que es la que acaba en los registros.
+
+### Lo que NO cambia
+
+- Ningun constructor cambia de firma: `with_http_client` es aditivo y el cliente por defecto
+  sigue siendo `UreqClient`.
+- El trait `SearchProvider` se queda igual. Su propia doc promete que los metodos requeridos
+  solo cambian en una version mayor, y pasar el cliente por el metodo habria roto a cualquiera
+  que lo implemente fuera.
+- `RateLimit` se queda **unitaria**. Llevar el motivo dentro seria `RateLimit(String)`, y eso
+  si rompe: `#[non_exhaustive]` impide construir el enum desde fuera pero no protege a una
+  variante de ser emparejada por patron. O sea que el `Retry-After` del 429 se sigue perdiendo,
+  igual que antes.
+- El transporte es el mismo plazo que antes (`timeout_global`), el mismo tope de cuerpo (10 MiB,
+  que es el que `read_to_string` ya aplicaba) y las mismas redirecciones.
+
 ## [Unreleased] - v353 (2026-11-18) - V469: la puerta de la web no tenia autoprueba, y al enchufar la suya en CI otras tres puertas pidieron correcciones en cadena (0.2.436)
 
 V466 dejo esto escrito como hueco: `check_website_numbers.py` **no tenia autoprueba**, al
