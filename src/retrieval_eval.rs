@@ -1089,9 +1089,17 @@ pub mod fetch {
             // whose path escapes the destination (`../../etc/passwd`). Refusing
             // beats sanitising -- an archive that tries it is not one we want half
             // of.
-            let raw = member
-                .enclosed_name()
-                .ok_or_else(|| FetchError::UnsafePath(member.name().to_string()))?;
+            let raw = member.enclosed_name().ok_or_else(|| {
+                // Aqui el nombre no se usa para decidir nada --- la entrada ya
+                // esta rechazada --- sino para decir CUAL se rechazo. Si zip 9
+                // no puede decodificarlo, el rechazo sigue en pie y lo que se
+                // pierde es el nombre, no la garantia.
+                let cual = member
+                    .name()
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|e| format!("<nombre ilegible: {e}>"));
+                FetchError::UnsafePath(cual)
+            })?;
             let mut parts = raw.components();
             parts.next(); // drop the archive's own top-level directory
             let relative: PathBuf = parts.collect();
@@ -2077,7 +2085,12 @@ mod tests {
             let mut buf = Vec::new();
             {
                 let mut w = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
-                let opts: zip::write::FileOptions<'_, ()> = zip::write::FileOptions::default();
+                // `SimpleFileOptions` es el alias de zip para
+                // `FileOptions<'static, 'static, ()>`, que es lo que este test
+                // quiere decir. En zip 9 el tipo lleva DOS parametros de vida y
+                // escribirlo a mano con uno solo no compila --- y es ademas la
+                // forma que ya usan `encrypted_knowledge` y `secure_backup`.
+                let opts = zip::write::SimpleFileOptions::default();
                 for (name, body) in entries {
                     w.start_file(*name, opts).expect("start");
                     w.write_all(body).expect("write");

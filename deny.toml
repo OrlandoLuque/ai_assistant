@@ -350,90 +350,70 @@ ignore = [
     # Re-check by: 2027-03-15 OR when BOTH lopdf and the egui stack drop it,
     # or ttf-parser gets a maintainer again.
     "RUSTSEC-2026-0192",
-    # --- la familia `zip`: CUATRO advisories (2026-10-09/10 y 2026-10-22).
-    # Medicion comun de las tres primeras, hecha el 2026-10-20
-    # leyendo los usos y no suponiendolos:
+    # ---- La familia `zip`: las CUATRO borradas en V467 (2026-11-18) ------
     #
-    #   Nosotros usamos `ZipArchive::new` (6 sitios), `ZipWriter::new`,
-    #   `FileOptions` y `CompressionMethod::Deflated`: leemos entradas y
-    #   escribimos archivos. NO hay una sola llamada a `.extract()` sobre un zip
-    #   en `src/` -- los cinco `.extract(` que aparecen son
-    #   `extractor.extract(...)` del extractor de hechos de `advanced_memory`.
+    # Estaban aqui RUSTSEC-2026-0367, -0368 y -0369 (2026-10-09/10) y -0429
+    # (2026-10-22), las cuatro de la familia `extract`. Se borran y no se
+    # renuevan, porque su bloqueo se levanto: `zip` esta ahora en **9.4.1** y es
+    # la UNICA version del lock.
     #
-    #   La copia transitiva igual: `candle-core 0.10.2` arrastra `zip 7.2.0` y
-    #   usa `ZipArchive::new` (7 sitios), `ZipWriter::new` y `FileOptions`.
-    #   Comprobado en el fuente de la cache del registro, porque afirmar que un
-    #   tercero no llama a una funcion sin mirarlo es una razon falsa con
-    #   aspecto de revisada.
+    # La condicion escrita era «Re-check by: 2026-12-15 OR cuando subamos
+    # nuestro `zip` a >= 9 (N153)», y la razon decia que el salto era «siete
+    # versiones mayores de salto para la nuestra, y fuera de nuestra mano para
+    # la de candle». La primera mitad era cierta y costo siete llamadas
+    # arregladas. La segunda era FALSA, y falsa de la forma que este
+    # repositorio ya conoce: describia la version anclada y no el ecosistema.
     #
-    #   Tres versiones en el lock: 2.4.2 (la nuestra, declarada), 3.0.0 (sin
-    #   arista normal -- es una build-dependency; ver RUSTSEC-2026-0429) y
-    #   7.2.0 (por candle). El arreglo esta en >= 9.0.0: siete
-    #   versiones mayores de salto para la nuestra, y fuera de nuestra mano para
-    #   la de candle. Subir la nuestra es deuda legitima aparte (N153).
+    #   utoipa-swagger-ui  9.0.2  -> 10.0.2   se lleva zip 3.0.0, trae 9.4.1
+    #   candle-core        0.10.2 -> 0.11.1   se lleva zip 7.2.0
+    #   zip (la nuestra)   "2"    -> "9"      7 sitios: `name()` devuelve Result
+    #   utoipa             "5"    -> "6"      lo pide swagger-ui 10
     #
-    #   Cada una lleva su propia razon y su propia fecha abajo, porque es lo que
-    #   piden `check_rustsec_ignores.py` y `check_recheck_dates.py` -- y tenian
-    #   razon: un comentario compartido para tres entradas deja dos sin razon
-    #   propia, y una entrada sin razon es la que nadie vuelve a leer.
+    # Los dos padres tenian release con `zip 9` desde antes. Nadie lo miro
+    # porque la entrada ya tenia razon escrita y fecha, y una entrada con razon
+    # parece revisada --- el mismo defecto que la familia zstd de V451, donde lo
+    # que no se leyo fue que `patched` es una LISTA. Aqui lo que no se leyo fue
+    # que «fuera de nuestra mano» era una frase sobre el padre, no sobre upstream.
+    #
+    # Y el dia de borrarlas llegan CUATRO advisories nuevos de `zip`
+    # (RUSTSEC-2026-0545 a -0548, del 2026-11-17: AES sin comprobar su codigo de
+    # autenticacion, symlinks fuera del destino, preasignacion en los
+    # decodificadores heredados y nombres del encabezado local), con el mismo
+    # arreglo `>= 9.0.0`. **No entran aqui: ya estan arreglados.** Si la subida
+    # se hubiera dejado para el 2026-12-15, esta lista tendria hoy ocho
+    # entradas de `zip` en vez de ninguna.
+    #
+    # El lock, de paso, pierde 90 lineas netas: fuera `onig`, `onig_sys`,
+    # `rust-embed` (x3) y `derive_arbitrary`; dentro `fancy-regex`.
 
-    # zip: conserva los bits SUID/SGID al EXTRAER. No extraemos (ver medicion
-    # arriba): solo `ZipArchive::new` para leer y `ZipWriter::new` para escribir.
-    # Re-check by: 2026-12-15 OR cuando subamos nuestro `zip` a >= 9 (N153).
-    "RUSTSEC-2026-0367",
-    # zip: `ZipArchive::extract` crea symlinks que apuntan donde diga el archivo.
-    # La funcion vulnerable es `extract`, y no la llamamos -- ni nosotros ni
-    # candle-core, ni la build-dep de utoipa-swagger-ui -- los tres
-    # dependientes del lock, re-medidos el 2026-11-03 en la entrada de
-    # RUSTSEC-2026-0429.
-    # Re-check by: 2026-12-15 OR cuando subamos nuestro `zip` a >= 9 (N153).
-    "RUSTSEC-2026-0368",
-    # zip: `ZipStreamReader::extract()` y `ZipArchive::extract()` aplican los
-    # permisos Unix que vengan en el archivo. Las dos son de extraccion y
-    # ninguna aparece en el grafo (ver medicion arriba); `ZipStreamReader` no se
-    # menciona siquiera.
-    # Re-check by: 2026-12-15 OR cuando subamos nuestro `zip` a >= 9 (N153).
-    "RUSTSEC-2026-0369",
-    # zip, la CUARTA de la familia `extract` (advisory del 2026-10-22, que
-    # entro en la base de datos despues del ultimo push: CI se puso en rojo
-    # el 2026-11-02 con el Cargo.lock sin tocar). `ZipArchive::extract`
-    # dimensiona el buffer del destino de un symlink con el tamano declarado
-    # en el directorio central, antes de leer un solo byte, y
-    # `Vec::with_capacity` es infalible: cuando la reserva se rechaza, ABORTA
-    # el proceso. La funcion vulnerable vuelve a ser `extract`, igual que en
-    # las tres de arriba.
+    # ---- Tres `unmaintained` nuevos (2026-11-17), sin version arreglada ----
     #
-    # RE-MEDIDO hoy, 2026-11-03, y no heredado: heredar la medicion del
-    # 2026-10-20 seria exactamente la razon-con-aspecto-de-revisada que esta
-    # lista persigue. Lo que sale, con los tres `zip` del lock uno por uno:
-    #
-    #   nosotros (zip 2.4.2, declarado) ...... 11 `ZipArchive::new` + 6
-    #       `ZipWriter::new`, CERO `.extract(` sobre un zip y cero
-    #       `ZipStreamReader`. Los 11 no contradicen los "6 sitios" de la
-    #       medicion de arriba: el codigo ha crecido desde el 20/10, y lo
-    #       que NO ha cambiado es que todas las llamadas siguen siendo
-    #       `::new`. (Los `.extract(` que aparecen en `src/` son de
-    #       extractores de entidades, HTML, metadatos de papers y hechos:
-    #       ninguno es un zip.)
-    #   candle-core 0.10.2 (zip 7.2.0) ....... 7 `ZipArchive::new` + 1
-    #       `ZipWriter::new`, cero `.extract(`. Leido del fuente en la cache
-    #       del registro, no supuesto.
-    #   utoipa-swagger-ui 9.0.2 (zip 3.0.0) .. es la arista que la medicion
-    #       de arriba llama "sin arista normal", y ahora tiene nombre: es una
-    #       **build-dependency**. Y descomprime de verdad --- el dist de
-    #       Swagger UI, en su `build.rs` ---, asi que era la unica de las
-    #       tres que podia romper la razon. No la rompe: lo hace con su
-    #       propio bucle `by_index()` + `enclosed_name()` + `io::copy`, y
-    #       pone los permisos sobre el fichero regular que acaba de crear.
-    #       No llama a `ZipArchive::extract` ni a
-    #       `ZipStreamReader::extract`. Hasta hoy ese tercer `zip` del lock
-    #       no se habia abierto.
-    #
-    # El arreglo es >= 9.0.0, el mismo de las otras tres: siete versiones
-    # mayores de salto para el nuestro (deuda propia, N153) y fuera de
-    # nuestra mano para los otros dos.
-    # Re-check by: 2026-12-15 OR cuando subamos nuestro `zip` a >= 9 (N153).
-    "RUSTSEC-2026-0429",
+    # Los tres los declara cargo-audit con «No fixed upgrade is available!», y
+    # son avisos de MANTENIMIENTO, no vulnerabilidades: no hay camino de
+    # explotacion que evaluar, hay un crate que ya no tiene quien lo cuide.
+    # Por eso la fecha va a tres meses y no a uno: lo que hay que volver a
+    # mirar es si el ecosistema se movio, y eso no pasa en cuatro semanas.
+    # Ponerlos en el monton del 2026-12-15 habria hecho de ese dia nueve
+    # entradas, que es como una fecha deja de ser un disparador.
+
+    # chrono: lo usamos DIRECTAMENTE --- 63 ficheros de `src/` lo mencionan y
+    # `Cargo.toml` lo declara sin `optional` --- y ademas lo arrastran por su
+    # cuenta arrow 57.3, datafusion 51.0 y polars 0.55. Cambiar de crate no es
+    # un bump de lock: es una migracion de ecosistema que no depende solo de
+    # nosotros. Medido el 2026-11-18.
+    # Re-check by: 2027-02-15 OR cuando arrow/datafusion/polars migren.
+    "RUSTSEC-2026-0543",
+    # chrono-tz: transitivo y SOLO transitivo --- polars 0.55 (arrow, core, ops,
+    # plan, stream, time) y arrow-array 57.3. Medido: CERO apariciones de
+    # `chrono_tz` en `src/`, asi que no hay nada nuestro que migrar; se va solo
+    # cuando se vayan polars y arrow.
+    # Re-check by: 2027-02-15 OR cuando polars y arrow lo suelten.
+    "RUSTSEC-2026-0555",
+    # humantime: transitivo y solo transitivo --- lance 2.0.0 y object_store
+    # (0.12.5 y 0.13.2). Medido: CERO apariciones en `src/`. Formatea
+    # duraciones; no hay superficie que evaluar mas alla de eso.
+    # Re-check by: 2027-02-15 OR cuando lance y object_store lo suelten.
+    "RUSTSEC-2026-0542",
 ]
 
 # ----------------------------------------------------------------

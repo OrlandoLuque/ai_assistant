@@ -11,7 +11,10 @@
 //! 2. **GGUF file** (V111) — single-file quantized format used by llama.cpp,
 //!    Ollama, LM Studio, etc. Path must end in `.gguf`. Tokenizer is read
 //!    from a sibling `tokenizer.json` (the original HF tokenizer); GGUF
-//!    metadata-embedded tokenizers are not yet decoded by candle 0.10.
+//!    metadata-embedded tokenizers were not decoded by candle 0.10, which is
+//!    where this was measured; V467 moved to 0.11 and did NOT re-check it, so
+//!    treat the sibling-tokenizer requirement as the supported path, not as a
+//!    statement about 0.11.
 //!    Loaded via [`candle_transformers::models::quantized_llama::ModelWeights`]
 //!    which keeps weights in their original quantization (Q4_K_M, Q5_K_M, …).
 //!
@@ -85,7 +88,9 @@ fn load_safetensors_dir(dir: &Path) -> Result<Box<dyn Backend>, BackendError> {
 
     let device = Device::Cpu;
     // CPU + Llama: f32 keeps the math stable. bf16 would halve memory but
-    // most CPU kernels in candle 0.10 are f32-only — cast at load time.
+    // most CPU kernels were f32-only in candle 0.10, where this was measured.
+    // V467 moved to 0.11 without re-measuring it: f32 is still the safe choice,
+    // and whether bf16 is now viable is an open question, not a known no.
     let dtype = DType::F32;
 
     // SAFETY: mmaping a file the user pointed at. The file must outlive the

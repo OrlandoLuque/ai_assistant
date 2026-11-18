@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.433"
+version = "0.2.434"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -658,7 +658,7 @@ regex = "1"
 urlencoding = "2"
 
 # Optional ZIP support for document parsing (EPUB, DOCX, ODT)
-zip = { version = "2", optional = true, default-features = false, features = ["deflate"] }
+zip = { version = "9", optional = true, default-features = false, features = ["deflate"] }
 
 # Optional PDF support for document parsing
 pdf-extract = { version = "0.12", optional = true }
@@ -776,9 +776,9 @@ parking_lot = { version = "0.12", optional = true }
 # axum TLS server (HTTPS via rustls)
 axum-server = { version = "0.8", optional = true, features = ["tls-rustls"] }
 # OpenAPI documentation generation from code annotations
-utoipa = { version = "5", optional = true, features = ["axum_extras"] }
+utoipa = { version = "6", optional = true, features = ["axum_extras"] }
 # Swagger UI for interactive API documentation
-utoipa-swagger-ui = { version = "9", optional = true, features = ["axum"] }
+utoipa-swagger-ui = { version = "10", optional = true, features = ["axum"] }
 # Redis client (async with tokio, connection pooling)
 redis = { version = "1", optional = true, features = ["tokio-comp", "connection-manager"] }
 # Async stream combinators for SSE responses
@@ -813,11 +813,14 @@ hkdf = { version = "0.12", optional = true }
 # === V110: Candle CPU backend for in-process local inference ===
 # Pure-Rust transformer runtime. CPU-only by default (no CUDA / Metal /
 # Accelerate features) to keep build times sane and the dep graph portable.
-# Pinned to 0.10 — the candle siblings (-core / -nn / -transformers) must
+# Pinned to 0.11 — the candle siblings (-core / -nn / -transformers) must
 # share the same minor version or symbol resolution breaks at link time.
-candle-core = { version = "0.10", optional = true, default-features = false }
-candle-nn = { version = "0.10", optional = true, default-features = false }
-candle-transformers = { version = "0.10", optional = true, default-features = false }
+# Moved off 0.10 in V467, and not for a feature: 0.10 pulled `zip 7.2.0`, which
+# carried four advisories, and `tokenizers 0.22.2` alongside the 0.23 this
+# manifest already asked for. One bump, two duplicates gone.
+candle-core = { version = "0.11", optional = true, default-features = false }
+candle-nn = { version = "0.11", optional = true, default-features = false }
+candle-transformers = { version = "0.11", optional = true, default-features = false }
 # HuggingFace tokenizers (tokenizer.json format). esaxx-fast avoids the
 # native onig dependency; http feature off — we never download remotely.
 tokenizers = { version = "0.23", optional = true, default-features = false, features = ["esaxx_fast", "fancy-regex"] }

@@ -260,7 +260,14 @@ impl DocumentParser {
         if all_text.is_empty() {
             for i in 0..archive.len() {
                 let mut file = archive.by_index(i)?;
-                let name = file.name().to_string();
+                // En zip 9 el nombre de la entrada puede no ser decodificable y
+                // `name()` devuelve `Result`. Una entrada cuyo nombre no se puede
+                // leer no puede coincidir con los sufijos que se buscan aqui, asi
+                // que se salta: es la misma respuesta que daria el `if` de abajo,
+                // pero dicha donde se sabe por que.
+                let Ok(name) = file.name().map(|n| n.to_string()) else {
+                    continue;
+                };
                 if name.ends_with(".xhtml") || name.ends_with(".html") || name.ends_with(".htm") {
                     let mut content = String::new();
                     file.read_to_string(&mut content)?;
@@ -325,7 +332,9 @@ impl DocumentParser {
         // Fallback: look for any .opf file
         for i in 0..archive.len() {
             let file = archive.by_index(i)?;
-            let name = file.name().to_string();
+            let Ok(name) = file.name().map(|n| n.to_string()) else {
+                continue;
+            };
             if name.ends_with(".opf") {
                 return Ok(name);
             }
@@ -2468,7 +2477,9 @@ impl DocumentParser {
         let mut slide_names: Vec<String> = Vec::new();
         for i in 0..archive.len() {
             if let Ok(file) = archive.by_index(i) {
-                let name = file.name().to_string();
+                let Ok(name) = file.name().map(|n| n.to_string()) else {
+                    continue;
+                };
                 if name.starts_with("ppt/slides/slide") && name.ends_with(".xml") {
                     slide_names.push(name);
                 }
@@ -2598,7 +2609,9 @@ impl DocumentParser {
         let mut sheet_names: Vec<String> = Vec::new();
         for i in 0..archive.len() {
             if let Ok(file) = archive.by_index(i) {
-                let name = file.name().to_string();
+                let Ok(name) = file.name().map(|n| n.to_string()) else {
+                    continue;
+                };
                 if name.starts_with("xl/worksheets/sheet") && name.ends_with(".xml") {
                     sheet_names.push(name);
                 }

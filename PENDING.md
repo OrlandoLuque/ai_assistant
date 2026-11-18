@@ -756,6 +756,13 @@ Modulos de networking real para sistema distribuido:
 
 ## Dependencias
 
+> **Foto de la epoca V65-V74, no el estado de hoy.** Se conserva porque la seccion
+> siguiente describe esos modulos y este bloque es su contexto. Lo que dice ya no es
+> cierto: su `full` tiene 15 features y hoy hay **99** flags; dice `ureq = "2"` y el
+> lock lleva **3.5.0**; `zip = "2"` paso a **9** en V467 y `pdf-extract = "0.7"` esta
+> en **0.12**. La lista viva es `Cargo.toml`, y es la unica --- una segunda copia de
+> una dependencia es como una version se queda vieja pareciendo defendible en las dos.
+
 ```toml
 [features]
 documents = ["zip", "pdf-extract"]

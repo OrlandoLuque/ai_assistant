@@ -5,6 +5,149 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v351 (2026-11-18) - V467: cuatro vulnerabilidades nuevas de `zip` y las cuatro que llevaban un mes suprimidas se arreglan con la misma subida, porque la razon que lo bloqueaba describia la version anclada y no el ecosistema (0.2.434)
+
+CI se puso en rojo **sin que nadie tocara nada**: entre el commit de ayer y el de hoy la base de
+datos de RUSTSEC publico **siete avisos** que afectan al lock.
+
+| ID | tipo | crate |
+|---|---|---|
+| 2026-0545 | vulnerabilidad | `zip` --- entradas AES devueltas sin comprobar su codigo de autenticacion |
+| 2026-0546 | vulnerabilidad (7,5 alta) | `zip` --- `ZipArchive::extract` escribe fuera del destino por symlinks absolutos o encadenados |
+| 2026-0547 | vulnerabilidad | `zip` --- los decodificadores heredados preasignan el tamano declarado |
+| 2026-0548 | vulnerabilidad | `zip` --- `ZipStreamReader` extrae con los nombres del encabezado local |
+| 2026-0542 | sin mantenimiento | `humantime` |
+| 2026-0543 | sin mantenimiento | `chrono` |
+| 2026-0555 | sin mantenimiento | `chrono-tz` |
+
+Es el caso de [[project_scheduled_red_has_no_owner]] con el reloj a favor: se vio al mirar el CI
+del push anterior, no cuatro dias despues.
+
+### Lo primero fue medir que nos alcanza, no que dice el aviso
+
+- **No hay una sola llamada a `.extract()` sobre un zip** en `src/`.
+- **`ZipStreamReader` no se menciona** en el repositorio.
+- **Ninguna copia de `zip` del grafo compila `aes-crypto`** ni ningun decodificador heredado:
+  nuestra declaracion es `default-features = false, features = ["deflate"]`, y la consulta
+  `cargo tree --all-features -e features` por `aes|legacy|shrink|reduce|implode` no devuelve
+  nada.
+
+O sea que de las cuatro, **ninguna era alcanzable hoy**. Esa es exactamente la razon por la que
+habia que arreglarlas de verdad y no suprimirlas otra vez: una razon cierta es lo que hace que
+una entrada sobreviva un mes sin que nadie vuelva a mirarla.
+
+### Lo que ya estaba escrito, y la mitad que era falsa
+
+En `deny.toml` habia **cuatro** advisories de `zip` suprimidos desde el 2026-10-20
+(RUSTSEC-2026-0367, -0368, -0369 y -0429), con la medicion de usos hecha y esta condicion:
+
+> *Re-check by: 2026-12-15 OR cuando subamos nuestro `zip` a >= 9 (N153)*
+
+y esta razon:
+
+> *El arreglo esta en >= 9.0.0: siete versiones mayores de salto para la nuestra, y fuera de
+> nuestra mano para la de candle.*
+
+La primera mitad era cierta. **La segunda era falsa**, y falsa de la forma de siempre aqui:
+describia la version **anclada**, no el ecosistema. Los dos padres tenian release con `zip 9`
+desde antes:
+
+| | de | a | efecto en el lock |
+|---|---|---|---|
+| `utoipa-swagger-ui` | 9.0.2 | 10.0.2 | se lleva `zip 3.0.0`, trae `9.4.1` |
+| `candle-core/nn/transformers` | 0.10 | 0.11 | se lleva `zip 7.2.0` |
+| `zip` (la nuestra) | `"2"` | `"9"` | siete sitios de `name()` |
+| `utoipa` | `"5"` | `"6"` | lo exige swagger-ui 10 |
+
+Nadie lo miro **porque la entrada ya tenia razon escrita y fecha**, y una entrada con razon
+parece revisada. Es [[project_false_suppression_reason]] en su version mas incomoda: la razon no
+estaba inventada, estaba medida --- y medida sobre la pregunta equivocada, igual que la familia
+`zstd` de V451, donde lo que no se leyo fue que `patched` es una lista.
+
+### Lo que costo
+
+**Siete llamadas.** En `zip 9`, `name()` devuelve `Result<Cow<str>, ZipError>` porque el nombre
+puede no ser decodificable. En los seis barridos que buscan un nombre conocido ---`.xhtml`,
+`.opf`, `ppt/slides/slide*.xml`, `xl/worksheets/sheet*.xml`, y los dos del paquete `.kpkg`--- la
+respuesta es saltar la entrada: **un nombre que no se puede leer no puede coincidir con el
+sufijo que se busca**. En el septimo (`retrieval_eval`) el nombre no decide nada ---la entrada
+ya la rechazo `enclosed_name()`--- sino que dice CUAL se rechazo, asi que si no se puede
+decodificar se nombra como ilegible y el rechazo sigue en pie.
+
+Y un octavo sitio, **que `cargo check --lib` no ve**: un test de `retrieval_eval` anotaba
+`zip::write::FileOptions<'_, ()>` a mano, y en zip 9 ese tipo lleva **dos** parametros de vida
+(`FileOptions<'k, 'n, T>`). Con `--lib` a secas la biblioteca compilaba limpia y las SEIS
+puertas de clippy y los dos conjuntos de tests se pusieron rojos por esa unica linea. La
+anotacion sobraba: `SimpleFileOptions` es el alias de zip para
+`FileOptions<'static, 'static, ()>`, que es lo que el test queria decir, y es la forma que ya
+usaban `encrypted_knowledge` y `secure_backup`. Un tipo escrito a mano donde habia un alias es
+una dependencia de mas en la firma del tercero.
+
+Y una subida que ni se habia considerado: `utoipa` de 5 a 6, porque `swagger-ui 10` trae
+`utoipa 6` y el lock tenia las dos --- un `expected OpenApi, found a different OpenApi` que es
+la forma en que dos versiones del mismo tipo se presentan.
+
+### El resultado
+
+- **Ocho advisories fuera**: las cuatro nuevas, arregladas; las cuatro viejas, **borradas y no
+  renovadas**, porque su bloqueo se levanto.
+- La lista de supresiones pasa de **13 a 12** y sigue identica en los tres ficheros que la
+  dicen, con razon y fecha vigente en cada entrada.
+- El lock **pierde 90 lineas netas**, y no por casualidad: `candle 0.10` arrastraba
+  `tokenizers 0.22.2` mientras nuestra declaracion pedia `0.23`, asi que el lock tenia **las
+  dos**. Con `candle 0.11` queda una sola (`0.23.1`), y con ella se van `onig` y `onig_sys`
+  ---la 0.22 usaba onig y la 0.23 usa `fancy-regex`--- mas `rust-embed` (x3) y
+  `derive_arbitrary`, que eran de `utoipa-swagger-ui 9`. Una subida de seguridad que deja
+  **menos** superficie que antes y una dependencia mayor duplicada menos.
+- `cargo deny check licenses bans sources`: **ok, ok, ok**. Importa decirlo: entran crates
+  nuevos y PolyForm Noncommercial no admite copyleft.
+
+Si la subida se hubiera dejado para el 2026-12-15, como permitia la fecha, hoy habria **ocho**
+entradas de `zip` en la lista en vez de ninguna.
+
+### Las tres que si se suprimen, y por que a tres meses
+
+`chrono`, `chrono-tz` y `humantime` son avisos de **mantenimiento**, no vulnerabilidades, y
+cargo-audit dice de los tres «No fixed upgrade is available!». No hay camino de explotacion que
+evaluar: hay un crate sin quien lo cuide.
+
+- **`chrono`**: lo usamos DIRECTAMENTE ---63 ficheros de `src/` lo mencionan y `Cargo.toml` lo
+  declara sin `optional`--- y encima lo arrastran por su cuenta arrow 57.3, datafusion 51.0 y
+  polars 0.55. Cambiar de crate es una migracion de ecosistema, no un bump.
+- **`chrono-tz`** y **`humantime`**: transitivos y solo transitivos, con **cero** apariciones en
+  `src/` (medido). Se van cuando se vayan polars/arrow y lance/object_store.
+
+La fecha es **2027-02-15** y no un mes: lo que hay que volver a mirar es si el ecosistema se
+movio, y eso no pasa en cuatro semanas. Ponerlas en el monton del 2026-12-15 habria hecho de
+ese dia nueve entradas, que es como una fecha deja de ser un disparador.
+
+### Dos comentarios que la subida dejo falsos, corregidos
+
+`Cargo.toml` decia **«Pinned to 0.10»** tres lineas encima de un `0.11`, y
+`src/local_inference_candle.rs` afirmaba dos cosas medidas sobre candle 0.10: que los
+tokenizadores embebidos en el GGUF no se decodifican y que los kernels de CPU son solo f32.
+Las dos siguen siendo la via soportada, pero **no se han vuelto a medir en 0.11**, y ahora lo
+dicen asi en vez de atribuir a 0.11 una medicion de 0.10. Un comentario que nombra una version
+caduca con la subida, y es la clase de deuda que este repositorio ya tiene catalogada.
+
+Y en `PENDING.md`, la seccion `## Dependencias` --- que se presentaba como la lista del
+proyecto y es una foto de la epoca V65-V74: su `full` tiene 15 features y hoy hay 99, y decia
+`ureq = "2"` con el lock en 3.5.0 --- lleva ahora una linea que dice de cuando es y remite a
+`Cargo.toml`, que es la unica lista viva.
+
+### Lo que aparecio por el camino y NO se hizo
+
+`src/local_embedder.rs` **no compila**, y no desde hoy: usa la API de `ureq 2`
+(`ureq::get(url).timeout(...)` y `resp.into_reader()`) y el lock lleva **ureq 3.5.0** desde
+antes de esta noche ---comprobado en `git show HEAD:Cargo.lock`---. Lo tapa que su feature,
+`embeddings-local`, esta deliberadamente fuera de CI por el coste de las dependencias nativas, y
+esa razon escrita es cierta: lo que no decia es que detras hay un modulo roto. «No lo compila
+CI» se leyo como una decision de presupuesto, y era tambien un escondite.
+
+No se arregla aqui por la regla de orden ---lo que aparece se apunta--- y porque el arreglo
+tiene trampa propia: el puerto `HttpClient` tiene un tope de 10 MiB que **truncaria** la
+descarga de un modelo, asi que la via es la API nativa de `ureq 3`, no el puerto.
+
 ## [Unreleased] - v350 (2026-11-18) - V466: la web se comprobaba consigo misma y el README consigo mismo, asi que podian derivar juntos sin que nada se pusiera rojo; y la frase fechada de la web tenia una resta que no cuadraba (0.2.433)
 
 V465 dejo el README diciendo **9.171** tests. La web seguia diciendo **9.169** en seis paginas

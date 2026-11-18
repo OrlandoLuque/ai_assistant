@@ -585,7 +585,9 @@ impl<K: KeyProvider> KpkgReader<K> {
                 .by_index(i)
                 .map_err(|e| KpkgError::ZipReadError(e.to_string()))?;
 
-            let name = file.name().to_string();
+            let Ok(name) = file.name().map(|n| n.to_string()) else {
+                continue;
+            };
 
             // Skip directories and manifest
             if file.is_dir() || name == "manifest.json" {
@@ -696,7 +698,9 @@ impl<K: KeyProvider> KpkgReader<K> {
                 .by_index(i)
                 .map_err(|e| KpkgError::ZipReadError(e.to_string()))?;
 
-            let name = file.name().to_string();
+            let Ok(name) = file.name().map(|n| n.to_string()) else {
+                continue;
+            };
 
             if file.is_dir() || name == "manifest.json" {
                 continue;
