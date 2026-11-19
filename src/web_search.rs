@@ -3,7 +3,7 @@
 //! Search the web and integrate results into AI responses.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::http_client::{HttpClient, HttpRequest, HttpResponse, UreqClient};
@@ -226,49 +226,10 @@ impl SearchProvider for DuckDuckGoProvider {
             .text()
             .map_err(|e| SearchError::Parse(e.to_string()))?;
 
-        // Parse results from HTML
-        let mut results = Vec::new();
-        let result_pattern =
-            regex::Regex::new(r#"class="result__a"[^>]*href="([^"]*)"[^>]*>([^<]*)</a>"#).ok();
-        let snippet_pattern = regex::Regex::new(r#"class="result__snippet"[^>]*>([^<]*)</a>"#).ok();
-
-        if let Some(re) = result_pattern {
-            for (i, cap) in re.captures_iter(&html).enumerate() {
-                if i >= config.max_results {
-                    break;
-                }
-
-                let url = cap.get(1).map(|m| m.as_str()).unwrap_or("");
-                let title = cap.get(2).map(|m| m.as_str()).unwrap_or("");
-
-                // Try to find snippet
-                let snippet = snippet_pattern
-                    .as_ref()
-                    .and_then(|re| re.captures_iter(&html).nth(i))
-                    .and_then(|c| c.get(1))
-                    .map(|m| m.as_str())
-                    .unwrap_or("");
-
-                // Decode DuckDuckGo redirect URL
-                let actual_url = if url.contains("uddg=") {
-                    url.split("uddg=")
-                        .nth(1)
-                        .and_then(|s| urlencoding::decode(s).ok())
-                        .map(|s| s.into_owned())
-                        .unwrap_or_else(|| url.to_string())
-                } else {
-                    url.to_string()
-                };
-
-                results.push(SearchResult::new(
-                    &html_decode(title),
-                    &actual_url,
-                    &html_decode(snippet),
-                ));
-            }
-        }
-
-        Ok(results)
+        // El mismo lector que el proveedor con cache, y por eso dos expresiones
+        // regulares se fueron de aqui: ver [`parse_ddg_results`], que explica en
+        // que cuatro cosas perdian.
+        Ok(parse_ddg_results(&html, config.max_results))
     }
 
     fn name(&self) -> &str {
@@ -766,24 +727,39 @@ impl Default for WebSearchEngine {
 // ============================================================================
 
 /// Enhanced DuckDuckGo search with HTML result parsing, caching, and rate limiting.
+///
+/// Hasta V471 **no lo podia usar nadie**. No implementaba [`SearchProvider`],
+/// asi que `WebSearchEngine::add_provider` no lo aceptaba, y el desencaje era
+/// doble: el trait pide `&self` y su busqueda tomaba `&mut self`, y pide
+/// `(query, &SearchConfig)` donde esta tomaba `(query, max_results)`. O sea que
+/// el proveedor **con** cache y limitacion de ritmo ---las dos cosas que quieres
+/// al raspar el HTML de un buscador--- se quedaba fuera del motor, y el que si
+/// estaba dentro no tiene ninguna de las dos. Lo usaba solo su propio test.
+///
+/// Ahora encaja: la cache y el reloj viven detras de un `Mutex` cada uno, que es
+/// lo que convierte `&mut self` en `&self` sin pedirle nada al llamante.
 pub struct EnhancedDuckDuckGoProvider {
     /// Rate limit: minimum seconds between requests.
     min_interval_secs: f64,
-    /// Last request timestamp.
-    last_request: Option<std::time::Instant>,
+    /// Instante de la ultima peticion **mandada**, no de la ultima que salio
+    /// bien. Ver [`EnhancedDuckDuckGoProvider::pace`].
+    last_request: Mutex<Option<std::time::Instant>>,
     /// Result cache (query -> (results, timestamp)).
-    cache: HashMap<String, (Vec<SearchResult>, std::time::Instant)>,
+    cache: Mutex<HashMap<String, (Vec<SearchResult>, std::time::Instant)>>,
     /// Cache TTL in seconds.
     cache_ttl_secs: u64,
+    /// Quien habla HTTP.
+    client: Arc<dyn HttpClient>,
 }
 
 impl EnhancedDuckDuckGoProvider {
     pub fn new() -> Self {
         Self {
             min_interval_secs: 1.0,
-            last_request: None,
-            cache: HashMap::new(),
+            last_request: Mutex::new(None),
+            cache: Mutex::new(HashMap::new()),
             cache_ttl_secs: 300,
+            client: Arc::new(UreqClient),
         }
     }
 
@@ -799,140 +775,107 @@ impl EnhancedDuckDuckGoProvider {
         self
     }
 
+    /// Cambia quien habla HTTP. Ver [`DuckDuckGoProvider::with_http_client`].
+    pub fn with_http_client(mut self, client: Arc<dyn HttpClient>) -> Self {
+        self.client = client;
+        self
+    }
+
     /// Search with caching and rate limiting.
+    ///
+    /// Sigue aqui por compatibilidad y delega en la del trait. El plazo de 10 s
+    /// que llevaba incrustado es exactamente el de `SearchConfig::default()`,
+    /// asi que delegar no cambia lo que sale al cable.
     pub fn search(
-        &mut self,
+        &self,
         query: &str,
         max_results: usize,
     ) -> Result<Vec<SearchResult>, SearchError> {
-        let cache_key = query.to_lowercase();
+        SearchProvider::search(
+            self,
+            query,
+            &SearchConfig {
+                max_results,
+                ..SearchConfig::default()
+            },
+        )
+    }
 
-        // Check cache
-        if let Some((results, ts)) = self.cache.get(&cache_key) {
-            if ts.elapsed().as_secs() < self.cache_ttl_secs {
-                return Ok(results[..std::cmp::min(results.len(), max_results)].to_vec());
-            }
+    /// La respuesta cacheada, si existe y no ha caducado, recortada al tope que
+    /// pide quien pregunta **ahora**.
+    ///
+    /// Y lo que hay guardado es lo que pidio el PRIMERO: la pagina se trocea ya
+    /// con su `max_results`, asi que un llamante posterior que quiera mas
+    /// recibe menos y nada se lo dice. Es el comportamiento de antes de V471
+    /// ---el codigo viejo tambien cacheaba lo ya recortado--- y no lo cambio
+    /// aqui, pero conviene que este escrito: esta cache no guarda «la respuesta
+    /// de DuckDuckGo», guarda «la respuesta recortada que pidio alguien».
+    fn cached(&self, key: &str, max_results: usize) -> Option<Vec<SearchResult>> {
+        let cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        let (results, ts) = cache.get(key)?;
+        if ts.elapsed().as_secs() >= self.cache_ttl_secs {
+            return None;
         }
+        Some(results[..results.len().min(max_results)].to_vec())
+    }
 
-        // Rate limit
-        if let Some(last) = self.last_request {
-            let elapsed = last.elapsed().as_secs_f64();
+    fn remember(&self, key: String, results: &[SearchResult]) {
+        self.cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(key, (results.to_vec(), std::time::Instant::now()));
+    }
+
+    /// Espera lo que falte del intervalo minimo y apunta **esta** peticion.
+    ///
+    /// Apuntarla aqui, antes de mandarla, y no despues de que salga bien, es un
+    /// arreglo: `last_request` solo se escribia tras un exito, asi que un bucle
+    /// de fallos ---justo el caso en que el servidor te quiere lejos--- no
+    /// esperaba nada entre intento e intento.
+    ///
+    /// El candado se mantiene **durante** la espera a proposito. Soltarlo antes
+    /// dejaria pasar a dos hilos a la vez: los dos leerian «ya toca» y el ritmo
+    /// real seria el doble del pedido.
+    fn pace(&self) {
+        let mut last = self.last_request.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(previous) = *last {
+            let elapsed = previous.elapsed().as_secs_f64();
             if elapsed < self.min_interval_secs {
-                std::thread::sleep(std::time::Duration::from_secs_f64(
-                    self.min_interval_secs - elapsed,
-                ));
+                std::thread::sleep(Duration::from_secs_f64(self.min_interval_secs - elapsed));
             }
         }
+        *last = Some(std::time::Instant::now());
+    }
+}
 
-        // Fetch and parse
+impl SearchProvider for EnhancedDuckDuckGoProvider {
+    fn search(&self, query: &str, config: &SearchConfig) -> Result<Vec<SearchResult>, SearchError> {
+        let cache_key = query.to_lowercase();
+        if let Some(hit) = self.cached(&cache_key, config.max_results) {
+            return Ok(hit);
+        }
+
+        self.pace();
+
         let url = format!(
             "https://html.duckduckgo.com/html/?q={}",
             search_urlencode(query)
         );
-        let mut resp = ureq::get(&url)
-            .header("User-Agent", "Mozilla/5.0 (compatible; AIAssistant/1.0)")
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(10)))
-            .build()
-            .call()
-            .map_err(|e| SearchError::Network(e.to_string()))?;
-        let html = resp
-            .body_mut()
-            .read_to_string()
-            .map_err(|e| SearchError::Network(e.to_string()))?;
+        let request = HttpRequest::get(url)
+            .timeout(config.timeout)
+            .header("User-Agent", "Mozilla/5.0 (compatible; AIAssistant/1.0)");
 
-        let results = self.parse_ddg_html(&html, max_results);
+        let html = send_search(&*self.client, &request)?
+            .text()
+            .map_err(|e| SearchError::Parse(e.to_string()))?;
 
-        // Cache results
-        self.cache
-            .insert(cache_key, (results.clone(), std::time::Instant::now()));
-        self.last_request = Some(std::time::Instant::now());
-
+        let results = parse_ddg_results(&html, config.max_results);
+        self.remember(cache_key, &results);
         Ok(results)
     }
 
-    /// Parse DuckDuckGo HTML results page.
-    /// Extracts result links and snippets using simple string matching.
-    fn parse_ddg_html(&self, html: &str, max_results: usize) -> Vec<SearchResult> {
-        let mut results = Vec::new();
-
-        // DuckDuckGo HTML results are in <a class="result__a" href="...">Title</a>
-        // and <a class="result__snippet" ...>Description...</a>
-        // We use simple string scanning without regex.
-        let result_marker = "class=\"result__a\"";
-        let snippet_marker = "class=\"result__snippet\"";
-
-        // Collect all result blocks
-        let mut pos = 0;
-        while pos < html.len() && results.len() < max_results {
-            // Find next result link
-            let link_start = match html[pos..].find(result_marker) {
-                Some(i) => pos + i,
-                None => break,
-            };
-
-            // Find href in this tag
-            let tag_start = html[..link_start].rfind('<').unwrap_or(link_start);
-            let tag_end = match html[link_start..].find('>') {
-                Some(i) => link_start + i,
-                None => break,
-            };
-
-            let tag_content = &html[tag_start..tag_end + 1];
-            let href = extract_attr(tag_content, "href").unwrap_or_default();
-
-            // Extract title (text between > and </a>)
-            let title_start = tag_end + 1;
-            let title_end = match html[title_start..].find("</a>") {
-                Some(i) => title_start + i,
-                None => break,
-            };
-            let raw_title = strip_html_tags(&html[title_start..title_end]);
-
-            // Find snippet after the link
-            let snippet_search_start = title_end;
-            let snippet_text =
-                if let Some(snip_pos) = html[snippet_search_start..].find(snippet_marker) {
-                    let snip_abs = snippet_search_start + snip_pos;
-                    // Find the closing > of this tag
-                    let snip_tag_end = match html[snip_abs..].find('>') {
-                        Some(i) => snip_abs + i + 1,
-                        None => break,
-                    };
-                    // Find closing </a> or </span>
-                    let snip_content_end = html[snip_tag_end..]
-                        .find("</a>")
-                        .or_else(|| html[snip_tag_end..].find("</span>"))
-                        .map(|i| snip_tag_end + i)
-                        .unwrap_or(snip_tag_end);
-                    strip_html_tags(&html[snip_tag_end..snip_content_end])
-                } else {
-                    String::new()
-                };
-
-            // Decode DuckDuckGo redirect URL
-            let actual_url = if href.contains("uddg=") {
-                href.split("uddg=")
-                    .nth(1)
-                    .and_then(|s| s.split('&').next())
-                    .map(|s| simple_urldecode(s))
-                    .unwrap_or(href.clone())
-            } else {
-                href.clone()
-            };
-
-            if !actual_url.is_empty() && !raw_title.is_empty() {
-                results.push(SearchResult::new(
-                    &html_decode(&raw_title),
-                    &actual_url,
-                    &html_decode(&snippet_text),
-                ));
-            }
-
-            pos = title_end + 4; // Skip past </a>
-        }
-
-        results
+    fn name(&self) -> &str {
+        "DuckDuckGo (cached)"
     }
 }
 
@@ -940,6 +883,104 @@ impl Default for EnhancedDuckDuckGoProvider {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Lee la pagina de resultados HTML de DuckDuckGo. **El unico lector.**
+///
+/// Habia dos. `DuckDuckGoProvider` traia el suyo con dos expresiones
+/// regulares y este barria cadenas, y no era una cuestion de gusto: el de
+/// regex perdia en las cuatro.
+///
+/// | | regex | este |
+/// |---|---|---|
+/// | orden de atributos | exigia `href` DESPUES de `class` | `extract_attr`, indiferente |
+/// | titulo con `<b>` | `([^<]*)` lo cortaba en el primer resaltado | `strip_html_tags` |
+/// | resumen | el i-esimo del documento entero, suponiendo 1:1 | el que sigue a ESE enlace |
+/// | `uddg=` | no cortaba en `&`: arrastraba `&rut=...` | corta y decodifica |
+///
+/// Las dos del medio no son casos raros: DuckDuckGo envuelve en `<b>` cada
+/// termino de la consulta que aparece en el titulo o en el resumen, o sea que
+/// el lector de regex truncaba **casi siempre**.
+fn parse_ddg_results(html: &str, max_results: usize) -> Vec<SearchResult> {
+    let mut results = Vec::new();
+
+    // DuckDuckGo HTML results are in <a class="result__a" href="...">Title</a>
+    // and <a class="result__snippet" ...>Description...</a>
+    // We use simple string scanning without regex.
+    let result_marker = "class=\"result__a\"";
+    let snippet_marker = "class=\"result__snippet\"";
+
+    // Collect all result blocks
+    let mut pos = 0;
+    while pos < html.len() && results.len() < max_results {
+        // Find next result link
+        let link_start = match html[pos..].find(result_marker) {
+            Some(i) => pos + i,
+            None => break,
+        };
+
+        // Find href in this tag
+        let tag_start = html[..link_start].rfind('<').unwrap_or(link_start);
+        let tag_end = match html[link_start..].find('>') {
+            Some(i) => link_start + i,
+            None => break,
+        };
+
+        let tag_content = &html[tag_start..tag_end + 1];
+        let href = extract_attr(tag_content, "href").unwrap_or_default();
+
+        // Extract title (text between > and </a>)
+        let title_start = tag_end + 1;
+        let title_end = match html[title_start..].find("</a>") {
+            Some(i) => title_start + i,
+            None => break,
+        };
+        let raw_title = strip_html_tags(&html[title_start..title_end]);
+
+        // Find snippet after the link
+        let snippet_search_start = title_end;
+        let snippet_text = if let Some(snip_pos) = html[snippet_search_start..].find(snippet_marker)
+        {
+            let snip_abs = snippet_search_start + snip_pos;
+            // Find the closing > of this tag
+            let snip_tag_end = match html[snip_abs..].find('>') {
+                Some(i) => snip_abs + i + 1,
+                None => break,
+            };
+            // Find closing </a> or </span>
+            let snip_content_end = html[snip_tag_end..]
+                .find("</a>")
+                .or_else(|| html[snip_tag_end..].find("</span>"))
+                .map(|i| snip_tag_end + i)
+                .unwrap_or(snip_tag_end);
+            strip_html_tags(&html[snip_tag_end..snip_content_end])
+        } else {
+            String::new()
+        };
+
+        // Decode DuckDuckGo redirect URL
+        let actual_url = if href.contains("uddg=") {
+            href.split("uddg=")
+                .nth(1)
+                .and_then(|s| s.split('&').next())
+                .map(|s| simple_urldecode(s))
+                .unwrap_or(href.clone())
+        } else {
+            href.clone()
+        };
+
+        if !actual_url.is_empty() && !raw_title.is_empty() {
+            results.push(SearchResult::new(
+                &html_decode(&raw_title),
+                &actual_url,
+                &html_decode(&snippet_text),
+            ));
+        }
+
+        pos = title_end + 4; // Skip past </a>
+    }
+
+    results
 }
 
 /// URL-encode a query string for search.
@@ -1754,8 +1795,7 @@ mod tests {
         </div>
         "##;
 
-        let provider = EnhancedDuckDuckGoProvider::new();
-        let results = provider.parse_ddg_html(html, 10);
+        let results = parse_ddg_results(html, 10);
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].title, "Example Page One");
         assert_eq!(results[0].url, "https://example.com/page1");
@@ -1764,58 +1804,12 @@ mod tests {
         assert_eq!(results[1].url, "https://example.org/page2");
     }
 
-    #[test]
-    fn test_search_cache_hit() {
-        let mut provider = EnhancedDuckDuckGoProvider::new();
-        // Manually insert cache entry
-        let cached_results = vec![SearchResult::new(
-            "Cached",
-            "https://cached.com",
-            "cached snippet",
-        )];
-        provider.cache.insert(
-            "test query".to_string(),
-            (cached_results.clone(), std::time::Instant::now()),
-        );
-
-        // Should return cached result without making network call
-        let results = provider.search("test query", 10).unwrap();
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].title, "Cached");
-        assert_eq!(results[0].url, "https://cached.com");
-    }
-
-    #[test]
-    fn test_search_cache_expired() {
-        let mut provider = EnhancedDuckDuckGoProvider::new();
-        provider.cache_ttl_secs = 0; // Expire immediately
-
-        // Insert cache entry that should be expired
-        let cached_results = vec![SearchResult::new("Old", "https://old.com", "old")];
-        provider.cache.insert(
-            "expired query".to_string(),
-            (cached_results, std::time::Instant::now()),
-        );
-
-        // Sleep a tiny bit to ensure the cache is expired
-        std::thread::sleep(std::time::Duration::from_millis(10));
-
-        // This should try to fetch fresh results (cache expired).
-        // The result depends on network availability — may succeed or fail.
-        // We just verify the cached "Old" result is NOT returned verbatim
-        // (proving the cache was indeed expired).
-        let result = provider.search("expired query", 10);
-        match result {
-            Ok(results) => {
-                // If network call succeeded, results should NOT be the old cached ones
-                // (unless DuckDuckGo returned something matching, which is fine)
-                let _ = results;
-            }
-            Err(_) => {
-                // Network error is expected in CI without internet — also valid
-            }
-        }
-    }
+    // `test_search_cache_hit` y `test_search_cache_expired` estaban aqui y
+    // ahora viven en `transport_tests`, con los dobles. El segundo aceptaba
+    // `Ok` **o** `Err` y por tanto no podia fallar; ademas llamaba a
+    // duckduckgo.com de verdad desde la suite. Las dos versiones nuevas
+    // comprueban lo que estos decian comprobar: que la cache **evita** la
+    // peticion y que una caducada la **provoca**.
 
     #[test]
     fn test_dedup_results() {
@@ -2195,7 +2189,6 @@ Disallow: /nogoogle/
 mod transport_tests {
     use super::*;
     use crate::http_client::{HttpMethod, HttpStream};
-    use std::sync::Mutex;
 
     /// Contesta una respuesta preparada y guarda la peticion que vio.
     ///
@@ -2205,7 +2198,7 @@ mod transport_tests {
     struct Canned {
         status: u16,
         body: String,
-        seen: Mutex<Option<HttpRequest>>,
+        seen: Mutex<Vec<HttpRequest>>,
     }
 
     impl Canned {
@@ -2213,23 +2206,33 @@ mod transport_tests {
             Self {
                 status,
                 body: body.to_string(),
-                seen: Mutex::new(None),
+                seen: Mutex::new(Vec::new()),
             }
         }
 
-        /// La peticion que el proveedor mando de verdad al cable.
+        /// La ultima peticion que el proveedor mando de verdad al cable.
         fn seen(&self) -> HttpRequest {
             self.seen
                 .lock()
                 .expect("el candado del doble")
-                .clone()
+                .last()
+                .cloned()
                 .expect("el proveedor no mando ninguna peticion")
+        }
+
+        /// Cuantas veces se ha salido al cable. Es lo que permite comprobar que
+        /// una cache **evita** una peticion, en vez de suponerlo.
+        fn calls(&self) -> usize {
+            self.seen.lock().expect("el candado del doble").len()
         }
     }
 
     impl HttpClient for Canned {
         fn send(&self, request: &HttpRequest) -> anyhow::Result<HttpResponse> {
-            *self.seen.lock().expect("el candado del doble") = Some(request.clone());
+            self.seen
+                .lock()
+                .expect("el candado del doble")
+                .push(request.clone());
             Ok(HttpResponse {
                 status: self.status,
                 headers: Vec::new(),
@@ -2417,5 +2420,124 @@ mod transport_tests {
         let provider = SearXNGProvider::new("http://searx.invalid/").with_http_client(spy);
         let results = provider.search("rust", &config_with(2)).expect("200");
         assert_eq!(results.len(), 2, "el tope es del llamante, no del servidor");
+    }
+
+    // ======================================================================
+    // El proveedor con cache, que hasta V471 no podia usar nadie
+    // ======================================================================
+
+    const DDG_UN_RESULTADO: &str = r#"<a class="result__a" href="https://example.com/p">Un titulo</a>
+                                      <a class="result__snippet">Un resumen</a>"#;
+
+    fn cached_provider(spy: Arc<Canned>) -> EnhancedDuckDuckGoProvider {
+        EnhancedDuckDuckGoProvider::new()
+            .with_min_interval(0.0)
+            .with_http_client(spy)
+    }
+
+    #[test]
+    fn test_the_engine_can_hold_the_cached_provider_now() {
+        // Lo que no se podia escribir antes de V471: `add_provider` pide
+        // `Box<dyn SearchProvider>` y este tipo no implementaba el trait, asi
+        // que el proveedor con cache y ritmo se quedaba fuera del motor.
+        let spy = Arc::new(Canned::new(200, DDG_UN_RESULTADO));
+        let mut engine = WebSearchEngine::new(config_with(10));
+        engine.add_provider(Box::new(cached_provider(spy.clone())));
+
+        let results = engine
+            .search("rust")
+            .expect("el motor pregunta al proveedor");
+        assert_eq!(results.len(), 1);
+        assert_eq!(spy.calls(), 1);
+    }
+
+    #[test]
+    fn test_the_cache_answers_the_second_identical_query_without_asking_again() {
+        let spy = Arc::new(Canned::new(200, DDG_UN_RESULTADO));
+        let provider = cached_provider(spy.clone());
+
+        let first = SearchProvider::search(&provider, "rust", &config_with(10)).expect("200");
+        let second =
+            SearchProvider::search(&provider, "rust", &config_with(10)).expect("de la cache");
+
+        assert_eq!(first.len(), 1);
+        assert_eq!(second.len(), first.len());
+        assert_eq!(second[0].url, first[0].url);
+        assert_eq!(
+            spy.calls(),
+            1,
+            "la segunda consulta no tenia que salir al cable"
+        );
+    }
+
+    #[test]
+    fn test_an_expired_entry_does_cause_a_second_request() {
+        // El test que esto sustituye aceptaba `Ok` **o** `Err`, o sea que no
+        // podia fallar, y ademas llamaba a duckduckgo.com de verdad.
+        let spy = Arc::new(Canned::new(200, DDG_UN_RESULTADO));
+        let provider = cached_provider(spy.clone()).with_cache_ttl(0);
+
+        SearchProvider::search(&provider, "rust", &config_with(10)).expect("200");
+        SearchProvider::search(&provider, "rust", &config_with(10)).expect("200");
+
+        assert_eq!(spy.calls(), 2, "con TTL 0 no hay nada que reutilizar");
+    }
+
+    #[test]
+    fn test_the_rate_limiter_counts_a_request_that_failed_too() {
+        // El defecto: `last_request` solo se apuntaba tras un exito, asi que un
+        // bucle de fallos no esperaba nada entre intentos --- justo el caso en
+        // que el servidor te quiere lejos.
+        let provider = EnhancedDuckDuckGoProvider::new()
+            .with_min_interval(0.3)
+            .with_http_client(Arc::new(NoTransport));
+
+        let started = std::time::Instant::now();
+        for _ in 0..2 {
+            assert!(SearchProvider::search(&provider, "rust", &config_with(3)).is_err());
+        }
+
+        assert!(
+            started.elapsed() >= Duration::from_millis(250),
+            "la segunda tenia que esperar su turno, y todo tardo {:?}",
+            started.elapsed()
+        );
+    }
+
+    // ======================================================================
+    // Las cuatro cosas en que perdia el lector de regex
+    // ======================================================================
+
+    #[test]
+    fn test_a_highlighted_term_no_longer_truncates_the_title() {
+        // DuckDuckGo envuelve en `<b>` cada termino de la consulta que aparece
+        // en el titulo o en el resumen. El lector de regex cortaba en
+        // `([^<]*)`, o sea en el primer resaltado: truncaba casi siempre.
+        let html = r#"<a class="result__a" href="https://example.com/p">rust <b>async</b> hoy</a>
+                      <a class="result__snippet">el <b>async</b> de Rust</a>"#;
+        let results = parse_ddg_results(html, 10);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "rust async hoy");
+        assert_eq!(results[0].snippet, "el async de Rust");
+    }
+
+    #[test]
+    fn test_the_redirect_url_drops_the_trailing_parameters() {
+        // `uddg=` lleva la URL real y detras puede ir `&rut=...`. El lector de
+        // regex no cortaba en `&`, asi que se lo llevaba pegado.
+        let html =
+            r#"<a class="result__a" href="/l/?uddg=https%3A%2F%2Fexample.org%2Fp&rut=abc">T</a>"#;
+        let results = parse_ddg_results(html, 10);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].url, "https://example.org/p");
+    }
+
+    #[test]
+    fn test_the_attributes_may_come_in_the_other_order() {
+        // El lector de regex exigia `href` DESPUES de `class`.
+        let html = r#"<a href="https://example.com/p" class="result__a">T</a>"#;
+        let results = parse_ddg_results(html, 10);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].url, "https://example.com/p");
     }
 }

@@ -5,6 +5,108 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v355 (2026-11-19) - V471: el proveedor de DuckDuckGo con cache y ritmo no lo podia usar nadie, y de los dos lectores de su HTML sobrevive el que no truncaba (0.2.438)
+
+Sigue la tarea `#77` en el mismo fichero que V470, y lo que aparecio al migrar los siete
+proveedores no era transporte.
+
+### `EnhancedDuckDuckGoProvider` estaba fuera del motor, y el desencaje era doble
+
+Medido, no supuesto: `SearchProvider` tiene **ocho** implementadores en el fichero y este no
+era ninguno, asi que `WebSearchEngine::add_provider` ---que pide `Box<dyn SearchProvider>`---
+no podia aceptarlo. Lo usaba **solo su propio test**, y tampoco estaba en la lista de
+reexportacion de `lib.rs`, al lado de sus seis hermanos.
+
+No encajaba por dos razones a la vez, y eso es lo que lo mantuvo quieto: el trait pide `&self`
+y su busqueda tomaba `&mut self`; el trait pide `(query, &SearchConfig)` y esta tomaba
+`(query, max_results)`. O sea que **el proveedor con cache y limitacion de ritmo** ---las dos
+cosas que quieres al raspar el HTML de un buscador--- se quedaba fuera, y el que si estaba
+dentro, el que usa `ai_gui`, no tiene ninguna de las dos.
+
+El arreglo es un `Mutex` para la cache y otro para el reloj: es lo que convierte `&mut self` en
+`&self` sin pedirle nada al llamante.
+
+### Dos lectores del mismo HTML, y el que estaba en produccion era el peor
+
+`DuckDuckGoProvider` traia dos expresiones regulares y `EnhancedDuckDuckGoProvider` barria
+cadenas. No era cuestion de gusto: el de regex perdia en las cuatro.
+
+| | regex | barrido |
+|---|---|---|
+| orden de atributos | exigia `href` **despues** de `class` | `extract_attr`, indiferente |
+| titulo con `<b>` | `([^<]*)` cortaba en el primer resaltado | `strip_html_tags` |
+| resumen | el i-esimo del documento entero, suponiendo 1:1 con los enlaces | el que sigue a **ese** enlace |
+| `uddg=` | no cortaba en `&`: se llevaba `&rut=...` pegado | corta y decodifica |
+
+Las dos del medio no son casos raros. **DuckDuckGo envuelve en `<b>` cada termino de la
+consulta** que aparece en el titulo o en el resumen, asi que el lector de regex truncaba casi
+siempre ---y es el que usaba la GUI---. Ahora hay **uno**, libre, con la tabla de arriba escrita
+en su propia doc para que nadie reintroduzca el otro por simetria.
+
+### El ritmo no contaba los fallos
+
+`last_request` se escribia **despues** de que la peticion saliera bien. Un bucle de fallos no
+esperaba nada entre intento e intento, que es justo el caso en el que el servidor te quiere
+lejos. Ahora se apunta antes de mandar, y el candado se mantiene durante la espera a proposito:
+soltarlo antes dejaria pasar a dos hilos a la vez y el ritmo real seria el doble del pedido.
+
+### Un test que no podia fallar, y que ademas salia a internet
+
+`test_search_cache_expired` aceptaba `Ok` **o** `Err` ---con el comentario «may succeed or
+fail» al lado--- o sea que no podia fallar nunca. Y para averiguarlo llamaba a
+**duckduckgo.com de verdad** desde la suite de unidad. Sus dos sucesores comprueban lo que ese
+decia comprobar: que la cache **evita** la peticion (`calls() == 1`) y que una entrada caducada
+la **provoca** (`calls() == 2`). Eso solo se puede escribir porque el cliente ya es inyectable.
+
+### Siete tests nuevos, dos borrados, cuatro mutantes
+
+Cada mutante mato **exactamente un** test, el suyo, y ninguno mas:
+
+| mutante | murio |
+|---|---|
+| la cache nunca acierta | el de que la segunda consulta no sale al cable |
+| el reloj solo cuenta los exitos | el del ritmo tras un fallo |
+| la URL no se corta en `&` | el del `uddg=` con parametros de cola |
+| el titulo no se limpia de etiquetas | el del termino resaltado |
+
+### Lo que NO cambia
+
+- `search(&self, query, max_results)` **sigue existiendo** y delega en la del trait. El plazo de
+  10 s que llevaba incrustado es exactamente el de `SearchConfig::default()`, asi que delegar no
+  cambia lo que sale al cable. Pasar de `&mut self` a `&self` no rompe a ningun llamante.
+- La URL de DuckDuckGo sigue incrustada en este proveedor (el simple si tiene `base_url`). Con
+  el cliente inyectable ya no estorba para probarlo, y anadir el campo seria API nueva sin
+  consumidor.
+- `WebCrawler` sigue hablando `ureq` a pelo: son tres sitios mas y van aparte, porque alli el
+  hallazgo es otro ---el `robots.txt` se descarga en dos copias y los tres caminos de fallo
+  acaban en «todo permitido», incluido el 5xx, donde el RFC 9309 dice lo contrario.
+
+### Las cifras, re-medidas las cuatro de una vez
+
+V470 y V471 suman **+16 tests**, y las cuatro cifras que el proyecto publica se movieron en
+bloque. Medidas con su comando al lado, que es lo unico que las hace comparables:
+
+| cifra | antes | ahora | comando |
+|---|---|---|---|
+| titular (`FEATURES_STD`, lib) | 9.171 | **9.187** | `cargo test --features "$FEATURES_STD" --lib` |
+| `--features full` a solas | 7.380 | **7.396** | `cargo test --features full --lib` |
+| el minimo de ocho features | 5.339 | **5.355** | `cargo test --no-default-features --features "$FEATURES_MIN"` |
+| atributos `#[test]` en `src/` | 10.262 | **10.278** | `grep -rc "#\[test\]" src/` |
+
+Las cuatro suben exactamente 16, que es lo que cabe esperar: los dos modulos tocados no tienen
+puerta de feature, asi que sus tests entran en **todos** los conjuntos.
+
+Treinta y ocho ocurrencias en seis ficheros (README, `CLAUDE.md` y cuatro paginas de la web).
+**Dos sitios se quedan con la cifra vieja a proposito**: la frase medida del `developer_guide`
+con fecha 2026-11-18 y el subtitulo de `feature_matrix` que dice «2026-09 (v0.2.244)». La regla
+es re-medir la frase entera o dejarla con su fecha, y `FEATURES_NETWORK` no se re-midio esta
+noche. Parchear una cifra dentro de una frase fechada deja una frase internamente falsa con una
+fecha nueva avalandola.
+
+Y lo que **no** se toco: la cifra de LOC. Medida 569.383 contra el «568K» declarado, dentro del
+**1 %** que la puerta tolera a proposito ---el margen existe porque cada commit la mueve---, asi
+que cambiarla en once sitios por un 0,24 % es ruido.
+
 ## [Unreleased] - v354 (2026-11-19) - V470: los siete proveedores de busqueda detras del puerto, y la variante de error que nadie construia (0.2.437)
 
 Tarea `#77` ---confinar la E/S detras del puerto `HttpClient`---, que es el cuerpo de la

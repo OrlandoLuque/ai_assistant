@@ -20,16 +20,18 @@ Esto te da el contexto completo: dónde estamos, qué se ha hecho, cómo trabaja
 
 ## Sobre el Proyecto
 - **Librería Rust** para integración con LLMs locales y cloud
-- **568K líneas de código**, 579 archivos fuente (.rs), **9.171 tests** bajo el conjunto de
-  features que corre CI (`FEATURES_STD`). Re-medido el 2026-11-18 en 0.2.431; decía
+- **568K líneas de código**, 579 archivos fuente (.rs), **9.187 tests** bajo el conjunto de
+  features que corre CI (`FEATURES_STD`). Re-medido el 2026-11-19 en 0.2.438 (antes 9.171, del
+  2026-11-18; las LOC medidas hoy son 569.383, y «568K» entra en el 1 % que tolera la puerta);
+  decía
   540K/559/9.753, del 2026-09-03.
   - Las dos primeras salen de **la definición de la puerta**
     (`scripts/check_readme_numbers.py`: `src/**/*.rs` y sus saltos de línea), que es la misma
     que exige el README y la web. Una segunda definición es como una cifra se queda vieja
     pareciendo defendible en las dos versiones.
   - El recuento de tests **ninguna puerta lo comprueba** —hace falta correr la suite— así que
-    va con el comando al lado o no significa nada: 9.171 es `FEATURES_STD`, `--features full`
-    a solas da menos, y el mínimo de ocho features da 5.339. El «9.753» de antes no decía con
+    va con el comando al lado o no significa nada: 9.187 es `FEATURES_STD`, `--features full`
+    a solas da menos, y el mínimo de ocho features da 5.355. El «9.753» de antes no decía con
     qué comando se había medido, y por eso no se puede ni comparar con estas.
 - **Autor único**: Orlando José Luque Moraira (Lander) — orlando.luque@gmail.com
 - **Estado**: **el repositorio de GitHub es PÚBLICO Y ASÍ DEBE SEGUIR**
@@ -203,7 +205,7 @@ de un tercero, ninguna de las dos cosas recuperable. Lo que el autor quería era
 3. Respetar la estructura modular existente basada en feature flags de Cargo
 4. Zero `.unwrap()` en producción — usar proper error handling siempre
 5. Zero warnings del compilador — compilación limpia en todas las combinaciones de features
-6. Tests para todo — **9.171** bajo el conjunto de features de CI (2026-11-18), y debe
+6. Tests para todo — **9.187** bajo el conjunto de features de CI (2026-11-19), y debe
    mantenerse así. Aquí decía «9.600+», que no coincide con ninguna de las tres cifras que da
    el README, porque no llevaba al lado el comando que la produce
 7. **Nunca `git add -A` ni `git add .` en estos repositorios.** Nombra cada ruta. Un
