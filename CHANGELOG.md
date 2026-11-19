@@ -5,6 +5,70 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v358 (2026-11-20) - V474: ocho vulnerabilidades de wasmtime que no se arreglaban subiendo wasmtime (0.2.441)
+
+Rojo de seguridad, y no lo trajo ningun cambio de codigo: el mismo arbol estaba **verde a las
+03:18 del 2026-11-19** y lo que se movio fue la base de avisos. Es la forma que ya tiene nombre en
+este repositorio ---CI se pone rojo sin que nadie toque nada--- y por eso el rojo se lee antes de
+tocar: ocho de los diecisiete hallazgos son de `wasmtime` 49.0.5 y los otros nueve de `heapless`
+0.8.0, que es **otra** cosa y sigue abierta.
+
+### Las ocho
+
+Son las RUSTSEC-2026-**0566 a 0573**, ocho consecutivas ---las nueve siguientes, 0574 a 0582, son
+las de `heapless`---, todas con fecha 2026-11-16, todas de severidad baja y todas parcheadas en
+`>=49.0.6`. Los cuatro titulos de abajo estan leidos del informe; los otros cuatro van por
+identificador y no por titulo a proposito, porque el comando con el que los saque emparejaba cada
+`ID:` con el titulo del bloque **siguiente**, y un titulo mal asignado es peor que ninguno:
+
+| ID | que es |
+|---|---|
+| RUSTSEC-2026-0567 | abort en builds sin la feature `threads` |
+| RUSTSEC-2026-0569 | panico en `Caller::get_module_export` llamado desde fuera de WebAssembly |
+| RUSTSEC-2026-0570 | abort en builds sin la feature `gc` |
+| RUSTSEC-2026-0572 | panico al cancelar una copia de stream o future por el extremo equivocado |
+| RUSTSEC-2026-0566, 0568, 0571, 0573 | el resto del mismo lote; uno de ellos es el consumo de memoria no acotado de `wasmtime-wasi-http` con HTTP/2 |
+
+El manifiesto ya pedia `^49.0.2`, asi que esto es **solo lock**: ni una linea de `Cargo.toml` y
+ninguna API que mover.
+
+### Lo que no es obvio: subir `wasmtime` no sube wasmtime
+
+`cargo update -p wasmtime --precise 49.0.6` **falla**, y el mensaje es el hallazgo:
+
+```
+error: failed to select a version for `wasmtime-environ`.
+    ... required by package `wiggle v49.0.5`
+    ... which satisfies dependency `wiggle = "=49.0.5"` of package `wasmtime-wasi v49.0.5`
+```
+
+`wasmtime-wasi` clava `wiggle` con `=`, y `wiggle` clava `wasmtime-environ` con `=`, mientras el
+`wasmtime` nuevo clava **su** `wasmtime-environ`. O sea que los dos que nombra nuestro manifiesto
+tienen que moverse **a la vez**, y el arreglo es `cargo update --precise 49.0.7 -p wasmtime -p
+wasmtime-wasi`: 81 lineas de lock, con el arbol de `cranelift` detras (0.136.5 a 0.136.7).
+
+Se toma la **ultima** de la serie, 49.0.7, y no la minima que los avisos declaran parcheada: un
+parche por detras es el sitio donde el proximo aviso vuelve a pedir lo mismo.
+
+### Lo que NO es
+
+- **No arregla el rojo entero.** Los nueve avisos `unsound` de `heapless` 0.8.0 (fecha 2026-11-18)
+  siguen ahi, asi que los dos trabajos de auditoria **seguiran rojos** despues de este commit. Van
+  en su propio commit porque son otro problema: el parche esta en `heapless >=0.9.4` y es
+  inalcanzable desde aqui ---`lancedb 0.26.2` -> `lance =2.0.0` -> `lance-geo` -> `geodatafusion`
+  -> `geo 0.31` -> `rstar 0.12.2` -> `heapless ^0.8`, con `lance` clavado con `=`---, y `lancedb`
+  va por la 0.41.0 mientras pedimos `^0.26`. Eso es cambio de dependencia declarada, no lock.
+- **No se suprime nada.** La supresion con fecha de revision era la salida facil y el autor la
+  rechazo con la pregunta correcta: por que suprimir, si se puede dejar bien.
+- **No cambia ninguna cifra**: cero tests nuevos, cero lineas de `src/`.
+
+### Verificacion
+
+`wasmtime` entra solo con la feature `skill-forge`, que no esta en `full`, asi que la puerta que
+importa es la suya: `cargo check --features skill-forge --lib`, que es literalmente lo que corre
+CI, verde en 1m13s. Y de propina lo que CI **no** corre, que cuesta 38 s medidos:
+`cargo test --features skill-forge --lib skill_forge`, **60 tests** verdes.
+
 ## [Unreleased] - v357 (2026-11-19) - V473: el otro lector de robots.txt convertia un dominio caido en permiso para rastrearlo entero, y sus dos caminos de red no los probaba nadie (0.2.440)
 
 El gemelo que V472 dejo apuntado con sus numeros de linea, y la tarea `#77` otra vez: confinar la
