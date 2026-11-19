@@ -491,8 +491,15 @@ impl HttpStream {
 pub trait HttpClient: Send + Sync {
     /// Envia la peticion y devuelve la respuesta, **sea o no un 2xx**.
     ///
-    /// Es el unico metodo que un implementador tiene que escribir; todo lo demas
-    /// del trait se deriva de aqui.
+    /// Uno de los **dos** metodos que un implementador tiene que escribir; el
+    /// otro es [`HttpClient::send_streaming`], y los tres que quedan
+    /// ---`get_json`, `post_json` y `post_streaming`--- se derivan de estos dos.
+    ///
+    /// Aqui decia «el unico metodo», y lo repetian la guia y la web, hasta que en
+    /// V473 los dos dobles nuevos de este fichero tuvieron que escribir un
+    /// `send_streaming` que falla a proposito. Que haya que declararlo es
+    /// deliberado: obliga a decidir en tiempo de compilacion en vez de dejarlo
+    /// fallar en ejecucion.
     fn send(&self, request: &HttpRequest) -> Result<HttpResponse>;
 
     /// Envia la peticion y devuelve el cuerpo como flujo, sin traerlo a memoria.
@@ -1272,6 +1279,171 @@ impl MockHttpServer {
 }
 
 // ============================================================================
+// Dobles del puerto, para los tests de cualquier modulo
+// ============================================================================
+
+/// Un cliente del puerto que contesta respuestas **preparadas** y guarda las
+/// peticiones que vio, sin tocar la red.
+///
+/// La diferencia con [`MockHttpServer`] no es de comodidad. Ese escucha en
+/// localhost, asi que solo sirve cuando el codigo bajo prueba **acepta** una URL
+/// de fuera; los siete proveedores de busqueda y los dos lectores de
+/// `robots.txt` la **construyen** ---`https://{dominio}/robots.txt`---, de modo
+/// que no hay donde apuntar un servidor y lo unico sustituible es el transporte.
+/// De paso, el test no depende de que haya un puerto libre.
+///
+/// Vivio dentro de los tests de `web_search` desde V470. Esta aqui desde V473,
+/// cuando `crawl_policy` necesito el mismo doble: dos copias de un doble son dos
+/// sitios donde recordar la trampa de este puerto ---que un no-2xx llega como
+/// `Ok` y no como `Err`--- y uno donde olvidarse.
+///
+/// ```rust
+/// # #[cfg(feature = "test-utils")]
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use ai_assistant::{CannedHttpClient, HttpClient, HttpRequest};
+///
+/// let client = CannedHttpClient::new(503, "en mantenimiento");
+/// let response = client.send(&HttpRequest::get("https://example.com/robots.txt"))?;
+///
+/// // El puerto NO convierte el no-2xx en error: eso lo decide el llamante.
+/// assert_eq!(response.status, 503);
+/// assert!(!response.is_success());
+///
+/// // Y se puede comprobar que se salio al cable una vez, y con que URL.
+/// assert_eq!(client.calls(), 1);
+/// assert_eq!(client.seen().url, "https://example.com/robots.txt");
+/// # Ok(())
+/// # }
+/// # #[cfg(not(feature = "test-utils"))]
+/// # fn main() {}
+/// ```
+#[cfg(any(test, feature = "test-utils"))]
+pub struct CannedHttpClient {
+    /// Respuestas a servir, en orden; la ultima se repite.
+    responses: Vec<(u16, Vec<u8>)>,
+    /// Lo que de verdad salio al cable, en orden.
+    seen: std::sync::Mutex<Vec<HttpRequest>>,
+    /// Los estados que de verdad se sirvieron, en orden.
+    served: std::sync::Mutex<Vec<u16>>,
+}
+
+#[cfg(any(test, feature = "test-utils"))]
+impl CannedHttpClient {
+    /// La misma respuesta a todas las peticiones.
+    pub fn new(status: u16, body: &str) -> Self {
+        Self::sequence(vec![(status, body.as_bytes().to_vec())])
+    }
+
+    /// Un cuerpo que **no** es UTF-8 valido, que un `String` no puede llevar.
+    pub fn raw(status: u16, body: Vec<u8>) -> Self {
+        Self::sequence(vec![(status, body)])
+    }
+
+    /// Respuestas distintas en orden, y **la ultima se repite**.
+    ///
+    /// Es lo que permite escribir «la primera vez el servidor contesta y la
+    /// segunda se ha caido», que es el caso del RFC 9309 §2.4: cuando el
+    /// `robots.txt` se vuelve ilegible, una copia en cache sigue valiendo. Sin
+    /// esto habia que suponer ese caso en vez de probarlo.
+    ///
+    /// # Panics
+    ///
+    /// Si la lista viene vacia: un doble sin ninguna respuesta no es un caso de
+    /// prueba, es un test mal escrito.
+    pub fn sequence(responses: Vec<(u16, Vec<u8>)>) -> Self {
+        assert!(
+            !responses.is_empty(),
+            "un doble necesita al menos una respuesta"
+        );
+        Self {
+            responses,
+            seen: std::sync::Mutex::new(Vec::new()),
+            served: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    /// La ultima peticion que el codigo bajo prueba mando de verdad al cable.
+    ///
+    /// # Panics
+    ///
+    /// Si no mando ninguna. Fallar aqui es el diagnostico que se quiere: el
+    /// test esperaba una peticion y no la hubo.
+    pub fn seen(&self) -> HttpRequest {
+        self.seen
+            .lock()
+            .expect("el candado del doble")
+            .last()
+            .cloned()
+            .expect("no se mando ninguna peticion")
+    }
+
+    /// Cuantas veces se ha salido al cable. Es lo que permite comprobar que una
+    /// cache **evita** una peticion, en vez de suponerlo.
+    pub fn calls(&self) -> usize {
+        self.seen.lock().expect("el candado del doble").len()
+    }
+
+    /// Los estados que ha servido, en orden.
+    ///
+    /// Esto existe porque un test puede pasar por el motivo equivocado. El de
+    /// `crawl_policy` sobre «la primera vez el dominio contesta y la segunda se
+    /// ha caido» pasaba **igual** con un doble que sirviera siempre la primera
+    /// respuesta ---lo demostro una mutacion, que no mato a nadie---, asi que la
+    /// premisa del caso hay que afirmarla, no suponerla.
+    ///
+    /// Y se lee de lo **apuntado al servir**, no de recalcular que tocaba: la
+    /// primera version de esta funcion derivaba la lista de `responses` y del
+    /// numero de llamadas, o sea de la misma regla que pretendia vigilar, y la
+    /// mutacion siguio sin matar a nadie. Un testigo deducido de la regla no es
+    /// un testigo.
+    pub fn served(&self) -> Vec<u16> {
+        self.served.lock().expect("el candado del doble").clone()
+    }
+}
+
+#[cfg(any(test, feature = "test-utils"))]
+impl HttpClient for CannedHttpClient {
+    fn send(&self, request: &HttpRequest) -> Result<HttpResponse> {
+        let mut seen = self.seen.lock().expect("el candado del doble");
+        let index = seen.len().min(self.responses.len() - 1);
+        seen.push(request.clone());
+        let (status, body) = &self.responses[index];
+        self.served
+            .lock()
+            .expect("el candado del doble")
+            .push(*status);
+        Ok(HttpResponse {
+            status: *status,
+            headers: Vec::new(),
+            body: body.clone(),
+        })
+    }
+
+    fn send_streaming(&self, _request: &HttpRequest) -> Result<HttpStream> {
+        anyhow::bail!("el doble no hace streaming")
+    }
+}
+
+/// No hay respuesta ninguna: el transporte falla.
+///
+/// El caso que distingue «el servidor dijo que no» de «no hubo servidor», que en
+/// este puerto son cosas distintas: el primero es `Ok` con un estado, y solo
+/// este es `Err`.
+#[cfg(any(test, feature = "test-utils"))]
+pub struct FailingHttpClient;
+
+#[cfg(any(test, feature = "test-utils"))]
+impl HttpClient for FailingHttpClient {
+    fn send(&self, _request: &HttpRequest) -> Result<HttpResponse> {
+        anyhow::bail!("conexion rehusada")
+    }
+
+    fn send_streaming(&self, _request: &HttpRequest) -> Result<HttpStream> {
+        anyhow::bail!("conexion rehusada")
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -1279,6 +1451,36 @@ impl MockHttpServer {
 mod tests {
     use super::*;
     use std::sync::Mutex;
+
+    #[test]
+    fn el_doble_sirve_la_secuencia_en_orden_y_repite_la_ultima() {
+        let client =
+            CannedHttpClient::sequence(vec![(200, b"primera".to_vec()), (503, b"caida".to_vec())]);
+        let request = HttpRequest::get("https://example.com/");
+
+        let primera = client.send(&request).expect("el doble no falla");
+        assert_eq!(primera.status, 200);
+        assert_eq!(primera.body, b"primera");
+
+        for _ in 0..3 {
+            let siguiente = client.send(&request).expect("el doble no falla");
+            // La ultima se repite, que es lo que permite escribir «y a partir de
+            // ahi el servidor esta caido» sin contar las peticiones a mano.
+            assert_eq!(siguiente.status, 503);
+        }
+        assert_eq!(client.calls(), 4);
+        assert_eq!(client.seen().url, "https://example.com/");
+    }
+
+    #[test]
+    fn el_doble_que_falla_es_err_y_el_no_2xx_no_lo_es() {
+        let request = HttpRequest::get("https://example.com/");
+
+        // La distincion que este puerto hace y `ureq` no: «el servidor dijo que
+        // no» es `Ok` con estado, y solo «no hubo servidor» es `Err`.
+        assert!(FailingHttpClient.send(&request).is_err());
+        assert!(CannedHttpClient::new(500, "boom").send(&request).is_ok());
+    }
 
     /// La lista, escrita como lista: 429 y 503, y nada mas.
     ///

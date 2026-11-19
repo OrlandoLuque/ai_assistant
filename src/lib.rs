@@ -785,7 +785,7 @@ pub use http_client::{
 /// aqui dentro por construccion, porque compilan DENTRO. Lo que lo prueba es un
 /// doctest, que compila fuera.
 #[cfg(any(test, feature = "test-utils"))]
-pub use http_client::{MockHttpServer, StallingServer};
+pub use http_client::{CannedHttpClient, FailingHttpClient, MockHttpServer, StallingServer};
 
 #[cfg(feature = "server-tls")]
 pub use server::load_tls_config;

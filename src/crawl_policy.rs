@@ -5,11 +5,14 @@
 //! engine suitable for respectful web crawling.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+
+use crate::http_client::{HttpClient, HttpRequest, UreqClient};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Robots.txt types
@@ -49,6 +52,26 @@ pub struct ParsedRobotsTxt {
 }
 
 impl ParsedRobotsTxt {
+    /// Un robots.txt que no prohibe nada, como el de un dominio que contesta
+    /// que no tiene fichero.
+    ///
+    /// Definido como el parseo del fichero **vacio**, y no a mano, para que «sin
+    /// reglas» signifique aqui exactamente lo que significa para el parser.
+    pub fn allow_all() -> Self {
+        CrawlPolicy::parse_robots_txt("")
+    }
+
+    /// Un robots.txt que lo prohibe todo, para cuando NO se ha podido leer el de
+    /// verdad: el 5xx y la falta de respuesta del RFC 9309 seccion 2.3.1.4.
+    ///
+    /// Tambien definido pasando el texto por el parser ---`User-agent: *` mas
+    /// `Disallow: /`---, para que no haya una segunda idea de lo que ese par de
+    /// lineas significa. El campo `raw` queda con ese texto, que es sintetico:
+    /// ningun dominio lo mando.
+    pub fn disallow_all() -> Self {
+        CrawlPolicy::parse_robots_txt("User-agent: *\nDisallow: /\n")
+    }
+
     /// Check whether the given path is allowed for the specified user-agent.
     ///
     /// Uses the exact user-agent match first, then falls back to the wildcard `*` section.
@@ -304,6 +327,12 @@ pub struct CrawlPolicy {
     robots_cache: HashMap<String, (ParsedRobotsTxt, Instant)>,
     /// Per-domain rate limiting state.
     rate_state: HashMap<String, DomainRateState>,
+    /// El transporte.
+    ///
+    /// Inyectable porque las dos URL de este modulo se **construyen** aqui
+    /// dentro ---`https://{dominio}/robots.txt`---, asi que no hay donde apuntar
+    /// un servidor de pruebas y lo unico sustituible es esto.
+    client: Arc<dyn HttpClient>,
 }
 
 impl CrawlPolicy {
@@ -313,7 +342,18 @@ impl CrawlPolicy {
             config,
             robots_cache: HashMap::new(),
             rate_state: HashMap::new(),
+            client: Arc::new(UreqClient),
         }
+    }
+
+    /// El mismo motor con otro transporte.
+    ///
+    /// Es lo que hace probables los dos caminos de red de este modulo. Antes de
+    /// V473 no habia **ni un** test de ninguno de los dos, y por eso nada cazaba
+    /// que un dominio caido se leyera como permiso para rastrearlo entero.
+    pub fn with_http_client(mut self, client: Arc<dyn HttpClient>) -> Self {
+        self.client = client;
+        self
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -521,7 +561,9 @@ impl CrawlPolicy {
     /// Check if a URL is allowed to be crawled according to robots.txt.
     ///
     /// Fetches and caches the robots.txt for the domain if not already cached.
-    /// Returns `true` if `respect_robots_txt` is disabled.
+    /// Returns `true` if `respect_robots_txt` is disabled. Lo que se decide
+    /// cuando el fichero **no** se puede leer esta en
+    /// [`CrawlPolicy::fetch_robots_txt`], con el RFC al lado.
     pub fn is_url_allowed(&mut self, url: &str) -> Result<bool> {
         if !self.config.respect_robots_txt {
             return Ok(true);
@@ -531,15 +573,14 @@ impl CrawlPolicy {
             .ok_or_else(|| anyhow!("Could not extract domain from URL: {}", url))?;
         let path = Self::extract_path(url);
 
-        // Ensure we have robots.txt cached for this domain
-        self.fetch_robots_txt(&domain)?;
-
-        if let Some((parsed, _)) = self.robots_cache.get(&domain) {
-            Ok(parsed.is_allowed(&self.config.user_agent, &path))
-        } else {
-            // If we failed to fetch robots.txt, allow by default
-            Ok(true)
-        }
+        // La copia del agente es para poder preguntar por el mientras
+        // `fetch_robots_txt` tiene prestado el motor. Aqui habia una rama `else`
+        // que concedia permiso «si no se pudo traer el robots.txt» ---imposible,
+        // porque la funcion acaba de insertar la entrada--- y lo que de verdad
+        // hacia era dejar escrita una politica que ya no es la de abajo.
+        let user_agent = self.config.user_agent.clone();
+        let parsed = self.fetch_robots_txt(&domain)?;
+        Ok(parsed.is_allowed(&user_agent, &path))
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -598,6 +639,27 @@ impl CrawlPolicy {
     ///
     /// Returns a reference to the cached parsed robots.txt. If the cache is still
     /// valid (within TTL), returns the cached version without making a new request.
+    ///
+    /// # Lo que se decide cuando el fichero no se puede leer
+    ///
+    /// Los tres caminos de fallo acababan en «todo permitido», y para uno de
+    /// ellos eso es lo contrario de lo que manda el RFC 9309:
+    ///
+    /// | lo que contesto el dominio | RFC 9309 | aqui |
+    /// |---|---|---|
+    /// | 2xx | 2.3.1.1: parsearlo | se parsea |
+    /// | 4xx, o un 3xx que el transporte no resolvio | 2.3.1.3: «the crawler MAY access any resources» | todo permitido |
+    /// | 5xx | 2.3.1.4: «MUST assume complete disallow» | todo prohibido |
+    /// | nada: conexion, DNS, plazo agotado | 2.3.1.4 cubre lo «unreachable» | todo prohibido |
+    /// | los dos ultimos **habiendo copia** | 2.4: la copia vale incluso pasado el dia | se mantiene la copia |
+    ///
+    /// El 5xx es el que importa: un dominio caido no es un dominio que invite a
+    /// rastrearlo entero, y el camino anterior ---`Err(_)` a un `robots.txt`
+    /// vacio--- convertia su caida en permiso.
+    ///
+    /// La copia que se mantiene se vuelve a fechar hoy, o sea que no se pregunta
+    /// otra vez hasta que pase el TTL. Es lo que la seccion 2.4 permite, y evita
+    /// insistirle a un dominio que ya esta caido.
     pub fn fetch_robots_txt(&mut self, domain: &str) -> Result<&ParsedRobotsTxt> {
         let now = Instant::now();
 
@@ -616,27 +678,35 @@ impl CrawlPolicy {
         }
 
         // Fetch robots.txt from the domain
-        let url = format!("https://{}/robots.txt", domain);
-        let timeout = self.config.timeout_ms / 1000;
-        let timeout = if timeout == 0 { 1 } else { timeout };
+        let request = HttpRequest::get(format!("https://{}/robots.txt", domain))
+            .timeout(self.config.timeout())
+            .header("User-Agent", self.config.user_agent.as_str());
 
-        let content = match ureq::Agent::new_with_config(
-            ureq::Agent::config_builder()
-                .timeout_global(Some(Duration::from_secs(timeout)))
-                .build(),
-        )
-        .get(&url)
-        .header("User-Agent", &self.config.user_agent)
-        .call()
-        {
-            Ok(mut response) => response.body_mut().read_to_string().unwrap_or_default(),
-            Err(_) => {
-                // If we can't fetch robots.txt, use an empty one (allow all)
-                String::new()
+        let fetched = match self.client.send(&request) {
+            // 2.3.1.1. El cuerpo se lee **con perdida** porque el RFC permite
+            // saltarse los octetos que no sean UTF-8 valido: un fichero con un
+            // byte suelto no es un dominio sin reglas, que es en lo que lo
+            // convertia el `read_to_string().unwrap_or_default()` de antes.
+            Ok(response) if response.is_success() => Some(Self::parse_robots_txt(
+                &String::from_utf8_lossy(&response.body),
+            )),
+            // 2.3.1.3. Detras de este puerto un no-2xx llega como `Ok`, asi que
+            // el estado hay que mirarlo: con el `.call()` de `ureq` un 404 venia
+            // como `Err` y caia en el mismo saco que no haber servidor.
+            Ok(response) if (300..500).contains(&response.status) => {
+                Some(ParsedRobotsTxt::allow_all())
             }
+            // 2.3.1.4: 5xx, o no hubo respuesta.
+            Ok(_) | Err(_) => None,
         };
 
-        let parsed = Self::parse_robots_txt(&content);
+        let parsed = match (fetched, self.robots_cache.remove(domain)) {
+            (Some(parsed), _) => parsed,
+            // 2.4: una copia vieja es mejor dato que una prohibicion general.
+            (None, Some((cached, _))) => cached,
+            (None, None) => ParsedRobotsTxt::disallow_all(),
+        };
+
         self.robots_cache
             .insert(domain.to_string(), (parsed, Instant::now()));
 
@@ -679,23 +749,25 @@ impl CrawlPolicy {
     }
 
     /// Fetch and parse a sitemap from a URL.
+    ///
+    /// Un no-2xx es un error, y el mensaje lleva el **cuerpo** dentro: es donde
+    /// el servidor explica por que. Con `.call()` el no-2xx ya era un error, pero
+    /// de `ureq` 3 solo se podia sacar el numero.
     pub fn fetch_sitemap(&self, url: &str) -> Result<ParsedSitemap> {
-        let timeout = self.config.timeout_ms / 1000;
-        let timeout = if timeout == 0 { 1 } else { timeout };
+        let request = HttpRequest::get(url)
+            .timeout(self.config.timeout())
+            .header("User-Agent", self.config.user_agent.as_str());
 
-        let mut response = ureq::Agent::new_with_config(
-            ureq::Agent::config_builder()
-                .timeout_global(Some(Duration::from_secs(timeout)))
-                .build(),
-        )
-        .get(url)
-        .header("User-Agent", &self.config.user_agent)
-        .call()
-        .map_err(|e| anyhow!("Failed to fetch sitemap {}: {}", url, e))?;
+        let response = self
+            .client
+            .send(&request)
+            .map_err(|e| anyhow!("Failed to fetch sitemap {}: {}", url, e))?;
+        response
+            .error_for_status()
+            .map_err(|e| anyhow!("Failed to fetch sitemap {}: {}", url, e))?;
 
         let content = response
-            .body_mut()
-            .read_to_string()
+            .text()
             .map_err(|e| anyhow!("Failed to read sitemap response: {}", e))?;
 
         Self::parse_sitemap(&content)
@@ -1037,5 +1109,231 @@ Sitemap: https://example.com/sitemap2.xml
             policy.get_delay("veryslow.com"),
             Duration::from_millis(5000)
         );
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Transporte
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Los dos caminos de red de este modulo, probados sin red.
+///
+/// Antes de V473 no habia **ni uno**: lo que se probaba aqui era el parseo de
+/// `robots.txt` y de los sitemaps, que son funciones puras. Y la razon no era
+/// descuido ---la URL se construye aqui dentro, asi que no habia donde apuntar
+/// un servidor de pruebas--- sino exactamente el hueco que cierra inyectar el
+/// cliente.
+#[cfg(test)]
+mod transport_tests {
+    use super::*;
+    use crate::http_client::{CannedHttpClient, FailingHttpClient};
+
+    const REGLAS: &str = "User-agent: *\nDisallow: /private/\nAllow: /public/\nCrawl-delay: 2\nSitemap: https://example.com/sitemap.xml\n";
+
+    fn motor(client: Arc<dyn HttpClient>) -> CrawlPolicy {
+        CrawlPolicy::new(CrawlPolicyConfig::default()).with_http_client(client)
+    }
+
+    #[test]
+    fn un_2xx_manda_sus_reglas() {
+        let client = Arc::new(CannedHttpClient::new(200, REGLAS));
+        let mut policy = motor(client.clone());
+
+        assert!(policy
+            .is_url_allowed("https://example.com/public/a")
+            .unwrap());
+        assert!(!policy
+            .is_url_allowed("https://example.com/private/a")
+            .unwrap());
+        assert_eq!(client.calls(), 1, "la segunda pregunta sale de la cache");
+    }
+
+    #[test]
+    fn un_5xx_lo_prohibe_todo() {
+        let client = Arc::new(CannedHttpClient::new(503, "en mantenimiento"));
+        let mut policy = motor(client);
+
+        // RFC 9309 seccion 2.3.1.4: «MUST assume complete disallow». Esto
+        // contestaba `true` a las dos, porque el error se convertia en un
+        // `robots.txt` vacio y un fichero vacio no prohibe nada.
+        assert!(!policy.is_url_allowed("https://example.com/").unwrap());
+        assert!(!policy
+            .is_url_allowed("https://example.com/cualquier/cosa")
+            .unwrap());
+    }
+
+    #[test]
+    fn un_4xx_lo_permite_todo() {
+        let client = Arc::new(CannedHttpClient::new(404, "no hay fichero"));
+        let mut policy = motor(client);
+
+        // Seccion 2.3.1.3: «the crawler MAY access any resources on the server».
+        assert!(policy
+            .is_url_allowed("https://example.com/cualquier/cosa")
+            .unwrap());
+    }
+
+    #[test]
+    fn sin_respuesta_lo_prohibe_todo() {
+        let mut policy = motor(Arc::new(FailingHttpClient));
+
+        // No es lo mismo que un 4xx: aqui no se sabe si hay reglas o no, y la
+        // seccion 2.3.1.4 cubre tambien lo «unreachable».
+        assert!(!policy.is_url_allowed("https://example.com/").unwrap());
+    }
+
+    #[test]
+    fn una_copia_en_cache_sobrevive_a_que_el_dominio_se_caiga() {
+        // Contesta una vez y a la siguiente ya se ha caido; el TTL a cero fuerza
+        // a preguntar de nuevo en vez de esperar un dia.
+        let client = Arc::new(CannedHttpClient::sequence(vec![
+            (200, REGLAS.as_bytes().to_vec()),
+            (503, b"en mantenimiento".to_vec()),
+        ]));
+        let mut policy =
+            CrawlPolicy::new(CrawlPolicyConfig::default().with_robots_cache_ttl_secs(0))
+                .with_http_client(client.clone());
+
+        assert!(!policy
+            .is_url_allowed("https://example.com/private/a")
+            .unwrap());
+        // Seccion 2.4: la copia sigue valiendo, asi que `/public` sigue
+        // permitido en vez de caer en la prohibicion general del 5xx.
+        assert!(policy
+            .is_url_allowed("https://example.com/public/a")
+            .unwrap());
+        // La premisa del caso, afirmada: con TTL cero se vuelve a preguntar, y lo
+        // que contesto la segunda vez fue la caida. Sin esta linea el test pasaba
+        // tambien con un doble que sirviera dos veces el 200, o sea sin probar
+        // nada de la seccion 2.4.
+        assert_eq!(client.served(), vec![200, 503]);
+    }
+
+    #[test]
+    fn la_cache_evita_la_segunda_peticion() {
+        let client = Arc::new(CannedHttpClient::new(200, REGLAS));
+        let mut policy = motor(client.clone());
+
+        for _ in 0..3 {
+            policy.is_url_allowed("https://example.com/a").unwrap();
+        }
+        assert_eq!(client.calls(), 1);
+    }
+
+    #[test]
+    fn con_respect_robots_txt_apagado_no_se_sale_al_cable() {
+        let client = Arc::new(CannedHttpClient::new(503, ""));
+        let mut policy =
+            CrawlPolicy::new(CrawlPolicyConfig::default().with_respect_robots_txt(false))
+                .with_http_client(client.clone());
+
+        assert!(policy
+            .is_url_allowed("https://example.com/private/a")
+            .unwrap());
+        assert_eq!(client.calls(), 0, "no hay nada que preguntar");
+    }
+
+    #[test]
+    fn la_peticion_lleva_la_url_del_dominio_el_agente_y_el_plazo_exacto() {
+        let client = Arc::new(CannedHttpClient::new(200, REGLAS));
+        let mut policy = CrawlPolicy::new(
+            CrawlPolicyConfig::default()
+                .with_user_agent("mi-rastreador/1.0".to_string())
+                .with_timeout_ms(2_500),
+        )
+        .with_http_client(client.clone());
+
+        policy
+            .is_url_allowed("https://example.com/a/b?q=1")
+            .unwrap();
+
+        let request = client.seen();
+        assert_eq!(request.url, "https://example.com/robots.txt");
+        assert_eq!(
+            request.headers,
+            vec![("User-Agent".to_string(), "mi-rastreador/1.0".to_string())]
+        );
+        // El plazo sale de `config.timeout()`, que ya existia y no usaba nadie:
+        // los dos fetchers lo volvian a derivar dividiendo los milisegundos
+        // entre mil, con lo que 2,5 s se quedaban en 2 y medio segundo subia a 1.
+        assert_eq!(request.timeout, Duration::from_millis(2_500));
+    }
+
+    #[test]
+    fn un_byte_que_no_es_utf8_no_borra_las_reglas() {
+        // `read_to_string().unwrap_or_default()` devolvia el fichero VACIO ante
+        // un solo octeto invalido, o sea «todo permitido» por un byte suelto.
+        let mut body = REGLAS.as_bytes().to_vec();
+        body.extend_from_slice(b"# comentario \xff\xfe\n");
+        let client = Arc::new(CannedHttpClient::raw(200, body));
+        let mut policy = motor(client);
+
+        assert!(!policy
+            .is_url_allowed("https://example.com/private/a")
+            .unwrap());
+    }
+
+    #[test]
+    fn el_retraso_sale_del_robots_y_el_prohibido_no_inventa_ninguno() {
+        let client = Arc::new(CannedHttpClient::new(200, REGLAS));
+        let mut policy = motor(client);
+        policy.is_url_allowed("https://example.com/a").unwrap();
+        assert_eq!(policy.get_delay("example.com"), Duration::from_secs(2));
+
+        let caido = Arc::new(CannedHttpClient::new(503, ""));
+        let mut policy = motor(caido);
+        policy.is_url_allowed("https://example.com/a").unwrap();
+        // El robots.txt sintetico que lo prohibe todo no trae `Crawl-delay`, asi
+        // que el retraso es el configurado y no un numero inventado.
+        assert_eq!(
+            policy.get_delay("example.com"),
+            CrawlPolicyConfig::default().default_delay()
+        );
+    }
+
+    #[test]
+    fn los_sitemaps_declarados_salen_del_robots() {
+        let client = Arc::new(CannedHttpClient::new(200, REGLAS));
+        let mut policy = motor(client);
+
+        assert_eq!(
+            policy.discover_sitemaps("example.com").unwrap(),
+            vec!["https://example.com/sitemap.xml".to_string()]
+        );
+    }
+
+    #[test]
+    fn un_sitemap_no_2xx_es_un_error_con_el_cuerpo_dentro() {
+        let client = Arc::new(CannedHttpClient::new(500, "<html>se cayo la base</html>"));
+        let policy = motor(client);
+
+        let error = policy
+            .fetch_sitemap("https://example.com/sitemap.xml")
+            .expect_err("un 500 no es un sitemap");
+        let texto = error.to_string();
+        assert!(texto.contains("500"), "{texto}");
+        // El cuerpo dentro del mensaje es lo que convierte «dijo que no» en un
+        // diagnostico; de `ureq` 3 solo salia el numero.
+        assert!(texto.contains("se cayo la base"), "{texto}");
+    }
+
+    #[test]
+    fn un_sitemap_2xx_se_parsea() {
+        let xml = concat!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n",
+            "<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n",
+            "  <url><loc>https://example.com/a</loc></url>\n",
+            "  <url><loc>https://example.com/b</loc></url>\n",
+            "</urlset>"
+        );
+        let client = Arc::new(CannedHttpClient::new(200, xml));
+        let policy = motor(client.clone());
+
+        let sitemap = policy
+            .fetch_sitemap("https://example.com/sitemap.xml")
+            .unwrap();
+        assert_eq!(sitemap.entries.len(), 2);
+        assert!(!sitemap.is_index);
+        assert_eq!(client.seen().url, "https://example.com/sitemap.xml");
     }
 }

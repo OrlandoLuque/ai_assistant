@@ -1,0 +1,167 @@
+# Mutations for `src/crawl_policy.rs`, el segundo lector de `robots.txt`.
+#
+# POR QUE ESTE MODULO TIENE SPEC
+# ------------------------------
+# V473 lo migro al puerto `HttpClient` y, al hacerlo, encontro que sus dos
+# caminos de red ---el `robots.txt` y el sitemap--- no tenian **ni un** test. La
+# razon no era descuido: la URL se construye aqui dentro
+# (`https://{dominio}/robots.txt`), asi que no habia donde apuntar un servidor de
+# pruebas y lo unico sustituible es el transporte. Con el cliente inyectado son
+# trece tests nuevos, y lo que vigila este fichero es que sigan sirviendo para
+# algo.
+#
+# Lo que decide el comportamiento no es una preferencia nuestra, es el RFC 9309,
+# y la asimetria importa: un 4xx permite rastrear (2.3.1.3, «the crawler MAY
+# access any resources»), un 5xx lo **prohibe** (2.3.1.4, «MUST assume complete
+# disallow»). Antes de V473 los tres caminos de fallo acababan en «todo
+# permitido», o sea que un dominio caido se leia como permiso para rastrearlo
+# entero. Esa es la mutacion M1 y es el estado anterior del codigo, literal.
+#
+# POR QUE AQUI SE MUTA UNA LINEA DE `http_client.rs`
+# --------------------------------------------------
+# M7 y M8 cambian el doble de pruebas del puerto, no este modulo. Estan aqui
+# porque el test que las necesita esta aqui, y porque esa mutacion es la que
+# encontro el defecto mas sutil de la tanda: el test del §2.4 pasaba **igual**
+# con un doble que sirviera siempre su primera respuesta, o sea sin comprobar
+# nunca que la segunda peticion hubiera visto la caida. No faltaba un test;
+# sobraba una suposicion. Y el primer arreglo ---un `served()` deducido de la
+# lista de respuestas y del numero de llamadas--- seguia sin matar a nadie,
+# porque un testigo deducido de la regla que vigila no es un testigo.
+#
+# `features = "browser"` porque es la feature que compila este modulo
+# (`browser = ["autonomous"]`, y esta dentro de `FEATURES_STD`); `full` a solas
+# **no** lo compila.
+
+features = "browser"
+filter = "crawl_policy::transport_tests"
+
+# ---------------------------------------------------------------------------
+# M1: el 5xx y la falta de respuesta vuelven a permitir todo
+# ---------------------------------------------------------------------------
+# El defecto original, literal: el brazo del error devolvia un `robots.txt`
+# vacio, y un fichero sin reglas es permiso para todo.
+[[mutation]]
+id = "M1"
+file = "src/crawl_policy.rs"
+filter = "crawl_policy::transport_tests"
+invariant = "un 5xx, o no haber respuesta, prohiben todo el dominio (RFC 9309 2.3.1.4); un dominio caido no es un dominio que invite a rastrearlo entero"
+before = "            Ok(_) | Err(_) => None,"
+after = "            Ok(_) | Err(_) => Some(ParsedRobotsTxt::allow_all()),"
+occurrences = 1
+
+# ---------------------------------------------------------------------------
+# M2: la frontera 4xx/5xx se corre hasta 600
+# ---------------------------------------------------------------------------
+# La mutacion de un caracter que borra la unica asimetria que el RFC pide. Si
+# esta sobrevive, el modulo trata igual «no hay fichero» y «el servidor se ha
+# caido», que es exactamente el fallo de antes con otra cara.
+[[mutation]]
+id = "M2"
+file = "src/crawl_policy.rs"
+filter = "crawl_policy::transport_tests::un_5xx_lo_prohibe_todo"
+invariant = "el tramo del «MAY access» acaba en 500: el 4xx permite y el 5xx no"
+before = "            Ok(response) if (300..500).contains(&response.status) => {"
+after = "            Ok(response) if (300..600).contains(&response.status) => {"
+occurrences = 1
+
+# ---------------------------------------------------------------------------
+# M3: la copia en cache se tira cuando el dominio se cae
+# ---------------------------------------------------------------------------
+# El §2.4 permite seguir usando una copia cuando el fichero es ilegible, incluso
+# pasado el dia. Tirarla y prohibir todo es prudente pero es **peor dato**: se
+# tenian las reglas y se cambian por una prohibicion general.
+[[mutation]]
+id = "M3"
+file = "src/crawl_policy.rs"
+filter = "crawl_policy::transport_tests::una_copia_en_cache_sobrevive_a_que_el_dominio_se_caiga"
+invariant = "si ya habia una copia parseada, un fallo posterior no la pisa (RFC 9309 2.4)"
+before = "            (None, Some((cached, _))) => cached,"
+after = "            (None, Some(_)) => ParsedRobotsTxt::disallow_all(),"
+occurrences = 1
+
+# ---------------------------------------------------------------------------
+# M4: el cuerpo se lee estricto y un byte invalido vacia el fichero
+# ---------------------------------------------------------------------------
+# Era `read_to_string().unwrap_or_default()`: **un** octeto que no es UTF-8
+# valido convertia el fichero entero en la cadena vacia, o sea en permiso total.
+# El RFC pide lo contrario, seguir las reglas que si se pueden leer.
+[[mutation]]
+id = "M4"
+file = "src/crawl_policy.rs"
+filter = "crawl_policy::transport_tests::un_byte_que_no_es_utf8_no_borra_las_reglas"
+invariant = "un byte invalido no borra las reglas legibles: el cuerpo se decodifica con perdida"
+before = """            Ok(response) if response.is_success() => Some(Self::parse_robots_txt(
+                &String::from_utf8_lossy(&response.body),
+            )),"""
+after = """            Ok(response) if response.is_success() => Some(Self::parse_robots_txt(
+                &response.text().unwrap_or_default(),
+            )),"""
+occurrences = 1
+
+# ---------------------------------------------------------------------------
+# M5: el plazo se vuelve a derivar dividiendo entre mil
+# ---------------------------------------------------------------------------
+# `CrawlPolicyConfig::timeout()` existia y no la usaba ninguno de los dos
+# fetchers: cada uno hacia `timeout_ms / 1000`, division entera, asi que 2,5 s se
+# quedaban en 2 y medio segundo subia a 1 por el `if timeout == 0 { 1 }` de al
+# lado. Una cifra configurada que el codigo redondea en silencio.
+[[mutation]]
+id = "M5"
+file = "src/crawl_policy.rs"
+filter = "crawl_policy::transport_tests::la_peticion_lleva_la_url_del_dominio_el_agente_y_el_plazo_exacto"
+invariant = "el plazo de la peticion es el configurado, al milisegundo, y no una division entera de segundos"
+before = """        let request = HttpRequest::get(format!("https://{}/robots.txt", domain))
+            .timeout(self.config.timeout())"""
+after = """        let request = HttpRequest::get(format!("https://{}/robots.txt", domain))
+            .timeout(Duration::from_secs(self.config.timeout_ms / 1000))"""
+occurrences = 1
+
+# ---------------------------------------------------------------------------
+# M6: el sitemap deja pasar el no-2xx
+# ---------------------------------------------------------------------------
+# Trampa numero 2 del puerto: detras de el un no-2xx llega como `Ok`, asi que si
+# nadie pide el error, la pagina de error de un 500 se parsea como si fuera un
+# sitemap. Con `.call()` de `ureq` esto ya era un error ---lo que se gana es el
+# cuerpo dentro del mensaje--- y justo por eso es una regresion facil de meter al
+# migrar.
+[[mutation]]
+id = "M6"
+file = "src/crawl_policy.rs"
+filter = "crawl_policy::transport_tests::un_sitemap_no_2xx_es_un_error_con_el_cuerpo_dentro"
+invariant = "un sitemap que no es 2xx es un error, y el mensaje lleva el cuerpo dentro"
+before = """        response
+            .error_for_status()
+            .map_err(|e| anyhow!("Failed to fetch sitemap {}: {}", url, e))?;"""
+after = ""
+occurrences = 1
+
+# ---------------------------------------------------------------------------
+# M7: el doble sirve siempre su primera respuesta, visto desde este modulo
+# ---------------------------------------------------------------------------
+# La que no mato a nadie a la primera. Si el test del §2.4 no afirma **que
+# estados se sirvieron**, un doble roto le sirve dos veces el 200 y la asercion
+# pasa igual, sin haber probado nada. Es el unico mutante de esta tanda que
+# vigila un test en vez de un trozo de produccion, y por eso esta.
+[[mutation]]
+id = "M7"
+file = "src/http_client.rs"
+filter = "crawl_policy::transport_tests::una_copia_en_cache_sobrevive_a_que_el_dominio_se_caiga"
+invariant = "el test de la copia en cache afirma su propia premisa: la segunda peticion vio la caida, no otra vez el 200"
+before = "        let index = seen.len().min(self.responses.len() - 1);"
+after = "        let index = 0;"
+occurrences = 1
+
+# ---------------------------------------------------------------------------
+# M8: lo mismo, visto desde el test del propio doble
+# ---------------------------------------------------------------------------
+# El doble compartido es ahora de los dos modulos (V473 lo subio al puerto desde
+# los tests de `web_search`), asi que tiene su propio test; esta mutacion es la
+# que comprueba que ese test sirve para algo.
+[[mutation]]
+id = "M8"
+file = "src/http_client.rs"
+filter = "http_client::tests::el_doble_sirve_la_secuencia_en_orden_y_repite_la_ultima"
+invariant = "`CannedHttpClient::sequence` sirve las respuestas en orden y repite la ultima"
+before = "        let index = seen.len().min(self.responses.len() - 1);"
+after = "        let index = 0;"
+occurrences = 1

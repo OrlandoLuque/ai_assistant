@@ -2304,7 +2304,7 @@ biggest.
 
 ### Test doubles for consumers: the `test-utils` feature
 
-Two of the doubles this crate uses for its own tests are available to you, behind
+Four of the doubles this crate uses for its own tests are available to you, behind
 `test-utils` (off by default — a mock server in a release binary helps nobody):
 
 ```toml
@@ -2320,13 +2320,30 @@ ai_assistant = { version = "0.2", features = ["test-utils"] }
   delivers the whole body a byte at a time, which is the only way to tell a per-read
   timeout from a total one.
 
-Until V443 both were `#[cfg(test)]`, so writing `MockHttpServer::start()` in another crate
-did not compile and the only option was hand-rolling a TCP server — exactly the work these
-two already did in here.
+- **`CannedHttpClient`** — implements `HttpClient` itself, so it replaces the *transport*
+  instead of the server: it answers a prepared status and body, or a `sequence` of them with
+  the last one repeating, and it records what went out — `seen()` for the last request,
+  `calls()` for how many, `served()` for the statuses it really served. This is the one to
+  reach for when the code under test *builds* its own URL
+  (`https://{domain}/robots.txt`) and there is nowhere to point a server at.
+- **`FailingHttpClient`** — every send is an `Err`. It is the case that separates "the server
+  said no" from "there was no server", which behind this port are different things: a non-2xx
+  arrives as `Ok` with a status, and only a transport failure is `Err`.
+
+Until V443 the first two were `#[cfg(test)]`, so writing `MockHttpServer::start()` in another
+crate did not compile and the only option was hand-rolling a TCP server — exactly the work
+these two already did in here. The other two made the same move in V473, when a second module
+needed the same double and copying it would have left two places to remember this port's trap
+in, and one to forget it in.
 
 `MockHttpClient` stays internal: it pins the status at 200, which makes it the wrong tool
-for most things a consumer wants to test. Implement `HttpClient` yourself — it is one
-required method — and see "Injecting a different client" below for where to hand it in.
+for most things a consumer wants to test — `CannedHttpClient` is the general version of it.
+
+Writing your own is still fine, and it is **two** required methods, not one: `send` and
+`send_streaming`. This sentence said "one" until V473, and so did the doc comment on `send`;
+what showed it was that both doubles added that day had to write a `send_streaming` that
+bails. The other three (`get_json`, `post_json`, `post_streaming`) derive from those two. See
+"Injecting a different client" below for where to hand your client in.
 
 ---
 

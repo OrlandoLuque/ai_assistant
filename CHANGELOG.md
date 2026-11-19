@@ -5,6 +5,121 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v357 (2026-11-19) - V473: el otro lector de robots.txt convertia un dominio caido en permiso para rastrearlo entero, y sus dos caminos de red no los probaba nadie (0.2.440)
+
+El gemelo que V472 dejo apuntado con sus numeros de linea, y la tarea `#77` otra vez: confinar la
+E/S detras del puerto `HttpClient`. `src/crawl_policy.rs` no tiene ya ninguna llamada a `ureq`.
+
+### El mismo defecto, por el lado opuesto de la misma trampa
+
+Este modulo tiene su propio lector de `robots.txt`, con su propio tipo de reglas, y llegaba al
+mismo sitio desde el otro lado: usaba `.call()` de `ureq` 3, donde un no-2xx **es** un `Err`, y el
+brazo del error lo decia por escrito.
+
+> `// If we can't fetch robots.txt, use an empty one (allow all)`
+
+Un fichero sin reglas es permiso para todo, asi que el 404 de un dominio sin fichero, el 5xx de un
+dominio caido y un cable desenchufado acababan los tres en la misma respuesta. Para el primero eso
+es lo que manda el RFC 9309; para el segundo es lo contrario de lo que manda.
+
+| lo que contesto el dominio | RFC 9309 | antes | ahora |
+|---|---|---|---|
+| 2xx | §2.3.1.1: parsearlo | se parseaba | se parsea, con el cuerpo decodificado **con perdida** |
+| 4xx, o un 3xx que el transporte no resolvio | §2.3.1.3: *«the crawler MAY access any resources»* | todo permitido | todo permitido |
+| 5xx | §2.3.1.4: *«MUST assume complete disallow»* | **todo permitido** | todo prohibido |
+| nada: conexion, DNS, plazo agotado | §2.3.1.4 cubre lo *«unreachable»* | **todo permitido** | todo prohibido |
+| los dos ultimos **habiendo copia** | §2.4: la copia vale incluso pasado el dia | se tiraba la copia | se mantiene la copia |
+
+La ultima fila es lo que **no** lleva el gemelo de `web_search.rs`, y no por descuido: su cache no
+tiene TTL ninguno ---se pregunta una vez por dominio y por rastreador, como dice su propia entrada
+de V472---, asi que alli un fallo nunca llega a pisar una copia buena. Dos modulos, dos
+estructuras, y la regla del §2.4 solo tiene donde aplicarse en uno. Comprobado antes de escribirla,
+no deducido.
+
+### Lo que no probaba nadie, y por que
+
+Los dos caminos de red de este modulo ---el `robots.txt` y el sitemap--- no tenian **ni un** test.
+La razon no era descuido: la URL se construye aqui dentro (`https://{dominio}/robots.txt`), asi que
+no hay donde apuntar un servidor de pruebas y lo unico sustituible es el transporte. Es el mismo
+hueco estructural que V470 encontro en cuatro de los siete proveedores de busqueda, y se cierra
+igual: `client: Arc<dyn HttpClient>` mas `with_http_client`. **Trece tests** nuevos.
+
+### El doble de pruebas iba a ser la segunda copia
+
+El doble que hacia falta ya existia ---dentro de los tests de `web_search`, desde V470--- y
+copiarlo habria dejado dos sitios donde recordar la trampa de este puerto. Esta ahora en
+`http_client.rs`, junto a `MockHttpServer` y bajo la misma feature `test-utils`, que es el camino
+que ese servidor ya recorrio en V443: son `CannedHttpClient` y `FailingHttpClient`, y `web_search`
+usa esos. **Una** definicion, 24 tests de un lado y 13 del otro, y dos mas del doble en si.
+
+### La mutacion caza un test que pasaba por el motivo equivocado
+
+Ocho mutaciones, ocho muertas ---pero no a la primera, y lo que costo las dos pasadas de mas vale
+mas que el commit.
+
+El test de la copia en cache ---«la primera vez el dominio contesta y la segunda se ha caido»---
+pasaba **igual** con un doble que sirviera siempre su primera respuesta: nunca comprobaba que la
+segunda peticion hubiera visto la caida. No faltaba un test, sobraba una suposicion. Y el testigo
+que escribi para arreglarlo ---un `served()` que recalculaba que respuesta tocaba--- estaba
+**deducido de la misma regla que vigilaba**, asi que la mutacion siguio sin matar a nadie. Ahora lo
+servido se apunta al servirlo. Un testigo deducido de la regla no es un testigo.
+
+Esa es la mutacion `M7` de `scripts/mutations/crawl_policy.toml`, y es la unica de la tanda que
+vigila un test en vez de un trozo de produccion.
+
+### Dos cosas mas, de las que aparecen al migrar
+
+`CrawlPolicyConfig::timeout()` existia y **no la usaba ninguno de los dos fetchers**: cada uno
+volvia a derivar el plazo con `timeout_ms / 1000`, division entera, asi que 2,5 s se quedaban en 2
+y medio segundo subia a 1 por el `if timeout == 0 { 1 }` de al lado. Una cifra configurada que el
+codigo redondeaba en silencio.
+
+Y `is_url_allowed` tenia una rama muerta que concedia permiso «si no se pudo traer el robots.txt»
+---imposible, porque la funcion de arriba acaba de insertar la entrada---, con lo que lo unico que
+hacia esa rama era dejar escrita una politica que ya no es la del modulo. Fuera, pidiendo la
+referencia que `fetch_robots_txt` devuelve.
+
+### Y una afirmacion falsa en tres sitios
+
+`HttpClient` tiene **dos** metodos obligatorios, `send` y `send_streaming`. El comentario de `send`
+decia «es el unico metodo que un implementador tiene que escribir», y lo repetian `docs/GUIDE.md` y
+la pagina de la web. Lo que lo saco a la luz es que los dos dobles de este commit tuvieron que
+escribir un `send_streaming` que falla a proposito. Corregido en los tres, y que haya que
+declararlo se queda como esta: obliga a decidirlo en compilacion en vez de dejarlo fallar en
+ejecucion.
+
+### Lo que NO es
+
+- **No es un fallo que estuviera afectando a nadie hoy.** `CrawlPolicy` no lo construye ningun otro
+  modulo de la crate ---el rastreador que usa la GUI es el de `web_search.rs`, el de V472---, asi
+  que lo que se corrige aqui es la biblioteca para quien la consuma.
+- **No cierra la tarea `#77`.** Quedan **46** ficheros con llamadas vivas a `ureq`, 137 lineas en
+  total, mas `http_client.rs`, que es donde `ureq` debe estar. Los cuatro de `reqwest` son asincronos
+  y no van a este puerto: eso es una decision de diseno, no una migracion.
+- **No se toca el rastreador de `web_search.rs`.** Su cache de `robots.txt` sigue sin caducar, que es
+  una desviacion del §2.4 anotada ya en V472 y que sigue siendo otra decision.
+- **No se anade reintento** ni se cambia ningun plazo, salvo el que estaba mal redondeado.
+
+### Verificacion
+
+`puertas`: **32 puertas, 31 verdes** a la primera y `fmt` rojo por mi formato en los tests nuevos;
+verde entero tras `cargo fmt`, que solo toco `src/crawl_policy.rs`. Las cinco puertas de numeros, vueltas a correr tras tocar las cifras: verdes. Mutaciones:
+`8/8 DIED`, cada una
+nombrando su test. Y lo que no corre esa bateria sigue sin correrlo: la bateria del arnes, el
+trabajo de los 41 binarios y los doc-tests, que quedan para CI.
+
+| cifra | V472 | V473 | comando |
+|---|---|---|---|
+| titular (`FEATURES_STD`, lib) | 9.194 | **9.209** | `cargo test --features "$FEATURES_STD" --lib` |
+| `--features full` a solas | 7.403 | **7.405** | `cargo test --features full --lib` |
+| el minimo de ocho features | 5.362 | **5.364** | `cargo test --no-default-features --features "$FEATURES_MIN"` |
+| atributos `#[test]` en `src/` | 10.285 | **10.300** | `grep -rc "#\[test\]" src/` |
+
+El titular sube 15 y el minimo solo 2, y la asimetria es la que hay que leer: trece de los quince
+tests estan detras de la feature `browser`, que **no** entra ni en `full` ni en el minimo de ocho.
+Los dos que suben en todas partes son los del doble compartido, que vive en `http_client.rs` y no
+tiene puerta de feature.
+
 ## [Unreleased] - v356 (2026-11-19) - V472: el robots.txt se descargaba en dos copias y los tres caminos de fallo acababan en «todo permitido», incluido el 5xx que el RFC prohibe (0.2.439)
 
 Cierra `web_search.rs` para la tarea `#77`: **ya no queda una sola llamada a `ureq` a pelo en el

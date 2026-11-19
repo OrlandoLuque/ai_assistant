@@ -2239,84 +2239,7 @@ Disallow: /nogoogle/
 #[cfg(test)]
 mod transport_tests {
     use super::*;
-    use crate::http_client::{HttpMethod, HttpStream};
-
-    /// Contesta una respuesta preparada y guarda la peticion que vio.
-    ///
-    /// Un doble y no un `MockHttpServer`: ademas de servir para los cuatro de
-    /// URL fija, el test no depende de que haya un puerto libre ni de lo que
-    /// escuche en localhost.
-    struct Canned {
-        status: u16,
-        body: Vec<u8>,
-        seen: Mutex<Vec<HttpRequest>>,
-    }
-
-    impl Canned {
-        fn new(status: u16, body: &str) -> Self {
-            Self {
-                status,
-                body: body.as_bytes().to_vec(),
-                seen: Mutex::new(Vec::new()),
-            }
-        }
-
-        /// Un cuerpo que **no** es UTF-8 valido, que `String` no puede llevar.
-        fn raw(status: u16, body: Vec<u8>) -> Self {
-            Self {
-                status,
-                body,
-                seen: Mutex::new(Vec::new()),
-            }
-        }
-
-        /// La ultima peticion que el proveedor mando de verdad al cable.
-        fn seen(&self) -> HttpRequest {
-            self.seen
-                .lock()
-                .expect("el candado del doble")
-                .last()
-                .cloned()
-                .expect("el proveedor no mando ninguna peticion")
-        }
-
-        /// Cuantas veces se ha salido al cable. Es lo que permite comprobar que
-        /// una cache **evita** una peticion, en vez de suponerlo.
-        fn calls(&self) -> usize {
-            self.seen.lock().expect("el candado del doble").len()
-        }
-    }
-
-    impl HttpClient for Canned {
-        fn send(&self, request: &HttpRequest) -> anyhow::Result<HttpResponse> {
-            self.seen
-                .lock()
-                .expect("el candado del doble")
-                .push(request.clone());
-            Ok(HttpResponse {
-                status: self.status,
-                headers: Vec::new(),
-                body: self.body.clone(),
-            })
-        }
-
-        fn send_streaming(&self, _request: &HttpRequest) -> anyhow::Result<HttpStream> {
-            anyhow::bail!("el doble no hace streaming")
-        }
-    }
-
-    /// No hay respuesta ninguna: el transporte falla.
-    struct NoTransport;
-
-    impl HttpClient for NoTransport {
-        fn send(&self, _request: &HttpRequest) -> anyhow::Result<HttpResponse> {
-            anyhow::bail!("conexion rehusada")
-        }
-
-        fn send_streaming(&self, _request: &HttpRequest) -> anyhow::Result<HttpStream> {
-            anyhow::bail!("conexion rehusada")
-        }
-    }
+    use crate::http_client::{CannedHttpClient, FailingHttpClient, HttpMethod};
 
     fn config_with(max_results: usize) -> SearchConfig {
         SearchConfig {
@@ -2327,7 +2250,7 @@ mod transport_tests {
 
     #[test]
     fn test_a_429_is_rate_limit_and_not_a_network_error() {
-        let spy = Arc::new(Canned::new(429, r#"{"error":"quota exceeded"}"#));
+        let spy = Arc::new(CannedHttpClient::new(429, r#"{"error":"quota exceeded"}"#));
         let provider = BraveSearchProvider::new("k").with_http_client(spy);
         let err = provider
             .search("rust", &config_with(5))
@@ -2340,7 +2263,7 @@ mod transport_tests {
 
     #[test]
     fn test_a_503_is_rate_limit_too_because_that_is_what_the_server_means() {
-        let spy = Arc::new(Canned::new(503, "overloaded"));
+        let spy = Arc::new(CannedHttpClient::new(503, "overloaded"));
         let provider = SearXNGProvider::new("http://searx.invalid").with_http_client(spy);
         let err = provider
             .search("rust", &config_with(5))
@@ -2353,7 +2276,7 @@ mod transport_tests {
         // Lo que `ureq` tiraba: su `Error::StatusCode(u16)` no lleva la
         // respuesta, asi que «clave caducada» y «dominio no autorizado»
         // llegaban al llamante como el mismo "status code 401".
-        let spy = Arc::new(Canned::new(
+        let spy = Arc::new(CannedHttpClient::new(
             401,
             r#"{"message":"subscription token expired"}"#,
         ));
@@ -2371,7 +2294,7 @@ mod transport_tests {
 
     #[test]
     fn test_a_transport_failure_is_still_a_network_error() {
-        let provider = BraveSearchProvider::new("k").with_http_client(Arc::new(NoTransport));
+        let provider = BraveSearchProvider::new("k").with_http_client(Arc::new(FailingHttpClient));
         let err = provider
             .search("rust", &config_with(5))
             .expect_err("sin transporte no hay resultados");
@@ -2380,7 +2303,7 @@ mod transport_tests {
 
     #[test]
     fn test_google_caps_num_at_ten_even_when_asked_for_fifty() {
-        let spy = Arc::new(Canned::new(200, r#"{"items":[]}"#));
+        let spy = Arc::new(CannedHttpClient::new(200, r#"{"items":[]}"#));
         let provider = GoogleSearchProvider::new("key", "cx").with_http_client(spy.clone());
         provider
             .search("rust", &config_with(50))
@@ -2394,7 +2317,7 @@ mod transport_tests {
 
     #[test]
     fn test_bing_sends_its_key_in_a_header_and_not_in_the_url() {
-        let spy = Arc::new(Canned::new(200, r#"{"webPages":{"value":[]}}"#));
+        let spy = Arc::new(CannedHttpClient::new(200, r#"{"webPages":{"value":[]}}"#));
         let provider = BingSearchProvider::new("secreto").with_http_client(spy.clone());
         provider.search("rust", &config_with(3)).expect("200");
         let request = spy.seen();
@@ -2415,7 +2338,7 @@ mod transport_tests {
 
     #[test]
     fn test_tavily_posts_the_query_as_json_and_reads_content_as_the_snippet() {
-        let spy = Arc::new(Canned::new(
+        let spy = Arc::new(CannedHttpClient::new(
             200,
             r#"{"results":[{"title":"T","url":"u","content":"el contenido"}]}"#,
         ));
@@ -2445,7 +2368,7 @@ mod transport_tests {
 
     #[test]
     fn test_serpapi_parses_the_organic_results_and_nothing_else() {
-        let spy = Arc::new(Canned::new(
+        let spy = Arc::new(CannedHttpClient::new(
             200,
             r#"{"organic_results":[{"title":"A","link":"la","snippet":"sa"}],
                 "ads":[{"title":"anuncio","link":"lb","snippet":"sb"}]}"#,
@@ -2460,7 +2383,7 @@ mod transport_tests {
     fn test_duckduckgo_scrapes_the_html_it_is_served() {
         let html = r#"<a class="result__a" href="https://example.com/p">Un titulo</a>
                       <a class="result__snippet">Un resumen</a>"#;
-        let spy = Arc::new(Canned::new(200, html));
+        let spy = Arc::new(CannedHttpClient::new(200, html));
         let provider = DuckDuckGoProvider::new().with_http_client(spy);
         let results = provider.search("rust", &config_with(5)).expect("200");
         assert_eq!(results.len(), 1);
@@ -2471,7 +2394,7 @@ mod transport_tests {
 
     #[test]
     fn test_searxng_returns_no_more_than_the_configured_maximum() {
-        let spy = Arc::new(Canned::new(
+        let spy = Arc::new(CannedHttpClient::new(
             200,
             r#"{"results":[{"title":"1","url":"u1","content":"c1"},
                            {"title":"2","url":"u2","content":"c2"},
@@ -2489,7 +2412,7 @@ mod transport_tests {
     const DDG_UN_RESULTADO: &str = r#"<a class="result__a" href="https://example.com/p">Un titulo</a>
                                       <a class="result__snippet">Un resumen</a>"#;
 
-    fn cached_provider(spy: Arc<Canned>) -> EnhancedDuckDuckGoProvider {
+    fn cached_provider(spy: Arc<CannedHttpClient>) -> EnhancedDuckDuckGoProvider {
         EnhancedDuckDuckGoProvider::new()
             .with_min_interval(0.0)
             .with_http_client(spy)
@@ -2500,7 +2423,7 @@ mod transport_tests {
         // Lo que no se podia escribir antes de V471: `add_provider` pide
         // `Box<dyn SearchProvider>` y este tipo no implementaba el trait, asi
         // que el proveedor con cache y ritmo se quedaba fuera del motor.
-        let spy = Arc::new(Canned::new(200, DDG_UN_RESULTADO));
+        let spy = Arc::new(CannedHttpClient::new(200, DDG_UN_RESULTADO));
         let mut engine = WebSearchEngine::new(config_with(10));
         engine.add_provider(Box::new(cached_provider(spy.clone())));
 
@@ -2513,7 +2436,7 @@ mod transport_tests {
 
     #[test]
     fn test_the_cache_answers_the_second_identical_query_without_asking_again() {
-        let spy = Arc::new(Canned::new(200, DDG_UN_RESULTADO));
+        let spy = Arc::new(CannedHttpClient::new(200, DDG_UN_RESULTADO));
         let provider = cached_provider(spy.clone());
 
         let first = SearchProvider::search(&provider, "rust", &config_with(10)).expect("200");
@@ -2534,7 +2457,7 @@ mod transport_tests {
     fn test_an_expired_entry_does_cause_a_second_request() {
         // El test que esto sustituye aceptaba `Ok` **o** `Err`, o sea que no
         // podia fallar, y ademas llamaba a duckduckgo.com de verdad.
-        let spy = Arc::new(Canned::new(200, DDG_UN_RESULTADO));
+        let spy = Arc::new(CannedHttpClient::new(200, DDG_UN_RESULTADO));
         let provider = cached_provider(spy.clone()).with_cache_ttl(0);
 
         SearchProvider::search(&provider, "rust", &config_with(10)).expect("200");
@@ -2550,7 +2473,7 @@ mod transport_tests {
         // que el servidor te quiere lejos.
         let provider = EnhancedDuckDuckGoProvider::new()
             .with_min_interval(0.3)
-            .with_http_client(Arc::new(NoTransport));
+            .with_http_client(Arc::new(FailingHttpClient));
 
         let started = std::time::Instant::now();
         for _ in 0..2 {
@@ -2616,7 +2539,7 @@ mod transport_tests {
     fn test_a_404_robots_allows_the_whole_site() {
         // RFC 9309 §2.3.1.3: no hay fichero, «the crawler MAY access any
         // resources on the server». Este camino ya era correcto.
-        let mut crawler = crawler_with(Arc::new(Canned::new(404, "not found")));
+        let mut crawler = crawler_with(Arc::new(CannedHttpClient::new(404, "not found")));
         assert!(crawler.is_allowed("https://example.invalid/cualquiera"));
     }
 
@@ -2624,7 +2547,7 @@ mod transport_tests {
     fn test_a_503_robots_disallows_everything_as_the_rfc_requires() {
         // §2.3.1.4: el fichero queda indefinido y el rastreador «MUST assume
         // complete disallow». Antes de V472 esto devolvia `true`.
-        let mut crawler = crawler_with(Arc::new(Canned::new(503, "overloaded")));
+        let mut crawler = crawler_with(Arc::new(CannedHttpClient::new(503, "overloaded")));
         assert!(
             !crawler.is_allowed("https://example.invalid/cualquiera"),
             "a un servidor que se esta cayendo no se le entra a rastrear"
@@ -2635,7 +2558,7 @@ mod transport_tests {
     fn test_a_transport_failure_disallows_everything_too() {
         // No es un 5xx, pero es la misma condicion: no hay fichero que
         // interpretar. Antes tambien devolvia `true`.
-        let mut crawler = crawler_with(Arc::new(NoTransport));
+        let mut crawler = crawler_with(Arc::new(FailingHttpClient));
         assert!(!crawler.is_allowed("https://example.invalid/cualquiera"));
     }
 
@@ -2645,7 +2568,7 @@ mod transport_tests {
         // o sea en permiso total, por un solo byte invalido.
         let mut body = b"User-agent: *\nDisallow: /privado\n".to_vec();
         body.extend_from_slice(&[0xff, 0xfe]); // basura que no es UTF-8
-        let mut crawler = crawler_with(Arc::new(Canned::raw(200, body)));
+        let mut crawler = crawler_with(Arc::new(CannedHttpClient::raw(200, body)));
 
         assert!(
             !crawler.is_allowed("https://example.invalid/privado/x"),
@@ -2658,7 +2581,7 @@ mod transport_tests {
     fn test_both_entry_points_agree_on_the_same_server() {
         // Lo que la duplicacion no podia garantizar: `fetch_robots` y
         // `is_allowed` leian el mismo servidor con dos copias del codigo.
-        let mut crawler = crawler_with(Arc::new(Canned::new(503, "")));
+        let mut crawler = crawler_with(Arc::new(CannedHttpClient::new(503, "")));
         let desde_fetch = crawler
             .fetch_robots("example.invalid")
             .map(|r| r.disallowed.clone())
@@ -2673,7 +2596,7 @@ mod transport_tests {
     fn test_fetch_page_refuses_a_non_2xx_instead_of_crawling_the_error_page() {
         // Detras del puerto un no-2xx vuelve como `Ok`: sin `error_for_status`
         // la pagina de un 404 se rastrearia como contenido, con sus enlaces.
-        let crawler = crawler_with(Arc::new(Canned::new(
+        let crawler = crawler_with(Arc::new(CannedHttpClient::new(
             404,
             "<html><title>No existe</title><a href=\"/otra\">otra</a></html>",
         )));
@@ -2688,7 +2611,7 @@ mod transport_tests {
 
     #[test]
     fn test_fetch_page_reads_the_page_it_is_served() {
-        let crawler = crawler_with(Arc::new(Canned::new(
+        let crawler = crawler_with(Arc::new(CannedHttpClient::new(
             200,
             "<html><title>Hola</title><body>texto<a href=\"https://example.invalid/b\">b</a></body></html>",
         )));
