@@ -5,6 +5,104 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v356 (2026-11-19) - V472: el robots.txt se descargaba en dos copias y los tres caminos de fallo acababan en «todo permitido», incluido el 5xx que el RFC prohibe (0.2.439)
+
+Cierra `web_search.rs` para la tarea `#77`: **ya no queda una sola llamada a `ureq` a pelo en el
+fichero**. Y como en V470 y V471, el transporte era la parte aburrida.
+
+### Dos copias de una regla, y la segunda lo admitia por escrito
+
+La descarga del `robots.txt` estaba en `fetch_robots` y otra vez dentro de `is_allowed`, con este
+comentario al lado de la copia:
+
+> `// For now, inline the fetch to avoid borrow issues`
+
+El prestamo se resuelve pidiendo las piezas por argumento ---`(client, user_agent, domain)`---
+en vez de `&self`, que es lo que hace la funcion asociada nueva. Dos copias de una regla son dos
+sitios donde arreglarla y uno donde olvidarse; aqui la regla estaba **mal en las dos**.
+
+### Y lo que estaba mal tiene fuente
+
+Los **tres** caminos de fallo ---error de transporte, no-2xx y cuerpo ilegible--- acababan en
+`RobotsRules::allow_all()`. Para un **4xx** eso es correcto y la norma lo dice; para un **5xx**
+es lo contrario de lo que dice:
+
+| estado | RFC 9309 | antes | ahora |
+|---|---|---|---|
+| 2xx | sigue las reglas que puedas interpretar | las seguia | las sigue, y el cuerpo se decodifica **con perdida** |
+| 4xx | §2.3.1.3: *«the crawler MAY access any resources on the server»* | permitia todo | permite todo |
+| 5xx | §2.3.1.4: el fichero queda indefinido y *«MUST assume complete disallow»* | **permitia todo** | prohibe todo |
+| fallo de transporte | no es literal del RFC, pero es la misma condicion | **permitia todo** | prohibe todo |
+
+Un servidor que se esta cayendo es justo al que no hay que entrarle a rastrear, y era el unico
+caso en el que este rastreador le entraba entero.
+
+Lo comprobe **contra el RFC**, no de memoria, y las dos lecturas que no son literales ---el
+fallo de transporte y el 3xx que agota el limite de redirecciones--- van escritas como tales en
+la doc de la funcion.
+
+### El `unwrap_or_default()` que convertia un byte malo en permiso total
+
+`resp.body_mut().read_to_string().unwrap_or_default()`: un `robots.txt` con **un** byte que no es
+UTF-8 valido se volvia la cadena vacia, o sea un fichero sin reglas, o sea permiso para todo.
+Ahora se decodifica con perdida, que es lo que pide la norma ---seguir las reglas que *si* se
+pueden leer--- y hay un test con `Disallow: /privado` seguido de dos bytes invalidos.
+
+La decision contraria, en el mismo commit y a proposito: `fetch_page` **si** exige UTF-8 valido.
+De un `robots.txt` roto interesan las reglas legibles; una pagina que no decodifica no es texto
+que valga la pena trocear, y decodificar con perdida convertiria basura binaria en «contenido».
+
+### Y un 404 se rastreaba como si fuera una pagina
+
+Detras del puerto un no-2xx vuelve como `Ok`, asi que `fetch_page` necesita pedir el error. Sin
+eso, la pagina de error de un 404 ---con su titulo, su texto y **sus enlaces**--- entraba en la
+cola del rastreo como contenido legitimo. Es la trampa numero 2 de las cuatro que tiene anotadas
+este puerto, y aqui habria sido una regresion introducida por la propia migracion.
+
+### Siete tests, cuatro mutantes
+
+Antes no habia ninguno sobre el camino de red del rastreador: hacia falta un servidor que
+contestara 404, 503 y basura a voluntad. Con el cliente inyectable es un doble de veinte lineas.
+
+| mutante | murieron | eran |
+|---|---|---|
+| el 5xx vuelve a permitir todo (el estado de antes de V472) | **3** | 503, fallo de transporte, y el de que las dos puertas coinciden |
+| la frontera 4xx/5xx se corre hasta 600 | **2** | 503 y el de coincidencia (el de transporte sigue cayendo por `Err`) |
+| el cuerpo ilegible se descarta | 1 | el del `robots.txt` con bytes invalidos |
+| `fetch_page` sin `error_for_status` | 1 | el del 404 que no se rastrea |
+
+### Lo que NO es
+
+- **No se anade reintento** al `robots.txt` ni al rastreo. El plazo sigue siendo de 5 s para el
+  `robots.txt` y 15 s para la pagina, los mismos de antes.
+- **La cache de `robots.txt` no caduca**, igual que antes. El RFC sugiere no reutilizar una copia
+  mas de 24 h (§2.4) y aqui la vida de la cache es la del `WebCrawler`; para un rastreo de una
+  sentada da igual, y cambiarlo seria otra decision.
+- **`is_allowed` sigue devolviendo `false` para una URL sin dominio**, que era el comportamiento
+  anterior y no es lo mismo que «prohibido por robots».
+
+### Las cifras, otra vez, y esta vez medidas antes del bump
+
+V472 anade **+7 tests**, asi que las cuatro cifras se mueven de nuevo. Medidas con el `target`
+templado y **antes** de tocar `Cargo.toml`, que es la correccion que esta noche se le hizo al
+orden de la *skill* `commit`: el paso que necesita los numeros es el de las cifras, pero medirlos
+despues del bump los mide en frio, porque un bump huerfana el crate entero.
+
+| cifra | V471 | V472 | comando |
+|---|---|---|---|
+| titular (`FEATURES_STD`, lib) | 9.187 | **9.194** | `cargo test --features "$FEATURES_STD" --lib` |
+| `--features full` a solas | 7.396 | **7.403** | `cargo test --features full --lib` |
+| el minimo de ocho features | 5.355 | **5.362** | `cargo test --no-default-features --features "$FEATURES_MIN"` |
+| atributos `#[test]` en `src/` | 10.278 | **10.285** | `grep -rc "#\[test\]" src/` |
+
+Las cuatro suben exactamente 7, por lo mismo que en V471: el modulo no tiene puerta de feature.
+
+Y una correccion sobre la marcha: la cifra de LOC de `CLAUDE.md` se escribio primero **sin
+medir** ---569.636, de cabeza--- y la medicion dio **569.549**. Esta arreglada antes del commit,
+pero vale la pena que conste: inventar una cifra que nadie comprueba es exactamente el defecto
+que persiguen las tres puertas de numeros, y la unica razon de que saliera a la luz es que medir
+cuesta un comando.
+
 ## [Unreleased] - v355 (2026-11-19) - V471: el proveedor de DuckDuckGo con cache y ritmo no lo podia usar nadie, y de los dos lectores de su HTML sobrevive el que no truncaba (0.2.438)
 
 Sigue la tarea `#77` en el mismo fichero que V470, y lo que aparecio al migrar los siete

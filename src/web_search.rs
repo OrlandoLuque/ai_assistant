@@ -1076,6 +1076,27 @@ impl RobotsRules {
             crawl_delay: None,
         }
     }
+
+    /// Reglas que prohiben el sitio entero.
+    ///
+    /// Es lo que pide el RFC 9309 ante un 5xx (§2.3.1.4): el fichero queda
+    /// «unreachable», o sea indefinido, y entonces el rastreador *«MUST assume
+    /// complete disallow»*. No es lo mismo que un 4xx (§2.3.1.3), donde el
+    /// fichero simplemente no existe y el rastreador **puede** acceder a todo.
+    ///
+    /// Esa distincion es la que faltaba, y la explica entera
+    /// `WebCrawler::fetch_robots_rules`. Va en texto y no como enlace a
+    /// proposito: esa funcion es privada, y un enlace de rustdoc desde un
+    /// elemento publico a uno privado **es un enlace roto** --- lo canto la
+    /// puerta `check_doc_links` con «<private-link>:0», que es exactamente para
+    /// lo que esta.
+    pub fn disallow_all() -> Self {
+        Self {
+            disallowed: vec!["/".to_string()],
+            allowed: Vec::new(),
+            crawl_delay: None,
+        }
+    }
 }
 
 /// A crawled page with extracted content.
@@ -1107,6 +1128,8 @@ pub struct WebCrawler {
     robots_cache: HashMap<String, RobotsRules>,
     /// Visited URLs.
     visited: std::collections::HashSet<String>,
+    /// Quien habla HTTP.
+    client: Arc<dyn HttpClient>,
 }
 
 impl WebCrawler {
@@ -1118,7 +1141,17 @@ impl WebCrawler {
             user_agent: "AIAssistantCrawler/1.0".to_string(),
             robots_cache: HashMap::new(),
             visited: std::collections::HashSet::new(),
+            client: Arc::new(UreqClient),
         }
+    }
+
+    /// Cambia quien habla HTTP. Ver [`DuckDuckGoProvider::with_http_client`].
+    ///
+    /// Aqui importa el doble: sin esto, probar la politica de `robots.txt`
+    /// exigiria un servidor que contestara 404, 503 y basura a voluntad.
+    pub fn with_http_client(mut self, client: Arc<dyn HttpClient>) -> Self {
+        self.client = client;
+        self
     }
 
     pub fn with_max_depth(mut self, depth: usize) -> Self {
@@ -1182,32 +1215,59 @@ impl WebCrawler {
         results
     }
 
+    /// Trae el `robots.txt` de un dominio y lo interpreta **con la politica de
+    /// estados del RFC 9309**.
+    ///
+    /// Antes esto estaba **dos veces**, en `fetch_robots` y dentro de
+    /// `is_allowed`, y la segunda copia lo admitia en un comentario: *«For now,
+    /// inline the fetch to avoid borrow issues»*. El prestamo se resuelve
+    /// pidiendo las piezas por argumento en vez de `&self`, que es lo que hace
+    /// esta funcion asociada. Dos copias de una regla son dos sitios donde
+    /// arreglarla y uno donde olvidarse --- y aqui la regla estaba mal en las
+    /// dos.
+    ///
+    /// **Lo que estaba mal**: los *tres* caminos de fallo ---error de
+    /// transporte, no-2xx y cuerpo ilegible--- acababan en `allow_all()`. Para
+    /// un **4xx** eso es correcto y la norma lo dice (§2.3.1.3: *«then the
+    /// crawler MAY access any resources on the server»*). Para un **5xx** es lo
+    /// contrario de lo que dice (§2.3.1.4: el fichero queda indefinido y el
+    /// rastreador *«MUST assume complete disallow»*), y un servidor que se esta
+    /// cayendo es justo al que no hay que entrarle a rastrear.
+    ///
+    /// Dos decisiones que **no** son literales del RFC y por eso van escritas:
+    ///
+    /// - un fallo de transporte no es un 5xx, pero es la misma condicion ---no
+    ///   hay fichero que interpretar--- asi que se trata igual;
+    /// - un 3xx que llegue hasta aqui significa que se agoto el limite de
+    ///   redirecciones, y el RFC permite entonces tomar el fichero por
+    ///   inexistente (§2.3.1.2 con §2.3.1.3), o sea `allow_all`.
+    ///
+    /// Y el cuerpo se decodifica **con perdida** en vez de descartarse: el
+    /// `read_to_string().unwrap_or_default()` de antes convertia un
+    /// `robots.txt` con un solo byte invalido en uno vacio, o sea en permiso
+    /// total, cuando lo que pide la norma es seguir las reglas que **si** se
+    /// pueden leer.
+    fn fetch_robots_rules(client: &dyn HttpClient, user_agent: &str, domain: &str) -> RobotsRules {
+        let request = HttpRequest::get(format!("https://{domain}/robots.txt"))
+            .timeout(Duration::from_secs(5))
+            .header("User-Agent", user_agent);
+
+        match client.send(&request) {
+            Ok(response) if response.is_success() => {
+                let content = String::from_utf8_lossy(&response.body);
+                Self::parse_robots_txt(&content, user_agent)
+            }
+            Ok(response) if (300..500).contains(&response.status) => RobotsRules::allow_all(),
+            Ok(_) | Err(_) => RobotsRules::disallow_all(),
+        }
+    }
+
     /// Fetch robots.txt for a domain and cache it.
     pub fn fetch_robots(&mut self, domain: &str) -> Option<&RobotsRules> {
-        if self.robots_cache.contains_key(domain) {
-            return self.robots_cache.get(domain);
+        if !self.robots_cache.contains_key(domain) {
+            let rules = Self::fetch_robots_rules(&*self.client, &self.user_agent, domain);
+            self.robots_cache.insert(domain.to_string(), rules);
         }
-
-        // Try to fetch robots.txt
-        let robots_url = format!("https://{}/robots.txt", domain);
-        let rules = match ureq::get(&robots_url)
-            .header("User-Agent", &self.user_agent)
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(5)))
-            .build()
-            .call()
-        {
-            Ok(mut resp) => {
-                let content = resp.body_mut().read_to_string().unwrap_or_default();
-                Self::parse_robots_txt(&content, &self.user_agent)
-            }
-            Err(_) => {
-                // If we can't fetch robots.txt, assume everything is allowed
-                RobotsRules::allow_all()
-            }
-        };
-
-        self.robots_cache.insert(domain.to_string(), rules);
         self.robots_cache.get(domain)
     }
 
@@ -1219,31 +1279,11 @@ impl WebCrawler {
         };
         let path = Self::extract_path(url);
 
-        // Fetch/retrieve robots rules
-        let rules = if self.robots_cache.contains_key(&domain) {
-            self.robots_cache.get(&domain).cloned()
-        } else {
-            // For now, inline the fetch to avoid borrow issues
-            let robots_url = format!("https://{}/robots.txt", domain);
-            let rules = match ureq::get(&robots_url)
-                .header("User-Agent", &self.user_agent)
-                .config()
-                .timeout_global(Some(std::time::Duration::from_secs(5)))
-                .build()
-                .call()
-            {
-                Ok(mut resp) => {
-                    let content = resp.body_mut().read_to_string().unwrap_or_default();
-                    Self::parse_robots_txt(&content, &self.user_agent)
-                }
-                Err(_) => RobotsRules::allow_all(),
-            };
-            self.robots_cache.insert(domain.clone(), rules);
-            self.robots_cache.get(&domain).cloned()
-        };
-
-        match rules {
-            Some(rules) => Self::path_allowed(&rules, &path),
+        // Un solo camino hacia las reglas: `fetch_robots` las cachea y las
+        // devuelve. La copia inline que habia aqui ya no existe, y con ella se
+        // va la posibilidad de que las dos respondan distinto al mismo servidor.
+        match self.fetch_robots(&domain) {
+            Some(rules) => Self::path_allowed(rules, &path),
             None => true,
         }
     }
@@ -1341,17 +1381,28 @@ impl WebCrawler {
 
     /// Fetch a page and extract text + links.
     fn fetch_page(&self, url: &str, depth: usize) -> Result<CrawledPage, String> {
-        let mut resp = ureq::get(url)
-            .header("User-Agent", &self.user_agent)
-            .config()
-            .timeout_global(Some(std::time::Duration::from_secs(15)))
-            .build()
-            .call()
+        let request = HttpRequest::get(url)
+            .timeout(Duration::from_secs(15))
+            .header("User-Agent", self.user_agent.as_str());
+
+        let response = self
+            .client
+            .send(&request)
             .map_err(|e| format!("Failed to fetch {}: {}", url, e))?;
 
-        let html = resp
-            .body_mut()
-            .read_to_string()
+        // Detras del puerto un no-2xx vuelve como `Ok`, asi que el error hay
+        // que pedirlo: sin esto, la pagina de error de un 404 se rastrearia
+        // como si fuera contenido, con sus enlaces y todo.
+        response
+            .error_for_status()
+            .map_err(|e| format!("Failed to fetch {}: {}", url, e))?;
+
+        // Aqui SI se exige UTF-8 valido, al contrario que con el `robots.txt`:
+        // de un `robots.txt` roto interesan las reglas que se puedan leer, pero
+        // una pagina que no decodifica no es texto que valga la pena trocear, y
+        // decodificar con perdida convertiria basura binaria en «contenido».
+        let html = response
+            .text()
             .map_err(|e| format!("Failed to read {}: {}", url, e))?;
 
         let title = Self::extract_title(&html);
@@ -2197,7 +2248,7 @@ mod transport_tests {
     /// escuche en localhost.
     struct Canned {
         status: u16,
-        body: String,
+        body: Vec<u8>,
         seen: Mutex<Vec<HttpRequest>>,
     }
 
@@ -2205,7 +2256,16 @@ mod transport_tests {
         fn new(status: u16, body: &str) -> Self {
             Self {
                 status,
-                body: body.to_string(),
+                body: body.as_bytes().to_vec(),
+                seen: Mutex::new(Vec::new()),
+            }
+        }
+
+        /// Un cuerpo que **no** es UTF-8 valido, que `String` no puede llevar.
+        fn raw(status: u16, body: Vec<u8>) -> Self {
+            Self {
+                status,
+                body,
                 seen: Mutex::new(Vec::new()),
             }
         }
@@ -2236,7 +2296,7 @@ mod transport_tests {
             Ok(HttpResponse {
                 status: self.status,
                 headers: Vec::new(),
-                body: self.body.clone().into_bytes(),
+                body: self.body.clone(),
             })
         }
 
@@ -2539,5 +2599,105 @@ mod transport_tests {
         let results = parse_ddg_results(html, 10);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].url, "https://example.com/p");
+    }
+
+    // ======================================================================
+    // El rastreador: la politica de `robots.txt` del RFC 9309
+    //
+    // Los tres caminos de fallo acababan en «todo permitido». Para un 4xx eso
+    // es la norma; para un 5xx es lo contrario de la norma.
+    // ======================================================================
+
+    fn crawler_with(client: Arc<dyn HttpClient>) -> WebCrawler {
+        WebCrawler::new().with_http_client(client)
+    }
+
+    #[test]
+    fn test_a_404_robots_allows_the_whole_site() {
+        // RFC 9309 §2.3.1.3: no hay fichero, «the crawler MAY access any
+        // resources on the server». Este camino ya era correcto.
+        let mut crawler = crawler_with(Arc::new(Canned::new(404, "not found")));
+        assert!(crawler.is_allowed("https://example.invalid/cualquiera"));
+    }
+
+    #[test]
+    fn test_a_503_robots_disallows_everything_as_the_rfc_requires() {
+        // §2.3.1.4: el fichero queda indefinido y el rastreador «MUST assume
+        // complete disallow». Antes de V472 esto devolvia `true`.
+        let mut crawler = crawler_with(Arc::new(Canned::new(503, "overloaded")));
+        assert!(
+            !crawler.is_allowed("https://example.invalid/cualquiera"),
+            "a un servidor que se esta cayendo no se le entra a rastrear"
+        );
+    }
+
+    #[test]
+    fn test_a_transport_failure_disallows_everything_too() {
+        // No es un 5xx, pero es la misma condicion: no hay fichero que
+        // interpretar. Antes tambien devolvia `true`.
+        let mut crawler = crawler_with(Arc::new(NoTransport));
+        assert!(!crawler.is_allowed("https://example.invalid/cualquiera"));
+    }
+
+    #[test]
+    fn test_an_undecodable_robots_still_applies_the_rules_it_can_read() {
+        // El `unwrap_or_default()` de antes convertia esto en un fichero vacio,
+        // o sea en permiso total, por un solo byte invalido.
+        let mut body = b"User-agent: *\nDisallow: /privado\n".to_vec();
+        body.extend_from_slice(&[0xff, 0xfe]); // basura que no es UTF-8
+        let mut crawler = crawler_with(Arc::new(Canned::raw(200, body)));
+
+        assert!(
+            !crawler.is_allowed("https://example.invalid/privado/x"),
+            "la regla legible tiene que seguir aplicandose"
+        );
+        assert!(crawler.is_allowed("https://example.invalid/publico"));
+    }
+
+    #[test]
+    fn test_both_entry_points_agree_on_the_same_server() {
+        // Lo que la duplicacion no podia garantizar: `fetch_robots` y
+        // `is_allowed` leian el mismo servidor con dos copias del codigo.
+        let mut crawler = crawler_with(Arc::new(Canned::new(503, "")));
+        let desde_fetch = crawler
+            .fetch_robots("example.invalid")
+            .map(|r| r.disallowed.clone())
+            .unwrap_or_default();
+        let desde_is_allowed = crawler.is_allowed("https://example.invalid/x");
+
+        assert_eq!(desde_fetch, vec!["/".to_string()]);
+        assert!(!desde_is_allowed, "y la otra puerta dice lo mismo");
+    }
+
+    #[test]
+    fn test_fetch_page_refuses_a_non_2xx_instead_of_crawling_the_error_page() {
+        // Detras del puerto un no-2xx vuelve como `Ok`: sin `error_for_status`
+        // la pagina de un 404 se rastrearia como contenido, con sus enlaces.
+        let crawler = crawler_with(Arc::new(Canned::new(
+            404,
+            "<html><title>No existe</title><a href=\"/otra\">otra</a></html>",
+        )));
+        let fallo = crawler
+            .fetch_page("https://example.invalid/x", 0)
+            .expect_err("un 404 no es una pagina rastreada");
+        assert!(
+            fallo.contains("404"),
+            "y el codigo va en el mensaje: {fallo}"
+        );
+    }
+
+    #[test]
+    fn test_fetch_page_reads_the_page_it_is_served() {
+        let crawler = crawler_with(Arc::new(Canned::new(
+            200,
+            "<html><title>Hola</title><body>texto<a href=\"https://example.invalid/b\">b</a></body></html>",
+        )));
+        let page = crawler
+            .fetch_page("https://example.invalid/a", 1)
+            .expect("200");
+        assert_eq!(page.title.as_deref(), Some("Hola"));
+        assert_eq!(page.depth, 1);
+        assert!(page.text.contains("texto"));
+        assert!(page.links.iter().any(|l| l.ends_with("/b")));
     }
 }
