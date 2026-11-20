@@ -95,7 +95,7 @@ SRC = "src"
 
 # Docs that record the past rather than describe the present: the project
 # treats docs/IMPROVEMENTS_V*.md and the dated audits as history, not state
-# (see CLAUDE.md). A name in a February design note is not a live promise.
+# A name in a February design note is not a live promise.
 HISTORICAL = re.compile(
     r"(IMPROVEMENTS_V|SECURITY_AUDIT|_AUDIT_|AUDIT_V|CHANGELOG|PENDING|_V\d+\.md$|ARCHIVE)",
     re.I,

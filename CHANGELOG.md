@@ -5,6 +5,64 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v361 (2026-11-20) - V477: el fichero de instrucciones de trabajo era publico, y cuatro documentos lo citaban como si fuera parte del inventario (0.2.444)
+
+`CLAUDE.md` no documenta el producto: es el protocolo de trabajo del autor ---que leer al
+empezar, que no tocar sin permiso, que reglas no se saltan--- y estaba seguido en un
+repositorio publico desde el 2026-02-21, en 34 commits. Hasta V476 llevaba ademas la
+estrategia de negocio. Sale del repositorio y se queda en el disco, sin seguimiento,
+porque es lo que se lee al abrir el proyecto.
+
+**Medido antes de quitarlo, no supuesto:**
+
+| quien lo nombraba | lo lee de verdad? |
+|---|---|
+| `scripts/check_doc_imports.py` | si, como uno de los `.md` de la raiz que recorre con `os.listdir` --- ahora recorre uno menos y sigue verde |
+| `Cargo.toml` | solo en `exclude`: ya estaba fuera del paquete, y la entrada sobra ahora que el fichero no esta seguido |
+| `src/project_conventions.rs`, `src/agent_profiles.rs` | **no.** Ahi «CLAUDE.md» es una CAPACIDAD: cargar las convenciones del proyecto **del usuario**, fusionando con `AGENTS.md`. No tiene nada que ver con este fichero |
+| ningun test, ningun `build.rs` | no lo lee nadie en tiempo de ejecucion |
+
+Y cuatro referencias quedaban apuntando a un fichero que ya no esta: `docs/modus-operandi.md`
+decia que la cifra de features vive «en `CLAUDE.md` y `docs/CAPABILITIES.md`, que ninguna
+puerta lee» ---ahora son tres sitios y el no leido es uno---, `docs/CAPABILITIES.md` enviaba
+a `CLAUDE.md` por una lista que ya tenia debajo, `PENDING.md` lo citaba como la fuente de
+una leccion que los propios `IMPROVEMENTS_V*` llevan en su cabecera, y la puerta lo citaba
+en un comentario.
+
+Lo que esto **no** es:
+
+- **No es una reescritura de historia.** El fichero sigue en los 34 commits que lo
+  contienen. Borrarlo de ahi es `filter-repo` mas force-push, que es PARADA OBLIGATORIA y
+  ademas no lo consigue del todo: GitHub sirve los objetos viejos por SHA hasta que su
+  Soporte haga recoleccion, y el fork de un tercero conserva la historia completa.
+- **No es un borrado.** Sigue en el disco y se sigue leyendo. La exclusion va en
+  `.git/info/exclude` y no en `.gitignore` a proposito: asi el nombre no queda escrito en un
+  fichero publico. Hay una copia de seguridad fuera de los dos repositorios, y conviene
+  saber que **ahora son las dos unicas copias**: un clon nuevo ya no trae las reglas del
+  proyecto.
+- **No toca los historicos.** `CHANGELOG.md` y cuatro `docs/IMPROVEMENTS_V*.md` lo
+  mencionan y se quedan: reescribir un documento fechado para borrar una mencion es hacerle
+  decir algo falso.
+
+**Y de paso, el repaso de los 1002 ficheros seguidos que pidio el autor**, por si se habia
+colado algo mas:
+
+- **Cero** `.docx`, `.zip`, `.pdf`, fuentes tipograficas, pesos de modelos o binarios.
+- **Cero** rutas de la maquina del autor. La primera medicion dijo «1 fichero» y era un
+  artefacto de mi `xargs`; `git grep` sobre el contenido seguido dice cero.
+- `_private/` **no esta seguido** y esta en `.gitignore` con la razon escrita al lado.
+- Los tres `src/eval_benchmarks/fixtures/*.jsonl` llevan nombres de corpus de terceros
+  ---FactScore, FEVER, HaluEval--- y **son propios**, escritos en el formato de cada uno:
+  uno de los registros de FEVER es «Nikola Tesla enjoyed eating pizza». La unica cadena
+  discutible son quince palabras de la Wikipedia en el campo `evidence`, sustituibles en un
+  minuto.
+- El correo del autor queda en seis ficheros seguidos, todos a proposito (`LICENSE`,
+  `README.md`, `tdmrep.json`, dos cabeceras de autoria) **menos uno**:
+  `scripts/build_release.ps1` escribe «For commercial licensing, contact: ...» en el
+  `README.txt` de **cada paquete de release**. Es la ultima oferta comercial que queda en el
+  arbol y no se toca aqui: cambia lo que dice un artefacto distribuido sobre su licencia, y
+  eso es decision del autor.
+
 ## [Unreleased] - v360 (2026-11-20) - V476: la estrategia de negocio vivia en el repositorio publico, y la tabla de precios de la web se titulaba «Estructura de features» (0.2.443)
 
 El autor leyo que publicar una oferta comercial obliga a identificarse con datos personales

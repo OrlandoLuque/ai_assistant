@@ -247,8 +247,8 @@ reads as advice and gets skipped. They are grouped by the question they answer.
     ```bash
     python scripts/check_readme_numbers.py && python scripts/check_website_numbers.py ../ai_assistant-website
     ```
-    And the same number lives in `CLAUDE.md` and `docs/CAPABILITIES.md`, which **neither gate
-    reads** --- which is how `95 features` survived four features being added.
+    And the same number lives in `docs/CAPABILITIES.md`, which **no gate reads** --- which
+    is how `95 features` survived four features being added.
 
 10f. **Run *every* `scripts/check_*.py` before pushing, not the ones the change seems to be
     about.** The previous rule was followed and still produced a red: V446 added one job to

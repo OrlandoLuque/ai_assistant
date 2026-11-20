@@ -12,8 +12,8 @@
 >
 > **El estado actual vive en `CHANGELOG.md`** (las entradas de cabecera), y el inventario de
 > capacidades en `docs/CAPABILITIES.md` y `docs/README.md`. Esto es exactamente el mismo
-> error que `CLAUDE.md` ya documenta para los `docs/IMPROVEMENTS_V*.md`: leer el documento mas
-> vistoso y tomarlo por el estado del proyecto.
+> error que invitan a cometer los `docs/IMPROVEMENTS_V*.md`, y que su propia cabecera avisa:
+> leer el documento mas vistoso y tomarlo por el estado del proyecto.
 >
 > **Que SI se ha hecho el 2026-11-13**: repasar las diecinueve secciones de "funcionalidad
 > pendiente" del final y comprobar cada "No implementado" contra el arbol. **Tres eran

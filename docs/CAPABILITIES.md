@@ -243,10 +243,9 @@ Adding a family is a **loader plus its metrics**, not a subsystem.
 
 ## Everything else
 
-Not checked. The subsystems are listed in `CLAUDE.md` — multi-provider LLM,
-multi-agent, autonomous agent, distributed, security, streaming, FreshContext,
-MCP, WASM, research, anti-hallucination, vision — and each deserves a row here
-once somebody has looked.
+Not checked. The subsystems — multi-provider LLM, multi-agent, autonomous agent,
+distributed, security, streaming, FreshContext, MCP, WASM, research,
+anti-hallucination, vision — each deserve a row here once somebody has looked.
 
 Counts, which are facts and are regenerable:
 
