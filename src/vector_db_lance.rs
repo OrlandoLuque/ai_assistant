@@ -123,11 +123,17 @@ fn build_record_batch(
     )
 }
 
-/// Wrap a RecordBatch into a RecordBatchIterator that implements IntoArrow.
+/// Wrap a RecordBatch into the reader that `Table::add` accepts.
+///
+/// El tipo de retorno es un **objeto de trait** y no el iterador concreto a
+/// proposito: desde `lancedb` 0.41 `Table::add` pide `T: Scannable`, y
+/// `Scannable` esta implementado para `Box<dyn RecordBatchReader + Send>` y no
+/// para `Box<RecordBatchIterator<..>>`. Con el tipo concreto los tres llamantes
+/// fallaban con el mismo E0277, y el arreglo es uno porque el envoltorio es uno.
 fn into_arrow(
     batch: RecordBatch,
     schema: Arc<Schema>,
-) -> Box<RecordBatchIterator<std::vec::IntoIter<Result<RecordBatch, arrow_schema::ArrowError>>>> {
+) -> Box<dyn arrow_array::RecordBatchReader + Send> {
     Box::new(RecordBatchIterator::new(
         vec![Ok(batch)].into_iter(),
         schema,

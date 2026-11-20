@@ -76,10 +76,6 @@ const NOT_IN_CI: &[(&str, &str)] = &[
         "webrtc",
         "heavy native stack, covered by `voice-agent` in practice",
     ),
-    (
-        "vector-lancedb",
-        "heavy native dep; the other vector backends cover the trait",
-    ),
     ("aws-bedrock", "needs AWS credentials"),
     ("server-tls", "needs PEM material at build time"),
 ];
@@ -132,10 +128,16 @@ full = [",
 /// **Measured, not assumed (2026-09-11, full battery, 84/87):** every feature
 /// below *compiles* on top of the minimum set. None of them is broken — they are
 /// simply absent from CI, so nothing would notice if one broke tomorrow. The only
-/// three combinations that fail are the native-toolchain ones already excused in
-/// [`NOT_IN_CI`] (`vector-lancedb`, `whisper-local`, `local-inference-llama-cpp`),
-/// and they fail here for a *local* reason — no libclang / C++ toolchain on the
-/// dev laptop — which is a lead about this machine, not a verdict about the code.
+/// two combinations that fail are the native-toolchain ones still excused in
+/// [`NOT_IN_CI`] (`whisper-local`, `local-inference-llama-cpp`), and they fail
+/// here for a *local* reason — no libclang on the dev laptop — which is a lead
+/// about this machine, not a verdict about the code.
+///
+/// **Eran tres hasta V475, y la tercera no fallaba por libclang.**
+/// `vector-lancedb` fallaba por **protoc**, que es lo que `prost-build` necesita
+/// para el arbol de `lance`; instalado, compila aqui y pasa sus 14 tests. Dos
+/// herramientas distintas bajo una sola frase son dos razones de las que solo se
+/// comprueba una, y la que estaba escrita era la de las otras dos features.
 ///
 /// **Lo que esta nota decia hasta V457** --- *«el coste de cerrar esta lista son
 /// minutos de CI, no trabajo de reparacion; esa es una decision de presupuesto

@@ -5,6 +5,134 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v359 (2026-11-20) - V475: los nueve avisos de heapless se van porque la dependencia se va, y la razon escrita de por que nadie compilaba lancedb era la de otra feature (0.2.442)
+
+La otra mitad del rojo de V474. Y no se suprime nada: el autor rechazo la supresion con fecha de
+revision con la pregunta correcta ---«por que suprimirla, si se puede dejar bien»--- y dejarla bien
+resulta que cuesta **una linea de codigo**.
+
+### El parche estaba a seis niveles de profundidad y clavado
+
+`heapless 0.8.0` acumulo **nueve** avisos `unsound` el 2026-11-18 (RUSTSEC-2026-0574 a 0582:
+`SortedLinkedList::zeroize`, `IndexMap::truncate`, el `TryFrom` de `Deque`, una carrera en la pila
+de Treiber, `FindMutView::pop` con uso despues de liberar...). Todos parcheados en `>=0.9.4`, y
+ninguno alcanzable:
+
+```
+ai_assistant -> lancedb 0.26.2 -> lance =2.0.0 -> lance-geo -> geodatafusion
+             -> geo 0.31 -> rstar 0.12.2 -> heapless ^0.8
+```
+
+`lance` esta clavado con `=`, asi que `cargo update -p heapless --precise 0.9.4` no tiene por donde.
+Lo que si tiene es el otro extremo de la cadena: **nosotros pedimos `^0.26` y `lancedb` va por la
+0.41**. Resuelto en una sonda fuera del arbol antes de tocar nada, para no suponerlo: con 0.41 el
+subarbol entero ---`geo`, `rstar`, `heapless`--- **desaparece**.
+
+Medido en nuestro lock despues del salto:
+
+| | antes | despues |
+|---|---|---|
+| ocurrencias de `heapless`, `rstar`, `geo` | 9 avisos vivos | **0** |
+| cajas en el lock | 1.092 | **1.078** |
+| `lance` | 2.0.0 | 14.0.2 |
+| `arrow-array` / `arrow-schema` | 57 | 58.4.2 |
+
+Catorce cajas MENOS subiendo doce versiones mayores de `lance`, que no es lo que uno espera de un
+salto asi.
+
+### El coste en codigo: una linea, y el compilador la dicta
+
+Quince versiones menores de `lancedb` dieron **tres** errores, todos el mismo:
+
+```
+error[E0277]: the trait bound `Box<RecordBatchIterator<..>>: Scannable` is not satisfied
+help: the trait `Scannable` is implemented for `Box<dyn RecordBatchReader + Send>`
+```
+
+`Table::add` pide ahora `T: Scannable`, y `Scannable` esta para el objeto de trait, no para el
+iterador concreto. Los tres llamantes pasan por un solo envoltorio, `into_arrow`, asi que el
+arreglo es cambiarle el tipo de retorno a `Box<dyn RecordBatchReader + Send>`. Tres sitios, un
+cambio: 7 usos de `lancedb::` y 5 de `arrow` en un solo fichero, que es todo el radio del salto.
+
+### La razon escrita era de otra feature
+
+`vector-lancedb` estaba excusada en `NOT_IN_CI`
+(`src/bin/ai_test_harness/feature_matrix.rs`) asi:
+
+> `heavy native dep; the other vector backends cover the trait`
+
+Las dos mitades hablan de cosas distintas y solo una es verdad:
+
+- **Lo que bloqueaba era `protoc`**, no el peso: `prost-build` lo necesita para el arbol de `lance`.
+  En un runner son dos lineas de `apt`; en esta maquina no estaba, y asi «no compila aqui» se leyo
+  como «no se puede compilar». La nota de arriba del mismo fichero lo atribuia ademas a **libclang**,
+  que es el bloqueo de las otras dos features de esa lista ---`whisper-local` y
+  `local-inference-llama-cpp`, que siguen excusadas y sin tocar---. Dos herramientas bajo una sola
+  frase son dos razones de las que solo se comprueba una.
+- **«Los otros backends cubren el trait» es cierto del trait** y tapaba 849 lineas de
+  `src/vector_db_lance.rs` que no compilaba nadie, **14 tests** que no ejecutaba nadie y un ejemplo
+  roto desde el 2026-04-06.
+
+Ahora hay trabajo propio en CI ---instala `protoc`, corre los 14 tests y pasa
+`clippy --all-targets -- -D warnings`---, y la entrada sale de `NOT_IN_CI` en **este mismo commit**,
+que es lo que el trinquete de doble sentido exige.
+
+### El ejemplo llevaba siete meses roto, y el porque importa
+
+`examples/vector_lancedb_demo.rs`, sin tocar desde el 2026-04-06, fallaba de cuatro maneras: tres
+campos de `BackendInfo` que ya no se llaman asi (`persistent`, `distributed`, `max_vectors` contra
+`supports_persistence`, nada, y `max_recommended_vectors`) y una **expresion de struct** sobre
+`VectorDbConfig`, que se volvio `#[non_exhaustive]`.
+
+Ese cuarto es el interesante: `..Default::default()` no salva una expresion de struct desde **fuera**
+de la crate, y un ejemplo es el unico codigo de este arbol que compila como consumidor externo. O
+sea que el ejemplo era el unico sitio donde ese detalle del API publico se nota, y era justamente lo
+que nadie compilaba. Arreglado por los setters que el propio macro genera para eso.
+
+### Y 849 lineas que nunca habia linteado nadie
+
+`clippy --features vector-lancedb --all-targets -- -D warnings`: **0 avisos**. No habia nada roto
+---lo cual es la noticia buena y la mala a la vez---, pero tampoco habia nada vigilandolo: los lints
+alcanzan solo las features que se nombran, y esta no la nombraba ningun trabajo.
+
+### Lo que NO es
+
+- **No cambia el API publico** ni toca los otros seis backends vectoriales.
+- **No mete `vector-lancedb` en `full`**: sigue siendo opcional y pesada, con su trabajo aparte,
+  igual que `skill-forge` con wasmtime.
+- **No arregla las otras dos de `NOT_IN_CI`**: `whisper-local` y `local-inference-llama-cpp` siguen
+  necesitando libclang, y eso no se ha tocado.
+- **No se suprime ningun aviso**, ni aqui ni en `deny.toml`. Los diecisiete hallazgos del rojo
+  quedan cerrados por dependencia, ocho en V474 y nueve aqui.
+- **Las cifras de tests no se mueven**: los 14 tests estan tras una feature que no entra ni en
+  `FEATURES_STD` ni en `full`, asi que el titular sigue en 9.209. Lo que sube es lo que CI ejecuta,
+  que es otra cosa y no tiene badge.
+
+### Verificacion
+
+La bateria local: **33 puertas, todas verdes** --- y son 33, no 32, porque deriva la lista de
+`ci.yml` y se trajo sola el clippy del trabajo nuevo. Paso por una razon que conviene decir en vez
+de celebrar: las cajas de `lance` ya estaban compiladas en este `target`, asi que ningun build
+script volvio a correr. En un arbol frio ese gate necesita `protoc` en el entorno, y eso esta
+anotado en la skill ---un verde local que depende de lo que haya en `target/` vale menos de lo que
+parece.
+
+Aparte de la bateria: `cargo test --features vector-lancedb --lib vector_db_lance` **14 de 14** en
+0,54 s, `cargo clippy --features vector-lancedb --all-targets -- -D warnings` sin un aviso, y los
+**10 tests** del trinquete de `feature_matrix`, que son los que comprueban que la entrada borrada de
+`NOT_IN_CI` y el trabajo nuevo cuadran.
+
+| cifra | V474 | V475 | por que |
+|---|---|---|---|
+| titular (`FEATURES_STD`, lib) | 9.209 | **9.209** | los 14 tests estan tras una feature que no entra en `FEATURES_STD` |
+| `--features full` a solas | 7.405 | **7.405** | tampoco entra en `full` |
+| el minimo de ocho features | 5.364 | **5.364** | lo mismo |
+| LOC | 569.972 | **569.980** | las ocho lineas del ejemplo y de los comentarios |
+| cajas en el lock | 1.092 | **1.078** | el subarbol de `geo` se va entero |
+
+Lo que sube y no tiene badge es lo que CI **ejecuta**: 14 tests y 849 lineas que antes no entraban
+en ningun trabajo.
+
 ## [Unreleased] - v358 (2026-11-20) - V474: ocho vulnerabilidades de wasmtime que no se arreglaban subiendo wasmtime (0.2.441)
 
 Rojo de seguridad, y no lo trajo ningun cambio de codigo: el mismo arbol estaba **verde a las

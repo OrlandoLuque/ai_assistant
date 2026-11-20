@@ -18,11 +18,15 @@ fn main() {
     // ------------------------------------------------------------------
     println!("--- 1. VectorDbConfig ---\n");
 
-    let config = VectorDbConfig {
-        dimensions: 128,
-        collection_name: "demo_vectors".to_string(),
-        ..Default::default()
-    };
+    // Por los setters y no por un literal: `VectorDbConfig` es
+    // `#[non_exhaustive]`, y eso prohibe la expresion de struct desde FUERA de
+    // la crate incluso con `..Default::default()`. Un ejemplo es el unico
+    // codigo de este arbol que compila como consumidor externo, asi que es el
+    // unico sitio donde ese detalle se nota --- y llevaba siete meses sin que
+    // nada lo compilara.
+    let config = VectorDbConfig::default()
+        .with_dimensions(128)
+        .with_collection_name("demo_vectors".to_string());
 
     println!("  dimensions:      {}", config.dimensions);
     println!("  collection_name: {}", config.collection_name);
@@ -168,10 +172,17 @@ fn main() {
     println!("\n--- 8. Backend Info ---\n");
 
     let info = db.backend_info();
+    // Los nombres de estos campos son los que tiene `BackendInfo`, no los que
+    // tenia: `persistent`, `distributed` y `max_vectors` no existen --- el
+    // tercero se llama `max_recommended_vectors` y el segundo no existe en
+    // absoluto, porque lo que distingue un backend empotrado de uno dedicado
+    // aqui es el `tier`.
     println!("  Name:        {}", info.name);
-    println!("  Persistent:  {}", info.persistent);
-    println!("  Distributed: {}", info.distributed);
-    println!("  Max vectors: {:?}", info.max_vectors);
+    println!("  Tier:        {}", info.tier);
+    println!("  Persistence: {}", info.supports_persistence);
+    println!("  Filtering:   {}", info.supports_filtering);
+    println!("  Export:      {}", info.supports_export);
+    println!("  Max vectors: {:?}", info.max_recommended_vectors);
 
     // Cleanup
     let _ = std::fs::remove_dir_all(&tmp_dir);

@@ -626,6 +626,52 @@ jobs:
       - name: Compile the WASM skill engine
         run: cargo check --features skill-forge --lib
 
+  vector-lancedb:
+    name: LanceDB - el backend que no compilaba nadie
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # V475. `vector-lancedb` estaba en `NOT_IN_CI`
+    # (`src/bin/ai_test_harness/feature_matrix.rs`) con esta razon escrita:
+    # «heavy native dep; the other vector backends cover the trait». Las dos
+    # mitades de esa frase hablan de cosas distintas y solo una es verdad.
+    #
+    # - Lo que de verdad bloqueaba era **protoc**, que `prost-build` necesita y
+    #   que el arbol de `lance` arrastra. En un runner son dos lineas de apt; en
+    #   la maquina de desarrollo no estaba, y asi «no compila aqui» se leyo como
+    #   «no se puede compilar». Con protoc instalado compila: medido el
+    #   2026-11-20, `cargo check --features vector-lancedb --lib` en 2 min 14 s
+    #   con el arbol de lance en frio.
+    # - «Los otros backends cubren el trait» es cierto del TRAIT, y tapaba 849
+    #   lineas de `src/vector_db_lance.rs` que no compilaba nadie, **14 tests**
+    #   que no ejecutaba nadie, y un ejemplo roto desde el 2026-04-06 ---siete
+    #   meses--- por tres campos renombrados de `BackendInfo` y por una
+    #   expresion de struct sobre un tipo que se volvio `#[non_exhaustive]`. Un
+    #   ejemplo es el unico codigo de este arbol que compila como consumidor
+    #   EXTERNO, asi que es el unico sitio donde ese detalle se nota.
+    #
+    # `cargo test` y no `cargo check`, por lo mismo que dice el trabajo de
+    # abajo: «lo compila alguien» y «lo prueba alguien» son dos preguntas
+    # distintas, y aqui los 14 tests corren en 0,54 s --- el coste es todo
+    # compilacion. Y `clippy --all-targets` porque los lints alcanzan solo las
+    # features que se nombran: estas 849 lineas no las habia linteado nunca
+    # nadie, y salieron limpias.
+    #
+    # COSTE: sin medir en el runner todavia, y la primera ejecucion lo dira. Lo
+    # que si se sabe es el tamano del arbol: `lancedb` resuelve 533 cajas por si
+    # solo, y el lock completo del proyecto tiene 1.078.
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.98.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: vector-lancedb
+      - name: protoc, que es lo que de verdad bloqueaba
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: Los 14 tests del backend empotrado
+        run: cargo test --features vector-lancedb --lib vector_db_lance
+      - name: Lints, que nunca habian alcanzado este fichero
+        run: cargo clippy --features vector-lancedb --all-targets -- -D warnings
+
   uncovered-features:
     name: Las once que no compilaba nadie
     runs-on: ubuntu-latest

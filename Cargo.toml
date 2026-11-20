@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.441"
+version = "0.2.442"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -717,10 +717,10 @@ sha2 = "0.10"
 # Optional tiktoken for exact OpenAI tokenizer (cl100k_base, o200k_base). Adds ~4MB.
 tiktoken-rs = { version = "0.6", optional = true }
 # Optional LanceDB for embedded vector database (Tier 2)
-lancedb = { version = "0.26", optional = true, default-features = false }
+lancedb = { version = "0.41", optional = true, default-features = false }
 # Optional Arrow for LanceDB data interchange (version must match lancedb's arrow dep)
-arrow-array = { version = "57", optional = true }
-arrow-schema = { version = "57", optional = true }
+arrow-array = { version = "58", optional = true }
+arrow-schema = { version = "58", optional = true }
 # Optional futures for async stream collection (LanceDB queries)
 futures = { version = "0.3", optional = true }
 # Optional HMAC for AWS SigV4 authentication (Bedrock, S3)

@@ -21,8 +21,8 @@ Esto te da el contexto completo: dónde estamos, qué se ha hecho, cómo trabaja
 ## Sobre el Proyecto
 - **Librería Rust** para integración con LLMs locales y cloud
 - **568K líneas de código**, 579 archivos fuente (.rs), **9.209 tests** bajo el conjunto de
-  features que corre CI (`FEATURES_STD`). Re-medido el 2026-11-19 en 0.2.440 (antes 9.194, del
-  mismo día; las LOC medidas hoy son 569.972, y «568K» entra en el 1 % que tolera la puerta);
+  features que corre CI (`FEATURES_STD`). Re-medido el 2026-11-20 en 0.2.442 (antes 9.194, del
+  2026-11-19; las LOC medidas hoy son 569.980, y «568K» entra en el 1 % que tolera la puerta);
   decía
   540K/559/9.753, del 2026-09-03.
   - Las dos primeras salen de **la definición de la puerta**
