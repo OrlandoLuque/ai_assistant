@@ -130,28 +130,15 @@ Esto te da el contexto completo: dónde estamos, qué se ha hecho, cómo trabaja
   - Ese fork quedó **desacoplado** (repo público independiente, sin relación con este) por un
     cambio de visibilidad accidental el mismo día; el código está intacto. Ver la memoria
     `feedback_never_change_repo_visibility`.
-- **Opción futura**: Considerar publicar un módulo básico pequeño (solo providers) bajo MIT en crates.io como módulo open-source bajo MIT/Apache-2.0
 
-### Monetización
-- **Modelo elegido**: PolyForm Noncommercial + negociación caso a caso con empresas
-- **Motivo**: El autor es desarrollador solo, con tiempo y presupuesto limitados, con familia
-- **Estrategia de precios**: Caso a caso, sin infraestructura SaaS compleja por ahora
-- **Futuro**: Si crece, evolucionar a Open-Core con features premium
-
-### Protección de Propiedad Intelectual
-- **Registro PI España** (cultura.gob.es): 13,59€ — PENDIENTE
-- **WIPO PROOF** (OMPI/ONU): ~20€ — PENDIENTE
-- **Safe Creative**: 15-30€ — PENDIENTE
-- **Depósito notarial**: 50-150€ — PENDIENTE (recomendado)
-- **CLA**: Implementar antes de recibir contribuciones externas (CLA Assistant en GitHub)
-- **Patentes**: DESCARTADAS (no merece la pena en Europa para software puro)
-
-### Estrategia de Features para Monetización Futura
-| Tier | Features | Precio |
-|------|----------|--------|
-| Gratuito | core, embeddings, streaming, tools, documents, rag | 0€ |
-| Pro | multi-agent, security, analytics, eval, vision | Pago |
-| Enterprise | distributed, p2p, autonomous, scheduler, browser | Personalizado |
+> **La estrategia de negocio no vive en este repositorio.** Monetización, precios,
+> niveles de features con precio, costes de registro de PI y las tareas de
+> licenciamiento se sacaron el 2026-11-20, a la vez que la oferta comercial de la web
+> pública, y están en `ai_assistant_plans/2026-11-20_comercial_retirado_de_la_web/`.
+> **No los traigas de vuelta.** El repositorio es público y una oferta comercial en
+> línea obliga a identificarse con datos personales; la decisión del autor fue quitar
+> la oferta, no publicar los datos. La licencia PolyForm Noncommercial no cambia: lo
+> que se fue es la invitación a negociar, no los términos.
 
 ## PARADA OBLIGATORIA — licencias, visibilidad y cualquier cosa con efecto legal
 
@@ -223,17 +210,3 @@ proyecto en el plan nocturno: compila, clippy `-D warnings`, tests, batería,
 commit por cambio. Fuera del plan nocturno explícito, **NUNCA suspendas/apagues**
 el equipo (ver memoria `feedback_no_suspend`).
 
-## Documentos Generados
-- `Informe_Viabilidad_ai_assistant.docx` — Informe completo de viabilidad v2 (monetización, PI, licenciamiento)
-  - Actualizado 21/02/2026 con estrategia PolyForm Shield (recomendada) vs Noncommercial (alternativa)
-  - Incluye secciones sobre evolución del código, plan de acción y costes
-
-## Tareas Pendientes
-- [x] Actualizar el informe .docx con la estrategia PolyForm (v2 completada 21/02/2026)
-- [x] Decidir licencia → PolyForm Noncommercial 1.0.0 (decidida 22/02/2026)
-- [x] Sustituir LICENSE-MIT y LICENSE-APACHE por LICENSE PolyForm (hecho 22/02/2026)
-- [x] Actualizar campo `license` en Cargo.toml (hecho 22/02/2026)
-- [ ] Registrar PI en España, WIPO PROOF y Safe Creative
-- [x] Implementar CLA en el repositorio (CLA.md + CONTRIBUTING.md + GitHub Action, hecho 11/04/2026)
-- [ ] Decidir si publicar módulo básico bajo MIT como módulo open-source bajo MIT/Apache-2.0
-- [ ] Crear página web/landing con info de licencia comercial

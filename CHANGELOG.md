@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v360 (2026-11-20) - V476: la estrategia de negocio vivia en el repositorio publico, y la tabla de precios de la web se titulaba «Estructura de features» (0.2.443)
+
+El autor leyo que publicar una oferta comercial obliga a identificarse con datos personales
+y pidio revisar que no quedara nada «que suene a tema de negocio». Habia dos cosas, y la
+segunda no estaba localizada.
+
+**En este repositorio, que es publico**, `CLAUDE.md` llevaba el modelo de monetizacion, la
+estrategia de precios, la tabla de tres niveles con precio, los costes de los cuatro
+registros de propiedad intelectual y una linea sobre las circunstancias personales del
+autor. Nada de eso es instruccion operativa: son cuatro bloques de estrategia en un fichero
+que existe para decir como se trabaja aqui.
+
+**En la web** habia una oferta activa en dos sitios. `licensing.html` se sabia. El otro era
+la seccion `#tiers` de `ai_assistant_overview.html`, titulada «Estructura de features» y
+presentada como informacion tecnica: debajo del titulo estaban 0 EUR / Negociado /
+Personalizado. Un titulo tecnico sobre contenido comercial es justo lo que no encuentra un
+barrido por palabras, y por eso hubo que mirar las 26 paginas una por una.
+
+Lo que esto **no** es:
+
+- **No es un cambio de licencia.** PolyForm Noncommercial 1.0.0 sigue siendo la licencia,
+  `LICENSE` no se toca, y los terminos siguen dichos en la portada y en
+  `product_overview.html`. Lo que se fue es la invitacion a negociar, no los terminos.
+- **No es un cambio de visibilidad.** El repositorio es publico y sigue publico.
+- **No borra el pasado.** El material sigue en la historia de git, y las paginas han estado
+  servidas, asi que Google y el Internet Archive pueden tener copia. Esto corta lo que se
+  publica desde ahora, nada mas.
+- **No toca `PENDING.md`**, que salia con doce coincidencias en el barrido y las doce eran
+  tecnicas: los «Tier 0/2/3» de los backends vectoriales y el «rag tier» del pensamiento
+  adaptativo. Contar coincidencias de una palabra no es medir el tema.
+
+Verificacion: `CLAUDE.md` 239 -> 212 lineas, con la PARADA OBLIGATORIA, la regla de no
+modificar codigo sin permiso, la de no meter material de terceros y la de no cambiar la
+visibilidad comprobadas una por una despues del corte. `check_doc_imports.py` ---la unica
+puerta que lee `CLAUDE.md`--- 1046 nombres importados, 0 fallos. Las dos autopruebas de
+numeros verdes (29 y 7 casos), y las puertas de la web con 25 paginas en lugar de 26 y sus
+14 cifras intactas. El contenido retirado no se borra: queda en `ai_assistant_plans/`,
+fuera de los dos repositorios, con un README que dice de donde salio cada trozo.
+
+Y entra una nota en `CLAUDE.md` donde estaban las secciones, porque lo contrario de
+documentar una decision es que la siguiente sesion la deshaga por utilidad: dice que la
+estrategia de negocio no vive aqui y que no hay que traerla de vuelta.
+
 ## [Unreleased] - v359 (2026-11-20) - V475: los nueve avisos de heapless se van porque la dependencia se va, y la razon escrita de por que nadie compilaba lancedb era la de otra feature (0.2.442)
 
 La otra mitad del rojo de V474. Y no se suprime nada: el autor rechazo la supresion con fecha de
