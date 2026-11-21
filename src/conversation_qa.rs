@@ -234,13 +234,20 @@ impl QaScenario {
 
 /// A small price sheet used by the grounding scenario. The Startup line is the
 /// exact fact the model must recover from a large-ish context.
+///
+/// The subject is deliberately mundane. It used to be a commercial software
+/// licence tariff, which in a public repository reads as this project's own price
+/// list to anyone who greps for it. It never was one and the figures are invented,
+/// but a decorative fixture should not need that explanation. The amounts are
+/// unchanged on purpose, so the retrieval difficulty and every historical pass
+/// rate for this scenario stay comparable.
 const PRICE_KNOWLEDGE: &str = "\
-Commercial license price sheet (EUR per year, VAT excluded):
-- Individual / indie developer: 49 EUR per year.
+Office cleaning service price sheet (EUR per year, VAT excluded):
+- Individual / home office: 49 EUR per year.
 - Startup (fewer than 10 employees): 490 EUR per year.
 - Business (10 to 250 employees): 2400 EUR per year.
 - Enterprise (more than 250 employees): 12000 EUR per year.
-A one-time perpetual TDM license for a single dataset costs 3500 EUR.";
+A one-time deep clean of a single floor costs 3500 EUR.";
 
 /// Built-in scenarios covering the failure modes found by hand: multi-turn
 /// context retention and knowledge grounding.
@@ -266,7 +273,7 @@ pub fn builtin_scenarios() -> Vec<QaScenario> {
             description: "Answers a specific price present in the injected knowledge".to_string(),
             knowledge: Some(PRICE_KNOWLEDGE.to_string()),
             turns: vec![QaTurn::new(
-                "Según el pliego, ¿cuánto cuesta al año la licencia para una Startup? \
+                "Según el pliego, ¿cuánto cuesta al año el servicio para una Startup? \
                  Responde solo con el importe exacto.",
             )
             .expect("490")],

@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v362 (2026-11-21) - V478: un pliego de precios de licencias comerciales vivia en el codigo fuente, como decorado de un escenario de RAG (0.2.445)
+
+`PRICE_KNOWLEDGE`, en `src/conversation_qa.rs`, era un pliego titulado «Commercial license
+price sheet» con cinco tarifas en euros, dentro de un repositorio publico. Es el contexto que
+inyecta el escenario `grounded_price`: el modelo tiene que recuperar «490» de un texto largo,
+y el comentario de encima ya decia que era un decorado.
+
+**Medido antes de tocarlo, porque la pregunta era si esas cifras eran las del autor:** no lo
+son. El plan de negocio que salio en V476 hablaba de `0 EUR` / `Negociado` / `Personalizado`,
+y sus importes eran los de registro de propiedad intelectual (13,59 / ~20 / 15-30 / 50-150
+EUR). Ninguno de los cinco del pliego aparece ahi. Es un decorado inventado y no nombra el
+proyecto en ninguna linea.
+
+Lo que cambia es el asunto, no los numeros: pasa a ser un pliego de limpieza de oficinas.
+**Las cinco cifras se mantienen exactas a proposito**, para que la dificultad de recuperacion
+no se mueva y las tasas de acierto historicas de `grounded_price` sigan siendo comparables con
+las de este cuaderno. La pregunta pasa de «la licencia para una Startup» a «el servicio para
+una Startup», y los dos asserts del test siguen pidiendo «490» sin tocarse.
+
+| presupuestado | hecho |
+|---|---|
+| la constante | si |
+| la pregunta del escenario | si |
+| el `.expect("490")` | **no hacia falta**: el importe no cambia |
+| dos menciones en `docs/LOCAL_MODELS_CONTEXT_AND_QA.md` | **no hacian falta**: dicen «inyecta un pliego y pide un precio», que sigue siendo verdad |
+
+Y el fichero ya llevaba dentro el modelo de como se hace neutro: su escenario hermano
+`multi_grounded` usa un catalogo de planes de soporte con Basico 19, Estandar 49, Premium 99 y
+Empresa 290 --- misma forma, ningun asunto comercial propio.
+
+Lo que esto **no** es: no es un hallazgo de seguridad ni una fuga de nada. Era una cadena
+decorativa que, en un repositorio publico y leida por quien grepea en vez de leer el
+comentario, se lee como la lista de precios del proyecto. Una cadena decorativa no deberia
+necesitar esa explicacion.
+
+Verificacion: **33 puertas en verde** con la bateria completa, 7 clippy incluidos. La unica
+que no corre es `check_documented_cli.py`, que necesita expansion de shell y el propio script
+la nombra.
+
 ## [Unreleased] - v361 (2026-11-20) - V477: el fichero de instrucciones de trabajo era publico, y cuatro documentos lo citaban como si fuera parte del inventario (0.2.444)
 
 `CLAUDE.md` no documenta el producto: es el protocolo de trabajo del autor ---que leer al
