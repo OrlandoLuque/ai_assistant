@@ -5,6 +5,60 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v364 (2026-11-21) - V480: la advisory de unsafe-libyaml se suprime, y la razon que tenia preparada llevaba un dia siendo falsa (0.2.447)
+
+`RUSTSEC-2024-0449` (`unsafe-libyaml`, `unmaintained`) dejaba CI en rojo desde V475. El fallo
+era **exactamente uno**, leido del log del run `44848353918` y no supuesto: «1 denied warning
+found», porque el trabajo pasa `-D unmaintained`. Los otros tres trabajos de Supply Chain
+---`cargo-deny`, la sincronia de la lista de ignorados y el SBOM--- estaban verdes.
+
+Decision del autor: **suprimir por ahora, y arreglarlo de verdad como lo PRIORITARIO
+siguiente**. Lo segundo esta encolado fuera del repositorio.
+
+**Lo que esta entrada aporta no es la supresion, es su razon.** Habia un parche preparado del
+2026-11-20 cuya condicion de desbloqueo decia «cuando lindera suelte serde_yaml_ng». Re-medido
+en crates.io hoy antes de aplicarlo:
+
+| eslabon | lo que dice la medicion del 2026-11-21 |
+|---|---|
+| `lindera` | **ya lo solto**, en **5.0.0** del 2026-08-08. Va por 6.2.0. La 4.0.0 si lo tenia |
+| `lance-tokenizer` | su ultima publicada, **14.0.3 del 2026-11-15**, sigue pidiendo `lindera ^3.0.7` |
+| `lancedb` 0.41.0 | pide `lance-index =14.0.2` **exacto**, con `features = ["tokenizer-jieba", "tokenizer-lindera"]` y sin `optional` |
+
+O sea que la razon escrita era falsa el dia que se escribio, y **son dos clavos y no uno**:
+aunque `lance-tokenizer` relajara su pin manana, no llegaria aqui hasta que `lancedb` suba de
+`=14.0.2`. Eso la nota anterior no lo tenia. Es la cuarta razon de supresion de este proyecto
+que resulta falsa teniendo aspecto de revisada --- el patron esta documentado y volvio a pasar.
+
+La condicion escrita ahora es comprobable con una llamada por eslabon, y eso es el punto:
+`Re-check by: 2027-02-21 OR cuando lance-tokenizer admita lindera 5+ Y lancedb suba de
+lance-index =14.0.2`.
+
+Superficie, re-medida: **cero** apariciones de `serde_yaml_ng` o `unsafe_libyaml` en `src/`. Es
+el parser de YAML con el que lindera lee su configuracion de diccionarios, detras de la feature
+opcional `vector-lancedb`, que no entra ni en `full` ni en `FEATURES_STD`.
+
+Lo que esta supresion **cuesta**, dicho sin adornos: V475 cambio nueve avisos `unsound` de
+`heapless` 0.8 ---con parche en 0.9.4 y a seis niveles de profundidad, inalcanzable--- por este
+uno de mantenimiento sin parche. El cambio es bueno y la deuda es mas pequena, pero sigue
+siendo deuda, y ahora es **invisible**: a partir de este commit CI esta verde.
+
+**Verificacion, con lo que de verdad se corrio:** la bateria completa dio **33 puertas verdes**
+sobre el arbol con los cambios de V478 y V479; este commit solo anade un TOML y dos YAML, que
+no pueden tocar un test de Rust, y sus tres puertas propias ---`check_rustsec_ignores`,
+`check_recheck_dates`, `check_deny_graph`--- estan verdes: 13 supresiones identicas en los tres
+ficheros, cada una con razon y con re-chequeo vigente.
+
+Y una segunda pasada de la bateria salio **roja en `test_std_lib`**, con un solo test:
+`memory_service::tests::test_entity_add_query`. **No era de estos cambios: era contencion.** Se
+estaba compilando CUDA en veinte nucleos a la vez. El test se sincroniza con
+`sleep(Duration::from_millis(50))` esperando que el hilo del servicio procese un mensaje, y 50
+ms no le bastan con la maquina cargada. Medido: la suite tarda **19,37 s con 9209 verdes** en
+maquina tranquila y **64,59 s con 1 fallo** bajo la compilacion, y el test a solas pasa en 0,05
+s. El error de metodo fue mio ---verificar y compilar a la vez--- y la fragilidad del test es
+real y queda apuntada: un test que pasa en reposo y falla bajo carga no esta sincronizado, esta
+esperando.
+
 ## [Unreleased] - v363 (2026-11-21) - V479: el README.txt de cada paquete de release invitaba a negociar una licencia comercial, y no incluia el texto de la licencia (0.2.446)
 
 `scripts/build_release.ps1` escribia dos lineas al final del `README.txt` de **cada paquete

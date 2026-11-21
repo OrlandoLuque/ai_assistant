@@ -414,6 +414,41 @@ ignore = [
     # duraciones; no hay superficie que evaluar mas alla de eso.
     # Re-check by: 2027-02-15 OR cuando lance y object_store lo suelten.
     "RUSTSEC-2026-0542",
+    # unsafe-libyaml: `unmaintained`, y cargo-audit lo dice con «No fixed upgrade
+    # is available!» porque el rango afectado es `introduced: 0.0.0-0` sin
+    # version arreglada. No hay a donde subir en ningun eslabon.
+    #
+    # La cadena, medida en el lock de hoy:
+    #   lancedb 0.41.0 -> lance-index 14.0.2 -> lance-tokenizer 14.0.2
+    #                  -> lindera 3.0.7 -> serde_yaml_ng 0.10.0
+    #                  -> unsafe-libyaml 0.2.11
+    #
+    # POR QUE NO SE PUEDE SALIR SUBIENDO, re-medido en crates.io el 2026-11-21 y
+    # no heredado de la nota anterior, que era FALSA en este punto:
+    #   1. `lindera` YA solto `serde_yaml_ng`, en **5.0.0** (2026-08-08), y va por
+    #      6.2.0. Asi que «esperar a lindera» no es la condicion: lindera ya esta.
+    #   2. `lance-tokenizer` 14.0.3 (2026-11-15), su ultima publicada, sigue
+    #      pidiendo `lindera ^3.0.7`. Tres meses despues.
+    #   3. Y hay un segundo clavo que la nota anterior no tenia: `lancedb` 0.41.0
+    #      pide `lance-index =14.0.2` EXACTO, con
+    #      `features = ["tokenizer-jieba", "tokenizer-lindera"]` y sin `optional`.
+    #      O sea que aunque lance-tokenizer arreglara el suyo manana, no llegaria
+    #      aqui hasta que lancedb suba. Son DOS clavos, no uno.
+    #
+    # Superficie: CERO apariciones de `serde_yaml_ng::` o `unsafe_libyaml::` en
+    # `src/`. Es el parser de YAML con el que lindera lee su configuracion de
+    # diccionarios, detras de la feature opcional `vector-lancedb`, que no entra
+    # ni en `full` ni en `FEATURES_STD`.
+    #
+    # Lo que esta entrada cuesta, dicho claro: V475 cambio NUEVE avisos `unsound`
+    # de `heapless` 0.8 ---con parche en 0.9.4 y a seis niveles, inalcanzable---
+    # por este uno de mantenimiento sin parche. El cambio es bueno y la deuda es
+    # mas pequena, pero sigue siendo deuda, y el autor la ha puesto como lo
+    # PRIORITARIO siguiente: el arreglo de verdad es que lance suelte el pin.
+    # Re-check by: 2027-02-21 OR cuando `lance-tokenizer` admita lindera 5+ Y
+    # `lancedb` suba de `lance-index =14.0.2`. Las dos se comprueban con una
+    # llamada a crates.io cada una.
+    "RUSTSEC-2024-0449",
 ]
 
 # ----------------------------------------------------------------

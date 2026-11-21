@@ -116,6 +116,7 @@ jobs:
             --ignore RUSTSEC-2026-0543 \
             --ignore RUSTSEC-2026-0555 \
             --ignore RUSTSEC-2026-0542 \
+            --ignore RUSTSEC-2024-0449 \
             -D unsound \
             -D yanked \
             -D unmaintained
