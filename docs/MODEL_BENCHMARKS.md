@@ -133,6 +133,93 @@ dependencies), so disk growth is not a concern in normal use.
 
 ## Log (newest first)
 
+### 2026-11-21 — `Q1_0` contra `PTQ1_0` en una Ada: gana `Q1_0` en los dos ejes, y mi pronóstico de kernels falló
+
+**La pregunta** es la que esta misma sección dejó escrita el 2026-09-20: *«Y lo que nadie ha
+publicado: `Q1_0` contra `PTQ1_0` en una Ada. Las cifras de terceros son de `PTQ1_0` a solas.
+Esa comparación en la 4080 sigue siendo el dato que falta».* Ya no falta.
+
+**Montaje.** RTX 4080 SUPER (Ada Lovelace, compute 8.9, 16.375 MiB). Toolkit CUDA 13.5
+instalado esa noche; el fork construido con `-DGGML_CUDA=ON` y
+**`-DCMAKE_CUDA_ARCHITECTURES=89`**, generador Visual Studio 2022, build `5d80cff0b`. El mismo
+`llama-bench` para los dos modelos, `-p 64 -n 16`. Ambos reportan **26,90 B de parámetros**,
+que es la comprobación de que el tamaño no varía.
+
+**La comprobación previa, hecha ANTES de instalar nada**, porque la trampa de septiembre fue
+medir un formato sin kernel: contados con *lookbehind* negativo —`grep -i q1_0` cuenta también
+`ptq1_0`, y `q1_0` tampoco sirve porque `_` es carácter de palabra— **los dos formatos
+tienen kernels CUDA**: `Q1_0` en 21 ficheros de `ggml-cuda/`, `PTQ1_0` en 13, con su propia
+instancia `mmq-instance-ptq1_0.cu`. Y los dos están en `mmq-config-ampere.cuh`, que es la
+config que usa Ada (`mmq.cuh` cae en `ggml_cuda_mmq_get_config_ampere`). `GGML_CUDA_HOPPER_Q1`
+se dejó en **OFF**: es una ruta sm_90a, de Hopper, que Ada no puede usar.
+
+#### CUDA, 5 repeticiones, `-ngl 99`
+
+| Modelo | Cuantización | Tamaño | `pp64` (leer) | `tg16` (escribir) |
+|---|---|---|---|---|
+| Bonsai-27B | `Q1_0` (1,125 bpw) | **3,53 GiB** | **1600,01** ± 209,83 | **99,41** ± 2,18 |
+| Ternary-Bonsai-2-27B | `PTQ1_0` (1,75 bpw ternario, grupo 128) | 5,53 GiB | 895,25 ± 54,05 | 70,31 ± 0,98 |
+
+**`Q1_0` gana en los dos ejes: 1,79× leyendo y 1,41× escribiendo, siendo además un 57 % más
+pequeño.** Para una tarjeta Ada, la respuesta operativa es la misma que para la integrada.
+
+#### Y mi pronóstico falló, que es la parte informativa
+
+De la comprobación previa dedujo uno que ganaría `PTQ1_0`: tiene **11 apariciones en la config
+MMQ de Ampere** —la que usa Ada— y una instancia de plantilla propia, mientras `Q1_0` no tiene
+config por arquitectura en ningún sitio y va por la ruta genérica. **Un kernel afinado perdiendo
+contra uno genérico por 1,41× no se explica con el recuento de ficheros**, y el recuento es lo
+único que yo había medido. Lo que queda es una hipótesis sin comprobar: a 1,125 bpw contra 1,75
+el cuello puede ser el ancho de banda y no el kernel, y 3,53 GiB mueven menos bytes por token
+que 5,53. Queda por medir, y hasta entonces es una conjetura.
+
+#### CPU pura (`-ngl 0`), 3 repeticiones — el 16× se reproduce en otra CPU
+
+| Modelo | `pp64` | `tg16` |
+|---|---|---|
+| Bonsai-27B `Q1_0` | 214,11 ± 25,85 | **3,69** ± 1,15 |
+| Ternary-Bonsai-2-27B `PTQ1_0` | 75,61 ± 49,51 | **0,23** ± 0,02 |
+
+**3,69 contra 0,23 es 16,0×.** El 2026-09-20, en un i7-1165G7, fue 0,81 contra 0,05: **16,2×**.
+Dos CPU distintas, dos órdenes de magnitud distintos en lo absoluto, y **el mismo factor**. Eso
+confirma el diagnóstico de aquella corrección en hardware independiente: `ptq1_0` no aparece
+ni una vez en `ggml-cpu/arch/x86/quants.c` —re-comprobado hoy, 0 contra 6 de `q1_0`— y las PR
+que lo añaden siguen abiertas.
+
+Y la forma de los dos números dice de dónde viene cada cosa: **16× sin GPU y 1,41× con ella** es
+exactamente la firma de «tiene kernel CUDA, le falta el de x86». Si faltaran los dos, la
+distancia no se cerraría al encender la tarjeta.
+
+#### Qué sobrevive de septiembre y qué no
+
+- **La conclusión retirada resulta ser cierta aquí, y la retirada seguía estando bien.** El
+  2026-09-20 se retiró «peor en los dos ejes» como afirmación *sobre el formato*, porque la
+  medida era de una Iris Xe con un kernel ausente. En Ada también es peor en los dos ejes —pero
+  por 1,41× y no por 8,4×, y con los dos kernels presentes. Retirar una afirmación mal
+  fundamentada es correcto aunque luego otra medición la respalde: lo que se retiró fue el
+  fundamento.
+- **El tamaño sigue siendo intrínseco.** 5,53 GiB contra 3,53 para el mismo modelo no depende
+  de la máquina.
+
+#### Lo que esto NO dice
+
+- **Nada sobre calidad.** Mide velocidad y tamaño. Ninguna de las dos cifras dice si el modelo
+  responde mejor.
+- **El `pp` es ruidoso**: ±209,83 sobre 1600 es un 13 %. Con `-r 2` dio 1486,63 ± 243,21, dentro
+  del error. El eje fiable aquí es `tg`, con ±2,18 sobre 99,41.
+- **Una máquina, un build, una noche.** Y nada sobre Hopper ni Blackwell.
+- **No refuta la recomendación de PrismML.** Lo que documentan es cuál de **sus dos** formatos
+  ternarios conviene por arquitectura (`PTQ1_0` en Ada, `PQ2_0` en H100/A100/Blackwell). Esta
+  comparación es contra `Q1_0`, que es el formato anterior de 1,125 bpw, y esa no está en su
+  documentación. Son dos preguntas distintas.
+- Las cifras de terceros para `PTQ1_0` eran ~96,7 t/s en una 4090. Aquí `PTQ1_0` da 70,31 en una
+  4080, que es coherente con la tarjeta más pequeña; lo que añade esta medida es que **`Q1_0` en
+  la 4080 da 99,41**, por encima de la cifra publicada de `PTQ1_0` en una tarjeta mayor. Dos
+  montajes distintos, así que es un indicio, no una comparación.
+
+Modelos en caché **fuera del árbol** (`~/.cache/prismml_models/`), con su licencia Apache-2.0
+anotada al lado, descargados con autorización expresa del autor.
+
 ### 2026-09-20 — `Q1_0` contra `PTQ1_0` a tamaño constante: el formato nuevo pierde en los dos ejes
 
 **La pregunta.** V329 midió el Ternary Bonsai 2 de 27B en `PTQ1_0` a 0,22 tok/s y quedó la

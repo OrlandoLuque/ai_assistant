@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v365 (2026-11-21) - V481: la comparacion de formatos que el cuaderno declaraba que faltaba, medida en Ada, y gana el formato sin kernel afinado (0.2.448)
+
+`docs/MODEL_BENCHMARKS.md` cerraba su ultima entrada, del 2026-09-20, diciendo: «lo que nadie
+ha publicado: `Q1_0` contra `PTQ1_0` en una Ada. Esa comparacion en la 4080 sigue siendo el
+dato que falta». Ya no falta.
+
+**Montaje**: RTX 4080 SUPER (Ada, compute 8.9), toolkit CUDA 13.5 instalado esta noche, el fork
+de PrismML construido con `-DGGML_CUDA=ON` y `-DCMAKE_CUDA_ARCHITECTURES=89`, build `5d80cff0b`,
+el mismo `llama-bench` para los dos, `-p 64 -n 16`. Los dos modelos reportan 26,90 B de
+parametros, que es la comprobacion de que el tamano no varia.
+
+| | tamano | `pp64` | `tg16` |
+|---|---|---|---|
+| Bonsai-27B `Q1_0` (1,125 bpw) | **3,53 GiB** | **1600,01** ± 209,83 | **99,41** ± 2,18 |
+| Ternary-Bonsai-2-27B `PTQ1_0` (1,75 bpw) | 5,53 GiB | 895,25 ± 54,05 | 70,31 ± 0,98 |
+
+**`Q1_0` gana en los dos ejes: 1,79x leyendo y 1,41x escribiendo, siendo un 57 % mas pequeno.**
+
+**Y el pronostico fallo, que es la parte que vale.** Antes de instalar el toolkit se contaron
+los kernels, para no repetir la trampa de septiembre: los dos formatos tienen kernels CUDA, y
+`PTQ1_0` tiene **once apariciones en la config MMQ de Ampere** ---la que usa Ada--- mas su
+propia instancia de plantilla, mientras `Q1_0` no tiene config por arquitectura en ningun
+sitio. De ahi se dedujo que ganaria `PTQ1_0`. **No gana.** Un kernel afinado perdiendo por
+1,41x contra uno generico no se explica contando ficheros, y contar ficheros era lo unico
+medido. La hipotesis que queda ---sin comprobar--- es que a 1,125 bpw contra 1,75 el cuello sea
+el ancho de banda y no el kernel.
+
+**El 16x de CPU se reproduce en hardware independiente.** Con `-ngl 0`: 3,69 contra 0,23 t/s en
+`tg16`, que es **16,0x**. El 2026-09-20, en un i7-1165G7, fue 0,81 contra 0,05: **16,2x**. Dos
+CPU distintas, el mismo factor. Confirma el diagnostico de aquella correccion: `ptq1_0` no
+aparece ni una vez en `ggml-cpu/arch/x86/quants.c` (re-comprobado: 0 contra 6 de `q1_0`). Y la
+forma de los dos numeros dice de donde viene: **16x sin GPU y 1,41x con ella** es la firma de
+«tiene kernel CUDA, le falta el de x86».
+
+Lo que esto **no** dice: nada sobre calidad ---mide velocidad y tamano---; el `pp` es ruidoso
+(±209 sobre 1600 es un 13 %, y el eje fiable es `tg`); una maquina, un build, una noche; y **no
+refuta la recomendacion de PrismML**, que es sobre cual de sus DOS formatos ternarios conviene
+por arquitectura, no sobre `Q1_0`. Son dos preguntas distintas y conviene no mezclarlas.
+
+Los dos GGUF viven en `~/.cache/prismml_models/`, **fuera del arbol de los dos repositorios**,
+con su licencia Apache-2.0 anotada al lado en un registro, descargados con autorizacion expresa
+del autor. La norma de no meter material de terceros en un repositorio se cumple sin
+excepciones.
+
+Verificacion de este commit: es solo documentacion. `check_documented_cli.py` ---la puerta que
+la bateria no puede correr porque su linea del workflow lleva sustitucion de comandos--- se
+corrio a mano y da verde sobre 44 ficheros. Y la entrada **no anade ni un enlace markdown** en
+sus 87 lineas, medido, asi que `check_doc_links.py` no puede verse afectada.
+
 ## [Unreleased] - v364 (2026-11-21) - V480: la advisory de unsafe-libyaml se suprime, y la razon que tenia preparada llevaba un dia siendo falsa (0.2.447)
 
 `RUSTSEC-2024-0449` (`unsafe-libyaml`, `unmaintained`) dejaba CI en rojo desde V475. El fallo
