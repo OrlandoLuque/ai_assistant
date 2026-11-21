@@ -5,6 +5,60 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v367 (2026-11-21) - V483: el 14B contesta la pregunta de V482, y una categoria da la MISMA cifra por una causa distinta (0.2.450)
+
+V482 dejo escrito que la medicion siguiente era si un modelo mayor cierra el hueco de
+`agentic_edit`, y que de la respuesta dependia la clase de hallazgo. Mismo montaje, lo unico que
+cambia es el modelo:
+
+| categoria | `qwen2.5-coder:7b` | `qwen2.5-coder:14b` | diferencia |
+|---|---|---|---|
+| `agentic_rust_multi` | 6,33/10 | **8,00/10** | +1,67 |
+| `agentic_test_gen` | 7,00/12 | **7,00/12** | **0,00** |
+| `agentic_edit` | 0,00/10 | **4,67/10** | **+4,67** |
+
+**`agentic_edit` no era un suelo: es el mejor discriminador de la suite.** De 0,00 a 4,67 entre
+dos modelos de la misma familia. Y el reparto de como falla se mueve en la direccion con
+sentido: «rompio codigo que no habia que tocar» baja de **5 a 2**, mientras «no hizo el cambio»
+se queda en 5. El modelo mayor no acierta mas a ciegas: **estropea menos**. Orden de utilidad de
+la suite, ya medido por los dos lados: `agentic_edit`, luego `agentic_rust_multi`, y las dos de
+un solo paso no informan por encima de un 7B de codigo.
+
+**Y el hallazgo que un total habria escondido.** `agentic_test_gen` da 7,00/12 con los dos
+modelos. Identico. Mirando solo el total, la conclusion seria «el tamano no importa aqui». Los
+modos de fallo dicen otra cosa:
+
+| modo de fallo | 7B | 14B |
+|---|---|---|
+| rechazo codigo valido | **6** | **0** |
+| demasiado flojo para pillar el bug | 0 | 1 |
+| **no produjo tests** | 1 | **8** |
+
+La misma cifra por una causa completamente distinta: el 14B dejo de escribir suites
+sobreajustadas y empezo a no entregar suite. Un agregado plano sobre una composicion invertida.
+
+**Y «8 no produjo tests» es una hipotesis, no una conclusion.** Puede ser el modelo o puede ser
+**extraccion**: un 14B que escribe los tests en un formato que el harness no sabe recortar se ve
+igual que uno que no los escribe. Dos indicios a favor de lo segundo: la proyeccion de reintento
+sube a 8,78 en k=2 y **9,67 en k=3** ---lo intermitente se arregla reintentando, una incapacidad
+real no---, y la varianza pasa de «siempre 4, a veces 5» a «siempre 3, a veces 8». Queda sin
+resolver, y la medicion siguiente es mirar la respuesta cruda de una de esas ocho.
+
+**Las cinco «backend crash» de V482: la explicacion de timeout se debilita.** El 14B hizo las
+tres categorias con **cero**, contra cinco del 7B. Si fueran timeouts por lentitud, el modelo
+mas lento deberia tener mas, no ninguno. Tampoco eran abortos del runner, porque el log del
+servidor no tenia ni un assert. Lo que queda en pie es dependiente del input. **No se cierra
+aqui**: hay dos causas candidatas y evidencia contra que cualquiera lo explique entero, y el
+experimento que lo cerraria es repetir `agentic_rust_multi` con el 7B leyendo el log del
+servidor en el momento.
+
+Lo que esto **no** dice: dos modelos de la misma familia y nada mas; y `agentic_rust_multi` sube
+con «siempre 8, a veces 0, nunca 2», o sea **cero tareas intermedias** ---las dos que fallan
+fallan siempre---, que es un conjunto empezando a saturarse por arriba.
+
+Verificacion: solo documentacion. `check_documented_cli.py` a mano, verde sobre 44 ficheros, y
+la entrada no anade ningun enlace markdown.
+
 ## [Unreleased] - v366 (2026-11-21) - V482: la suite de benchmarks no esta gastada, tiene un acantilado, y el modelo mas pequeno lo cae de 12/12 a 0/10 (0.2.449)
 
 El veredicto de agosto ---«half the suite is saturated»--- era verdad a medias y ahora tiene

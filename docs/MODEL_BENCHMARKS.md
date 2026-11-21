@@ -133,6 +133,76 @@ dependencies), so disk growth is not a concern in normal use.
 
 ## Log (newest first)
 
+### 2026-11-21 (3.º) — el 14B contesta la pregunta de la entrada anterior, y `agentic_test_gen` da la MISMA cifra por una causa distinta
+
+**La pregunta** la dejó escrita la entrada de arriba: si un modelo mayor cierra el hueco, o si
+`agentic_edit` mide algo que estos modelos no hacen. Mismo montaje, mismas repeticiones, misma
+temperatura y semilla; lo único que cambia es el modelo.
+
+| Categoría | `qwen2.5-coder:7b` | `qwen2.5-coder:14b` | Δ |
+|---|---|---|---|
+| `agentic_rust_multi` | 6,33/10 | **8,00/10** | +1,67 |
+| `agentic_test_gen` | 7,00/12 | **7,00/12** | **0,00** |
+| `agentic_edit` | 0,00/10 | **4,67/10** | **+4,67** |
+
+#### `agentic_edit` no era un suelo: es el mejor discriminador de la suite
+
+0,00 → 4,67 entre un 7B y un 14B de la misma familia. La respuesta a la pregunta de la entrada
+anterior es **«el 7B era pequeño»**, no «la categoría mide algo imposible». Y el reparto de cómo
+falla se mueve en la dirección que tiene sentido: **«rompió código que no había que tocar» baja
+de 5 a 2**, mientras «no hizo el cambio» se queda en 5. El modelo mayor no es que acierte más a
+ciegas: **estropea menos**.
+
+Con el acantilado medido por los dos lados, el orden de utilidad de la suite queda claro:
+`agentic_edit` primero, `agentic_rust_multi` después, y las dos de un solo paso no informan de
+nada por encima de un 7B de código.
+
+#### Y el hallazgo que un total habría escondido
+
+`agentic_test_gen` da **7,00/12 con los dos modelos**. Idéntico. Si solo se mirara el total, la
+conclusión sería «el tamaño no importa aquí». Los modos de fallo dicen otra cosa:
+
+| modo de fallo | 7B | 14B |
+|---|---|---|
+| rechazó código válido | **6** | **0** |
+| demasiado flojo para pillar el bug | 0 | 1 |
+| **no produjo tests** | 1 | **8** |
+
+**La misma cifra por una causa completamente distinta.** El 14B dejó de escribir suites
+sobreajustadas —de 6 a 0— y empezó a no entregar suite en absoluto —de 1 a 8—. Un agregado
+plano sobre una composición invertida.
+
+**Y «8 no produjo tests» merece una hipótesis, no una conclusión.** Puede ser el modelo, o puede
+ser **extracción**: un 14B que escribe los tests en un formato que el harness no sabe recortar
+se ve exactamente igual que uno que no los escribe. Dos indicios a favor de la segunda: la
+proyección de reintento sube a 8,78 en k=2 y **9,67 en k=3** —algo que falla por formato de
+forma intermitente se arregla reintentando, y una incapacidad real no—, y la varianza pasa de
+«siempre 4, a veces 5» a «siempre 3, a veces 8», o sea muchas más tareas inestables. **Queda sin
+resolver y es la medición siguiente**: mirar la respuesta cruda de una de esas ocho.
+
+#### Las cinco «backend crash» de la entrada anterior: la explicación de timeout se debilita
+
+El 14B hizo las tres categorías con **cero** «backend crash», contra cinco del 7B. Si fueran
+timeouts por lentitud, el modelo **más** lento debería tener **más**, no ninguno. Así que:
+
+- No eran abortos del runner —el log del servidor no tenía ni un assert—.
+- Y tampoco «el modelo es lento», porque el lento no las tuvo.
+
+Lo que queda en pie es **dependiente del input**: generaciones concretas que no volvieron, que
+es la forma que la memoria del fallo del sampler ya describía, pero sin el assert que la
+acompañaba. **No lo cierro**: lo honesto es decir que hay dos causas candidatas y evidencia
+contra que cualquiera de las dos lo explique entero. El experimento que lo cerraría es repetir
+`agentic_rust_multi` con el 7B leyendo el log del servidor en el momento.
+
+#### Lo que esto NO dice
+
+- **Dos modelos de la misma familia.** No dice nada de otras familias ni de modelos mayores.
+- `agentic_rust_multi` sube a 8,00 con «siempre 8, a veces 0, nunca 2»: **cero tareas
+  intermedias**. Las dos que fallan lo hacen siempre, y las ocho que pasan siempre pasan. Eso
+  es un conjunto que empieza a saturarse por arriba.
+- Tres repeticiones. Con la nota ya conocida de que una categoría de una sola pasada lleva
+  ±1 tarea de ruido.
+
 ### 2026-11-21 (2.º) — la suite no está gastada: tiene un acantilado, y el 7B lo cae de 12/12 a 0/10
 
 **La pregunta** salió de un accidente útil. Al pedir «repetir las categorías con más modelos», el
