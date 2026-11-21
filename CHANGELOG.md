@@ -5,6 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v366 (2026-11-21) - V482: la suite de benchmarks no esta gastada, tiene un acantilado, y el modelo mas pequeno lo cae de 12/12 a 0/10 (0.2.449)
+
+El veredicto de agosto ---«half the suite is saturated»--- era verdad a medias y ahora tiene
+nombre. Medido sobre **un solo modelo**, `qwen2.5-coder:7b-instruct`, que es el coder mas
+pequeno de la maquina:
+
+| categoria | resultado | varianza |
+|---|---|---|
+| `code_gen_bench` | **11,00/11** | sd 0,00 --- saturada |
+| `agentic_rust` | **12,00/12** | sd 0,00 --- saturada |
+| `agentic_rust_multi` | **6,33/10** | sd 0,41 --- discrimina |
+| `agentic_test_gen` | **7,00/12** | sd 0,39 --- discrimina |
+| `agentic_edit` | **0,00/10** | sd 0,00 --- **suelo** |
+
+**La mitad saturada es la de un solo paso, y la otra mitad va del 63 % al cero.** No hay que
+subir el liston de la suite: el liston alto ya estaba dentro y nadie lo habia medido con un
+modelo pequeno. Esto cambia como se encarga una medicion: `code_gen_bench` y `agentic_rust` ya
+no informan de nada por encima de un 7B de codigo.
+
+**`agentic_edit` es un cero con varianza cero** ---«siempre 0, a veces 0, nunca 10»---, y el
+reparto de como falla es un 50/50 limpio: **5 rompieron codigo que no habia que tocar** y **5
+no hicieron el cambio pedido**. Es la unica de las cinco que mide trabajar sobre un crate
+ajeno con su suite pasando, y describe el cambio por el sintoma sin decir el fichero.
+
+**`agentic_test_gen` falla por exigente, no por flojo:** de 12 suites, **6 rechazaron codigo
+valido**, 1 no produjo tests y **0 fueron demasiado flojas para pillar el bug plantado**. La
+categoria esta construida al reves ---se le da la implementacion correcta y debe escribir la
+suite, puntuada por mutacion--- y lo que se rompe no es detectar, es no inventarse requisitos.
+
+**Y una etiqueta que apunta a la causa equivocada.** Cinco ejecuciones salieron marcadas
+«backend crash», y el mensaje del harness manda a buscar
+`Assertion failed: found ... llama-sampling.cpp` en el log del servidor. **Medido: el log de
+Ollama de esta noche tiene CERO errores y CERO asserts.** La deteccion real es mas ancha que el
+mensaje: `hit_backend_failure` solo mira si algun mensaje de la conversacion empieza por
+`[BACKEND-FAILURE]`, y ese marcador se pone ante **cualquier `Err` de `generate_sync`**
+(`agentic_code.rs:439`): timeout, conexion o HTTP, no solo un abort. La tarea cuyo tiempo se
+puede leer tardo **415.129 ms** y salio marcada SLOW, asi que fueron generaciones que no
+volvieron a tiempo. El mensaje no se toca aqui ---es codigo--- y queda apuntado.
+
+Lo que el mecanismo **si** hace bien: esas ejecuciones **salen del denominador**. Varias tareas
+aparecen como `2/2 runs (score=1.00) [1 run lost to backend crashes]`, que es lo correcto.
+
+Lo que esto **no** dice: un solo modelo, tres repeticiones, y **nada sobre si un modelo mayor
+cierra el hueco** ---esa es la medicion siguiente y es la que vale: si un 14B o un 30B tampoco
+pasa de 0 en `agentic_edit`, el hallazgo es de otra clase---.
+
+Montaje, por si hay que repetirlo: perfil `release-fast` (el unico con `panic = "unwind"`, que
+es lo que necesita el `catch_unwind` del harness), features `full,browser`, Ollama con CUDA
+sobre una RTX 4080 SUPER con 13,1 GiB libres, `AI_BENCH_REPEATS=3`, `temp=0.5`, `seed=42`.
+
+Verificacion: solo documentacion. `check_documented_cli.py` a mano, verde sobre 44 ficheros, y
+la entrada no anade ningun enlace markdown.
+
 ## [Unreleased] - v365 (2026-11-21) - V481: la comparacion de formatos que el cuaderno declaraba que faltaba, medida en Ada, y gana el formato sin kernel afinado (0.2.448)
 
 `docs/MODEL_BENCHMARKS.md` cerraba su ultima entrada, del 2026-09-20, diciendo: «lo que nadie

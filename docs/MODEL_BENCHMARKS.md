@@ -133,6 +133,75 @@ dependencies), so disk growth is not a concern in normal use.
 
 ## Log (newest first)
 
+### 2026-11-21 (2.º) — la suite no está gastada: tiene un acantilado, y el 7B lo cae de 12/12 a 0/10
+
+**La pregunta** salió de un accidente útil. Al pedir «repetir las categorías con más modelos», el
+primer modelo —`qwen2.5-coder:7b-instruct`, el coder más pequeño que hay en la máquina— saturó
+las dos categorías de un solo paso. Barrer cinco modelos sobre algo saturado no mide nada, así
+que la pregunta pasó a ser: **¿queda algo en la suite que discrimine?**
+
+**Montaje.** `ai_test_harness` con el perfil `release-fast` (el único con `panic = "unwind"`,
+que es lo que necesita su `catch_unwind`), features `full,browser`. Ollama con CUDA sobre la
+RTX 4080 SUPER, 13,1 GiB libres. `AI_BENCH_REPEATS=3`, `temp=0.5`, `seed=42`. Un solo modelo en
+los cinco: lo que varía es la categoría.
+
+| Categoría | Resultado | Varianza |
+|---|---|---|
+| `code_gen_bench` | **11,00/11** | sd 0,00 — saturada |
+| `agentic_rust` | **12,00/12** | sd 0,00 — saturada |
+| `agentic_rust_multi` | **6,33/10** | sd 0,41 — discrimina |
+| `agentic_test_gen` | **7,00/12** | sd 0,39 — discrimina |
+| `agentic_edit` | **0,00/10** | sd 0,00 — **suelo** |
+
+**El veredicto de agosto —«half the suite is saturated»— ahora tiene nombre:** la mitad saturada
+es la de **un solo paso**, y la otra mitad va del 63 % al **cero**. No hay que subir el listón de
+la suite: el listón alto ya estaba dentro y nadie lo había medido con un modelo pequeño.
+
+#### `agentic_edit`: un cero con varianza cero
+
+«Siempre 0, a veces 0, nunca 10». No es mala suerte ni un umbral mal puesto: el modelo **no
+puede** con la tarea. Y el reparto de cómo falla es un 50/50 limpio: **5 rompieron código que no
+había que tocar** y **5 no hicieron el cambio pedido**. Esa categoría le da al modelo un crate
+existente con su suite pasando y un cambio descrito **por el síntoma, sin decir el fichero**, y
+puntua las dos cosas por separado. Es la única de las cinco que mide trabajar sobre código
+ajeno, que es el caso de uso real.
+
+#### `agentic_test_gen`: falla por exigente, no por flojo
+
+De 12 suites: **6 rechazaron código válido**, 1 no produjo tests, y **0 fueron demasiado flojas
+para pillar el bug plantado**. Esa asimetría es el hallazgo. La categoría está construida al
+revés a propósito —le das la implementación correcta y tiene que escribir la suite, puntuada
+por mutación: debe aceptar la referencia **y** matar todos los bugs— y lo que se rompe no es la
+capacidad de detectar, es la de no inventarse requisitos. Tests sobreajustados, no débiles.
+
+#### Y una etiqueta que apunta a la causa equivocada
+
+Cinco ejecuciones salieron marcadas **«backend crash»** (3 en `rust_multi`, 1 en `test_gen`, 1 en
+`agentic_rust`). El mensaje del harness dice: *«en Ollama esto es el runner de llama.cpp
+abortando en la ruta de muestreo casi-greedy; busca `Assertion failed: found ...
+llama-sampling.cpp` en el log del servidor».*
+
+**Medido: en el log de Ollama de esta noche hay CERO errores y CERO asserts.** Y la detección
+real, leída en la fuente, es más ancha que el mensaje: `hit_backend_failure` solo comprueba que
+algún mensaje de la conversación empiece por `[BACKEND-FAILURE]`, y ese marcador se pone ante
+**cualquier `Err` de `generate_sync`** (`agentic_code.rs:439`) —timeout, conexión, HTTP—, no solo
+un abort. La tarea cuyo tiempo se puede leer tardó **415.129 ms**, casi siete minutos, y salió
+marcada SLOW. O sea que lo de esta noche fueron **generaciones que no volvieron a tiempo**, y el
+mensaje envía al lector a buscar un assert que no existe.
+
+Lo que el mecanismo SÍ hace bien: esas ejecuciones **salen del denominador**, no cuentan como
+fallo del modelo. Varias tareas aparecen como `2/2 runs (score=1.00) [1 run lost to backend
+crashes]`, que es exactamente lo correcto.
+
+#### Lo que esto NO dice
+
+- **Un solo modelo.** Las cifras son de `qwen2.5-coder:7b-instruct` y de nadie más. Lo que se
+  afirma aquí es la **forma** de la suite, no el sitio de ese modelo en una tabla.
+- **Tres repeticiones**, con las desviaciones de la tabla al lado. El 6,33 y el 7,00 son medias
+  de tasa de acierto, no conteos.
+- **Nada sobre si un modelo mayor cierra el hueco.** Es la medición siguiente y es la que vale:
+  si un 14B o un 30B tampoco pasa de 0 en `agentic_edit`, el hallazgo es de otra clase.
+
 ### 2026-11-21 — `Q1_0` contra `PTQ1_0` en una Ada: gana `Q1_0` en los dos ejes, y mi pronóstico de kernels falló
 
 **La pregunta** es la que esta misma sección dejó escrita el 2026-09-20: *«Y lo que nadie ha
