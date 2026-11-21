@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v363 (2026-11-21) - V479: el README.txt de cada paquete de release invitaba a negociar una licencia comercial, y no incluia el texto de la licencia (0.2.446)
+
+`scripts/build_release.ps1` escribia dos lineas al final del `README.txt` de **cada paquete
+de release**: la licencia, y «For commercial licensing, contact:» con el correo personal del
+autor. La segunda es una oferta, no una descripcion, y era la ultima que quedaba en el arbol
+despues de que V476 sacara la de la web y la estrategia de negocio del repositorio.
+
+```
+-License: PolyForm Noncommercial 1.0.0
+-For commercial licensing, contact: <correo>
++License: PolyForm Noncommercial 1.0.0 - this license does not cover commercial use.
++Full license text:      https://github.com/.../blob/master/LICENSE
+```
+
+El criterio con el que se decide, que es el que el autor relayo el 2026-11-21: **describir lo
+que la licencia no concede es informacion; invitar a negociar una alternativa es una oferta.**
+Lo que obliga a identificarse con datos de actividad economica es la actividad, no la frase.
+
+**Y un hallazgo de paso:** el paquete de release **no incluye el fichero `LICENSE`**. Solo lo
+nombraba. Asi que el enlace nuevo no es un sustituto de lo que se fue, es informacion que
+faltaba --- quien descomprimia un release tenia el nombre de la licencia y ninguna via de leer
+sus terminos.
+
+Lo que esto **no** deshace: las releases ya publicadas siguen llevando dentro de su zip el
+`README.txt` viejo, con la oferta y el correo. Eso no se arregla desde aqui, y no se toca:
+reescribir un artefacto ya distribuido es otra decision y es del autor.
+
+Lo que **no** se ha tocado, con su razon:
+
+| donde | que dice | por que se queda |
+|---|---|---|
+| `LICENSE:140` | «To negotiate a license for AI/ML training purposes, contact: …» | decision del autor el 2026-11-21: se queda, **con revision pendiente**. Ahi la invitacion carga peso: la reserva de mineria de textos necesita un destinatario para poder ejercerse, y un contacto que rebota es una reserva que no se puede ejercer |
+| `CONTRIBUTING.md:18`, `CLA.md:51` | el CLA existe para poder ofrecer licencias comerciales | hablan a quien va a ceder su copyright, no al publico. Es la informacion que esa persona necesita para decidir si firma |
+| `index.html`, `product_overview.html`, la celda de `framework_comparison.html` | «Commercial use requires a negotiated license» | describe lo que la licencia no concede. Reescribirlo es redaccion legal |
+
+Verificacion: las mismas 33 puertas en verde de V478 --- los dos cambios se verificaron juntos
+sobre el mismo arbol antes de tocar version, y se separan en dos commits porque son dos
+hallazgos y cada uno debe poder revertirse solo.
+
 ## [Unreleased] - v362 (2026-11-21) - V478: un pliego de precios de licencias comerciales vivia en el codigo fuente, como decorado de un escenario de RAG (0.2.445)
 
 `PRICE_KNOWLEDGE`, en `src/conversation_qa.rs`, era un pliego titulado «Commercial license

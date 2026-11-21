@@ -233,8 +233,8 @@ API Reference:          https://github.com/OrlandoLuque/ai_assistant/blob/master
 Example clients:        https://github.com/OrlandoLuque/ai_assistant/tree/master/examples/clients
 crates.io:              https://crates.io/crates/ai_assistant_core
 
-License: PolyForm Noncommercial 1.0.0
-For commercial licensing, contact: orlando.luque@gmail.com
+License: PolyForm Noncommercial 1.0.0 - this license does not cover commercial use.
+Full license text:      https://github.com/OrlandoLuque/ai_assistant/blob/master/LICENSE
 '@
 
 $readmeTxt = $readmeTxt.Replace("__VERSION__", $Version)
