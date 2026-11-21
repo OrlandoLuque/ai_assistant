@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v369 (2026-11-21) - V485: el «backend crash» era el techo de 120 s del cliente, y la retractacion de V483 estaba mal (0.2.452)
+
+V483 retiro la explicacion de timeout razonando que «el 14B hizo las tres categorias con cero
+backend crash, y si fueran timeouts por lentitud el modelo mas lento deberia tener mas». **Ese
+razonamiento es malo y la retractacion sobraba.**
+
+**Lo que cierra la pregunta.** Se repitio UNA sola tarea de las ocho intermitentes (`sum_even`,
+con `--filter`) con `AGENTIC_DEBUG=1` y tres repeticiones. Una fallo, y el log del servidor estaba
+fresco:
+
+```
+[GIN] 2026/11/21 - 04:12:05 | 500 |          2m0s |  127.0.0.1 | POST "/api/chat"
+```
+
+**HTTP 500 a los 2m0s exactos**, con 21,2 s la peticion anterior y 0,45 s y 3,7 s las siguientes:
+el servidor estuvo sano, y en 6.463 lineas de log hay **cero** asserts, abortos o errores. Los
+2m0s no son casualidad: `src/providers.rs` pone `.timeout(Duration::from_secs(120))` en las lineas
+587, 669 y 981. **Es el techo del cliente cumpliendose.**
+
+**Por que el argumento de V483 era malo:** comparaba velocidades MEDIAS cuando lo que importa es
+la COLA. Un modelo mas lento de media no tiene por que tener mas generaciones que pasen de 120 s;
+lo que las produce es una generacion concreta que se alarga. El rastro muestra el mecanismo: la
+ejecucion que fallo iba por `iters=5` con la tripleta `read_file,write_file,run_command` repetida
+cuatro veces ---el agente dando vueltas---, y asi es como una generacion se hace larga.
+
+**Y el texto del error tambien engana.** Dice `Failed to send request to Ollama` y no fue un fallo
+de envio, fue una respuesta que no llego. La explicacion de «el runner muere, muere el socket, el
+cliente ve un fallo de envio» es correcta para el OTRO caso, el abort del sampler. La misma cadena
+cubre las dos cosas.
+
+**La regla que queda:** «backend crash» + log limpio + un 500 a 2m0s exactos = **timeout del
+cliente**. Con `Assertion failed ... llama-sampling.cpp` en el log, entonces si es el abort del
+runner. Dos causas, una etiqueta, un mismo texto de error, y se distinguen en una linea del log.
+
+Queda para decidir, y es codigo: o se sube ese techo en las pasadas de benchmark, o el harness
+distingue timeout de caida en lo que informa. Hoy un timeout sale del denominador, que es
+defendible, pero entonces una categoria cuyo agente entra en bucle pierde ejecuciones sin que la
+cifra lo diga.
+
+Lo que esto **no** dice: no invalida ninguna cifra anterior ---las ejecuciones perdidas ya salian
+del denominador, que es el tratamiento correcto para las dos causas---. Y en la pasada aislada
+`sum_even` dio 2/2 donde el barrido dio 1/3: entra en el ±1 tarea de ruido ya documentado, y una
+tarea no es una medicion.
+
 ## [Unreleased] - v368 (2026-11-21) - V484: leida tarea por tarea, la cifra identica de V483 dice que el 14B si es mejor (0.2.451)
 
 V483 dejo dos cosas en el aire: por que `agentic_test_gen` da 7,00/12 con los dos modelos, y si

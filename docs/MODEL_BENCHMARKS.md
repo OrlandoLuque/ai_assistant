@@ -133,6 +133,64 @@ dependencies), so disk growth is not a concern in normal use.
 
 ## Log (newest first)
 
+### 2026-11-21 (5.º) — cerrada: el «backend crash» era el techo de 120 s del cliente, y mi retractación de la entrada anterior estaba mal
+
+La entrada (3.ª) retiró la explicación de timeout con este razonamiento: *«el 14B hizo las tres
+categorías con cero backend crash, y si fueran timeouts por lentitud el modelo más lento debería
+tener más»*. **Ese razonamiento es malo y la retractación sobraba.**
+
+**Lo que cierra la pregunta.** Se repitió **una sola tarea** de las ocho intermitentes
+(`sum_even`, con `--filter`) con `AGENTIC_DEBUG=1`, tres repeticiones, el mismo 14B. Una de las
+tres falló, y esta vez el log del servidor estaba fresco:
+
+```
+[GIN] 2026/11/21 - 04:12:05 | 500 |          2m0s |       127.0.0.1 | POST "/api/chat"
+```
+
+**HTTP 500 a los 2m0s exactos.** Y alrededor: 21,2 s la petición anterior, 0,45 s y 3,7 s las
+siguientes. El servidor estuvo **sano todo el tiempo**, y en 6.463 líneas de log hay **cero**
+asserts, abortos o errores.
+
+Los 2m0s no son casualidad: `src/providers.rs` pone `.timeout(Duration::from_secs(120))` en las
+líneas 587, 669 y 981. **Es el techo del cliente, cumpliéndose.** La generación tardó más de dos
+minutos, el cliente cortó, y Ollama registró la petición abortada como 500.
+
+#### Por qué el argumento de la entrada anterior era malo
+
+Comparaba **velocidades medias** cuando lo que importa es la **cola**. Un modelo más lento de
+media no tiene por qué tener más generaciones que pasen de 120 s; lo que las produce es una
+generación concreta que se alarga. El rastro de depuración muestra el mecanismo: la ejecución que
+falló iba por `iters=5` con la tripleta `read_file,write_file,run_command` **repetida cuatro
+veces** — el agente estaba dando vueltas, y así es como una generación se hace larga. Las tres
+categorías del 14B simplemente no toparon con una; una tarea aislada topó a la primera.
+
+#### Y el texto del error también engaña
+
+El mensaje es `All providers failed. Primary error: Failed to send request to Ollama`. **No fue un
+fallo de envío**: fue una respuesta que no llegó a tiempo. La explicación de que «el runner muere,
+muere el socket, y el cliente ve un fallo de envío» es correcta para el **otro** caso, el del
+abort del sampler. La misma cadena cubre las dos cosas, y eso es lo que hace que se confundan.
+
+#### La regla que queda, y es corta
+
+**«backend crash» + log del servidor limpio + un 500 a 2m0s exactos = timeout del cliente, no
+caída del backend.** Si hay `Assertion failed ... llama-sampling.cpp` en el log, entonces sí es
+el abort del runner. Son dos cosas con la misma etiqueta y el mismo texto de error, y se
+distinguen en una línea del log.
+
+Lo que esto deja para decidir, y es código: o se sube ese techo para las pasadas de benchmark, o
+el harness distingue timeout de caída en lo que informa. Hoy un timeout se cuenta como
+infraestructura y **sale del denominador**, que es defendible — pero entonces una categoría cuyo
+agente entra en bucle pierde ejecuciones sin que la cifra lo diga.
+
+#### Lo que esto NO dice
+
+- **No invalida ninguna cifra de las entradas anteriores.** Las ejecuciones perdidas salían ya
+  del denominador, que es el tratamiento correcto para las dos causas.
+- Y una curiosidad que **no** se debe leer como resultado: en esta pasada aislada `sum_even` dio
+  2/2, donde en el barrido completo había dado 1/3. Entra dentro del ±1 tarea de ruido ya
+  documentado para una sola pasada, y una tarea no es una medición.
+
 ### 2026-11-21 (4.º) — leída tarea por tarea, la cifra idéntica dice que el 14B SÍ es mejor
 
 La entrada anterior dejó dos cosas en el aire: por qué `agentic_test_gen` da 7,00/12 con los dos
