@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v368 (2026-11-21) - V484: leida tarea por tarea, la cifra identica de V483 dice que el 14B si es mejor (0.2.451)
+
+V483 dejo dos cosas en el aire: por que `agentic_test_gen` da 7,00/12 con los dos modelos, y si
+«8 no produjo tests» era el modelo o la extraccion. El informe JSON del mismo barrido las
+contesta: no hubo que medir nada nuevo, solo leer lo que ya estaba.
+
+| | 7B | 14B |
+|---|---|---|
+| siempre pasa (3/3) | 4 | 3 |
+| **intermitente** (1 o 2 de 3) | 5 | **8** |
+| nunca pasa (0/3) | **3** | **1** |
+
+**La cifra plana esconde una mejora real de capacidad**: el 14B pasa de **3 tareas imposibles a
+1**. Lo que le impide subir el total es que convirtio las imposibles en **intermitentes**, no en
+resueltas. Y la unica que nunca pasa lleva el unico mensaje real de los doce:
+`dedup preserving first-appearance order`, «the model's tests are too weak: they caught only 0/2
+known bugs».
+
+**Eso decide la hipotesis de V483.** Las ocho intermitentes son exactamente las ocho cuyo ultimo
+fallo fue «no produjo tests». Una incapacidad no es intermitente; un formato que el extractor no
+sabe recortar si. El deficit del 14B es **un suelo de capacidad de UNA tarea mas ocho fallos de
+entrega**, y la pass rate los suma como si fueran lo mismo.
+
+**Y una correccion a V483, que es mia:** los modos de fallo se cuentan por ultima causa de cada
+tarea **que fallo alguna vez**, no por tareas suspendidas. Es deliberado y esta escrito en la
+fuente ---una tarea resuelta 2 de 3 fallo una, y como fallo es la misma evidencia---, pero hace
+que «8 no produjo tests» y «5 tareas suspendidas» convivan sin contradecirse. V483 lo dejaba
+leer como «8 tareas suspendidas por no entregar», y no es eso.
+
+Lo que esto **no** dice: **no se ha mirado una respuesta cruda todavia**. La hipotesis de
+extraccion esta mucho mejor apoyada ---intermitencia mas la proyeccion de reintento de 9,67 en
+k=3--- pero sigue siendo hipotesis, y lo que la cierra es leer la salida del modelo en una de las
+ocho. Nada cambia en `agentic_edit` ni en `agentic_rust_multi`.
+
+Verificacion: solo documentacion. `check_documented_cli.py` a mano, verde sobre 44 ficheros, y la
+entrada no anade ningun enlace markdown.
+
 ## [Unreleased] - v367 (2026-11-21) - V483: el 14B contesta la pregunta de V482, y una categoria da la MISMA cifra por una causa distinta (0.2.450)
 
 V482 dejo escrito que la medicion siguiente era si un modelo mayor cierra el hueco de

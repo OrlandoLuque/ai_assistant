@@ -133,6 +133,46 @@ dependencies), so disk growth is not a concern in normal use.
 
 ## Log (newest first)
 
+### 2026-11-21 (4.º) — leída tarea por tarea, la cifra idéntica dice que el 14B SÍ es mejor
+
+La entrada anterior dejó dos cosas en el aire: por qué `agentic_test_gen` da 7,00/12 con los dos
+modelos, y si «8 no produjo tests» era el modelo o la extracción. El informe JSON del propio
+barrido las contesta, y no hizo falta medir nada nuevo — solo leer lo que ya estaba.
+
+| | 7B | 14B |
+|---|---|---|
+| siempre pasa (3/3) | 4 | 3 |
+| **intermitente** (1 o 2 de 3) | 5 | **8** |
+| nunca pasa (0/3) | **3** | **1** |
+
+**La cifra plana esconde una mejora real de capacidad.** El 14B pasó de **3 tareas imposibles a
+1**. Lo que le impide subir el total es que convirtió esas imposibles en **intermitentes**, no en
+resueltas: 8 de 12 tareas pasan unas veces y otras no.
+
+Y la única que nunca pasa tiene un mensaje de verdad, el único de los doce:
+`dedup preserving first-appearance order`, con *«the model's tests are too weak: they caught only
+0/2 known bugs»*. Las otras once no fallan por flojera.
+
+**Eso decide la hipótesis de la entrada anterior.** Las ocho intermitentes son exactamente las
+ocho cuyo último fallo fue «no produjo tests». Una incapacidad no es intermitente; un formato que
+el extractor no sabe recortar sí. Así que **el déficit del 14B es un suelo de capacidad de UNA
+tarea más ocho fallos de entrega**, y la pass rate los suma como si fueran lo mismo.
+
+**Y un detalle de lectura que conviene no volver a confundir:** los modos de fallo se cuentan
+**por última causa de cada tarea que falló alguna vez**, no por tareas suspendidas. Es
+deliberado y está escrito en la fuente —una tarea resuelta 2 de 3 veces falló una, y cómo falló
+es la misma evidencia—, pero hace que «8 no produjo tests» y «5 tareas suspendidas» convivan sin
+contradecirse. Leerlo como «8 tareas suspendidas por no entregar» es el error fácil, y yo lo
+cometí al escribir la entrada anterior.
+
+#### Lo que esto NO dice
+
+- **No he mirado una respuesta cruda todavía.** La hipótesis de extracción está mucho mejor
+  apoyada —intermitencia más proyección de reintento de 9,67 en k=3— pero sigue siendo una
+  hipótesis. Lo que la cerraría es leer la salida del modelo en una de las ocho.
+- Nada cambia en `agentic_edit` ni en `agentic_rust_multi`: sus cifras y su lectura siguen como
+  en la entrada anterior.
+
 ### 2026-11-21 (3.º) — el 14B contesta la pregunta de la entrada anterior, y `agentic_test_gen` da la MISMA cifra por una causa distinta
 
 **La pregunta** la dejó escrita la entrada de arriba: si un modelo mayor cierra el hueco, o si
