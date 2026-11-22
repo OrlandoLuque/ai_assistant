@@ -243,13 +243,28 @@ fn run_one_test_gen(
     // there with a pinned `seed` for reproducibility (V258). But 0.5 is not immunity —
     // other inputs still crash the runner at that temperature — so the case has to be
     // handled rather than merely avoided.
+    //
+    // V485 (2026-11-21) found a SECOND path to this same error text, and the chain above
+    // is not it: the runner stays alive and healthy, the generation simply takes longer
+    // than the client's ceiling, and Ollama logs the aborted request as
+    // `500 | 2m0s | POST "/api/chat"`. Measured with a clean server log — zero asserts,
+    // aborts or errors in 6,463 lines — and requests of 0.45 s and 3.7 s on either side
+    // of it. What made that generation long was the agent looping: `iters=5` with the
+    // `read_file,write_file,run_command` triple repeated four times.
+    //
+    // So TWO causes produce one label, one error text and one treatment, and exactly one
+    // line of the server log separates them. That is why the message below names both
+    // instead of asserting the abort: a report that names one cause as THE cause sends
+    // the next reader looking for an assert that was never there.
     if crate::agentic_code::hit_backend_failure(&agent) {
         let _ = std::fs::remove_dir_all(&ws);
         return Err(format!(
             "{BACKEND_CRASH_PREFIX}, not a model failure (this run leaves the denominator) \
-             — the generation never returned. On Ollama this is the llama.cpp runner \
-             aborting on the near-greedy sampling path; check the server log for \
-             `Assertion failed: found ... llama-sampling.cpp`."
+             — the generation never returned. TWO causes print this same text, and one \
+             line of the server log tells them apart: `Assertion failed: found ... \
+             llama-sampling.cpp` means the llama.cpp runner aborted, while a CLEAN log \
+             with a `500` at exactly `2m0s` means the client's own timeout fired on a \
+             slow generation. Check which before blaming either."
         ));
     }
 

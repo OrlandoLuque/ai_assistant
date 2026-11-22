@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v372 (2026-11-22) - V488: el harness nombraba el abort del sampler como LA causa de «backend crash», y hay dos (0.2.455)
+
+El mensaje que `agentic_test_gen` imprime cuando una generacion no vuelve decia, literalmente,
+«On Ollama this is the llama.cpp runner aborting on the near-greedy sampling path; check the
+server log for `Assertion failed: found ... llama-sampling.cpp`». Afirmaba UNA causa como si
+fuera la unica, y V485 midio la otra: el runner **vivo y sano**, la generacion tardando mas que
+el techo de 120 s del cliente, y Ollama registrando `500 | 2m0s | POST "/api/chat"` con el log
+limpio ---cero asserts en 6.463 lineas---.
+
+El coste de esa frase no es teorico: por ella pase una noche buscando un assert que no existia,
+y la explicacion que escribi primero era la equivocada.
+
+Ahora el mensaje nombra las dos y la linea de log que las separa:
+
+- `Assertion failed: found ... llama-sampling.cpp` en el log -> el runner murio.
+- log **limpio** con un `500` a los `2m0s` exactos -> salto el timeout del cliente.
+
+Y el comentario de encima, que ya conocia el techo de 120 s, lo tenia **mal encadenado**: decia
+«el runner muere, asi que el cliente agota su techo y reporta un fallo de envio». Esa cadena es
+correcta para el abort y es la unica que describia. La segunda no pasa por ninguna muerte.
+
+**Donde NO estaba el defecto, medido:** seis sitios del harness construyen este mensaje
+(`agentic_code.rs` x2, `agentic_edit.rs`, `agentic_rust.rs` x2, `agentic_test_gen.rs`) y los
+otros cinco ya decian lo neutro ---«the generation never returned; check the backend log»---.
+Asi que el arreglo es de UN sitio, no de seis, y el impulso de extraer un helper compartido
+sobraba. Se midio antes de tocar.
+
+Lo que esto **no** cambia: ni la deteccion ---sigue siendo cualquier `Err` de `generate_sync`
+en `agentic_code.rs:439`--- ni el tratamiento: las dos causas sacan la ejecucion del
+denominador, que es lo correcto para las dos.
+
+Verificacion: bateria completa de puertas.
+
 ## [Unreleased] - v371 (2026-11-22) - V487: la pregunta abierta de V484, cerrada --- una ejecucion se pierde por UNA llave de cierre y la de al lado por tests de funciones que no existen (0.2.454)
 
 V484 dejo una hipotesis: las ocho tareas que el 14B deja intermitentes en `agentic_test_gen`
