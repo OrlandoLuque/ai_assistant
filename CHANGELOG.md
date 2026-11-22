@@ -5,6 +5,69 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v370 (2026-11-22) - V486: la condicion de cierre de las dos de quick-xml nombraba los dos crates equivocados, y `lru` ya salio del grafo (0.2.453)
+
+P2 de la cola prioritaria: el re-chequeo de las 13 supresiones de `deny.toml`, hecho **23 dias
+antes** de que venza la primera. El valor de hacerlo temprano no es recordar que hay que
+revisar ---de eso ya se encarga la puerta que rompe CI--- sino que el rojo no llegue en bloque:
+el 2026-12-15 vencen dos y el 2027-02-15 vencen cinco.
+
+**Lo medido, tres cosas.**
+
+**1. La condicion de cierre de `RUSTSEC-2026-0194` y `-0195` (quick-xml) estaba mal en sus dos
+mitades.** Decia que hacen falta «(a) object_store sobre quick-xml >= 0.41 y polars
+recogiendolo, y (b) salir de wayland-scanner 0.31.x».
+
+- **(b) sobra**: `wayland-scanner 0.31.11` ya pide `quick-xml ^0.41`, que es un bump de PARCHE
+  dentro de 0.31.x. No hay que salir de la serie.
+- **(a) nombra al crate equivocado**: `object_store` ya lo hizo ---0.14.1 y 0.14.2 piden
+  `quick-xml ^0.41.0`---. Quien cierra el paso es **datafusion**, que no aparecia en la
+  condicion: pide `object_store ^0.13.2` **no opcional** en todas sus versiones, incluida la
+  mas nueva publicada (55.3.0), y `object_store 0.13.2` topa quick-xml en `^0.39.0`.
+
+Y el resolutor anade un detalle que cambia como se lee el arreglo:
+
+```
+$ cargo update -p wayland-scanner --precise 0.31.11 --dry-run
+      Adding quick-xml v0.41.0
+      Updating wayland-scanner v0.31.10 -> v0.31.11
+```
+
+**Anade** la 0.41.0 en vez de mover la 0.39.4: para un crate `0.x`, `^0.39` y `^0.41` son
+majors incompatibles, asi que conviven y la advisory sigue disparandose por la vieja. La
+condicion real de cierre es que **datafusion admita object_store 0.14+**, y esta dos pines de
+profundidad, igual que RUSTSEC-2024-0449: `lancedb` clava `lance-index =14.0.2`.
+
+**2. `lru` ya no esta en el grafo, asi que `RUSTSEC-2026-0002` y `-0253` pueden BORRARSE.**
+Cero coincidencias de `name = "lru"` en `Cargo.lock`, y
+`cargo tree --all-features -i lru` contesta `did not match any packages`. La fuerza de esa
+medicion importa: el lock **no esta filtrado** por features ni por target, asi que «no esta en
+el lock» significa que ninguna combinacion puede arrastrarlo, y si el crate no esta, ninguna
+advisory sobre el crate puede dispararse. **No se borran en este commit**: quitarlas toca
+tambien `ci.yml` y `supply-chain.yml`, y eso espera al visto bueno del autor.
+
+**3. Y una trampa del instrumento, que casi me hace borrar la supresion equivocada.** En esta
+maquina `cargo deny check advisories` emite `advisory-not-detected` ---«no crate matched
+advisory criteria»--- para **seis** supresiones. Leido solo, eso dice «estas supresiones
+sobran». Pero la salida completa emite ademas `unknown-advisory` para esas mismas seis: la
+copia local de `advisory-db` es del **2026-07-16**, la ultima que tiene es la
+`RUSTSEC-2026-0206`, y `cargo deny fetch` **no la actualiza** porque git rechaza el repo por
+«dubious ownership» y el fetch falla en silencio. La senal solo valia para la unica de las
+siete cuya advisory si esta en la base de julio, que es la de `lru`.
+
+Lo primero que hice fue leer esa salida con `tail -8`, que me mostro una de las siete y ninguna
+de las seis `unknown-advisory` ---o sea que el fragmento invertia el sentido del aviso---.
+
+**El estado de las 13, medido:** doce tienen su crate en el lock (`wasmtime 49.0.7`,
+`paste 1.0.15`, `rustls-pemfile 2.2.0`, `quick-xml 0.39.4` x2, `ttf-parser 0.25.1`,
+`webbrowser 0.8.15`, `chrono 0.4.44`, `chrono-tz 0.10.4`, `humantime 2.3.0`,
+`unsafe-libyaml 0.2.11`); las dos de `lru`, no.
+
+Lo que esto **no** dice: no se ha borrado ninguna supresion, no se ha movido **ninguna** de las
+13 fechas de re-chequeo ---verificado con el parser de la propia puerta antes y despues--- y no
+se ha tocado el `Cargo.lock`: las dos pruebas con `cargo update` fueron `--dry-run`. El cambio
+es solo comentarios en `deny.toml`.
+
 ## [Unreleased] - v369 (2026-11-21) - V485: el «backend crash» era el techo de 120 s del cliente, y la retractacion de V483 estaba mal (0.2.452)
 
 V483 retiro la explicacion de timeout razonando que «el 14B hizo las tres categorias con cero

@@ -218,6 +218,33 @@ ignore = [
     # paso de audit y esa frase dejo de ser verdad el mismo dia. La entrada
     # esta justo debajo, con su propia razon medida.
     # Re-check by: 2027-02-15
+    #
+    # V486 re-chequeo (2026-11-22): `lru` YA NO ESTA EN EL GRAFO. Esta supresion
+    # puede BORRARSE, no renovarse --- pendiente solo del visto bueno del autor,
+    # porque quitarla toca tambien ci.yml y supply-chain.yml.
+    #
+    # Medido:
+    #     $ grep 'name = "lru"' Cargo.lock        -> ninguna coincidencia
+    #     $ cargo tree --target x86_64-unknown-linux-gnu --all-features -i lru
+    #       error: package ID specification `lru` did not match any packages
+    #
+    # Y la fuerza de esa medicion importa: el Cargo.lock NO esta filtrado por
+    # features ni por target ---los lleva todos---, asi que «no esta en el lock» es
+    # la afirmacion mas fuerte posible: ninguna combinacion de features y ningun
+    # target pueden arrastrarlo. No hace falta la base de advisories para esto: si
+    # el crate no esta, ninguna advisory sobre el crate puede dispararse.
+    #
+    # Cuidado con el instrumento que casi me hace borrar la equivocada: en esta
+    # maquina `cargo deny check advisories` emite
+    # `warning[advisory-not-detected]: no crate matched advisory criteria` para
+    # SEIS supresiones, y para esas seis emite tambien
+    # `warning[unknown-advisory]: advisory not found in any advisory database`.
+    # La causa es que la copia local de advisory-db es del 2026-07-16 ---la ultima
+    # que tiene es la RUSTSEC-2026-0206--- y `cargo deny fetch` no la actualiza: git
+    # rechaza el repo por «dubious ownership» y el fetch falla EN SILENCIO. O sea
+    # que ese aviso, en local, se lee como «esta supresion sobra» cuando significa
+    # «no tengo el dato». La unica senal valida fue la de esta entrada, cuya
+    # advisory SI esta en la base de julio.
     "RUSTSEC-2026-0002",
     # lru 0.12.5: posible use-after-free por falta de seguridad ante panico en
     # `LruCache::pop()`. Transitiva, y NO alcanzable con un bump de lock ---
@@ -241,6 +268,12 @@ ignore = [
     # entre en panico.
     # Re-check by: 2027-02-13 O cuando tantivy publique con `lru >= 0.18.2`
     # --- entonces BORRAR, no renovar.
+    #
+    # V486 re-chequeo (2026-11-22): igual que RUSTSEC-2026-0002, `lru` YA NO ESTA
+    # EN EL GRAFO ---cero coincidencias en Cargo.lock, que no esta filtrado por
+    # features ni por target--- asi que esta entrada tambien puede BORRARSE en vez
+    # de renovarse. Pendiente del visto bueno del autor. La medicion completa y la
+    # trampa del advisory-db viejo estan en la entrada de RUSTSEC-2026-0002.
     "RUSTSEC-2026-0253",
     # (RUSTSEC-2026-0187 was here -- lopdf stack overflow. DELETED in V355,
     #  not renewed: its own re-check condition had come true. pdf-extract
@@ -315,6 +348,46 @@ ignore = [
     # por eframe/egui 0.27 -- o sea que subir la pila de egui, que ya es deuda
     # propia, tambien desbloquearia esta.
     # Comprobar con: cargo update -p quick-xml --precise 0.41.0
+    #
+    # V486 re-chequeo (2026-11-22, 23 dias antes de vencer): LA SUPRESION SIGUE
+    # SIENDO NECESARIA, y la condicion de arriba esta MAL EN SUS DOS MITADES.
+    #
+    # (b) sobra. No hay que «salir de wayland-scanner 0.31.x»: la 0.31.11 ya pide
+    # `quick-xml ^0.41`, y es un bump de PARCHE dentro de 0.31.x. Medido con el
+    # resolutor, en seco:
+    #
+    #     $ cargo update -p wayland-scanner --precise 0.31.11 --dry-run
+    #           Adding quick-xml v0.41.0
+    #           Updating wayland-scanner v0.31.10 -> v0.31.11
+    #
+    # Y lo que importa de ese resultado: ANADE la 0.41.0 en vez de mover la 0.39.4.
+    # Para un crate 0.x los rangos ^0.39 y ^0.41 son majors incompatibles, asi que
+    # conviven las dos y la advisory sigue disparandose por la 0.39.4. Subir
+    # wayland-scanner no arregla nada por si solo; solo deja de ser un bloqueo.
+    #
+    # (a) nombra al crate equivocado. object_store YA lo hizo: 0.14.1 y 0.14.2
+    # piden `quick-xml ^0.41.0`. Quien cierra el paso es DATAFUSION, que no aparece
+    # en la condicion: pide `object_store ^0.13.2` NO opcional en todas sus
+    # versiones, incluida la mas nueva publicada ---55.3.0, leida en el indice---, y
+    # object_store 0.13.2 topa quick-xml en `^0.39.0`.
+    #
+    # La cadena real, medida en el lock de hoy:
+    #     quick-xml 0.39.4 <- object_store 0.13.2 <- datafusion 54.2.0
+    #                      <- lance 14.0.2 <- lancedb 0.41.0
+    #                      <- tambien polars-io 0.55.2 y polars-error 0.55.2
+    #
+    # Condicion real de cierre: cuando DATAFUSION admita object_store 0.14+. Y esta
+    # dos pines de profundidad, igual que RUSTSEC-2024-0449: lancedb clava
+    # lance-index =14.0.2.
+    #
+    # Nota de instrumento, que me costo un diagnostico equivocado: el bloque
+    # [[package]] de object_store 0.14.2 en el lock NO lista quick-xml, y eso NO
+    # significa que el crate lo haya soltado ---la dep es opcional y aqui no esta
+    # activada---. El lock contesta «que arrastra esta instancia», no «que declara
+    # el crate». Para lo segundo, el indice de crates.io.
+    #
+    # Y la fecha NO se toca: sigue el 2026-12-15 a proposito, para que el rojo de CI
+    # llegue cuando estaba previsto y lo decida el autor.
     "RUSTSEC-2026-0194",
     # quick-xml, same crate and version, second DoS: unbounded namespace-
     # declaration allocation in NsReader. Same chain, same reachability, same
@@ -327,6 +400,9 @@ ignore = [
     # no solo la primera. La medicion esta alli; aqui no se duplica para que no se
     # queden desincronizadas, pero la condicion es la misma.
     # Comprobar con: cargo update -p quick-xml --precise 0.41.0
+    # V486 re-chequeo (2026-11-22): re-medida en la entrada de RUSTSEC-2026-0194,
+    # donde la condicion cambio de raiz ---el bloqueo es datafusion, no
+    # object_store ni wayland-scanner---. Aqui sigue sin duplicarse a proposito.
     "RUSTSEC-2026-0195",
     # ttf-parser 0.25.1 unmaintained. cargo-deny denies unmaintained where
     # cargo-audit only warns, which is why this is here at all.
