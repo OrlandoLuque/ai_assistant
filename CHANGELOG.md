@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v373 (2026-11-22) - V489: el techo de 120 s del cliente vivia en cinco numeros magicos y no habia forma de subirlo para medir (0.2.456)
+
+`src/providers.rs` cortaba cada generacion no-streaming con
+`.timeout(std::time::Duration::from_secs(120))` escrito **inline en cinco sitios** ---tres a 120 s
+(Ollama, OpenAI, Kobold) y dos a 180 s (los dos que llevan imagenes)--- y nada en el crate decia
+que ese techo existiera. El fichero ya tenia el patron bueno al lado: `MODEL_PROBE_TIMEOUT` es una
+constante con nombre y con rustdoc explicando por que vale 3 s.
+
+El coste de no nombrarlo esta medido: una pasada de benchmark reporto `BACKEND CRASH`, la
+explicacion que se escribio fue un abort del sampler de llama.cpp, y lo que habia pasado era que
+este techo salto sobre un agente que estaba dando vueltas (V485). Un numero que nadie puede
+nombrar es un numero del que nadie sospecha.
+
+Ahora son `GENERATE_TIMEOUT` y `GENERATE_WITH_IMAGES_TIMEOUT`, con el rustdoc diciendo lo que son
+y lo que NO son ---un timeout TOTAL, que para una conexion de streaming estaria mal en las dos
+direcciones, y por eso los caminos de streaming siguen usando `long_lived`---.
+
+Y `AI_GENERATE_TIMEOUT_SECS=n` lo sube, que es lo que una pasada de benchmark necesita: en un
+bucle agentico sobre un 14B, pasar de dos minutos es ordinario y no roto. Un valor que no parsea o
+que es cero cae al valor por defecto en vez de fallar, porque es una comodidad para medir y no
+configuracion de la que nadie deba depender. **Sin la variable, no cambia ningun valor.**
+
+**Y un rojo propio que la bateria local cazo y CI habria cazado igual:**
+`GENERATE_WITH_IMAGES_TIMEOUT` es codigo muerto bajo el conjunto minimo de features, porque sus
+dos sitios de llamada son `#[cfg(feature = "vision")]` y la constante no lo era. Salio como
+`error: constant GENERATE_WITH_IMAGES_TIMEOUT is never used` en **las dos** puertas de clippy con
+`--no-default-features`, y en ninguna de las otras cinco. Es la clase exacta de defecto que este
+repositorio ya tiene catalogada: el alcance de un lint es la lista de features con la que se
+invoca. Gateada igual que sus llamadas.
+
+Documentado en `docs/MODEL_BENCHMARKS.md`, al lado de las `AI_BENCH_*`, con la advertencia que
+importa: una ejecucion cortada por el techo **sale del denominador**, asi que subirlo cambia que
+ejecuciones cuentan y eso va en la cabecera de la entrada que lo use.
+
+Lo que esto **no** hace: no toca el harness ni como informa, no cambia los 120 s ni los 180 s por
+defecto, y no decide la otra mitad de la pregunta que V485 dejo abierta ---si el harness debe
+informar de timeout y de caida por separado---, que sigue abierta.
+
+Verificacion: bateria completa de puertas.
+
 ## [Unreleased] - v372 (2026-11-22) - V488: el harness nombraba el abort del sampler como LA causa de «backend crash», y hay dos (0.2.455)
 
 El mensaje que `agentic_test_gen` imprime cuando una generacion no vuelve decia, literalmente,

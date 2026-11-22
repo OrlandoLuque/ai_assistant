@@ -19,6 +19,49 @@ use crate::session::UserPreferences;
 /// latency of the whole scan (the caller re-scans on demand).
 const MODEL_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 
+/// The ceiling on one NON-streaming generation request, and the reason it is named
+/// here instead of written at each call site.
+///
+/// Five call sites carried `from_secs(120)` inline and nothing in the crate stated
+/// that a ceiling existed. The cost of that was measured: a benchmark run reported
+/// `BACKEND CRASH` and the explanation written down was a llama.cpp sampler abort,
+/// when Ollama had simply logged `500 | 2m0s | POST "/api/chat"` with a clean server
+/// log because this timeout fired on a generation that took longer than two minutes
+/// (V485, 2026-11-21). A number nobody can name is a number nobody suspects.
+///
+/// It is deliberately a TOTAL timeout. For a long-lived streaming connection that
+/// would be wrong in both directions --- which is why the streaming paths below use
+/// `long_lived` instead --- but a plain generate call either returns a whole body or
+/// it does not.
+const GENERATE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// As [`GENERATE_TIMEOUT`], for the request shapes that carry images: the same ceiling
+/// would be tight, because the prompt has to be encoded and the vision tower run
+/// before the first token.
+/// Gated like the two call sites it serves: both image paths are
+/// `#[cfg(feature = "vision")]`, so without the gate this constant is dead code under
+/// the minimum feature set --- which is exactly how the local battery caught it, on the
+/// two `--no-default-features` clippy gates and nowhere else.
+#[cfg(feature = "vision")]
+const GENERATE_WITH_IMAGES_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
+
+/// `default`, unless `AI_GENERATE_TIMEOUT_SECS` names another whole number of seconds.
+///
+/// The override exists for benchmark runs, where exceeding two minutes is ordinary
+/// rather than broken: an agentic loop on a 14B model can spend that long legitimately,
+/// and a run cut off by this ceiling leaves the denominator, so a category whose agent
+/// loops loses runs without the pass rate saying so.
+///
+/// An unparseable or zero value falls back to `default` rather than failing: this is a
+/// convenience for a measurement run, not configuration anyone should depend on.
+fn generate_timeout(default: std::time::Duration) -> std::time::Duration {
+    std::env::var("AI_GENERATE_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|s| *s > 0)
+        .map_or(default, std::time::Duration::from_secs)
+}
+
 /// Fetch models from Ollama API. Single-attempt, short-timeout discovery probe.
 ///
 /// Uses the default `ureq` adapter; [`fetch_ollama_models_with`] takes the port.
@@ -584,7 +627,7 @@ pub fn generate_ollama_response_with(
     let response = retry_with_config(config.retry_config.clone(), || {
         let resp = client.send(
             &HttpRequest::post_json(&url, &request_body)?
-                .timeout(std::time::Duration::from_secs(120)),
+                .timeout(generate_timeout(GENERATE_TIMEOUT)),
         )?;
         // Igual que arriba: el no-2xx sigue siendo un error para que el
         // reintento ocurra --- y ahora el mensaje LLEVA EL CUERPO, que es donde
@@ -666,7 +709,7 @@ pub fn generate_openai_response_with(
     let response = retry_with_config(config.retry_config.clone(), || {
         let resp = client.send(
             &HttpRequest::post_json(&url, &request_body)?
-                .timeout(std::time::Duration::from_secs(120)),
+                .timeout(generate_timeout(GENERATE_TIMEOUT)),
         )?;
         // Igual que arriba: el no-2xx sigue siendo un error para que el
         // reintento ocurra --- y ahora el mensaje LLEVA EL CUERPO, que es donde
@@ -758,7 +801,7 @@ pub fn generate_ollama_response_with_images_with(
     let response = retry_with_config(config.retry_config.clone(), || {
         let resp = client.send(
             &HttpRequest::post_json(&url, &request_body)?
-                .timeout(std::time::Duration::from_secs(180)),
+                .timeout(generate_timeout(GENERATE_WITH_IMAGES_TIMEOUT)),
         )?;
         // Igual que arriba: el no-2xx sigue siendo un error para que el
         // reintento ocurra --- y ahora el mensaje LLEVA EL CUERPO, que es donde
@@ -837,7 +880,7 @@ pub fn generate_openai_compat_response_with_images_with(
     let response = retry_with_config(config.retry_config.clone(), || {
         let resp = client.send(
             &HttpRequest::post_json(&url, &request_body)?
-                .timeout(std::time::Duration::from_secs(180)),
+                .timeout(generate_timeout(GENERATE_WITH_IMAGES_TIMEOUT)),
         )?;
         // Igual que arriba: el no-2xx sigue siendo un error para que el
         // reintento ocurra --- y ahora el mensaje LLEVA EL CUERPO, que es donde
@@ -978,7 +1021,7 @@ pub fn generate_kobold_response_with(
     let response = retry_with_config(config.retry_config.clone(), || {
         let resp = client.send(
             &HttpRequest::post_json(&url, &request_body)?
-                .timeout(std::time::Duration::from_secs(120)),
+                .timeout(generate_timeout(GENERATE_TIMEOUT)),
         )?;
         // Igual que arriba: el no-2xx sigue siendo un error para que el
         // reintento ocurra --- y ahora el mensaje LLEVA EL CUERPO, que es donde

@@ -79,6 +79,14 @@ scored as a pass rate — the categories that use it are noted in the table abov
 `AI_BENCH_NUM_CTX=n` (context window; shrinking it is what decides whether a big model
 fits entirely in VRAM — see [LOCAL_MODELS.md](LOCAL_MODELS.md)). Both appear in the
 `backend=` label the harness prints, so they end up in the log automatically.
+Y **un techo que no es un knob**, porque hasta V488 no se podía tocar: la biblioteca corta una
+petición de generación no-*streaming* a los **120 s** (180 s si lleva imágenes). Una ejecución
+cortada ahí **sale del denominador**, así que una categoría cuyo agente entra en bucle pierde
+ejecuciones sin que la tasa de acierto lo diga — y el error que imprime es el mismo
+`BACKEND CRASH` que una caída real del backend. `AI_GENERATE_TIMEOUT_SECS=n` lo sube para la
+pasada, y conviene decirlo en la cabecera de la entrada cuando se use, porque cambia qué
+ejecuciones cuentan.
+
 
 ## How to read / caveats
 
