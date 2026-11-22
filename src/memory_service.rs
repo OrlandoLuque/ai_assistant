@@ -626,6 +626,32 @@ mod tests {
             .as_millis() as u64
     }
 
+    /// Espera hasta que `read` devuelva un valor que `done` acepte, o pasen unos 5 s.
+    ///
+    /// Sustituye al `thread::sleep(Duration::from_millis(50))` que habia antes de cada
+    /// lectura. El servicio aplica las escrituras en un hilo de fondo, asi que cada uno
+    /// de esos sleeps estaba en realidad esperando una condicion y adivinando cuanto
+    /// tarda: 50 ms sobran con la maquina en reposo y no llegan con la maquina cargada.
+    /// Medido: este modulo se puso rojo en `test_entity_add_query` mientras compilaba el
+    /// toolkit de CUDA ---64,59 s la bateria y un fallo--- y ese mismo test pasa en
+    /// 0,05 s con la maquina tranquila.
+    ///
+    /// Sondea cada 5 ms, asi que en reposo vuelve ANTES que el sleep al que sustituye;
+    /// los 5 s son un techo que solo alcanza un bloqueo de verdad.
+    ///
+    /// Devuelve el ultimo valor leido en vez de afirmar nada, para que el assert de cada
+    /// test siga siendo quien falla y con su propio mensaje.
+    fn settle<T>(read: impl Fn() -> T, done: impl Fn(&T) -> bool) -> T {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let v = read();
+            if done(&v) || std::time::Instant::now() >= deadline {
+                return v;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     fn make_episode(id: &str, content: &str, tags: &[&str]) -> Episode {
         Episode {
             id: id.to_string(),
@@ -677,7 +703,7 @@ mod tests {
         handle.add_episode(ep);
 
         // Give the background thread time to process
-        std::thread::sleep(Duration::from_millis(50));
+        settle(|| handle.recall(vec![1.0, 0.0, 0.0], 5), |r| r.len() == 1);
 
         // Recall by embedding (matching embedding)
         let results = handle.recall(vec![1.0, 0.0, 0.0], 5);
@@ -716,7 +742,7 @@ mod tests {
             handle.add_episode(ep);
         }
 
-        std::thread::sleep(Duration::from_millis(50));
+        settle(|| handle.recall(vec![1.0, 0.0, 0.0], 3), |r| r.len() == 3);
 
         // Query with "search" embedding — should get search episodes
         let results = handle.recall(vec![1.0, 0.0, 0.0], 3);
@@ -747,6 +773,8 @@ mod tests {
             images: Vec::new(),
         });
 
+        // Se queda a proposito: el assert de abajo es condicional (`if !results.is_empty()`),
+        // asi que no hay condicion positiva que esperar y un sondeo no tendria predicado.
         std::thread::sleep(Duration::from_millis(50));
 
         // Query with orthogonal embedding — should get no high-relevance results
@@ -772,7 +800,10 @@ mod tests {
         handle.add_episode(make_episode("ep2", "wrote report", &["write", "report"]));
         handle.add_episode(make_episode("ep3", "searched docs", &["search", "docs"]));
 
-        std::thread::sleep(Duration::from_millis(50));
+        settle(
+            || handle.recall_by_tags(vec!["search".to_string()], 5),
+            |r| r.len() == 2,
+        );
 
         let results = handle.recall_by_tags(vec!["search".to_string()], 5);
         assert_eq!(results.len(), 2, "Should find 2 episodes with 'search' tag");
@@ -799,8 +830,13 @@ mod tests {
             ));
         }
 
-        std::thread::sleep(Duration::from_millis(50));
+        settle(
+            || handle.recall_by_tags(vec!["search".to_string()], 10),
+            |r| r.len() == 5,
+        );
         handle.consolidate();
+        // Se queda a proposito: este test no comprueba nada ---lo dice su propio comentario---,
+        // asi que no hay nada que esperar. Un test que no afirma nada es cosa aparte.
         std::thread::sleep(Duration::from_millis(50));
 
         // Just verify no panic — consolidation may or may not produce procedures
@@ -818,7 +854,7 @@ mod tests {
         let entity = make_entity("e1", "Rust Language", "programming_language");
         handle.add_entity(entity);
 
-        std::thread::sleep(Duration::from_millis(50));
+        settle(|| handle.query_entity("Rust Language"), |e| e.is_some());
 
         let result = handle.query_entity("Rust Language");
         assert!(result.is_some());
@@ -838,7 +874,10 @@ mod tests {
         handle.add_entity(make_entity("e2", "Python", "language"));
         handle.add_entity(make_entity("e3", "VSCode", "editor"));
 
-        std::thread::sleep(Duration::from_millis(50));
+        settle(
+            || handle.list_entity_types(),
+            |t| t.contains(&"language".to_string()),
+        );
 
         let types = handle.list_entity_types();
         assert!(types.contains(&"language".to_string()));
@@ -857,7 +896,7 @@ mod tests {
         let plan_json = r#"{"id":"plan1","steps":[{"action":"search","status":"pending"}]}"#;
         handle.save_plan("plan1", plan_json);
 
-        std::thread::sleep(Duration::from_millis(50));
+        settle(|| handle.load_plan("plan1"), |p| p.is_some());
 
         let loaded = handle.load_plan("plan1");
         assert!(loaded.is_some());
@@ -878,7 +917,7 @@ mod tests {
         handle.save_plan("plan1", "{}");
         handle.save_plan("plan2", "{}");
 
-        std::thread::sleep(Duration::from_millis(50));
+        settle(|| handle.list_plans(), |p| p.len() == 2);
 
         let plans = handle.list_plans();
         assert_eq!(plans.len(), 2);
@@ -894,11 +933,14 @@ mod tests {
         let plan_json = r#"{"id":"plan1","steps":[{"action":"search","status":"pending"},{"action":"write","status":"pending"}]}"#;
         handle.save_plan("plan1", plan_json);
 
-        std::thread::sleep(Duration::from_millis(50));
+        settle(|| handle.load_plan("plan1"), |p| p.is_some());
 
         handle.update_plan_step("plan1", 0, "completed");
 
-        std::thread::sleep(Duration::from_millis(50));
+        settle(
+            || handle.load_plan("plan1"),
+            |p| p.as_deref().is_some_and(|s| s.contains("completed")),
+        );
 
         let loaded = handle.load_plan("plan1").unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&loaded).unwrap();
@@ -924,7 +966,7 @@ mod tests {
             "agent A did research",
             &["research"],
         ));
-        std::thread::sleep(Duration::from_millis(50));
+        settle(|| handle_b.recall(vec![1.0, 0.0, 0.0], 5), |r| r.len() == 1);
 
         // Agent B can recall it
         let results = handle_b.recall(vec![1.0, 0.0, 0.0], 5);
@@ -953,7 +995,10 @@ mod tests {
             ));
         }
 
-        std::thread::sleep(Duration::from_millis(100));
+        // Espera a que la eviccion llegue a su estado estable (3). Si estuviera rota,
+        // pasaria de 3 y el assert de abajo lo caza; con el sleep ciego, cero episodios
+        // aterrizados tambien pasaban el `<= 3`.
+        settle(|| handle.recall(vec![1.0, 0.0, 0.0], 10), |r| r.len() >= 3);
 
         // Recall all — should only have 3 (oldest evicted)
         let results = handle.recall(vec![1.0, 0.0, 0.0], 10);
@@ -997,7 +1042,13 @@ mod tests {
             t.join().unwrap();
         }
 
-        std::thread::sleep(Duration::from_millis(200));
+        settle(
+            || {
+                svc.handle()
+                    .recall_by_tags(vec!["concurrent".to_string()], 100)
+            },
+            |r| r.len() == 50,
+        );
 
         // Verify all episodes were recorded
         let handle = svc.handle();
@@ -1020,7 +1071,16 @@ mod tests {
         handle1.add_episode(make_episode("pool1_ep", "pool 1 data", &["pool1"]));
         handle2.add_episode(make_episode("pool2_ep", "pool 2 data", &["pool2"]));
 
-        std::thread::sleep(Duration::from_millis(50));
+        // Las dos esperas importan: el assert de abajo es `is_empty()`, que pasa solo por
+        // que la escritura del otro pool no haya aterrizado todavia.
+        settle(
+            || handle1.recall_by_tags(vec!["pool1".to_string()], 5),
+            |r| !r.is_empty(),
+        );
+        settle(
+            || handle2.recall_by_tags(vec!["pool2".to_string()], 5),
+            |r| !r.is_empty(),
+        );
 
         // Pool 1 should not see pool 2's data
         let results1 = handle1.recall_by_tags(vec!["pool2".to_string()], 5);
@@ -1047,12 +1107,12 @@ mod tests {
         let handle = svc.handle();
 
         handle.add_entity(make_entity("e1", "TestEntity", "test"));
-        std::thread::sleep(Duration::from_millis(50));
+        settle(|| handle.query_entity("TestEntity"), |e| e.is_some());
 
         assert!(handle.query_entity("TestEntity").is_some());
 
         handle.remove_entity("e1");
-        std::thread::sleep(Duration::from_millis(50));
+        settle(|| handle.query_entity("TestEntity"), |e| e.is_none());
 
         assert!(handle.query_entity("TestEntity").is_none());
 

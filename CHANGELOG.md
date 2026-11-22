@@ -5,6 +5,61 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v374 (2026-11-22) - V490: los 18 sleeps de memory_service esperaban una condicion a ciegas, y dos de esos tests pasaban sin comprobar nada (0.2.457)
+
+El modulo de tests de `src/memory_service.rs` tenia **18** `std::thread::sleep` ---dieciseis de
+50 ms, uno de 100 y uno de 200--- siempre con la misma forma: escritura, sleep, lectura, assert.
+El servicio aplica las escrituras en un hilo de fondo, asi que cada uno de esos sleeps estaba
+**esperando una condicion y adivinando cuanto tarda**. 50 ms sobran con la maquina en reposo y no
+llegan con la maquina cargada: medido el 2026-11-21, este modulo se puso rojo en
+`test_entity_add_query` mientras compilaba el toolkit de CUDA ---64,59 s la bateria y un fallo---
+y ese mismo test pasa en 0,05 s con la maquina tranquila.
+
+Dieciseis pasan a `settle(read, done)`, que sondea cada 5 ms hasta un techo de 5 s y **devuelve el
+ultimo valor leido** en vez de afirmar nada, para que el assert de cada test siga siendo quien
+falla y con su propio mensaje.
+
+**Y lo contraintuitivo, medido en los dos sentidos** con el mismo comando y la misma maquina en
+reposo:
+
+| | tests | tiempo |
+|---|---|---|
+| antes, 18 sleeps ciegos | 17/17 | **0,20 s** |
+| despues, 16 a sondeo | 17/17 | **0,05 s** |
+
+**Anadir esperas lo hizo 4 veces mas rapido**, porque un sondeo vuelve en cuanto la condicion se
+cumple y un sleep vuelve siempre tarde. Los 0,20 s contra los 1,1 s de sueno total confirman de
+paso que los tests corren en paralelo: el reloj lo marcaba el test mas lento, el de 200 ms.
+
+**Dos de esos tests no eran fragiles, eran VACUOS.** Un sleep corto no los ponia en rojo, los hacia
+pasar sin discriminar:
+
+- `test_memory_respects_max_episodes` afirma `results.len() <= 3`. Con **cero** episodios
+  aterrizados, `0 <= 3` pasa. Ahora espera a que la eviccion alcance su estado estable, asi que si
+  estuviera rota el assert la caza.
+- `test_memory_isolation_between_pools` afirma `results1.is_empty()`. Si la escritura del otro pool
+  no ha aterrizado, esta vacio y pasa **sin haber comprobado ningun aislamiento**. Ahora espera a
+  que las dos escrituras sean visibles antes de comprobarlo.
+
+**Dos sleeps se quedan, con su motivo escrito en el codigo**: uno cuyo assert es condicional
+(`if !results.is_empty()`), que no tiene condicion positiva que esperar; y otro en
+`test_consolidation_runs`, que **no comprueba nada** ---lo dice su propio comentario---, asi que no
+hay nada que esperar. Un test que no afirma nada es un problema aparte y no se toca aqui.
+
+Lo que esto **no** hace: no anade asserts a ese test, no toca los seis
+`recv_timeout(Duration::from_millis(100))` del codigo del servicio ---que no son sleeps--- y no
+cambia ninguna cifra publica.
+
+**Dos tropiezos de instrumento, por si vuelven.** El fichero esta en **CRLF con 8 LF sueltos**, asi
+que partirlo por LF da 1.072 lineas y partirlo por CRLF da 1.064: dos numeraciones que difieren en
+8, y el primer script fallo su assert y **se nego a escribir** en vez de empalmar en el sitio
+equivocado. El segundo deriva las posiciones del contenido y no de ningun numero de linea. Y mi
+contador de sleeps restantes conto tambien los `recv_timeout` del servicio, asi que dio 9 donde
+habia 2 ---los asserts del script, que son el control de verdad, estaban bien---.
+
+Verificacion: bateria completa de puertas. `cargo fmt` reformateo seis de las llamadas nuevas a
+multilinea; `fmt --check` estaba limpio antes del cambio, asi que todo lo que pidio era mio.
+
 ## [Unreleased] - v373 (2026-11-22) - V489: el techo de 120 s del cliente vivia en cinco numeros magicos y no habia forma de subirlo para medir (0.2.456)
 
 `src/providers.rs` cortaba cada generacion no-streaming con
