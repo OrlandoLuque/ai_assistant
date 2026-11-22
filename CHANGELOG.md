@@ -5,6 +5,73 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v376 (2026-11-22) - V492: de 8 pasadas fallidas, 6 son entrega malformada y con TRES formas distintas, y el seed 1234 vuelve a ser el que discrimina (0.2.459)
+
+V487 demostro que «produced no tests» esconde DOS causas midiendo UNA tarea, donde salio una de
+cada. Esta entrada mide TRES tareas mas de las ocho intermitentes y cuenta las pasadas fallidas por
+causa, que es lo que decide si merece la pena arreglar el harness. Mismo 14B, temp=0.5, seed=42, 3
+repeticiones, `AGENTIC_DEBUG=1`. **Las tres reprodujeron su score del barrido.**
+
+| tarea | score | fallos | causa |
+|---|---|---|---|
+| `divide returning Option` (V487) | 0,33 | 2 | 1 entrega (falta una llave), 1 **error real del modelo** |
+| `explicit lifetimes` | **0,00** | 3 | **las tres** `serde rejects it: invalid escape` |
+| `enum + match evaluator` | 0,33 | 2 | >=1 `control character (\u0000-\u001F)` |
+| `implement the Iterator trait` | 0,67 | 1 | 1 `control character` |
+
+**De 8 pasadas fallidas, al menos 6 son fallos de entrega**, y con **tres malformaciones distintas**
+del JSON de la llamada: una llave de cierre que falta (descuadre de +1 en 842 caracteres, medido en
+V487), escapes invalidos, y caracteres de control sin escapar ---el log de `explicit lifetimes` trae
+**10 bytes NUL literales**---.
+
+**`explicit lifetimes` es el caso limpio, y la causa esta en el enunciado.** 0 de 3, y las tres por
+`invalid escape`. No es casualidad que sea esa tarea: la sintaxis de lifetimes lleva apostrofos
+(`&'a str`) y el modelo tiene que meterlos dentro de una cadena JSON. El harness lo reporta como
+«the model never produced a test file with any `#[test]`», que se lee como incapacidad, y lo que
+falla es el **transporte del contenido**. En dos de las tres pasadas el fichero SI acabo escrito
+(580 y 455 bytes) desde una iteracion anterior, y aun asi la tarea cuenta como que nunca produjo
+tests.
+
+**El confundido que encontre, y que no debe pasarse por alto.** `enum` e `Iterator` fallaron las dos
+en la pasada 3, con el mismo error y en la misma posicion (`line 5 column 0`). Con el seed fijado
+eso huele a artefacto, asi que se comprobo cambiandolo:
+
+| base del seed | pasada 3 | resultado |
+|---|---|---|
+| 42 | `control character ... line 5 column 0` | FAIL 1/3 |
+| 7 | **el mismo error, la misma posicion** | FAIL 1/3 |
+| 1234 | escribe 786 bytes | **PASS 2/3** |
+
+No es un artefacto puro ---sobrevive a cambiar 42 por 7--- pero si es sensible al seed. Y el
+estriado no es `+1`: `effective_seed()` suma la constante de la razon dorada por indice de
+repeticion, asi que los seeds de la pasada 3 con base 42 y con base 7 difieren en 35 sobre un
+espacio de 64 bits y aun asi fallan igual, mientras el de base 1234 pasa.
+
+**Lo interesante es que ya estaba escrito en el codigo.** El rustdoc de `effective_seed` dice que el
+estriado dorado es «insurance rather than a demonstrated fix», y cita: seeds 42, 43 y 44 fallaron
+`ledger` mientras 1234 lo paso 3/3, y tres muestras no pueden demostrar que seeds adyacentes esten
+correlacionados. Esta medicion es **una segunda instancia de la misma forma, en otra tarea**.
+
+**El limite honesto de lo que demuestra:** el valor que discrimina es **1234 otra vez**, el mismo de
+la medicion anterior. Asi que lo medido es «1234 pasa donde 42 y su vecindario fallan», en dos
+tareas distintas --- NO una ley sobre la distancia entre seeds. Para eso haria falta un barrido, y
+dos puntos no son una curva.
+
+Lo que esto **decide**: que el arreglo del harness merece la pena, porque si 6 de 8 fallos son de
+entrega, una reparacion o un reintento del array de llamadas recuperaria la mayor parte del deficit
+de esta categoria. Lo que **no** decide es si hacerlo: cambiaria las cifras historicas de varias
+categorias, y eso es decision del autor.
+
+Lo que esto **no** dice: no decide la proporcion exacta ---son 4 tareas de 8 y 8 pasadas fallidas,
+con un confundido de seed medido y nombrado: «la entrega domina» esta bien apoyado, «es el 75 %» no
+lo esta---. Y un detalle que no se debe leer como resultado: con seeds 42 y 7, la pasada 2 de `enum`
+produjo exactamente 1614 bytes las dos veces. El seed si llega a la peticion (`providers.rs` lo mete
+en las opciones) y si se estria, asi que lo mas probable es que el modelo converja en la misma
+respuesta para una tarea simple, pero es una coincidencia que conviene tener vista.
+
+Verificacion: solo documentacion. La entrada no anade ningun enlace markdown ni mueve ninguna cifra
+publica.
+
 ## [Unreleased] - v375 (2026-11-22) - V491: la excusa de `webrtc` afirmaba una cobertura falsa, el trinquete no leia las razones, y una puerta que no encuentra nada no se distingue de una que no sabe mirar (0.2.458)
 
 `NOT_IN_CI`, la lista de features excusadas de tener su propio trabajo en CI, se vigilaba en **dos

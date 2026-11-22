@@ -141,6 +141,81 @@ dependencies), so disk growth is not a concern in normal use.
 
 ## Log (newest first)
 
+### 2026-11-22 (2.º) — la proporción de las dos causas: la entrega malformada domina, con tres formas distintas, y el seed 1234 vuelve a ser el que discrimina
+
+V487 demostró que «produced no tests» esconde **dos** causas midiendo **una** tarea, donde salió
+una de cada. Esta entrada mide **tres tareas más** de las ocho intermitentes y cuenta las pasadas
+fallidas por causa, que es lo que decide si merece la pena arreglar el harness.
+
+Mismo 14B, `temp=0.5`, `seed=42`, 3 repeticiones, `AGENTIC_DEBUG=1`. **Las tres reprodujeron su
+score del barrido**, lo cual ya vale algo por sí mismo.
+
+| tarea | score | fallos | causa leída del rastro |
+|---|---|---|---|
+| `divide returning Option` (V487) | 0,33 | 2 | 1 entrega (falta una llave), 1 **error real del modelo** |
+| `explicit lifetimes` | **0,00** | 3 | **las tres** `serde rejects it: invalid escape` |
+| `enum + match evaluator` | 0,33 | 2 | ≥1 `control character (\u0000-\u001F)` |
+| `implement the Iterator trait` | 0,67 | 1 | 1 `control character` |
+
+**De 8 pasadas fallidas, al menos 6 son fallos de entrega**, y con **tres malformaciones
+distintas** del JSON de la llamada de herramienta:
+
+1. una **llave de cierre que falta** (V487, medido: descuadre de +1 en 842 caracteres),
+2. **escapes inválidos**,
+3. **caracteres de control** sin escapar — y el log de `explicit lifetimes` trae **10 bytes NUL
+   literales**.
+
+#### `explicit lifetimes` es el caso limpio, y la causa está en el enunciado
+
+0 de 3, y las tres por `invalid escape`. No es casualidad que sea **esta** tarea: la sintaxis de
+lifetimes de Rust lleva apóstrofos (`&'a str`), y el modelo tiene que meterlos dentro de una
+cadena JSON. El harness lo reporta como «the model never produced a test file with any
+`#[test]`», que se lee como incapacidad —y lo que falla es el **transporte del contenido**, no el
+contenido—. En dos de las tres pasadas el fichero **sí** acabó escrito (580 y 455 bytes) desde una
+iteración anterior, y aun así la tarea cuenta como que nunca produjo tests.
+
+#### El confundido que encontré, y que no debe pasarse por alto
+
+`enum` e `Iterator` fallaron **las dos en la pasada 3**, con el **mismo error y en la misma
+posición** (`line 5 column 0`). Con el seed fijado, eso huele a artefacto. Comprobado cambiándolo,
+que es lo único que lo decide:
+
+| base del seed | pasada 3 | resultado |
+|---|---|---|
+| 42 | `control character ... line 5 column 0` | FAIL 1/3 |
+| **7** | **el mismo error, la misma posición** | FAIL 1/3 |
+| 1234 | escribe 786 bytes | **PASS 2/3** |
+
+No es un artefacto puro —sobrevive a cambiar 42 por 7— pero **sí es sensible al seed**. Y el
+estriado no es `+1`: `effective_seed()` suma la constante de la razón dorada por índice de
+repetición, así que los seeds de la pasada 3 con base 42 y con base 7 difieren en 35 sobre un
+espacio de 64 bits y **aun así fallan igual**, mientras el de base 1234 pasa.
+
+**Lo que hace esto interesante es que ya estaba escrito en el código.** El rustdoc de
+`effective_seed` dice que el estriado dorado es «insurance rather than a demonstrated fix», y
+cita: *seeds 42, 43 y 44 fallaron `ledger` mientras 1234 lo pasó 3/3, y tres muestras no pueden
+demostrar que seeds adyacentes estén correlacionados*. Esta medición es **una segunda instancia de
+la misma forma, en otra tarea**.
+
+**Y el límite honesto de lo que demuestra:** el valor que discrimina es **1234 otra vez**, el
+mismo de la medición anterior. Así que lo medido es «1234 pasa donde 42 y su vecindario fallan»,
+en dos tareas distintas — **no** una ley sobre la distancia entre seeds. Para eso haría falta un
+barrido de seeds, y dos puntos no son una curva.
+
+#### Lo que esto decide, y lo que no
+
+- **Decide que el arreglo del harness merece la pena.** Si 6 de 8 fallos son de entrega, una
+  reparación o un reintento del array de llamadas recuperaría la mayor parte del déficit de esta
+  categoría. Lo que **no** decide es si hacerlo: cambiaría las cifras históricas de varias
+  categorías, y eso es una decisión del autor.
+- **No decide la proporción exacta.** Son 4 tareas de 8 y 8 pasadas fallidas, con un confundido de
+  seed medido y nombrado. «La entrega domina» está bien apoyado; «es el 75 %» no.
+- Un detalle que **no** se debe leer como resultado: con seeds 42 y 7, la pasada 2 de `enum`
+  produjo **exactamente 1614 bytes** las dos veces. El seed sí llega a la petición
+  (`providers.rs` lo mete en las opciones) y sí se estría, así que lo más probable es que el modelo
+  converja en la misma respuesta para una tarea simple. Pero es una coincidencia que conviene
+  tener vista.
+
 ### 2026-11-22 — cerrada la pregunta de V484: una ejecución se pierde por UNA llave de cierre, y la de al lado por tests de funciones que no existen
 
 La entrada del día 21 (4.ª) dejó una hipótesis: las ocho tareas que el 14B deja intermitentes en
