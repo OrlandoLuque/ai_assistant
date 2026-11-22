@@ -74,7 +74,13 @@ const NOT_IN_CI: &[(&str, &str)] = &[
     ("video-io", "needs host video devices"),
     (
         "webrtc",
-        "heavy native stack, covered by `voice-agent` in practice",
+        "heavy native stack, and it needs no job of its own because it is a member of \
+         FEATURES_STD, which the check, clippy and test jobs all build. This reason used \
+         to claim cover by voice-agent «in practice», and that was false: voice-agent \
+         expands to `audio` and nothing else, so building it compiles no WebRTC at all. \
+         The conclusion was right for a different reason, which is the worst shape a \
+         wrong reason can take ---it survives every review because the outcome looks \
+         fine--- and it is what the third ratchet direction below now refuses",
     ),
     ("aws-bedrock", "needs AWS credentials"),
     ("server-tls", "needs PEM material at build time"),
@@ -914,6 +920,117 @@ serde = \"1\"
                 "NOT_IN_CI excuses {name:?} ({reason}), but no such feature is declared"
             );
         }
+    }
+
+    /// Las afirmaciones de la forma «covered by `X`» que el grafo de features rechaza.
+    ///
+    /// Separada del test a proposito, para que su POLARIDAD se pueda comprobar: hoy no
+    /// queda ninguna afirmacion de esa forma ---que es el estado bueno--- y una puerta que
+    /// no encuentra nada es indistinguible de una puerta que no sabe mirar. Lo unico que
+    /// las separa es darle de comer una afirmacion falsa de mentira, que es lo que hace
+    /// `the_cover_claim_check_catches_a_false_claim`.
+    fn broken_cover_claims(
+        entries: &[(&str, &str)],
+        graph: &std::collections::BTreeMap<String, Vec<String>>,
+        declared: &BTreeSet<String>,
+    ) -> Vec<String> {
+        let mut out = Vec::new();
+        for (name, reason) in entries {
+            let Some(resto) = reason.split("covered by `").nth(1) else {
+                continue;
+            };
+            let Some(afirmada) = resto.split('`').next() else {
+                continue;
+            };
+            if !declared.contains(afirmada) {
+                out.push(format!(
+                    "{name}: dice «covered by `{afirmada}`» y esa feature no esta declarada"
+                ));
+                continue;
+            }
+            if !expand([afirmada.to_string()], graph).contains(*name) {
+                out.push(format!(
+                    "{name}: dice «covered by `{afirmada}`» y activar `{afirmada}` no lo \
+                     enciende"
+                ));
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn an_exclusion_that_claims_cover_by_another_feature_must_be_telling_the_truth() {
+        // La tercera direccion, y la que faltaba. Las otras dos preguntan si una feature
+        // esta excusada y si la excusa nombra algo que todavia existe. Ninguna lee la
+        // RAZON --- y una razon puede hacer una afirmacion comprobable: cuando dice
+        // «covered by `X`», el grafo de features sabe si construir `X` compila de verdad
+        // esta feature.
+        //
+        // `webrtc` llevaba exactamente esa afirmacion y era falsa: `voice-agent` se
+        // expande a `audio` y nada mas, asi que construirlo no compila WebRTC. Lo que la
+        // hacia indetectable es que la CONCLUSION era correcta por otro motivo ---webrtc
+        // es miembro de FEATURES_STD---, asi que cada repaso veia una feature cubierta y
+        // una frase plausible y seguia adelante.
+        //
+        // Trampa de esta puerta, dicha aqui porque no se ve: la razon de una excusa que
+        // DESCRIBA una afirmacion falsa pasada no debe reescribirla en la forma que el
+        // parser reconoce, o la puerta la leera como una afirmacion viva.
+        let manifest = std::fs::read_to_string("Cargo.toml").unwrap_or_default();
+        if manifest.is_empty() {
+            return;
+        }
+        let graph = feature_graph(&manifest);
+        let declared: BTreeSet<String> = declared_features(&manifest).into_iter().collect();
+        let roto = broken_cover_claims(NOT_IN_CI, &graph, &declared);
+        assert!(
+            roto.is_empty(),
+            "una excusa de NOT_IN_CI afirma una cobertura que el grafo de features niega: \
+             {roto:?}\nCorrige la razon o la excusa, no esta puerta. Una razon falsa parece \
+             revisada."
+        );
+    }
+
+    #[test]
+    fn the_cover_claim_check_catches_a_false_claim() {
+        // La polaridad, comprobada contra el defecto real y no solo contra un fixture: el
+        // caso falso es textualmente el que llevaba `webrtc` hasta V491.
+        let manifest = "[features]\nvoice-agent = [\"audio\"]\naudio = []\nwebrtc = []\n";
+        let graph = feature_graph(manifest);
+        let declared: BTreeSet<String> = declared_features(manifest).into_iter().collect();
+        assert_eq!(
+            declared.len(),
+            3,
+            "el manifiesto de prueba no se parseo: {declared:?}"
+        );
+
+        let falso: &[(&str, &str)] = &[(
+            "webrtc",
+            "heavy native stack, covered by `voice-agent` in practice",
+        )];
+        assert_eq!(
+            broken_cover_claims(falso, &graph, &declared).len(),
+            1,
+            "la puerta NO caza la afirmacion falsa que motivo su existencia"
+        );
+
+        let cierto: &[(&str, &str)] = &[("audio", "covered by `voice-agent`")];
+        assert!(
+            broken_cover_claims(cierto, &graph, &declared).is_empty(),
+            "la puerta rechaza una afirmacion que SI es verdad en el grafo"
+        );
+
+        let fantasma: &[(&str, &str)] = &[("webrtc", "covered by `ghost`")];
+        assert_eq!(
+            broken_cover_claims(fantasma, &graph, &declared).len(),
+            1,
+            "la puerta no nota que la feature citada no existe"
+        );
+
+        let sin_afirmacion: &[(&str, &str)] = &[("webrtc", "heavy native stack")];
+        assert!(
+            broken_cover_claims(sin_afirmacion, &graph, &declared).is_empty(),
+            "la puerta inventa una afirmacion donde no hay ninguna"
+        );
     }
 
     /// Las dos piezas que faltaban, probadas por separado: sin esto la puerta

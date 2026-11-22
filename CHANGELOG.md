@@ -5,6 +5,86 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v375 (2026-11-22) - V491: la excusa de `webrtc` afirmaba una cobertura falsa, el trinquete no leia las razones, y una puerta que no encuentra nada no se distingue de una que no sabe mirar (0.2.458)
+
+`NOT_IN_CI`, la lista de features excusadas de tener su propio trabajo en CI, se vigilaba en **dos
+direcciones**: que toda feature declarada este construida o excusada, y que ninguna excusa nombre
+una feature que dejo de existir. **Ninguna de las dos lee la RAZON** de la excusa, y una razon
+puede hacer una afirmacion comprobable.
+
+`webrtc` llevaba una: *«heavy native stack, covered by `voice-agent` in practice»*. **Medido en el
+grafo de features: `voice-agent` se expande a `audio` y nada mas.** Construirlo no compila WebRTC.
+La afirmacion era falsa.
+
+**Y lo que la hacia indetectable es que la conclusion era correcta por otro motivo:** `webrtc` esta
+en `FEATURES_STD` (`ci.yml:31`), asi que CI lo compila, lo lintea y lo testea en el conjunto
+principal. Cada repaso veia una feature cubierta y una frase plausible y seguia adelante. Es la
+peor forma que puede tomar una razon equivocada.
+
+Se anade la tercera direccion: **una afirmacion de la forma «covered by `X`» tiene que ser verdad
+en el grafo de features.** Y la razon de `webrtc` pasa a decir lo que de verdad la excusa.
+
+#### La parte que importa mas que la puerta
+
+Hoy, corregida la razon, **no queda ninguna afirmacion de esa forma**, que es el estado bueno. Lo
+que significa que la puerta nueva no encuentra nada --- y una puerta que no encuentra nada es
+indistinguible de una puerta que no sabe mirar. Asi que la comprobacion vive en una funcion aparte,
+`broken_cover_claims`, y un segundo test le da de comer cuatro casos:
+
+| caso | se espera |
+|---|---|
+| la afirmacion falsa **textual** que llevaba `webrtc` | la caza |
+| una afirmacion que SI es verdad en el grafo | la acepta |
+| una que cita una feature inexistente | la caza |
+| una razon sin ninguna afirmacion | no inventa nada |
+
+La polaridad se comprueba contra el defecto real, no contra un fixture inventado.
+
+#### Y la puerta se probo por mutacion, no solo por fixture
+
+Devuelta la razon falsa a su sitio **real** en `NOT_IN_CI` y corrido el paso de CI, la puerta se
+pone roja con el mensaje que tiene que dar:
+
+```
+test ...::an_exclusion_that_claims_cover_by_another_feature_must_be_telling_the_truth ... FAILED
+una excusa de NOT_IN_CI afirma una cobertura que el grafo de features niega:
+["webrtc: dice «covered by `voice-agent`» y activar `voice-agent` no lo enciende"]
+test result: FAILED. 11 passed; 1 failed
+```
+
+Y corregida otra vez, 12 de 12 en verde, con el hash del fichero verificado antes y despues del ir
+y volver (`cfa77d64193318a6` las dos veces). Un self-test prueba que la funcion sabe mirar; esto
+prueba que la puerta, montada donde esta y leyendo el dato de verdad, caza el defecto que la
+motivo.
+
+#### Una cuarta direccion, medida y descartada
+
+Lo primero que se midio fue otra cosa: «una excusa cuya feature esta cubierta por CI es
+redundante». Son **dos** hoy, `full` y `webrtc`. Pero la de `full` dice «the always-tested
+baseline, covered by every other CI job», que es **cierta y estructural**: esta excusada
+precisamente porque la construyen todos. Una puerta que la marcara estaria pidiendo borrar una
+excusa correcta, asi que esa direccion se descarta, y se deja escrito para no volver a proponerla.
+
+#### Dos errores de instrumento, los dos de la misma forma
+
+1. **Medi la redundancia contra `full` y `FEATURES_MIN` y no contra `FEATURES_STD`**, que es la via
+   de cobertura principal. Dio **0** donde hay **2**. `webrtc` aparecio solo al mirar el conjunto
+   que de verdad lo construye.
+2. **Afirme que ningun trabajo de CI ejecuta los tests unitarios del binario del harness**, tras
+   buscar `--bins` y `--all-targets`. El paso existe y se llama `Feature coverage ratchet`:
+   `cargo test --bin ai_test_harness --features "full,browser" -- feature_matrix::tests`, en
+   **singular**. El trinquete si se aplica, y por poco anado un test creyendo que nadie lo correria.
+
+Las dos veces el filtro contesto una pregunta mas estrecha que la que se le hizo, y su respuesta se
+parecia a la buena. Van tres esta noche con esa forma.
+
+Verificacion: bateria completa de puertas, **y el paso del trinquete a mano**, porque la bateria
+local **no lo corre** ---deja el trabajo `harness-battery` a CI a proposito y lo dice en su propio
+texto---. Asi que el comando de `ci.yml` se ejecuto literal.
+
+Lo que esto **no** hace: no cambia que features construye CI, y `webrtc` sigue excusada de tener
+trabajo propio ---ahora por la razon verdadera---.
+
 ## [Unreleased] - v374 (2026-11-22) - V490: los 18 sleeps de memory_service esperaban una condicion a ciegas, y dos de esos tests pasaban sin comprobar nada (0.2.457)
 
 El modulo de tests de `src/memory_service.rs` tenia **18** `std::thread::sleep` ---dieciseis de
