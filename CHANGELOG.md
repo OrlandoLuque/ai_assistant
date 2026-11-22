@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v371 (2026-11-22) - V487: la pregunta abierta de V484, cerrada --- una ejecucion se pierde por UNA llave de cierre y la de al lado por tests de funciones que no existen (0.2.454)
+
+V484 dejo una hipotesis: las ocho tareas que el 14B deja intermitentes en `agentic_test_gen`
+llevan «produced no tests» como ultimo fallo, y eso parecia ser el EXTRACTOR del harness y no el
+modelo. La cierra leer una respuesta cruda, que es lo que esa entrada decia que faltaba.
+
+Tarea: `test-gen: divide returning Option`, score 0,333 en el barrido ---falla 2 de 3--- y de las
+mas simples de las doce, porque un fallo en una tarea simple argumenta contra la incapacidad.
+Repetida con `--filter=divide`, `AGENTIC_DEBUG=1`, 3 repeticiones, el mismo 14B, temp=0.5 seed=42.
+
+**Reprodujo exacto**: 0,333 y el mismo modo de fallo. Y eso ya vale algo: `sum_even` dio 1/3 en el
+barrido y 2/2 aislada, dentro del ruido; esta da lo mismo en los dos sitios.
+
+**Las tres pasadas fallaron de tres maneras distintas:**
+
+| pasada | resultado | causa |
+|---|---|---|
+| 1 | pasa | once tests correctos para `divide` |
+| 2 | falla | el modelo escribe tests para `add` y `multiply`, **que no existen en el crate** |
+| 3 | falla | los tests son correctos y completos, y el JSON de la llamada **no parsea** |
+
+**La pasada 3 es el hallazgo.** El modelo emitio un array con una sola llamada `write_file` y el
+contenido entero del fichero, correcto. Medido sobre la respuesta reconstruida del rastro, no leido
+a ojo: **842 caracteres** ---los que el propio rastro declara---, **9 llaves de apertura y 8 de
+cierre**, descuadre de **+1**, y **anadiendo una sola llave de cierre parsea**. El `json` de Python
+falla en la misma posicion que serde (`line 5 column 1`, char 841). La ejecucion entera se pierde
+por un caracter.
+
+Y el extractor **no tiene culpa**: ese JSON esta genuinamente malformado y rechazarlo es correcto.
+Lo que no hay es ninguna reparacion ni reintento para un array de llamadas desbalanceado, asi que
+un desliz de un caracter cuesta una pasada y sale etiquetado «produced no tests», que se lee como
+«el modelo no supo».
+
+**La pasada 2 es lo contrario**: el JSON si era valido (`the array IS valid JSON`, tres llamadas) y
+el fallo es del modelo, que escribio una bateria para `add`, `multiply` y `divide` cuando el crate
+solo tiene `divide`. `cargo test` contesto `error[E0425]: cannot find function add`, y el agente
+**repitio el mismo error cinco veces** hasta agotar iteraciones sin leer el mensaje del compilador.
+
+**Lo que decide:** «produced no tests» no es un modo de fallo, son al menos DOS ---entrega
+malformada y error de capacidad--- y en esta tarea salio una de cada. La hipotesis de V484 era
+medio cierta, y la parte comoda ---«es el extractor»--- es falsa.
+
+Lo que esto **no** dice: una tarea no es una medicion. No se ha medido la proporcion de las dos
+causas en las ocho intermitentes, solo que ambas existen bajo la misma etiqueta. Y la proyeccion de
+reintento a ciegas (0,70 en k=3 para esta tarea) sigue siendo la barra que una reparacion guiada
+tendria que batir.
+
+Verificacion: solo documentacion. La entrada no anade ningun enlace markdown ni mueve ninguna cifra
+publica; `check_documented_cli.py` a mano, verde sobre 44 ficheros.
+
 ## [Unreleased] - v370 (2026-11-22) - V486: la condicion de cierre de las dos de quick-xml nombraba los dos crates equivocados, y `lru` ya salio del grafo (0.2.453)
 
 P2 de la cola prioritaria: el re-chequeo de las 13 supresiones de `deny.toml`, hecho **23 dias

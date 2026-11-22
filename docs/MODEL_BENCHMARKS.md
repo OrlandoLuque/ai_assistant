@@ -133,6 +133,70 @@ dependencies), so disk growth is not a concern in normal use.
 
 ## Log (newest first)
 
+### 2026-11-22 — cerrada la pregunta de V484: una ejecución se pierde por UNA llave de cierre, y la de al lado por tests de funciones que no existen
+
+La entrada del día 21 (4.ª) dejó una hipótesis: las ocho tareas que el 14B deja intermitentes en
+`agentic_test_gen` tienen «produced no tests» como último fallo, y eso parecía ser el **extractor**
+del harness y no el modelo. Lo que la cierra es leer una respuesta cruda, que es lo que esa entrada
+decía que faltaba.
+
+**Tarea elegida y por qué.** `test-gen: divide returning Option`, score 0,333 en el barrido — falla
+2 de 3 — y de las más simples de las doce. Un fallo en una tarea simple argumenta contra la
+incapacidad. Repetida con `--filter=divide`, `AGENTIC_DEBUG=1`, tres repeticiones, el mismo 14B,
+`temp=0.5 seed=42`.
+
+**Reprodujo exacto: 0,333, y el mismo modo de fallo** (`1 produced no tests`). Eso ya vale algo por
+sí mismo: `sum_even` dio 1/3 en el barrido y 2/2 aislada, dentro del ruido; esta da lo mismo en los
+dos sitios.
+
+**Y las tres pasadas fallaron de tres maneras distintas.**
+
+| pasada | resultado | causa, leída del rastro |
+|---|---|---|
+| 1 | **pasa** | once tests correctos para `divide` |
+| 2 | **falla** | el modelo escribe tests para `add` y `multiply`, **que no existen en el crate** |
+| 3 | **falla** | los tests son correctos y completos, y el JSON de la llamada **no parsea** |
+
+#### La pasada 3, que es el hallazgo
+
+El modelo emitió un array con una sola llamada `write_file` y el contenido entero del fichero de
+tests, correcto. El rastro dice:
+
+```
+[dbg] serde rejects it: expected `,` or `}` at line 5 column 1
+[dbg] around col 1: "]"
+[dbg] no tests/model_tests.rs (os error 2)
+[dbg] tests/ holds:
+```
+
+Medido sobre la respuesta reconstruida del log, no leído a ojo: **842 caracteres** —los que el
+propio rastro declara—, **9 llaves de apertura y 8 de cierre**, descuadre de **+1**, y
+**añadiendo una sola llave de cierre parsea**. El `json` de Python falla en la misma posición que
+serde (`line 5 column 1`, char 841).
+
+O sea: **la ejecución entera se pierde por un carácter.** Y el extractor no tiene culpa — ese JSON
+está genuinamente malformado y rechazarlo es lo correcto. Lo que no hay es ninguna reparación ni
+reintento para un array de llamadas desbalanceado, así que un desliz de un carácter cuesta una
+pasada completa y sale etiquetado «produced no tests», que se lee como «el modelo no supo».
+
+#### La pasada 2, que es lo contrario
+
+Aquí el JSON **sí** era válido (`[dbg] the array IS valid JSON`, tres llamadas) y el fallo es del
+modelo de verdad: escribió una batería para `add`, `multiply` y `divide` cuando el crate solo tiene
+`divide`, y `cargo test` contestó `error[E0425]: cannot find function add`. Luego **repitió el mismo
+error cinco veces** hasta agotar iteraciones (`iters=0 tools=[<err: Max iterations reached>]`), sin
+leer el mensaje del compilador que tenía delante.
+
+#### Lo que esto decide, y lo que no
+
+- **La hipótesis de V484 era medio cierta.** «Produced no tests» no es un modo de fallo, son al
+  menos **dos**: entrega malformada y error de capacidad. En esta tarea salieron **una de cada**.
+- **No es el extractor.** Era la lectura cómoda y es falsa: el parser hace lo correcto.
+- **Lo que esto NO dice**: una tarea no es una medición. No se ha medido la proporción de las dos
+  causas en las ocho intermitentes, solo que ambas existen y conviven bajo la misma etiqueta. Y la
+  proyección de reintento a ciegas (0,70 en k=3 para esta tarea) sigue siendo la barra que cualquier
+  reparación guiada tendría que batir.
+
 ### 2026-11-21 (5.º) — cerrada: el «backend crash» era el techo de 120 s del cliente, y mi retractación de la entrada anterior estaba mal
 
 La entrada (3.ª) retiró la explicación de timeout con este razonamiento: *«el 14B hizo las tres
