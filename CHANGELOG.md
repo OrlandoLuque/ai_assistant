@@ -5,6 +5,142 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v378 (2026-11-24) - V494: el rojo habia crecido mientras nadie miraba, de una advisory a dos, y la segunda no la ve cargo-deny porque vive detras de un feature que no activamos (0.2.461)
+
+V493 quedo con `Security Audit` en rojo por `RUSTSEC-2026-0592`, diagnosticado y con el arreglo
+a medio aplicar en el arbol. Al retomarlo, la pregunta «de que esta rojo CI» tenia **otra
+respuesta que la de hace 22 horas**: la ejecucion `push` de V493 (00:25Z del 23) reporto **una**
+vulnerabilidad y la ejecucion `schedule` del mismo commit (17:00Z del 23) reporto **dos**. Mismo
+arbol, mismos workflows, mismo SHA; lo que cambio fue la base de advisories, que CI clona limpia
+cada vez.
+
+**La leccion no es que apareciera una advisory nueva, es donde estaba escrita.** El rojo que yo
+creia diagnosticado seguia creciendo en una ejecucion programada que no interrumpe a nadie, y
+esa es exactamente la forma que este repositorio ya conoce: Supply Chain estuvo rojo cuatro dias
+en noviembre de 2026 y se encontro mirando, no porque nada avisara. Un rojo que se da por
+entendido se deja de leer, que es peor que uno que nadie ha mirado.
+
+### Las tres advisories de ese dia, y cual nos toca
+
+| ID | crate | que es | nos toca? |
+|---|---|---|---|
+| `RUSTSEC-2026-0592` | `url 2.5.8` | desbordamiento de pila en `Url::origin()` con URLs `blob:` anidadas | **si** --- parche en 2.5.9 |
+| `RUSTSEC-2026-0594` | `cookie 0.18.2` | nonces de cookie privada repetidos tras `fork()` | **si** --- parche en 0.18.3 |
+| `RUSTSEC-2026-0595` | `parquet` | filtros de Bloom en claro al escribir parquet cifrado | **no** --- `parquet` no esta en el lock |
+
+**El arreglo son dos `cargo update` y 12 lineas de `Cargo.lock`**: `url 2.5.8 -> 2.5.9` con su
+hermano `form_urlencoded 1.2.2 -> 1.2.3`, y `cookie 0.18.2 -> 0.18.3`. Sin supresion, sin fechas
+de re-chequeo y sin nada que justificar: cuando el parche cabe en el rango que el grafo ya tiene,
+`deny.toml` no gana una entrada. Siguen siendo las 11 supresiones de V493.
+
+### Por que cargo-deny vio una y cargo-audit dos
+
+No es un desacuerdo de configuracion ---el trabajo de sincronia de listas paso, o sea que los
+tres ficheros seguian de acuerdo---. Es la diferencia de **a que le preguntan cada uno**:
+
+- `cargo-audit` escanea `Cargo.lock` entero: 1078 crates, todo lo que el lock nombre.
+- `cargo-deny` resuelve el grafo por features y por target, y `cookie` no esta en el suyo.
+
+Y la cadena, medida: `cookie` <- `cookie_store 0.22.1` <- `ureq 3.5.0`. Pero `cookie_store` es
+una dependencia **opcional** de `ureq`, detras de su feature `cookies`, y nosotros declaramos
+`ureq = { version = "3", features = ["json"] }`. O sea que `cookie` esta **en el lock sin estar
+en ninguna compilacion**. Esa es la asimetria entera, y conviene tenerla escrita porque la
+conclusion natural ---«deny dice que no, asi que no»--- es falsa en la otra direccion: audit
+tiene razon sobre lo que el lock promete y deny tiene razon sobre lo que se compila, y el rojo
+de CI lo decide el primero.
+
+### La exposicion de `cookie`, medida y doblemente ausente
+
+| pregunta | respuesta |
+|---|---|
+| declaramos `cookie` o `cookie_store`? | **no** --- cero menciones en `Cargo.toml` |
+| activamos `ureq/cookies`? | **no** --- solo `["json"]`, y el default de `ureq` es `["rustls", "gzip"]` |
+| `cookie_store` activa el feature vulnerable? | **no** --- pide `cookie` con `features = ["percent-encode"]` |
+| tiene `cookie 0.18.2` features por defecto? | **no** --- su `[features]` no tiene clave `default`, asi que `private` no entra por ahi |
+| `use cookie::`, `PrivateJar`, `SignedJar` en `src/`? | **cero** apariciones |
+
+La funcion afectada es `cookie::PrivateJar::add`, y `PrivateJar` vive detras del feature
+`private` (`aes-gcm`, `rand`, `subtle`). Con `percent-encode` como unico feature pedido, **ese
+codigo no se compila**, que es una ausencia mas fuerte que «no lo llamamos».
+
+**Y eso NO se usa aqui como razon para no arreglarlo.** El parche cuesta dos lineas de lock, asi
+que la alcanzabilidad no hace falta decidirla; se anota porque dice donde mirar si alguna vez no
+hubiera parche.
+
+Y una cifra que hay que corregir de la nota con la que se diagnostico esto: `url` no lo arrastran
+«`bollard` y la cadena de `lancedb`», lo arrastran **20 crates** que lo nombran como dependencia
+directa en el lock ---`reqwest 0.12.28`, `redis 1.2.0`, `bollard 0.18.1`, `webbrowser 0.8.15`,
+`wasmtime-wasi 49.0.7`, `utoipa-swagger-ui 10.0.2`, `lindera 3.0.7`, dos `object_store`, siete de
+la familia `lance`/`lancedb`, tres de `datafusion`, y `cookie_store 0.22.1`, que cierra el circulo
+con la otra advisory---. La nota anterior nombro dos caminos y los llamo «quien lo arrastra»;
+subestimar tambien es una cifra falsa. Lo que no cambia es la otra mitad: **cero** `use url::` y
+**cero** llamadas a `Url::origin()` o `url::quirks::origin()` en `src/`.
+
+### Un bump que no es solo un arreglo
+
+`url` 2.5.9 no se limita a poner un limite: sigue el estandar y **cambia un resultado
+observable**. `Url::origin()` toma el origen del interior solo si su esquema es `http`, `https` o
+`file`, y devuelve un origen opaco en los demas casos, asi que un `blob:ws://...` o un
+`blob:blob:https://...` que antes daba un origen de tupla ahora da uno opaco. Y nunca se llama a
+si misma, que es lo que arregla el desbordamiento ---un desbordamiento de pila **aborta el
+proceso** y `catch_unwind()` no lo atrapa, asi que no era contenible---.
+
+Para nosotros eso es inocuo porque no llamamos a `origin()` desde ninguna parte, pero **no es lo
+mismo que decir que el bump no cambia nada**: lo cambia para cualquiera que la llame, y entre los
+20 crates que arrastran `url` hay varios que podrian. Lo que se puede afirmar es lo medido: la
+bateria completa pasa con 2.5.9, los mismos 33 gates que pasaban con 2.5.8.
+
+### La que no nos toca, y el casi
+
+`RUSTSEC-2026-0595` es de `parquet`, y `parquet` tiene **cero** entradas `name = "parquet"` en
+`Cargo.lock`. Esa es la ausencia mas fuerte que se puede afirmar sin compilar, porque el lock no
+esta filtrado ni por features ni por target. Lo que si tenemos es `arrow 58.4.2`.
+
+Dos cosas que conviene no perder de esa tercera:
+
+- Es `informational = "unsound"`, no `vulnerability`, y por eso CI dijo «2 vulnerabilities» y no
+  tres. Pero **CI corre `cargo audit` con `-D unsound -D yanked -D unmaintained`**, asi que una
+  informacional sobre un crate que si tuvieramos pinta rojo igual. El casi fue de un crate, no de
+  una politica.
+- Su `patched` es una **lista de cuatro rangos** (`>= 60.2.0`, `>= 59.3.3, < 60.0.0`,
+  `>= 58.4.2, < 59.0.0`, `>= 57.3.3, < 58.0.0`), que es la forma que este repositorio ya tiene
+  escrita: el rango pequeno suele caber dentro del pin que el grafo ya lleva. `arrow` y `parquet`
+  salen en el mismo tren en `arrow-rs`, asi que lo mas probable es que un `parquet` nuestro
+  hubiera sido 58.4.2 y ya estuviera parcheado --- **probable, no medido**, porque el crate no
+  esta.
+
+### El limite de la verificacion local, que esta vez si se pudo levantar
+
+En V493 esto se escribio asi: la bateria local no puede confirmar el arreglo, porque el
+`advisory-db` de esta maquina es del 2026-07-16 y `cargo deny fetch` falla en silencio. Ya no es
+cierto, y la causa resulto ser otra de la que se suponia. El `git fetch` dice que el directorio
+lo creo una cuenta con un SID de **otra maquina** ---git no puede ni traducirlo a un nombre--- y
+se niega por `dubious ownership`. Con `git -c safe.directory=... fetch` entra sin tocar la
+configuracion global de nadie, y la base estaba **515 commits por detras**.
+
+Tres detalles de ese instrumento que cuestan si no se saben:
+
+- Hay **dos** clones y uno esta dentro del otro ---`~/.cargo/advisory-db` para `cargo-audit` y
+  `~/.cargo/advisory-db/advisory-db-3157b0e258782691` para `cargo-deny`---, asi que actualizar uno
+  deja al otro mintiendo con cara de verde.
+- **`cargo audit` necesita `--no-fetch`** para usar la copia local: su fetch propio falla con un
+  mensaje distinto del de git ---`failed to find 'origin' remote`--- que suena a repositorio
+  roto y es el mismo problema de propiedad visto por su git empotrado.
+- Y `git status | head` devuelve el codigo de salida de `head`, no de `git`: la misma forma del
+  fallo de la cadena en segundo plano, con una tuberia en vez de un punto y coma.
+
+**Y la prueba de que la copia local ya es fiel**, que es lo que convierte esto en verificacion y
+no en esperanza: `cargo audit --no-fetch` con los once `--ignore` de CI y sus `-D unsound -D
+yanked -D unmaintained` dice `Loaded 1563 security advisories` contra `1078 crate dependencies` y
+sale con 0 --- **las dos cifras identicas** a las del log de CI del dia anterior. Hasta hoy, el
+audit local no era un predictor del veredicto de CI; ahora lo es, y eso vale para la proxima
+advisory tanto como para esta.
+
+Verificacion: bateria completa de puertas locales, sin SKIP_POLARS ni SKIP_DOC_LINKS, y esta vez
+tambien `cargo audit` y `cargo deny check advisories` en local contra la base al dia. El cambio
+es solo de `Cargo.lock`: cero lineas de Rust, cero cifras publicas movidas y ninguna supresion
+anadida ni quitada.
+
 ## [Unreleased] - v377 (2026-11-23) - V493: las dos supresiones de lru se borran, y lo que se fue no fue lru sino tantivy, que ninguna de las dos razones escritas predijo (0.2.460)
 
 V486 midio que `lru` ya no esta en el grafo y dejo el borrado pendiente del visto bueno del
