@@ -52,12 +52,21 @@ A `deny.toml` entry without comment + `Re-check by:` date fails
 review, and now fails CI. Example of an **acceptable** entry:
 
 ```toml
-# tantivy → lru IterMut unsoundness. The affected codepath
-# (mutating an entry obtained from IterMut while the iterator is
-# alive) is not used by tantivy's query/indexing paths we exercise.
-# Re-check by: 2027-02-15 OR when lancedb/tantivy bump lru >= 0.16.
-"RUSTSEC-2026-0002",
+# webbrowser 0.8.15: command injection via a crafted URL. Exactly one
+# dependant, egui-winit 0.27.2, requiring `^0.8.3`; the fix is 1.2.2,
+# which that `^` cannot reach. Unix-only, and it needs an attacker who
+# already controls the process environment; the egui features are not
+# in `full`.
+# Re-check by: 2027-03-15 OR when the egui stack is upgraded past 0.27
+# (tracked as N37) — then DELETE this entry, do not renew it.
+"RUSTSEC-2026-0257",
 ```
+
+That example is live, and it is deliberately one whose reason was
+**re-measured and survived unchanged** (V401) — of eight entries audited
+that day, it was the only one. The previous example here was
+`RUSTSEC-2026-0002`, held up as the model entry until V493 deleted it:
+see below.
 
 Example of an **unacceptable** entry:
 
@@ -103,6 +112,47 @@ measured, and left `Re-check by: 2026-09-01` in place; the entry
 then read as freshly reviewed while being permanently overdue.
 Keep the history of what was measured, and put the new date last:
 the gate reads the LAST date in the block.
+
+### Deleting rather than renewing — and why the trigger is usually wrong
+
+Worked example, V493 (2026-11-23): the two `lru` entries were deleted,
+not renewed, because the crate left the graph. What makes it worth
+writing down is **how the condition came true**.
+
+Both written triggers said the same thing: *when `tantivy` bumps `lru`
+>= 0.16*. Neither of them happened. What happened is that **`lancedb`
+stopped using `tantivy`** — the chain was
+`lru ← tantivy 0.24.2 ← lance/lance-index ← lancedb 0.26.2`, and
+`lancedb` is now 0.41.0 with `tantivy` absent from the lock entirely.
+Two advisories lost their subject at once, for a reason stated in
+neither entry.
+
+So, two rules that cost nothing and would have caught it:
+
+* **Name the link whose disappearance ends the entry, not only the
+  version bump you expect.** A trigger phrased as "when X bumps Y" is
+  unfalsifiable by the far more common event: somebody upstream drops
+  X. "when `lru` leaves the lock" is checkable in one command and does
+  not predict the mechanism.
+* **The instrument that decides deletion is `Cargo.lock`, not
+  `cargo audit` and not `cargo deny`.** The lock is not filtered by
+  features or by target — it carries all of them — so zero matches for
+  `name = "X"` is the strongest absence claim available without
+  compiling: no feature combination and no target can pull it in. If the
+  crate is absent, no advisory about that crate can fire.
+
+And the trap on this machine, which nearly deleted the wrong entry:
+`cargo deny check advisories` prints
+`warning[advisory-not-detected]: no crate matched advisory criteria`
+for **six** entries, and for those same six it also prints
+`warning[unknown-advisory]: advisory not found in any advisory
+database`. The local `advisory-db` copy is from 2026-07-16 and
+`cargo deny fetch` does not update it — git refuses the repo over
+"dubious ownership" and the fetch fails **silently**, with no output and
+no error code. Read the output in full and cross the two warnings: an
+`advisory-not-detected` **without** its `unknown-advisory` is a real
+signal; with it, it means "I do not have the data".
+
 
 ## 4. Monthly review — processing the issue
 

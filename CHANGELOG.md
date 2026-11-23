@@ -5,6 +5,107 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v377 (2026-11-23) - V493: las dos supresiones de lru se borran, y lo que se fue no fue lru sino tantivy, que ninguna de las dos razones escritas predijo (0.2.460)
+
+V486 midio que `lru` ya no esta en el grafo y dejo el borrado pendiente del visto bueno del
+autor, porque quitar una supresion toca `deny.toml`, `ci.yml` y `supply-chain.yml` ---los tres o
+`audit-deny-sync` pone CI en rojo---. Dado el visto bueno, esta entrada lo ejecuta. Pero al
+re-medir aparecio el dato que faltaba, y es el interesante.
+
+**Lo que se fue no fue `lru`: fue `tantivy`.** Re-medido el 2026-11-23:
+
+```
+$ grep -c 'name = "lru"' Cargo.lock        -> 0
+$ grep -c 'name = "tantivy"' Cargo.lock    -> 0
+$ grep -c 'name = "lancedb"' Cargo.lock    -> 1   (version 0.41.0)
+```
+
+La cadena era `lru <- tantivy 0.24.2 <- lance / lance-index <- lancedb 0.26.2 <- nosotros`, por
+la feature `vector-lancedb`. `lancedb` esta hoy en 0.41.0 y su cadena ya no pasa por `tantivy`,
+asi que las dos advisories se quedaron sin sujeto **a la vez y por el mismo motivo**.
+
+**Y las dos razones escritas predecian otra cosa.** Las dos decian, con esas palabras, «cuando
+`tantivy` suba `lru` >= 0.16» (una) y «>= 0.18.2» (la otra). Ninguna de las dos ocurrio. Ocurrio
+que alguien aguas arriba dejo de usar `tantivy`, que es el suceso mas probable de los dos y no
+estaba contemplado en ninguna de las dos entradas. De ahi las dos reglas que se anaden al
+runbook:
+
+- **Nombra el eslabon cuya desaparicion cierra la entrada, no solo la subida de version que
+  esperas.** Un disparador escrito como «cuando X suba Y» es infalsificable por el suceso mas
+  comun: que alguien suelte X. «Cuando `lru` salga del lock» se comprueba en un comando y no
+  predice el mecanismo.
+- **El instrumento que decide un borrado es el `Cargo.lock`**, no `cargo audit` ni `cargo deny`.
+  El lock no esta filtrado por features ni por target ---los lleva todos--- asi que cero
+  coincidencias de `name = "X"` es la afirmacion de ausencia mas fuerte posible sin compilar:
+  ninguna combinacion de features y ningun target pueden arrastrarlo.
+
+### El segundo hallazgo: el indice de `ci.yml` discrepaba en 4 de 13
+
+El paso de `cargo audit` lleva encima un indice en comentarios que dice de si mismo «el indice,
+en el mismo orden que los flags de abajo». Medido: **no lo estaba**.
+
+| | |
+|---|---|
+| IDs en el indice | 13 |
+| IDs en los flags `--ignore` | 13 |
+| mismo orden | **no** |
+| solo en el indice | `-0367`, `-0368`, `-0369`, `-0429` |
+| solo en los flags | `2024-0449`, `-0542`, `-0543`, `-0555` |
+
+Los cuatro «solo en el indice» estan **borrados** de `deny.toml` desde octubre ---tienen su
+lapida en el fichero--- y los cuatro «solo en los flags» se anadieron despues sin tocar el
+indice. O sea que el indice describia la lista de hace cuatro cambios mientras afirmaba
+describir la de abajo.
+
+**Y lo que lo hace una lamina del mismo defecto: el fichero ya tiene escrita, doce lineas mas
+arriba, la leccion que condena a ese indice.** Dice literalmente que «dos copias de una razon
+son una razon y un pasivo», a cuenta de un bloque de shell que comparaba las tres listas en
+paralelo a `check_rustsec_ignores.py` y que se borro por esto mismo. El indice es la segunda
+copia que esa frase describe.
+
+`check_rustsec_ignores.py` **no puede** verlo, y es deliberado: su regla 3 dice que ningun ID se
+cuenta desde un comentario, porque contarlos haria que un ID mencionado en una explicacion
+pareciera suprimido. La puerta esta bien; lo que no existe es una puerta para esto.
+
+El indice queda corregido a 11 entradas, en el orden real de los flags, verificado por script.
+**Lo que NO se hizo: decidir si ese indice debe existir.** Son las dos opciones ---borrarlo, que
+es lo que dice la leccion del propio fichero, o ponerle una puerta que lo compare--- y es
+decision del autor, no mia.
+
+### El tercer hallazgo: el runbook usaba como ejemplo la supresion que hoy se borra
+
+`docs/runbooks/rustsec-handling.md` presenta un «ejemplo de entrada **aceptable**», y el ejemplo
+era `RUSTSEC-2026-0002`: la que acaba de borrarse porque su condicion se cumplio por una via que
+su propia razon no contemplaba. El modelo a imitar era el caso de estudio.
+
+Sustituido por `RUSTSEC-2026-0257` (webbrowser), que es deliberadamente la unica de las ocho
+auditadas en V401 cuya razon escrita sobrevivio sin cambios al contacto con el grafo. Y se anade
+la seccion «Deleting rather than renewing», con el ejemplo de V493 y las dos reglas de arriba.
+
+Lo que **no** se toco: `docs/SECURITY_AUDIT.md` y `docs/SECURITY_AUDIT_V152.md` mencionan `lru`
+y siguen igual. Son **auditorias con fecha** (marzo de 2026, v0.1.0), o sea historico, no
+estado; su casilla sin marcar era cierta cuando se escribio.
+
+### Lo que esta entrada NO es
+
+- **No es un cambio de exposicion.** Las dos advisories no se suprimen porque se haya decidido
+  que no importan: el crate no esta. Si `lru` volviera al grafo, `cargo audit` las reportaria y
+  CI se pondria rojo, que es el comportamiento correcto y es la razon de borrar en vez de
+  renovar.
+- **No depende de la base de advisories local**, que esta vieja ---del 2026-07-16, ultima
+  advisory `RUSTSEC-2026-0206`--- y cuyo `cargo deny fetch` falla EN SILENCIO porque git rechaza
+  el repo por «dubious ownership». Esa base emite `advisory-not-detected` para seis entradas y
+  tambien `unknown-advisory` para esas mismas seis: ese aviso se lee como «sobra» y significa
+  «no tengo el dato». El lock no necesita esa base para nada.
+- **No cambia ninguna cifra publica** ni una linea de codigo Rust. Son comentarios, dos flags de
+  `cargo audit` por fichero y un documento.
+
+Verificacion: `check_rustsec_ignores.py` da `OK - 11 suppressed advisories, identical in
+deny.toml, ci.yml, supply-chain.yml, each with a reason` (eran 13), `check_recheck_dates.py` da
+`OK: las 11 supresiones de deny.toml tienen re-chequeo vigente`, y el indice de `ci.yml` coincide
+con sus flags en contenido y en orden, comprobado por script. Bateria completa de puertas
+locales sin saltar `check_doc_links.py`, porque esta entrada edita un documento.
+
 ## [Unreleased] - v376 (2026-11-22) - V492: de 8 pasadas fallidas, 6 son entrega malformada y con TRES formas distintas, y el seed 1234 vuelve a ser el que discrimina (0.2.459)
 
 V487 demostro que «produced no tests» esconde DOS causas midiendo UNA tarea, donde salio una de
