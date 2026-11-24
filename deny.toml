@@ -419,22 +419,37 @@ ignore = [
     # Ponerlos en el monton del 2026-12-15 habria hecho de ese dia nueve
     # entradas, que es como una fecha deja de ser un disparador.
 
-    # chrono: lo usamos DIRECTAMENTE --- 63 ficheros de `src/` lo mencionan y
-    # `Cargo.toml` lo declara sin `optional` --- y ademas lo arrastran por su
-    # cuenta arrow 57.3, datafusion 51.0 y polars 0.55. Cambiar de crate no es
-    # un bump de lock: es una migracion de ecosistema que no depende solo de
-    # nosotros. Medido el 2026-11-18.
+    # chrono: lo usamos DIRECTAMENTE --- 91 ficheros de `src/` lo mencionan, 24
+    # de ellos con un `use chrono`, y `Cargo.toml` lo declara sin `optional` ---
+    # y ademas lo arrastran por su cuenta 34 crates: cinco `arrow-*` 58.4.2
+    # (arith, array, cast, csv, json), ocho de `datafusion` 54.2.0, diez de
+    # `polars` 0.55.2, seis de la familia `lance` 14.0.2 / `lancedb` 0.41.0, los
+    # dos `object_store` (0.13.2 y 0.14.2), mas `chrono-tz` 0.10.4,
+    # `serde_with` 3.18.0 y `now` 0.1.3 --- 35 dependientes directos contando el
+    # nuestro. Cambiar de crate no es un bump de lock: es una migracion de
+    # ecosistema que no depende solo de nosotros.
+    # Re-medido el 2026-11-24. Decia «63 ficheros» y «arrow 57.3, datafusion
+    # 51.0 y polars 0.55»: tres nombres de 35, dos versiones pasadas, y el 63 se
+    # quedo corto en 28 ficheros --- que refuerza el argumento, pero una cifra
+    # que subestima es igual de falsa que una que exagera.
     # Re-check by: 2027-02-15 OR cuando arrow/datafusion/polars migren.
     "RUSTSEC-2026-0543",
-    # chrono-tz: transitivo y SOLO transitivo --- polars 0.55 (arrow, core, ops,
-    # plan, stream, time) y arrow-array 57.3. Medido: CERO apariciones de
+    # chrono-tz: transitivo y SOLO transitivo --- `polars` 0.55.2 (arrow, core,
+    # ops, plan, stream, time), `arrow-array` 58.4.2 y `datafusion-functions`
+    # 54.2.0: 8 dependientes directos en el lock. Medido: CERO apariciones de
     # `chrono_tz` en `src/`, asi que no hay nada nuestro que migrar; se va solo
-    # cuando se vayan polars y arrow.
-    # Re-check by: 2027-02-15 OR cuando polars y arrow lo suelten.
+    # cuando se vayan polars, arrow y datafusion.
+    # Re-medido el 2026-11-24. Decia «arrow-array 57.3» y no nombraba
+    # `datafusion-functions`, o sea que se dejaba un dependiente entero fuera ---
+    # y la razon se apoyaba en quien lo arrastra para no hacer nada.
+    # Re-check by: 2027-02-15 OR cuando polars, arrow y datafusion lo suelten.
     "RUSTSEC-2026-0555",
-    # humantime: transitivo y solo transitivo --- lance 2.0.0 y object_store
-    # (0.12.5 y 0.13.2). Medido: CERO apariciones en `src/`. Formatea
-    # duraciones; no hay superficie que evaluar mas alla de eso.
+    # humantime: transitivo y solo transitivo --- `lance` 14.0.2 y los dos
+    # `object_store` (0.13.2 y 0.14.2): sus 3 dependientes directos en el lock.
+    # Medido: CERO apariciones en `src/`. Formatea duraciones; no hay superficie
+    # que evaluar mas alla de eso.
+    # Re-medido el 2026-11-24. Decia `lance 2.0.0`, doce majors por detras, y un
+    # `object_store 0.12.5` que ya no existe en el lock.
     # Re-check by: 2027-02-15 OR cuando lance y object_store lo suelten.
     "RUSTSEC-2026-0542",
     # unsafe-libyaml: `unmaintained`, y cargo-audit lo dice con «No fixed upgrade

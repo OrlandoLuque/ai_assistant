@@ -5,6 +5,73 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v380 (2026-11-24) - V496: las tres razones que decian «medido» llevaban medidas de hace seis dias, y una se dejaba fuera un dependiente entero (0.2.463)
+
+Las supresiones de `deny.toml` llevan una razon escrita y la politica exige que este **medida**.
+Tres de ellas ---`chrono`, `chrono-tz` y `humantime`, las tres `unmaintained` de 2026-11-17---
+decian «Medido el 2026-11-18» y afirmaban en presente unas versiones que el lock ya no tiene.
+**Una razon con fecha es una razon que caduca**, y lo que la hace peligrosa es que la fecha la
+hace parecer revisada.
+
+### Como se encontro, y por que la primera cifra que salio era falsa
+
+Con un script que compara **cada par «crate version» de los comentarios** de `deny.toml` contra
+`Cargo.lock`. Dio **12 discrepancias**. Esa cifra no es el resultado: es la cota superior, porque
+mezcla dos poblaciones que se escriben igual.
+
+| clase de mencion | ejemplo | caduca? |
+|---|---|---|
+| registro historico de un cambio | `utoipa-swagger-ui 9.0.2 -> 10.0.2`, `zstd 0.13.3 -> 0.13.4` | **no** --- la version de antes es correcta por ser de antes |
+| contraste explicito entonces/ahora | «la cadena era `... <- lancedb 0.26.2`» y dos lineas despues «hoy esta en 0.41.0» | **no** |
+| afirmacion en presente, con fecha | «lo arrastran por su cuenta arrow 57.3, datafusion 51.0 y polars 0.55. Medido el 2026-11-18» | **si** |
+
+Leidos los contextos, **9 de las 12 son historicas y correctas tal cual**, y las caducas son 3.
+Si me hubiera quedado en el numero del script habria «corregido» nueve frases que estaban bien,
+rompiendo el registro de lo que paso.
+
+### Las tres correcciones
+
+| razon | decia | dice ahora |
+|---|---|---|
+| `chrono` | 63 ficheros de `src/`; lo arrastran arrow 57.3, datafusion 51.0, polars 0.55 | **91** ficheros (24 con `use chrono`); 34 crates ajenos lo arrastran: cinco `arrow-*` 58.4.2, ocho de `datafusion` 54.2.0, diez de `polars` 0.55.2, seis de `lance` 14.0.2 / `lancedb` 0.41.0, dos `object_store`, mas `chrono-tz`, `serde_with` y `now` --- **35 dependientes directos** contando el nuestro |
+| `chrono-tz` | polars 0.55 (seis) y arrow-array 57.3 | los mismos seis de `polars` 0.55.2, `arrow-array` **58.4.2** y **`datafusion-functions` 54.2.0** --- 8 en total |
+| `humantime` | lance 2.0.0 y object_store (0.12.5 y 0.13.2) | `lance` **14.0.2** y los dos `object_store` (**0.13.2 y 0.14.2**) --- sus 3 dependientes |
+
+**La que no es solo un numero es la de `chrono-tz`**: le faltaba `datafusion-functions` entero.
+Y eso importa mas de lo que parece, porque esa razon **se apoya justamente en quien lo arrastra**
+para concluir que no hay nada nuestro que migrar. Una lista de arrastradores incompleta es una
+premisa incompleta, no un detalle de estilo. Por el mismo motivo se completo su disparador, que
+decia «cuando polars y arrow lo suelten» y ahora dice «cuando polars, arrow y datafusion lo
+suelten»: un disparador que se cumple mientras un tercero sigue arrastrando el crate es
+exactamente la clase de disparador que V493 aprendio a desconfiar.
+
+**Y la de `chrono` iba corta, no larga**: 63 contra 91 ficheros. Subestimar **refuerza** su
+argumento ---usamos `chrono` mas de lo que la razon decia, asi que migrar es aun menos trivial---
+y da igual: una cifra que subestima es tan falsa como una que exagera, y la de esta casa es que
+las dos direcciones son el mismo defecto.
+
+### Lo que NO es
+
+- **No cambia la politica ni una sola supresion.** Siguen siendo las **11** de V493, las mismas
+  once en los tres ficheros, y la puerta de sincronia lo confirma.
+- **No mueve ninguna fecha `Re-check by:`.** Las tres siguen en 2027-02-15. Mover una seria
+  renovar una supresion, que es un acto de politica y no una correccion de un hecho; lo unico que
+  se toco de esas lineas es el **texto** del disparador de `chrono-tz`, por lo dicho arriba.
+- **No arregla las nueve menciones historicas**, porque no estan rotas: dejarlas es lo correcto.
+- Cero lineas de Rust y cero cifras publicas movidas.
+
+### Verificacion
+
+`check_rustsec_ignores.py`, `check_recheck_dates.py` y `check_deny_graph.py`, las tres en 0 ---las
+dos primeras son las que leen esta parte del fichero, y la primera es la que exige que cada ID
+tenga una razon de al menos 15 caracteres que no sean el propio ID---. Mas las otras 18 puertas de
+python del repositorio, tambien en 0.
+
+**No corrieron las puertas de cargo** (`fmt`, las siete de clippy, los tres conjuntos de tests y
+`check_doc_links.py`), y la razon esta medida: `git diff --name-only` sobre
+`src/ tests/ benches/ examples/` da **cero** ficheros. El cambio es un fichero de configuracion de
+`cargo deny`, que ninguna de esas puertas compila, mas el CHANGELOG y el numero de version.
+
 ## [Unreleased] - v379 (2026-11-24) - V495: el runbook afirmaba que la base de advisories local no se podia arreglar, y esa frase costo una noche de empujar sin verificar (0.2.462)
 
 Solo documentacion: `docs/runbooks/rustsec-handling.md`, de 250 a 340 lineas. Pero el cambio que
