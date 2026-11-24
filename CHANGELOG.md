@@ -5,6 +5,100 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v379 (2026-11-24) - V495: el runbook afirmaba que la base de advisories local no se podia arreglar, y esa frase costo una noche de empujar sin verificar (0.2.462)
+
+Solo documentacion: `docs/runbooks/rustsec-handling.md`, de 250 a 340 lineas. Pero el cambio que
+importa no es lo que anade, es un parrafo que **corrige**, porque era falso en la mitad que decide.
+
+Lo que decia, al final de la seccion de borrar supresiones:
+
+```
+The local `advisory-db` copy is from 2026-07-16 and `cargo deny fetch` does not
+update it --- git refuses the repo over "dubious ownership" and the fetch fails
+silently, with no output and no error code.
+```
+
+Dos tercios de eso son verdad. Lo que no esta escrito y se leia entre lineas ---que no se podia
+hacer nada sin cambiar la configuracion global de git de la maquina--- es lo que costo: V494 se
+diagnostico y se dejo a medio empujar una noche entera porque la verificacion local se dio por
+imposible.
+
+**Medido al intentarlo en vez de creerlo:** el clon estaba **515 commits por detras**, su HEAD de
+verdad era del 2026-07-13 ---el 2026-07-16 era la fecha del **fichero**, tres dias mas tarde, asi
+que una fecha leida del sistema de ficheros no es la edad de la base---, y la causa no es una
+preferencia: los ficheros los creo una cuenta cuyo SID pertenece a **otra maquina**, tan ajena que
+git imprime `(inconvertible)` donde iria el nombre del propietario. `safe.directory` es el
+mecanismo que el propio mensaje de error de git propone, y **se puede pasar por comando**, sin
+dejar nada escrito en la configuracion de nadie.
+
+El runbook ahora lleva el bucle de dos lineas que lo actualiza, y las tres trampas que cuestan si
+no se saben: que hay **dos clones y uno esta dentro del otro** (el de fuera es de `cargo-audit`,
+el de dentro de `cargo-deny`, y actualizar uno deja al otro contestando con datos de cuatro meses
+y codigo de salida 0), que **`cargo audit` necesita `--no-fetch`** porque su fetch propio falla
+con otro mensaje distinto, y que **la comprobacion de que ya es fiel son dos cifras y no una
+fecha**: `Loaded 1563 security advisories` contra `1078 crate dependencies`, identicas a las del
+log de CI del mismo dia.
+
+### Lo demas que entra, todo nacido de V494
+
+- **Dos sintomas en `## 1. Symptoms`.** El primero es el que mas cuesta: **el mismo commit tiene
+  dos veredictos**, porque CI clona la base limpia en cada ejecucion. En V493, la ejecucion de
+  `push` reporto una vulnerabilidad y la de `schedule` del **mismo SHA**, dieciseis horas despues,
+  reporto dos. *Un rojo que ya has diagnosticado no es un rojo que hayas terminado de leer*, y
+  como un fallo de `schedule` no interrumpe a nadie, nada te va a avisar de que crecio.
+- **Una subseccion para cuando `cargo-deny` y `cargo-audit` discrepan**, que es lo que paso en
+  V494: uno vio una vulnerabilidad y el otro dos, en el mismo arbol, con la puerta de sincronia de
+  listas en verde. Ninguno estaba roto: audit lee el lock entero y deny resuelve el grafo por
+  features y por target. Con la tabla, la cadena medida (`cookie` <- `cookie_store` <- `ureq`, con
+  `cookie_store` opcional detras de un feature que no activamos) y la regla: **leer el silencio de
+  deny como absolucion es la trampa**, porque significa «no esta en mi grafo», no «no esta en lo
+  que distribuyes». Y una tabla nueva con **dos ausencias que no se deben confundir**, medidas
+  con `cargo tree -i`: `lru` ---borrado del lock en V493--- da
+  `error: package ID specification 'lru' did not match any packages`, mientras `cookie` da
+  `warning: nothing to print.` **incluso con `--target all --all-features`**. La primera es la
+  ausencia mas fuerte que hay sin compilar; la segunda es un grado mas debil de forma e igual de
+  concluyente para si el codigo se compila. Las dos son mas fuertes que «no lo llamamos», que
+  solo habla del codigo de hoy.
+- **Una nota en `## 5. Mitigate`**: una advisory **informacional** pinta rojo igual que una
+  vulnerabilidad, porque el paso de auditoria corre con `-D unsound -D yanked -D unmaintained`.
+  Aqui no hay nivel de «es solo un aviso». V494 se libro de `RUSTSEC-2026-0595` ---`parquet`,
+  `informational = "unsound"`, publicada el mismo dia que las dos que si arreglo--- solo porque
+  `parquet` tiene cero entradas en el lock. **Ese casi fue un crate, no una politica.**
+
+### Lo que NO es
+
+**No cambia ninguna puerta ni ningun comportamiento**: cero lineas de Rust, cero cifras publicas
+movidas, ninguna supresion anadida ni quitada ---siguen siendo las 11 de V493--- y ninguna fecha
+de re-chequeo tocada.
+
+**Y no arregla `cargo deny fetch`**, que sigue fallando por su cuenta porque su git empotrado no
+honra un `-c` de la linea de ordenes. La base local esta al dia por fuera, asi que lee bien; que
+se mantenga asi sin correr el bucle a mano necesita decidir un mecanismo, y eso no es una
+correccion de hecho.
+
+### Verificacion, con lo que no corrio dicho en la misma frase
+
+Corrieron **las 21 puertas de python**, todas en 0, incluidas las dos que habia que comprobar y no
+suponer: `check_rustsec_ignores.py` y `check_recheck_dates.py` ---mencionar tres IDs de RUSTSEC en
+la prosa de un `.md` no las rompe, y la regla 3 de la primera es «ningun ID se cuenta desde un
+comentario», asi que no era obvio---. Y `check_doc_imports.py`, que es la unica que alcanza este
+fichero de verdad: hace `os.walk("docs")` recursivo, mientras `check_documented_cli.py` globa
+`docs/*.md` sin recursion y por tanto no ve nada dentro de `docs/runbooks/`.
+
+**No corrieron las puertas de cargo** ---`fmt`, las siete de clippy, los tres conjuntos de tests y
+`check_doc_links.py`--- y la razon esta medida, no razonada: `git diff --name-only` sobre
+`src/ tests/ benches/ examples/` da **cero** ficheros, asi que sus entradas son identicas a las
+del arbol que dio `ALL 33 GREEN` cuarenta minutos antes. El unico cambio que las tocaria es el
+numero de version, y ningun test afirma una `0.2.x` concreta: `CARGO_PKG_VERSION` siempre se pasa
+y nunca se asevera, y los literales `0.2.x` que hay en `src/` son un `since` de deprecacion, un
+ejemplo en un comentario y dos cadenas arbitrarias de un test de comparacion de versiones.
+
+Un aviso que conviene no separar de esto: **`check_doc_links.py` no distingue «no hay enlaces
+rotos» de «cargo no llego a ejecutarse»**, porque tira el `returncode` de `cargo doc`. Encontrado
+esta noche y **no arreglado** ---es la puerta de 20 de los 25 minutos de la bateria y corre en
+CI---. Asi que su verde, cuando lo da, vale menos de lo que parece; el discriminador es el reloj.
+Queda apuntado con su prueba y su precio, que es decision del autor.
+
 ## [Unreleased] - v378 (2026-11-24) - V494: el rojo habia crecido mientras nadie miraba, de una advisory a dos, y la segunda no la ve cargo-deny porque vive detras de un feature que no activamos (0.2.461)
 
 V493 quedo con `Security Audit` en rojo por `RUSTSEC-2026-0592`, diagnosticado y con el arreglo

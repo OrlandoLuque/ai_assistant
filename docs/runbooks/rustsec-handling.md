@@ -14,7 +14,16 @@ queue and needs to be processed.
 * CI fails on the `cargo-deny` or `cargo-audit` step.
 * A new issue with label `supply-chain` + `monthly-review` was just
   opened by the bot.
-* `cargo audit` locally surfaces an ID not in `deny.toml`.
+* `cargo audit` locally surfaces an ID not in `deny.toml` -- but only if
+  the local database is current, which by default it is **not** on this
+  machine. See "The local database, and how to make it current" below.
+* **The same commit has two different verdicts.** CI clones the advisory
+  database fresh on every run, so the `push` run and a later `schedule`
+  run of the *same SHA* can disagree. Measured on V493: the push run
+  (00:25Z) reported one vulnerability, the scheduled run sixteen hours
+  later reported two. **A red you have already diagnosed is not a red you
+  have finished reading** -- and because a `schedule` failure interrupts
+  nobody, nothing will tell you it grew.
 
 ## 2. Decision tree
 
@@ -74,6 +83,53 @@ Example of an **unacceptable** entry:
 # upstream issue, ignore
 "RUSTSEC-XXXX-NNNN",
 ```
+
+### When `cargo-deny` and `cargo-audit` disagree, neither is broken
+
+V494 (2026-11-24) hit this and it looks alarming: `cargo-deny` reported
+**one** vulnerability and `cargo-audit` reported **two**, on the same
+tree, in the same run, with the ignore-list sync job passing. The lists
+had not drifted. The two tools answer different questions:
+
+| tool | what it reads | scope |
+|---|---|---|
+| `cargo-audit` | `Cargo.lock`, whole | every crate the lock names (1078) |
+| `cargo-deny` | a resolved dependency graph | filtered by **features** and by **target** |
+
+The crate only `cargo-audit` saw was `cookie`, pulled by `cookie_store`,
+which is an **optional** dependency of `ureq` behind its `cookies`
+feature -- and this crate declares `ureq = { features = ["json"] }`. So
+`cookie` is in the lock without being in any compilation. Cargo says so
+itself if you read the build log: ``Downloaded cookie v0.18.3`` followed
+by ``Finished `dev` profile ... in 0.93s``. It downloads what the lock
+names and compiles what the graph needs.
+
+**Two absences, two different messages, and do not confuse them.**
+`cargo tree -i` answers this directly, and its wording is the
+diagnostic:
+
+| query | cargo says | means |
+|---|---|---|
+| `-i lru` (deleted in V493) | `error: package ID specification 'lru' did not match any packages` | not in the lock at all |
+| `-i cookie`, even with `--target all --all-features` | `warning: nothing to print.` | **in** the lock, and no path from this crate reaches it under any feature or target |
+
+The first is the strongest absence claim available without compiling.
+The second is one notch weaker in form and just as conclusive for
+whether the code is built: nothing we can enable gets there. Both are
+stronger than "we do not call it", which only speaks about today's
+source. Note that `cargo tree` appends a hint about narrowing `--target`
+to the second message even when `--target all` was passed, so the hint
+is not a sign you asked wrong.
+
+**Which one decides?** For whether CI goes red: `cargo-audit`, because
+it reads the lock. For whether the vulnerable code is reachable:
+`cargo-deny`'s narrower graph, and "the feature is not enabled" is
+stronger evidence than "we do not call it" -- the code is not compiled
+at all.
+
+**The trap is reading deny's silence as absolution.** It means "not in
+my graph", not "not in what you ship". Ask both, and when they differ,
+say which question you are answering.
 
 ### Measure the reason. Do not reason about it.
 
@@ -146,12 +202,55 @@ And the trap on this machine, which nearly deleted the wrong entry:
 `warning[advisory-not-detected]: no crate matched advisory criteria`
 for **six** entries, and for those same six it also prints
 `warning[unknown-advisory]: advisory not found in any advisory
-database`. The local `advisory-db` copy is from 2026-07-16 and
-`cargo deny fetch` does not update it — git refuses the repo over
-"dubious ownership" and the fetch fails **silently**, with no output and
-no error code. Read the output in full and cross the two warnings: an
+database`. Read the output in full and cross the two warnings: an
 `advisory-not-detected` **without** its `unknown-advisory` is a real
 signal; with it, it means "I do not have the data".
+
+### The local database, and how to make it current
+
+**This section replaces a claim that was half wrong.** It used to say the
+local copy is from 2026-07-16, that `cargo deny fetch` fails silently
+over git's "dubious ownership", and -- by implication -- that nothing
+could be done short of changing the machine's global git configuration.
+The first two halves were right. The third was not, and it cost a night
+of pushing security fixes unverified.
+
+Measured 2026-11-24: the clone was **515 commits behind**, its real HEAD
+was 2026-07-13 (the 2026-07-16 was the *file* mtime, three days later --
+so a date read off the filesystem is not the database's age), and the
+cause is not a preference. The files were created by an account whose
+SID belongs to **another machine**, so git refuses the repository and
+prints `(inconvertible)` where the owner's name would go.
+`safe.directory` is the mechanism git's own error message proposes, and
+it can be passed **per command**, changing nothing persistent:
+
+```bash
+for SD in "$HOME/.cargo/advisory-db"           "$HOME/.cargo/advisory-db/advisory-db-3157b0e258782691"; do
+  git -c safe.directory="$SD" -C "$SD" fetch origin main
+  git -c safe.directory="$SD" -C "$SD" merge --ff-only origin/main
+done
+```
+
+Three things that cost time if you do not know them:
+
+* **There are two clones and one is inside the other.** The outer is
+  `cargo-audit`'s, the inner is `cargo-deny`'s. Updating one leaves the
+  other answering with four-month-old data and a green exit code, which
+  is worse than both being stale.
+* **`cargo audit` needs `--no-fetch`** to use the local copy. Its own
+  fetch fails with a *different* message, `failed to find 'origin'
+  remote`, which reads like a broken repository and is the same
+  ownership problem seen by its embedded git.
+* **The check that it is now faithful is two numbers, not a date.**
+  After the update, local printed `Loaded 1563 security advisories`
+  against `1078 crate dependencies` -- identical to CI's log for the
+  same day. Compare those with CI's; that is what turns the local audit
+  into a predictor of CI's verdict, and until then it was not one.
+
+`cargo deny fetch` still fails on its own, because its embedded git does
+not honour a command-line `-c`. Keeping the database current without
+hand-running the loop above needs a decision about mechanism, and that
+decision is the maintainer's.
 
 
 ## 4. Monthly review — processing the issue
@@ -197,6 +296,14 @@ monthly run will open a new one.
 > of opening a new one each month.
 
 ## 5. Mitigate (CI red, fix not ready)
+
+**An `informational` advisory turns CI red exactly like a vulnerability.**
+The audit step runs with `-D unsound -D yanked -D unmaintained`, so
+there is no "it is only a warning" tier here. V494 escaped
+`RUSTSEC-2026-0595` (`parquet`, `informational = "unsound"`, published
+the same day as the two it did fix) only because `parquet` has zero
+`name = "parquet"` entries in the lock. **That near miss was a crate,
+not a policy.**
 
 If the CI is blocking a release and the proper fix needs time:
 
