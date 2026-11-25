@@ -5,6 +5,122 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v382 2026-11-26 - V498: ni el reparador de JSON ni el buscador de corchetes sabian si estaban dentro de una cadena, y ese bit de estado que faltaba costaba una llamada perdida por un lado y bytes borrados en silencio por el otro (0.2.465)
+
+`parse_tool_calls` en `src/autonomous_loop.rs` recibe el texto de un modelo local y saca de ahi
+las llamadas a herramienta. Pasa primero por `repair_model_json`, que arregla las formas en que
+un modelo pequeno escribe JSON invalido. Ninguna de las dos mitades llevaba **estado de
+cadena**, y ese unico bit que faltaba producia **dos** fallos de naturaleza distinta: uno que
+pierde la llamada entera y otro, peor, que la entrega **corrompida y sin decirlo**.
+
+### Como se midio
+
+Seis payloads sinteticos por el parser de verdad, uno por mecanismo, con un modulo de medicion
+temporal que **ya no esta en el fichero**. Lo que salio:
+
+| caso | antes | causa |
+|---|---|---|
+| salto de linea crudo dentro de una cadena | **0 llamadas** | el reparador preservaba `\n` a proposito |
+| falta una llave de cierre | 0 llamadas | estructural, y sigue sin arreglarse a proposito |
+| prosa detras del array, SIN corchetes | 1 llamada | ya funcionaba |
+| **prosa detras del array, CON corchetes** | **0 llamadas** | `rfind(']')` aterriza en el corchete de la prosa |
+| **prosa DELANTE, con corchetes** | **0 llamadas** | `find('[')` aterriza en el corchete de la prosa |
+| **un control dentro de una cadena** | **1 llamada, `content="ab"`** | el byte desaparece sin dejar rastro |
+
+### La correccion a un diagnostico mio del 2026-11-23, que estaba equivocado
+
+El traspaso de esa noche dejo escrito que una de las tres causas era «prosa detras del array»,
+y que el arreglo consistia en «tomar `find('[') .. rfind(']')` como respaldo». **Las dos cosas
+son falsas, y la segunda se comprueba leyendo el fichero:** `try_parse_json_array` ya hacia
+exactamente ese recorte, y `test_parse_tool_calls_embedded` lleva tiempo probando que prosa
+delante y detras del array parsea bien. Mi tabla decia «el parser exige que todo el texto sea el
+array» y el parser no exige eso.
+
+La causa real es otra y es peor: el recorte es **avaricioso**. `find` coge el primer `[` del
+texto entero y `rfind` el ultimo `]`, asi que **un corchete en cualquier parte de la prosa se
+traga el intervalo**, y no en una direccion sino en las dos. La direccion «delante» no la habia
+nombrado nunca. Lo que hacia que el sintoma pareciera otra cosa es justamente que la prosa
+**sin** corchetes funciona: el caso facil de reproducir es el que no falla.
+
+### El bug de datos, que es la mitad peor, y el test que lo daba por bueno
+
+El reparador borraba los caracteres de control. Dentro de una cadena eso no es reparar sintaxis,
+es **editar el contenido del modelo**: un `write_file` cuyo contenido era `a\0b` llegaba como
+`ab`. Y el fallo solo se ve cuando el parseo **funciona**, o sea que no deja ni un rastro en
+ningun sitio.
+
+Lo que hay que decir entero: **habia un test que lo afirmaba como comportamiento esperado.**
+`test_parse_tool_calls_repairs_malformed_model_json` comprobaba
+`assert_eq!(..., "bcde")` sobre una entrada con tres controles metidos dentro de una cadena. El
+aserto ahora exige los tres bytes intactos. Un test que fija una perdida de datos no es una red:
+es la perdida de datos firmada.
+
+El arreglo: dentro de una cadena, un control se **escapa**, nunca se borra --- `\n`, `\r`, `\t`,
+`\b`, `\f` a su forma corta y el resto a `\u00XX`. Fuera de una cadena, tabulador, salto y
+retorno se quedan tal cual, porque ahi si son espacio en blanco legal. El razonamiento que
+llevaba escrito el fichero ---«son espacio en blanco legal de JSON entre tokens»--- era **cierto
+entre tokens y falso dentro de una cadena**, y esa es la unica distincion que faltaba.
+
+### Una guarda que el estado de cadena obliga a poner
+
+Un escaner con estado de cadena se puede desincronizar: basta una prosa con un numero **impar**
+de comillas para que todas las decisiones posteriores se tomen en el modo equivocado. Asi que
+`repair_scan` devuelve `None` si la pasada **termina dentro de una cadena**, y el llamante
+entrega el texto **intacto** en vez de una conjetura. Devolver una conjetura es como un reparador
+convierte JSON valido en invalido, que es lo contrario de su contrato.
+
+### Una implementacion de la regla, no dos que deben coincidir
+
+La version vieja tenia dos pasadas ---una que detectaba si hacia falta reparar y otra que
+reparaba--- con las mismas condiciones escritas dos veces. Eso es exactamente la forma que deja
+que dos copias de una regla se separen, que en este repositorio tiene nombre propio. Ahora hay
+una pasada y el resultado se compara con la entrada: si no cambio nada, se devuelve prestado. El
+coste es una asignacion sobre un payload de unos pocos KB, una vez por turno del modelo.
+
+### Lo que NO es
+
+- **No arregla la llave que falta**, que son tres de los seis payloads medidos el 2026-11-23.
+  Insertar una llave es **adivinar donde**, y una adivinanza que acierta a veces fabrica llamadas
+  a herramienta que nadie escribio. Hay un test que fija esa decision por escrito
+  (`a_missing_brace_is_still_not_repaired`) y que falla si alguien la cambia sin leer esto.
+- **No prueba que ninguna cifra historica fuera falsa.** Lo que si hace es **cambiar las cifras
+  futuras**: las categorias agenticas recuperan pasadas que antes se perdian, asi que una tasa de
+  acierto de antes de esta version y una de despues no se comparan. El autor lo autorizo el
+  2026-11-22 sabiendo eso.
+- **No toca el parseo XML** (`try_parse_xml_tool_use`), que delimita por etiquetas y no por
+  corchetes, asi que el defecto no le aplica.
+- **Cambia una cosa que no era el objetivo y conviene decirla:** en la rama estilo OpenAI, una
+  entrada sin `function` o sin `name` ahora se **salta**, donde antes abandonaba el parseo entero.
+  Es consecuencia de recorrer varios candidatos en vez de uno, y no puede perder una llamada que
+  el codigo viejo encontrara.
+
+### Verificacion
+
+Los **50** tests de `autonomous_loop` en verde (43 de antes mas 7 nuevos), y **la polaridad
+comprobada contra el codigo viejo, no contra el fixture**: puestos los 7 tests nuevos sobre la
+implementacion anterior, **4 fallan** ---el salto crudo, el control borrado, la prosa con
+corchetes y la rama OpenAI--- cada uno con su mensaje. Los otros **3 pasan en ambas**, y eso se
+dice tal cual: no son tests de defecto sino guardas de alcance (el corchete dentro de una cadena
+ya funcionaba, las comillas impares pasaban por otro motivo, y la llave que falta sigue sin
+arreglarse a proposito). Un test que pasa en las dos versiones no demuestra el arreglo.
+
+**La bateria local, y lo que salio rojo en ella:** 34 puertas, **33 en verde y `cargo fmt`
+en rojo**. El motivo es del metodo y conviene decirlo: este cambio se aplico parcheando el
+fichero con un script ---es CRLF con seis LF sueltos, y una edicion a mano de un fichero asi
+es como se corrompen los finales de linea---, y un parche no pasa por `rustfmt`. Lo que pedia
+eran **dos lineas** de un test, dos literales que caben juntos. Aplicado `cargo fmt`, que
+ademas paso el fichero entero de CRLF a LF ---inofensivo aqui, porque `.gitattributes` lleva
+`* text=auto` y `core.autocrlf=input`, asi que la normalizacion ocurre al comitear: el diff
+sigue siendo 319 inserciones y 100 borrados---. Despues del formateo se volvieron a correr
+`cargo fmt --check`, la clippy de `FEATURES_STD` con `--all-targets -D warnings`, los tests de
+`autonomous_loop` y la autoprueba de la puerta de enlaces, las cuatro en verde. **No se volvio
+a correr la bateria entera**: lo que cambio el formateo son espacios en dos lineas de un test,
+y veinte minutos de `cargo doc` por eso seria teatro.
+
+El recuento de tests de `FEATURES_STD` pasa de **9.209 a 9.216**.
+Las otras dos cifras de esa frase del README **no se pueden mover, y es demostrable sin medirlas**:
+`autonomous_loop.rs` esta detras de `#[cfg(feature = "autonomous")]`, y ni `full` a solas ni el
+minimo de ocho features activan `autonomous`, asi que ninguna de las dos compila este fichero.
 ## [Unreleased] - v381 (2026-11-25) - V497: la puerta de enlaces media menos de lo que prometia por dos sitios distintos, y era la mas cara de la bateria, o sea la que nadie vuelve a mirar (0.2.464)
 
 `scripts/check_doc_links.py` ejecutaba `cargo doc`, parseaba su `stderr` buscando avisos y

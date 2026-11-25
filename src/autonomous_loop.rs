@@ -1167,72 +1167,85 @@ impl AutonomousAgent {
 /// good call is not thrown away over a syntax slip.
 ///
 /// When the parse fails the whole call is dropped and the agent looks like it
-/// never tried to use the tool at all — there is no error anywhere, because
-/// nothing was ever recognised as a call. Three malformations are handled:
+/// never tried to use the tool at all --- there is no error anywhere, because
+/// nothing was ever recognised as a call.
+///
+/// **The scan tracks whether it is inside a JSON string.** Until 2026-11-25 it
+/// did not, and that single missing bit of state produced both a lost-call bug
+/// and a silent data bug, because the same character is legal between tokens
+/// and illegal inside a string. What it repairs:
 ///
 /// * **Rust/Python-style `\u{XXXX}` where JSON demands `\uXXXX`.** Measured on
 ///   qwen2.5-coder:14b: asked for an empty string argument it writes `\u{0}`,
 ///   and its entire test-suite tool call is lost. Transliterated rather than
-///   deleted — the code point is unambiguous, and dropping it would edit the
+///   deleted --- the code point is unambiguous, and dropping it would edit the
 ///   model's answer instead of repairing its syntax.
-/// * **Stray control characters**, which JSON forbids raw inside strings.
+/// * **Raw control characters inside a string are ESCAPED, not removed.**
+///   Removing them was the worse of the two bugs, because it only showed up
+///   when the parse *succeeded*: a `write_file` whose content was `a\0b`
+///   arrived as `ab`, with nothing anywhere saying a byte had been dropped.
+/// * **Raw newline, tab and carriage return inside a string**, which are the
+///   same defect wearing legal clothes. The previous version waved them through
+///   reasoning that they are "legal JSON whitespace between tokens" --- true
+///   *between tokens*, false *inside a string*, and it cost three of the six
+///   malformed payloads measured on 2026-11-23.
 /// * **Backslashes introducing no valid escape at all**, which are dropped.
 ///
-/// The repairs must happen together: removing a control character but leaving
-/// its backslash orphans it against the following quote (`\"` → `\\"`), closing
-/// the string early and trading one parse error for another.
+/// Outside a string, tab/newline/carriage return are left exactly as they are:
+/// there they really are legal whitespace, which is why the old reasoning
+/// looked right.
 ///
-/// Tab, newline and carriage return survive: they are legal JSON whitespace
-/// between tokens, and models escape them correctly inside strings. Every edit
-/// here can only turn invalid JSON into valid JSON, never the reverse.
+/// The repairs must happen together: removing a control character but leaving
+/// its backslash orphans it against the following quote (`\"` -> `\\"`),
+/// closing the string early and trading one parse error for another.
+///
+/// Returns the input borrowed when nothing needed repairing, so a well-formed
+/// response costs no copy.
 fn repair_model_json(text: &str) -> std::borrow::Cow<'_, str> {
-    let is_stray_control = |c: char| c.is_control() && !matches!(c, '\t' | '\n' | '\r');
-    let mut chars = text.chars().peekable();
-    let mut needs_repair = false;
-    while let Some(c) = chars.next() {
-        if is_stray_control(c) {
-            needs_repair = true;
-            break;
-        }
-        if c == '\\' {
-            match chars.peek() {
-                // `\u` is only valid followed by exactly four hex digits, so it
-                // cannot be waved through the way the single-character escapes
-                // can — `\u{0}` is precisely the malformation being repaired.
-                Some('u') => {
-                    chars.next();
-                    let hex: String = chars.clone().take(4).collect();
-                    if hex.len() < 4 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
-                        needs_repair = true;
-                        break;
-                    }
-                }
-                Some('"' | '\\' | '/' | 'b' | 'f' | 'n' | 'r' | 't') => {
-                    chars.next();
-                }
-                _ => {
-                    needs_repair = true;
-                    break;
-                }
-            }
-        }
+    match repair_scan(text) {
+        // One implementation of the rule, not two that must agree: the previous
+        // version had a detector pass and a rewriter pass carrying the same
+        // conditions, which is the shape that lets two copies of a rule drift
+        // apart. Comparing the result costs one allocation on a payload of a
+        // few KB, once per model turn.
+        Some(repaired) if repaired != text => std::borrow::Cow::Owned(repaired),
+        _ => std::borrow::Cow::Borrowed(text),
     }
-    if !needs_repair {
-        return std::borrow::Cow::Borrowed(text);
-    }
+}
 
-    let mut out = String::with_capacity(text.len());
+/// One pass of the repair. `None` means the scan ended inside a string, so the
+/// quote accounting was wrong and every decision after that quote was taken in
+/// the wrong mode --- prose carrying an odd number of `"` will do it. The
+/// caller then returns the text untouched, because handing back a guess is how
+/// a repair turns valid JSON into invalid JSON.
+fn repair_scan(text: &str) -> Option<String> {
+    let mut out = String::with_capacity(text.len() + 16);
     let mut chars = text.chars().peekable();
+    let mut in_string = false;
     while let Some(c) = chars.next() {
-        if is_stray_control(c) {
+        if !in_string {
+            match c {
+                '"' => {
+                    in_string = true;
+                    out.push(c);
+                }
+                // The only control characters JSON allows between tokens.
+                '\t' | '\n' | '\r' => out.push(c),
+                // Any other is illegal wherever it appears, and out here there
+                // is no content to preserve.
+                _ if c.is_control() => {}
+                // A backslash cannot begin anything valid outside a string.
+                '\\' => {}
+                _ => out.push(c),
+            }
             continue;
         }
-        if c == '\\' {
-            match chars.peek() {
-                // Rust/Python style `\u{XXXX}` where JSON demands `\uXXXX`.
-                // Transliterate rather than delete: the code point the model
-                // asked for is unambiguous, and silently dropping it would edit
-                // the model's answer instead of repairing its syntax.
+        match c {
+            '"' => {
+                in_string = false;
+                out.push(c);
+            }
+            '\\' => match chars.peek().copied() {
                 Some('u') => {
                     chars.next();
                     if chars.peek() == Some(&'{') {
@@ -1246,8 +1259,15 @@ fn repair_model_json(text: &str) -> std::borrow::Cow<'_, str> {
                             _ => {}
                         }
                     } else {
-                        out.push('\\');
-                        out.push('u');
+                        let hex: String = chars.clone().take(4).collect();
+                        if hex.len() == 4 && hex.chars().all(|c| c.is_ascii_hexdigit()) {
+                            out.push(c);
+                            out.push('u');
+                        } else {
+                            // `\u` with no code point behind it: the backslash
+                            // introduces nothing, so drop it and keep the `u`.
+                            out.push('u');
+                        }
                     }
                 }
                 // A real escape: keep both halves, so `\\` stays an escaped
@@ -1259,14 +1279,66 @@ fn repair_model_json(text: &str) -> std::borrow::Cow<'_, str> {
                     }
                 }
                 // Introduces nothing valid: drop the backslash and let the next
-                // character stand on its own (or be dropped, if it is a control).
+                // character stand on its own.
                 _ => {}
+            },
+            // The heart of the fix. These bytes are the model's content, so they
+            // are escaped into legal JSON and never deleted.
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{c}' => out.push_str("\\f"),
+            _ if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
+            _ => out.push(c),
+        }
+    }
+    if in_string {
+        return None;
+    }
+    Some(out)
+}
+
+/// The byte index just past the `close` that balances the `open` at byte `from`,
+/// or `None` when nothing balances it.
+///
+/// `text.find(open)` .. `text.rfind(close)` is the obvious way to pick the JSON
+/// out of a model's prose, and it is wrong in **both** directions: a bracket
+/// anywhere in that prose captures the span. Measured on this parser
+/// (2026-11-25) --- `See [the docs] first.` before a valid array, and
+/// `Now see [the docs].` after one, each cost the whole call, while the same
+/// prose *without* a bracket parsed fine. That is why the failure read as
+/// "trailing prose breaks it" when trailing prose does not.
+///
+/// A bracket inside a JSON string is content, not structure, so the scan
+/// carries the same string state as `repair_scan`.
+fn matching_close(text: &str, from: usize, open: char, close: char) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (i, c) in text.get(from..)?.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
             }
             continue;
         }
-        out.push(c);
+        if c == '"' {
+            in_string = true;
+        } else if c == open {
+            depth += 1;
+        } else if c == close {
+            depth = depth.checked_sub(1)?;
+            if depth == 0 {
+                return Some(from + i + c.len_utf8());
+            }
+        }
     }
-    std::borrow::Cow::Owned(out)
+    None
 }
 
 /// Parse tool calls from the LLM response text.
@@ -1310,56 +1382,79 @@ pub fn parse_tool_calls(response: &str) -> Vec<ParsedToolCall> {
 }
 
 fn try_parse_json_array(text: &str) -> Option<Vec<ParsedToolCall>> {
-    let start = text.find('[')?;
-    let end = text.rfind(']')?;
-    if end <= start {
-        return None;
+    // Every `[`-opened span that balances, tried left to right: the first `[`
+    // in the text is not necessarily the array's, so one candidate is not
+    // enough --- see `matching_close` for the measurement.
+    for (start, _) in text.char_indices().filter(|(_, c)| *c == '[') {
+        let Some(end) = matching_close(text, start, '[', ']') else {
+            continue;
+        };
+        let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(&text[start..end]) else {
+            continue;
+        };
+        let mut calls = Vec::new();
+        for item in &arr {
+            if let Some(name) = item.get("name").and_then(|v| v.as_str()) {
+                let arguments = extract_arguments(item.get("arguments"));
+                calls.push(ParsedToolCall {
+                    name: name.to_string(),
+                    arguments,
+                });
+            }
+        }
+        if !calls.is_empty() {
+            return Some(calls);
+        }
     }
-    let candidate = &text[start..=end];
-    let arr: Vec<serde_json::Value> = serde_json::from_str(candidate).ok()?;
-    let mut calls = Vec::new();
-    for item in &arr {
-        if let Some(name) = item.get("name").and_then(|v| v.as_str()) {
-            let arguments = extract_arguments(item.get("arguments"));
+    None
+}
+
+fn try_parse_openai_style(text: &str) -> Option<Vec<ParsedToolCall>> {
+    // Look for a `"tool_calls"` key in a JSON object, with the same bracket
+    // discipline as the array above: the outermost `{` .. `}` pair of the whole
+    // text is not the object, it is whatever the prose happens to brace.
+    for (start, _) in text.char_indices().filter(|(_, c)| *c == '{') {
+        let Some(end) = matching_close(text, start, '{', '}') else {
+            continue;
+        };
+        let Ok(obj) = serde_json::from_str::<serde_json::Value>(&text[start..end]) else {
+            continue;
+        };
+        let Some(tool_calls) = obj.get("tool_calls").and_then(|v| v.as_array()) else {
+            continue;
+        };
+        let mut calls = Vec::new();
+        for tc in tool_calls {
+            // An entry missing `function` or `name` is skipped, where the
+            // previous version abandoned the whole parse over it. Skipping
+            // cannot lose a call the old code found, which is the invariant
+            // that matters here.
+            let Some(func) = tc.get("function") else {
+                continue;
+            };
+            let Some(name) = func.get("name").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            // arguments can be a string (JSON-encoded) or an object
+            let arguments = if let Some(args_str) = func.get("arguments").and_then(|v| v.as_str()) {
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(args_str) {
+                    extract_arguments(Some(&parsed))
+                } else {
+                    HashMap::new()
+                }
+            } else {
+                extract_arguments(func.get("arguments"))
+            };
             calls.push(ParsedToolCall {
                 name: name.to_string(),
                 arguments,
             });
         }
+        if !calls.is_empty() {
+            return Some(calls);
+        }
     }
-    Some(calls)
-}
-
-fn try_parse_openai_style(text: &str) -> Option<Vec<ParsedToolCall>> {
-    // Look for "tool_calls" key in a JSON object
-    let start = text.find('{')?;
-    let end = text.rfind('}')?;
-    if end <= start {
-        return None;
-    }
-    let candidate = &text[start..=end];
-    let obj: serde_json::Value = serde_json::from_str(candidate).ok()?;
-    let tool_calls = obj.get("tool_calls")?.as_array()?;
-    let mut calls = Vec::new();
-    for tc in tool_calls {
-        let func = tc.get("function")?;
-        let name = func.get("name")?.as_str()?;
-        // arguments can be a string (JSON-encoded) or an object
-        let arguments = if let Some(args_str) = func.get("arguments").and_then(|v| v.as_str()) {
-            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(args_str) {
-                extract_arguments(Some(&parsed))
-            } else {
-                HashMap::new()
-            }
-        } else {
-            extract_arguments(func.get("arguments"))
-        };
-        calls.push(ParsedToolCall {
-            name: name.to_string(),
-            arguments,
-        });
-    }
-    Some(calls)
+    None
 }
 
 fn try_parse_xml_tool_use(text: &str) -> Option<Vec<ParsedToolCall>> {
@@ -1878,11 +1973,15 @@ mod tests {
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].arguments.get("a").unwrap(), "café");
 
-        // Bare control characters, with no backslash involved.
+        // Bare control characters inside a string, with no backslash
+        // involved. They are ESCAPED, not removed: this assertion read
+        // "bcde" until 2026-11-25, which is the data bug written down as
+        // expected behaviour --- the three bytes the model put in its
+        // content were deleted and nothing anywhere said so.
         let input = "[{\"name\": \"x\", \"arguments\": {\"a\": \"b\u{b}c\u{c}d\u{1b}e\"}}]";
         let calls = parse_tool_calls(input);
         assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].arguments.get("a").unwrap(), "bcde");
+        assert_eq!(calls[0].arguments.get("a").unwrap(), "b\u{b}c\u{c}d\u{1b}e");
 
         // A legitimately escaped backslash must survive intact — mangling it
         // would corrupt every Windows path a model ever writes.
@@ -3255,6 +3354,126 @@ mod control_tests {
         assert!(
             seen.iter().any(|(_, query)| query.contains("[Tool:")),
             "expected a mid-loop call whose query is tool output: {seen:?}"
+        );
+    }
+}
+
+// ============================================================================
+// String state in the JSON repair and in the bracket scan (P3', 2026-11-25)
+// ============================================================================
+
+#[cfg(test)]
+mod string_state_tests {
+    use super::*;
+
+    /// A raw newline inside a string: JSON forbids it, and the previous version
+    /// preserved it on purpose, so the whole call was lost. Three of the six
+    /// malformed payloads measured on 2026-11-23 were this.
+    #[test]
+    fn raw_newline_inside_a_string_is_escaped_not_preserved() {
+        let nl = char::from(10u8);
+        let input = format!(
+            "{}{nl}{}",
+            r#"[{"name":"write_file","arguments":{"content":"line1"#, r#"line2"}}]"#
+        );
+        let calls = parse_tool_calls(&input);
+        assert_eq!(calls.len(), 1, "the call was lost: {input:?}");
+        // And the newline is still THERE: escaping is not deleting.
+        assert_eq!(
+            calls[0].arguments.get("content").unwrap(),
+            &format!("line1{nl}line2")
+        );
+    }
+
+    /// The data bug, which is the worse half: when the parse succeeded anyway,
+    /// the control characters the model put in its content were deleted and
+    /// nothing said so.
+    #[test]
+    fn control_characters_inside_a_string_keep_their_bytes() {
+        let nul = char::from(0u8);
+        let input = format!(
+            "{}{nul}{}",
+            r#"[{"name":"write_file","arguments":{"content":"a"#, r#"b"}}]"#
+        );
+        let calls = parse_tool_calls(&input);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(
+            calls[0].arguments.get("content").unwrap(),
+            &format!("a{nul}b"),
+            "the NUL was dropped: this is the silent data bug"
+        );
+    }
+
+    /// Prose with a bracket in it, on either side of the array. `find('[')` and
+    /// `rfind(']')` each land in the prose, so BOTH directions used to cost the
+    /// whole call --- and the same prose without a bracket parsed fine, which
+    /// is what made the cause look like something else.
+    #[test]
+    fn prose_with_brackets_does_not_capture_the_array() {
+        let array = r#"[{"name":"x","arguments":{}}]"#;
+
+        let before = format!("See [the docs] first.{array}");
+        assert_eq!(parse_tool_calls(&before).len(), 1, "prose before: {before}");
+
+        let after = format!("{array} Now see [the docs] for details.");
+        assert_eq!(parse_tool_calls(&after).len(), 1, "prose after: {after}");
+
+        let both = format!("See [docs].{array} And [more docs].");
+        assert_eq!(parse_tool_calls(&both).len(), 1, "both sides: {both}");
+
+        // The case that already worked, kept so a fix cannot regress it.
+        let plain = format!("{array} Now I will run the tests.");
+        assert_eq!(parse_tool_calls(&plain).len(), 1);
+    }
+
+    /// A bracket inside a JSON string is content, not structure.
+    #[test]
+    fn a_bracket_inside_a_string_is_not_structure() {
+        let input = r#"[{"name":"write_file","arguments":{"content":"a ] and a } inside"}}] done."#;
+        let calls = parse_tool_calls(input);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(
+            calls[0].arguments.get("content").unwrap(),
+            "a ] and a } inside"
+        );
+    }
+
+    /// The OpenAI-style branch got the same bracket discipline, because the
+    /// defect was one rule missing from two places.
+    #[test]
+    fn openai_style_survives_prose_with_braces() {
+        let input = concat!(
+            "Here you go {see below}: ",
+            r#"{"tool_calls":[{"function":{"name":"search","arguments":"{\"q\":\"rust\"}"}}]}"#,
+            " and that is all {done}."
+        );
+        let calls = parse_tool_calls(input);
+        assert_eq!(calls.len(), 1, "input: {input}");
+        assert_eq!(calls[0].name, "search");
+        assert_eq!(calls[0].arguments.get("q").unwrap(), "rust");
+    }
+
+    /// Prose with an ODD number of quotes leaves the scan inside a string, so
+    /// the repair refuses to guess and returns the text untouched.
+    #[test]
+    fn unbalanced_quotes_leave_the_text_alone() {
+        let input = r#"he said "hello [{"name":"x","arguments":{}}]"#;
+        assert!(matches!(
+            repair_model_json(input),
+            std::borrow::Cow::Borrowed(_)
+        ));
+    }
+
+    /// What this change deliberately does NOT do: a missing closing brace is
+    /// still a lost call. Inserting one is guessing WHERE, and a guess that is
+    /// right sometimes manufactures tool calls nobody wrote. Three of the six
+    /// measured payloads are this, and they stay unfixed on purpose.
+    #[test]
+    fn a_missing_brace_is_still_not_repaired() {
+        let input = r#"[{"name":"x","arguments":{"a":"b"}]"#;
+        assert!(
+            parse_tool_calls(input).is_empty(),
+            "if this ever passes, someone added brace balancing: read the V498 entry first"
         );
     }
 }
