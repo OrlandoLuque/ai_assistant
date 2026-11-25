@@ -5,6 +5,141 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v381 (2026-11-25) - V497: la puerta de enlaces media menos de lo que prometia por dos sitios distintos, y era la mas cara de la bateria, o sea la que nadie vuelve a mirar (0.2.464)
+
+`scripts/check_doc_links.py` ejecutaba `cargo doc`, parseaba su `stderr` buscando avisos y
+devolvia la lista **sin mirar nunca `proc.returncode`**. Probado en dos segundos:
+
+```
+$ python scripts/check_doc_links.py "feature-que-no-existe-jamas"
+broken intra-doc links: 0 (baseline 0)          <- y salia 0
+
+$ cargo doc --no-deps --features "feature-que-no-existe-jamas"
+error: the package 'ai_assistant' does not contain this feature: ...
+                                                 <- salio 101, sin compilar nada
+```
+
+**La mitad de la razon estaba escrita y la otra no.** El comentario de al lado decia, con razon,
+que «rustdoc emite esto como avisos, asi que un exit cero no dice nada»; lo que no decia es que
+entonces un exit **distinto de cero** tampoco se mira. Sin lineas `unresolved link to`, la lista
+sale vacia y eso se imprime como exito.
+
+Y es la peor de las 33 puertas donde podia pasar: **es la que cuesta 20 de los ~25 minutos** de la
+bateria, o sea la que corre en CI (`ci.yml`, con `$FEATURES_STD`) y cuyo verde nadie vuelve a
+mirar porque mirarlo cuesta media hora.
+
+### El arreglo, y la regla exacta
+
+Tres funciones donde habia una: `cargo_doc()` ejecuta, `parse_warnings()` parsea ---ya existia--- y
+`untrustworthy(returncode, stderr)` **decide**. `main()` pregunta primero y, si la respuesta no es
+`None`, **no imprime ninguna cuenta**: escribe el motivo, las ultimas 15 lineas del `stderr` y
+sale con **2**, que en este repositorio significa «el instrumento no pudo hacer su trabajo» y no
+«la puerta encontro algo» ---la misma convencion que ya usan `check_bench_budget.py`,
+`check_feature_dep_drift.py` y otras tres---.
+
+La regla es **el codigo de salida a solas**, y no «distinto de cero Y sin avisos parseados». La
+diferencia importa: una compilacion parcial **puede** emitir avisos de verdad antes de pararse, y
+creerselos significaria dar una cuenta medida sobre menos codigo del que esta puerta promete en su
+propia cabecera. Es el mismo defecto que el fichero existe para cazar, una capa mas afuera.
+
+### La autoprueba, en la mitad que no tenia ninguna
+
+Esto es lo que explica que el fallo durara dos meses: `parse_warnings()` tenia autoprueba **desde
+el dia** en que una tanda de avisos sin localizacion colapso en uno; la mitad que **ejecuta cargo**
+no tenia ninguna. Ahora lleva cinco casos, y el quinto es el que fija la regla:
+
+| caso | se fia? |
+|---|---|
+| exit 0, con avisos | **si** |
+| exit 0, `stderr` vacio | **si** |
+| exit 101, `does not contain this feature` | no |
+| exit 101, sin ninguna linea `error` que citar | no |
+| **exit 101, CON avisos reales parseados** | **no** |
+
+Mas una comprobacion de que el motivo nombra el codigo de salida, porque un rojo que no lo diga no
+se arregla desde el log.
+
+**Y la polaridad comprobada contra el defecto real, no contra el fixture:** sustituida
+`untrustworthy` por la version vieja ---la que siempre devuelve `None`--- la autoprueba **falla**,
+con `SELF-TEST FAIL: untrustworthy(101, ...) -> None`. Una autoprueba que solo ha visto entrada
+buena no es una autoprueba, que es lo que el comentario de `mutate.py` ya dice en este mismo
+`ci.yml`.
+
+Va a CI **delante** de la puerta, siguiendo la convencion que ya tienen otras cuatro: autoprueba
+primero y un comentario que nombra el defecto concreto. La bateria local la recoge sola, porque
+deriva su lista del grep de los workflows: pasa de **20 puertas de python ejecutables a 21**, y de
+33 gates a 34.
+
+### El segundo sitio, encontrado al arreglar el primero
+
+`DEFAULT_FEATURES` llevaba **21** features; el `FEATURES_STD` de `ci.yml` lleva **24**. Faltaban
+`ffi`, `tabular` y `test-utils`. Y el comentario que esta justo encima decia:
+
+```
+# Must match ci.yml's FEATURES_STD. Passed explicitly so a narrower default
+# cannot quietly make the gate pass by checking less.
+```
+
+O sea que **el comentario enunciaba un requisito que el codigo no cumplia**, que es exactamente
+lo que esta puerta existe para cazar una capa mas afuera. CI no estaba afectado ---pasa el
+argumento explicitamente--- pero cualquier ejecucion a mano daba una cuenta tomada sobre menos
+codigo del que CI publica, y el propio docstring del fichero dice por que eso importa: **mas
+ancho encuentra MAS, no menos** (`full,local-inference` daba 46 donde el conjunto de CI daba 57).
+
+**Por que va en este commit y no en otro.** Son dos hallazgos, si. Pero son la misma frase con dos
+instancias: el `returncode` hacia que la cuenta se tomara sobre **cero** codigo, y el default
+estrecho sobre **menos** codigo. Arreglar solo uno seria aplicar la leccion al sitio donde se
+aprendio y a ninguno mas, que es el defecto recurrente de este repositorio con nombre propio.
+
+El arreglo no es solo poner las tres que faltaban: **una copia que nadie compara es una copia que
+se desvia**, asi que `self_test` ahora **relee `ci.yml`** y falla si divergen, nombrando las
+features de cada lado. Es la misma forma que el guardian del README comparando `ci_gates` con
+`ci_gates_prose`: una definicion, dos sitios, y una comprobacion que se da cuenta. Y que `ci.yml`
+no se pueda leer es un **fallo**, no un salto: una comprobacion que calladamente no corre es el
+defecto del que va todo este fichero.
+
+Polaridad, tambien contra el defecto real: con el default viejo de 21, la autoprueba falla y
+**nombra las tres** (`in ci.yml and not here: ['ffi', 'tabular', 'test-utils']`); con `ci.yml`
+ilegible, falla tambien.
+
+### Una frase de V495 que hay que corregir
+
+V495 dejo escrito que el verde de esta puerta «vale menos de lo que parece; el discriminador es el
+reloj», porque esa noche una pasada de la bateria la resolvio en **2 segundos** y otra en
+**25 m 51 s**. La primera mitad de la frase es cierta por el `returncode`; **la segunda esta
+equivocada**, y medirla era barato.
+
+Medido en un crate de juguete con dos enlaces rotos a proposito: **cargo reproduce los
+diagnosticos de rustdoc desde la cache**. La segunda ejecucion, en `0.02s` y sin recompilar nada,
+**re-imprime los dos avisos identicos** a los de la pasada en frio. Asi que una pasada rapida
+**no** es una pasada que no comprobo nada, y el reloj no discrimina: lo unico que no se puede
+creer es un exit distinto de cero.
+
+Lo que de aqui **no** se puede deducir, y conviene decirlo: que aquella pasada de 2 segundos
+estuviera bien. No se puede saber ---la version vieja tiraba la evidencia--- y ya no hace falta,
+porque desde esta version un fallo de cargo no vuelve a salir por la puerta como un cero.
+
+### Lo que NO es
+
+- **No cambia la cuenta**: sigue siendo **0** enlaces rotos, `BASELINE = 0`, y no se ha tocado ni
+  un enlace de documentacion.
+- **No prueba que ningun verde historico fuera falso.** Es una puerta que *podia* mentir, no una
+  que se haya pillado mintiendo en CI; el unico caso demostrado es el experimento provocado.
+- **No arregla un efecto secundario que deja**, porque vive en un fichero que no es del
+  repositorio: `SKIP_DOC_LINKS=1` filtra por `*check_doc_links*` y ahora eso **tambien** casa con
+  la linea de la autoprueba, que tarda milisegundos y no necesita cargo. El atajo rapido se salta
+  una comprobacion que no cuesta nada. La condicion deberia excluir `*--self-test*`.
+
+### Verificacion
+
+`--self-test` en verde con sus dos mitades (3 de 3 avisos, 5 de 5 casos de exit), la polaridad
+comprobada contra el defecto, el caso negativo saliendo **2** donde antes salia 0, y la puerta
+completa corrida de verdad contra `$FEATURES_STD` ---que es la unica forma de probar que un exit
+cero sigue contando igual que antes---. Mas las otras 20 puertas de python del repositorio, todas
+en 0. `cargo fmt`, clippy y los tests no se corrieron: el cambio son dos ficheros, un script de
+`scripts/` y un `run:` de `ci.yml`, y `git diff --name-only` sobre `src/ tests/ benches/ examples/`
+da **cero** ficheros.
+
 ## [Unreleased] - v380 (2026-11-24) - V496: las tres razones que decian «medido» llevaban medidas de hace seis dias, y una se dejaba fuera un dependiente entero (0.2.463)
 
 Las supresiones de `deny.toml` llevan una razon escrita y la politica exige que este **medida**.

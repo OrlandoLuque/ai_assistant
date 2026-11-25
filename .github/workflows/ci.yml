@@ -97,6 +97,16 @@ jobs:
         # A broken example is worse than no example: it is the first thing a
         # reader copies.
         run: cargo test --features "$FEATURES_STD" --doc
+      # The self-test runs first and is not a formality: until 2026-11-24 this
+      # gate could not tell "no broken links" from "cargo never ran". It threw
+      # away `cargo doc`'s exit code, so a feature typo made cargo exit 101
+      # having compiled nothing while the gate printed
+      # `broken intra-doc links: 0 (baseline 0)` and passed -- in this job, on
+      # the most expensive gate in the battery, which is the one whose green
+      # nobody re-checks. The parsing half had had a self-test for two months;
+      # the half that runs cargo had none, and that is where the defect lived.
+      - name: Self-test the doc-links gate
+        run: python scripts/check_doc_links.py --self-test
       - name: Check doc links
         # Added V335, next to the doc examples because it is the same defect one
         # layer out: V317 caught examples that did not compile, this catches
