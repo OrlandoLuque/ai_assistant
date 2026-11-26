@@ -6,6 +6,22 @@
 //! who only need the trait surface (e.g. for stub testing) don't pull the
 //! native deps.
 //!
+//! # If what you want is to start `llama-server` and talk to it over HTTP
+//!
+//! That is a different module: `crate::embedded_server`, which spawns and
+//! supervises the process and hands back a base URL. **In process** (here)
+//! versus **a server of its own** (there) is the whole distinction, and it is
+//! worth saying out loud because the second one is behind the `vision`
+//! feature for a reason that has nothing to do with either: it validates a
+//! multimodal projector. Someone looking for it under a name like this one
+//! will not find it, which has already cost a consumer of this crate a
+//! launcher of its own.
+//!
+//! Written as a code span and not an intra-doc link on purpose: that module
+//! is behind a feature this one does not imply, so a link would resolve in
+//! the set CI documents and dangle in any build with `local-inference` and
+//! without `vision`.
+//!
 //! # What is done and what is not, as of 2026-09-19
 //!
 //! This header used to say the Candle and llama-cpp-2 integrations were

@@ -9,6 +9,29 @@
 //! vision setups: a validated `MultimodalProjector` is passed straight
 //! through to `--mmproj` on the spawned argv.
 //!
+//! # Why this is behind the `vision` feature, which is where nobody looks
+//!
+//! Only because of that projector: the gate is about [`crate::mmproj`] and
+//! nothing else here needs it. Spawning a server is not a vision capability,
+//! and putting it behind a feature named for one made it invisible --- somebody
+//! asking "how do I start a local `llama-server` with this crate?" will not
+//! guess `vision`.
+//!
+//! **That cost is measured, not hypothetical.** `ai_portable_kit`, the only
+//! thing that consumes this crate from outside, compiles it with three features
+//! and no `vision`, so this module does not exist for it. It wrote its own
+//! launcher: 1.282 lines against the 683 here, with `start`,
+//! `wait_until_ready`, `base_url`, `port`, `is_running`, `stop` and output
+//! capture --- one for one.
+//!
+//! The gate was left where it is on purpose. [`LaunchError`] is **not**
+//! `#[non_exhaustive]` and its `MmprojValidation` variant carries an
+//! [`crate::mmproj::MmprojValidationError`], so moving this module out of
+//! `vision` means either making a public variant conditional on a feature
+//! ---which breaks exhaustive `match`es depending on how the crate was
+//! compiled--- or changing that variant's type. Both are public API decisions
+//! and neither is a tidy-up.
+//!
 //! ## Lifecycle
 //!
 //! 1. [`LlamaServerConfig::builder`] composes a config (binary, model,

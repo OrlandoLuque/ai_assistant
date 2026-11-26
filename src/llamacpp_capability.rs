@@ -7,6 +7,14 @@
 //! `Q1_0` kernel used by the Bonsai 1-bit models.
 //!
 //! The probe is intentionally *passive*: it never modifies server state.
+//!
+//! It also needs a server that is **already running**, which is a narrower
+//! thing than it looks: there is no answer here to "is there a card I could
+//! use?" before anything has started. To start one, see
+//! `crate::embedded_server`; to ask a binary what devices it supports
+//! without starting it, nothing in this crate does that yet --- `llama-server
+//! --list-devices` answers it, and `ai_portable_kit` is where that call
+//! currently lives.
 
 use crate::retry::{retry_with_config, RetryConfig};
 use serde::{Deserialize, Serialize};

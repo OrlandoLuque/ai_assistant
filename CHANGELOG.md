@@ -5,7 +5,83 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] - v382 2026-11-26 - V498: ni el reparador de JSON ni el buscador de corchetes sabian si estaban dentro de una cadena, y ese bit de estado que faltaba costaba una llamada perdida por un lado y bytes borrados en silencio por el otro (0.2.465)
+## [Unreleased] - v383 (2026-11-27) - V499: la capacidad de lanzar `llama-server` llevaba meses escrita y estaba detras de un feature llamado `vision`, asi que el unico consumidor externo de este crate escribio la suya de 1.282 lineas (0.2.466)
+
+`src/embedded_server.rs` son **683 lineas** que arrancan y supervisan un `llama-server`, con
+`start`, `wait_until_ready`, `base_url`, `port`, `is_running`, `stop`, captura de salida y un
+builder con `ctx_size`, `n_gpu_layers`, `extra_args` y `ready_timeout`. Se describe a si mismo
+asi:
+
+> «Embedded `llama-server` launcher. Spawns and supervises a local `llama-server` (or
+> compatible binary) so callers no longer have to manage the process out-of-band.»
+
+Y esta declarado en `lib.rs:1404` detras de `#[cfg(feature = "vision")]`.
+
+### El coste, que esta medido y no es hipotetico
+
+`ai_portable_kit` ---el pendrive que arranca un modelo en un ordenador ajeno, y **lo unico que
+consume este crate desde fuera**--- compila la libreria con `default-features = false` y tres
+features: `model-recommender`, `hardware-detection` y `hardware-nvml`. Sin `vision`, asi que
+**ese modulo no existe para el**. Escribio su propio lanzador: `src/engine.rs`, **1.282
+lineas**, con la misma API una por una.
+
+Nadie que busque «como arranco un `llama-server` con esta libreria» va a mirar detras de un
+feature de vision. El gate es solo por el proyector multimodal: `embedded_server` importa
+`crate::mmproj` en **una** linea, lo usa en **una** validacion y lo expone en **una** variante
+de error. Arrancar un servidor no es una capacidad de vision.
+
+### Lo que esta version hace: que se encuentre
+
+Punteros en los dos sitios donde alguien busca eso, mas la razon escrita en el propio modulo:
+
+| fichero | lo que dice ahora |
+|---|---|
+| `local_inference.rs` | que **en proceso** (ahi) y **un servidor propio** (alla) son la distincion, y que lo segundo esta detras de `vision` por un motivo que no tiene que ver con ninguna de las dos |
+| `llamacpp_capability.rs` | que su sonda necesita un servidor **ya levantado**, que es mas estrecho de lo que parece: no contesta «hay una tarjeta que podria usar» antes de arrancar nada |
+| `embedded_server.rs` | por que esta donde esta, el coste medido, y lo que vale moverlo |
+
+Los dos punteros son **code spans y no enlaces intra-doc**, a proposito: cruzan una frontera
+de features, asi que un enlace resolveria en el conjunto que CI documenta y quedaria colgando
+en cualquier build con `local-inference` y sin `vision`. La puerta de enlaces solo comprueba
+un conjunto, asi que no lo cazaria.
+
+### Lo que esta version NO hace, y por que no es pereza
+
+**No mueve el gate**, y las dos formas de hacerlo son decisiones del autor:
+
+1. **Sacar el modulo de `vision`** obliga a tocar una API publica. `LaunchError` **no** es
+   `#[non_exhaustive]` y su variante `MmprojValidation` lleva un
+   `crate::mmproj::MmprojValidationError`. O la variante pasa a ser condicional a un feature
+   ---y entonces un `match` exhaustivo de fuera compila o no segun como se haya compilado el
+   crate--- o se le cambia el tipo. Ninguna de las dos es una limpieza.
+2. **Crear un feature `embedded-server`** no toca ninguna API, pero mueve la cifra publica de
+   features de **99 a 100**, y esa cifra esta en **19 sitios** repartidos en el README,
+   `CLAUDE.md`, `docs/CAPABILITIES.md` y cinco paginas de la web. La puerta de numeros obliga
+   a que coincidan, asi que el riesgo no es un rojo silencioso; el riesgo es hacer ese barrido
+   de madrugada, que es exactamente como se publico un `9,209` en cuatro paginas cuando yo
+   creia que estaba en una.
+
+Las dos quedan escritas con su coste. Lo que falta para elegir es una decision, no una
+medicion.
+
+### Lo que NO es
+
+- **No cambia una linea de codigo ejecutable.** Son tres comentarios de modulo: 47 lineas
+  anadidas, cero borradas, cero funciones tocadas.
+- **No mueve ninguna cifra publica.** Los tests de `FEATURES_STD` siguen en **9.216** (medidos
+  en la bateria de esta version), las features en 99, los ficheros fuente en 579.
+- **No arregla que el prototipo tenga 1.282 lineas que no hacen falta.** Retirarlas a favor de
+  `embedded_server` es un refactor con su propio riesgo y empieza por la decision de arriba.
+
+### Verificacion
+
+La bateria local completa: **ALL 34 GREEN**, incluidas las siete de clippy con `-D warnings`,
+los tres conjuntos de tests y las 21 puertas de python. Importa decir cual de ellas vigila
+justo esto: `check_doc_links.py` con `$FEATURES_STD`, que son 20 de los 28 minutos y que desde
+V497 ya no puede devolver un cero cuando `cargo doc` falla. O sea que el verde de los enlaces
+de estos tres rustdoc nuevos es un verde medido.
+
+## [Unreleased] - v382 (2026-11-26) - V498: ni el reparador de JSON ni el buscador de corchetes sabian si estaban dentro de una cadena, y ese bit de estado que faltaba costaba una llamada perdida por un lado y bytes borrados en silencio por el otro (0.2.465)
 
 `parse_tool_calls` en `src/autonomous_loop.rs` recibe el texto de un modelo local y saca de ahi
 las llamadas a herramienta. Pasa primero por `repair_model_json`, que arregla las formas en que
